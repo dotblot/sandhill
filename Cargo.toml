@@ -28,3 +28,8 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+
+# Hashing runs at every daemon start (to identify the build) and for every
+# stored output; unoptimized it takes seconds on a debug build's executable.
+[profile.dev.package.sha2]
+opt-level = 3

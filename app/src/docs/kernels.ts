@@ -3,7 +3,8 @@
 // document's folder the first time code in that language runs.
 
 import { createSignal, type Setter } from "solid-js";
-import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
+import type { KernelspecInfo } from "../backend/types";
+import { type KernelWanted, normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
 
 export class DocKernels {
   readonly assigned: () => Record<string, string>;
@@ -16,8 +17,8 @@ export class DocKernels {
   constructor(
     private ws: Workspace,
     private cwd: string,
-    /** Kernel the document asks for, e.g. a notebook's kernelspec name. */
-    private preferred: (language: string) => string | undefined = () => undefined,
+    /** Kernel the document asks for, e.g. a notebook's kernelspec. */
+    private preferred: (language: string) => KernelWanted | undefined = () => undefined,
   ) {
     [this.assigned, this.setAssigned] = createSignal<Record<string, string>>({});
     [this.startingNow, this.setStartingNow] = createSignal<string[]>([]);
@@ -73,12 +74,23 @@ export class DocKernels {
   }
 
   private async start(language: string, kernel?: string): Promise<string> {
-    const spec = kernel
-      ? this.ws.kernelspecs().find((k) => k.name === kernel)
-      : pickKernel(this.ws.kernelspecs(), language, this.preferred(language));
-    if (!spec) throw new Error(`No ${language} kernel is installed where sandhilld runs`);
+    const find = (specs: KernelspecInfo[]) =>
+      kernel ? specs.find((k) => k.name === kernel) : pickKernel(specs, language, this.preferred(language));
+    // The user may have installed a kernel since the app connected.
+    const spec = find(this.ws.kernelspecs()) ?? find(await this.ws.refreshKernelspecs());
+    if (!spec) throw new Error(missingKernel(language));
     const info = await this.ws.startSession(spec.name, this.cwd);
     this.assign(language, info.id);
     return info.id;
   }
+}
+
+function missingKernel(language: string): string {
+  if (language === "python") {
+    return "No Python kernel was found. Install ipykernel in the environment you use (for conda: conda install -n <env> ipykernel) and run again.";
+  }
+  if (language === "r") {
+    return "No R kernel was found. Install Ark, or IRkernel in R (install.packages(\"IRkernel\")), and run again.";
+  }
+  return `No ${language} kernel was found where sandhilld runs.`;
 }

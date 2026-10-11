@@ -1,7 +1,7 @@
 // What the app shell needs from an open document, whatever its format.
 
 import { createSignal } from "solid-js";
-import type { Workspace } from "../model/workspace";
+import type { KernelWanted, Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
 import { DocKernels } from "./kernels";
 
@@ -27,7 +27,7 @@ export abstract class Doc {
   constructor(
     protected ws: Workspace,
     readonly path: string,
-    preferredKernel: (language: string) => string | undefined = () => undefined,
+    preferredKernel: (language: string) => KernelWanted | undefined = () => undefined,
   ) {
     const slash = path.lastIndexOf("/");
     this.name = path.slice(slash + 1);

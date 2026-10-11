@@ -38,9 +38,10 @@ The full design, including the reasoning behind each choice, is in
 
 ## Try the Mac app
 
-You need Rust, Node 22 and Jupyter kernels for the languages you want
-(`python -m pip install ipykernel && python -m ipykernel install --user`;
-for R, [Ark](https://github.com/posit-dev/ark) or IRkernel).
+You need Rust, Node 22 and Jupyter kernels for the languages you want:
+ipykernel in your Python environment (conda environments are found on their
+own; others need `python -m ipykernel install --user`), and for R,
+[Ark](https://github.com/posit-dev/ark) or IRkernel.
 
 ```sh
 cd app
