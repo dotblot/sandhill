@@ -12,8 +12,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
-    Blob, Call, CellRef, Event, HistoryPage, KernelspecInfo, Outcome, PingReply, Request,
-    RunStarted, ServerMessage, SessionInfo, Subscribed,
+    Blob, Call, CellRef, DirEntry, Event, FileOutputs, FileText, FileWritten, HistoryPage,
+    KernelspecInfo, Outcome, PingReply, Request, RunStarted, ServerMessage, SessionInfo,
+    Subscribed,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -35,7 +36,7 @@ type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Outcome>>>>;
 pub struct Client {
     writer: Mutex<Box<dyn AsyncWrite + Send + Unpin>>,
     pending: Pending,
-    events: mpsc::UnboundedReceiver<Event>,
+    events: Option<mpsc::UnboundedReceiver<Event>>,
     next_id: AtomicU64,
 }
 
@@ -52,7 +53,7 @@ impl Client {
         Client {
             writer: Mutex::new(Box::new(writer)),
             pending,
-            events,
+            events: Some(events),
             next_id: AtomicU64::new(1),
         }
     }
@@ -104,7 +105,13 @@ impl Client {
 
     /// Next event from any subscribed session; `None` once disconnected.
     pub async fn next_event(&mut self) -> Option<Event> {
-        self.events.recv().await
+        self.events.as_mut()?.recv().await
+    }
+
+    /// Takes the event stream so it can be read on its own task while the
+    /// client is shared for calls. The stream ends when the connection does.
+    pub fn take_events(&mut self) -> Option<mpsc::UnboundedReceiver<Event>> {
+        self.events.take()
     }
 
     pub async fn ping(&self) -> Result<PingReply> {
@@ -185,7 +192,37 @@ impl Client {
     }
 
     pub async fn get_blob(&self, hash: &str) -> Result<Blob> {
-        self.call(Call::GetBlob { hash: hash.into() }).await
+        self.call(Call::GetBlob {
+            hash: hash.into(),
+            near: None,
+        })
+        .await
+    }
+
+    pub async fn read_file(&self, path: &str) -> Result<FileText> {
+        self.call(Call::ReadFile { path: path.into() }).await
+    }
+
+    pub async fn write_file(
+        &self,
+        path: &str,
+        text: &str,
+        expected_mtime_ms: Option<i64>,
+    ) -> Result<FileWritten> {
+        self.call(Call::WriteFile {
+            path: path.into(),
+            text: text.into(),
+            expected_mtime_ms,
+        })
+        .await
+    }
+
+    pub async fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
+        self.call(Call::ListDir { path: path.into() }).await
+    }
+
+    pub async fn file_outputs(&self, file: &str) -> Result<FileOutputs> {
+        self.call(Call::FileOutputs { file: file.into() }).await
     }
 }
 

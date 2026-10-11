@@ -1,0 +1,20 @@
+[package]
+name = "sandhill-app"
+description = "The Sandhill Mac app: a Tauri window around the TypeScript UI"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+sandhill-proto.workspace = true
+anyhow.workspace = true
+base64 = "0.22"
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2.12", features = [] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

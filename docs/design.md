@@ -11,7 +11,7 @@
 | Layer | Pick | Why |
 |---|---|---|
 | Mac app shell | **Tauri 2** (Rust core + the system WKWebView) | No Electron or bundled Chromium. Idle RAM is typically tens of MB, not hundreds. You need a web view anyway because notebook outputs (plotly, htmlwidgets, interactive tables) are HTML. |
-| UI | **SolidJS or Svelte**, **CodeMirror 6** editor, **xterm.js** terminal | Small, fast, and CodeMirror handles very large files well. JupyterLab's editor is also CodeMirror 6, so its Python/R language modes are reusable. |
+| UI | **SolidJS** (chosen over Svelte), **CodeMirror 6** editor, **xterm.js** terminal | Small, fast, and CodeMirror handles very large files well. JupyterLab's editor is also CodeMirror 6, so its Python/R language modes are reusable. |
 | Mac ↔ server link | **System `ssh` (your `~/.ssh/config`, keys, ProxyJump)** carrying one multiplexed RPC stream to the daemon's stdio (msgpack or JSON-RPC) | This is the pattern VS Code Remote and Zed remote use. It needs no open ports and works through bastions. The app auto-uploads the daemon binary on first connect. |
 | Server daemon | **One Rust binary (tokio)** running as a **`systemd --user` service with `loginctl enable-linger`** | It survives the Mac app closing, network drops, and your logout, with no tmux. It owns kernels, jobs, PTYs, the output store and the agents. |
 | Kernels | **Jupyter protocol over ZeroMQ**: `ipykernel` for Python, **Ark** (Posit's Rust R kernel, MIT) for R | These are standard and reconnectable. Ark already speaks the variables, plots and help "comms" that Positron uses. Use the `runtimelib` / `jupyter-protocol` crates from nteract's runtimed. |
@@ -58,6 +58,7 @@ Rust for both the daemon and the Tauri core, chosen for speed and low RAM. You a
 ### Local mode on the Mac (added 2026-10-11)
 The same daemon also runs on the Mac itself. "Local" is just another host:
 - Build `sandhilld` for `aarch64-apple-darwin` as well as Linux. On the Mac it runs as a **launchd user agent** instead of a systemd service, and the app talks to it over a Unix socket instead of ssh. Everything above the link (kernels, output journal, agents, MCP tools, sidecar outputs) is shared code.
+  - As built (step 2): the app ships `sandhilld` inside `Sandhill.app` and runs `sandhilld attach --start`, which starts the daemon in the background if it isn't running, so no launchd setup is needed. The remote case will run the same command through ssh. The launchd agent in `packaging/` stays optional, for starting the daemon at login.
 - Keep the OS-specific parts behind one small trait from day one: service install (systemd vs launchd), job isolation (`systemd-run` scopes vs process groups), and the transport (ssh stdio vs Unix socket).
 - Closing the app window doesn't stop local work, because the daemon keeps running. But work does stop while the Mac **sleeps or shuts down**. The daemon should hold a sleep assertion while jobs run (what `caffeinate` does), and warn before you close the lid with work in progress.
 - The kernels (ipykernel, Ark) and agents (`claude`, `codex`) run natively on Apple silicon.

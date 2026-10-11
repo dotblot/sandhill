@@ -1,0 +1,68 @@
+[
+  {
+    "name": "consecutive streams of the same name are joined",
+    "events": [
+      {"msg_type": "sandhill.run_started", "content": {"code": "print(1)", "cell": null}},
+      {"msg_type": "execute_input", "content": {"code": "print(1)", "execution_count": 1}},
+      {"msg_type": "stream", "content": {"name": "stdout", "text": "a\n"}},
+      {"msg_type": "stream", "content": {"name": "stdout", "text": "b\n"}},
+      {"msg_type": "stream", "content": {"name": "stderr", "text": "warn\n"}},
+      {"msg_type": "stream", "content": {"name": "stdout", "text": "c\n"}},
+      {"msg_type": "sandhill.run_finished", "content": {"status": "ok", "execution_count": 1}}
+    ],
+    "outputs": [
+      {"output_type": "stream", "name": "stdout", "text": "a\nb\n"},
+      {"output_type": "stream", "name": "stderr", "text": "warn\n"},
+      {"output_type": "stream", "name": "stdout", "text": "c\n"}
+    ]
+  },
+  {
+    "name": "results, displays and errors keep their fields",
+    "events": [
+      {"msg_type": "display_data", "content": {"data": {"image/png": {"sandhill_blob": "ab", "size": 4}, "text/plain": "<Figure>"}, "metadata": {"image/png": {"width": 400}}, "transient": {}}},
+      {"msg_type": "execute_result", "content": {"execution_count": 3, "data": {"text/plain": "2"}, "metadata": {}}},
+      {"msg_type": "error", "content": {"ename": "ZeroDivisionError", "evalue": "division by zero", "traceback": ["line 1", "line 2"]}}
+    ],
+    "outputs": [
+      {"output_type": "display_data", "data": {"image/png": {"sandhill_blob": "ab", "size": 4}, "text/plain": "<Figure>"}, "metadata": {"image/png": {"width": 400}}},
+      {"output_type": "execute_result", "execution_count": 3, "data": {"text/plain": "2"}, "metadata": {}},
+      {"output_type": "error", "ename": "ZeroDivisionError", "evalue": "division by zero", "traceback": ["line 1", "line 2"]}
+    ]
+  },
+  {
+    "name": "clear_output clears now, or at the next output when wait is set",
+    "events": [
+      {"msg_type": "stream", "content": {"name": "stdout", "text": "10%"}},
+      {"msg_type": "clear_output", "content": {"wait": false}},
+      {"msg_type": "stream", "content": {"name": "stdout", "text": "50%"}},
+      {"msg_type": "clear_output", "content": {"wait": true}},
+      {"msg_type": "stream", "content": {"name": "stdout", "text": "100%"}}
+    ],
+    "outputs": [
+      {"output_type": "stream", "name": "stdout", "text": "100%"}
+    ]
+  },
+  {
+    "name": "a pending clear with nothing after it keeps the old output",
+    "events": [
+      {"msg_type": "stream", "content": {"name": "stdout", "text": "done"}},
+      {"msg_type": "clear_output", "content": {"wait": true}}
+    ],
+    "outputs": [
+      {"output_type": "stream", "name": "stdout", "text": "done"}
+    ]
+  },
+  {
+    "name": "update_display_data replaces the display with the same id",
+    "events": [
+      {"msg_type": "display_data", "content": {"data": {"text/plain": "step 1"}, "metadata": {}, "transient": {"display_id": "p"}}},
+      {"msg_type": "display_data", "content": {"data": {"text/plain": "other"}, "metadata": {}, "transient": {"display_id": "q"}}},
+      {"msg_type": "update_display_data", "content": {"data": {"text/plain": "step 2"}, "metadata": {"done": true}, "transient": {"display_id": "p"}}},
+      {"msg_type": "update_display_data", "content": {"data": {"text/plain": "ignored"}, "metadata": {}, "transient": {"display_id": "missing"}}}
+    ],
+    "outputs": [
+      {"output_type": "display_data", "data": {"text/plain": "step 2"}, "metadata": {"done": true}},
+      {"output_type": "display_data", "data": {"text/plain": "other"}, "metadata": {}}
+    ]
+  }
+]

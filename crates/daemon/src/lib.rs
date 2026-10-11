@@ -3,11 +3,14 @@
 //! journals every output so the Mac app can disconnect and catch up later.
 
 pub mod blobs;
+pub mod files;
 pub mod journal;
 pub mod kernel;
+pub mod outputs;
 pub mod paths;
 pub mod server;
 pub mod session;
+pub mod sidecar;
 
 pub use paths::StateDir;
 pub use server::Daemon;

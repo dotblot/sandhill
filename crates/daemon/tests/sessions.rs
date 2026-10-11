@@ -8,8 +8,8 @@ use std::time::Duration;
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    BLOB_KEY, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED, Event, RunFinished,
-    SessionStatus,
+    BLOB_KEY, CONFLICT_ERROR, CellRef, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED,
+    EntryKind, Event, RunFinished, SessionStatus,
 };
 use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
@@ -63,8 +63,17 @@ async fn have_kernel(name: &str) -> bool {
 
 /// Runs code and returns the run's events up to and including run_finished.
 async fn run(client: &mut Client, session: &str, code: &str) -> (Vec<Event>, RunFinished) {
+    run_cell(client, session, code, None).await
+}
+
+async fn run_cell(
+    client: &mut Client,
+    session: &str,
+    code: &str,
+    cell: Option<CellRef>,
+) -> (Vec<Event>, RunFinished) {
     client.subscribe(session, None).await.unwrap();
-    let run = client.execute(session, code, None).await.unwrap().run;
+    let run = client.execute(session, code, cell).await.unwrap().run;
     let mut events = Vec::new();
     loop {
         let event = tokio::time::timeout(TIMEOUT, client.next_event())
@@ -341,4 +350,164 @@ async fn r_kernel_runs_code() {
     );
 
     client.shutdown(&info.id).await.unwrap();
+}
+
+fn cell(file: &Path, cell_id: &str) -> Option<CellRef> {
+    Some(CellRef {
+        file: file.to_string_lossy().into_owned(),
+        cell_id: cell_id.into(),
+    })
+}
+
+/// The sidecar is written just after the run finishes; wait for it briefly.
+async fn read_sidecar(doc: &Path) -> serde_json::Value {
+    let index = sandhill_daemon::sidecar::dir_for(doc)
+        .unwrap()
+        .join("index.json");
+    for _ in 0..50 {
+        if let Ok(text) = std::fs::read_to_string(&index) {
+            return serde_json::from_str(&text).unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("no sidecar at {}", index.display());
+}
+
+#[tokio::test]
+async fn files_can_be_listed_read_and_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(work.join("data")).unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let client = daemon.client().await;
+
+    let path = work.join("analysis.qmd").to_string_lossy().into_owned();
+    let written = client.write_file(&path, "# Title\n", None).await.unwrap();
+    let read = client.read_file(&path).await.unwrap();
+    assert_eq!(read.text, "# Title\n");
+    assert_eq!(read.mtime_ms, written.mtime_ms);
+
+    let entries = client.list_dir(&work.to_string_lossy()).await.unwrap();
+    let listed: Vec<_> = entries.iter().map(|e| (e.name.as_str(), e.kind)).collect();
+    assert_eq!(
+        listed,
+        [("data", EntryKind::Dir), ("analysis.qmd", EntryKind::File)]
+    );
+
+    // Someone else saves the file after we read it.
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(&path, "# Changed elsewhere\n").unwrap();
+    let err = client
+        .write_file(&path, "# Mine\n", Some(read.mtime_ms))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains(CONFLICT_ERROR), "{err}");
+
+    let ping = client.ping().await.unwrap();
+    assert!(!ping.home.is_empty());
+}
+
+#[tokio::test]
+async fn qmd_outputs_are_saved_next_to_the_file() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let doc = dir.path().join("analysis.qmd");
+    std::fs::write(&doc, "```{python}\nprint('hi')\n```\n").unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session("python3", None).await.unwrap().id;
+
+    let code = "from IPython.display import display\n\
+                print('hi')\n\
+                display({'image/png': 'iVBORw0KGgo=', 'text/plain': '<plot>'}, raw=True)\n\
+                6 * 7";
+    let (_, finished) = run_cell(&mut client, &session, code, cell(&doc, "setup")).await;
+    assert_eq!(finished.status, "ok");
+
+    let sidecar = read_sidecar(&doc).await;
+    let saved = &sidecar["cells"]["setup"];
+    assert_eq!(saved["code"], code);
+    assert_eq!(saved["status"], "ok");
+    let outputs = saved["outputs"].as_array().unwrap();
+    let types: Vec<_> = outputs
+        .iter()
+        .map(|o| o["output_type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["stream", "display_data", "execute_result"]);
+    assert_eq!(outputs[0]["text"], "hi\n");
+    assert_eq!(outputs[2]["data"]["text/plain"], "42");
+
+    // The plot was copied next to the document, so it can be served even
+    // after the daemon's own store is gone.
+    let hash = outputs[1]["data"]["image/png"][BLOB_KEY].as_str().unwrap();
+    std::fs::remove_dir_all(daemon.daemon.state().blobs_dir()).unwrap();
+    let blob = client
+        .call::<sandhill_proto::Blob>(sandhill_proto::Call::GetBlob {
+            hash: hash.into(),
+            near: Some(doc.to_string_lossy().into_owned()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(blob.data, "iVBORw0KGgo=");
+
+    // The same outputs come back from the journal.
+    let file_outputs = client.file_outputs(&doc.to_string_lossy()).await.unwrap();
+    assert_eq!(file_outputs.cells.len(), 1);
+    assert_eq!(file_outputs.cells[0].cell_id, "setup");
+    assert_eq!(file_outputs.cells[0].outputs, *outputs);
+
+    client.shutdown(&session).await.unwrap();
+}
+
+#[tokio::test]
+async fn reopening_mid_run_shows_output_so_far_then_the_rest() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let doc = dir.path().join("long.ipynb");
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let session = {
+        let client = daemon.client().await;
+        let session = client.start_session("python3", None).await.unwrap().id;
+        let code = "import time\nfor i in range(4):\n    print('step', i, flush=True)\n    time.sleep(0.5)";
+        client
+            .execute(&session, code, cell(&doc, "c1"))
+            .await
+            .unwrap();
+        session
+        // The app closes here.
+    };
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    let mut client = daemon.client().await;
+    let snapshot = client.file_outputs(&doc.to_string_lossy()).await.unwrap();
+    let cell = &snapshot.cells[0];
+    assert_eq!(cell.finished_ms, None, "the run should still be going");
+    let mut text = cell.outputs[0]["text"].as_str().unwrap().to_string();
+    assert!(text.starts_with("step 0\n"), "{text:?}");
+
+    client
+        .subscribe(&session, Some(snapshot.seq))
+        .await
+        .unwrap();
+    loop {
+        let event = tokio::time::timeout(TIMEOUT, client.next_event())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.run.as_deref() != Some(cell.run.as_str()) {
+            continue;
+        }
+        match event.msg_type.as_str() {
+            "stream" => text.push_str(event.content["text"].as_str().unwrap()),
+            EVENT_RUN_FINISHED => break,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "step 0\nstep 1\nstep 2\nstep 3\n");
+
+    client.shutdown(&session).await.unwrap();
 }

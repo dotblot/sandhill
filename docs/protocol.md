@@ -27,7 +27,11 @@ Responses can arrive out of order; match them by `id`.
 | `subscribe` | `session`, `since_seq?` | `{session, from_seq}`, then events |
 | `unsubscribe` | `session` | `null` |
 | `history` | `session`, `since_seq`, `limit?` | `{events, next_seq}` |
-| `get_blob` | `hash` | `{hash, data}` |
+| `get_blob` | `hash`, `near?` | `{hash, data}` |
+| `read_file` | `path` | `{path, text, mtime_ms}` |
+| `write_file` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}` |
+| `list_dir` | `path` | `[{name, kind, size, mtime_ms}]`, directories first |
+| `file_outputs` | `file` | `{file, cells, seq}` |
 
 `SessionInfo` is `{id, kernel, language, cwd, pid, status, created_ms, ended_ms?, last_seq}`
 with `status` one of `starting`, `running`, `ended`.
@@ -58,6 +62,39 @@ Binary MIME values (images other than SVG, PDF) and any value over 64 KiB are
 stored once, by SHA-256, and replaced in the event with
 `{"sandhill_blob": "<hash>", "size": <bytes>}`. Fetch them with `get_blob`.
 The data is the original JSON string (base64 for images).
+
+## Files and notebook outputs
+
+Paths are absolute on the daemon's machine (a leading `~` is expanded), so
+the app edits files the same way locally and on a server.
+
+- `write_file` replaces the file atomically. Pass the `mtime_ms` you read to
+  refuse the write, with an error starting `conflict:`, if the file changed
+  on disk in the meantime.
+- To tie a run to a notebook cell, pass `cell: {file, cell_id}` to `execute`.
+  For `.ipynb` the cell id is the notebook's own cell `id`. For `.qmd` and
+  `.Rmd` it is the chunk label, or `chunk-<n>` (1-based position) for an
+  unlabeled chunk.
+- `file_outputs` returns the latest run of each cell of a file, including
+  runs still going: `{cell_id, run, session, language, code, started_ms,
+  finished_ms?, status?, execution_count?, outputs}`, with `outputs` as
+  nbformat 4 output objects. Subscribe to each session with `since_seq` set
+  to the returned `seq` to continue from exactly that point.
+- When a run from a `.qmd` or `.Rmd` cell finishes, the daemon saves its
+  outputs next to the document, whether or not a client is connected:
+
+  ```
+  analysis.qmd
+  .analysis.qmd.out/
+    index.json      {"sandhill_outputs": 1, "document", "cells": {cell_id: {code, language,
+                     kernel, run, started_ms, finished_ms, status, execution_count, outputs}}}
+    blobs/<sha256>  values the outputs refer to as {"sandhill_blob": hash, "size": n}
+  ```
+
+  `get_blob` with `near` set to the document also looks in its `blobs/`.
+- `.ipynb` outputs live in the notebook itself, which only the app writes.
+  On opening a notebook, the app takes outputs from `file_outputs` for
+  cells whose latest run is newer than the file.
 
 ## Guarantees
 

@@ -80,11 +80,40 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
-    /// Returns [`Blob`].
+    /// Returns [`Blob`]. `near` names a document whose saved outputs may hold
+    /// the blob (a `.qmd` sidecar), checked when the daemon's store lacks it.
     GetBlob {
         hash: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        near: Option<String>,
+    },
+    /// Reads a UTF-8 text file on the daemon's machine. Returns [`FileText`].
+    ReadFile {
+        path: String,
+    },
+    /// Replaces a text file atomically. With `expected_mtime_ms`, fails with
+    /// an error starting with [`CONFLICT_ERROR`] if the file changed on disk
+    /// since it was read. Returns [`FileWritten`].
+    WriteFile {
+        path: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_mtime_ms: Option<i64>,
+    },
+    /// Returns `Vec<DirEntry>`, directories first, then by name.
+    ListDir {
+        path: String,
+    },
+    /// The latest run of every cell of a notebook file, from the journal,
+    /// including runs still in progress. Returns [`FileOutputs`].
+    FileOutputs {
+        file: String,
     },
 }
+
+/// Prefix of the error returned when a write would overwrite changes made on
+/// disk since the file was read.
+pub const CONFLICT_ERROR: &str = "conflict:";
 
 /// Which notebook cell a piece of code came from, so clients can put outputs
 /// back under the right cell.
@@ -133,6 +162,11 @@ pub struct Event {
 pub struct PingReply {
     pub protocol_version: u32,
     pub daemon_version: String,
+    /// Home directory of the user the daemon runs as.
+    #[serde(default)]
+    pub home: String,
+    #[serde(default)]
+    pub hostname: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -191,6 +225,64 @@ pub struct Blob {
     pub hash: String,
     /// The original JSON string value (base64 for binary MIME types).
     pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileText {
+    pub path: String,
+    pub text: String,
+    pub mtime_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileWritten {
+    pub path: String,
+    pub mtime_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryKind {
+    File,
+    Dir,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DirEntry {
+    pub name: String,
+    pub kind: EntryKind,
+    pub size: u64,
+    pub mtime_ms: i64,
+}
+
+/// Outputs of the latest run of each cell of one file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileOutputs {
+    pub file: String,
+    pub cells: Vec<CellOutputs>,
+    /// The journal position these outputs reflect. Subscribe with this as
+    /// `since_seq` to receive what happens next without gaps or repeats.
+    pub seq: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CellOutputs {
+    pub cell_id: String,
+    pub run: String,
+    pub session: String,
+    pub language: String,
+    pub code: String,
+    pub started_ms: i64,
+    /// `None` while the run is queued or executing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_count: Option<u64>,
+    /// nbformat 4 output objects. Large values are blob references.
+    pub outputs: Vec<Value>,
 }
 
 /// Content of a [`EVENT_RUN_FINISHED`] event.

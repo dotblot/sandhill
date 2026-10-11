@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use sandhill_daemon::{Daemon, StateDir};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
 
 #[derive(Parser)]
@@ -109,7 +110,11 @@ async fn attach(cli: &Cli, state: StateDir, socket: PathBuf, start: bool) -> Res
         _ = tokio::io::copy(&mut stdin, &mut to_daemon) => {}
         _ = tokio::io::copy(&mut from_daemon, &mut stdout) => {}
     }
-    Ok(())
+    // Exit right away rather than returning: stdin is read on a thread that
+    // can't be cancelled, and shutting the runtime down would wait for the
+    // client's next line. The client would never learn the daemon is gone.
+    let _ = stdout.flush().await;
+    std::process::exit(0)
 }
 
 /// Starts `sandhilld serve` in its own session, logging to the state dir.
