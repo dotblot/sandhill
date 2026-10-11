@@ -1,7 +1,9 @@
 # App icon
 
-`source.png` is the icon artwork (two sandhill cranes at sunset), 1024 px,
-with the canvas around the rounded square made transparent. The other files
+`source.png` is the icon artwork (two large sandhill cranes in front of the
+sun, chosen in October 2026 because they read better at small sizes than the
+earlier sunset scene), 1024 px, with the light canvas around the rounded
+square made transparent and its shadow kept as translucent black. The other files
 are generated from it:
 
 ```sh
