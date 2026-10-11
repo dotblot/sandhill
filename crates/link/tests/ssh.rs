@@ -3,11 +3,12 @@
 //! home. Everything else is real: the probe script, copying the build over
 //! ssh's stdin, and `sandhilld attach --start` starting a daemon there.
 
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use sandhill_link::{Error, Options, Target, connect};
+use sandhill_proto::ARK_PATH;
 
 /// The sandhilld that `cargo test --workspace` builds next to this test.
 fn daemon_binary() -> Option<PathBuf> {
@@ -24,6 +25,28 @@ fn this_triple() -> &'static str {
         other => panic!("no triple for {other:?}"),
     }
 }
+
+/// Ark's Linux builds link to glibc.
+fn ark_triple() -> String {
+    this_triple().replace("-musl", "-gnu")
+}
+
+/// What the probe, install and attach scripts run on the server.
+const TOOLS: &[&str] = &[
+    "sh",
+    "env",
+    "uname",
+    "timeout",
+    "sed",
+    "head",
+    "sha256sum",
+    "shasum",
+    "mkdir",
+    "cat",
+    "chmod",
+    "mv",
+    "rm",
+];
 
 struct Server {
     /// Short, so the daemon's socket path stays under the platform limit.
@@ -45,16 +68,45 @@ impl Server {
              while [ \"$1\" != \"--\" ]; do shift; done\n\
              shift 2\n\
              cd '{home}' || exit 1\n\
+             PATH='{home}/rbin:{home}/tools'\n\
              exec env -u XDG_STATE_HOME -u SANDHILL_STATE_DIR -u SANDHILL_SOCKET HOME='{home}' SHELL=/bin/sh sh -c \"$*\"\n",
             home = home.path().display()
         );
         std::fs::write(&ssh, script).unwrap();
         std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The server's PATH has only the tools the scripts use, so whether it
+        // has R is up to the test, not this machine.
+        let tools = home.path().join("tools");
+        std::fs::create_dir(&tools).unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        for tool in TOOLS {
+            if let Some(found) = std::env::split_paths(&path)
+                .map(|dir| dir.join(tool))
+                .find(|p| {
+                    p.metadata()
+                        .is_ok_and(|m| m.is_file() && m.mode() & 0o111 != 0)
+                })
+            {
+                std::os::unix::fs::symlink(found, tools.join(tool)).unwrap();
+            }
+        }
         Server { home, ssh }
     }
 
     fn installed(&self) -> PathBuf {
         self.home.path().join(".local/bin/sandhilld")
+    }
+
+    fn ark(&self) -> PathBuf {
+        self.home.path().join(ARK_PATH)
+    }
+
+    /// Puts an `R` on the server's PATH.
+    fn add_r(&self) {
+        let r = self.home.path().join("rbin/R");
+        std::fs::create_dir_all(r.parent().unwrap()).unwrap();
+        std::fs::write(&r, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&r, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     fn options(&self, builds: Option<&Path>) -> Options {
@@ -130,6 +182,49 @@ async fn installs_the_daemon_on_a_new_server_then_reuses_it() {
     let connection = connect(&lab(), &options, &progress)
         .await
         .expect("connects again");
+    connection.client.ping().await.unwrap();
+    assert!(said.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn installs_ark_on_a_server_with_r() {
+    let Some(daemon) = daemon_binary() else {
+        eprintln!("skipping: sandhilld is not built (run `cargo test --workspace`)");
+        return;
+    };
+    let server = Server::new();
+    let builds = builds(&daemon);
+    let ark = "#!/bin/sh\n# a stand-in for Ark\n";
+    std::fs::write(builds.path().join(format!("ark-{}", ark_triple())), ark).unwrap();
+    let options = server.options(Some(builds.path()));
+    let said = Mutex::new(Vec::<String>::new());
+    let progress = |note: &str| said.lock().unwrap().push(note.to_string());
+
+    // Without R there is no use for Ark.
+    let connection = connect(&lab(), &options, &progress)
+        .await
+        .expect("connects");
+    drop(connection);
+    assert!(!server.ark().exists());
+    assert_eq!(*said.lock().unwrap(), ["Installing sandhilld on me@lab…"]);
+
+    server.add_r();
+    said.lock().unwrap().clear();
+    let connection = connect(&lab(), &options, &progress)
+        .await
+        .expect("connects");
+    drop(connection);
+    assert_eq!(std::fs::read_to_string(server.ark()).unwrap(), ark);
+    assert_eq!(
+        *said.lock().unwrap(),
+        ["Installing the R kernel on me@lab…"]
+    );
+
+    // The second time, the server has this Ark already.
+    said.lock().unwrap().clear();
+    let connection = connect(&lab(), &options, &progress)
+        .await
+        .expect("connects");
     connection.client.ping().await.unwrap();
     assert!(said.lock().unwrap().is_empty());
 }
