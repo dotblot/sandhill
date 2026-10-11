@@ -11,6 +11,7 @@ import {
 import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
+import { ScriptDoc } from "../docs/scriptDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { pickKernel, type Workspace } from "../model/workspace";
 import smallIcon from "../../src-tauri/icons/32x32.png";
@@ -124,8 +125,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       pending = (async () => {
         try {
           const shown = shownOutputs[path] ?? [];
+          const kind = docKind(path);
           const doc =
-            docKind(path) === "ipynb" ? await NotebookDoc.open(ws, path, shown) : await QmdDoc.open(ws, path, shown);
+            kind === "ipynb"
+              ? await NotebookDoc.open(ws, path, shown)
+              : kind === "script"
+                ? await ScriptDoc.open(ws, path, shown)
+                : await QmdDoc.open(ws, path, shown);
           setDocs((d) => [...d, doc]);
           return doc;
         } catch (err) {
@@ -197,7 +203,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     return true;
   }
 
-  async function createFile(kind: "qmd" | "ipynb") {
+  async function createFile(kind: NewFile) {
     const dir = root();
     try {
       const names = new Set((await ws.call<DirEntry[]>("list_dir", { path: dir })).map((e) => e.name));
@@ -210,7 +216,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       const text =
         kind === "ipynb"
           ? serializeNotebook(newNotebook(python))
-          : "---\ntitle: \"Untitled\"\n---\n\n```{python}\nprint(\"hello\")\n```\n";
+          : kind === "qmd"
+            ? "---\ntitle: \"Untitled\"\n---\n\n```{python}\nprint(\"hello\")\n```\n"
+            : "";
       const path = `${dir}/${name()}`;
       await ws.call<FileText>("write_file", { path, text });
       setTreeKey((k) => k + 1);
@@ -341,7 +349,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                 }
               >
                 <div class="empty-state">
-                  <p>Open a .qmd, .Rmd or .ipynb file from the sidebar.</p>
+                  <p>Open a .qmd, .Rmd, .ipynb, .R or .py file from the sidebar.</p>
                   <p class="muted">Code runs in sessions that keep going when you close the app.</p>
                 </div>
               </Show>
@@ -365,8 +373,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   );
 }
 
-/** The + menu in the sidebar: new Quarto document or notebook. */
-function NewFileMenu(props: { onCreate: (kind: "qmd" | "ipynb") => void }) {
+type NewFile = "qmd" | "ipynb" | "R" | "py";
+
+/** The + menu in the sidebar: a new Quarto document, notebook or script. */
+function NewFileMenu(props: { onCreate: (kind: NewFile) => void }) {
   const [open, setOpen] = createSignal(false);
   let wrap!: HTMLSpanElement;
   const close = (e: MouseEvent) => {
@@ -379,7 +389,7 @@ function NewFileMenu(props: { onCreate: (kind: "qmd" | "ipynb") => void }) {
     document.removeEventListener("mousedown", close);
     document.removeEventListener("keydown", escape);
   });
-  const pick = (kind: "qmd" | "ipynb") => {
+  const pick = (kind: NewFile) => {
     setOpen(false);
     props.onCreate(kind);
   };
@@ -397,6 +407,14 @@ function NewFileMenu(props: { onCreate: (kind: "qmd" | "ipynb") => void }) {
           <button role="menuitem" onClick={() => pick("ipynb")}>
             <FileIcon name="Untitled.ipynb" />
             Jupyter notebook
+          </button>
+          <button role="menuitem" onClick={() => pick("R")}>
+            <FileIcon name="Untitled.R" />
+            R script
+          </button>
+          <button role="menuitem" onClick={() => pick("py")}>
+            <FileIcon name="Untitled.py" />
+            Python script
           </button>
         </div>
       </Show>

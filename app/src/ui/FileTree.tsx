@@ -44,7 +44,7 @@ function Dir(props: {
               class="tree-item file"
               classList={{ openable, active: props.activePath === path }}
               style={indent(props.depth)}
-              title={openable ? path : "Only .qmd, .Rmd and .ipynb files open in Sandhill for now"}
+              title={openable ? path : "Only .qmd, .Rmd, .ipynb, .R and .py files open in Sandhill for now"}
               onClick={() => openable && props.onOpen(path)}
             >
               <FileIcon name={entry.name} />
