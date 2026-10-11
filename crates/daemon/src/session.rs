@@ -497,6 +497,12 @@ impl Actor {
             EVENT_RUN_FINISHED,
             serde_json::to_value(content).unwrap_or_default(),
         );
+        let journal = self.journal.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = crate::sidecar::record_run(&journal, &run.run_id) {
+                tracing::warn!("cannot save outputs of run {}: {err:#}", run.run_id);
+            }
+        });
     }
 
     fn run_id_for(&self, msg_id: &str) -> Option<String> {

@@ -19,6 +19,7 @@ use crate::blobs::BlobStore;
 use crate::journal::Journal;
 use crate::paths::StateDir;
 use crate::session::SessionHandle;
+use crate::{files, outputs, sidecar};
 
 const REPLAY_PAGE: u32 = 500;
 const HISTORY_LIMIT: u32 = 5000;
@@ -152,6 +153,8 @@ impl Daemon {
             Call::Ping => serde_json::to_value(PingReply {
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+                home: std::env::var("HOME").unwrap_or_default(),
+                hostname: hostname(),
             })?,
             Call::ListKernelspecs => serde_json::to_value(crate::kernel::list_kernelspecs().await)?,
             Call::StartSession { kernel, cwd } => {
@@ -209,16 +212,43 @@ impl Daemon {
                 let next_seq = events.last().map_or(since_seq, |e| e.seq);
                 serde_json::to_value(HistoryPage { events, next_seq })?
             }
-            Call::GetBlob { hash } => {
-                let bytes = self
-                    .journal
-                    .blobs()
-                    .get(&hash)
-                    .with_context(|| format!("no blob {hash}"))?;
+            Call::GetBlob { hash, near } => {
+                let mut bytes = self.journal.blobs().get(&hash);
+                if bytes.is_err()
+                    && let Some(path) = near
+                        .and_then(|n| files::resolve(&n).ok())
+                        .and_then(|doc| sidecar::blob_path(&doc, &hash))
+                {
+                    bytes = std::fs::read(path);
+                }
+                let bytes = bytes.with_context(|| format!("no blob {hash}"))?;
                 serde_json::to_value(Blob {
                     hash,
                     data: String::from_utf8_lossy(&bytes).into_owned(),
                 })?
+            }
+            Call::ReadFile { path } => {
+                serde_json::to_value(blocking(move || files::read_text(&path)).await?)?
+            }
+            Call::WriteFile {
+                path,
+                text,
+                expected_mtime_ms,
+            } => serde_json::to_value(
+                blocking(move || files::write_text(&path, &text, expected_mtime_ms)).await?,
+            )?,
+            Call::ListDir { path } => {
+                serde_json::to_value(blocking(move || files::list_dir(&path)).await?)?
+            }
+            Call::FileOutputs { file } => {
+                let journal = self.journal.clone();
+                serde_json::to_value(
+                    blocking(move || {
+                        let file = files::resolve(&file)?.to_string_lossy().into_owned();
+                        Ok(outputs::file_outputs(&journal, &file)?)
+                    })
+                    .await?,
+                )?
             }
             Call::Subscribe { .. } | Call::Unsubscribe { .. } => unreachable!("handled earlier"),
         })
@@ -368,6 +398,23 @@ async fn write_loop<W: AsyncWrite + Unpin>(
             return;
         }
     }
+}
+
+/// Runs filesystem and SQLite work off the async worker threads.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+    tokio::task::spawn_blocking(f).await?
+}
+
+fn hostname() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer is valid for its whole length, and gethostname
+    // writes at most that many bytes.
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
+    if rc != 0 {
+        return String::new();
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
 fn response(id: u64, result: Result<Value>) -> ServerMessage {

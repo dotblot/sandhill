@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS events (
     content    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id, seq);
+CREATE INDEX IF NOT EXISTS events_by_run ON events(run_id, seq);
+CREATE INDEX IF NOT EXISTS runs_by_cell ON runs(cell_file, cell_id);
 ";
 
 #[derive(Debug, thiserror::Error)]
@@ -85,6 +87,22 @@ pub struct RunRecord {
     pub session_id: String,
     pub msg_id: String,
     pub finished: bool,
+}
+
+/// A run that came from a notebook cell.
+#[derive(Debug, Clone)]
+pub struct CellRun {
+    pub cell_file: String,
+    pub cell_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub language: String,
+    pub kernel: String,
+    pub code: String,
+    pub started_ms: i64,
+    pub finished_ms: Option<i64>,
+    pub status: Option<String>,
+    pub execution_count: Option<u64>,
 }
 
 pub struct Journal {
@@ -284,6 +302,58 @@ impl Journal {
         })
     }
 
+    /// Highest sequence number in the whole journal.
+    pub fn max_seq(&self) -> Result<i64> {
+        Ok(self.conn.lock().unwrap().query_row(
+            "SELECT COALESCE(MAX(seq), 0) FROM events",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// The most recent run of each cell of `file`.
+    pub fn latest_cell_runs(&self, file: &str) -> Result<Vec<CellRun>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "{CELL_RUN_SELECT}
+             WHERE r.cell_file = ?1
+               AND r.rowid = (SELECT MAX(rowid) FROM runs
+                              WHERE cell_file = r.cell_file AND cell_id = r.cell_id)
+             ORDER BY r.rowid"
+        ))?;
+        let rows = stmt.query_map([file], cell_run_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn cell_run(&self, run_id: &str) -> Result<Option<CellRun>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                &format!("{CELL_RUN_SELECT} WHERE r.id = ?1 AND r.cell_file IS NOT NULL"),
+                [run_id],
+                cell_run_from_row,
+            )
+            .optional()?)
+    }
+
+    /// `(msg_type, content)` of a run's events up to and including `max_seq`.
+    pub fn run_events(&self, run_id: &str, max_seq: i64) -> Result<Vec<(String, Value)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_type, content FROM events
+             WHERE run_id = ?1 AND seq <= ?2 ORDER BY seq",
+        )?;
+        let rows = stmt.query_map(params![run_id, max_seq], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            let (msg_type, content) = row?;
+            events.push((msg_type, serde_json::from_str(&content)?));
+        }
+        Ok(events)
+    }
+
     pub fn events_since(&self, session_id: &str, since_seq: i64, limit: u32) -> Result<Vec<Event>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -313,6 +383,27 @@ impl Journal {
         }
         Ok(events)
     }
+}
+
+const CELL_RUN_SELECT: &str = "
+    SELECT r.cell_file, r.cell_id, r.id, r.session_id, s.language, s.kernel, r.code,
+           r.started_ms, r.finished_ms, r.status, r.execution_count
+    FROM runs r JOIN sessions s ON s.id = r.session_id";
+
+fn cell_run_from_row(row: &rusqlite::Row) -> rusqlite::Result<CellRun> {
+    Ok(CellRun {
+        cell_file: row.get(0)?,
+        cell_id: row.get(1)?,
+        run_id: row.get(2)?,
+        session_id: row.get(3)?,
+        language: row.get(4)?,
+        kernel: row.get(5)?,
+        code: row.get(6)?,
+        started_ms: row.get(7)?,
+        finished_ms: row.get(8)?,
+        status: row.get(9)?,
+        execution_count: row.get::<_, Option<i64>>(10)?.map(|n| n as u64),
+    })
 }
 
 pub fn now_ms() -> i64 {
@@ -380,6 +471,43 @@ mod tests {
         assert_eq!(all[1].seq, third.seq);
         assert_eq!(j.events_since("a", first.seq, 100).unwrap().len(), 1);
         assert_eq!(j.last_seq("a").unwrap(), third.seq);
+    }
+
+    #[test]
+    fn latest_run_per_cell() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = journal(dir.path());
+        j.insert_session(&session("a")).unwrap();
+        let cell = |id: &str| sandhill_proto::CellRef {
+            file: "/w/a.qmd".into(),
+            cell_id: id.into(),
+        };
+        j.insert_run("r1", "a", "m1", "1", Some(&cell("x")))
+            .unwrap();
+        j.insert_run("r2", "a", "m2", "2", Some(&cell("y")))
+            .unwrap();
+        j.insert_run("r3", "a", "m3", "3", Some(&cell("x")))
+            .unwrap();
+        j.insert_run("r4", "a", "m4", "4", None).unwrap();
+        j.finish_run("r3", "ok", Some(3)).unwrap();
+        let runs = j.latest_cell_runs("/w/a.qmd").unwrap();
+        let ids: Vec<_> = runs
+            .iter()
+            .map(|r| (r.cell_id.as_str(), r.run_id.as_str()))
+            .collect();
+        assert_eq!(ids, [("y", "r2"), ("x", "r3")]);
+        assert_eq!(runs[1].execution_count, Some(3));
+        assert_eq!(runs[1].language, "python");
+        assert!(j.cell_run("r4").unwrap().is_none());
+
+        j.append("a", Some("r3"), "stream", json!({"text": "early"}))
+            .unwrap();
+        let cutoff = j.max_seq().unwrap();
+        j.append("a", Some("r3"), "stream", json!({"text": "late"}))
+            .unwrap();
+        let events = j.run_events("r3", cutoff).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1["text"], "early");
     }
 
     #[test]

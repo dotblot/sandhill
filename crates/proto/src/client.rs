@@ -12,8 +12,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
-    Blob, Call, CellRef, Event, HistoryPage, KernelspecInfo, Outcome, PingReply, Request,
-    RunStarted, ServerMessage, SessionInfo, Subscribed,
+    Blob, Call, CellRef, DirEntry, Event, FileOutputs, FileText, FileWritten, HistoryPage,
+    KernelspecInfo, Outcome, PingReply, Request, RunStarted, ServerMessage, SessionInfo,
+    Subscribed,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -185,7 +186,37 @@ impl Client {
     }
 
     pub async fn get_blob(&self, hash: &str) -> Result<Blob> {
-        self.call(Call::GetBlob { hash: hash.into() }).await
+        self.call(Call::GetBlob {
+            hash: hash.into(),
+            near: None,
+        })
+        .await
+    }
+
+    pub async fn read_file(&self, path: &str) -> Result<FileText> {
+        self.call(Call::ReadFile { path: path.into() }).await
+    }
+
+    pub async fn write_file(
+        &self,
+        path: &str,
+        text: &str,
+        expected_mtime_ms: Option<i64>,
+    ) -> Result<FileWritten> {
+        self.call(Call::WriteFile {
+            path: path.into(),
+            text: text.into(),
+            expected_mtime_ms,
+        })
+        .await
+    }
+
+    pub async fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
+        self.call(Call::ListDir { path: path.into() }).await
+    }
+
+    pub async fn file_outputs(&self, file: &str) -> Result<FileOutputs> {
+        self.call(Call::FileOutputs { file: file.into() }).await
     }
 }
 
