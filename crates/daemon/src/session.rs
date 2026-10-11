@@ -93,6 +93,7 @@ impl SessionHandle {
             created_ms: now_ms(),
             ended_ms: None,
             project,
+            language_version: None,
         };
         journal.insert_session(&record)?;
 
@@ -114,11 +115,11 @@ impl SessionHandle {
                     }
                 }
             };
-            wait_until_ready(&mut conn, &mut rx).await?;
-            anyhow::Ok(conn)
+            let version = wait_until_ready(&mut conn, &mut rx).await?;
+            anyhow::Ok((conn, version))
         };
-        let conn = match tokio::time::timeout(STARTUP_TIMEOUT, started).await {
-            Ok(Ok(conn)) => conn,
+        let (conn, version) = match tokio::time::timeout(STARTUP_TIMEOUT, started).await {
+            Ok(Ok(started)) => started,
             failure => {
                 kernel::kill_process_group(launched.pid);
                 journal.set_session_status(&id, SessionStatus::Ended)?;
@@ -133,6 +134,10 @@ impl SessionHandle {
         journal.set_session_status(&id, SessionStatus::Running)?;
         let mut record = record;
         record.status = SessionStatus::Running;
+        if let Some(version) = version.filter(|v| !v.is_empty()) {
+            journal.set_language_version(&id, &version)?;
+            record.language_version = Some(version);
+        }
         Ok(Self::spawn(
             record,
             journal,
@@ -557,28 +562,36 @@ impl Actor {
 
 /// Sends `kernel_info_request` until a reply *and* a matching IOPub status
 /// message arrive. Seeing IOPub traffic proves the subscription is live, so
-/// no output from the first cell can be lost.
+/// no output from the first cell can be lost. Returns the language version
+/// the reply gives.
 async fn wait_until_ready(
     conn: &mut KernelConnection,
     rx: &mut mpsc::Receiver<KernelMsg>,
-) -> Result<()> {
+) -> Result<Option<String>> {
     loop {
         let request = JupyterMessage::new(KernelInfoRequest {}, None);
         let request_id = request.header.msg_id.clone();
         conn.shell.send(request).await?;
-        let (mut replied, mut iopub_seen) = (false, false);
+        let (mut reply, mut iopub_seen) = (None, false);
         let deadline = tokio::time::Instant::now() + Duration::from_millis(1000);
         while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, rx.recv()).await {
             let (KernelMsg::IoPub(m) | KernelMsg::Shell(m) | KernelMsg::Control(m)) = &msg;
             let is_ours =
                 m.parent_header.as_ref().map(|h| h.msg_id.as_str()) == Some(request_id.as_str());
-            match msg {
-                KernelMsg::Shell(_) if is_ours => replied = true,
+            match &msg {
+                KernelMsg::Shell(m) if is_ours => {
+                    reply = Some(match &m.content {
+                        JupyterMessageContent::KernelInfoReply(info) => {
+                            Some(info.language_info.version.clone())
+                        }
+                        _ => None,
+                    })
+                }
                 KernelMsg::IoPub(_) if is_ours => iopub_seen = true,
                 _ => {}
             }
-            if replied && iopub_seen {
-                return Ok(());
+            if iopub_seen && let Some(version) = reply {
+                return Ok(version);
             }
         }
     }

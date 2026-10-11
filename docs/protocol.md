@@ -38,9 +38,20 @@ Responses can arrive out of order; match them by `id`.
 | `list_recent_projects` | | `[ProjectInfo]`, most recent first, `state` null |
 | `save_project_state` | `path`, `state` | `null` |
 | `forget_project` | `path` | `null` |
+| `system_stats` | `path?` | `SystemStats` for the daemon's machine |
 
-`SessionInfo` is `{id, kernel, language, cwd, pid, status, created_ms, ended_ms?, last_seq, project?}`
-with `status` one of `starting`, `running`, `ended`.
+`SessionInfo` is `{id, kernel, language, language_version?, cwd, pid, status, created_ms, ended_ms?, last_seq, project?}`
+with `status` one of `starting`, `running`, `ended`. `language_version` is
+what the kernel reports in its `kernel_info_reply` ("4.4.1", "3.12.4").
+
+`SystemStats` is `{cpu: {percent, cores, model, load}, memory: {total, used},
+gpus: [{name, percent, memory_used, memory_total}], disk?: {path, total, used,
+available}, sessions: [{session, rss}]}`, sizes in bytes. CPU `percent` is the
+whole machine's use since the previous call (or over a quarter second for the
+first), `load` the one-minute load average. Memory `used` leaves out caches the
+system can drop. `gpus` come from `nvidia-smi` when there is one. `disk` is the
+file system holding `path` (default: the home folder). `sessions` gives the
+memory each running kernel holds, with the processes it started.
 
 `ProjectInfo` is `{path, name, opened_ms, exists, state}`. A project is a
 folder on the daemon's machine, named by its absolute path without a trailing

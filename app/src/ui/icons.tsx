@@ -1,7 +1,7 @@
 // Icons drawn for Sandhill: file and folder icons in muted colors, line icons
 // for buttons, and filled icons for the rail. They follow the UI mockup.
 
-import type { JSX } from "solid-js";
+import { type JSX, Show } from "solid-js";
 
 /** Fill and darker fold color of each file icon color. */
 const PALETTE = {
@@ -251,6 +251,84 @@ const LINE_ICONS = {
   ),
   folder: () => <path d="M2 4.5h4l1.5 1.5H14v6.5H2z" />,
   up: () => <path d="M8 13V3.5M4 7.5l4-4 4 4" />,
+  x: () => <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />,
+  leftPane: () => (
+    <>
+      <rect x="2" y="2.5" width="12" height="11" rx="2.2" />
+      <path d="M6.2 2.5v11" />
+    </>
+  ),
+  rightPane: () => (
+    <>
+      <rect x="2" y="2.5" width="12" height="11" rx="2.2" />
+      <path d="M9.8 2.5v11" />
+    </>
+  ),
+  chat: () => (
+    <>
+      <path d="M3.5 2.8h9a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H7.2L4.2 14v-2.2h-.7A1.5 1.5 0 0 1 2 10.3v-6a1.5 1.5 0 0 1 1.5-1.5z" />
+      <path d="M5 6h6M5 8.5h4" />
+    </>
+  ),
+  search: () => (
+    <>
+      <circle cx="7" cy="7" r="4.2" />
+      <path d="M10.2 10.2 13.5 13.5" />
+    </>
+  ),
+  menu: () => <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />,
+  trash: () => <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 9h5.8l.6-9M7 7v4.5M9 7v4.5" />,
+  cpu: () => (
+    <>
+      <rect x="4" y="4" width="8" height="8" rx="1.5" />
+      <path d="M6.5 2v2M9.5 2v2M6.5 12v2M9.5 12v2M2 6.5h2M2 9.5h2M12 6.5h2M12 9.5h2" />
+    </>
+  ),
+  memory: () => (
+    <>
+      <rect x="1.8" y="4.5" width="12.4" height="6" rx="1" />
+      <path d="M4.5 6.5v2M7 6.5v2M9.5 6.5v2M12 6.5v2M3.5 10.5v1.8M12.5 10.5v1.8" />
+    </>
+  ),
+  gpu: () => (
+    <>
+      <rect x="1.8" y="4" width="12.4" height="7.5" rx="1.2" />
+      <circle cx="6" cy="7.75" r="2" />
+      <path d="M10 6.5h2.2M10 9h2.2M3.5 11.5v1.8" />
+    </>
+  ),
+  disk: () => (
+    <>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M2 9.5h12" />
+      <circle cx="11.3" cy="11.3" r=".5" />
+    </>
+  ),
+  minimize: () => <path d="M4 8h8" />,
+  maximize: () => <path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" />,
+  restore: () => <path d="M13 7H9V3M3 9h4v4M9 7l4.5-4.5M7 9l-4.5 4.5" />,
+  monitor: () => (
+    <>
+      <rect x="2" y="2.5" width="12" height="8.5" rx="1.3" />
+      <path d="M6 14h4M8 11v3" />
+    </>
+  ),
+  cloud: () => <path d="M4.6 12.5a2.9 2.9 0 0 1-.4-5.8 3.9 3.9 0 0 1 7.5-.7 2.9 2.9 0 0 1 .4 6.5z" />,
+  sessions: () => (
+    <>
+      <rect x="2.5" y="3" width="11" height="4" rx="1" />
+      <rect x="2.5" y="9" width="11" height="4" rx="1" />
+      <path d="M5 5h.01M5 11h.01" />
+    </>
+  ),
+  check: () => <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />,
+  file: () => (
+    <>
+      <path d="M3.5 2.5h5l3 3v8h-8z" />
+      <path d="M8.5 2.5v3h3" />
+    </>
+  ),
+  command: () => <path d="M6.5 4.5 10 8l-3.5 3.5" />,
 } satisfies Record<string, () => JSX.Element>;
 
 export type IconName = keyof typeof LINE_ICONS;
@@ -264,13 +342,41 @@ export function Icon(props: { name: IconName; small?: boolean }) {
   );
 }
 
-/** The filled Files icon of the rail. */
-export function FilesRailIcon() {
+/** A kernel's language: R and Python logos, or a chip with the language's first letters. */
+export function LangIcon(props: { language: string }) {
+  const lang = () => props.language.toLowerCase();
   return (
-    <svg class="rico" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M1.6 4.2v9.2c0 .6.5 1.1 1.1 1.1h7.1v-1.3H2.9v-9z" />
-      <path d="M5.2 1.4h4.9l3.6 3.6v7.2c0 .6-.5 1.1-1.1 1.1H5.2c-.6 0-1.1-.5-1.1-1.1V2.5c0-.6.5-1.1 1.1-1.1z" />
-      <path d="M9.8 1.6v3.1c0 .3.2.5.5.5h3.1" fill-opacity=".45" style={{ fill: "var(--bg)" }} />
+    <svg class="lang" viewBox="0 0 16 16" aria-hidden="true">
+      <Show
+        when={lang() !== "python" && lang() !== "python3"}
+        fallback={
+          <>
+            <path
+              d="M8 1.2c-3 0-3 1.3-3 2.2v1.4h3.1v.5H3.5C2.2 5.3 1.2 6.4 1.2 8.1s1 2.9 2.3 2.9h1.2V9.2c0-1.4 1.2-2.6 2.6-2.6h3.1c1.1 0 2-.9 2-2V3.4c0-1-.9-2.2-4.4-2.2z"
+              fill="#3a76ad"
+            />
+            <path
+              d="M8 14.8c3 0 3-1.3 3-2.2v-1.4H7.9v-.5h4.6c1.3 0 2.3-1.1 2.3-2.8s-1-2.9-2.3-2.9h-1.2v1.8c0 1.4-1.2 2.6-2.6 2.6H5.6c-1.1 0-2 .9-2 2v1.2c0 1 .9 2.2 4.4 2.2z"
+              fill="#f2c53d"
+            />
+            <circle cx="6.2" cy="2.9" r=".6" fill="#fff" />
+            <circle cx="9.8" cy="13.1" r=".6" fill="#fff" />
+          </>
+        }
+      >
+        <rect x="1" y="1" width="14" height="14" rx="4" fill={lang() === "r" ? "#2368b8" : "#1fa784"} />
+        <text
+          x="8"
+          y={lang() === "r" ? "11.6" : "11"}
+          text-anchor="middle"
+          font-size={lang() === "r" ? "10" : "7.5"}
+          font-weight="800"
+          fill="#fff"
+          font-family="system-ui, sans-serif"
+        >
+          {lang() === "r" ? "R" : lang().slice(0, 2)}
+        </text>
+      </Show>
     </svg>
   );
 }

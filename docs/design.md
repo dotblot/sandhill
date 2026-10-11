@@ -100,22 +100,31 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 
 ### The look (added 2026-10-11)
 
-The app follows draft 13 of the UI mockup (https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9).
-The editor is a translucent card on a warm gradient; the side pane the rail
-opens sits directly on the window background. All text is 14px: chrome
-(title bar, tabs, toolbars, status bar, pane text) in the system font, code
-and outputs in JetBrains Mono, bundled with the app (OFL) so every Mac shows
-the same font, with ligatures off so `<-` stays as typed. Plots stay white in
-dark mode. On macOS the windows use an overlay title bar: the page draws the
-32px bar under the window buttons. The panes skip `backdrop-filter`:
-over a smooth gradient a blur changes nothing you can see, and each blurred
-pane costs a window-sized compositing layer. Styles are in `app/src/styles.css`,
-icons in `app/src/ui/icons.tsx`.
+The app follows draft 16 of the UI mockup, the agreed final layout, kept in
+`docs/design/ui/`: `spec.md` describes it, `sandhill-layout.html` is the
+clickable mockup (light and dark) and the PNGs are screenshots of it. Where
+the spec and the mockup differ, the mockup wins.
 
-The agreed final layout is draft 16, kept in `docs/design/ui/`: `spec.md`
-describes it, `sandhill-layout.html` is the clickable mockup (light and dark)
-and the PNGs are screenshots of it. The app is not restyled to it yet; until
-it is, the paragraph above describes what the app looks like.
+There is no title bar row. On macOS the windows use an overlay title bar, with
+the window buttons placed in the page's 34px toolbar row (`title_bar()` in
+`app/src-tauri/src/windows.rs`); the toolbar (left pane, right pane, Agents,
+⌘K, menu) floats over the top of the left pane. Panes reach the top of the
+window and sit 3px apart and 3px from its edges; the gaps are drag handles.
+The editor and Console are translucent cards on a warm gradient, each with
+minimize and maximize buttons; the left pane sits directly on the background,
+with a Local / server tab pair, the project's files, its kernel rows (language,
+version, files using it, memory, and shutting down with an inline
+confirmation) and the machine's CPU, memory, GPU and disk (`system_stats`).
+One corner radius, 12px, for every rounded thing. All text is 14px except the
+11px kernel and resource rows: chrome in the system font, code and outputs in
+JetBrains Mono, bundled with the app (OFL) so every Mac shows the same font,
+with ligatures off so `<-` stays as typed. Plots stay white in dark mode. The
+panes skip `backdrop-filter`: over a smooth gradient a blur changes nothing you
+can see, and each blurred pane costs a window-sized compositing layer. Styles
+are in `app/src/styles.css`, icons in `app/src/ui/icons.tsx`.
+
+The right pane (Variables, Help, Packages, Git, Plots) and Agents come with
+steps 4 and 5; until then their toolbar buttons show but do nothing.
 
 ---
 

@@ -292,6 +292,7 @@ export class NotebookDoc extends Doc {
           ),
           cell.cell_type === "markdown" ? markdown() : language ?? [],
           ...baseExtensions({ lineNumbers: false, wrap: cell.cell_type !== "code" }),
+          this.trackCursor(),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) this.setDirty(true);
           }),

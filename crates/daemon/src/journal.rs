@@ -62,6 +62,8 @@ const MIGRATIONS: &[&str] = &[
          opened_ms INTEGER NOT NULL,
          state     TEXT
      );",
+    // 2: the language version the kernel reports, like 4.4.1.
+    "ALTER TABLE sessions ADD COLUMN language_version TEXT;",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +94,7 @@ pub struct SessionRecord {
     pub created_ms: i64,
     pub ended_ms: Option<i64>,
     pub project: Option<String>,
+    pub language_version: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,8 +147,9 @@ impl Journal {
     pub fn insert_session(&self, s: &SessionRecord) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO sessions (id, kernel, language, cwd, connection_file, client_session,
-                                   pid, interrupt_mode, status, created_ms, ended_ms, project)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                   pid, interrupt_mode, status, created_ms, ended_ms, project,
+                                   language_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 s.id,
                 s.kernel,
@@ -159,7 +163,16 @@ impl Journal {
                 s.created_ms,
                 s.ended_ms,
                 s.project,
+                s.language_version,
             ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_language_version(&self, id: &str, version: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE sessions SET language_version = ?2 WHERE id = ?1",
+            params![id, version],
         )?;
         Ok(())
     }
@@ -177,7 +190,7 @@ impl Journal {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, kernel, language, cwd, connection_file, client_session, pid,
-                    interrupt_mode, status, created_ms, ended_ms, project
+                    interrupt_mode, status, created_ms, ended_ms, project, language_version
              FROM sessions ORDER BY created_ms",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -194,6 +207,7 @@ impl Journal {
                 created_ms: row.get(9)?,
                 ended_ms: row.get(10)?,
                 project: row.get(11)?,
+                language_version: row.get(12)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -215,6 +229,7 @@ impl Journal {
                 SessionStatus::Ended => 0,
                 _ => self.unfinished_run_count(&record.id)?,
             },
+            language_version: record.language_version.clone(),
         })
     }
 
@@ -538,6 +553,7 @@ mod tests {
             created_ms: 0,
             ended_ms: None,
             project: None,
+            language_version: None,
         }
     }
 

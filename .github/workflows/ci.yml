@@ -118,6 +118,46 @@ jobs:
           sleep 8
           screencapture -x start-window.png || echo "could not take a screenshot"
           pkill -f "$app/Contents/MacOS/" || true
+          echo "SANDHILL_APP=$app" >> "$GITHUB_ENV"
+      - name: Look at a project window
+        # A project window on a small project, reopened with two tabs the way
+        # the app restores it, then measured and pictured in this check's
+        # notices, to check the look on a real Mac.
+        continue-on-error: true
+        run: |
+          app="$SANDHILL_APP"
+          proj="$(cd "$(mktemp -d)" && pwd -P)/pbmc-atlas"
+          mkdir -p "$proj"
+          cat > "$proj/analysis.qmd" <<'END'
+          ---
+          title: "PBMC 3k: clusters and markers"
+          ---
+
+          ## Load and filter
+          Drop cells with fewer than 200 genes.
+
+          ```{python}
+          cells = [212, 2400, 1800, 90, 3100]
+          kept = [c for c in cells if 200 < c < 2500]
+          print(len(kept), "cells kept")
+          ```
+          END
+          printf 'import math\nprint(math.sqrt(2))\n' > "$proj/qc.py"
+          printf '%s\n' \
+            "{\"id\":1,\"method\":\"open_project\",\"params\":{\"path\":\"$proj\"}}" \
+            "{\"id\":2,\"method\":\"save_project_state\",\"params\":{\"path\":\"$proj\",\"state\":{\"tabs\":[\"$proj/analysis.qmd\",\"$proj/qc.py\"],\"active\":\"$proj/analysis.qmd\"}}}" \
+            | { cat; sleep 3; } | "$app/Contents/MacOS/sandhilld" attach --start
+          support="$HOME/Library/Application Support/dev.sandhill.ide"
+          mkdir -p "$support"
+          printf '[["local","%s"]]' "$proj" > "$support/open-projects.json"
+          open "$app"
+          sleep 12
+          swift .github/scripts/window.swift | tee window.txt
+          read -r id x y w h < window.txt
+          screencapture -x -o -l "$id" project-window.png
+          python -m pip install --quiet pillow
+          python .github/scripts/look.py project-window.png "$w"
+          pkill -f "$app/Contents/MacOS/" || true
       - uses: actions/upload-artifact@v4
         with:
           name: Sandhill-macos-arm64
@@ -126,6 +166,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: start-window-screenshot
-          path: start-window.png
+          path: |
+            start-window.png
+            project-window.png
           if-no-files-found: ignore
           retention-days: 14

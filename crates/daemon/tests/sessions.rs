@@ -268,6 +268,41 @@ async fn interrupt_stops_a_long_running_cell() {
 /// The app tells busy sessions from idle ones by this count, even for
 /// sessions it never subscribed to.
 #[tokio::test]
+async fn sessions_report_their_language_version_and_memory() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    let info = client.start_session("python3", None).await.unwrap();
+    let version = info.language_version.clone().expect("no language version");
+    assert!(version.starts_with('3'), "{version}");
+    let listed = client.list_sessions().await.unwrap();
+    assert_eq!(listed[0].language_version, Some(version));
+
+    // A kernel holding 200 MB shows it; the disk is the one the folder is on.
+    let (_, finished) = run(&mut client, &info.id, "x = b\"x\" * (200 * 2**20)").await;
+    assert_eq!(finished.status, "ok");
+    let stats = client
+        .system_stats(Some(dir.path().to_str().unwrap()))
+        .await
+        .unwrap();
+    let held = stats
+        .sessions
+        .iter()
+        .find(|s| s.session == info.id)
+        .unwrap();
+    assert!(held.rss > 200 << 20, "kernel holds {} bytes", held.rss);
+    assert!(stats.cpu.cores >= 1 && stats.memory.total > held.rss);
+    assert_eq!(stats.disk.unwrap().path, dir.path().to_str().unwrap());
+
+    client.shutdown(&info.id).await.unwrap();
+    let stats = client.system_stats(None).await.unwrap();
+    assert!(stats.sessions.iter().all(|s| s.session != info.id));
+}
+
+#[tokio::test]
 async fn sessions_count_their_unfinished_runs() {
     if !have_kernel("python3").await {
         return;

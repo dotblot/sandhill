@@ -1,9 +1,10 @@
-// An R or Python script: an editor for the file and a console under it.
-// ⌘↵ runs the selection, or the statement at the cursor and moves on to the
-// next one; ⇧⌘↵ runs the whole file. Runs are journaled under the file, so
-// the console comes back when the file or the app opens again, with any
-// output that arrived in between. Scripts run in the project's folder, as
-// in RStudio, so they share sessions with each other wherever they are.
+// An R or Python script: an editor for the file, and a console the window
+// shows in its Console pane. ⌘↵ runs the selection, or the statement at the
+// cursor and moves on to the next one; ⇧⌘↵ runs the whole file. Runs are
+// journaled under the file, so the console comes back when the file or the
+// app opens again, with any output that arrived in between. Scripts run in
+// the project's folder, as in RStudio, so they share sessions with each
+// other wherever they are.
 
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -25,7 +26,6 @@ const SLOT = /^console-(\d+)$/;
 const ECHO_LINES = 6;
 /** Recorded in the document's shown-outputs list: when the console was last cleared. */
 const CLEARED = "cleared:";
-const HEIGHT_KEY = "sandhill.consoleHeight";
 
 export function scriptLanguage(path: string): "r" | "python" | undefined {
   const ext = path.split(".").pop()?.toLowerCase();
@@ -42,8 +42,8 @@ export class ScriptDoc extends Doc {
   readonly kind = "script";
   readonly language: "r" | "python";
   private view?: EditorView;
-  private readonly root: HTMLElement;
-  private readonly editorHost: HTMLElement;
+  /** The console's runs, for the window's Console pane to show. */
+  readonly consoleElement: HTMLElement;
   private readonly list: HTMLElement;
   private entries: Entry[] = [];
   private nextSlot = 0;
@@ -66,26 +66,11 @@ export class ScriptDoc extends Doc {
   ) {
     super(ws, path, undefined, shownOutputs, ws.project);
     this.language = scriptLanguage(path) ?? "r";
-    this.root = el("div", "script");
-    this.editorHost = el("div", "script-editor");
-    const handle = el("div", "console-handle");
-    handle.title = "Drag to resize the console";
-    const consoleEl = el("section", "console");
-    const head = el("div", "console-head");
-    const title = el("span", "console-title");
-    title.textContent = "Console";
-    const clear = el("button", "console-clear");
-    clear.textContent = "Clear";
-    clear.title = "Clear the console";
-    clear.addEventListener("click", () => this.clearConsole());
-    head.append(title, el("span", "spacer"), clear);
     this.list = el("div", "console-list");
     this.list.addEventListener("scroll", () => {
       this.follow = this.list.scrollTop + this.list.clientHeight >= this.list.scrollHeight - 24;
     });
-    consoleEl.append(head, this.list);
-    this.root.append(this.editorHost, handle, consoleEl);
-    this.resizable(handle);
+    this.consoleElement = this.list;
   }
 
   languages(): string[] {
@@ -97,7 +82,6 @@ export class ScriptDoc extends Doc {
   }
 
   mount(parent: HTMLElement) {
-    parent.append(this.root);
     const runKeys = Prec.highest(
       keymap.of([
         { key: "Mod-Enter", run: () => this.runCurrent() },
@@ -106,19 +90,26 @@ export class ScriptDoc extends Doc {
       ]),
     );
     this.view = new EditorView({
-      parent: this.editorHost,
+      parent,
       state: EditorState.create({
         doc: this.initialText,
         extensions: [
           runKeys,
           languageFor(this.language) ?? [],
           ...baseExtensions(),
+          this.trackCursor(),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) this.setDirty(true);
           }),
         ],
       }),
     });
+    this.consoleShown();
+  }
+
+  /** Called when the Console pane shows this script's console. */
+  consoleShown() {
+    this.follow = true;
     this.scrollToEnd();
   }
 
@@ -241,7 +232,7 @@ export class ScriptDoc extends Doc {
     return entry;
   }
 
-  private clearConsole() {
+  clearConsole() {
     for (const entry of this.entries) {
       entry.output.dispose();
       entry.root.remove();
@@ -267,49 +258,10 @@ export class ScriptDoc extends Doc {
       this.list.scrollTop = this.list.scrollHeight;
     });
   }
-
-  /** Dragging the bar above the console sets its height, remembered for every script. */
-  private resizable(handle: HTMLElement) {
-    const saved = Number(stored(HEIGHT_KEY));
-    if (saved > 0) this.root.style.setProperty("--console-height", `${saved}px`);
-    handle.addEventListener("pointerdown", (down) => {
-      down.preventDefault();
-      handle.setPointerCapture(down.pointerId);
-      const box = this.root.getBoundingClientRect();
-      const move = (e: PointerEvent) => {
-        const height = Math.round(Math.min(box.height - 80, Math.max(60, box.bottom - e.clientY)));
-        this.root.style.setProperty("--console-height", `${height}px`);
-      };
-      const up = () => {
-        handle.removeEventListener("pointermove", move);
-        handle.removeEventListener("pointerup", up);
-        const height = parseInt(this.root.style.getPropertyValue("--console-height"), 10);
-        if (height > 0) store(HEIGHT_KEY, String(height));
-      };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", up);
-    });
-  }
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   node.className = className;
   return node;
-}
-
-function stored(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function store(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Private mode; the height just isn't remembered.
-  }
 }

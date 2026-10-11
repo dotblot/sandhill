@@ -32,9 +32,10 @@ export class BrowserShell implements Shell {
     // The page was already replaced by the project it opened.
   }
 
-  // The development bridge reaches only the daemon on this machine.
+  // The development bridge reaches only the daemon on this machine;
+  // `?servers=gpu01` lists it again under that name, to see a server's tab.
   async listServers(): Promise<string[]> {
-    return [];
+    return (this.params.get("servers") ?? "").split(",").filter(Boolean);
   }
 
   async addServer(_host: string): Promise<string[]> {
