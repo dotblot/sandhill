@@ -45,6 +45,8 @@ export interface SessionInfo {
   last_seq: number;
   /** The project folder the session was started for, if any. */
   project?: string;
+  /** Runs sent to the kernel that have not finished: the one running and any queued. */
+  pending_runs?: number;
 }
 
 /** A folder opened as a project on the daemon's machine. */

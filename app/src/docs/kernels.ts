@@ -1,6 +1,9 @@
-// Which session each language of a document runs in. A document gets its
-// own sessions by default (like a notebook's kernel), started in the
-// document's folder the first time code in that language runs.
+// Which session each language of a document runs in. The first time code
+// in a language runs, the document joins a session of its project already
+// running in the same folder (as RStudio's scripts share one console), or
+// starts one there. A document that names its kernel, like a notebook, only
+// joins sessions of that kernel. "New …" in the kernel bar starts a separate
+// session for one document.
 
 import { createSignal, type Setter } from "solid-js";
 import type { KernelspecInfo } from "../backend/types";
@@ -25,20 +28,35 @@ export class DocKernels {
   }
 
   session(language: string): string | undefined {
-    const id = this.assigned()[normalizeLanguage(language)];
+    const assigned = this.assigned()[normalizeLanguage(language)];
+    const id = assigned && this.ws.current(assigned);
     return id && this.ws.liveSessions().some((s) => s.id === id) ? id : undefined;
+  }
+
+  /** The running sessions this document uses, one per language at most. */
+  sessions(): string[] {
+    return Object.keys(this.assigned())
+      .map((language) => this.session(language))
+      .filter((id): id is string => !!id);
   }
 
   assign(language: string, session: string) {
     this.setAssigned((a) => ({ ...a, [normalizeLanguage(language)]: session }));
   }
 
-  /** The session for `language`, starting a kernel if there is none. */
+  /** The session for `language`: the one assigned, else one to join, else a new one. */
   ensure(language: string): Promise<string> {
     const lang = normalizeLanguage(language);
     const existing = this.session(lang);
     if (existing) return Promise.resolve(existing);
-    return this.starting.get(lang) ?? this.track(lang, this.start(lang));
+    const pending = this.starting.get(lang);
+    if (pending) return pending;
+    const join = this.ws.sessionToJoin(lang, this.cwd, this.namedKernel(lang));
+    if (join) {
+      this.assign(lang, join.id);
+      return Promise.resolve(join.id);
+    }
+    return this.track(lang, this.start(lang, undefined, true));
   }
 
   isStarting(language: string): boolean {
@@ -61,11 +79,13 @@ export class DocKernels {
     return pending;
   }
 
+  /** Restarts the session; other documents using it move to the new one too. */
   async restart(language: string) {
     const old = this.session(language);
     const kernel = this.ws.sessions().find((s) => s.id === old)?.kernel;
     if (old) await this.ws.shutdown(old).catch(() => {});
-    await this.startNew(language, kernel);
+    const fresh = await this.startNew(language, kernel);
+    if (old) this.ws.replaced(old, fresh);
   }
 
   async interrupt(language: string) {
@@ -73,15 +93,23 @@ export class DocKernels {
     if (id) await this.ws.interrupt(id);
   }
 
-  private async start(language: string, kernel?: string): Promise<string> {
+  /** Starts a kernel; `shared` ones are for other documents to join too. */
+  private async start(language: string, kernel?: string, shared = false): Promise<string> {
     const find = (specs: KernelspecInfo[]) =>
       kernel ? specs.find((k) => k.name === kernel) : pickKernel(specs, language, this.preferred(language));
     // The user may have installed a kernel since the app connected.
     const spec = find(this.ws.kernelspecs()) ?? find(await this.ws.refreshKernelspecs());
     if (!spec) throw new Error(missingKernel(language));
-    const info = await this.ws.startSession(spec.name, this.cwd);
+    const info = shared ? await this.ws.startShared(spec.name, this.cwd) : await this.ws.startSession(spec.name, this.cwd);
     this.assign(language, info.id);
     return info.id;
+  }
+
+  /** The kernel the document names for `language`, if it names one. */
+  private namedKernel(language: string): string | undefined {
+    const wanted = this.preferred(language);
+    if (!wanted?.name && !wanted?.display_name) return undefined;
+    return pickKernel(this.ws.kernelspecs(), language, wanted)?.name;
   }
 }
 
