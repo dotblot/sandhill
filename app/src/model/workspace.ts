@@ -58,6 +58,13 @@ export class Workspace {
     this.setSessions(await this.call<SessionInfo[]>("list_sessions"));
   }
 
+  /** Asks the daemon for its kernels again, say after the user installed one. */
+  async refreshKernelspecs(): Promise<KernelspecInfo[]> {
+    const specs = await this.call<KernelspecInfo[]>("list_kernelspecs");
+    this.setKernelspecs(specs);
+    return specs;
+  }
+
   liveSessions(language?: string): SessionInfo[] {
     return this.sessions().filter(
       (s) => s.status !== "ended" && (!language || s.language.toLowerCase() === language),
@@ -154,21 +161,50 @@ export class Workspace {
   }
 }
 
-/** Picks a kernel for a language: the one named, else Ark for R, python3 for Python. */
+/** The kernel a document asks for, as a notebook's kernelspec metadata records it. */
+export interface KernelWanted {
+  name?: string;
+  display_name?: string;
+}
+
+/**
+ * Picks a kernel for a language: the environment the document names, else
+ * the kernel it names, else Ark for R and python3 for Python.
+ */
 export function pickKernel(
   specs: KernelspecInfo[],
   language: string,
-  preferred?: string,
+  wanted: KernelWanted = {},
 ): KernelspecInfo | undefined {
   const lang = normalizeLanguage(language);
   const matching = specs.filter((s) => normalizeLanguage(s.language) === lang);
   const byName = (name?: string) => (name ? matching.find((s) => s.name === name) : undefined);
+  const byEnv = wantedEnvs(wanted)
+    .map((env) => matching.find((s) => s.env === env))
+    .find((s) => s);
   return (
-    byName(preferred) ??
+    byEnv ??
+    byName(wanted.name) ??
     (lang === "r" ? (byName("ark") ?? byName("ir")) : undefined) ??
     (lang === "python" ? byName("python3") : undefined) ??
     matching[0]
   );
+}
+
+/**
+ * Environments a document may be naming. VS Code records the environment as
+ * the display name (with the kernel name "python3"); nb_conda_kernels names
+ * kernels `conda-env-<env>-py` and shows "Python [conda env:<env>]".
+ */
+export function wantedEnvs(wanted: KernelWanted): string[] {
+  const envs: string[] = [];
+  const conda = wanted.name && /^conda-env-(.+)-[^-]+$/.exec(wanted.name);
+  if (conda) envs.push(conda[1]);
+  if (wanted.name && /^conda-(root|base)-/.test(wanted.name)) envs.push("base");
+  const shown = wanted.display_name && /\[conda env:(.+?)\]/.exec(wanted.display_name);
+  if (shown) envs.push(shown[1]);
+  if (wanted.display_name) envs.push(wanted.display_name);
+  return envs;
 }
 
 export function normalizeLanguage(language: string): string {

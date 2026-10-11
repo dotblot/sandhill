@@ -51,7 +51,7 @@ export class QmdDoc extends Doc {
     private initialText: string,
   ) {
     super(ws, path, (language) =>
-      language === "python" ? frontMatterKernel(this.text()) : undefined,
+      language === "python" ? { name: frontMatterKernel(this.text()) } : undefined,
     );
     [this.langs, this.setLangs] = createSignal<string[]>(chunkLanguages(parseChunks(initialText)));
     this.layoutField = this.createLayoutField();

@@ -16,24 +16,18 @@ use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::kernelspecs::{self, Search};
+
 pub async fn list_kernelspecs() -> Vec<KernelspecInfo> {
-    let mut specs: Vec<KernelspecInfo> = jupyter_zmq_client::list_kernelspecs()
+    tokio::task::spawn_blocking(|| kernelspecs::list(&Search::from_env()))
         .await
-        .into_iter()
-        .map(|k| KernelspecInfo {
-            name: k.kernel_name,
-            display_name: k.kernelspec.display_name,
-            language: k.kernelspec.language,
-        })
-        .collect();
-    specs.sort_by(|a, b| a.name.cmp(&b.name));
-    specs.dedup_by(|a, b| a.name == b.name);
-    specs
+        .unwrap_or_default()
 }
 
 pub async fn find_kernelspec(name: &str) -> Result<KernelspecDir> {
-    jupyter_zmq_client::find_kernelspec(name)
-        .await
+    let wanted = name.to_string();
+    tokio::task::spawn_blocking(move || kernelspecs::find(&Search::from_env(), &wanted))
+        .await?
         .with_context(|| format!("no Jupyter kernel named {name:?} is installed"))
 }
 

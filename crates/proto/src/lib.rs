@@ -167,6 +167,10 @@ pub struct PingReply {
     pub home: String,
     #[serde(default)]
     pub hostname: String,
+    /// Identifies the daemon's executable, so `attach --start` can replace
+    /// a daemon an older app left running. Empty from older daemons.
+    #[serde(default)]
+    pub build: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -174,6 +178,10 @@ pub struct KernelspecInfo {
     pub name: String,
     pub display_name: String,
     pub language: String,
+    /// The environment the kernel runs in (a conda env, a venv, a pyenv
+    /// version), so a notebook that names its environment finds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

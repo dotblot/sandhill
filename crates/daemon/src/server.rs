@@ -155,6 +155,7 @@ impl Daemon {
                 daemon_version: env!("CARGO_PKG_VERSION").to_string(),
                 home: std::env::var("HOME").unwrap_or_default(),
                 hostname: hostname(),
+                build: crate::build_id().to_string(),
             })?,
             Call::ListKernelspecs => serde_json::to_value(crate::kernel::list_kernelspecs().await)?,
             Call::StartSession { kernel, cwd } => {

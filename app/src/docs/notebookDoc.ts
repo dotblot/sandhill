@@ -20,7 +20,7 @@ import {
   parseNotebook,
   serializeNotebook,
 } from "../model/ipynb";
-import { normalizeLanguage, type Workspace } from "../model/workspace";
+import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
 import { CellOutput, type OutputInfo } from "./cellOutput";
 import { Doc } from "./doc";
 
@@ -55,7 +55,7 @@ export class NotebookDoc extends Doc {
     path: string,
     private nb: Notebook,
   ) {
-    super(ws, path, () => nb.metadata?.kernelspec?.name);
+    super(ws, path, () => nb.metadata?.kernelspec);
     [this.language, this.setLanguage] = createSignal(normalizeLanguage(notebookLanguage(nb) ?? "python"));
     for (const cell of nb.cells) this.views.set(cell.id, this.createView(cell));
   }
@@ -346,9 +346,7 @@ export class NotebookDoc extends Doc {
   /** Records the kernel in the notebook's metadata the first time it runs, as Jupyter does. */
   private recordKernel() {
     if (this.nb.metadata.kernelspec) return;
-    const spec = this.ws.kernelspecs().find(
-      (k) => normalizeLanguage(k.language) === this.language(),
-    );
+    const spec = pickKernel(this.ws.kernelspecs(), this.language());
     if (!spec) return;
     this.nb.metadata.kernelspec = { name: spec.name, display_name: spec.display_name, language: spec.language };
     this.setLanguage(normalizeLanguage(spec.language));

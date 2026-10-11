@@ -17,8 +17,8 @@ Responses can arrive out of order; match them by `id`.
 
 | Method | Params | Result |
 |---|---|---|
-| `ping` | | `{protocol_version, daemon_version}` |
-| `list_kernelspecs` | | `[{name, display_name, language}]` |
+| `ping` | | `{protocol_version, daemon_version, home, hostname, build}` |
+| `list_kernelspecs` | | `[{name, display_name, language, env?}]` |
 | `start_session` | `kernel`, `cwd?` | `SessionInfo` once the kernel is ready |
 | `list_sessions` | | `[SessionInfo]`, including ended sessions |
 | `execute` | `session`, `code`, `cell?: {file, cell_id}` | `{run, msg_id}` |
@@ -35,6 +35,18 @@ Responses can arrive out of order; match them by `id`.
 
 `SessionInfo` is `{id, kernel, language, cwd, pid, status, created_ms, ended_ms?, last_seq}`
 with `status` one of `starting`, `running`, `ended`.
+
+`build` identifies the daemon's executable (a short sha256). `sandhilld attach
+--start` stops a running daemon whose `build` differs from its own (an older
+app left it running) and starts its own build; kernels keep running and the
+new daemon reattaches to them.
+
+`list_kernelspecs` lists the kernels in Jupyter's standard folders and also
+those inside conda environments, pyenv versions and the environment of the
+first Python on `PATH`, which need no `ipykernel install`. Kernels found in a
+conda environment are named `conda-env-<env>-py` (or `-r`), as
+nb_conda_kernels names them, and run with the environment activated. `env`
+names the environment a kernel runs in.
 
 ## Events
 
