@@ -27,6 +27,8 @@ export interface KernelspecInfo {
   name: string;
   display_name: string;
   language: string;
+  /** The environment it runs in: a conda env, a venv or a pyenv version. */
+  env?: string;
 }
 
 export type SessionStatus = "starting" | "running" | "ended";

@@ -6,12 +6,15 @@ pub mod blobs;
 pub mod files;
 pub mod journal;
 pub mod kernel;
+pub mod kernelspecs;
 pub mod outputs;
 pub mod paths;
 pub mod projects;
 pub mod server;
 pub mod session;
 pub mod sidecar;
+pub mod version;
 
 pub use paths::StateDir;
 pub use server::Daemon;
+pub use version::build_id;

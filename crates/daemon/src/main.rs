@@ -1,9 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use sandhill_daemon::{Daemon, StateDir};
+use sandhill_daemon::kernel::{pid_alive, send_signal};
+use sandhill_daemon::{Daemon, StateDir, build_id};
+use sandhill_proto::client::Client;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
 
@@ -63,6 +65,8 @@ async fn serve(state: StateDir, socket: PathBuf) -> Result<()> {
     state
         .create()
         .context("cannot create the state directory")?;
+    // Identify this build now, before an update can replace the executable.
+    build_id();
     if socket.exists() {
         if UnixStream::connect(&socket).await.is_ok() {
             bail!("sandhilld is already running on {}", socket.display());
@@ -92,6 +96,9 @@ async fn serve(state: StateDir, socket: PathBuf) -> Result<()> {
 }
 
 async fn attach(cli: &Cli, state: StateDir, socket: PathBuf, start: bool) -> Result<()> {
+    if start && let Err(err) = stop_other_build(&socket).await {
+        eprintln!("keeping the running sandhilld: {err:#}");
+    }
     let stream = match UnixStream::connect(&socket).await {
         Ok(stream) => stream,
         Err(_) if start => {
@@ -115,6 +122,56 @@ async fn attach(cli: &Cli, state: StateDir, socket: PathBuf, start: bool) -> Res
     // client's next line. The client would never learn the daemon is gone.
     let _ = stdout.flush().await;
     std::process::exit(0)
+}
+
+/// Stops the running daemon if it is another build than this one, so that
+/// `--start` starts this build instead. That is how an updated app gets its
+/// own daemon. Kernels keep running, and the new daemon reattaches to them.
+async fn stop_other_build(socket: &Path) -> Result<()> {
+    let Ok(stream) = UnixStream::connect(socket).await else {
+        return Ok(());
+    };
+    let ours = build_id();
+    if ours.is_empty() {
+        return Ok(());
+    }
+    let peer = stream.peer_cred()?;
+    let (read, write) = stream.into_split();
+    let client = Client::new(read, write);
+    let running = tokio::time::timeout(Duration::from_secs(10), client.ping())
+        .await
+        .context("it did not answer")??;
+    if running.build == ours {
+        return Ok(());
+    }
+    drop(client);
+    let pid = peer.pid().context("cannot tell which process it is")?;
+    // SAFETY: getuid has no preconditions.
+    if peer.uid() != unsafe { libc::getuid() } {
+        bail!("it runs as another user");
+    }
+    let pid = u32::try_from(pid)?;
+    eprintln!(
+        "stopping sandhilld {} (pid {pid}), which is another build than this one",
+        running.daemon_version
+    );
+    send_signal(pid, libc::SIGTERM)?;
+    // Wait until it is gone: the new daemon can only reconnect to kernels
+    // once the old one has let go of them.
+    for _ in 0..100 {
+        if !pid_alive(pid) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    send_signal(pid, libc::SIGKILL)?;
+    for _ in 0..20 {
+        if !pid_alive(pid) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    bail!("pid {pid} did not stop")
 }
 
 /// Starts `sandhilld serve` in its own session, logging to the state dir.
@@ -141,7 +198,7 @@ fn start_detached(cli: &Cli, state: &StateDir) -> Result<()> {
     Ok(())
 }
 
-async fn wait_for_socket(socket: &std::path::Path) -> Result<UnixStream> {
+async fn wait_for_socket(socket: &Path) -> Result<UnixStream> {
     for _ in 0..100 {
         if let Ok(stream) = UnixStream::connect(socket).await {
             return Ok(stream);

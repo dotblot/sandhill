@@ -58,7 +58,7 @@ Rust for both the daemon and the Tauri core, chosen for speed and low RAM. You a
 ### Local mode on the Mac (added 2026-10-11)
 The same daemon also runs on the Mac itself. "Local" is just another host:
 - Build `sandhilld` for `aarch64-apple-darwin` as well as Linux. On the Mac it runs as a **launchd user agent** instead of a systemd service, and the app talks to it over a Unix socket instead of ssh. Everything above the link (kernels, output journal, agents, MCP tools, sidecar outputs) is shared code.
-  - As built (step 2): the app ships `sandhilld` inside `Sandhill.app` and runs `sandhilld attach --start`, which starts the daemon in the background if it isn't running, so no launchd setup is needed. The remote case will run the same command through ssh. The launchd agent in `packaging/` stays optional, for starting the daemon at login.
+  - As built (step 2): the app ships `sandhilld` inside `Sandhill.app` and runs `sandhilld attach --start`, which starts the daemon in the background if it isn't running, so no launchd setup is needed. If the running daemon is another build (an older app left it running), `attach --start` stops it and starts its own; kernels survive that, as they survive any daemon restart. The remote case will run the same command through ssh. The launchd agent in `packaging/` stays optional, for starting the daemon at login.
 - Keep the OS-specific parts behind one small trait from day one: service install (systemd vs launchd), job isolation (`systemd-run` scopes vs process groups), and the transport (ssh stdio vs Unix socket).
 - Closing the app window doesn't stop local work, because the daemon keeps running. But work does stop while the Mac **sleeps or shuts down**. The daemon should hold a sleep assertion while jobs run (what `caffeinate` does), and warn before you close the lid with work in progress.
 - The kernels (ipykernel, Ark) and agents (`claude`, `codex`) run natively on Apple silicon.
@@ -192,7 +192,7 @@ Positron is the target experience. The plan is to keep its features and drop its
 | **Help pane** (`?fn`, docstrings) | MVP | Ark's help comm for R. Python: `inspect` and pydoc rendering. |
 | **Viewer pane** (htmlwidgets, HTML reports, Shiny) | v1 | A sandboxed WKWebView pane. Ports are forwarded over ssh. |
 | **Quarto inline output** | MVP | Already the core of §4. |
-| **Interpreter discovery and switching** (conda/mamba, venv, uv, renv, several R versions) | v1 | The daemon scans the server and remembers a choice per project. |
+| **Interpreter discovery and switching** (conda/mamba, venv, uv, renv, several R versions) | v1 | The daemon scans the server and remembers a choice per project. Started: kernels inside conda environments, pyenv versions and the shell's environment are found without `ipykernel install` and run with their environment activated. |
 | **MCP server for coding agents in live sessions** (Positron 2026.10, experimental) | MVP | Already the core of §5. Positron adding the same thing confirms the design. |
 | **Assistant aware of your session** (variables, plots, errors) | v1 | The same MCP tools, plus "Fix" and "Explain" buttons on errors. |
 | **Packages pane** | later | `pip`/`uv`/`conda`/`install.packages` wrappers. |
