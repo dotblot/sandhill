@@ -1,0 +1,381 @@
+// A Jupyter notebook: a list of cells, each with its own small editor and
+// outputs. Outputs are saved into the .ipynb itself; when a notebook is
+// reopened, runs that finished after it was last saved are merged in from
+// the daemon's journal.
+
+import { markdown } from "@codemirror/lang-markdown";
+import { EditorState, Prec } from "@codemirror/state";
+import { EditorView, keymap } from "@codemirror/view";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
+import { createSignal, type Setter } from "solid-js";
+import { type Blob, type FileText, type FileWritten, isBlobRef, type Output } from "../backend/types";
+import { baseExtensions, languageFor } from "../editor/setup";
+import {
+  type CellType,
+  type NbCell,
+  newCell,
+  type Notebook,
+  notebookLanguage,
+  parseNotebook,
+  serializeNotebook,
+} from "../model/ipynb";
+import { normalizeLanguage, type Workspace } from "../model/workspace";
+import { CellOutput, type OutputInfo } from "./cellOutput";
+import { Doc } from "./doc";
+
+interface CellView {
+  cell: NbCell;
+  root: HTMLElement;
+  body: HTMLElement;
+  count: HTMLElement;
+  editor?: EditorView;
+  output?: CellOutput;
+  preview?: HTMLElement;
+}
+
+export class NotebookDoc extends Doc {
+  readonly kind = "ipynb";
+  private root?: HTMLElement;
+  private views = new Map<string, CellView>();
+  private observer?: IntersectionObserver;
+  private language: () => string;
+  private setLanguage: Setter<string>;
+
+  static async open(ws: Workspace, path: string): Promise<NotebookDoc> {
+    const file = await ws.call<FileText>("read_file", { path });
+    const doc = new NotebookDoc(ws, file.path, parseNotebook(file.text));
+    doc.mtime = file.mtime_ms;
+    await doc.mergeJournal();
+    return doc;
+  }
+
+  private constructor(
+    ws: Workspace,
+    path: string,
+    private nb: Notebook,
+  ) {
+    super(ws, path, () => nb.metadata?.kernelspec?.name);
+    [this.language, this.setLanguage] = createSignal(normalizeLanguage(notebookLanguage(nb) ?? "python"));
+    for (const cell of nb.cells) this.views.set(cell.id, this.createView(cell));
+  }
+
+  languages(): string[] {
+    return [this.language()];
+  }
+
+  mount(parent: HTMLElement) {
+    this.root = document.createElement("div");
+    this.root.className = "notebook";
+    parent.append(this.root);
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const view = this.views.get((entry.target as HTMLElement).dataset.id!);
+          if (view) this.ensureEditor(view);
+        }
+      },
+      { rootMargin: "600px" },
+    );
+    this.renderCells();
+  }
+
+  focus() {
+    const first = this.nb.cells[0];
+    if (first) this.focusCell(first.id);
+  }
+
+  dispose() {
+    this.observer?.disconnect();
+    for (const view of this.views.values()) {
+      view.editor?.destroy();
+      view.output?.dispose();
+    }
+  }
+
+  async save(force = false) {
+    for (const view of this.views.values()) view.cell.source = this.sourceOf(view);
+    const cells = await Promise.all(
+      this.nb.cells.map(async (cell) => ({ ...cell, outputs: await this.inlineBlobs(cell.outputs) })),
+    );
+    const written = await this.ws.call<FileWritten>("write_file", {
+      path: this.path,
+      text: serializeNotebook({ ...this.nb, cells }),
+      expected_mtime_ms: force ? undefined : this.mtime,
+    });
+    this.mtime = written.mtime_ms;
+    this.setDirty(false);
+  }
+
+  async runAll() {
+    for (const cell of this.nb.cells) {
+      if (cell.cell_type === "code") await this.runCell(cell.id);
+      else if (cell.cell_type === "markdown") this.showPreview(this.views.get(cell.id)!);
+    }
+  }
+
+  async runCell(id: string) {
+    const view = this.views.get(id);
+    if (!view) return;
+    if (view.cell.cell_type === "markdown") {
+      this.showPreview(view);
+      return;
+    }
+    if (view.cell.cell_type !== "code") return;
+    const code = this.sourceOf(view);
+    const output = view.output!;
+    output.showSaved({ phase: "queued", code, outputs: [] });
+    this.recordKernel();
+    try {
+      const run = await this.execute(this.language(), code, id);
+      output.bindRun(this.ws.runs, run);
+    } catch (err) {
+      output.showSaved({
+        phase: "done",
+        status: "error",
+        code,
+        outputs: [{ output_type: "error", ename: "Could not run", evalue: String(err), traceback: [] }],
+      });
+    }
+  }
+
+  /** Brings in runs that finished (or are still going) since the notebook was saved. */
+  private async mergeJournal() {
+    const snapshot = await this.ws.fileOutputs(this.path);
+    let merged = false;
+    for (const cell of snapshot.cells) {
+      const view = this.views.get(cell.cell_id);
+      if (!view?.output) continue;
+      if (cell.finished_ms === undefined || cell.finished_ms > this.mtime) {
+        view.output.bindRun(this.ws.runs, cell.run);
+        merged = true;
+      }
+    }
+    this.adoptSessions(snapshot.cells.map((c) => ({ ...c, language: normalizeLanguage(c.language) })));
+    // Outputs that arrived while the notebook was closed are written into it
+    // right away, as if it had stayed open and saved them.
+    if (merged) await this.save().catch((err) => console.warn("could not save merged outputs", err));
+  }
+
+  private createView(cell: NbCell): CellView {
+    const root = document.createElement("div");
+    root.className = `nb-cell nb-${cell.cell_type}`;
+    root.dataset.id = cell.id;
+    const gutter = document.createElement("div");
+    gutter.className = "nb-gutter";
+    const count = document.createElement("span");
+    count.className = "nb-count";
+    gutter.append(count);
+    if (cell.cell_type === "code") {
+      const run = button("▶", "Run cell (⇧↵)", () => void this.runCell(cell.id));
+      run.classList.add("nb-run");
+      gutter.append(run);
+    }
+    const body = document.createElement("div");
+    body.className = "nb-body";
+    const tools = document.createElement("div");
+    tools.className = "nb-tools";
+    tools.append(
+      button("↑", "Move up", () => this.moveCell(cell.id, -1)),
+      button("↓", "Move down", () => this.moveCell(cell.id, 1)),
+      button("✕", "Delete cell", () => this.deleteCell(cell.id)),
+    );
+    const insert = document.createElement("div");
+    insert.className = "nb-insert";
+    insert.append(
+      button("+ Code", "Insert a code cell below", () => this.insertCell(cell.id, "code")),
+      button("+ Markdown", "Insert a text cell below", () => this.insertCell(cell.id, "markdown")),
+    );
+    root.append(gutter, body, tools, insert);
+
+    const view: CellView = { cell, root, body, count };
+    if (cell.cell_type === "code") {
+      view.output = new CellOutput(this.renderContext(() => {}), (info) => this.onOutput(view, info));
+      if (cell.outputs.length || cell.execution_count !== null) {
+        view.output.showSaved({
+          phase: "done",
+          executionCount: cell.execution_count ?? undefined,
+          code: cell.source,
+          outputs: cell.outputs,
+        });
+      }
+      body.append(this.placeholder(cell), view.output.element);
+    } else if (cell.cell_type === "markdown" && cell.source.trim()) {
+      this.showPreview(view);
+    } else {
+      body.append(this.placeholder(cell));
+    }
+    this.updateCount(view);
+    return view;
+  }
+
+  /** Plain text stands in for the editor until the cell scrolls into view. */
+  private placeholder(cell: NbCell): HTMLElement {
+    const pre = document.createElement("pre");
+    pre.className = "nb-placeholder";
+    pre.textContent = cell.source || " ";
+    pre.addEventListener("click", () => {
+      const view = this.views.get(cell.id);
+      if (view) this.ensureEditor(view)?.focus();
+    });
+    return pre;
+  }
+
+  private ensureEditor(view: CellView): EditorView | undefined {
+    if (view.editor || view.preview) return view.editor;
+    const { cell } = view;
+    const language = cell.cell_type === "code" ? languageFor(this.language()) : undefined;
+    const editor = new EditorView({
+      state: EditorState.create({
+        doc: cell.source,
+        extensions: [
+          Prec.highest(
+            keymap.of([
+              { key: "Shift-Enter", run: () => (this.runAndAdvance(cell.id), true) },
+              { key: "Mod-Enter", run: () => (void this.runCell(cell.id), true) },
+              { key: "Escape", run: () => (cell.cell_type === "markdown" ? (this.showPreview(view), true) : false) },
+            ]),
+          ),
+          cell.cell_type === "markdown" ? markdown() : language ?? [],
+          ...baseExtensions({ lineNumbers: false, wrap: cell.cell_type !== "code" }),
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) this.setDirty(true);
+          }),
+        ],
+      }),
+    });
+    view.editor = editor;
+    view.body.querySelector(".nb-placeholder")?.replaceWith(editor.dom);
+    if (!editor.dom.isConnected) view.body.prepend(editor.dom);
+    return editor;
+  }
+
+  private showPreview(view: CellView) {
+    if (view.cell.cell_type !== "markdown") return;
+    view.cell.source = this.sourceOf(view);
+    view.editor?.destroy();
+    view.editor = undefined;
+    const preview = document.createElement("div");
+    preview.className = "nb-markdown";
+    preview.innerHTML = DOMPurify.sanitize(marked.parse(view.cell.source || "*Empty text cell*", { async: false }) as string);
+    preview.addEventListener("dblclick", () => {
+      view.preview = undefined;
+      preview.replaceWith(this.placeholder(view.cell));
+      this.ensureEditor(view)?.focus();
+    });
+    view.body.replaceChildren(preview);
+    view.preview = preview;
+  }
+
+  private onOutput(view: CellView, info: OutputInfo) {
+    this.updateCount(view, info);
+    if (!view.output?.runId) return;
+    // Live outputs become part of the notebook.
+    view.cell.outputs = info.outputs;
+    if (info.phase === "done") view.cell.execution_count = info.executionCount ?? null;
+    this.setDirty(true);
+  }
+
+  private updateCount(view: CellView, info?: OutputInfo) {
+    if (view.cell.cell_type !== "code") return;
+    const phase = info?.phase;
+    const n = phase === "done" ? info?.executionCount : view.cell.execution_count;
+    view.count.textContent = phase === "running" ? "[*]" : phase === "queued" ? "[ ]" : n ? `[${n}]` : "";
+    view.root.dataset.phase = phase ?? "";
+  }
+
+  private sourceOf(view: CellView): string {
+    return view.editor ? view.editor.state.doc.toString() : view.cell.source;
+  }
+
+  private runAndAdvance(id: string) {
+    void this.runCell(id);
+    const index = this.nb.cells.findIndex((c) => c.id === id);
+    let next = this.nb.cells[index + 1];
+    if (!next) next = this.insertCell(id, "code");
+    this.focusCell(next.id);
+  }
+
+  private focusCell(id: string) {
+    const view = this.views.get(id);
+    if (!view) return;
+    view.root.scrollIntoView({ block: "nearest" });
+    if (!view.preview) this.ensureEditor(view)?.focus();
+  }
+
+  private insertCell(afterId: string, type: CellType): NbCell {
+    const cell = newCell(type);
+    const index = this.nb.cells.findIndex((c) => c.id === afterId);
+    this.nb.cells.splice(index + 1, 0, cell);
+    this.views.set(cell.id, this.createView(cell));
+    this.renderCells();
+    this.setDirty(true);
+    this.focusCell(cell.id);
+    return cell;
+  }
+
+  private deleteCell(id: string) {
+    const index = this.nb.cells.findIndex((c) => c.id === id);
+    if (index < 0 || this.nb.cells.length === 1) return;
+    this.nb.cells.splice(index, 1);
+    const view = this.views.get(id);
+    view?.editor?.destroy();
+    view?.output?.dispose();
+    view?.root.remove();
+    this.views.delete(id);
+    this.setDirty(true);
+  }
+
+  private moveCell(id: string, delta: number) {
+    const index = this.nb.cells.findIndex((c) => c.id === id);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= this.nb.cells.length) return;
+    const [cell] = this.nb.cells.splice(index, 1);
+    this.nb.cells.splice(target, 0, cell);
+    this.renderCells();
+    this.setDirty(true);
+  }
+
+  private renderCells() {
+    if (!this.root) return;
+    this.root.replaceChildren(...this.nb.cells.map((c) => this.views.get(c.id)!.root));
+    for (const view of this.views.values()) this.observer?.observe(view.root);
+  }
+
+  /** Records the kernel in the notebook's metadata the first time it runs, as Jupyter does. */
+  private recordKernel() {
+    if (this.nb.metadata.kernelspec) return;
+    const spec = this.ws.kernelspecs().find(
+      (k) => normalizeLanguage(k.language) === this.language(),
+    );
+    if (!spec) return;
+    this.nb.metadata.kernelspec = { name: spec.name, display_name: spec.display_name, language: spec.language };
+    this.setLanguage(normalizeLanguage(spec.language));
+  }
+
+  /** Notebooks store values inline, so blob references are replaced with their data. */
+  private async inlineBlobs(outputs: Output[]): Promise<Output[]> {
+    return Promise.all(
+      outputs.map(async (o) => {
+        if (!o.data) return o;
+        const entries = await Promise.all(
+          Object.entries(o.data as Record<string, unknown>).map(async ([mime, value]) => {
+            if (!isBlobRef(value)) return [mime, value];
+            const blob = await this.ws.call<Blob>("get_blob", { hash: value.sandhill_blob, near: this.path });
+            return [mime, blob.data];
+          }),
+        );
+        return { ...o, data: Object.fromEntries(entries) };
+      }),
+    );
+  }
+}
+
+function button(label: string, title: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.title = title;
+  b.addEventListener("click", onClick);
+  return b;
+}

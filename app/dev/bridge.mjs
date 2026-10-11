@@ -13,7 +13,11 @@ import { WebSocketServer } from "ws";
 
 const port = Number(process.env.BRIDGE_PORT ?? 4639);
 const daemon = process.env.SANDHILLD ?? new URL("../../target/debug/sandhilld", import.meta.url).pathname;
-const extraArgs = process.env.SANDHILL_STATE_DIR ? ["--state-dir", process.env.SANDHILL_STATE_DIR] : [];
+const extraArgs = [
+  ...(process.env.SANDHILL_STATE_DIR ? ["--state-dir", process.env.SANDHILL_STATE_DIR] : []),
+  // Socket paths are limited to about 100 bytes, so a deep state dir may need this.
+  ...(process.env.SANDHILL_SOCKET ? ["--socket", process.env.SANDHILL_SOCKET] : []),
+];
 
 function attach(onLine) {
   const child = spawn(daemon, [...extraArgs, "attach", "--start"], { stdio: ["pipe", "pipe", "inherit"] });

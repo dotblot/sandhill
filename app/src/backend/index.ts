@@ -19,6 +19,10 @@ export interface Backend {
   onLink(listener: (state: LinkState) => void): void;
   /** A URL the webview can load a blob from, decoded to bytes for binary MIME types. */
   blobUrl(hash: string, mime: string, near?: string): string;
+  /** Native menu commands (the Mac app only): "save", "close-tab", "run-all". */
+  onMenu?(listener: (command: string) => void): void;
+  /** Asked before the window closes; resolve false to keep it open. */
+  onCloseRequested?(handler: () => Promise<boolean>): void;
 }
 
 export async function createBackend(): Promise<Backend> {

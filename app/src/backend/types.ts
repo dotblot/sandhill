@@ -123,3 +123,9 @@ export interface SavedCell {
   execution_count?: number;
   outputs: Output[];
 }
+
+export interface Blob {
+  hash: string;
+  /** The original JSON string value (base64 for binary MIME types). */
+  data: string;
+}

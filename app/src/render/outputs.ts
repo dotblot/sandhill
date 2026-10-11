@@ -159,9 +159,9 @@ function renderInlineHtml(html: string): HTMLElement {
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML =
     `<style>:host{display:block;overflow-x:auto;font:13px/1.45 var(--font-ui)}` +
-    `table{border-collapse:collapse;font-variant-numeric:tabular-nums}` +
-    `th,td{padding:3px 8px;border-bottom:1px solid var(--border);text-align:right}` +
-    `thead th{border-bottom:1px solid var(--text-muted)}</style>` +
+    `table{border-collapse:collapse;border:none;font-variant-numeric:tabular-nums}` +
+    `th,td{padding:3px 8px;border:none;border-bottom:1px solid var(--border);text-align:right}` +
+    `thead th{border-bottom:1px solid var(--text-muted)}tbody tr:nth-child(odd){background:var(--chunk-bg)}</style>` +
     DOMPurify.sanitize(html, { FORCE_BODY: true });
   return host;
 }

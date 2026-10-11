@@ -7,6 +7,6 @@ export default defineConfig({
   plugins: [solid()],
   clearScreen: false,
   server: { port: 5173, strictPort: true },
-  build: { target: "safari16", outDir: "dist" },
+  build: { target: "safari16", outDir: "dist", chunkSizeWarningLimit: 1500 },
   test: { environment: "jsdom" },
 });

@@ -37,6 +37,18 @@ export class TauriBackend implements Backend {
     return `${convertFileSrc(hash, "sandhill-blob")}?${query}`;
   }
 
+  onMenu(listener: (command: string) => void) {
+    void listen<string>("menu://command", (e) => listener(e.payload));
+  }
+
+  onCloseRequested(handler: () => Promise<boolean>) {
+    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
+      getCurrentWindow().onCloseRequested(async (event) => {
+        if (!(await handler())) event.preventDefault();
+      }),
+    );
+  }
+
   private setLink(state: LinkState) {
     this.link = state;
     this.links.emit(state);
