@@ -9,8 +9,8 @@ running on the server after you close the app, and Claude Code, Codex or open
 and local models (through omp) working directly in your live sessions.
 
 > Status: early development. The Mac app opens projects of Quarto and Jupyter
-> notebooks and runs them on this Mac or on a Linux server over ssh; agents
-> are next. See the roadmap below.
+> notebooks and R and Python scripts, and runs them on this Mac or on a Linux
+> server over ssh; agents are next. See the roadmap below.
 
 ## How it fits together
 

@@ -182,7 +182,7 @@ function renderInlineHtml(html: string): HTMLElement {
   const host = el("div", "out out-html");
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML =
-    `<style>:host{display:block;overflow-x:auto;font:12px/1.3 var(--font-ui)}` +
+    `<style>:host{display:block;overflow-x:auto;font:14px/1.3 var(--font-ui)}` +
     `table{border-collapse:collapse;border:none;font-variant-numeric:tabular-nums}` +
     `th,td{padding:2px 10px;border:none;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);text-align:right}` +
     `thead th{color:var(--muted);font-weight:500;border-bottom:1px solid var(--line)}tbody tr:hover{background:var(--hover)}</style>` +
@@ -209,7 +209,7 @@ function renderFrame(html: string, ctx: RenderContext): HTMLElement {
   const mount = () => {
     const frame = document.createElement("iframe");
     frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
-    frame.srcdoc = `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:13px system-ui}</style>${html}${FRAME_SCRIPT}`;
+    frame.srcdoc = `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:14px system-ui}</style>${html}${FRAME_SCRIPT}`;
     frameHeights.set(frame, (h) => {
       holder.style.height = `${Math.min(Math.max(h, 40), 4000)}px`;
       ctx.onResize();

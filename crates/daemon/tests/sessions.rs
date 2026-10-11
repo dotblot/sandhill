@@ -692,3 +692,42 @@ async fn projects_keep_their_state_and_their_sessions() {
     );
     client.shutdown(&session).await.unwrap();
 }
+
+/// Runs queued behind one that fails still finish, so the session doesn't
+/// look busy forever (kernels abort them, or run them).
+#[tokio::test]
+async fn runs_queued_behind_an_error_finish() {
+    for (kernel, fails) in [("python3", "raise ValueError('x')"), ("ir", "stop('x')")] {
+        if !have_kernel(kernel).await {
+            continue;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = TestDaemon::start(dir.path()).await;
+        let mut client = daemon.client().await;
+        let session = client.start_session(kernel, None).await.unwrap().id;
+        client.subscribe(&session, None).await.unwrap();
+        let mut left = Vec::new();
+        for code in ["1", fails, "2", "3"] {
+            left.push(client.execute(&session, code, None).await.unwrap().run);
+        }
+        while !left.is_empty() {
+            let event = tokio::time::timeout(Duration::from_secs(20), client.next_event())
+                .await
+                .unwrap_or_else(|_| panic!("{kernel}: {} runs never finished", left.len()))
+                .unwrap();
+            if event.msg_type == EVENT_RUN_FINISHED {
+                left.retain(|run| Some(run.as_str()) != event.run.as_deref());
+            }
+        }
+        let sessions = client.list_sessions().await.unwrap();
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|s| s.id == session)
+                .unwrap()
+                .pending_runs,
+            0
+        );
+        client.shutdown(&session).await.unwrap();
+    }
+}
