@@ -206,6 +206,52 @@ Positron is the target experience. The plan is to keep its features and drop its
 
 ---
 
+## 5c. Projects (decided 2026-10-11)
+
+RStudio has `.Rproj` and Positron has workspace folders. Sandhill needs the same thing so that one analysis keeps its own interpreters, working directory, tabs and running kernels. Before this decision the app had only a "root folder" box over the file tree, remembered by the Mac app, and kernels started in each file's own folder.
+
+**What a project is.** A project is a folder on one host: the Ubuntu server, or the Mac in local mode. The daemon on that host owns it. A project is marked by one small file that can be committed to git:
+
+```
+my-analysis/
+  .sandhill/
+    project.toml     # shared settings, committed to git
+    outputs/         # project-level output cache (gitignored)
+    .gitignore       # written by Sandhill, ignores outputs/
+  analysis.qmd
+  renv.lock / environment.yml / pyproject.toml ...
+```
+
+- `project.toml` holds only settings a collaborator should share: the R and Python interpreters (or "detect"), the working-directory rule, and env files to load.
+- Personal state (open tabs, pane layout, recent commands) is **not** written into the folder. The daemon keeps it in its own state directory, keyed by the project path. RStudio puts this in `.Rproj.user/`, which people then have to gitignore; we avoid that.
+- Any folder can be opened as a project. `.sandhill/` is created only when you first change a project setting, so opening a colleague's repo leaves no trace.
+
+**What it does.**
+1. **Open and switch.** "Open Project…" picks a folder on a host. A start screen lists recent projects per host (server and Mac separately). Each project opens in its own window, so two projects can be open side by side.
+2. **Restore.** Reopening a project brings back its tabs, file tree and layout, and reattaches to that project's kernels that are still running. The daemon tags each kernel session with its project, so sessions can be listed per project.
+3. **Interpreter per project.** On first open the daemon looks for `renv.lock`, `environment.yml`, `pixi.toml`, `pyproject.toml`/`uv.lock` and `.venv/`, and proposes the matching R and Python. You confirm once and the choice is saved in `project.toml`. This is the "remembers a choice per project" line in the §5b table.
+4. **Working directory.** The console and plain `.R`/`.py` scripts run in the project root, as in RStudio. Chunks in `.qmd`/`.Rmd`/`.ipynb` run in the document's own folder, because that is where `quarto render` runs them, so relative paths behave the same interactively and when rendering (RStudio's default for R Markdown too). `project.toml` can switch documents to the project root.
+5. **Startup files.** R starts in the project root, so its `.Rprofile` and `.Renviron` there apply as usual; this is how renv activates. For Python, a `.env` file listed in `project.toml` is loaded into the kernel's environment.
+6. **Agents.** Claude Code and Codex start in the project root, so they read the project's own `CLAUDE.md`/`AGENTS.md` and reach the project's kernels through the MCP tools.
+7. **Output cache.** Inside a project, the §4 sidecar cache lives in `.sandhill/outputs/` instead of a `.file.qmd.out/` folder per document. Files opened outside any project keep the per-file sidecar.
+
+**Left out on purpose.**
+- Saving the R workspace (`.RData`) on close. RStudio does it by default and most guides say to turn it off; our kernels keep running on the server anyway.
+- Reading `.Rproj` files. A folder that has one opens fine; its encoding and working-directory settings can be read later if people ask.
+- Multi-root workspaces (VS Code/Positron `.code-workspace`). One folder per project; open a second window instead.
+
+**Build order.** First: daemon calls `open_project` and `list_recent_projects`, sessions tagged by project, the start screen, and restore. Interpreter detection lands with the v1 interpreter-switching feature.
+
+**Built so far (October 2026).** Open and switch, restore and project-tagged sessions:
+- The daemon calls `open_project`, `list_recent_projects`, `save_project_state` and `forget_project` (see [protocol.md](protocol.md)). A project's tabs live in the daemon's journal, keyed by its folder, and `start_session` takes the project so sessions can be listed per project.
+- The app opens a start window listing the host's recent projects, with a folder browser that asks the daemon for folders, so it will work the same for a server. Each project gets its own window, and the projects open at Quit open again at the next launch. Closing the last project window shows the start window again.
+- A project window reopens its tabs, and each document picks up the sessions that last ran its cells. Its kernel picker offers that project's sessions (and ones started outside any project), not other projects'.
+- The folder and tabs the app remembered before projects come back once, as a project, the first time it is opened.
+
+Not yet: `.sandhill/project.toml`, interpreter detection, the working-directory switch, `.env` loading, the output cache in `.sandhill/outputs/`, and agents (step 4).
+
+---
+
 ## 6. Performance budget (targets, not measurements)
 
 | Component | Target |

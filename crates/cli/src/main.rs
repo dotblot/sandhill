@@ -112,8 +112,12 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::Ls => {
             for s in client.list_sessions().await? {
+                let project = s
+                    .project
+                    .map(|p| format!("  (project {p})"))
+                    .unwrap_or_default();
                 println!(
-                    "{}  {:<10} {:<8} {}",
+                    "{}  {:<10} {:<8} {}{project}",
                     &s.id[..12],
                     s.kernel,
                     format!("{:?}", s.status).to_lowercase(),

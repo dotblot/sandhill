@@ -1,5 +1,5 @@
 // How the UI reaches sandhilld. In the Mac app, the Tauri core holds the
-// connection; during development in a browser, dev/bridge.mjs relays a
+// connections; during development in a browser, dev/bridge.mjs relays a
 // WebSocket to the daemon. Both look the same to the rest of the UI.
 
 import type { DaemonEvent } from "./types";
@@ -11,7 +11,15 @@ export interface LinkState {
   error?: string;
 }
 
+/** The daemon on this Mac. Servers reached over ssh get their own names. */
+export const LOCAL_HOST = "local";
+
+/** What a window shows: the start screen, or one project. */
+export type WindowContext = { kind: "start" } | { kind: "project"; host: string; path: string };
+
+/** One daemon, as one window sees it. */
 export interface Backend {
+  readonly host: string;
   call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
   /** Every event from every subscribed session. */
   onEvent(listener: (event: DaemonEvent) => void): void;
@@ -25,14 +33,24 @@ export interface Backend {
   onCloseRequested?(handler: () => Promise<boolean>): void;
 }
 
-export async function createBackend(): Promise<Backend> {
+/** The app around the windows: which window this is, and opening others. */
+export interface Shell {
+  context(): Promise<WindowContext>;
+  connect(host: string): Promise<Backend>;
+  /** Opens a project in its own window, or brings that window forward. */
+  openProject(host: string, path: string): Promise<void>;
+  showStart(): Promise<void>;
+  /** Closes this window (the start screen, once a project is open). */
+  closeWindow(): Promise<void>;
+}
+
+export async function createShell(): Promise<Shell> {
   if ("__TAURI_INTERNALS__" in window) {
-    const { TauriBackend } = await import("./tauri");
-    return TauriBackend.create();
+    const { TauriShell } = await import("./tauri");
+    return new TauriShell();
   }
-  const { WebSocketBackend } = await import("./websocket");
-  const bridge = new URLSearchParams(location.search).get("bridge") ?? "127.0.0.1:4639";
-  return new WebSocketBackend(bridge);
+  const { BrowserShell } = await import("./websocket");
+  return new BrowserShell();
 }
 
 /** Small helper both backends use to fan out callbacks. */

@@ -19,7 +19,7 @@ Responses can arrive out of order; match them by `id`.
 |---|---|---|
 | `ping` | | `{protocol_version, daemon_version, home, hostname, build}` |
 | `list_kernelspecs` | | `[{name, display_name, language, env?}]` |
-| `start_session` | `kernel`, `cwd?` | `SessionInfo` once the kernel is ready |
+| `start_session` | `kernel`, `cwd?`, `project?` | `SessionInfo` once the kernel is ready |
 | `list_sessions` | | `[SessionInfo]`, including ended sessions |
 | `execute` | `session`, `code`, `cell?: {file, cell_id}` | `{run, msg_id}` |
 | `interrupt` | `session` | `null` |
@@ -34,9 +34,24 @@ Responses can arrive out of order; match them by `id`.
 | `write_file` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}` |
 | `list_dir` | `path` | `[{name, kind, size, mtime_ms}]`, directories first |
 | `file_outputs` | `file` | `{file, cells, seq}` |
+| `open_project` | `path` | `ProjectInfo` with its saved `state` |
+| `list_recent_projects` | | `[ProjectInfo]`, most recent first, `state` null |
+| `save_project_state` | `path`, `state` | `null` |
+| `forget_project` | `path` | `null` |
 
-`SessionInfo` is `{id, kernel, language, cwd, pid, status, created_ms, ended_ms?, last_seq}`
+`SessionInfo` is `{id, kernel, language, cwd, pid, status, created_ms, ended_ms?, last_seq, project?}`
 with `status` one of `starting`, `running`, `ended`.
+
+`ProjectInfo` is `{path, name, opened_ms, exists, state}`. A project is a
+folder on the daemon's machine, named by its absolute path without a trailing
+slash (the daemon normalizes what it is given). `open_project` records it as
+opened now and returns the `state` the app last saved for it with
+`save_project_state` (any JSON; the app keeps its open tabs there), or `null`.
+The daemon keeps that state in its own journal, never in the folder, so
+opening a colleague's repository leaves no trace in it. `forget_project`
+removes a project from the recent list and touches no files. A session
+started with `project` lists it in its `SessionInfo`, also after a daemon
+restart.
 
 `build` identifies the daemon's executable (a short sha256). `sandhilld attach
 --start` stops a running daemon whose `build` differs from its own (an older

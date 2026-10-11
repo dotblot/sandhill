@@ -36,7 +36,7 @@ function KernelControl(props: { ws: Workspace; doc: Doc; language: string; onErr
   };
   const label = () => (props.language === "r" ? "R" : props.language === "python" ? "Python" : props.language);
   const specs = () => props.ws.kernelspecs().filter((k) => normalizeLanguage(k.language) === props.language);
-  const others = () => props.ws.liveSessions(props.language).filter((s) => s.id !== session());
+  const others = () => props.ws.projectSessions(props.language).filter((s) => s.id !== session());
   const guard = (p: Promise<unknown>) => p.catch((e) => props.onError(String(e)));
 
   // Set the choice once the options for it are in place. Through the

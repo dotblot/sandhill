@@ -43,6 +43,26 @@ export interface SessionInfo {
   created_ms: number;
   ended_ms?: number;
   last_seq: number;
+  /** The project folder the session was started for, if any. */
+  project?: string;
+}
+
+/** A folder opened as a project on the daemon's machine. */
+export interface ProjectInfo {
+  path: string;
+  name: string;
+  opened_ms: number;
+  /** False when the folder has been moved or deleted. */
+  exists: boolean;
+  /** What the app saved with save_project_state; null until then. */
+  state: ProjectState | null;
+}
+
+/** A project window's personal state, which the daemon keeps for it. */
+export interface ProjectState {
+  /** Open documents, in tab order. */
+  tabs?: string[];
+  active?: string;
 }
 
 export interface CellRef {
