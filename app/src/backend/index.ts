@@ -9,9 +9,11 @@ export type LinkStatus = "connecting" | "connected" | "disconnected";
 export interface LinkState {
   status: LinkStatus;
   error?: string;
+  /** What a slow connect is doing, such as installing sandhilld on a server. */
+  detail?: string;
 }
 
-/** The daemon on this Mac. Servers reached over ssh get their own names. */
+/** The daemon on this Mac. A server is named by its ssh destination, like `lab` or `me@host`. */
 export const LOCAL_HOST = "local";
 
 /** What a window shows: the start screen, or one project. */
@@ -42,6 +44,11 @@ export interface Shell {
   showStart(): Promise<void>;
   /** Closes this window (the start screen, once a project is open). */
   closeWindow(): Promise<void>;
+  /** Servers the start window offers besides this Mac. */
+  listServers(): Promise<string[]>;
+  /** Adds a server and returns the new list. */
+  addServer(host: string): Promise<string[]>;
+  removeServer(host: string): Promise<string[]>;
 }
 
 export async function createShell(): Promise<Shell> {

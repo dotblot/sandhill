@@ -1,0 +1,16 @@
+[package]
+name = "sandhill-link"
+description = "Reaching sandhilld: on this machine, or on a server over ssh"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+sandhill-proto.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

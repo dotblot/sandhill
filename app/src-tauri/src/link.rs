@@ -23,8 +23,8 @@ use tauri::{
     WebviewWindow,
 };
 
-use crate::daemon::{self, Target};
 use crate::memory;
+use sandhill_link::{Connection, Options, Target};
 
 pub const EVENT: &str = "daemon://event";
 pub const LINK: &str = "daemon://link";
@@ -51,17 +51,29 @@ pub struct LinkState {
     pub status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// What a slow connect is doing, such as installing sandhilld on a server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Every host's connection, and which windows use which host.
 #[derive(Default)]
 pub struct Links {
+    /// How to reach servers: the builds of sandhilld to install on them.
+    options: Options,
     hosts: Mutex<HashMap<String, Arc<Link>>>,
     /// Window label -> hosts it uses.
     windows: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 impl Links {
+    pub fn new(options: Options) -> Self {
+        Links {
+            options,
+            ..Links::default()
+        }
+    }
+
     /// Connects to `host` for `window`, if nothing is connected yet.
     fn use_host<R: Runtime>(
         &self,
@@ -81,7 +93,9 @@ impl Links {
             .lock()
             .unwrap()
             .entry(host.to_string())
-            .or_insert_with(|| Link::start(app.clone(), host.to_string(), target))
+            .or_insert_with(|| {
+                Link::start(app.clone(), host.to_string(), target, self.options.clone())
+            })
             .clone();
         Ok(link.state())
     }
@@ -139,7 +153,12 @@ impl Link {
     /// Connects in the background and reconnects whenever the connection
     /// drops. The UI resubscribes from the last event it saw, so nothing is
     /// missed.
-    fn start<R: Runtime>(app: AppHandle<R>, host: String, target: Target) -> Arc<Link> {
+    fn start<R: Runtime>(
+        app: AppHandle<R>,
+        host: String,
+        target: Target,
+        options: Options,
+    ) -> Arc<Link> {
         let link = Arc::new(Link {
             host: host.clone(),
             client: Mutex::new(None),
@@ -147,6 +166,7 @@ impl Link {
                 host,
                 status: Status::Connecting,
                 error: None,
+                detail: None,
             }),
             blobs: Mutex::default(),
             task: Mutex::new(None),
@@ -155,8 +175,11 @@ impl Link {
             let link = link.clone();
             async move {
                 let mut delay = RETRY_MIN;
+                let progress = |note: &str| {
+                    link.set_state(&app, Status::Connecting, None, Some(note.to_string()));
+                };
                 loop {
-                    match daemon::connect(&target).await {
+                    match sandhill_link::connect(&target, &options, &progress).await {
                         Ok(connection) => {
                             delay = RETRY_MIN;
                             link.serve(&app, connection).await;
@@ -165,11 +188,13 @@ impl Link {
                                 &app,
                                 Status::Disconnected,
                                 Some("lost the connection to sandhilld".into()),
+                                None,
                             );
                         }
                         Err(err) => {
                             tracing::warn!("cannot reach sandhilld on {}: {err:#}", link.host);
-                            link.set_state(&app, Status::Disconnected, Some(format!("{err:#}")));
+                            let error = Some(err.to_string());
+                            link.set_state(&app, Status::Disconnected, error, None);
                         }
                     }
                     tokio::time::sleep(delay).await;
@@ -197,11 +222,18 @@ impl Link {
         self.state.lock().unwrap().clone()
     }
 
-    fn set_state<R: Runtime>(&self, app: &AppHandle<R>, status: Status, error: Option<String>) {
+    fn set_state<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        status: Status,
+        error: Option<String>,
+        detail: Option<String>,
+    ) {
         let state = LinkState {
             host: self.host.clone(),
             status,
             error,
+            detail,
         };
         *self.state.lock().unwrap() = state.clone();
         app.state::<Arc<Links>>().emit(app, &self.host, LINK, state);
@@ -209,13 +241,13 @@ impl Link {
 
     /// Serves one connection until it drops, forwarding its events to the
     /// windows that use this host.
-    async fn serve<R: Runtime>(&self, app: &AppHandle<R>, connection: daemon::Connection) {
-        let daemon::Connection { mut client, child } = connection;
+    async fn serve<R: Runtime>(&self, app: &AppHandle<R>, connection: Connection) {
+        let Connection { mut client, child } = connection;
         let Some(mut events) = client.take_events() else {
             return;
         };
         *self.client.lock().unwrap() = Some(Arc::new(client));
-        self.set_state(app, Status::Connected, None);
+        self.set_state(app, Status::Connected, None, None);
         tracing::info!("connected to sandhilld on {}", self.host);
         let links = app.state::<Arc<Links>>();
         while let Some(event) = events.recv().await {
@@ -401,7 +433,7 @@ impl BlobQuery {
             return None;
         }
         let mut mime = "application/octet-stream".to_string();
-        let mut host = daemon::LOCAL.to_string();
+        let mut host = sandhill_link::LOCAL.to_string();
         let mut near = None;
         for (key, value) in url.query_pairs() {
             match key.as_ref() {

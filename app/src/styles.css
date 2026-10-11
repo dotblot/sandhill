@@ -208,6 +208,20 @@ pre.out { font: 12.5px/1.45 var(--font-mono); white-space: pre-wrap; word-break:
 .start { max-width: 640px; margin: 0 auto; padding: 36px 24px; height: 100%; overflow: auto; }
 .start-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
 .start-header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.hosts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.host-item { display: inline-flex; align-items: center; }
+.host { border-radius: 14px; padding: 3px 12px; font-size: 13px; background: transparent; }
+.host.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.host.add { color: var(--text-muted); border-style: dashed; border-color: var(--text-faint); }
+.host.add.active { background: var(--surface); color: var(--text); border-style: solid; }
+.host-remove { border: none; background: transparent; color: var(--text-faint); padding: 0 4px; margin-left: -2px; opacity: 0; }
+.host-item:hover .host-remove { opacity: 1; }
+.add-server { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 16px; background: var(--surface); }
+.add-server-row { display: flex; gap: 6px; }
+.add-server-row input { flex: 1; min-width: 0; }
+.add-server p { margin: 8px 0 0; font-size: 12px; }
+.start-link { margin: 0 0 10px; font-size: 12px; }
+.start-link[data-link="disconnected"] { color: var(--danger); }
 .start-actions { display: flex; gap: 8px; margin-bottom: 20px; }
 .start-actions button { padding: 5px 12px; }
 .recent h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 0 0 6px; }

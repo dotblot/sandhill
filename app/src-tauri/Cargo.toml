@@ -10,6 +10,7 @@ tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 sandhill-proto.workspace = true
+sandhill-link.workspace = true
 anyhow.workspace = true
 base64 = "0.22"
 libc.workspace = true

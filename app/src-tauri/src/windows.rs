@@ -82,8 +82,13 @@ impl Windows {
             return focus(&window);
         }
         let name = path.rsplit('/').find(|s| !s.is_empty()).unwrap_or(path);
+        let title = if host == sandhill_link::LOCAL {
+            name.to_string()
+        } else {
+            format!("{name} — {host}")
+        };
         WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-            .title(name)
+            .title(title)
             .inner_size(1280.0, 860.0)
             .min_inner_size(720.0, 480.0)
             .build()?;

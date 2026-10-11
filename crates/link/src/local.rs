@@ -1,61 +1,25 @@
-//! Finding and starting the local sandhilld.
-//!
-//! The app runs `sandhilld attach --start` and speaks the protocol over its
-//! stdin/stdout, which starts the daemon if it isn't running. A remote server
-//! will use the same command through ssh.
+//! The daemon on this machine.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
-use sandhill_proto::client::Client;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::OnceCell;
+
+use crate::{Connection, Error};
 
 /// Starting the daemon can take a while on first launch (it opens or
 /// creates its journal and reattaches to kernels that are still running).
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The host name the UI uses for the daemon on this Mac.
-pub const LOCAL: &str = "local";
-
-/// Where a daemon runs.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Target {
-    Local,
-}
-
-impl Target {
-    pub fn parse(host: &str) -> Result<Target> {
-        match host {
-            LOCAL => Ok(Target::Local),
-            _ => bail!("unknown host {host:?}"),
-        }
-    }
-}
-
-pub struct Connection {
-    pub client: Client,
-    /// The `attach` process; dropping it ends the connection.
-    pub child: Child,
-}
-
-pub async fn connect(target: &Target) -> Result<Connection> {
-    match target {
-        Target::Local => connect_local().await,
-    }
-}
-
-async fn connect_local() -> Result<Connection> {
-    let program = find()?;
+pub(crate) async fn connect() -> Result<Connection, Error> {
+    let program = find().ok_or(Error::NotFound)?;
     let mut command = Command::new(&program);
     if let Some(socket) = std::env::var_os("SANDHILL_SOCKET") {
         command.arg("--socket").arg(socket);
     }
-    command.args(["attach", "--start"]).stderr(Stdio::piped());
+    command.args(["attach", "--start"]);
     // The daemon started from here passes this on to every kernel.
     if let Some(path) = login_path().await {
         command.env("PATH", path);
@@ -65,44 +29,15 @@ async fn connect_local() -> Result<Connection> {
         command.env("LANG", "en_US.UTF-8");
     }
 
-    let (client, mut child) = Client::connect_command(command)
-        .await
-        .with_context(|| format!("cannot run {}", program.display()))?;
-    let last_error = Arc::new(Mutex::new(String::new()));
-    let stderr = child.stderr.take().map(|stderr| {
-        let last_error = last_error.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                tracing::info!("sandhilld: {line}");
-                if !line.trim().is_empty() {
-                    *last_error.lock().unwrap() = line;
-                }
-            }
-        })
-    });
-
-    let error = match tokio::time::timeout(ANSWER_TIMEOUT, client.ping()).await {
-        Ok(Ok(_)) => return Ok(Connection { client, child }),
-        Ok(Err(err)) => err.to_string(),
-        Err(_) => format!("sandhilld did not answer within {ANSWER_TIMEOUT:?}"),
-    };
-    // Prefer what the daemon said on its way out over "connection closed".
-    let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
-    if let Some(task) = stderr {
-        let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
-    }
-    let said = last_error.lock().unwrap().clone();
-    let said = said.trim_start_matches("Error: ");
-    bail!("{}", if said.is_empty() { &error } else { said })
+    crate::attach(command, &program.display().to_string(), ANSWER_TIMEOUT).await
 }
 
 /// Where sandhilld is: `$SANDHILL_DAEMON`, next to the app's own binary
 /// (inside the app bundle, or in `target/` during development), then the
 /// usual install locations and `PATH`.
-fn find() -> Result<PathBuf> {
+pub(crate) fn find() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SANDHILL_DAEMON") {
-        return Ok(PathBuf::from(path));
+        return Some(PathBuf::from(path));
     }
     let mut candidates = Vec::new();
     if let Some(dir) = std::env::current_exe()
@@ -118,10 +53,7 @@ fn find() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("PATH") {
         candidates.extend(std::env::split_paths(&path).map(|dir| dir.join("sandhilld")));
     }
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .context("sandhilld was not found next to the app, in ~/.local/bin or on PATH; build it with `cargo build -p sandhill-daemon` or set SANDHILL_DAEMON")
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 /// The `PATH` a login shell sets up. Apps opened from the Finder or the Dock

@@ -1,10 +1,10 @@
 //! Sandhill's Mac app: windows for the TypeScript UI in `app/src`, plus the
 //! connections to sandhilld that the UI talks through.
 
-mod daemon;
 mod link;
 mod memory;
 mod menu;
+mod servers;
 mod windows;
 
 use std::sync::Arc;
@@ -13,6 +13,7 @@ use anyhow::Context;
 use tauri::{Manager, RunEvent, WindowEvent};
 
 use crate::link::Links;
+use crate::servers::Servers;
 use crate::windows::Windows;
 
 fn main() -> anyhow::Result<()> {
@@ -25,7 +26,6 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let app = tauri::Builder::default()
-        .manage(Arc::new(Links::default()))
         .menu(menu::build)
         .on_menu_event(menu::handle)
         .invoke_handler(tauri::generate_handler![
@@ -35,6 +35,9 @@ fn main() -> anyhow::Result<()> {
             windows::open_project_window,
             windows::show_start_window,
             windows::cancel_quit,
+            servers::list_servers,
+            servers::add_server,
+            servers::remove_server,
         ])
         .register_asynchronous_uri_scheme_protocol(link::BLOB_SCHEME, link::blob_protocol)
         .on_window_event(|window, event| {
@@ -45,7 +48,10 @@ fn main() -> anyhow::Result<()> {
             }
         })
         .setup(|app| {
-            let saved = app.path().app_data_dir()?.join("open-projects.json");
+            app.manage(Arc::new(Links::new(link_options(app.handle()))));
+            let data = app.path().app_data_dir()?;
+            app.manage(Arc::new(Servers::load(data.join("servers.json"))));
+            let saved = data.join("open-projects.json");
             let windows = Arc::new(Windows::new(saved));
             app.manage(windows.clone());
             windows.restore(app.handle())?;
@@ -71,4 +77,24 @@ fn main() -> anyhow::Result<()> {
         }
     });
     Ok(())
+}
+
+/// The builds of sandhilld the app installs on servers: `daemons/` in the
+/// app's resources (bundled by `npm run bundle`), or `$SANDHILL_DAEMON_BUILDS`.
+/// `$SANDHILL_SSH` replaces the ssh program.
+fn link_options<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> sandhill_link::Options {
+    let builds = std::env::var_os("SANDHILL_DAEMON_BUILDS")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let dir = app.path().resource_dir().ok()?.join("daemons");
+            dir.is_dir().then_some(dir)
+        });
+    match &builds {
+        Some(dir) => tracing::info!("builds of sandhilld for servers: {}", dir.display()),
+        None => tracing::info!("no builds of sandhilld for servers in this app"),
+    }
+    sandhill_link::Options {
+        builds,
+        ssh: std::env::var_os("SANDHILL_SSH").map(Into::into),
+    }
 }
