@@ -95,6 +95,24 @@ pub enum Call {
     ReadFile {
         path: String,
     },
+    /// Reads a `.ipynb` with binary and large output values moved to the
+    /// blob store (see [`BLOB_KEY`]), so plots load by URL instead of
+    /// travelling inline. Returns [`FileText`] whose `text` is the notebook
+    /// JSON with those references, not the file's exact bytes.
+    ReadNotebook {
+        path: String,
+    },
+    /// Writes a `.ipynb` sent with blob references in its outputs, as
+    /// [`Call::ReadNotebook`] returns them, putting the stored values back.
+    /// `text` is the notebook as nbformat lays it out (keys sorted, one-space
+    /// indent); values put back are laid out the same way. Conflicts and the
+    /// reply are as for [`Call::WriteFile`].
+    WriteNotebook {
+        path: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_mtime_ms: Option<i64>,
+    },
     /// Replaces a text file atomically. With `expected_mtime_ms`, fails with
     /// an error starting with [`CONFLICT_ERROR`] if the file changed on disk
     /// since it was read. Returns [`FileWritten`].

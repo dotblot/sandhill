@@ -53,6 +53,17 @@ pub fn read_text(path: &str) -> Result<FileText> {
 /// Writes through a temporary file and a rename, so readers never see a
 /// half-written notebook and a crash leaves the old version intact.
 pub fn write_text(path: &str, text: &str, expected_mtime_ms: Option<i64>) -> Result<FileWritten> {
+    write_with(path, expected_mtime_ms, |file| {
+        Ok(file.write_all(text.as_bytes())?)
+    })
+}
+
+/// Like [`write_text`], with the contents written by `write`.
+pub fn write_with(
+    path: &str,
+    expected_mtime_ms: Option<i64>,
+    write: impl FnOnce(&mut std::fs::File) -> Result<()>,
+) -> Result<FileWritten> {
     let resolved = resolve(path)?;
     let existing = std::fs::metadata(&resolved).ok();
     if let (Some(expected), Some(meta)) = (expected_mtime_ms, &existing)
@@ -63,7 +74,7 @@ pub fn write_text(path: &str, text: &str, expected_mtime_ms: Option<i64>) -> Res
             resolved.display()
         );
     }
-    write_atomic(&resolved, text.as_bytes())?;
+    write_atomic_with(&resolved, write)?;
     let meta = std::fs::metadata(&resolved)?;
     Ok(FileWritten {
         path: resolved.to_string_lossy().into_owned(),
@@ -72,6 +83,13 @@ pub fn write_text(path: &str, text: &str, expected_mtime_ms: Option<i64>) -> Res
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic_with(path, |file| Ok(file.write_all(bytes)?))
+}
+
+fn write_atomic_with(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> Result<()>,
+) -> Result<()> {
     let dir = path
         .parent()
         .with_context(|| format!("{} has no parent directory", path.display()))?;
@@ -86,7 +104,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let result = (|| -> Result<()> {
         let mut file = std::fs::File::create(&tmp)
             .with_context(|| format!("cannot write in {}", dir.display()))?;
-        file.write_all(bytes)?;
+        write(&mut file)?;
         file.sync_all()?;
         // Keep the permissions of the file being replaced.
         if let Ok(meta) = std::fs::metadata(path) {
@@ -134,7 +152,7 @@ pub fn list_dir(path: &str) -> Result<Vec<DirEntry>> {
     Ok(entries)
 }
 
-fn mtime_ms(meta: &std::fs::Metadata) -> i64 {
+pub(crate) fn mtime_ms(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())

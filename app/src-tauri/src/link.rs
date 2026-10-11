@@ -24,6 +24,7 @@ use tauri::{
 };
 
 use crate::daemon::{self, Target};
+use crate::memory;
 
 pub const EVENT: &str = "daemon://event";
 pub const LINK: &str = "daemon://link";
@@ -32,8 +33,9 @@ pub const BLOB_SCHEME: &str = "sandhill-blob";
 const RETRY_MIN: Duration = Duration::from_millis(500);
 const RETRY_MAX: Duration = Duration::from_secs(5);
 /// Decoded blobs kept in memory per host, so reopening a document doesn't
-/// fetch its plots again (that matters over ssh).
-const BLOB_CACHE_BYTES: usize = 64 * 1024 * 1024;
+/// fetch its plots again (that matters over ssh). The web view keeps its own
+/// copy of every image it shows, so this only needs to cover recent ones.
+const BLOB_CACHE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -253,15 +255,46 @@ pub async fn daemon_call(
     }
     let call: Call = serde_json::from_value(Value::Object(request))
         .map_err(|err| format!("bad request: {err}"))?;
+    let large = matches!(&call, Call::WriteFile { text, .. } | Call::WriteNotebook { text, .. }
+        if text.len() > memory::LARGE);
     let client = links
         .link(&host)
         .and_then(|link| link.client())
         .ok_or("not connected to sandhilld")?;
-    client.call(call).await.map_err(|err| match err {
+    let result = client.call(call).await.map_err(|err| match err {
         // The UI matches some daemon errors by prefix (`conflict:`).
         ClientError::Remote(message) => message,
         other => other.to_string(),
-    })
+    });
+    if large || result.as_ref().is_ok_and(|v| text_size(v) > memory::LARGE) {
+        release_soon();
+    }
+    result
+}
+
+/// Bytes of text in a value, which is nearly all of a large reply.
+fn text_size(value: &Value) -> usize {
+    match value {
+        Value::String(s) => s.len(),
+        Value::Array(items) => items.iter().map(text_size).sum(),
+        Value::Object(map) => map.iter().map(|(k, v)| k.len() + text_size(v)).sum(),
+        _ => 0,
+    }
+}
+
+/// Releases freed memory once the reply has been handed to the web view
+/// and its copies dropped. Calls close together share one release.
+fn release_soon() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static PENDING: AtomicBool = AtomicBool::new(false);
+    if PENDING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    tauri::async_runtime::spawn(async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        PENDING.store(false, Ordering::Release);
+        memory::release_free_memory();
+    });
 }
 
 /// `sandhill-blob://localhost/<hash>?mime=<type>&host=<host>&near=<document>`:

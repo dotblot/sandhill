@@ -19,7 +19,7 @@ use crate::blobs::BlobStore;
 use crate::journal::Journal;
 use crate::paths::StateDir;
 use crate::session::SessionHandle;
-use crate::{files, outputs, projects, sidecar};
+use crate::{files, memory, notebook, outputs, projects, sidecar};
 
 const REPLAY_PAGE: u32 = 500;
 const HISTORY_LIMIT: u32 = 5000;
@@ -107,11 +107,16 @@ impl Daemon {
                     continue;
                 }
             };
+            let large = line.len() > memory::LARGE;
+            drop(line);
             let daemon = self.clone();
             let out = out.clone();
             let subscriptions = subscriptions.clone();
             tokio::spawn(async move {
                 daemon.handle(request, out, subscriptions).await;
+                if large {
+                    memory::release_free_memory();
+                }
             });
         }
         for (_, task) in subscriptions.lock().unwrap().drain() {
@@ -235,6 +240,32 @@ impl Daemon {
             }
             Call::ReadFile { path } => {
                 serde_json::to_value(blocking(move || files::read_text(&path)).await?)?
+            }
+            Call::ReadNotebook { path } => {
+                let journal = self.journal.clone();
+                let file = blocking(move || {
+                    let file = notebook::read_notebook(&path, journal.blobs());
+                    memory::release_free_memory();
+                    file
+                })
+                .await?;
+                serde_json::to_value(file)?
+            }
+            Call::WriteNotebook {
+                path,
+                text,
+                expected_mtime_ms,
+            } => {
+                let journal = self.journal.clone();
+                let written = blocking(move || {
+                    let written =
+                        notebook::write_notebook(&path, &text, expected_mtime_ms, journal.blobs());
+                    drop(text);
+                    memory::release_free_memory();
+                    written
+                })
+                .await?;
+                serde_json::to_value(written)?
             }
             Call::WriteFile {
                 path,
@@ -420,9 +451,14 @@ async fn write_loop<W: AsyncWrite + Unpin>(
         let Ok(mut line) = serde_json::to_vec(&message) else {
             continue;
         };
+        drop(message);
         line.push(b'\n');
         if writer.write_all(&line).await.is_err() || writer.flush().await.is_err() {
             return;
+        }
+        if line.len() > memory::LARGE {
+            drop(line);
+            memory::release_free_memory();
         }
     }
 }

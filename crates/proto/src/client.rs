@@ -218,6 +218,24 @@ impl Client {
         .await
     }
 
+    pub async fn read_notebook(&self, path: &str) -> Result<FileText> {
+        self.call(Call::ReadNotebook { path: path.into() }).await
+    }
+
+    pub async fn write_notebook(
+        &self,
+        path: &str,
+        text: &str,
+        expected_mtime_ms: Option<i64>,
+    ) -> Result<FileWritten> {
+        self.call(Call::WriteNotebook {
+            path: path.into(),
+            text: text.into(),
+            expected_mtime_ms,
+        })
+        .await
+    }
+
     pub async fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
         self.call(Call::ListDir { path: path.into() }).await
     }

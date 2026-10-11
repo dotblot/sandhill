@@ -39,11 +39,13 @@ export class NotebookDoc extends Doc {
   private root?: HTMLElement;
   private views = new Map<string, CellView>();
   private observer?: IntersectionObserver;
+  /** Tells outputs when they are within a couple of screens of view. */
+  private nearObserver?: IntersectionObserver;
   private language: () => string;
   private setLanguage: Setter<string>;
 
   static async open(ws: Workspace, path: string): Promise<NotebookDoc> {
-    const file = await ws.call<FileText>("read_file", { path });
+    const file = await readNotebook(ws, path);
     const doc = new NotebookDoc(ws, file.path, parseNotebook(file.text));
     doc.mtime = file.mtime_ms;
     await doc.mergeJournal();
@@ -78,6 +80,15 @@ export class NotebookDoc extends Doc {
       },
       { rootMargin: "600px" },
     );
+    this.nearObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = (entry.target.closest(".nb-cell") as HTMLElement | null)?.dataset.id;
+          this.views.get(id ?? "")?.output?.setNearView(entry.isIntersecting);
+        }
+      },
+      { root: parent, rootMargin: "200% 0px" },
+    );
     this.renderCells();
   }
 
@@ -88,6 +99,7 @@ export class NotebookDoc extends Doc {
 
   dispose() {
     this.observer?.disconnect();
+    this.nearObserver?.disconnect();
     for (const view of this.views.values()) {
       view.editor?.destroy();
       view.output?.dispose();
@@ -96,14 +108,27 @@ export class NotebookDoc extends Doc {
 
   async save(force = false) {
     for (const view of this.views.values()) view.cell.source = this.sourceOf(view);
-    const cells = await Promise.all(
-      this.nb.cells.map(async (cell) => ({ ...cell, outputs: await this.inlineBlobs(cell.outputs) })),
-    );
-    const written = await this.ws.call<FileWritten>("write_file", {
-      path: this.path,
-      text: serializeNotebook({ ...this.nb, cells }),
-      expected_mtime_ms: force ? undefined : this.mtime,
-    });
+    const expected_mtime_ms = force ? undefined : this.mtime;
+    let written: FileWritten;
+    try {
+      // Plots stay as blob references; the daemon puts them back as it
+      // writes the file, so they never travel through the app.
+      written = await this.ws.call<FileWritten>("write_notebook", {
+        path: this.path,
+        text: serializeNotebook(this.nb),
+        expected_mtime_ms,
+      });
+    } catch (err) {
+      if (!String(err).includes("unknown variant")) throw err;
+      const cells = await Promise.all(
+        this.nb.cells.map(async (cell) => ({ ...cell, outputs: await this.inlineBlobs(cell.outputs) })),
+      );
+      written = await this.ws.call<FileWritten>("write_file", {
+        path: this.path,
+        text: serializeNotebook({ ...this.nb, cells }),
+        expected_mtime_ms,
+      });
+    }
     this.mtime = written.mtime_ms;
     this.setDirty(false);
   }
@@ -340,7 +365,10 @@ export class NotebookDoc extends Doc {
   private renderCells() {
     if (!this.root) return;
     this.root.replaceChildren(...this.nb.cells.map((c) => this.views.get(c.id)!.root));
-    for (const view of this.views.values()) this.observer?.observe(view.root);
+    for (const view of this.views.values()) {
+      this.observer?.observe(view.root);
+      if (view.output) this.nearObserver?.observe(view.output.element);
+    }
   }
 
   /** Records the kernel in the notebook's metadata the first time it runs, as Jupyter does. */
@@ -352,7 +380,10 @@ export class NotebookDoc extends Doc {
     this.setLanguage(normalizeLanguage(spec.language));
   }
 
-  /** Notebooks store values inline, so blob references are replaced with their data. */
+  /**
+   * Notebooks store values inline, so blob references are replaced with
+   * their data. Only for an older daemon without `write_notebook`.
+   */
   private async inlineBlobs(outputs: Output[]): Promise<Output[]> {
     return Promise.all(
       outputs.map(async (o) => {
@@ -367,6 +398,20 @@ export class NotebookDoc extends Doc {
         return { ...o, data: Object.fromEntries(entries) };
       }),
     );
+  }
+}
+
+/**
+ * The notebook with plots and large tables as blob references, so they load
+ * by URL instead of sitting in memory as base64. An older daemon without
+ * `read_notebook` sends the file as it is.
+ */
+async function readNotebook(ws: Workspace, path: string): Promise<FileText> {
+  try {
+    return await ws.call<FileText>("read_notebook", { path });
+  } catch (err) {
+    if (!String(err).includes("unknown variant")) throw err;
+    return ws.call<FileText>("read_file", { path });
   }
 }
 

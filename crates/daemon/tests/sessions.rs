@@ -408,6 +408,74 @@ async fn files_can_be_listed_read_and_saved() {
 }
 
 #[tokio::test]
+async fn notebook_plots_stay_in_the_daemon_between_open_and_save() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let doc = dir.path().join("analysis.ipynb");
+    let notebook = serde_json::json!({
+        "cells": [{"cell_type": "code", "execution_count": null, "id": "c1",
+                   "metadata": {}, "outputs": [], "source": ["plot()"]}],
+        "metadata": {}, "nbformat": 4, "nbformat_minor": 5
+    });
+    std::fs::write(&doc, notebook.to_string()).unwrap();
+    let path = doc.to_string_lossy().into_owned();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session("python3", None).await.unwrap().id;
+
+    let code = "from IPython.display import display\n\
+                display({'image/png': 'iVBORw0KGgo=', 'text/plain': '<plot>'}, raw=True)";
+    let (_, finished) = run_cell(&mut client, &session, code, cell(&doc, "c1")).await;
+    assert_eq!(finished.status, "ok");
+
+    // The app opens the notebook and takes the run's outputs from the
+    // journal, the plot still a reference, then saves.
+    let read = client.read_notebook(&path).await.unwrap();
+    let mut opened: serde_json::Value = serde_json::from_str(&read.text).unwrap();
+    let file_outputs = client.file_outputs(&path).await.unwrap();
+    let outputs = file_outputs.cells[0].outputs.clone();
+    let hash = outputs[0]["data"]["image/png"][BLOB_KEY]
+        .as_str()
+        .expect("the plot should be a blob reference")
+        .to_string();
+    opened["cells"][0]["outputs"] = serde_json::Value::Array(outputs);
+    let text = serde_json::to_string_pretty(&opened).unwrap();
+    let written = client
+        .write_notebook(&path, &text, Some(read.mtime_ms))
+        .await
+        .unwrap();
+
+    // The file has the plot itself, as Jupyter expects.
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&doc).unwrap()).unwrap();
+    let output = &saved["cells"][0]["outputs"][0];
+    assert_eq!(output["data"]["image/png"], "iVBORw0KGgo=");
+    assert_eq!(output["output_type"], "display_data");
+
+    // Opening it again gives the same reference back.
+    let reread = client.read_notebook(&path).await.unwrap();
+    assert_eq!(reread.mtime_ms, written.mtime_ms);
+    let reopened: serde_json::Value = serde_json::from_str(&reread.text).unwrap();
+    assert_eq!(
+        reopened["cells"][0]["outputs"][0]["data"]["image/png"][BLOB_KEY],
+        hash.as_str()
+    );
+
+    // A save over changes made elsewhere is refused, as for any file.
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(&doc, notebook.to_string()).unwrap();
+    let err = client
+        .write_notebook(&path, &text, Some(written.mtime_ms))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains(CONFLICT_ERROR), "{err}");
+
+    client.shutdown(&session).await.unwrap();
+}
+
+#[tokio::test]
 async fn qmd_outputs_are_saved_next_to_the_file() {
     if !have_kernel("python3").await {
         return;
