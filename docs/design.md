@@ -112,6 +112,11 @@ over a smooth gradient a blur changes nothing you can see, and each blurred
 pane costs a window-sized compositing layer. Styles are in `app/src/styles.css`,
 icons in `app/src/ui/icons.tsx`.
 
+The agreed final layout is draft 16, kept in `docs/design/ui/`: `spec.md`
+describes it, `sandhill-layout.html` is the clickable mockup (light and dark)
+and the PNGs are screenshots of it. The app is not restyled to it yet; until
+it is, the paragraph above describes what the app looks like.
+
 ---
 
 ## 4. Inline outputs that are saved and reappear
