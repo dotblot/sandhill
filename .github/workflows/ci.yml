@@ -21,9 +21,10 @@ jobs:
       - name: Install Python and R kernels
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-ipykernel r-base-core r-cran-irkernel
+          sudo apt-get install -y --no-install-recommends python3-ipykernel r-base-core r-cran-irkernel
           python3 -m ipykernel install --user
-          Rscript -e 'IRkernel::installspec(user = TRUE)'
+          # r-cran-irkernel ships its kernelspec in /usr/share/jupyter/kernels/ir,
+          # so IRkernel::installspec() (which needs the jupyter CLI) isn't needed.
       - name: Install Ark (Posit's R kernel)
         # Best effort: if this fails, the R test falls back to IRkernel.
         continue-on-error: true
@@ -34,7 +35,7 @@ jobs:
           unzip -o /tmp/ark/*.zip -d /tmp/ark
           /tmp/ark/ark --install
       - name: List installed kernels
-        run: jupyter kernelspec list || ls ~/.local/share/jupyter/kernels
+        run: ls -d ~/.local/share/jupyter/kernels/* /usr/share/jupyter/kernels/*
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
