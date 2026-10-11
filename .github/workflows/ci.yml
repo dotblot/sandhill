@@ -40,8 +40,9 @@ jobs:
           tag=$(gh api 'repos/posit-dev/ark/releases?per_page=30' \
             --jq '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + .)[0].tag_name')
           echo "Ark $tag"
-          gh release download "$tag" --repo posit-dev/ark --pattern '*-linux-x64.zip' --dir /tmp/ark
-          unzip -o /tmp/ark/*.zip -d /tmp/ark
+          # Not ark-<version>-debug-linux-x64.zip.
+          gh release download "$tag" --repo posit-dev/ark --pattern "ark-$tag-linux-x64.zip" --dir /tmp/ark
+          unzip -o "/tmp/ark/ark-$tag-linux-x64.zip" -d /tmp/ark
           /tmp/ark/ark --install
       - name: List installed kernels
         run: |

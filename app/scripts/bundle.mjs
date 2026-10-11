@@ -81,8 +81,8 @@ function bundleArk(dir) {
   const work = mkdtempSync(join(tmpdir(), "sandhill-ark-"));
   try {
     for (const [arch, triple] of [["x64", "x86_64-unknown-linux-gnu"], ["arm64", "aarch64-unknown-linux-gnu"]]) {
-      // Not the -debug builds.
-      const asset = release.assets.find((a) => new RegExp(`linux-${arch}\\.zip$`).test(a.name));
+      // ark-<version>-linux-x64.zip, not ark-<version>-debug-linux-x64.zip.
+      const asset = release.assets.find((a) => a.name.endsWith(`-linux-${arch}.zip`) && !a.name.includes("-debug-"));
       if (!asset) {
         if (arch === "x64") throw new Error(`Ark ${release.tag_name} has no linux-x64 build`);
         console.warn(`Ark ${release.tag_name} has no linux-${arch} build: skipped`);
