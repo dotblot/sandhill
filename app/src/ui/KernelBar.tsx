@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
 import type { Doc } from "../docs/doc";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 
@@ -39,6 +39,19 @@ function KernelControl(props: { ws: Workspace; doc: Doc; language: string; onErr
   const others = () => props.ws.liveSessions(props.language).filter((s) => s.id !== session());
   const guard = (p: Promise<unknown>) => p.catch((e) => props.onError(String(e)));
 
+  // Set the choice once the options for it are in place. Through the
+  // `value` attribute it can land while the options are still changing (as
+  // when a tab closes), and WebKit then shows an empty picker.
+  let select!: HTMLSelectElement;
+  createEffect(() => {
+    const value = session() ? `session:${session()}` : "";
+    info();
+    others();
+    specs();
+    state();
+    select.value = value;
+  });
+
   const onSelect = (value: string) => {
     if (value.startsWith("session:")) props.doc.kernels.assign(props.language, value.slice(8));
     else if (value.startsWith("new:")) void guard(props.doc.kernels.startNew(props.language, value.slice(4)));
@@ -48,7 +61,7 @@ function KernelControl(props: { ws: Workspace; doc: Doc; language: string; onErr
     <div class="kernel" data-state={state()}>
       <span class="kernel-dot" title={state()} />
       <span class="kernel-lang">{label()}</span>
-      <select value={session() ? `session:${session()}` : ""} onChange={(e) => onSelect(e.currentTarget.value)}>
+      <select ref={select} onChange={(e) => onSelect(e.currentTarget.value)}>
         <option value="" disabled>
           {state() === "starting" ? "Starting…" : "Starts when you run code"}
         </option>
