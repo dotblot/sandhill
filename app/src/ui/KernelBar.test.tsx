@@ -19,10 +19,11 @@ function session(id: string): SessionInfo {
   } as SessionInfo;
 }
 
-function fakeDoc(sessionId: () => string | undefined, languages = ["python"]): Doc {
+function fakeDoc(sessionId: () => string | undefined, languages = ["python"], shown: () => string[] = () => []): Doc {
   return {
     languages: () => languages,
     dirty: () => false,
+    shownOutputs: shown,
     kernels: {
       session: (language: string) => (language === "python" ? sessionId() : undefined),
       isStarting: () => false,
@@ -77,5 +78,31 @@ describe("KernelBar", () => {
     setDoc(first);
     expect(select().value).toBe("session:aaaaaa111");
     dispose();
+  });
+
+  it("shows every output, or hides them once any is shown", () => {
+    const ws = {
+      sessions: () => [],
+      kernelspecs: () => [],
+      liveSessions: () => [],
+      projectSessions: () => [],
+      isBusy: () => false,
+    } as unknown as Workspace;
+    const [shown, setShown] = createSignal<string[]>([]);
+    const calls: boolean[] = [];
+    const doc = { ...fakeDoc(() => undefined, ["python"], shown), setAllOutputs: (v: boolean) => calls.push(v) } as unknown as Doc;
+    // Solid handles clicks at the document.
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <KernelBar ws={ws} doc={doc} onError={() => {}} />, root);
+    const toggle = () => root.querySelector(".outputs-toggle") as HTMLButtonElement;
+
+    expect(toggle().textContent).toBe("Show outputs");
+    toggle().click();
+    setShown(["load"]);
+    expect(toggle().textContent).toBe("Hide outputs");
+    toggle().click();
+    expect(calls).toEqual([true, false]);
+    dispose();
+    root.remove();
   });
 });

@@ -71,6 +71,33 @@ export function parseChunks(text: string): Chunk[] {
   return chunks;
 }
 
+/**
+ * 1-based numbers of the prose lines: those outside the YAML front matter
+ * and outside fenced blocks, run or not. The editor sets them in the system
+ * font.
+ */
+export function proseLines(text: string): number[] {
+  const lines = splitWithOffsets(text).map((l) => l.text);
+  const prose: number[] = [];
+  let i = 0;
+  if (/^---\s*$/.test(lines[0])) {
+    let end = 1;
+    while (end < lines.length && !/^(---|\.\.\.)\s*$/.test(lines[end])) end++;
+    if (end < lines.length) i = end + 1;
+  }
+  while (i < lines.length) {
+    const open = OPEN.exec(lines[i]);
+    if (!open) {
+      prose.push(++i);
+      continue;
+    }
+    let end = i + 1;
+    while (end < lines.length && !isClosingFence(lines[end], open[1])) end++;
+    i = end + 1;
+  }
+  return prose;
+}
+
 /** Chunk options from the R Markdown header (`{r name, echo=FALSE}`) or `#| label:` lines. */
 function labelFrom(headerRest: string, code: string): string | undefined {
   for (const line of code.split("\n")) {

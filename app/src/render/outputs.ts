@@ -182,10 +182,10 @@ function renderInlineHtml(html: string): HTMLElement {
   const host = el("div", "out out-html");
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML =
-    `<style>:host{display:block;overflow-x:auto;font:13px/1.45 var(--font-ui)}` +
+    `<style>:host{display:block;overflow-x:auto;font:12px/1.3 var(--font-ui)}` +
     `table{border-collapse:collapse;border:none;font-variant-numeric:tabular-nums}` +
-    `th,td{padding:3px 8px;border:none;border-bottom:1px solid var(--border);text-align:right}` +
-    `thead th{border-bottom:1px solid var(--text-muted)}tbody tr:nth-child(odd){background:var(--chunk-bg)}</style>` +
+    `th,td{padding:2px 10px;border:none;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);text-align:right}` +
+    `thead th{color:var(--muted);font-weight:500;border-bottom:1px solid var(--line)}tbody tr:hover{background:var(--hover)}</style>` +
     DOMPurify.sanitize(html, { FORCE_BODY: true });
   return host;
 }

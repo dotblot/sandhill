@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { frontMatterKernel, parseChunks, sameCode } from "./qmd";
+import { frontMatterKernel, parseChunks, proseLines, sameCode } from "./qmd";
 
 const doc = `---
 title: "Demo"
@@ -87,5 +87,18 @@ describe("sameCode", () => {
   it("ignores trailing whitespace and line endings", () => {
     expect(sameCode("x <- 1  \r\ny", "x <- 1\ny\n")).toBe(true);
     expect(sameCode("x <- 1", "x <- 2")).toBe(false);
+  });
+});
+
+describe("proseLines", () => {
+  it("leaves out the front matter and every fenced block", () => {
+    const lines = doc.split("\n");
+    const prose = proseLines(doc).map((n) => lines[n - 1]);
+    expect(prose.filter((l) => l.trim())).toEqual(["Some text."]);
+    expect(proseLines(doc)).toContain(5);
+  });
+
+  it("treats a document without front matter as prose from the top", () => {
+    expect(proseLines("# Title\r\n\r\n```{r}\nx\n```\nend")).toEqual([1, 2, 6]);
   });
 });

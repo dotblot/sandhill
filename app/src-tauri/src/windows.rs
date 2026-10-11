@@ -62,11 +62,11 @@ impl Windows {
         if let Some(window) = app.get_webview_window(START) {
             return focus(&window);
         }
-        WebviewWindowBuilder::new(app, START, WebviewUrl::App("index.html".into()))
+        let builder = WebviewWindowBuilder::new(app, START, WebviewUrl::App("index.html".into()))
             .title("Sandhill")
             .inner_size(820.0, 600.0)
-            .min_inner_size(560.0, 420.0)
-            .build()?;
+            .min_inner_size(560.0, 420.0);
+        title_bar(builder).build()?;
         self.add(START, WindowContext::Start);
         Ok(())
     }
@@ -87,11 +87,11 @@ impl Windows {
         } else {
             format!("{name} — {host}")
         };
-        WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+        let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
             .title(title)
             .inner_size(1280.0, 860.0)
-            .min_inner_size(720.0, 480.0)
-            .build()?;
+            .min_inner_size(720.0, 480.0);
+        title_bar(builder).build()?;
         self.add(
             &label,
             WindowContext::Project {
@@ -177,6 +177,24 @@ impl Windows {
             tracing::warn!("cannot remember open projects: {err}");
         }
     }
+}
+
+/// On macOS the page draws the title bar, under the window buttons, so the
+/// panes can float on one background from the top of the window down.
+#[cfg(target_os = "macos")]
+fn title_bar<'a, R: Runtime, M: Manager<R>>(
+    builder: WebviewWindowBuilder<'a, R, M>,
+) -> WebviewWindowBuilder<'a, R, M> {
+    builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn title_bar<'a, R: Runtime, M: Manager<R>>(
+    builder: WebviewWindowBuilder<'a, R, M>,
+) -> WebviewWindowBuilder<'a, R, M> {
+    builder
 }
 
 fn focus<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {

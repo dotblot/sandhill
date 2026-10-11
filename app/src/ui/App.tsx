@@ -1,18 +1,21 @@
-import { createEffect, createSignal, For, onMount, Show } from "solid-js";
-import type { Shell } from "../backend";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { LOCAL_HOST, type Shell } from "../backend";
 import { CONFLICT_ERROR, type DirEntry, type FileText, type ProjectInfo, type ProjectState } from "../backend/types";
 import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { pickKernel, type Workspace } from "../model/workspace";
+import smallIcon from "../../src-tauri/icons/32x32.png";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileTree } from "./FileTree";
+import { FileIcon, FilesRailIcon, Icon } from "./icons";
 import { KernelBar } from "./KernelBar";
 import { takeLegacyState } from "./legacy";
 import { linkText } from "./linkText";
 
 const SAVE_STATE_MS = 300;
+const SIDEBAR_KEY = "sandhill.sidebar";
 
 /** A project window: the project's files, its open documents and their kernels. */
 export function App(props: { ws: Workspace; shell: Shell; project: string }) {
@@ -23,6 +26,12 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [docs, setDocs] = createSignal<Doc[]>([]);
   const [active, setActive] = createSignal<Doc>();
   const [treeKey, setTreeKey] = createSignal(0);
+  const [sidebar, setSidebar] = createSignal(stored(SIDEBAR_KEY) !== "hidden");
+  const toggleSidebar = () => {
+    setSidebar(!sidebar());
+    store(SIDEBAR_KEY, sidebar() ? "shown" : "hidden");
+  };
+  const hostName = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
   const opening = new Map<string, Promise<Doc | undefined>>();
   const hosts = new Map<Doc, HTMLElement>();
   let docArea!: HTMLDivElement;
@@ -213,8 +222,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     ws.backend.onMenu?.(command);
     ws.backend.onCloseRequested?.(confirmClose);
     window.addEventListener("keydown", (e) => {
-      // In the Mac app the menu bar owns these shortcuts.
       const mod = e.metaKey || e.ctrlKey;
+      if (mod && !e.altKey && !e.shiftKey && e.key === "b") {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
+      // In the Mac app the menu bar owns these shortcuts.
       if (!mod || ws.backend.onMenu) return;
       if (e.key === "s") command("save");
       else if (e.key === "w") command("close-tab");
@@ -228,85 +242,225 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   });
 
   return (
-    <div class="app">
-      <aside class="sidebar">
-        <div class="project-header">
-          <span class="project-name" title={props.project}>
+    <div class="window">
+      <header class="titlebar" data-tauri-drag-region="deep">
+        <button class="proj" title="Open another project (⌘O)" onClick={() => void props.shell.showStart()}>
+          <img class="proj-icon" src={smallIcon} alt="" />
+          <span class="proj-name" title={props.project}>
             {name}
           </span>
-          <button title="Open another project (⌘O)" onClick={() => void props.shell.showStart()}>
-            Projects
+          <span class="proj-host" data-link={ws.link().status}>
+            <span class="dot" />
+            {hostName}
+          </span>
+          <Icon name="chevron" small />
+        </button>
+        <span class="spacer" />
+        <button class="tbbtn" aria-pressed={sidebar()} title="Sidebar (⌘B)" onClick={toggleSidebar}>
+          <Icon name="sidebar" />
+        </button>
+      </header>
+      <div class="window-body">
+        <nav class="rail" aria-label="Views">
+          <button aria-pressed={sidebar()} title="Files (⌘B)" onClick={toggleSidebar}>
+            <FilesRailIcon />
           </button>
-        </div>
-        <div class="sidebar-actions">
-          <button onClick={() => createFile("qmd")}>New Quarto</button>
-          <button onClick={() => createFile("ipynb")}>New notebook</button>
-          <button title="Refresh" onClick={() => setTreeKey((k) => k + 1)}>
-            ⟳
-          </button>
-        </div>
-        <Show when={!missing() && ws.link().status === "connected"}>
-          <FileTree ws={ws} root={root()} onOpen={(p) => void open(p)} activePath={active()?.path} refreshKey={treeKey()} />
-        </Show>
-      </aside>
-      <main class="main">
-        <div class="tabs" role="tablist">
-          <For each={docs()}>
-            {(doc) => (
-              <div
-                class="tab"
-                role="tab"
-                classList={{ active: active() === doc }}
-                title={doc.path}
-                onClick={() => setActive(doc)}
-              >
-                <span>{doc.name}</span>
-                <button
-                  class="tab-close"
-                  classList={{ dirty: doc.dirty() }}
-                  title={doc.dirty() ? "Unsaved changes" : "Close"}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void close(doc);
-                  }}
-                >
-                  {doc.dirty() ? "●" : "×"}
-                </button>
-              </div>
-            )}
-          </For>
-        </div>
-        <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} onError={notify} />}</Show>
-        <div class="doc-area" ref={docArea}>
-          <Show when={!active()}>
-            <Show
-              when={!missing()}
-              fallback={
-                <div class="empty-state">
-                  <p>Cannot open this project: {missing()}</p>
-                  <p>
-                    <button onClick={() => void props.shell.showStart()}>Show projects</button>
-                  </p>
-                </div>
-              }
-            >
-              <div class="empty-state">
-                <p>Open a .qmd, .Rmd or .ipynb file from the sidebar.</p>
-                <p class="muted">Code runs in sessions that keep going when you close the app.</p>
-              </div>
+        </nav>
+        <Show when={sidebar()}>
+          <aside class="sidebar pane">
+            <div class="pane-head">
+              <span class="pane-title" title={props.project}>
+                {name}
+              </span>
+              <span class="spacer" />
+              <NewFileMenu onCreate={(kind) => void createFile(kind)} />
+              <button class="pane-button" title="Refresh" onClick={() => setTreeKey((k) => k + 1)}>
+                <Icon name="refresh" small />
+              </button>
+            </div>
+            <Show when={!missing() && ws.link().status === "connected"}>
+              <FileTree ws={ws} root={root()} onOpen={(p) => void open(p)} activePath={active()?.path} refreshKey={treeKey()} />
             </Show>
-          </Show>
-        </div>
-        <footer class="status-bar" data-link={ws.link().status}>
+            <Sessions ws={ws} hostName={hostName} />
+          </aside>
+        </Show>
+        <main class="editor pane">
+          <div class="tabs" role="tablist">
+            <For each={docs()}>
+              {(doc) => (
+                <div
+                  class="tab"
+                  role="tab"
+                  aria-selected={active() === doc}
+                  classList={{ active: active() === doc }}
+                  title={doc.path}
+                  onClick={() => setActive(doc)}
+                >
+                  <FileIcon name={doc.name} />
+                  <span class="tab-name">{doc.name}</span>
+                  <button
+                    class="tab-close"
+                    classList={{ dirty: doc.dirty() }}
+                    title={doc.dirty() ? "Unsaved changes" : "Close"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void close(doc);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+          <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} onError={notify} />}</Show>
+          <div class="doc-area" ref={docArea}>
+            <Show when={!active()}>
+              <Show
+                when={!missing()}
+                fallback={
+                  <div class="empty-state">
+                    <p>Cannot open this project: {missing()}</p>
+                    <p>
+                      <button onClick={() => void props.shell.showStart()}>Show projects</button>
+                    </p>
+                  </div>
+                }
+              >
+                <div class="empty-state">
+                  <p>Open a .qmd, .Rmd or .ipynb file from the sidebar.</p>
+                  <p class="muted">Code runs in sessions that keep going when you close the app.</p>
+                </div>
+              </Show>
+            </Show>
+          </div>
+        </main>
+      </div>
+      <footer class="status-bar" data-link={ws.link().status}>
+        <span class="status-item" title={linkText(ws)}>
           <span class="link-dot" />
-          {linkText(ws)}
-          <span class="spacer" />
-          {active()?.path ?? ""}
-        </footer>
-      </main>
+          {ws.link().status === "connected" && ws.host()
+            ? `${hostName} · sandhilld ${ws.host()!.daemon_version}`
+            : linkText(ws)}
+        </span>
+        <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
+        <span class="spacer" />
+        <span class="status-item status-path">{active()?.path ?? ""}</span>
+      </footer>
       <Dialogs />
     </div>
   );
+}
+
+/** The + menu in the sidebar: new Quarto document or notebook. */
+function NewFileMenu(props: { onCreate: (kind: "qmd" | "ipynb") => void }) {
+  const [open, setOpen] = createSignal(false);
+  let wrap!: HTMLSpanElement;
+  const close = (e: MouseEvent) => {
+    if (!wrap.contains(e.target as Node)) setOpen(false);
+  };
+  const escape = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+  document.addEventListener("mousedown", close);
+  document.addEventListener("keydown", escape);
+  onCleanup(() => {
+    document.removeEventListener("mousedown", close);
+    document.removeEventListener("keydown", escape);
+  });
+  const pick = (kind: "qmd" | "ipynb") => {
+    setOpen(false);
+    props.onCreate(kind);
+  };
+  return (
+    <span class="menu-wrap" ref={wrap}>
+      <button class="pane-button" title="New file" aria-expanded={open()} onClick={() => setOpen(!open())}>
+        <Icon name="plus" small />
+      </button>
+      <Show when={open()}>
+        <div class="menu" role="menu">
+          <button role="menuitem" onClick={() => pick("qmd")}>
+            <FileIcon name="Untitled.qmd" />
+            Quarto document
+          </button>
+          <button role="menuitem" onClick={() => pick("ipynb")}>
+            <FileIcon name="Untitled.ipynb" />
+            Jupyter notebook
+          </button>
+        </div>
+      </Show>
+    </span>
+  );
+}
+
+/** Kernels running for this project, under the file tree. */
+function Sessions(props: { ws: Workspace; hostName: string }) {
+  const [now, setNow] = createSignal(Date.now());
+  const timer = setInterval(() => setNow(Date.now()), 60_000);
+  onCleanup(() => clearInterval(timer));
+  const sessions = () => props.ws.projectSessions();
+  const kernelName = (kernel: string) =>
+    props.ws.kernelspecs().find((k) => k.name === kernel)?.display_name ?? kernel;
+  return (
+    <Show when={sessions().length}>
+      <div class="sessions">
+        <div class="pane-head sub">Running on {props.hostName}</div>
+        <For each={sessions()}>
+          {(s) => (
+            <div class="session-row" title={`${s.kernel} · ${s.id} · ${s.cwd}`}>
+              <span class="dot" classList={{ busy: props.ws.isBusy(s.id) }} />
+              <span class="session-name">{kernelName(s.kernel)}</span>
+              <span class="session-age">{uptime(now() - s.created_ms)}</span>
+            </div>
+          )}
+        </For>
+      </div>
+    </Show>
+  );
+}
+
+/** "R idle", "Python running" for the open document, in the status bar. */
+function KernelStates(props: { ws: Workspace; doc: Doc }) {
+  const label = (language: string) => (language === "r" ? "R" : language === "python" ? "Python" : language);
+  const state = (language: string) => {
+    if (props.doc.kernels.isStarting(language)) return "starting";
+    const id = props.doc.kernels.session(language);
+    if (!id) return undefined;
+    return props.ws.isBusy(id) ? "running" : "idle";
+  };
+  return (
+    <For each={props.doc.languages().filter((l) => state(l))}>
+      {(language) => (
+        <span class="status-item" data-state={state(language)}>
+          <span class="kernel-dot" />
+          {label(language)} {state(language)}
+        </span>
+      )}
+    </For>
+  );
+}
+
+/** How long a session has run: "4 min", "5 h", "2 d". */
+export function uptime(ms: number): string {
+  const min = Math.max(0, Math.floor(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  const hours = Math.floor(min / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.floor(hours / 24)} d`;
+}
+
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Private mode; the choice just isn't remembered.
+  }
 }
 
 function message(err: unknown): string {
