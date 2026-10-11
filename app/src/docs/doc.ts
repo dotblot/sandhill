@@ -21,6 +21,13 @@ export abstract class Doc {
   readonly dirty: () => boolean;
   protected setDirty: (dirty: boolean) => void;
   readonly kernels: DocKernels;
+  /**
+   * Cells whose outputs are shown. Saved outputs start hidden, so opening a
+   * document full of plots loads none of them; running a cell shows its
+   * output. The project window remembers this list, not the file.
+   */
+  readonly shownOutputs: () => string[];
+  private setShownOutputs: (ids: string[]) => void;
   /** Modification time of the file as last read or written, to detect outside changes. */
   protected mtime = 0;
 
@@ -28,6 +35,7 @@ export abstract class Doc {
     protected ws: Workspace,
     readonly path: string,
     preferredKernel: (language: string) => KernelWanted | undefined = () => undefined,
+    shownOutputs: string[] = [],
   ) {
     const slash = path.lastIndexOf("/");
     this.name = path.slice(slash + 1);
@@ -36,6 +44,7 @@ export abstract class Doc {
     this.dirty = dirty;
     this.setDirty = setDirty;
     this.kernels = new DocKernels(ws, this.dir, preferredKernel);
+    [this.shownOutputs, this.setShownOutputs] = createSignal(shownOutputs);
   }
 
   /** Languages with code in this document, for the kernel bar. */
@@ -46,6 +55,19 @@ export abstract class Doc {
   abstract save(force?: boolean): Promise<void>;
   abstract runAll(): Promise<void>;
   abstract dispose(): void;
+  /** Shows or hides every output in the document. */
+  abstract setAllOutputs(visible: boolean): void;
+
+  /** Whether the output of `cellId` starts out shown. */
+  protected outputShown(cellId: string): boolean {
+    return this.shownOutputs().includes(cellId);
+  }
+
+  /** Records that the output of `cellId` was shown or hidden. */
+  protected outputToggled(cellId: string, visible: boolean) {
+    const rest = this.shownOutputs().filter((id) => id !== cellId);
+    this.setShownOutputs(visible ? [...rest, cellId] : rest);
+  }
 
   protected renderContext(onResize: () => void): RenderContext {
     return {

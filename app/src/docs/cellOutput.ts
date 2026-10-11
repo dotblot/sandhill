@@ -1,5 +1,9 @@
 // The output shown under one Quarto chunk or notebook cell: a status line
 // and the outputs, from a saved copy or a live run.
+//
+// Outputs can be hidden, leaving the status line with a summary ("plot,
+// table"). A hidden output is not rendered at all, so its plots are never
+// loaded or decoded: that is what keeps a notebook full of plots small.
 
 import type { Output } from "../backend/types";
 import type { RunPhase, RunState, RunStore } from "../model/runs";
@@ -18,6 +22,7 @@ export interface OutputInfo {
 export class CellOutput {
   readonly element: HTMLElement;
   private statusLine: HTMLElement;
+  private statusText: HTMLElement;
   private area: OutputArea;
   private unwatch?: () => void;
   private timer?: ReturnType<typeof setInterval>;
@@ -25,15 +30,41 @@ export class CellOutput {
   runId?: string;
 
   constructor(
-    ctx: RenderContext,
+    private ctx: RenderContext,
     private onChange: (info: OutputInfo) => void = () => {},
+    private visible = true,
+    /** Called whenever the output is shown or hidden. */
+    private onToggle: (visible: boolean) => void = () => {},
   ) {
     this.element = document.createElement("div");
     this.element.className = "cell-output empty";
+    this.element.classList.toggle("collapsed", !visible);
     this.statusLine = document.createElement("div");
     this.statusLine.className = "cell-status";
+    this.statusLine.addEventListener("click", () => {
+      if (this.info?.outputs.length) this.setVisible(!this.visible);
+    });
+    const caret = document.createElement("span");
+    caret.className = "cell-caret";
+    this.statusText = document.createElement("span");
+    this.statusLine.append(caret, this.statusText);
     this.area = new OutputArea(ctx);
     this.element.append(this.statusLine, this.area.element);
+  }
+
+  get isVisible(): boolean {
+    return this.visible;
+  }
+
+  /** Shows or hides the outputs; hidden ones are taken out of the page. */
+  setVisible(visible: boolean) {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    this.element.classList.toggle("collapsed", !visible);
+    this.area.update(visible ? (this.info?.outputs ?? []) : []);
+    this.renderStatus();
+    this.onToggle(visible);
+    this.ctx.onResize();
   }
 
   /** Outputs read from a file (a notebook or a .qmd sidecar). */
@@ -59,13 +90,13 @@ export class CellOutput {
     this.runId = undefined;
     this.info = undefined;
     this.area.update([]);
-    this.statusLine.textContent = "";
+    this.statusText.textContent = "";
     this.element.classList.add("empty");
   }
 
   setStale(stale: boolean) {
     this.element.classList.toggle("stale", stale);
-    this.statusLine.title = stale ? "The code changed since these outputs were produced" : "";
+    this.statusText.title = stale ? "The code changed since these outputs were produced" : "";
   }
 
   dispose() {
@@ -80,8 +111,9 @@ export class CellOutput {
 
   private render(info: OutputInfo) {
     this.info = info;
-    this.area.update(info.outputs);
+    if (this.visible) this.area.update(info.outputs);
     this.element.classList.toggle("empty", false);
+    this.element.classList.toggle("has-outputs", info.outputs.length > 0);
     this.element.dataset.phase = info.phase;
     this.element.dataset.status = info.status ?? "";
     this.renderStatus();
@@ -97,7 +129,9 @@ export class CellOutput {
   private renderStatus() {
     const info = this.info;
     if (!info) return;
-    this.statusLine.textContent = statusText(info, Date.now());
+    const summary = this.visible ? "" : outputSummary(info.outputs);
+    this.statusText.textContent = statusText(info, Date.now()) + (summary ? ` · ${summary}` : "");
+    this.statusLine.title = info.outputs.length ? (this.visible ? "Hide output" : "Show output") : "";
   }
 
   private detach() {
@@ -118,6 +152,34 @@ function fromRun(run: RunState): OutputInfo {
     code: run.code,
     outputs: run.outputs,
   };
+}
+
+/** Kinds of output worth counting in a summary; text is just "text". */
+const COUNTED = new Set(["plot", "table", "widget", "error"]);
+
+/** What a hidden output holds, in a few words: "plot", "2 plots, table". */
+export function outputSummary(outputs: Output[]): string {
+  const counts = new Map<string, number>();
+  for (const output of outputs) {
+    const kind = outputKind(output);
+    if (kind) counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([kind, n]) => (n === 1 || !COUNTED.has(kind) ? kind : `${n} ${kind}s`))
+    .join(", ");
+}
+
+function outputKind(output: Output): string | undefined {
+  if (output.output_type === "error") return "error";
+  if (output.output_type === "stream") return "text";
+  const data = (output.data ?? {}) as Record<string, unknown>;
+  const mimes = Object.keys(data);
+  if (!mimes.length) return undefined;
+  if (mimes.some((m) => m.startsWith("image/") || m === "application/pdf")) return "plot";
+  const html = data["text/html"];
+  if (html !== undefined) return typeof html === "string" && !/<table/i.test(html) ? "HTML" : "table";
+  if (mimes.some((m) => m.includes("widget") || m.includes("plotly") || m.includes("vega"))) return "widget";
+  return "text";
 }
 
 export function statusText(info: OutputInfo, now: number): string {

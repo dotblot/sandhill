@@ -26,9 +26,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const hosts = new Map<Doc, HTMLElement>();
   let docArea!: HTMLDivElement;
   const [restored, setRestored] = createSignal(false);
+  /** Shown outputs of documents that are not open, as the project state keeps them. */
+  let shownOutputs: Record<string, string[]> = {};
 
   // Once connected, reopen the documents that were open in this project.
   let restoring = false;
+  /** Set when the person opens a document before the tabs are back; their choice stays in front. */
+  let openedWhileRestoring = false;
   createEffect(() => {
     if (!ws.host() || restoring) return;
     restoring = true;
@@ -44,16 +48,22 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       }
       setMissing(undefined);
       const state = project.state ?? takeLegacyState(props.project);
+      shownOutputs = state.outputs ?? {};
       for (const path of state.tabs ?? []) await open(path, true);
       const last = docs().find((d) => d.path === state.active);
-      if (last) setActive(last);
+      if (last && !openedWhileRestoring) setActive(last);
       setRestored(true);
     })();
   });
 
   // The daemon keeps the open documents for next time, not the folder.
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  const projectState = (): ProjectState => ({ tabs: docs().map((d) => d.path), active: active()?.path });
+  const projectState = (): ProjectState => {
+    const outputs = { ...shownOutputs };
+    for (const doc of docs()) outputs[doc.path] = doc.shownOutputs();
+    for (const [path, ids] of Object.entries(outputs)) if (!ids.length) delete outputs[path];
+    return { tabs: docs().map((d) => d.path), active: active()?.path, outputs };
+  };
   const saveState = () => {
     clearTimeout(saveTimer);
     saveTimer = undefined;
@@ -86,6 +96,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   });
 
   async function open(path: string, quiet = false): Promise<Doc | undefined> {
+    if (!quiet && !restored()) openedWhileRestoring = true;
     const existing = docs().find((d) => d.path === path);
     if (existing) {
       setActive(existing);
@@ -95,9 +106,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     if (!pending) {
       pending = (async () => {
         try {
-          const doc = docKind(path) === "ipynb" ? await NotebookDoc.open(ws, path) : await QmdDoc.open(ws, path);
+          const shown = shownOutputs[path] ?? [];
+          const doc =
+            docKind(path) === "ipynb" ? await NotebookDoc.open(ws, path, shown) : await QmdDoc.open(ws, path, shown);
           setDocs((d) => [...d, doc]);
-          setActive(doc);
           return doc;
         } catch (err) {
           if (!quiet) notify(`Could not open ${path}: ${message(err)}`);
@@ -108,7 +120,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       })();
       opening.set(path, pending);
     }
-    return pending;
+    const doc = await pending;
+    if (doc && (!quiet || !openedWhileRestoring)) setActive(doc);
+    return doc;
   }
 
   async function saveDoc(doc: Doc): Promise<boolean> {
@@ -137,6 +151,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       if (choice === "Cancel") return false;
       if (choice === "Save" && !(await saveDoc(doc))) return false;
     }
+    shownOutputs[doc.path] = doc.shownOutputs();
     const list = docs();
     const index = list.indexOf(doc);
     const rest = list.filter((d) => d !== doc);
