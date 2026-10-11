@@ -99,6 +99,22 @@ jobs:
       - name: Zip the app
         # ditto keeps the bundle's symlinks, permissions and signature.
         run: ditto -c -k --keepParent target/release/bundle/macos/Sandhill.app Sandhill-macos-arm64.zip
+      - name: Check that the zipped app opens
+        # Unzipped the way Archive Utility does it and opened through Finder's
+        # route (LaunchServices), so a bundle macOS refuses to open fails here.
+        run: |
+          # The real path (/private/var/…), which is what the process shows.
+          dir=$(cd "$(mktemp -d)" && pwd -P)
+          ditto -x -k Sandhill-macos-arm64.zip "$dir"
+          app="$dir/Sandhill.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          open "$app"
+          for _ in $(seq 30); do
+            pgrep -f "$app/Contents/MacOS/sandhill-app" >/dev/null && break
+            sleep 1
+          done
+          pgrep -fl "$app/Contents/MacOS/" || { echo "Sandhill.app did not start"; exit 1; }
+          pkill -f "$app/Contents/MacOS/" || true
       - uses: actions/upload-artifact@v4
         with:
           name: Sandhill-macos-arm64
