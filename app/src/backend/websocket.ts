@@ -1,8 +1,44 @@
 // Development transport: the UI in an ordinary browser, talking to sandhilld
 // through dev/bridge.mjs. Not used by the Mac app.
+//
+// The page stands in for one window: `?project=<folder>` is a project
+// window, no project is the start screen. Opening a project navigates the
+// page instead of opening a window.
 
-import { type Backend, type LinkState, Listeners } from "./index";
+import { type Backend, LOCAL_HOST, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
 import type { DaemonEvent } from "./types";
+
+export class BrowserShell implements Shell {
+  private params = new URLSearchParams(location.search);
+
+  async context(): Promise<WindowContext> {
+    const path = this.params.get("project");
+    return path ? { kind: "project", host: LOCAL_HOST, path } : { kind: "start" };
+  }
+
+  async connect(_host: string): Promise<Backend> {
+    return new WebSocketBackend(this.params.get("bridge") ?? "127.0.0.1:4639");
+  }
+
+  async openProject(_host: string, path: string) {
+    location.search = this.query({ project: path });
+  }
+
+  async showStart() {
+    location.search = this.query({});
+  }
+
+  async closeWindow() {
+    // The page was already replaced by the project it opened.
+  }
+
+  private query(extra: Record<string, string>): string {
+    const query = new URLSearchParams(extra);
+    const bridge = this.params.get("bridge");
+    if (bridge) query.set("bridge", bridge);
+    return query.toString();
+  }
+}
 
 interface Pending {
   resolve(value: unknown): void;
@@ -10,6 +46,7 @@ interface Pending {
 }
 
 export class WebSocketBackend implements Backend {
+  readonly host = LOCAL_HOST;
   private socket?: WebSocket;
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -19,7 +56,7 @@ export class WebSocketBackend implements Backend {
   private link: LinkState = { status: "connecting" };
   private retryMs = 500;
 
-  constructor(private host: string) {
+  constructor(private bridge: string) {
     this.connect();
   }
 
@@ -45,11 +82,11 @@ export class WebSocketBackend implements Backend {
   blobUrl(hash: string, mime: string, near?: string): string {
     const query = new URLSearchParams({ mime });
     if (near) query.set("near", near);
-    return `http://${this.host}/blob/${hash}?${query}`;
+    return `http://${this.bridge}/blob/${hash}?${query}`;
   }
 
   private connect() {
-    const socket = new WebSocket(`ws://${this.host}/`);
+    const socket = new WebSocket(`ws://${this.bridge}/`);
     this.socket = socket;
     socket.onopen = () => {
       this.retryMs = 500;

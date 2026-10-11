@@ -1,23 +1,52 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type Backend, type LinkState, Listeners } from "./index";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { type Backend, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
 import type { DaemonEvent } from "./types";
 
-export class TauriBackend implements Backend {
+export class TauriShell implements Shell {
+  context(): Promise<WindowContext> {
+    return invoke<WindowContext>("window_context");
+  }
+
+  connect(host: string): Promise<Backend> {
+    return TauriBackend.create(host);
+  }
+
+  openProject(host: string, path: string): Promise<void> {
+    return invoke("open_project_window", { host, path });
+  }
+
+  showStart(): Promise<void> {
+    return invoke("show_start_window");
+  }
+
+  closeWindow(): Promise<void> {
+    // The start screen has nothing to confirm, so no close request.
+    return getCurrentWindow().destroy();
+  }
+}
+
+class TauriBackend implements Backend {
   private events = new Listeners<DaemonEvent>();
   private links = new Listeners<LinkState>();
   private link: LinkState = { status: "connecting" };
 
-  static async create(): Promise<TauriBackend> {
-    const backend = new TauriBackend();
+  private constructor(readonly host: string) {}
+
+  static async create(host: string): Promise<TauriBackend> {
+    const backend = new TauriBackend(host);
+    // The app sends a host's events only to the windows using it.
     await listen<DaemonEvent>("daemon://event", (e) => backend.events.emit(e.payload));
-    await listen<LinkState>("daemon://link", (e) => backend.setLink(e.payload));
-    backend.setLink(await invoke<LinkState>("link_state"));
+    await listen<LinkState & { host: string }>("daemon://link", (e) => {
+      if (e.payload.host === host) backend.setLink(e.payload);
+    });
+    backend.setLink(await invoke<LinkState>("use_host", { host }));
     return backend;
   }
 
   call<T>(method: string, params?: Record<string, unknown>): Promise<T> {
-    return invoke<T>("daemon_call", { method, params: params ?? null }).catch((err) => {
+    return invoke<T>("daemon_call", { host: this.host, method, params: params ?? null }).catch((err) => {
       throw new Error(String(err));
     });
   }
@@ -32,7 +61,7 @@ export class TauriBackend implements Backend {
   }
 
   blobUrl(hash: string, mime: string, near?: string): string {
-    const query = new URLSearchParams({ mime });
+    const query = new URLSearchParams({ host: this.host, mime });
     if (near) query.set("near", near);
     return `${convertFileSrc(hash, "sandhill-blob")}?${query}`;
   }
@@ -42,15 +71,16 @@ export class TauriBackend implements Backend {
   }
 
   onCloseRequested(handler: () => Promise<boolean>) {
-    void import("@tauri-apps/api/window").then(({ getCurrentWindow }) =>
-      getCurrentWindow().onCloseRequested(async (event) => {
-        if (!(await handler())) event.preventDefault();
-      }),
-    );
+    void getCurrentWindow().onCloseRequested(async (event) => {
+      if (await handler()) return;
+      event.preventDefault();
+      // If this close was part of Quit, the other windows stay too.
+      await invoke("cancel_quit");
+    });
   }
 
   private setLink(state: LinkState) {
-    this.link = state;
-    this.links.emit(state);
+    this.link = { status: state.status, error: state.error };
+    this.links.emit(this.link);
   }
 }

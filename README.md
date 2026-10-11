@@ -8,9 +8,9 @@ saved and come back when you reopen a file, R and Python sessions that keep
 running on the server after you close the app, and Claude Code, Codex or open
 and local models (through omp) working directly in your live sessions.
 
-> Status: early development. The Mac app opens Quarto and Jupyter notebooks
-> and runs them on this Mac; working against a server over ssh is next.
-> See the roadmap below.
+> Status: early development. The Mac app opens projects of Quarto and Jupyter
+> notebooks and runs them on this Mac; working against a server over ssh is
+> next. See the roadmap below.
 
 ## How it fits together
 
@@ -55,13 +55,17 @@ download **Sandhill-macos-arm64** under Artifacts. The app isn't notarized,
 so after unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once,
 or macOS will refuse to open it.
 
-Code keeps running after you quit; reopening a file shows its outputs again,
-including output printed while the app was closed. Quarto and R Markdown
-outputs are saved next to the file in `.<name>.out/`.
+The app opens on a start window: open a folder with your analysis as a
+project, and it gets its own window. Projects open at Quit come back at the
+next launch with their tabs, and each document reattaches to the kernels that
+last ran it. Code keeps running after you quit; reopening a file shows its
+outputs again, including output printed while the app was closed. Quarto and
+R Markdown outputs are saved next to the file in `.<name>.out/`.
 
 To work on the UI, `cargo build -p sandhill-daemon` once, then
 `npm run tauri dev` in `app/` reloads the window as you edit. Without the
-app, `npm run bridge` and `npm run dev` serve the same UI to a browser.
+app, `npm run bridge` and `npm run dev` serve the same UI to a browser; the
+page is the start window, and `?project=<folder>` makes it a project window.
 
 ## Try the daemon
 
@@ -86,6 +90,6 @@ WebKitGTK development packages; see `.github/workflows/ci.yml`) and
 
 1. **Server core** (done): `sandhilld` starts Python and R kernels, runs code, and records every output so a client can disconnect and replay later.
 2. **First Mac app loop** (done): open `.qmd`/`.ipynb`, run a chunk, see inline output, close and reopen with outputs intact.
-3. **Remote**: connect to an Ubuntu server over ssh; work keeps running when the app closes.
+3. **Server and projects**: RStudio-style projects, each in its own window (done); connect to an Ubuntu server over ssh, with work that keeps running when the app closes (next).
 4. **Agents**: Claude Code and Codex in a terminal pane, MCP tools for live sessions, omp chat for open and local models.
 5. **Positron-style panes**: Variables, Data Explorer, Plots, Help, Viewer.

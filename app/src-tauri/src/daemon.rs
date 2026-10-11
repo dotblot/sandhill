@@ -19,13 +19,37 @@ use tokio::sync::OnceCell;
 /// creates its journal and reattaches to kernels that are still running).
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The host name the UI uses for the daemon on this Mac.
+pub const LOCAL: &str = "local";
+
+/// Where a daemon runs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Target {
+    Local,
+}
+
+impl Target {
+    pub fn parse(host: &str) -> Result<Target> {
+        match host {
+            LOCAL => Ok(Target::Local),
+            _ => bail!("unknown host {host:?}"),
+        }
+    }
+}
+
 pub struct Connection {
     pub client: Client,
     /// The `attach` process; dropping it ends the connection.
     pub child: Child,
 }
 
-pub async fn connect() -> Result<Connection> {
+pub async fn connect(target: &Target) -> Result<Connection> {
+    match target {
+        Target::Local => connect_local().await,
+    }
+}
+
+async fn connect_local() -> Result<Connection> {
     let program = find()?;
     let mut command = Command::new(&program);
     if let Some(socket) = std::env::var_os("SANDHILL_SOCKET") {

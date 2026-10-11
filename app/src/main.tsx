@@ -1,9 +1,17 @@
 import { render } from "solid-js/web";
-import { createBackend } from "./backend";
+import { createShell, LOCAL_HOST } from "./backend";
 import { Workspace } from "./model/workspace";
 import { App } from "./ui/App";
+import { StartScreen } from "./ui/StartScreen";
 import "./styles.css";
 
-const backend = await createBackend();
-const ws = new Workspace(backend);
-render(() => <App ws={ws} />, document.getElementById("root")!);
+const shell = await createShell();
+const context = await shell.context();
+const root = document.getElementById("root")!;
+if (context.kind === "project") {
+  const ws = new Workspace(await shell.connect(context.host), context.path);
+  render(() => <App ws={ws} shell={shell} project={context.path} />, root);
+} else {
+  const ws = new Workspace(await shell.connect(LOCAL_HOST));
+  render(() => <StartScreen ws={ws} shell={shell} />, root);
+}

@@ -37,6 +37,7 @@ describe("KernelBar", () => {
       sessions: () => sessions,
       kernelspecs: () => [{ name: "python3", display_name: "Python 3", language: "python" }],
       liveSessions: () => sessions,
+      projectSessions: () => sessions,
       isBusy: () => false,
     } as unknown as Workspace;
     const [doc, setDoc] = createSignal(fakeDoc(() => "aaaaaa111"));
@@ -58,6 +59,7 @@ describe("KernelBar", () => {
       sessions: () => sessions,
       kernelspecs: () => [{ name: "python3", display_name: "Python 3", language: "python" }],
       liveSessions: () => sessions,
+      projectSessions: () => sessions,
       isBusy: () => false,
     } as unknown as Workspace;
     const first = fakeDoc(() => "aaaaaa111", ["python", "r"]);

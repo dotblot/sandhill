@@ -11,6 +11,7 @@ pub mod memory;
 pub mod notebook;
 pub mod outputs;
 pub mod paths;
+pub mod projects;
 pub mod server;
 pub mod session;
 pub mod sidecar;

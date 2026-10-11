@@ -579,3 +579,66 @@ async fn reopening_mid_run_shows_output_so_far_then_the_rest() {
 
     client.shutdown(&session).await.unwrap();
 }
+
+#[tokio::test]
+async fn projects_keep_their_state_and_their_sessions() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("my-analysis");
+    std::fs::create_dir_all(&project).unwrap();
+    let project_path = project.to_string_lossy().into_owned();
+    let state_dir = dir.path().join("state");
+
+    let first = TestDaemon::start(&state_dir).await;
+    let session = {
+        let client = first.client().await;
+        // A trailing slash names the same project.
+        let opened = client
+            .open_project(&format!("{project_path}/"))
+            .await
+            .unwrap();
+        assert_eq!(opened.path, project_path);
+        assert_eq!(opened.name, "my-analysis");
+        assert!(opened.state.is_null());
+        client
+            .save_project_state(&project_path, serde_json::json!({"tabs": ["a.qmd"]}))
+            .await
+            .unwrap();
+        let info: sandhill_proto::SessionInfo = client
+            .call(sandhill_proto::Call::StartSession {
+                kernel: "python3".into(),
+                cwd: Some(project_path.clone()),
+                project: Some(project_path.clone()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(info.project.as_deref(), Some(project_path.as_str()));
+        info.id
+    };
+    first.stop();
+
+    // After a daemon restart the project, its state and its session's tag
+    // are all still there.
+    let second = TestDaemon::start(&state_dir).await;
+    let mut client = second.client().await;
+    let recent = client.list_recent_projects().await.unwrap();
+    assert_eq!(recent.len(), 1);
+    assert!(recent[0].exists);
+    let reopened = client.open_project(&project_path).await.unwrap();
+    assert_eq!(reopened.state, serde_json::json!({"tabs": ["a.qmd"]}));
+    let sessions = client.list_sessions().await.unwrap();
+    let tagged = sessions.iter().find(|s| s.id == session).unwrap();
+    assert_eq!(tagged.project.as_deref(), Some(project_path.as_str()));
+    let (events, _) = run(&mut client, &session, "import os; print(os.getcwd())").await;
+    assert!(stdout_of(&events).contains("my-analysis"));
+
+    client.forget_project(&project_path).await.unwrap();
+    assert!(client.list_recent_projects().await.unwrap().is_empty());
+    assert!(
+        project.is_dir(),
+        "forgetting a project must not touch its files"
+    );
+    client.shutdown(&session).await.unwrap();
+}

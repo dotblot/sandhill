@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, onMount, Show } from "solid-js";
-import { CONFLICT_ERROR, type DirEntry, type FileText } from "../backend/types";
+import type { Shell } from "../backend";
+import { CONFLICT_ERROR, type DirEntry, type FileText, type ProjectInfo, type ProjectState } from "../backend/types";
 import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
@@ -8,14 +9,16 @@ import { pickKernel, type Workspace } from "../model/workspace";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileTree } from "./FileTree";
 import { KernelBar } from "./KernelBar";
+import { takeLegacyState } from "./legacy";
 
-const ROOT_KEY = "sandhill.root";
-const TABS_KEY = "sandhill.tabs";
+const SAVE_STATE_MS = 300;
 
-export function App(props: { ws: Workspace }) {
+/** A project window: the project's files, its open documents and their kernels. */
+export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const ws = props.ws;
-  const [root, setRoot] = createSignal<string>(load(ROOT_KEY) ?? "");
-  const [rootInput, setRootInput] = createSignal(root());
+  const root = () => props.project;
+  const name = props.project.slice(props.project.lastIndexOf("/") + 1) || props.project;
+  const [missing, setMissing] = createSignal<string>();
   const [docs, setDocs] = createSignal<Doc[]>([]);
   const [active, setActive] = createSignal<Doc>();
   const [treeKey, setTreeKey] = createSignal(0);
@@ -24,21 +27,45 @@ export function App(props: { ws: Workspace }) {
   let docArea!: HTMLDivElement;
   const [restored, setRestored] = createSignal(false);
 
-  // Once connected, default to the home folder and reopen the last tabs.
+  // Once connected, reopen the documents that were open in this project.
+  let restoring = false;
   createEffect(() => {
-    const host = ws.host();
-    if (!host || restored()) return;
-    if (!root()) changeRoot(host.home);
-    const tabs: string[] = JSON.parse(load(TABS_KEY) ?? "[]");
+    if (!ws.host() || restoring) return;
+    restoring = true;
     void (async () => {
-      for (const path of tabs) await open(path, true);
+      let project: ProjectInfo;
+      try {
+        project = await ws.call<ProjectInfo>("open_project", { path: props.project });
+      } catch (err) {
+        setMissing(message(err));
+        // Try again after a reconnect, in case the daemon was what failed.
+        restoring = false;
+        return;
+      }
+      setMissing(undefined);
+      const state = project.state ?? takeLegacyState(props.project);
+      for (const path of state.tabs ?? []) await open(path, true);
+      const last = docs().find((d) => d.path === state.active);
+      if (last) setActive(last);
       setRestored(true);
     })();
   });
 
+  // The daemon keeps the open documents for next time, not the folder.
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  const projectState = (): ProjectState => ({ tabs: docs().map((d) => d.path), active: active()?.path });
+  const saveState = () => {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    return ws
+      .call("save_project_state", { path: props.project, state: projectState() })
+      .catch((err) => console.warn("could not save the project's tabs", err));
+  };
   createEffect(() => {
-    const paths = docs().map((d) => d.path);
-    if (restored()) save(TABS_KEY, JSON.stringify(paths));
+    projectState();
+    if (!restored()) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => void saveState(), SAVE_STATE_MS);
   });
 
   // Mount each document once, keep it alive while hidden so editors keep their state.
@@ -57,13 +84,6 @@ export function App(props: { ws: Workspace }) {
     el.hidden = false;
     queueMicrotask(() => doc.focus());
   });
-
-  function changeRoot(path: string) {
-    const clean = path.trim().replace(/(.)\/+$/, "$1");
-    setRoot(clean);
-    setRootInput(clean);
-    save(ROOT_KEY, clean);
-  }
 
   async function open(path: string, quiet = false): Promise<Doc | undefined> {
     const existing = docs().find((d) => d.path === path);
@@ -128,18 +148,20 @@ export function App(props: { ws: Workspace }) {
     return true;
   }
 
-  async function confirmQuit(): Promise<boolean> {
+  async function confirmClose(): Promise<boolean> {
     const dirty = docs().filter((d) => d.dirty());
-    if (!dirty.length) return true;
-    const choice = await ask(
-      dirty.length === 1 ? `Save changes to ${dirty[0].name}?` : `Save changes to ${dirty.length} documents?`,
-      ["Save", "Don't save", "Cancel"],
-      "Running code keeps running either way.",
-    );
-    if (choice === "Cancel") return false;
-    if (choice === "Save") {
-      for (const doc of dirty) if (!(await saveDoc(doc))) return false;
+    if (dirty.length) {
+      const choice = await ask(
+        dirty.length === 1 ? `Save changes to ${dirty[0].name}?` : `Save changes to ${dirty.length} documents?`,
+        ["Save", "Don't save", "Cancel"],
+        "Running code keeps running either way.",
+      );
+      if (choice === "Cancel") return false;
+      if (choice === "Save") {
+        for (const doc of dirty) if (!(await saveDoc(doc))) return false;
+      }
     }
+    if (saveTimer !== undefined) await saveState();
     return true;
   }
 
@@ -173,7 +195,7 @@ export function App(props: { ws: Workspace }) {
 
   onMount(() => {
     ws.backend.onMenu?.(command);
-    ws.backend.onCloseRequested?.(confirmQuit);
+    ws.backend.onCloseRequested?.(confirmClose);
     window.addEventListener("keydown", (e) => {
       // In the Mac app the menu bar owns these shortcuts.
       const mod = e.metaKey || e.ctrlKey;
@@ -201,18 +223,14 @@ export function App(props: { ws: Workspace }) {
   return (
     <div class="app">
       <aside class="sidebar">
-        <form
-          class="root-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            changeRoot(rootInput());
-          }}
-        >
-          <button type="button" title="Parent folder" onClick={() => changeRoot(root().replace(/\/[^/]+$/, "") || "/")}>
-            ↑
+        <div class="project-header">
+          <span class="project-name" title={props.project}>
+            {name}
+          </span>
+          <button title="Open another project (⌘O)" onClick={() => void props.shell.showStart()}>
+            Projects
           </button>
-          <input value={rootInput()} onInput={(e) => setRootInput(e.currentTarget.value)} spellcheck={false} />
-        </form>
+        </div>
         <div class="sidebar-actions">
           <button onClick={() => createFile("qmd")}>New Quarto</button>
           <button onClick={() => createFile("ipynb")}>New notebook</button>
@@ -220,7 +238,7 @@ export function App(props: { ws: Workspace }) {
             ⟳
           </button>
         </div>
-        <Show when={root() && ws.link().status === "connected"}>
+        <Show when={!missing() && ws.link().status === "connected"}>
           <FileTree ws={ws} root={root()} onOpen={(p) => void open(p)} activePath={active()?.path} refreshKey={treeKey()} />
         </Show>
       </aside>
@@ -254,10 +272,22 @@ export function App(props: { ws: Workspace }) {
         <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} onError={notify} />}</Show>
         <div class="doc-area" ref={docArea}>
           <Show when={!active()}>
-            <div class="empty-state">
-              <p>Open a .qmd, .Rmd or .ipynb file from the sidebar.</p>
-              <p class="muted">Code runs in sessions that keep going when you close the app.</p>
-            </div>
+            <Show
+              when={!missing()}
+              fallback={
+                <div class="empty-state">
+                  <p>Cannot open this project: {missing()}</p>
+                  <p>
+                    <button onClick={() => void props.shell.showStart()}>Show projects</button>
+                  </p>
+                </div>
+              }
+            >
+              <div class="empty-state">
+                <p>Open a .qmd, .Rmd or .ipynb file from the sidebar.</p>
+                <p class="muted">Code runs in sessions that keep going when you close the app.</p>
+              </div>
+            </Show>
           </Show>
         </div>
         <footer class="status-bar" data-link={ws.link().status}>
@@ -274,20 +304,4 @@ export function App(props: { ws: Workspace }) {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function load(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function save(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Storage can be unavailable; remembering tabs is only a convenience.
-  }
 }

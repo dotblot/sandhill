@@ -44,6 +44,10 @@ pub enum Call {
         kernel: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
+        /// The project the session belongs to (its folder), for listing
+        /// sessions per project.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
     },
     /// Returns `Vec<SessionInfo>`, including ended sessions.
     ListSessions,
@@ -126,6 +130,25 @@ pub enum Call {
     /// including runs still in progress. Returns [`FileOutputs`].
     FileOutputs {
         file: String,
+    },
+    /// Opens a folder as a project: records it as recently opened and
+    /// returns [`ProjectInfo`] with the state saved for it.
+    OpenProject {
+        path: String,
+    },
+    /// Recently opened projects, most recent first. Returns `Vec<ProjectInfo>`
+    /// without their saved state.
+    ListRecentProjects,
+    /// Saves a project's personal state (open tabs and the like). The daemon
+    /// keeps it, not the project folder, so nothing is written into a
+    /// shared repository.
+    SaveProjectState {
+        path: String,
+        state: Value,
+    },
+    /// Removes a project from the recent list. Its files are untouched.
+    ForgetProject {
+        path: String,
     },
 }
 
@@ -223,6 +246,25 @@ pub struct SessionInfo {
     pub ended_ms: Option<i64>,
     /// Highest event sequence number journaled for this session (0 if none).
     pub last_seq: i64,
+    /// The project folder the session was started for, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+}
+
+/// A folder opened as a project on the daemon's machine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectInfo {
+    /// Absolute path, without a trailing slash.
+    pub path: String,
+    /// The folder's name.
+    pub name: String,
+    pub opened_ms: i64,
+    /// False when the folder no longer exists (moved or deleted).
+    pub exists: bool,
+    /// What the app saved with `save_project_state`; `null` if nothing yet,
+    /// and always `null` in `list_recent_projects`.
+    #[serde(default)]
+    pub state: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

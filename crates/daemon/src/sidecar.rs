@@ -222,6 +222,7 @@ mod tests {
                 status: SessionStatus::Running,
                 created_ms: 0,
                 ended_ms: None,
+                project: None,
             })
             .unwrap();
         let doc = dir.path().join("analysis.qmd");

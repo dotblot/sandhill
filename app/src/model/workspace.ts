@@ -1,6 +1,7 @@
-// App-wide state: the daemon link, kernels, sessions and their event
+// A window's state: the daemon link, kernels, sessions and their event
 // subscriptions. Documents ask it for a session per language and run code
-// through it.
+// through it. In a project window, sessions it starts are tagged with the
+// project.
 
 import { createSignal, type Setter } from "solid-js";
 import type { Backend, LinkState } from "../backend";
@@ -33,7 +34,11 @@ export class Workspace {
   /** Session id -> highest event seq received, for resubscribing after a reconnect. */
   private subscribed = new Map<string, number>();
 
-  constructor(readonly backend: Backend) {
+  constructor(
+    readonly backend: Backend,
+    /** The project folder this window works on, if any. */
+    readonly project?: string,
+  ) {
     [this.link, this.setLink] = createSignal<LinkState>({ status: "connecting" });
     [this.host, this.setHost] = createSignal<PingReply>();
     [this.kernelspecs, this.setKernelspecs] = createSignal<KernelspecInfo[]>([]);
@@ -71,13 +76,18 @@ export class Workspace {
     );
   }
 
+  /** Live sessions to offer in this window: its project's, and ones that belong to no project. */
+  projectSessions(language?: string): SessionInfo[] {
+    return this.liveSessions(language).filter((s) => !s.project || s.project === this.project);
+  }
+
   isBusy(session: string): boolean {
     this.activity();
     return this.runs.pending(session).length > 0;
   }
 
   async startSession(kernel: string, cwd?: string): Promise<SessionInfo> {
-    const info = await this.call<SessionInfo>("start_session", { kernel, cwd });
+    const info = await this.call<SessionInfo>("start_session", { kernel, cwd, project: this.project });
     await this.subscribe(info.id, info.last_seq);
     await this.refreshSessions();
     return info;

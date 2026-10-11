@@ -1,8 +1,12 @@
-//! The macOS menu bar. Commands that act on documents are sent to the UI as
-//! `menu://command` events with the item's id.
+//! The macOS menu bar. Commands that act on documents are sent to the
+//! focused window as `menu://command` events with the item's id.
+
+use std::sync::Arc;
 
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, Runtime, WebviewWindow};
+
+use crate::windows::Windows;
 
 pub const COMMAND: &str = "menu://command";
 
@@ -11,6 +15,8 @@ const SAVE: &str = "save";
 const CLOSE_TAB: &str = "close-tab";
 const RUN_ALL: &str = "run-all";
 const QUIT: &str = "quit";
+const OPEN_PROJECT: &str = "open-project";
+const CLOSE_WINDOW: &str = "close-window";
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let separator = || PredefinedMenuItem::separator(app);
@@ -37,10 +43,25 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "File",
         true,
         &[
+            &MenuItem::with_id(
+                app,
+                OPEN_PROJECT,
+                "Open Project…",
+                true,
+                Some("CmdOrCtrl+O"),
+            )?,
+            &separator()?,
             &MenuItem::with_id(app, SAVE, "Save", true, Some("CmdOrCtrl+S"))?,
             &separator()?,
             // Not the predefined Close Window, which would take Cmd+W.
             &MenuItem::with_id(app, CLOSE_TAB, "Close Tab", true, Some("CmdOrCtrl+W"))?,
+            &MenuItem::with_id(
+                app,
+                CLOSE_WINDOW,
+                "Close Window",
+                true,
+                Some("CmdOrCtrl+Shift+W"),
+            )?,
         ],
     )?;
     // Undo and Redo are left out so Cmd+Z reaches the editor, which keeps
@@ -83,17 +104,32 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 }
 
 pub fn handle<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
+    let windows = app.state::<Arc<Windows>>();
     match event.id().as_ref() {
-        QUIT => match app.get_webview_window("main") {
-            // The UI confirms, then the app exits with its last window.
-            Some(window) => {
+        // Each window confirms unsaved changes; the app exits with the last.
+        QUIT => windows.quit(app),
+        OPEN_PROJECT => {
+            if let Err(err) = windows.open_start(app) {
+                tracing::warn!("cannot open the start window: {err}");
+            }
+        }
+        CLOSE_WINDOW => {
+            if let Some(window) = focused(app) {
                 let _ = window.close();
             }
-            None => app.exit(0),
-        },
+        }
         id @ (SAVE | CLOSE_TAB | RUN_ALL) => {
-            let _ = app.emit(COMMAND, id);
+            if let Some(window) = focused(app) {
+                let target = EventTarget::webview_window(window.label());
+                let _ = app.emit_to(target, COMMAND, id);
+            }
         }
         _ => {}
     }
+}
+
+fn focused<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
+    app.webview_windows()
+        .into_values()
+        .find(|w| w.is_focused().unwrap_or(false))
 }

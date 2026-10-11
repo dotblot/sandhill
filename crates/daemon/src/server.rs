@@ -19,7 +19,7 @@ use crate::blobs::BlobStore;
 use crate::journal::Journal;
 use crate::paths::StateDir;
 use crate::session::SessionHandle;
-use crate::{files, memory, notebook, outputs, sidecar};
+use crate::{files, memory, notebook, outputs, projects, sidecar};
 
 const REPLAY_PAGE: u32 = 500;
 const HISTORY_LIMIT: u32 = 5000;
@@ -163,7 +163,11 @@ impl Daemon {
                 build: crate::build_id().to_string(),
             })?,
             Call::ListKernelspecs => serde_json::to_value(crate::kernel::list_kernelspecs().await)?,
-            Call::StartSession { kernel, cwd } => {
+            Call::StartSession {
+                kernel,
+                cwd,
+                project,
+            } => {
                 let cwd = match cwd {
                     Some(cwd) => PathBuf::from(cwd),
                     None => std::env::var_os("HOME")
@@ -178,6 +182,7 @@ impl Daemon {
                     &self.state.kernels_dir(),
                     &kernel,
                     &cwd,
+                    project.map(|p| projects::normalize(&p)).transpose()?,
                 )
                 .await?;
                 let id = handle.id.clone();
@@ -281,6 +286,27 @@ impl Daemon {
                     })
                     .await?,
                 )?
+            }
+            Call::OpenProject { path } => {
+                let journal = self.journal.clone();
+                serde_json::to_value(blocking(move || projects::open(&journal, &path)).await?)?
+            }
+            Call::ListRecentProjects => {
+                let journal = self.journal.clone();
+                serde_json::to_value(blocking(move || projects::recent(&journal)).await?)?
+            }
+            Call::SaveProjectState { path, state } => {
+                let journal = self.journal.clone();
+                blocking(move || {
+                    Ok(journal.save_project_state(&projects::normalize(&path)?, &state)?)
+                })
+                .await?;
+                Value::Null
+            }
+            Call::ForgetProject { path } => {
+                let journal = self.journal.clone();
+                blocking(move || Ok(journal.forget_project(&projects::normalize(&path)?)?)).await?;
+                Value::Null
             }
             Call::Subscribe { .. } | Call::Unsubscribe { .. } => unreachable!("handled earlier"),
         })
