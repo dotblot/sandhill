@@ -1,12 +1,146 @@
-import { createResource, createSignal, For, Show } from "solid-js";
-import type { Shell } from "../backend";
+import { createResource, createSignal, For, onMount, Show } from "solid-js";
+import { LOCAL_HOST, type Shell } from "../backend";
 import type { DirEntry, ProjectInfo } from "../backend/types";
 import type { Workspace } from "../model/workspace";
 import { Dialogs, notify } from "./dialogs";
 import { previousFolder as legacyFolder } from "./legacy";
+import { linkText } from "./linkText";
 
-/** The start window: recent projects on this host, and opening a folder as a new one. */
-export function StartScreen(props: { ws: Workspace; shell: Shell }) {
+const HOST_KEY = "sandhill.startHost";
+
+/**
+ * The start window: this Mac and the servers, each with its recent projects
+ * and a way to open a folder there as a new project.
+ */
+export function StartScreen(props: { shell: Shell; workspace: (host: string) => Promise<Workspace> }) {
+  const [servers, setServers] = createSignal<string[]>([]);
+  const [host, setHost] = createSignal(LOCAL_HOST);
+  const [adding, setAdding] = createSignal(false);
+  // One connection per host for as long as the window is open.
+  const workspaces = new Map<string, Promise<Workspace>>();
+  const workspaceFor = (h: string) => {
+    let ws = workspaces.get(h);
+    if (!ws) workspaces.set(h, (ws = props.workspace(h)));
+    return ws;
+  };
+  const [workspace] = createResource(host, workspaceFor);
+
+  onMount(async () => {
+    const list = await props.shell.listServers().catch(() => [] as string[]);
+    setServers(list);
+    const last = storedHost();
+    if (last && list.includes(last)) setHost(last);
+  });
+
+  function select(h: string) {
+    setHost(h);
+    setAdding(false);
+    try {
+      localStorage.setItem(HOST_KEY, h);
+    } catch {
+      // Private mode; the choice just isn't remembered.
+    }
+  }
+
+  async function add(h: string) {
+    try {
+      setServers(await props.shell.addServer(h));
+      select(h.trim());
+    } catch (err) {
+      notify(message(err));
+    }
+  }
+
+  async function remove(h: string) {
+    try {
+      setServers(await props.shell.removeServer(h));
+    } catch (err) {
+      notify(message(err));
+    }
+    if (host() === h) select(LOCAL_HOST);
+  }
+
+  return (
+    <div class="start">
+      <header class="start-header">
+        <h1>Sandhill</h1>
+      </header>
+      <nav class="hosts" aria-label="Where to work">
+        <button class="host" classList={{ active: host() === LOCAL_HOST }} onClick={() => select(LOCAL_HOST)}>
+          This Mac
+        </button>
+        <For each={servers()}>
+          {(server) => (
+            <span class="host-item">
+              <button class="host" classList={{ active: host() === server }} onClick={() => select(server)}>
+                {server}
+              </button>
+              <button class="host-remove" title="Remove from this list" onClick={() => void remove(server)}>
+                ×
+              </button>
+            </span>
+          )}
+        </For>
+        <button class="host add" classList={{ active: adding() }} onClick={() => setAdding(!adding())}>
+          + Server…
+        </button>
+      </nav>
+      <Show when={adding()}>
+        <AddServer onAdd={(h) => void add(h)} onCancel={() => setAdding(false)} />
+      </Show>
+      <Show when={workspace()} keyed fallback={<p class="muted">Connecting…</p>}>
+        {(ws) => <HostProjects ws={ws} shell={props.shell} />}
+      </Show>
+      <Dialogs />
+    </div>
+  );
+}
+
+function storedHost(): string | null {
+  try {
+    return localStorage.getItem(HOST_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function AddServer(props: { onAdd: (host: string) => void; onCancel: () => void }) {
+  const [text, setText] = createSignal("");
+  return (
+    <form
+      class="add-server"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (text().trim()) props.onAdd(text());
+      }}
+    >
+      <div class="add-server-row">
+        <input
+          value={text()}
+          onInput={(e) => setText(e.currentTarget.value)}
+          placeholder="lab, or you@server.example.org"
+          spellcheck={false}
+          autocapitalize="off"
+          aria-label="Server"
+          ref={(el) => queueMicrotask(() => el.focus())}
+        />
+        <button type="button" onClick={props.onCancel}>
+          Cancel
+        </button>
+        <button type="submit" class="primary" disabled={!text().trim()}>
+          Add
+        </button>
+      </div>
+      <p class="muted">
+        Sandhill connects with ssh, using your ~/.ssh/config and keys, so a name from there works. The first time,
+        it installs sandhilld in ~/.local/bin on the server.
+      </p>
+    </form>
+  );
+}
+
+/** One host's recent projects, and opening a folder there. */
+function HostProjects(props: { ws: Workspace; shell: Shell }) {
   const ws = props.ws;
   const connected = () => ws.link().status === "connected";
   const [recent, { refetch }] = createResource(
@@ -40,15 +174,15 @@ export function StartScreen(props: { ws: Workspace; shell: Shell }) {
     void refetch();
   }
 
-  // Before projects the app showed one folder; offer it until a project exists.
-  const previousFolder = () => (recent.loading || recent()?.length ? undefined : legacyFolder());
+  // Before projects the app showed one folder on this Mac; offer it until a project exists.
+  const previousFolder = () =>
+    ws.backend.host !== LOCAL_HOST || recent.loading || recent()?.length ? undefined : legacyFolder();
 
   return (
-    <div class="start">
-      <header class="start-header">
-        <h1>Sandhill</h1>
-        <span class="muted">{linkText(ws)}</span>
-      </header>
+    <>
+      <p class="start-link muted" data-link={ws.link().status}>
+        {linkText(ws)}
+      </p>
       <div class="start-actions">
         <button class="primary" disabled={!connected()} onClick={() => setPicking(true)}>
           Open Folder…
@@ -58,7 +192,7 @@ export function StartScreen(props: { ws: Workspace; shell: Shell }) {
         <FolderPicker ws={ws} onPick={(path) => void open(path)} onCancel={() => setPicking(false)} />
       </Show>
       <section class="recent">
-        <h2>{ws.backend.host === "local" ? "On this Mac" : ws.host()?.hostname}</h2>
+        <h2>{ws.backend.host === LOCAL_HOST ? "On this Mac" : `On ${ws.host()?.hostname ?? ws.backend.host}`}</h2>
         <Show when={previousFolder()}>
           {(folder) => (
             <ul class="recent-list">
@@ -71,7 +205,10 @@ export function StartScreen(props: { ws: Workspace; shell: Shell }) {
             </ul>
           )}
         </Show>
-        <Show when={recent()?.length || previousFolder()} fallback={<EmptyRecent loading={!recent()} />}>
+        <Show
+          when={recent()?.length || previousFolder()}
+          fallback={<EmptyRecent loading={connected() && !recent()} />}
+        >
           <ul class="recent-list">
             <For each={recent()}>
               {(project) => (
@@ -96,8 +233,7 @@ export function StartScreen(props: { ws: Workspace; shell: Shell }) {
           </ul>
         </Show>
       </section>
-      <Dialogs />
-    </div>
+    </>
   );
 }
 
@@ -159,13 +295,6 @@ function FolderPicker(props: { ws: Workspace; onPick: (path: string) => void; on
       </div>
     </div>
   );
-}
-
-function linkText(ws: Workspace): string {
-  const link = ws.link();
-  if (link.status === "connected") return ws.host() ? `sandhilld ${ws.host()!.daemon_version} on ${ws.host()!.hostname}` : "";
-  if (link.status === "connecting") return "Connecting to sandhilld…";
-  return `Disconnected${link.error ? `: ${link.error}` : ""}. Retrying…`;
 }
 
 /** "today", "yesterday", "3 days ago", or the date. */

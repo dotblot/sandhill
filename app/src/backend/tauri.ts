@@ -25,6 +25,20 @@ export class TauriShell implements Shell {
     // The start screen has nothing to confirm, so no close request.
     return getCurrentWindow().destroy();
   }
+
+  listServers(): Promise<string[]> {
+    return invoke("list_servers");
+  }
+
+  addServer(host: string): Promise<string[]> {
+    return invoke<string[]>("add_server", { host }).catch((err) => {
+      throw new Error(String(err));
+    });
+  }
+
+  removeServer(host: string): Promise<string[]> {
+    return invoke("remove_server", { host });
+  }
 }
 
 class TauriBackend implements Backend {
@@ -80,7 +94,7 @@ class TauriBackend implements Backend {
   }
 
   private setLink(state: LinkState) {
-    this.link = { status: state.status, error: state.error };
+    this.link = { status: state.status, error: state.error, detail: state.detail };
     this.links.emit(this.link);
   }
 }

@@ -9,8 +9,8 @@ running on the server after you close the app, and Claude Code, Codex or open
 and local models (through omp) working directly in your live sessions.
 
 > Status: early development. The Mac app opens projects of Quarto and Jupyter
-> notebooks and runs them on this Mac; working against a server over ssh is
-> next. See the roadmap below.
+> notebooks and runs them on this Mac or on a Linux server over ssh; agents
+> are next. See the roadmap below.
 
 ## How it fits together
 
@@ -32,6 +32,7 @@ The full design, including the reasoning behind each choice, is in
 | `app/` | The Mac app: TypeScript UI in `src/`, Tauri shell in `src-tauri/` |
 | `crates/daemon` | `sandhilld`: kernel sessions, output journal, socket server |
 | `crates/proto` | Wire protocol types and the async client the app and CLI share |
+| `crates/link` | How the app reaches sandhilld: on this Mac, or over ssh (installing it there) |
 | `crates/cli` | `sandhill`: terminal client, useful for scripting and testing |
 | `packaging/` | systemd (server) and launchd (Mac local mode) service files |
 | `docs/` | [Design](docs/design.md) and [protocol](docs/protocol.md) |
@@ -50,6 +51,12 @@ npm run bundle        # builds target/release/bundle/macos/Sandhill.app, with sa
 open ../target/release/bundle/macos/Sandhill.app
 ```
 
+For the app to install sandhilld on servers, the bundle needs Linux builds
+of it, which `npm run bundle` makes when cargo-zigbuild is installed (CI
+builds always have them):
+`rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl`,
+`cargo install cargo-zigbuild` and `brew install zig`.
+
 Every CI run also builds the app: open the run on GitHub's Actions tab and
 download **Sandhill-macos-arm64** under Artifacts. The app isn't notarized,
 so after unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once,
@@ -61,6 +68,24 @@ next launch with their tabs, and each document reattaches to the kernels that
 last ran it. Code keeps running after you quit; reopening a file shows its
 outputs again, including output printed while the app was closed. Quarto and
 R Markdown outputs are saved next to the file in `.<name>.out/`.
+
+### Work on a server
+
+On the start window, click **+ Server…** and type the server as you would
+after `ssh`: a `Host` from `~/.ssh/config`, or `user@host`. Pick it, open a
+folder there, and the project window works as it does on the Mac.
+
+- The app runs your Mac's own `ssh`, so `~/.ssh/config`, keys, the ssh agent
+  and jump hosts work as they do in Terminal. It can't type a password for
+  you: `ssh yourserver` must log in without asking for one (set up a key
+  with `ssh-copy-id yourserver`).
+- The first time, the app installs sandhilld in `~/.local/bin` on the
+  server, and replaces it when a newer app brings another build. It needs
+  no root and opens no ports, and runs on any 64-bit Linux, Intel or ARM.
+- Kernels start with the `PATH` your login shell sets up, so conda and the
+  tools your shell startup files add are found.
+- Code keeps running on the server when the app quits or the network drops.
+  The app reconnects on its own and shows what was printed in the meantime.
 
 To work on the UI, `cargo build -p sandhill-daemon` once, then
 `npm run tauri dev` in `app/` reloads the window as you edit. Without the
@@ -90,6 +115,6 @@ WebKitGTK development packages; see `.github/workflows/ci.yml`) and
 
 1. **Server core** (done): `sandhilld` starts Python and R kernels, runs code, and records every output so a client can disconnect and replay later.
 2. **First Mac app loop** (done): open `.qmd`/`.ipynb`, run a chunk, see inline output, close and reopen with outputs intact.
-3. **Server and projects**: RStudio-style projects, each in its own window (done); connect to an Ubuntu server over ssh, with work that keeps running when the app closes (next).
+3. **Server and projects** (done): RStudio-style projects, each in its own window; connect to an Ubuntu server over ssh, with work that keeps running when the app closes.
 4. **Agents**: Claude Code and Codex in a terminal pane, MCP tools for live sessions, omp chat for open and local models.
 5. **Positron-style panes**: Variables, Data Explorer, Plots, Help, Viewer.

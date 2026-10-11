@@ -10,6 +10,7 @@ import { ask, Dialogs, notify } from "./dialogs";
 import { FileTree } from "./FileTree";
 import { KernelBar } from "./KernelBar";
 import { takeLegacyState } from "./legacy";
+import { linkText } from "./linkText";
 
 const SAVE_STATE_MS = 300;
 
@@ -226,15 +227,6 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     });
   });
 
-  const linkText = () => {
-    const link = ws.link();
-    const host = ws.host();
-    if (link.status === "connected" && host) return `Connected to sandhilld ${host.daemon_version} on ${host.hostname}`;
-    if (link.status === "connected") return "Connected";
-    if (link.status === "connecting") return "Connecting to sandhilld…";
-    return `Disconnected${link.error ? `: ${link.error}` : ""}. Retrying…`;
-  };
-
   return (
     <div class="app">
       <aside class="sidebar">
@@ -307,7 +299,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         </div>
         <footer class="status-bar" data-link={ws.link().status}>
           <span class="link-dot" />
-          {linkText()}
+          {linkText(ws)}
           <span class="spacer" />
           {active()?.path ?? ""}
         </footer>

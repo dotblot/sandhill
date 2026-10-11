@@ -32,6 +32,19 @@ export class BrowserShell implements Shell {
     // The page was already replaced by the project it opened.
   }
 
+  // The development bridge reaches only the daemon on this machine.
+  async listServers(): Promise<string[]> {
+    return [];
+  }
+
+  async addServer(_host: string): Promise<string[]> {
+    throw new Error("Servers can be added in the Mac app, not in the browser");
+  }
+
+  async removeServer(_host: string): Promise<string[]> {
+    return [];
+  }
+
   private query(extra: Record<string, string>): string {
     const query = new URLSearchParams(extra);
     const bridge = this.params.get("bridge");
