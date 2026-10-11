@@ -29,6 +29,8 @@ Responses can arrive out of order; match them by `id`.
 | `history` | `session`, `since_seq`, `limit?` | `{events, next_seq}` |
 | `get_blob` | `hash`, `near?` | `{hash, data}` |
 | `read_file` | `path` | `{path, text, mtime_ms}` |
+| `read_notebook` | `path` | `{path, text, mtime_ms}`, plots and large values as blob references |
+| `write_notebook` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}`; blob references in outputs are written out as their values |
 | `write_file` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}` |
 | `list_dir` | `path` | `[{name, kind, size, mtime_ms}]`, directories first |
 | `file_outputs` | `file` | `{file, cells, seq}` |
@@ -107,6 +109,18 @@ the app edits files the same way locally and on a server.
 - `.ipynb` outputs live in the notebook itself, which only the app writes.
   On opening a notebook, the app takes outputs from `file_outputs` for
   cells whose latest run is newer than the file.
+- `read_notebook` reads a `.ipynb` the way the app wants it: output values
+  that are binary or over 64 KB are moved to the blob store and replaced by
+  blob references, so plots load by URL rather than as base64 text.
+- `write_notebook` takes the notebook back with its blob references (and
+  those of new outputs from the journal) and writes each referenced value
+  into the file, so a save doesn't bring the plots through the app either.
+  Send the text as nbformat lays it out (keys sorted, one-space indent);
+  values put back are laid out the same way, text split into lines. It
+  checks `expected_mtime_ms` like `write_file`, and fails without touching
+  the file if a referenced value is missing from the store. With a daemon
+  that predates these two calls, the app reads with `read_file` and puts
+  the values back itself (with `get_blob`) before `write_file`.
 
 ## Guarantees
 

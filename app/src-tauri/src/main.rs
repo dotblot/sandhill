@@ -3,11 +3,13 @@
 
 mod daemon;
 mod link;
+mod memory;
 mod menu;
 
 use std::sync::Arc;
 
 fn main() -> anyhow::Result<()> {
+    memory::configure();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),

@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 /// String values longer than this are moved out of the journal regardless of
 /// MIME type.
-const INLINE_LIMIT: usize = 64 * 1024;
+pub const INLINE_LIMIT: usize = 64 * 1024;
 
 /// Output message types whose `content.data` is a MIME bundle.
 const MIME_BUNDLE_TYPES: &[&str] = &["display_data", "update_display_data", "execute_result"];
@@ -79,7 +79,7 @@ impl BlobStore {
     }
 }
 
-fn is_binary_mime(mime: &str) -> bool {
+pub fn is_binary_mime(mime: &str) -> bool {
     mime.starts_with("image/") && mime != "image/svg+xml" || mime == "application/pdf"
 }
 

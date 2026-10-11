@@ -72,6 +72,12 @@ export class CellOutput {
     this.detach();
   }
 
+  /** Called as the output moves far from view and back. */
+  setNearView(near: boolean) {
+    if (near) this.area.resume();
+    else this.area.suspend();
+  }
+
   private render(info: OutputInfo) {
     this.info = info;
     this.area.update(info.outputs);

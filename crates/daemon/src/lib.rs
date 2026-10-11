@@ -7,6 +7,8 @@ pub mod files;
 pub mod journal;
 pub mod kernel;
 pub mod kernelspecs;
+pub mod memory;
+pub mod notebook;
 pub mod outputs;
 pub mod paths;
 pub mod server;
