@@ -52,6 +52,18 @@ CREATE INDEX IF NOT EXISTS events_by_run ON events(run_id, seq);
 CREATE INDEX IF NOT EXISTS runs_by_cell ON runs(cell_file, cell_id);
 ";
 
+/// Changes to the schema after the first release, applied in order. The
+/// database's `user_version` records how many have run.
+const MIGRATIONS: &[&str] = &[
+    // 1: projects, and the project each session belongs to.
+    "ALTER TABLE sessions ADD COLUMN project TEXT;
+     CREATE TABLE projects (
+         path      TEXT PRIMARY KEY,
+         opened_ms INTEGER NOT NULL,
+         state     TEXT
+     );",
+];
+
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
     #[error(transparent)]
@@ -79,6 +91,7 @@ pub struct SessionRecord {
     pub status: SessionStatus,
     pub created_ms: i64,
     pub ended_ms: Option<i64>,
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +130,7 @@ impl Journal {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Journal {
             conn: Mutex::new(conn),
             blobs,
@@ -130,8 +144,8 @@ impl Journal {
     pub fn insert_session(&self, s: &SessionRecord) -> Result<()> {
         self.conn.lock().unwrap().execute(
             "INSERT INTO sessions (id, kernel, language, cwd, connection_file, client_session,
-                                   pid, interrupt_mode, status, created_ms, ended_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                   pid, interrupt_mode, status, created_ms, ended_ms, project)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 s.id,
                 s.kernel,
@@ -144,6 +158,7 @@ impl Journal {
                 status_str(s.status),
                 s.created_ms,
                 s.ended_ms,
+                s.project,
             ],
         )?;
         Ok(())
@@ -162,7 +177,7 @@ impl Journal {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, kernel, language, cwd, connection_file, client_session, pid,
-                    interrupt_mode, status, created_ms, ended_ms
+                    interrupt_mode, status, created_ms, ended_ms, project
              FROM sessions ORDER BY created_ms",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -178,6 +193,7 @@ impl Journal {
                 status: parse_status(&row.get::<_, String>(8)?),
                 created_ms: row.get(9)?,
                 ended_ms: row.get(10)?,
+                project: row.get(11)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -194,7 +210,53 @@ impl Journal {
             created_ms: record.created_ms,
             ended_ms: record.ended_ms,
             last_seq: self.last_seq(&record.id)?,
+            project: record.project.clone(),
         })
+    }
+
+    /// Records that `path` was opened as a project and returns its saved state.
+    pub fn open_project(&self, path: &str) -> Result<Value> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO projects (path, opened_ms) VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET opened_ms = excluded.opened_ms",
+            params![path, now_ms()],
+        )?;
+        let state: Option<String> = conn.query_row(
+            "SELECT state FROM projects WHERE path = ?1",
+            params![path],
+            |row| row.get(0),
+        )?;
+        Ok(match state {
+            Some(text) => serde_json::from_str(&text)?,
+            None => Value::Null,
+        })
+    }
+
+    /// `(path, opened_ms)` of every recorded project, most recent first.
+    pub fn recent_projects(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT path, opened_ms FROM projects ORDER BY opened_ms DESC, path")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn save_project_state(&self, path: &str, state: &Value) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO projects (path, opened_ms, state) VALUES (?1, ?2, ?3)
+             ON CONFLICT(path) DO UPDATE SET state = excluded.state",
+            params![path, now_ms(), serde_json::to_string(state)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn forget_project(&self, path: &str) -> Result<()> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM projects WHERE path = ?1", params![path])?;
+        Ok(())
     }
 
     pub fn last_seq(&self, session: &str) -> Result<i64> {
@@ -429,6 +491,17 @@ fn parse_status(s: &str) -> SessionStatus {
     }
 }
 
+fn migrate(conn: &Connection) -> Result<()> {
+    let done: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    for (version, migration) in (1i64..).zip(MIGRATIONS).skip(done.max(0) as usize) {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(migration)?;
+        tx.pragma_update(None, "user_version", version)?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,7 +524,63 @@ mod tests {
             status: SessionStatus::Running,
             created_ms: 0,
             ended_ms: None,
+            project: None,
         }
+    }
+
+    #[test]
+    fn projects_are_listed_most_recent_first_with_their_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = journal(dir.path());
+        assert_eq!(j.open_project("/w/a").unwrap(), Value::Null);
+        j.save_project_state("/w/a", &json!({"tabs": ["/w/a/x.qmd"]}))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        j.open_project("/w/b").unwrap();
+        let paths: Vec<_> = j
+            .recent_projects()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.0)
+            .collect();
+        assert_eq!(paths, ["/w/b", "/w/a"]);
+        // Reopening moves it to the top and brings back its state.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(
+            j.open_project("/w/a").unwrap(),
+            json!({"tabs": ["/w/a/x.qmd"]})
+        );
+        assert_eq!(j.recent_projects().unwrap()[0].0, "/w/a");
+        j.forget_project("/w/a").unwrap();
+        assert_eq!(j.recent_projects().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn journals_from_before_projects_are_upgraded() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("j.sqlite");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute(
+                "INSERT INTO sessions (id, kernel, language, cwd, connection_file,
+                                       client_session, pid, interrupt_mode, status, created_ms)
+                 VALUES ('old', 'ir', 'R', '/', '/k.json', 'c', 1, 'signal', 'running', 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let j = journal(dir.path());
+        let sessions = j.sessions().unwrap();
+        assert_eq!(sessions[0].id, "old");
+        assert_eq!(sessions[0].project, None);
+        let mut tagged = session("new");
+        tagged.project = Some("/w/a".into());
+        j.insert_session(&tagged).unwrap();
+        assert_eq!(j.sessions().unwrap()[1].project.as_deref(), Some("/w/a"));
+        // Opening again doesn't run the migrations twice.
+        drop(j);
+        journal(dir.path());
     }
 
     #[test]

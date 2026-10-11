@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the Sandhill window may do. Sandhill's own commands (daemon_call, link_state) are always allowed.",
-  "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-destroy"]
+  "description": "What Sandhill's windows may do. Sandhill's own commands are always allowed.",
+  "windows": [
+    "*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy"
+  ]
 }

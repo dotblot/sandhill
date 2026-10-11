@@ -13,8 +13,8 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
     Blob, Call, CellRef, DirEntry, Event, FileOutputs, FileText, FileWritten, HistoryPage,
-    KernelspecInfo, Outcome, PingReply, Request, RunStarted, ServerMessage, SessionInfo,
-    Subscribed,
+    KernelspecInfo, Outcome, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
+    SessionInfo, Subscribed,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -126,6 +126,7 @@ impl Client {
         self.call(Call::StartSession {
             kernel: kernel.into(),
             cwd: cwd.map(Into::into),
+            project: None,
         })
         .await
     }
@@ -223,6 +224,26 @@ impl Client {
 
     pub async fn file_outputs(&self, file: &str) -> Result<FileOutputs> {
         self.call(Call::FileOutputs { file: file.into() }).await
+    }
+
+    pub async fn open_project(&self, path: &str) -> Result<ProjectInfo> {
+        self.call(Call::OpenProject { path: path.into() }).await
+    }
+
+    pub async fn list_recent_projects(&self) -> Result<Vec<ProjectInfo>> {
+        self.call(Call::ListRecentProjects).await
+    }
+
+    pub async fn save_project_state(&self, path: &str, state: serde_json::Value) -> Result<()> {
+        self.call(Call::SaveProjectState {
+            path: path.into(),
+            state,
+        })
+        .await
+    }
+
+    pub async fn forget_project(&self, path: &str) -> Result<()> {
+        self.call(Call::ForgetProject { path: path.into() }).await
     }
 }
 

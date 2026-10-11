@@ -8,6 +8,7 @@ pub mod journal;
 pub mod kernel;
 pub mod outputs;
 pub mod paths;
+pub mod projects;
 pub mod server;
 pub mod session;
 pub mod sidecar;

@@ -1,11 +1,13 @@
-//! The app's connection to sandhilld, shared by every page load.
+//! The app's connections to sandhilld, one per host, shared by every window
+//! that works on that host.
 //!
-//! The UI reaches the daemon through three doors, which `app/src/backend/tauri.ts`
+//! The UI reaches a daemon through three doors, which `app/src/backend/tauri.ts`
 //! wraps: the `daemon_call` command for requests, `daemon://event` and
 //! `daemon://link` events, and the `sandhill-blob:` protocol for plots and
-//! other large outputs.
+//! other large outputs. A window first calls `use_host`; events for a host
+//! go only to the windows using it.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,10 +16,14 @@ use sandhill_proto::client::{Client, ClientError};
 use sandhill_proto::{Blob, Call};
 use serde::Serialize;
 use serde_json::Value;
+use tauri::async_runtime::JoinHandle;
 use tauri::http::{Request, Response, StatusCode, header};
-use tauri::{AppHandle, Emitter, Manager, Runtime, State, UriSchemeContext, UriSchemeResponder};
+use tauri::{
+    AppHandle, Emitter, EventTarget, Manager, Runtime, State, UriSchemeContext, UriSchemeResponder,
+    WebviewWindow,
+};
 
-use crate::daemon;
+use crate::daemon::{self, Target};
 
 pub const EVENT: &str = "daemon://event";
 pub const LINK: &str = "daemon://link";
@@ -25,8 +31,8 @@ pub const BLOB_SCHEME: &str = "sandhill-blob";
 
 const RETRY_MIN: Duration = Duration::from_millis(500);
 const RETRY_MAX: Duration = Duration::from_secs(5);
-/// Decoded blobs kept in memory, so reopening a document doesn't fetch its
-/// plots again (that matters over ssh).
+/// Decoded blobs kept in memory per host, so reopening a document doesn't
+/// fetch its plots again (that matters over ssh).
 const BLOB_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -39,42 +45,168 @@ pub enum Status {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LinkState {
+    pub host: String,
     pub status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
-pub struct Link {
-    client: Mutex<Option<Arc<Client>>>,
-    state: Mutex<LinkState>,
-    blobs: Mutex<BlobCache>,
+/// Every host's connection, and which windows use which host.
+#[derive(Default)]
+pub struct Links {
+    hosts: Mutex<HashMap<String, Arc<Link>>>,
+    /// Window label -> hosts it uses.
+    windows: Mutex<HashMap<String, HashSet<String>>>,
 }
 
-impl Default for Link {
-    fn default() -> Self {
-        Link {
-            client: Mutex::new(None),
-            state: Mutex::new(LinkState {
-                status: Status::Connecting,
-                error: None,
-            }),
-            blobs: Mutex::default(),
+impl Links {
+    /// Connects to `host` for `window`, if nothing is connected yet.
+    fn use_host<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        window: &str,
+        host: &str,
+    ) -> Result<LinkState, String> {
+        let target = Target::parse(host).map_err(|err| err.to_string())?;
+        self.windows
+            .lock()
+            .unwrap()
+            .entry(window.to_string())
+            .or_default()
+            .insert(host.to_string());
+        let link = self
+            .hosts
+            .lock()
+            .unwrap()
+            .entry(host.to_string())
+            .or_insert_with(|| Link::start(app.clone(), host.to_string(), target))
+            .clone();
+        Ok(link.state())
+    }
+
+    fn link(&self, host: &str) -> Option<Arc<Link>> {
+        self.hosts.lock().unwrap().get(host).cloned()
+    }
+
+    fn windows_using(&self, host: &str) -> Vec<String> {
+        self.windows
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, hosts)| hosts.contains(host))
+            .map(|(label, _)| label.clone())
+            .collect()
+    }
+
+    /// Forgets a closed window, and disconnects from hosts no window uses.
+    pub fn release_window(&self, window: &str) {
+        let Some(hosts) = self.windows.lock().unwrap().remove(window) else {
+            return;
+        };
+        for host in hosts {
+            if self.windows_using(&host).is_empty()
+                && let Some(link) = self.hosts.lock().unwrap().remove(&host)
+            {
+                link.stop();
+            }
+        }
+    }
+
+    fn emit<R: Runtime, S: Serialize + Clone>(
+        &self,
+        app: &AppHandle<R>,
+        host: &str,
+        event: &str,
+        payload: S,
+    ) {
+        for label in self.windows_using(host) {
+            let _ = app.emit_to(EventTarget::webview_window(label), event, payload.clone());
         }
     }
 }
 
+pub struct Link {
+    host: String,
+    client: Mutex<Option<Arc<Client>>>,
+    state: Mutex<LinkState>,
+    blobs: Mutex<BlobCache>,
+    task: Mutex<Option<JoinHandle<()>>>,
+}
+
 impl Link {
+    /// Connects in the background and reconnects whenever the connection
+    /// drops. The UI resubscribes from the last event it saw, so nothing is
+    /// missed.
+    fn start<R: Runtime>(app: AppHandle<R>, host: String, target: Target) -> Arc<Link> {
+        let link = Arc::new(Link {
+            host: host.clone(),
+            client: Mutex::new(None),
+            state: Mutex::new(LinkState {
+                host,
+                status: Status::Connecting,
+                error: None,
+            }),
+            blobs: Mutex::default(),
+            task: Mutex::new(None),
+        });
+        let task = tauri::async_runtime::spawn({
+            let link = link.clone();
+            async move {
+                let mut delay = RETRY_MIN;
+                loop {
+                    match daemon::connect(&target).await {
+                        Ok(connection) => {
+                            delay = RETRY_MIN;
+                            link.serve(&app, connection).await;
+                            tracing::warn!("lost the connection to sandhilld on {}", link.host);
+                            link.set_state(
+                                &app,
+                                Status::Disconnected,
+                                Some("lost the connection to sandhilld".into()),
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!("cannot reach sandhilld on {}: {err:#}", link.host);
+                            link.set_state(&app, Status::Disconnected, Some(format!("{err:#}")));
+                        }
+                    }
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(RETRY_MAX);
+                }
+            }
+        });
+        *link.task.lock().unwrap() = Some(task);
+        link
+    }
+
+    fn stop(&self) {
+        if let Some(task) = self.task.lock().unwrap().take() {
+            // Dropping the connection kills its `attach` process.
+            task.abort();
+        }
+        self.client.lock().unwrap().take();
+    }
+
     fn client(&self) -> Option<Arc<Client>> {
         self.client.lock().unwrap().clone()
     }
 
-    fn set_state<R: Runtime>(&self, app: &AppHandle<R>, status: Status, error: Option<String>) {
-        let state = LinkState { status, error };
-        *self.state.lock().unwrap() = state.clone();
-        let _ = app.emit(LINK, state);
+    fn state(&self) -> LinkState {
+        self.state.lock().unwrap().clone()
     }
 
-    /// Serves one connection until it drops, forwarding its events to the UI.
+    fn set_state<R: Runtime>(&self, app: &AppHandle<R>, status: Status, error: Option<String>) {
+        let state = LinkState {
+            host: self.host.clone(),
+            status,
+            error,
+        };
+        *self.state.lock().unwrap() = state.clone();
+        app.state::<Arc<Links>>().emit(app, &self.host, LINK, state);
+    }
+
+    /// Serves one connection until it drops, forwarding its events to the
+    /// windows that use this host.
     async fn serve<R: Runtime>(&self, app: &AppHandle<R>, connection: daemon::Connection) {
         let daemon::Connection { mut client, child } = connection;
         let Some(mut events) = client.take_events() else {
@@ -82,9 +214,10 @@ impl Link {
         };
         *self.client.lock().unwrap() = Some(Arc::new(client));
         self.set_state(app, Status::Connected, None);
-        tracing::info!("connected to sandhilld");
+        tracing::info!("connected to sandhilld on {}", self.host);
+        let links = app.state::<Arc<Links>>();
         while let Some(event) = events.recv().await {
-            let _ = app.emit(EVENT, event);
+            links.emit(app, &self.host, EVENT, event);
         }
         // Calls still waiting fail with "disconnected" once the client goes.
         self.client.lock().unwrap().take();
@@ -92,39 +225,24 @@ impl Link {
     }
 }
 
-/// Connects in the background and reconnects whenever the connection drops.
-/// The UI resubscribes from the last event it saw, so nothing is missed.
-pub fn start<R: Runtime>(app: AppHandle<R>, link: Arc<Link>) {
-    tauri::async_runtime::spawn(async move {
-        let mut delay = RETRY_MIN;
-        loop {
-            match daemon::connect().await {
-                Ok(connection) => {
-                    delay = RETRY_MIN;
-                    link.serve(&app, connection).await;
-                    tracing::warn!("lost the connection to sandhilld");
-                    link.set_state(
-                        &app,
-                        Status::Disconnected,
-                        Some("lost the connection to sandhilld".into()),
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!("cannot reach sandhilld: {err:#}");
-                    link.set_state(&app, Status::Disconnected, Some(format!("{err:#}")));
-                }
-            }
-            tokio::time::sleep(delay).await;
-            delay = (delay * 2).min(RETRY_MAX);
-        }
-    });
+/// Starts (or joins) the connection to `host` for the calling window and
+/// returns its current state; changes arrive as `daemon://link` events.
+#[tauri::command]
+pub fn use_host<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    links: State<'_, Arc<Links>>,
+    host: String,
+) -> Result<LinkState, String> {
+    links.use_host(&app, window.label(), &host)
 }
 
-/// Sends one protocol request. `method` and `params` are exactly what the
-/// daemon takes on the wire (see docs/protocol.md).
+/// Sends one protocol request to `host`. `method` and `params` are exactly
+/// what the daemon takes on the wire (see docs/protocol.md).
 #[tauri::command]
 pub async fn daemon_call(
-    link: State<'_, Arc<Link>>,
+    links: State<'_, Arc<Links>>,
+    host: String,
     method: String,
     params: Option<Value>,
 ) -> Result<Value, String> {
@@ -135,7 +253,10 @@ pub async fn daemon_call(
     }
     let call: Call = serde_json::from_value(Value::Object(request))
         .map_err(|err| format!("bad request: {err}"))?;
-    let client = link.client().ok_or("not connected to sandhilld")?;
+    let client = links
+        .link(&host)
+        .and_then(|link| link.client())
+        .ok_or("not connected to sandhilld")?;
     client.call(call).await.map_err(|err| match err {
         // The UI matches some daemon errors by prefix (`conflict:`).
         ClientError::Remote(message) => message,
@@ -143,13 +264,8 @@ pub async fn daemon_call(
     })
 }
 
-#[tauri::command]
-pub fn link_state(link: State<'_, Arc<Link>>) -> LinkState {
-    link.state.lock().unwrap().clone()
-}
-
-/// `sandhill-blob://localhost/<hash>?mime=<type>&near=<document>`: the
-/// blob's bytes, base64-decoded for binary types, so `<img>` can load it.
+/// `sandhill-blob://localhost/<hash>?mime=<type>&host=<host>&near=<document>`:
+/// the blob's bytes, base64-decoded for binary types, so `<img>` can load it.
 pub fn blob_protocol<R: Runtime>(
     ctx: UriSchemeContext<'_, R>,
     request: Request<Vec<u8>>,
@@ -157,14 +273,20 @@ pub fn blob_protocol<R: Runtime>(
 ) {
     let app = ctx.app_handle().clone();
     tauri::async_runtime::spawn(async move {
-        let link = app.state::<Arc<Link>>();
-        responder.respond(serve_blob(&link, &request.uri().to_string()).await);
+        let links = app.state::<Arc<Links>>();
+        responder.respond(serve_blob(&links, &request.uri().to_string()).await);
     });
 }
 
-async fn serve_blob(link: &Link, uri: &str) -> Response<Vec<u8>> {
+async fn serve_blob(links: &Links, uri: &str) -> Response<Vec<u8>> {
     let Some(query) = BlobQuery::parse(uri) else {
         return text_response(StatusCode::BAD_REQUEST, "not a blob URL".into());
+    };
+    let Some(link) = links.link(&query.host) else {
+        return text_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("not connected to {}", query.host),
+        );
     };
     let binary = is_binary(&query.mime);
     let key = (query.hash.clone(), binary);
@@ -228,6 +350,7 @@ fn is_binary(mime: &str) -> bool {
 struct BlobQuery {
     hash: String,
     mime: String,
+    host: String,
     near: Option<String>,
 }
 
@@ -245,15 +368,22 @@ impl BlobQuery {
             return None;
         }
         let mut mime = "application/octet-stream".to_string();
+        let mut host = daemon::LOCAL.to_string();
         let mut near = None;
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
                 "mime" => mime = value.into_owned(),
+                "host" => host = value.into_owned(),
                 "near" => near = Some(value.into_owned()),
                 _ => {}
             }
         }
-        Some(BlobQuery { hash, mime, near })
+        Some(BlobQuery {
+            hash,
+            mime,
+            host,
+            near,
+        })
     }
 }
 
@@ -299,9 +429,10 @@ mod tests {
         let expected = BlobQuery {
             hash: HASH.into(),
             mime: "image/png".into(),
+            host: "local".into(),
             near: Some("/home/me/a b.qmd".into()),
         };
-        let query = "mime=image%2Fpng&near=%2Fhome%2Fme%2Fa+b.qmd";
+        let query = "mime=image%2Fpng&host=local&near=%2Fhome%2Fme%2Fa+b.qmd";
         for base in [
             "sandhill-blob://localhost",
             "http://sandhill-blob.localhost",

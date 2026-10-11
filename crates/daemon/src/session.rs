@@ -67,6 +67,7 @@ impl SessionHandle {
         kernels_dir: &Path,
         kernel: &str,
         cwd: &Path,
+        project: Option<String>,
     ) -> Result<SessionHandle> {
         let spec = kernel::find_kernelspec(kernel).await?;
         let language = spec.kernelspec.language.clone();
@@ -91,6 +92,7 @@ impl SessionHandle {
             status: SessionStatus::Starting,
             created_ms: now_ms(),
             ended_ms: None,
+            project,
         };
         journal.insert_session(&record)?;
 

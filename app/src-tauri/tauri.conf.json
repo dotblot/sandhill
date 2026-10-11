@@ -9,23 +9,16 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Sandhill",
-        "width": 1280,
-        "height": 860,
-        "minWidth": 720,
-        "minHeight": 480
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "R and Python notebooks with kernels that keep running",
     "icon": [
