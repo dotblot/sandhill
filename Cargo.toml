@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/proto", "crates/daemon", "crates/cli"]
+members = ["crates/proto", "crates/daemon", "crates/cli", "app/src-tauri"]
+# A plain `cargo build` builds what a server needs. The app needs WebKit
+# (system WebKitGTK on Linux), so build it with `-p sandhill-app`,
+# `--workspace` or `npm run tauri` in app/.
+default-members = ["crates/proto", "crates/daemon", "crates/cli"]
 
 [workspace.package]
 version = "0.1.0"

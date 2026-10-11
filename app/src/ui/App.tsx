@@ -175,10 +175,11 @@ export function App(props: { ws: Workspace }) {
     ws.backend.onMenu?.(command);
     ws.backend.onCloseRequested?.(confirmQuit);
     window.addEventListener("keydown", (e) => {
+      // In the Mac app the menu bar owns these shortcuts.
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
+      if (!mod || ws.backend.onMenu) return;
       if (e.key === "s") command("save");
-      else if (e.key === "w" && !ws.backend.onMenu) command("close-tab");
+      else if (e.key === "w") command("close-tab");
       else if (e.altKey && (e.key === "r" || e.code === "KeyR")) command("run-all");
       else return;
       e.preventDefault();

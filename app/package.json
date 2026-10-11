@@ -9,7 +9,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "bridge": "node dev/bridge.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

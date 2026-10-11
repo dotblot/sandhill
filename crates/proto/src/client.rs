@@ -36,7 +36,7 @@ type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Outcome>>>>;
 pub struct Client {
     writer: Mutex<Box<dyn AsyncWrite + Send + Unpin>>,
     pending: Pending,
-    events: mpsc::UnboundedReceiver<Event>,
+    events: Option<mpsc::UnboundedReceiver<Event>>,
     next_id: AtomicU64,
 }
 
@@ -53,7 +53,7 @@ impl Client {
         Client {
             writer: Mutex::new(Box::new(writer)),
             pending,
-            events,
+            events: Some(events),
             next_id: AtomicU64::new(1),
         }
     }
@@ -105,7 +105,13 @@ impl Client {
 
     /// Next event from any subscribed session; `None` once disconnected.
     pub async fn next_event(&mut self) -> Option<Event> {
-        self.events.recv().await
+        self.events.as_mut()?.recv().await
+    }
+
+    /// Takes the event stream so it can be read on its own task while the
+    /// client is shared for calls. The stream ends when the connection does.
+    pub fn take_events(&mut self) -> Option<mpsc::UnboundedReceiver<Event>> {
+        self.events.take()
     }
 
     pub async fn ping(&self) -> Result<PingReply> {
