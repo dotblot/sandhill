@@ -21,6 +21,11 @@ pub const EVENT_RUN_STARTED: &str = "sandhill.run_started";
 pub const EVENT_RUN_FINISHED: &str = "sandhill.run_finished";
 pub const EVENT_SESSION_ENDED: &str = "sandhill.session_ended";
 
+/// Where the app installs Ark (Posit's R kernel) on a server, relative to
+/// the home folder. The daemon offers it as the `ark` kernel when R is on
+/// `PATH`. It is kept off `PATH`: KDE has a program called `ark` too.
+pub const ARK_PATH: &str = ".local/share/sandhill/bin/ark";
+
 /// Key used in place of a large or binary output value that was moved to the
 /// blob store. The value becomes `{"sandhill_blob": "<sha256>", "size": n}`.
 pub const BLOB_KEY: &str = "sandhill_blob";

@@ -17,6 +17,10 @@
 //! and conda don't always write one) still gets the `python3` kernel Jupyter
 //! would start from it.
 //!
+//! Ark, the R kernel the app installs on servers (see
+//! [`sandhill_proto::ARK_PATH`]), is offered as `ark` when R is on `PATH`,
+//! unless a kernel by that name is registered already.
+//!
 //! A kernel found inside an environment runs that environment's own Python or
 //! R, with the environment's `bin` first on `PATH`, much as if it had been
 //! activated. A kernel that runs the same command as one listed before it
@@ -51,6 +55,8 @@ pub struct Search {
     pub conda_roots: Vec<PathBuf>,
     /// Folders of Python installations, like pyenv's `versions`.
     pub version_dirs: Vec<PathBuf>,
+    /// Ark as the app installs it, if it is there.
+    pub ark: Option<PathBuf>,
 }
 
 impl Search {
@@ -124,6 +130,7 @@ impl Search {
             conda_lists: in_home(".conda/environments.txt").into_iter().collect(),
             conda_roots,
             version_dirs: pyenv.map(|p| p.join("versions")).into_iter().collect(),
+            ark: in_home(sandhill_proto::ARK_PATH).filter(|p| p.is_file()),
         }
     }
 }
@@ -213,7 +220,44 @@ pub fn discover(search: &Search) -> Vec<Found> {
             });
         }
     }
+    if let Some(ark) = ark_kernel(search)
+        && names.insert(ark.kernel_name.clone())
+    {
+        commands.insert(command_key(&ark.kernelspec.argv));
+        found.push(Found {
+            dir: ark,
+            env: None,
+            duplicate: false,
+        });
+    }
     found
+}
+
+/// The installed Ark as a kernel, if there is an R for it to run.
+fn ark_kernel(search: &Search) -> Option<KernelspecDir> {
+    let ark = search.ark.as_ref()?;
+    let path = search.path.as_ref()?;
+    std::env::split_paths(path).find(|dir| dir.join("R").is_file())?;
+    // What `ark --install` writes.
+    let argv = [
+        &*ark.to_string_lossy(),
+        "--connection_file",
+        "{connection_file}",
+        "--session-mode",
+        "notebook",
+    ];
+    Some(KernelspecDir {
+        kernel_name: "ark".into(),
+        path: ark.parent()?.to_path_buf(),
+        kernelspec: JupyterKernelspec {
+            argv: argv.map(String::from).to_vec(),
+            display_name: "R (Ark)".into(),
+            language: "R".into(),
+            metadata: None,
+            interrupt_mode: None,
+            env: Some(HashMap::from([("RUST_LOG".into(), "error".into())])),
+        },
+    })
 }
 
 /// A folder with a `kernels/` subfolder.
@@ -923,6 +967,46 @@ mod tests {
             found[1].dir.kernelspec.argv[0],
             venv.join("bin/python").to_str().unwrap()
         );
+    }
+
+    #[test]
+    fn the_installed_ark_runs_r_unless_an_ark_is_registered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ark = tmp.path().join("sandhill/bin/ark");
+        std::fs::create_dir_all(ark.parent().unwrap()).unwrap();
+        std::fs::write(&ark, "").unwrap();
+        let r = tmp.path().join("r/bin");
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(r.join("R"), "").unwrap();
+        let mut search = Search {
+            ark: Some(ark.clone()),
+            path: Some(format!("/nowhere/bin:{}", r.display()).into()),
+            ..Search::default()
+        };
+
+        let found = discover(&search);
+        assert_eq!(names(&found), [("ark", false)]);
+        let spec = &found[0].dir.kernelspec;
+        assert_eq!(spec.argv[0], ark.to_str().unwrap());
+        assert_eq!(spec.language, "R");
+        assert_eq!(spec.display_name, "R (Ark)");
+
+        // Ark registered by the user (`ark --install`) keeps the name.
+        let user = tmp.path().join("Jupyter");
+        kernel(
+            &user,
+            "ark",
+            json!({"argv": ["/opt/ark", "--connection_file", "{connection_file}"], "display_name": "Ark R Kernel", "language": "R"}),
+        );
+        search.user_dir = Some(user);
+        let found = discover(&search);
+        assert_eq!(names(&found), [("ark", false)]);
+        assert_eq!(found[0].dir.kernelspec.argv[0], "/opt/ark");
+
+        // Without R there is nothing for Ark to run.
+        search.user_dir = None;
+        search.path = Some("/nowhere/bin".into());
+        assert!(discover(&search).is_empty());
     }
 
     #[test]

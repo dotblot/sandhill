@@ -1,11 +1,13 @@
 //! Servers, reached with the system `ssh`.
 //!
-//! Connecting takes up to three ssh sessions. The first runs a short script
+//! Connecting takes up to four ssh sessions. The first runs a short script
 //! that reports the server's OS and CPU, the `PATH` its login shell sets up,
-//! and the sandhilld it has. If that is missing or another build than the
-//! app's, the second copies the app's build to `~/.local/bin/sandhilld`. The
-//! last runs `sandhilld attach --start`, whose stdin and stdout carry the
-//! protocol for as long as the connection lasts.
+//! whether R is on it, and the sandhilld and Ark it has. If sandhilld is
+//! missing or another build than the app's, the next copies the app's build
+//! to `~/.local/bin/sandhilld`; if the server has R, the same goes for Ark,
+//! the R kernel, at [`ARK_PATH`]. The last runs `sandhilld attach --start`,
+//! whose stdin and stdout carry the protocol for as long as the connection
+//! lasts.
 //!
 //! Commands are written for any login shell (sh, bash, zsh, fish, csh): what
 //! ssh hands to it is a single `sh -c "..."` with nothing the outer shell
@@ -19,6 +21,8 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+
+use sandhill_proto::ARK_PATH;
 
 use crate::{Connection, Error, Options};
 
@@ -71,7 +75,7 @@ pub(crate) async fn connect(
 ) -> Result<Connection, Error> {
     let server = probe(destination, options).await?;
     let build = match &options.builds {
-        Some(dir) => find_build(dir, &server)?,
+        Some(dir) => find_build(dir, &server, "sandhilld")?,
         None => None,
     };
     let program = match (&build, &server.installed) {
@@ -80,7 +84,13 @@ pub(crate) async fn connect(
         }
         (Some(build), _) => {
             progress(&format!("Installing sandhilld on {destination}…"));
-            install(destination, options, build).await?;
+            install(
+                destination,
+                options,
+                build,
+                &format!("{INSTALL_DIR}/sandhilld"),
+            )
+            .await?;
             format!("{INSTALL_DIR}/sandhilld")
         }
         (None, Some(installed)) => installed.path.clone(),
@@ -91,6 +101,17 @@ pub(crate) async fn connect(
             });
         }
     };
+    if server.r
+        && let Some(dir) = &options.builds
+        && let Some(ark) = find_build(dir, &server, "ark")?
+        && server.ark.as_ref() != Some(&ark.sha256)
+    {
+        progress(&format!("Installing the R kernel on {destination}…"));
+        // A server without Ark still works, just without that R kernel.
+        if let Err(err) = install(destination, options, &ark, ARK_PATH).await {
+            tracing::warn!("cannot install Ark on {destination}: {err}");
+        }
+    }
     let mut command = ssh(destination, options);
     command.arg(attach_command(&program, server.path.as_deref()));
     crate::attach(command, "ssh", ANSWER_TIMEOUT).await
@@ -127,6 +148,10 @@ struct Server {
     /// the user's tools are), which the daemon passes on to kernels.
     path: Option<String>,
     installed: Option<Installed>,
+    /// Whether R is on that `PATH`.
+    r: bool,
+    /// The sha256 of the Ark the app installed, if there is one.
+    ark: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -152,6 +177,12 @@ d="$HOME/.local/bin/sandhilld"
 if [ -n "$d" ] && [ -x "$d" ]; then
   h=$(sha256sum "$d" 2>/dev/null || shasum -a 256 "$d" 2>/dev/null)
   echo "installed=${h%% *} $d"
+fi
+(PATH="${p:-$PATH}"; command -v R >/dev/null 2>&1) && echo "r=yes"
+a="$HOME/.local/share/sandhill/bin/ark"
+if [ -x "$a" ]; then
+  h=$(sha256sum "$a" 2>/dev/null || shasum -a 256 "$a" 2>/dev/null)
+  echo "ark=${h%% *}"
 fi
 "#;
 
@@ -193,6 +224,8 @@ fn parse_probe(text: &str) -> Server {
             "os" => server.os = value.trim().to_string(),
             "arch" => server.arch = value.trim().to_string(),
             "path" => server.path = Some(value.to_string()).filter(|p| !p.is_empty()),
+            "r" => server.r = value.trim() == "yes",
+            "ark" => server.ark = Some(value.trim().to_string()).filter(|h| h.len() == 64),
             "installed" => {
                 server.installed = value.split_once(' ').and_then(|(sha256, path)| {
                     (sha256.len() == 64).then(|| Installed {
@@ -224,11 +257,12 @@ struct Build {
     sha256: String,
 }
 
-/// The app's build of sandhilld for `server`, if it has one.
-fn find_build(dir: &Path, server: &Server) -> Result<Option<Build>, Error> {
+/// The app's build of `program` (sandhilld or ark) for `server`, if it has
+/// one.
+fn find_build(dir: &Path, server: &Server, program: &str) -> Result<Option<Build>, Error> {
     let Some(path) = triples(&server.os, &server.arch)
         .iter()
-        .map(|triple| dir.join(format!("sandhilld-{triple}")))
+        .map(|triple| dir.join(format!("{program}-{triple}")))
         .find(|path| path.is_file())
     else {
         return Ok(None);
@@ -245,15 +279,21 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-/// Copies `build` to the server through ssh's stdin. The new file replaces
-/// the old one in a single rename, so a daemon that is running keeps
-/// working; `attach --start` then replaces it with the new build.
-async fn install(destination: &Destination, options: &Options, build: &Build) -> Result<(), Error> {
-    let dir = INSTALL_DIR;
+/// Copies `build` to `target` (relative to the home directory) on the
+/// server through ssh's stdin. The new file replaces the old one in a single
+/// rename, so a daemon or kernel that is running keeps working; for
+/// sandhilld, `attach --start` then replaces it with the new build.
+async fn install(
+    destination: &Destination,
+    options: &Options,
+    build: &Build,
+    target: &str,
+) -> Result<(), Error> {
+    let (dir, name) = target.rsplit_once('/').unwrap_or((".", target));
+    let new = format!("{dir}/.{name}.new");
     let script = format!(
-        "mkdir -p {dir} && cat > {dir}/.sandhilld.new && chmod 755 {dir}/.sandhilld.new \
-         && mv -f {dir}/.sandhilld.new {dir}/sandhilld \
-         && (sha256sum {dir}/sandhilld || shasum -a 256 {dir}/sandhilld)"
+        "mkdir -p {dir} && cat > {new} && chmod 755 {new} && mv -f {new} {target} \
+         && (sha256sum {target} || shasum -a 256 {target})"
     );
     let mut command = ssh(destination, options);
     command
@@ -275,23 +315,23 @@ async fn install(destination: &Destination, options: &Options, build: &Build) ->
         (copied, child.wait_with_output().await)
     })
     .await
-    .map_err(|_| Error::Failed(format!("copying sandhilld to {destination} took too long")))?;
+    .map_err(|_| Error::Failed(format!("copying {name} to {destination} took too long")))?;
     let output = output.map_err(|err| Error::Failed(format!("ssh failed: {err}")))?;
     if !output.status.success() {
         let failed = failure(&output.stderr, "ssh", output.status);
         return Err(Error::Failed(format!(
-            "cannot install sandhilld on {destination}: {failed}"
+            "cannot install {name} on {destination}: {failed}"
         )));
     }
     if let Err(err) = copied {
         return Err(Error::Failed(format!(
-            "cannot copy sandhilld to {destination}: {err}"
+            "cannot copy {name} to {destination}: {err}"
         )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     if stdout.split_whitespace().next() != Some(build.sha256.as_str()) {
         return Err(Error::Failed(format!(
-            "the copy of sandhilld on {destination} does not match this app's"
+            "the copy of {name} on {destination} does not match this app's"
         )));
     }
     Ok(())
@@ -356,7 +396,7 @@ mod tests {
     fn probe_output_is_read_line_by_line() {
         let hash = "a".repeat(64);
         let text = format!(
-            "os=Linux\narch=x86_64\npath=/opt/conda/bin:/usr/bin\ninstalled={hash} /home/me/.local/bin/sandhilld\n"
+            "os=Linux\narch=x86_64\npath=/opt/conda/bin:/usr/bin\ninstalled={hash} /home/me/.local/bin/sandhilld\nr=yes\nark={hash}\n"
         );
         assert_eq!(
             parse_probe(&text),
@@ -366,8 +406,10 @@ mod tests {
                 path: Some("/opt/conda/bin:/usr/bin".into()),
                 installed: Some(Installed {
                     path: "/home/me/.local/bin/sandhilld".into(),
-                    sha256: hash,
+                    sha256: hash.clone(),
                 }),
+                r: true,
+                ark: Some(hash),
             }
         );
         // Nothing installed, and a shell that gave no PATH.
@@ -379,6 +421,11 @@ mod tests {
                 ..Server::default()
             }
         );
+    }
+
+    #[test]
+    fn the_probe_looks_for_ark_where_it_is_installed() {
+        assert!(PROBE.contains(&format!("$HOME/{ARK_PATH}")));
     }
 
     #[test]

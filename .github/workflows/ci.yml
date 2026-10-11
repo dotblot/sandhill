@@ -32,16 +32,22 @@ jobs:
           # r-cran-irkernel ships its kernelspec in /usr/share/jupyter/kernels/ir,
           # so IRkernel::installspec() (which needs the jupyter CLI) isn't needed.
       - name: Install Ark (Posit's R kernel)
-        # Best effort: if this fails, the R test falls back to IRkernel.
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+        # Ark marks no release as "latest", so take the newest one, as
+        # app/scripts/bundle.mjs does.
         run: |
-          gh release download --repo posit-dev/ark --pattern '*linux-x64*.zip' --dir /tmp/ark
-          unzip -o /tmp/ark/*.zip -d /tmp/ark
+          tag=$(gh api 'repos/posit-dev/ark/releases?per_page=30' \
+            --jq '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + .)[0].tag_name')
+          echo "Ark $tag"
+          # Not ark-<version>-debug-linux-x64.zip.
+          gh release download "$tag" --repo posit-dev/ark --pattern "ark-$tag-linux-x64.zip" --dir /tmp/ark
+          unzip -o "/tmp/ark/ark-$tag-linux-x64.zip" -d /tmp/ark
           /tmp/ark/ark --install
       - name: List installed kernels
-        run: ls -d ~/.local/share/jupyter/kernels/* /usr/share/jupyter/kernels/*
+        run: |
+          ls -d ~/.local/share/jupyter/kernels/* /usr/share/jupyter/kernels/*
+          cat ~/.local/share/jupyter/kernels/ark/kernel.json
       - name: UI tests and build
         working-directory: app
         run: |
@@ -51,6 +57,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+        env:
+          # Ark as the app installs it on servers (crates/daemon/tests/ark.rs).
+          SANDHILL_TEST_ARK: /tmp/ark/ark
 
   macos:
     name: macOS (Apple silicon, Python, app bundle)
@@ -81,6 +90,9 @@ jobs:
       - run: cargo test --workspace
       - name: Build Sandhill.app
         working-directory: app
+        env:
+          # To download Ark's Linux builds.
+          GH_TOKEN: ${{ github.token }}
         run: |
           npm ci
           npm run bundle -- --servers

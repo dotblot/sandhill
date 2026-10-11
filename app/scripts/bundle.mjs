@@ -11,12 +11,18 @@
 // --servers so a failure there is loud; locally they are built when
 // cargo-zigbuild is installed and skipped with a note otherwise.
 //
+// Ark, Posit's R kernel (MIT), goes into `daemons/` too: the app installs it
+// on servers that have R, so R runs with no setup there. Its Linux builds
+// are downloaded from its GitHub releases with the `gh` CLI (CI sets
+// GH_TOKEN); SANDHILL_ARK_VERSION picks a release, otherwise the newest.
+//
 // The daemon is only bundled here, not in tauri.conf.json, so that plain
 // `cargo build` and `npm run tauri dev` don't need a release daemon first.
 // "-" signs ad hoc: enough for macOS to run it, not notarized.
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,12 +55,52 @@ if (requireServers || hasZigbuild()) {
     copyFileSync(join(root, "target", target, "release", "sandhilld"), build);
     chmodSync(build, 0o755);
   }
+  try {
+    bundleArk(servers);
+  } catch (err) {
+    if (requireServers) throw err;
+    console.warn(`cannot download Ark (${err.message}): building without it, so R on servers needs a kernel installed there`);
+  }
   configs.push("--config", JSON.stringify({ bundle: { resources: { "binaries/servers/*": "daemons/" } } }));
 } else {
   console.warn("cargo-zigbuild not found: building without Linux daemons, so the app can't install sandhilld on servers");
 }
 
 run("npx", ["tauri", "build", ...configs, ...tauriArgs], app);
+
+// Ark's Linux builds link to glibc, so they are named for gnu triples.
+function bundleArk(dir) {
+  const repo = "posit-dev/ark";
+  const releases = JSON.parse(execFileSync("gh", ["api", `repos/${repo}/releases?per_page=30`], { encoding: "utf8" }));
+  const wanted = process.env.SANDHILL_ARK_VERSION;
+  const release = wanted
+    ? releases.find((r) => r.tag_name === wanted || r.tag_name === `v${wanted}`)
+    : (releases.find((r) => !r.draft && !r.prerelease) ?? releases.find((r) => !r.draft));
+  if (!release) throw new Error(wanted ? `no Ark release ${wanted}` : "no Ark release found");
+  console.log(`Bundling Ark ${release.tag_name}`);
+  const work = mkdtempSync(join(tmpdir(), "sandhill-ark-"));
+  try {
+    for (const [arch, triple] of [["x64", "x86_64-unknown-linux-gnu"], ["arm64", "aarch64-unknown-linux-gnu"]]) {
+      // ark-<version>-linux-x64.zip, not ark-<version>-debug-linux-x64.zip.
+      const asset = release.assets.find((a) => a.name.endsWith(`-linux-${arch}.zip`) && !a.name.includes("-debug-"));
+      if (!asset) {
+        if (arch === "x64") throw new Error(`Ark ${release.tag_name} has no linux-x64 build`);
+        console.warn(`Ark ${release.tag_name} has no linux-${arch} build: skipped`);
+        continue;
+      }
+      const into = join(work, arch);
+      run("gh", ["release", "download", release.tag_name, "--repo", repo, "--pattern", asset.name, "--dir", into]);
+      run("unzip", ["-q", "-o", join(into, asset.name), "-d", into]);
+      const ark = readdirSync(into, { recursive: true }).find((f) => f === "ark" || f.endsWith("/ark"));
+      if (!ark) throw new Error(`${asset.name} has no ark program`);
+      const build = join(dir, `ark-${triple}`);
+      copyFileSync(join(into, ark), build);
+      chmodSync(build, 0o755);
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
 
 function hasZigbuild() {
   try {

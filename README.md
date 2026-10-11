@@ -83,7 +83,11 @@ folder there, and the project window works as it does on the Mac.
   server, and replaces it when a newer app brings another build. It needs
   no root and opens no ports, and runs on any 64-bit Linux, Intel or ARM.
 - Kernels start with the `PATH` your login shell sets up, so conda and the
-  tools your shell startup files add are found.
+  tools your shell startup files add are found. Python runs in any conda,
+  mamba or virtual environment that has `ipykernel`.
+- When the server has R, the app also installs Ark, Posit's R kernel, in
+  `~/.local/share/sandhill/bin`, so R chunks run with no setup. R kernels
+  you installed yourself, such as IRkernel, are listed too.
 - Code keeps running on the server when the app quits or the network drops.
   The app reconnects on its own and shows what was printed in the meantime.
 
