@@ -165,7 +165,11 @@ pub fn discover(search: &Search) -> Vec<Found> {
     let mut commands = HashSet::new();
     let mut folders = HashSet::new();
     for source in sources(search) {
-        if !folders.insert(canonical(&source.data_dir)) {
+        // The shell's environment is usually also a conda environment. Its
+        // folder is read again under the conda names: a kernel that lost
+        // its plain name to an earlier one (a `python3` installed with
+        // `--user`) is listed that way, and the rest are duplicates.
+        if !folders.insert((canonical(&source.data_dir), source.names.clone())) {
             continue;
         }
         for (dir_name, path, spec) in read_kernels(&source.data_dir) {
@@ -661,6 +665,7 @@ mod tests {
                 ("scanpy", false),
                 ("python3", true),
                 ("conda-env-base-py", false),
+                ("conda-env-scanpy-py", true),
             ]
         );
         // The hand-registered kernel keeps its name but runs activated.
@@ -679,6 +684,34 @@ mod tests {
         );
         let listed: Vec<_> = list(&search).into_iter().map(|k| k.name).collect();
         assert_eq!(listed, ["conda-env-base-py", "scanpy"]);
+    }
+
+    #[test]
+    fn the_shell_environment_is_listed_when_a_user_kernel_has_its_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("miniforge3");
+        let env = root.join("envs/omicverse");
+        conda_env(&env);
+        // `python3 -m ipykernel install --user` with the system Python.
+        let user = tmp.path().join("Jupyter");
+        kernel(&user, "python3", ipykernel("/usr/bin/python3"));
+        let search = Search {
+            user_dir: Some(user),
+            // The shell activates omicverse.
+            path: Some(format!("{}:/usr/bin", env.join("bin").display()).into()),
+            conda_roots: vec![root],
+            ..Search::default()
+        };
+
+        let found = discover(&search);
+        assert_eq!(
+            names(&found),
+            [("python3", false), ("conda-env-omicverse-py", false)]
+        );
+        assert_eq!(found[0].dir.kernelspec.argv[0], "/usr/bin/python3");
+        let omicverse = &found[1].dir.kernelspec;
+        assert_eq!(omicverse.display_name, "Python (omicverse)");
+        assert_eq!(omicverse.argv[0], env.join("bin/python").to_str().unwrap());
     }
 
     #[test]
