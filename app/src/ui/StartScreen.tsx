@@ -2,7 +2,7 @@ import { createResource, createSignal, For, onMount, Show } from "solid-js";
 import { LOCAL_HOST, type Shell } from "../backend";
 import type { DirEntry, ProjectInfo } from "../backend/types";
 import type { Workspace } from "../model/workspace";
-import appIcon from "../../src-tauri/icons/source.svg";
+import appIcon from "../../src-tauri/icons/icon.png";
 import { Dialogs, notify } from "./dialogs";
 import { FileIcon, Icon } from "./icons";
 import { previousFolder as legacyFolder } from "./legacy";

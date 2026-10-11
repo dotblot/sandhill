@@ -127,7 +127,8 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 :root[data-frame="mac"] .titlebar { padding-left: 78px; }
 .proj { display: flex; align-items: center; gap: 5px; height: 21px; padding: 0 6px; border-radius: 5px; font-weight: 600; white-space: nowrap; min-width: 0; }
 .proj:hover { background: var(--hover); }
-.proj-icon { width: 14px; height: 14px; flex: none; }
+/* The icon files keep Apple's margin around the rounded square (100 of 1024 px). */
+.proj-icon { width: 17px; height: 17px; margin: -1.5px; flex: none; }
 .proj-name { overflow: hidden; text-overflow: ellipsis; }
 .proj-host { font-weight: 400; color: var(--muted); display: flex; align-items: center; gap: 5px; }
 .proj > .ico { color: var(--muted); }
@@ -330,7 +331,7 @@ pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; wor
 .start { display: flex; overflow: auto; padding: 0 16px; font-size: 13px; line-height: 1.4; }
 .start-in { margin: auto; width: min(760px, 100%); display: flex; flex-direction: column; gap: 22px; padding: 24px 0 40px; }
 .brand { display: flex; align-items: center; gap: 14px; }
-.brand img { width: 64px; height: 64px; flex: none; }
+.brand img { width: 78px; height: 78px; margin: -7px; flex: none; }
 .brand h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
 .brand p { margin: 2px 0 0; color: var(--muted); }
 .start-actions { display: flex; flex-wrap: wrap; gap: 8px; }

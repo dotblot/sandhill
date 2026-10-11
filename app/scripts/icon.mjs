@@ -1,12 +1,13 @@
-// Makes the app icon files in src-tauri/icons from source.svg, Huan's
-// artwork:
+// Makes the app icon files in src-tauri/icons from source.png, Huan's
+// painting:
 //
 //   npm run icon
 //
-// The artwork is fitted into Apple's icon grid (824 of 1024 px, centered),
-// so it sits at the same size as other apps in the Dock. At 16 and 32 px the
-// whole scene blurs into an orange blob, so those sizes are drawn from a
-// simpler crop: no reeds or ripples, and closer on the cranes and the sun.
+// The painting is square and fills its canvas, so it is drawn as a Mac icon:
+// clipped to a rounded square in Apple's icon grid (824 of 1024 px,
+// centered), with a soft shadow, so it sits at the same size as other apps
+// in the Dock. At 16 and 32 px the whole scene blurs, so those sizes show a
+// closer crop on the cranes' heads and necks, without the shadow.
 // `tauri icon` renders the SVGs; the small sizes then replace the ones in
 // icon.icns.
 
@@ -19,25 +20,29 @@ import { fileURLToPath } from "node:url";
 const app = join(dirname(fileURLToPath(import.meta.url)), "..");
 const icons = join(app, "src-tauri", "icons");
 
-// In the artwork's own coordinates (its viewBox is 0 0 1254 1254).
-const SMALL_CROP = "230 30 880 880";
-const SMALL_DROPS = ["water-ripples", "reeds-left", "reeds-right"];
+// In the painting's own pixels.
+const SMALL_CROP = "250 80 750 750";
 
-const svg = readFileSync(join(icons, "source.svg"), "utf8");
-const viewBox = /viewBox="([^"]+)"/.exec(svg);
-if (!viewBox) throw new Error("source.svg has no viewBox");
-const [x, y, w, h] = viewBox[1].trim().split(/[\s,]+/).map(Number);
-if (w !== h) throw new Error("source.svg is not square");
-const grid = (w * 1024) / 824;
-const pad = (grid - w) / 2;
-const full = svg.replace(viewBox[0], `viewBox="${x - pad} ${y - pad} ${grid} ${grid}"`);
+const png = readFileSync(join(icons, "source.png"));
+if (png.toString("latin1", 1, 4) !== "PNG") throw new Error("source.png is not a PNG");
+const [width, height] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+if (width !== height) throw new Error("source.png is not square");
+const href = `data:image/png;base64,${png.toString("base64")}`;
 
-let small = svg.replace(viewBox[0], `viewBox="${SMALL_CROP}"`);
-for (const id of SMALL_DROPS) {
-  const group = new RegExp(`<g id="${id}"[^>]*>[\\s\\S]*?</g>`);
-  if (!group.test(small)) throw new Error(`source.svg has no group "${id}" to leave out at small sizes`);
-  small = small.replace(group, "");
-}
+// Apple's grid: the rounded square is 824 px of 1024, corner radius 185.
+const square = `<rect x="100" y="100" width="824" height="824" rx="185"/>`;
+const svg = (body) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">` +
+  `<defs><clipPath id="square">${square}</clipPath>` +
+  `<filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity=".3"/></filter></defs>` +
+  body +
+  `</svg>`;
+const painting = (viewBox) =>
+  `<svg x="100" y="100" width="824" height="824" viewBox="${viewBox}" preserveAspectRatio="xMidYMid slice">` +
+  `<image width="${width}" height="${height}" xlink:href="${href}"/></svg>`;
+
+const full = svg(`<g filter="url(#shadow)"><g clip-path="url(#square)">${painting(`0 0 ${width} ${height}`)}</g></g>`);
+const small = svg(`<g clip-path="url(#square)">${painting(SMALL_CROP)}</g>`);
 
 const work = mkdtempSync(join(tmpdir(), "sandhill-icon-"));
 try {

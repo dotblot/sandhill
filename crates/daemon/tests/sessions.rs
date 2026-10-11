@@ -265,6 +265,56 @@ async fn interrupt_stops_a_long_running_cell() {
     client.shutdown(&session).await.unwrap();
 }
 
+/// The app tells busy sessions from idle ones by this count, even for
+/// sessions it never subscribed to.
+#[tokio::test]
+async fn sessions_count_their_unfinished_runs() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session("python3", None).await.unwrap().id;
+    let pending = |sessions: Vec<sandhill_proto::SessionInfo>| {
+        sessions
+            .into_iter()
+            .find(|s| s.id == session)
+            .unwrap()
+            .pending_runs
+    };
+    assert_eq!(pending(client.list_sessions().await.unwrap()), 0);
+
+    client.subscribe(&session, None).await.unwrap();
+    let slow = client
+        .execute(&session, "import time\ntime.sleep(3)", None)
+        .await
+        .unwrap()
+        .run;
+    let queued = client.execute(&session, "1 + 1", None).await.unwrap().run;
+    assert_eq!(pending(client.list_sessions().await.unwrap()), 2);
+
+    let mut left = vec![slow, queued];
+    while !left.is_empty() {
+        let event = tokio::time::timeout(TIMEOUT, client.next_event())
+            .await
+            .expect("timed out waiting for the runs to finish")
+            .unwrap();
+        if event.msg_type == EVENT_RUN_FINISHED {
+            left.retain(|run| Some(run.as_str()) != event.run.as_deref());
+        }
+    }
+    assert_eq!(pending(client.list_sessions().await.unwrap()), 0);
+
+    // A run cut off by the shutdown doesn't count as pending afterwards.
+    client
+        .execute(&session, "import time\ntime.sleep(60)", None)
+        .await
+        .unwrap();
+    client.shutdown(&session).await.unwrap();
+    assert_eq!(pending(client.list_sessions().await.unwrap()), 0);
+}
+
 #[tokio::test]
 async fn images_are_stored_as_blobs() {
     if !have_kernel("python3").await {
