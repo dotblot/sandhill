@@ -254,6 +254,10 @@ pub struct SessionInfo {
     /// The project folder the session was started for, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    /// Runs sent to the kernel that have not finished: the one running and
+    /// any queued behind it. Always 0 once the session has ended.
+    #[serde(default)]
+    pub pending_runs: u32,
 }
 
 /// A folder opened as a project on the daemon's machine.

@@ -211,6 +211,10 @@ impl Journal {
             ended_ms: record.ended_ms,
             last_seq: self.last_seq(&record.id)?,
             project: record.project.clone(),
+            pending_runs: match record.status {
+                SessionStatus::Ended => 0,
+                _ => self.unfinished_run_count(&record.id)?,
+            },
         })
     }
 
@@ -317,6 +321,15 @@ impl Journal {
                 },
             )
             .optional()?)
+    }
+
+    /// How many of a session's runs have not finished (running or queued).
+    pub fn unfinished_run_count(&self, session_id: &str) -> Result<u32> {
+        Ok(self.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM runs WHERE session_id = ?1 AND finished_ms IS NULL",
+            [session_id],
+            |row| row.get(0),
+        )?)
     }
 
     /// Runs that never got a reply, e.g. because the daemon was down.

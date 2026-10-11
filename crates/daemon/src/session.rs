@@ -451,6 +451,12 @@ impl Actor {
                     .unwrap_or_else(|| "unknown".to_string());
                 let count = Some(reply.execution_count.0 as u64).filter(|&n| n > 0);
                 if let Some(run) = self.runs.get_mut(&parent) {
+                    // An aborted request (queued behind an error) runs no
+                    // code, and IRkernel sends no idle status for it, so
+                    // the reply alone ends the run.
+                    if status == "aborted" {
+                        run.idle = true;
+                    }
                     run.reply = Some((status, count));
                     self.maybe_finish_run(&parent);
                 }

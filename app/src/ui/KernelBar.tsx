@@ -8,24 +8,46 @@ export function KernelBar(props: { ws: Workspace; doc: Doc; onError: (msg: strin
   const languages = () => props.doc.languages();
   // Shows every output when none are shown, else hides them all.
   const anyShown = () => props.doc.shownOutputs().length > 0;
+  const runAll = () => props.doc.runAll().catch((e) => props.onError(String(e)));
   return (
     <div class="kernel-bar">
       <For each={languages()} fallback={<span class="kernel-none">No R or Python code yet</span>}>
         {(language) => <KernelControl ws={props.ws} doc={props.doc} language={language} onError={props.onError} />}
       </For>
       <span class="spacer" />
-      <button
-        class="bar-button outputs-toggle"
-        onClick={() => props.doc.setAllOutputs(!anyShown())}
-        title={anyShown() ? "Hide every output in this document" : "Show every output in this document"}
+      <Show
+        when={props.doc.kind === "script"}
+        fallback={
+          <>
+            <button
+              class="bar-button outputs-toggle"
+              onClick={() => props.doc.setAllOutputs(!anyShown())}
+              title={anyShown() ? "Hide every output in this document" : "Show every output in this document"}
+            >
+              <Icon name={anyShown() ? "chevron" : "chevronRight"} small />
+              {anyShown() ? "Hide outputs" : "Show outputs"}
+            </button>
+            <button class="bar-button" onClick={runAll} title="Run every chunk, top to bottom">
+              <Icon name="play" small />
+              Run all <kbd>⌥⌘R</kbd>
+            </button>
+          </>
+        }
       >
-        <Icon name={anyShown() ? "chevron" : "chevronRight"} small />
-        {anyShown() ? "Hide outputs" : "Show outputs"}
-      </button>
-      <button class="bar-button" onClick={() => props.doc.runAll().catch((e) => props.onError(String(e)))} title="Run every chunk, top to bottom">
-        <Icon name="play" small />
-        Run all <kbd>⌥⌘R</kbd>
-      </button>
+        <button
+          class="bar-button run-line"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => props.doc.runCurrent?.()}
+          title="Run the selection, or the line or statement at the cursor, and move to the next"
+        >
+          <Icon name="play" small />
+          Run line <kbd>⌘↵</kbd>
+        </button>
+        <button class="bar-button run-file" onClick={runAll} title="Run the whole file (also ⇧⌘S and ⌥⌘R)">
+          <Icon name="play" small />
+          Run file <kbd>⇧⌘↵</kbd>
+        </button>
+      </Show>
     </div>
   );
 }

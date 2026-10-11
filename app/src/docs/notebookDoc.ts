@@ -163,8 +163,8 @@ export class NotebookDoc extends Doc {
     const output = view.output!;
     output.setVisible(true);
     output.showSaved({ phase: "queued", code, outputs: [] });
-    this.recordKernel();
     try {
+      this.recordKernel(await this.kernels.ensure(this.language()));
       const run = await this.execute(this.language(), code, id);
       output.bindRun(this.ws.runs, run);
     } catch (err) {
@@ -414,10 +414,12 @@ export class NotebookDoc extends Doc {
     }
   }
 
-  /** Records the kernel in the notebook's metadata the first time it runs, as Jupyter does. */
-  private recordKernel() {
+  /** Records the session's kernel in the notebook's metadata the first time it runs, as Jupyter does. */
+  private recordKernel(session: string) {
     if (this.nb.metadata.kernelspec) return;
-    const spec = pickKernel(this.ws.kernelspecs(), this.language());
+    const kernel = this.ws.sessions().find((s) => s.id === session)?.kernel;
+    const specs = this.ws.kernelspecs();
+    const spec = specs.find((k) => k.name === kernel) ?? pickKernel(specs, this.language());
     if (!spec) return;
     this.nb.metadata.kernelspec = { name: spec.name, display_name: spec.display_name, language: spec.language };
     this.setLanguage(normalizeLanguage(spec.language));

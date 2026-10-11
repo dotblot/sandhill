@@ -1,9 +1,17 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { LOCAL_HOST, type Shell } from "../backend";
-import { CONFLICT_ERROR, type DirEntry, type FileText, type ProjectInfo, type ProjectState } from "../backend/types";
+import {
+  CONFLICT_ERROR,
+  type DirEntry,
+  type FileText,
+  type ProjectInfo,
+  type ProjectState,
+  type SessionInfo,
+} from "../backend/types";
 import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
+import { ScriptDoc } from "../docs/scriptDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { pickKernel, type Workspace } from "../model/workspace";
 import smallIcon from "../../src-tauri/icons/32x32.png";
@@ -117,8 +125,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       pending = (async () => {
         try {
           const shown = shownOutputs[path] ?? [];
+          const kind = docKind(path);
           const doc =
-            docKind(path) === "ipynb" ? await NotebookDoc.open(ws, path, shown) : await QmdDoc.open(ws, path, shown);
+            kind === "ipynb"
+              ? await NotebookDoc.open(ws, path, shown)
+              : kind === "script"
+                ? await ScriptDoc.open(ws, path, shown)
+                : await QmdDoc.open(ws, path, shown);
           setDocs((d) => [...d, doc]);
           return doc;
         } catch (err) {
@@ -190,18 +203,22 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     return true;
   }
 
-  async function createFile(kind: "qmd" | "ipynb") {
+  async function createFile(kind: NewFile) {
     const dir = root();
     try {
       const names = new Set((await ws.call<DirEntry[]>("list_dir", { path: dir })).map((e) => e.name));
       let n = 1;
       const name = () => `Untitled${n > 1 ? `-${n}` : ""}.${kind}`;
       while (names.has(name())) n++;
-      const python = pickKernel(ws.kernelspecs(), "python");
+      // A new notebook names the kernel of the Python session it will join.
+      const joining = ws.sessionToJoin("python", dir)?.kernel;
+      const python = ws.kernelspecs().find((k) => k.name === joining) ?? pickKernel(ws.kernelspecs(), "python");
       const text =
         kind === "ipynb"
           ? serializeNotebook(newNotebook(python))
-          : "---\ntitle: \"Untitled\"\n---\n\n```{python}\nprint(\"hello\")\n```\n";
+          : kind === "qmd"
+            ? "---\ntitle: \"Untitled\"\n---\n\n```{python}\nprint(\"hello\")\n```\n"
+            : "";
       const path = `${dir}/${name()}`;
       await ws.call<FileText>("write_file", { path, text });
       setTreeKey((k) => k + 1);
@@ -281,7 +298,11 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
             <Show when={!missing() && ws.link().status === "connected"}>
               <FileTree ws={ws} root={root()} onOpen={(p) => void open(p)} activePath={active()?.path} refreshKey={treeKey()} />
             </Show>
-            <Sessions ws={ws} hostName={hostName} />
+            <Sessions
+              ws={ws}
+              hostName={hostName}
+              usedBy={(id) => docs().filter((d) => d.kernels.sessions().includes(id)).map((d) => d.name)}
+            />
           </aside>
         </Show>
         <main class="editor pane">
@@ -328,7 +349,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                 }
               >
                 <div class="empty-state">
-                  <p>Open a .qmd, .Rmd or .ipynb file from the sidebar.</p>
+                  <p>Open a .qmd, .Rmd, .ipynb, .R or .py file from the sidebar.</p>
                   <p class="muted">Code runs in sessions that keep going when you close the app.</p>
                 </div>
               </Show>
@@ -352,8 +373,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   );
 }
 
-/** The + menu in the sidebar: new Quarto document or notebook. */
-function NewFileMenu(props: { onCreate: (kind: "qmd" | "ipynb") => void }) {
+type NewFile = "qmd" | "ipynb" | "R" | "py";
+
+/** The + menu in the sidebar: a new Quarto document, notebook or script. */
+function NewFileMenu(props: { onCreate: (kind: NewFile) => void }) {
   const [open, setOpen] = createSignal(false);
   let wrap!: HTMLSpanElement;
   const close = (e: MouseEvent) => {
@@ -366,7 +389,7 @@ function NewFileMenu(props: { onCreate: (kind: "qmd" | "ipynb") => void }) {
     document.removeEventListener("mousedown", close);
     document.removeEventListener("keydown", escape);
   });
-  const pick = (kind: "qmd" | "ipynb") => {
+  const pick = (kind: NewFile) => {
     setOpen(false);
     props.onCreate(kind);
   };
@@ -385,32 +408,94 @@ function NewFileMenu(props: { onCreate: (kind: "qmd" | "ipynb") => void }) {
             <FileIcon name="Untitled.ipynb" />
             Jupyter notebook
           </button>
+          <button role="menuitem" onClick={() => pick("R")}>
+            <FileIcon name="Untitled.R" />
+            R script
+          </button>
+          <button role="menuitem" onClick={() => pick("py")}>
+            <FileIcon name="Untitled.py" />
+            Python script
+          </button>
         </div>
       </Show>
     </span>
   );
 }
 
-/** Kernels running for this project, under the file tree. */
-function Sessions(props: { ws: Workspace; hostName: string }) {
+/**
+ * Kernels running for this project, under the file tree. They keep running
+ * when files and the app close, so each has a stop button, and the ones no
+ * open file uses can be stopped together.
+ */
+export function Sessions(props: { ws: Workspace; hostName: string; usedBy: (session: string) => string[] }) {
   const [now, setNow] = createSignal(Date.now());
-  const timer = setInterval(() => setNow(Date.now()), 60_000);
+  // Also catches sessions started or stopped elsewhere, and long runs finishing.
+  const timer = setInterval(() => {
+    setNow(Date.now());
+    props.ws.refreshSessions().catch(() => {});
+  }, 60_000);
   onCleanup(() => clearInterval(timer));
   const sessions = () => props.ws.projectSessions();
   const kernelName = (kernel: string) =>
     props.ws.kernelspecs().find((k) => k.name === kernel)?.display_name ?? kernel;
+  const unused = () => sessions().filter((s) => !props.usedBy(s.id).length && !props.ws.isBusy(s.id));
+
+  const stop = async (s: SessionInfo) => {
+    const users = props.usedBy(s.id);
+    const detail = [
+      props.ws.isBusy(s.id) ? "The code it is running stops too." : "",
+      users.length ? `${users.join(", ")} will start a new session when you run code.` : "",
+      "Its variables are lost.",
+    ];
+    const choice = await ask(`Stop ${kernelName(s.kernel)}?`, ["Stop", "Cancel"], detail.filter(Boolean).join(" "));
+    if (choice === "Stop") await props.ws.shutdown(s.id).catch((e) => notify(`Could not stop the session: ${message(e)}`));
+  };
+
+  const stopUnused = async () => {
+    await props.ws.refreshSessions().catch(() => {});
+    const list = unused();
+    if (!list.length) return;
+    const choice = await ask(
+      list.length === 1 ? "Stop the session no open file uses?" : `Stop the ${list.length} sessions no open file uses?`,
+      ["Stop", "Cancel"],
+      "Their variables are lost. Sessions running code are left alone.",
+    );
+    if (choice !== "Stop") return;
+    for (const s of list) {
+      await props.ws.shutdown(s.id).catch((e) => notify(`Could not stop a session: ${message(e)}`));
+    }
+  };
+
   return (
     <Show when={sessions().length}>
       <div class="sessions">
-        <div class="pane-head sub">Running on {props.hostName}</div>
+        <div class="pane-head sub">
+          <span class="pane-title">Running on {props.hostName}</span>
+          <span class="spacer" />
+          <Show when={unused().length}>
+            <button class="link stop-unused" onClick={() => void stopUnused()} title="Stop the sessions no open file uses">
+              Stop unused
+            </button>
+          </Show>
+        </div>
         <For each={sessions()}>
-          {(s) => (
-            <div class="session-row" title={`${s.kernel} · ${s.id} · ${s.cwd}`}>
-              <span class="dot" classList={{ busy: props.ws.isBusy(s.id) }} />
-              <span class="session-name">{kernelName(s.kernel)}</span>
-              <span class="session-age">{uptime(now() - s.created_ms)}</span>
-            </div>
-          )}
+          {(s) => {
+            const users = () => props.usedBy(s.id);
+            return (
+              <div
+                class="session-row"
+                classList={{ unused: !users().length }}
+                title={`${s.kernel} · ${s.id.slice(0, 6)} · ${s.cwd}\n${users().length ? `Used by ${users().join(", ")}` : "No open file uses it"}`}
+              >
+                <span class="dot" classList={{ busy: props.ws.isBusy(s.id) }} />
+                <span class="session-name">{kernelName(s.kernel)}</span>
+                <span class="session-age">{users().length ? "" : "unused · "}{uptime(now() - s.created_ms)}</span>
+                <button class="session-stop" title="Stop this session" onClick={() => void stop(s)}>
+                  <Icon name="stop" small />
+                </button>
+              </div>
+            );
+          }}
         </For>
       </div>
     </Show>

@@ -5,12 +5,13 @@ import type { KernelWanted, Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
 import { DocKernels } from "./kernels";
 
-export type DocKind = "qmd" | "ipynb";
+export type DocKind = "qmd" | "ipynb" | "script";
 
 export function docKind(path: string): DocKind | undefined {
   const ext = path.split(".").pop()?.toLowerCase();
   if (ext === "qmd" || ext === "rmd") return "qmd";
   if (ext === "ipynb") return "ipynb";
+  if (ext === "r" || ext === "py") return "script";
   return undefined;
 }
 
@@ -30,12 +31,16 @@ export abstract class Doc {
   private setShownOutputs: (ids: string[]) => void;
   /** Modification time of the file as last read or written, to detect outside changes. */
   protected mtime = 0;
+  /** The last run sent to a kernel, or being sent. */
+  private sending: Promise<unknown> = Promise.resolve();
 
   constructor(
     protected ws: Workspace,
     readonly path: string,
     preferredKernel: (language: string) => KernelWanted | undefined = () => undefined,
     shownOutputs: string[] = [],
+    /** Where its kernels run; the document's own folder unless given. */
+    kernelFolder?: string,
   ) {
     const slash = path.lastIndexOf("/");
     this.name = path.slice(slash + 1);
@@ -43,7 +48,7 @@ export abstract class Doc {
     const [dirty, setDirty] = createSignal(false);
     this.dirty = dirty;
     this.setDirty = setDirty;
-    this.kernels = new DocKernels(ws, this.dir, preferredKernel);
+    this.kernels = new DocKernels(ws, kernelFolder ?? this.dir, preferredKernel);
     [this.shownOutputs, this.setShownOutputs] = createSignal(shownOutputs);
   }
 
@@ -54,6 +59,8 @@ export abstract class Doc {
   /** Saves; without `force`, refuses (CONFLICT_ERROR) if the file changed on disk. */
   abstract save(force?: boolean): Promise<void>;
   abstract runAll(): Promise<void>;
+  /** Scripts: runs the selection or the statement at the cursor. */
+  runCurrent?(): boolean;
   abstract dispose(): void;
   /** Shows or hides every output in the document. */
   abstract setAllOutputs(visible: boolean): void;
@@ -78,10 +85,18 @@ export abstract class Doc {
     };
   }
 
-  /** Runs `code` in this document's session for `language`, tied to a cell. */
-  protected async execute(language: string, code: string, cellId: string): Promise<string> {
-    const session = await this.kernels.ensure(language);
-    return this.ws.execute(session, code, { file: this.path, cell_id: cellId });
+  /**
+   * Runs `code` in this document's session for `language`, tied to a cell.
+   * Code is sent one run at a time, so it reaches the kernel in the order it
+   * was run, even when several runs wait for a kernel to start.
+   */
+  protected execute(language: string, code: string, cellId: string): Promise<string> {
+    const sent = this.sending.then(async () => {
+      const session = await this.kernels.ensure(language);
+      return this.ws.execute(session, code, { file: this.path, cell_id: cellId });
+    });
+    this.sending = sent.catch(() => {});
+    return sent;
   }
 
   /** Points each language at the session that last ran this file's cells, if it's still running. */

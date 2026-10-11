@@ -100,13 +100,14 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 
 ### The look (added 2026-10-11)
 
-The app follows draft 11 of the UI mockup (https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9).
-Panes are translucent cards on a warm gradient, 3px apart. Chrome (title bar,
-tabs, toolbars, status bar, pane text) is 11px in the system font; code and
-outputs are 12px in JetBrains Mono, bundled with the app (OFL) so every Mac
-shows the same font, with ligatures off so `<-` stays as typed. Plots stay
-white in dark mode. On macOS the windows use an overlay title bar: the page
-draws the 27px bar under the window buttons. The panes skip `backdrop-filter`:
+The app follows draft 13 of the UI mockup (https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9).
+The editor is a translucent card on a warm gradient; the side pane the rail
+opens sits directly on the window background. All text is 14px: chrome
+(title bar, tabs, toolbars, status bar, pane text) in the system font, code
+and outputs in JetBrains Mono, bundled with the app (OFL) so every Mac shows
+the same font, with ligatures off so `<-` stays as typed. Plots stay white in
+dark mode. On macOS the windows use an overlay title bar: the page draws the
+32px bar under the window buttons. The panes skip `backdrop-filter`:
 over a smooth gradient a blur changes nothing you can see, and each blurred
 pane costs a window-sized compositing layer. Styles are in `app/src/styles.css`,
 icons in `app/src/ui/icons.tsx`.
@@ -261,6 +262,8 @@ my-analysis/
 5. **Startup files.** R starts in the project root, so its `.Rprofile` and `.Renviron` there apply as usual; this is how renv activates. For Python, a `.env` file listed in `project.toml` is loaded into the kernel's environment.
 6. **Agents.** Claude Code and Codex start in the project root, so they read the project's own `CLAUDE.md`/`AGENTS.md` and reach the project's kernels through the MCP tools.
 7. **Output cache.** Inside a project, the §4 sidecar cache lives in `.sandhill/outputs/` instead of a `.file.qmd.out/` folder per document. Files opened outside any project keep the per-file sidecar.
+8. **Sessions shared between files (built 2026-10-11).** Files whose code runs in the same folder share one R and one Python session, as RStudio's scripts share one console: the first time a file runs code it joins the project's session for that language and folder, the one last used in the window, and only starts a kernel when there is none. A notebook that names its kernel joins only sessions of that kernel. "New …" in the kernel bar still gives one file a session of its own, and restarting a session moves every file using it to the new one. Sessions keep running when files and the app close (that is the point of the daemon), so the sidebar lists them with a stop button each, marks the ones no open file uses, and offers "Stop unused", which leaves alone sessions still running code (the daemon reports unfinished runs per session).
+9. **Scripts (built 2026-10-11).** `.R` and `.py` files open in an editor with a console under it. ⌘↵ runs the selection, or the statement at the cursor (a call over several lines, a pipe chain, a function or a Python block) and moves to the next; ⇧⌘↵ runs the whole file. Each run is journaled under the file, so the console's last 100 runs come back on reopen.
 
 **Left out on purpose.**
 - Saving the R workspace (`.RData`) on close. RStudio does it by default and most guides say to turn it off; our kernels keep running on the server anyway.

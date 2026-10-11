@@ -1,7 +1,8 @@
 // A window's state: the daemon link, kernels, sessions and their event
 // subscriptions. Documents ask it for a session per language and run code
 // through it. In a project window, sessions it starts are tagged with the
-// project.
+// project, and documents in the same folder share them, as scripts share
+// RStudio's console.
 
 import { createSignal, type Setter } from "solid-js";
 import type { Backend, LinkState } from "../backend";
@@ -25,14 +26,21 @@ export class Workspace {
   readonly sessions: () => SessionInfo[];
   /** Bumped whenever a run starts or finishes, for busy indicators. */
   readonly activity: () => number;
+  /** Restarted sessions, old id -> new id, so every document using one follows it. */
+  readonly replacements: () => Record<string, string>;
 
   private setLink: Setter<LinkState>;
   private setHost: Setter<PingReply | undefined>;
   private setKernelspecs: Setter<KernelspecInfo[]>;
   private setSessions: Setter<SessionInfo[]>;
   private setActivity: Setter<number>;
+  private setReplacements: Setter<Record<string, string>>;
   /** Session id -> highest event seq received, for resubscribing after a reconnect. */
   private subscribed = new Map<string, number>();
+  /** The session each language last ran code in, from this window. */
+  private lastUsed = new Map<string, string>();
+  /** Sessions being started for documents to share, by kernel and folder. */
+  private sharedStarts = new Map<string, Promise<SessionInfo>>();
 
   constructor(
     readonly backend: Backend,
@@ -44,6 +52,7 @@ export class Workspace {
     [this.kernelspecs, this.setKernelspecs] = createSignal<KernelspecInfo[]>([]);
     [this.sessions, this.setSessions] = createSignal<SessionInfo[]>([]);
     [this.activity, this.setActivity] = createSignal(0);
+    [this.replacements, this.setReplacements] = createSignal<Record<string, string>>({});
 
     backend.onEvent((event) => this.onEvent(event));
     backend.onLink((state) => {
@@ -81,9 +90,64 @@ export class Workspace {
     return this.liveSessions(language).filter((s) => !s.project || s.project === this.project);
   }
 
+  /**
+   * Whether a session is running code. For sessions this window follows,
+   * from their events; for others, from the daemon's count when the session
+   * list was last fetched.
+   */
   isBusy(session: string): boolean {
     this.activity();
-    return this.runs.pending(session).length > 0;
+    if (this.runs.pending(session).length > 0) return true;
+    if (this.subscribed.has(session)) return false;
+    return (this.sessions().find((s) => s.id === session)?.pending_runs ?? 0) > 0;
+  }
+
+  /**
+   * A running session of this project that a document in `cwd` can join:
+   * the one this window last ran `language` in, else the newest. With
+   * `kernel`, only sessions of that kernel.
+   */
+  sessionToJoin(language: string, cwd: string, kernel?: string): SessionInfo | undefined {
+    const lang = normalizeLanguage(language);
+    const candidates = this.liveSessions().filter(
+      (s) =>
+        s.project === this.project &&
+        normalizeLanguage(s.language) === lang &&
+        s.cwd === cwd &&
+        (!kernel || s.kernel === kernel),
+    );
+    const last = this.lastUsed.get(lang);
+    return (
+      candidates.find((s) => s.id === last) ??
+      candidates.reduce<SessionInfo | undefined>((a, b) => (a && a.created_ms >= b.created_ms ? a : b), undefined)
+    );
+  }
+
+  /** Starts a session for documents to share; documents asking at the same time get the same one. */
+  startShared(kernel: string, cwd: string): Promise<SessionInfo> {
+    const key = `${kernel}\n${cwd}`;
+    let pending = this.sharedStarts.get(key);
+    if (!pending) {
+      pending = this.startSession(kernel, cwd).finally(() => this.sharedStarts.delete(key));
+      this.sharedStarts.set(key, pending);
+    }
+    return pending;
+  }
+
+  /** Records that `old` was restarted as `fresh`. */
+  replaced(old: string, fresh: string) {
+    this.setReplacements((r) => ({ ...r, [old]: fresh }));
+  }
+
+  /** Follows restarts from a session id to the session that replaced it. */
+  current(session: string): string {
+    const replacements = this.replacements();
+    const seen = new Set<string>();
+    while (replacements[session] && !seen.has(session)) {
+      seen.add(session);
+      session = replacements[session];
+    }
+    return session;
   }
 
   async startSession(kernel: string, cwd?: string): Promise<SessionInfo> {
@@ -108,6 +172,8 @@ export class Workspace {
       await this.subscribe(session, info?.last_seq ?? 0);
     }
     const started = await this.call<RunStarted>("execute", { session, code, cell });
+    const language = this.sessions().find((s) => s.id === session)?.language;
+    if (language) this.lastUsed.set(normalizeLanguage(language), session);
     return started.run;
   }
 
