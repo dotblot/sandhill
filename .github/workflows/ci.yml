@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux (Python, IRkernel, Ark)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Python and R kernels
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-ipykernel r-base-core r-cran-irkernel
+          python3 -m ipykernel install --user
+          # r-cran-irkernel ships its kernelspec in /usr/share/jupyter/kernels/ir,
+          # so IRkernel::installspec() (which needs the jupyter CLI) isn't needed.
+      - name: Install Ark (Posit's R kernel)
+        # Best effort: if this fails, the R test falls back to IRkernel.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo posit-dev/ark --pattern '*linux-x64*.zip' --dir /tmp/ark
+          unzip -o /tmp/ark/*.zip -d /tmp/ark
+          /tmp/ark/ark --install
+      - name: List installed kernels
+        run: ls -d ~/.local/share/jupyter/kernels/* /usr/share/jupyter/kernels/*
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  macos:
+    name: macOS (Apple silicon, Python)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Python kernel
+        run: |
+          python -m pip install ipykernel
+          python -m ipykernel install --user
+      - run: cargo test --workspace

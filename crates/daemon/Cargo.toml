@@ -1,0 +1,30 @@
+[package]
+name = "sandhill-daemon"
+description = "sandhilld: keeps kernels, outputs, jobs and agents alive on the analysis machine"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sandhilld"
+path = "src/main.rs"
+
+[dependencies]
+sandhill-proto.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+jupyter-protocol.workspace = true
+jupyter-zmq-client.workspace = true
+libc.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

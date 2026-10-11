@@ -27,7 +27,31 @@ The full design, including the reasoning behind each choice, is in
 
 | Path | What |
 |---|---|
-| `docs/` | Design and protocol documents |
+| `crates/daemon` | `sandhilld`: kernel sessions, output journal, socket server |
+| `crates/proto` | Wire protocol types and the async client the app and CLI share |
+| `crates/cli` | `sandhill`: terminal client, useful for scripting and testing |
+| `packaging/` | systemd (server) and launchd (Mac local mode) service files |
+| `docs/` | [Design](docs/design.md) and [protocol](docs/protocol.md) |
+
+## Try the daemon
+
+You need Rust, and Jupyter kernels for the languages you want
+(`python -m ipykernel install --user`; for R, [Ark](https://github.com/posit-dev/ark) or IRkernel).
+
+```sh
+cargo build --release
+./target/release/sandhilld serve &                  # or install packaging/systemd/sandhilld.service
+./target/release/sandhill kernels
+id=$(./target/release/sandhill start python3)
+./target/release/sandhill run "$id" 'print("hello")'
+./target/release/sandhill history "$id"             # everything that ran, even while you were away
+```
+
+Against a server, copy `sandhilld` to `~/.local/bin` there and add
+`--ssh yourserver --remote-daemon '~/.local/bin/sandhilld'` to any `sandhill`
+command; the daemon starts on first use.
+
+Run the tests with `cargo test`. Kernel tests skip when a kernel isn't installed.
 
 ## Roadmap
 
