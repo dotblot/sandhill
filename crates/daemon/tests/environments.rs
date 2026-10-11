@@ -30,6 +30,10 @@ fn conda_env(prefix: &Path, python: &Path) {
     std::fs::create_dir_all(prefix.join("conda-meta")).unwrap();
     std::fs::create_dir_all(prefix.join("bin")).unwrap();
     std::os::unix::fs::symlink(python, prefix.join("bin/python")).unwrap();
+    // Where ipykernel installs its launcher; `python` already has the real one.
+    let site = prefix.join("lib/python3.12/site-packages");
+    std::fs::create_dir_all(&site).unwrap();
+    std::fs::write(site.join("ipykernel_launcher.py"), "").unwrap();
     let kernel = prefix.join("share/jupyter/kernels/python3");
     std::fs::create_dir_all(&kernel).unwrap();
     let spec = serde_json::json!({
@@ -54,6 +58,11 @@ async fn a_conda_environment_runs_its_own_python() {
     std::fs::create_dir_all(root.join("conda-meta")).unwrap();
     let env = root.join("envs/omicverse");
     conda_env(&env, &python);
+    // pip and conda don't always write a kernel.json; Jupyter still starts
+    // the environment's ipykernel, and so does the daemon.
+    let bare = root.join("envs/scenicplus");
+    conda_env(&bare, &python);
+    std::fs::remove_dir_all(bare.join("share")).unwrap();
 
     let state = home.join("state");
     let mut command = Command::new(DAEMON);
@@ -96,12 +105,32 @@ async fn a_conda_environment_runs_its_own_python() {
         .unwrap_or_else(|| panic!("the environment's kernel is not listed: {specs:?}"));
     assert_eq!(spec.display_name, "Python (omicverse)");
     assert_eq!(spec.env.as_deref(), Some("omicverse"));
+    assert!(
+        specs.iter().any(|k| k.name == "conda-env-scenicplus-py"),
+        "the environment without a kernel.json is not listed: {specs:?}"
+    );
 
-    let session = client
-        .start_session("conda-env-omicverse-py", None)
-        .await
-        .unwrap()
-        .id;
+    for (kernel, env) in [
+        ("conda-env-omicverse-py", &env),
+        ("conda-env-scenicplus-py", &bare),
+    ] {
+        let stdout = run(&mut client, kernel).await;
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                env.join("bin/python").to_str().unwrap(),
+                env.to_str().unwrap(),
+                env.join("bin").to_str().unwrap(),
+            ],
+            "{kernel}"
+        );
+    }
+}
+
+/// Starts `kernel`, prints where it runs, and shuts it down.
+async fn run(client: &mut Client, kernel: &str) -> String {
+    let session = client.start_session(kernel, None).await.unwrap().id;
     client.subscribe(&session, None).await.unwrap();
     let code = "import os, sys\nprint(sys.executable)\nprint(os.environ['CONDA_PREFIX'])\nprint(os.environ['PATH'].split(':')[0])";
     let run = client.execute(&session, code, None).await.unwrap().run;
@@ -122,14 +151,5 @@ async fn a_conda_environment_runs_its_own_python() {
         }
     }
     client.shutdown(&session).await.unwrap();
-
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(
-        lines,
-        [
-            env.join("bin/python").to_str().unwrap(),
-            env.to_str().unwrap(),
-            env.join("bin").to_str().unwrap(),
-        ]
-    );
+    stdout
 }

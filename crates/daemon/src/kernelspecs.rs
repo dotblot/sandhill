@@ -13,6 +13,10 @@
 //!   (`conda-env-<env>-py`, `conda-env-<env>-r`);
 //! - pyenv versions (`pyenv-<version>-py`).
 //!
+//! An environment with ipykernel installed but no `kernel.json` for it (pip
+//! and conda don't always write one) still gets the `python3` kernel Jupyter
+//! would start from it.
+//!
 //! A kernel found inside an environment runs that environment's own Python or
 //! R, with the environment's `bin` first on `PATH`, much as if it had been
 //! activated. A kernel that runs the same command as one listed before it
@@ -172,11 +176,27 @@ pub fn discover(search: &Search) -> Vec<Found> {
         if !folders.insert((canonical(&source.data_dir), source.names.clone())) {
             continue;
         }
-        for (dir_name, path, spec) in read_kernels(&source.data_dir) {
-            let name = match &source.names {
+        for (dir_name, path, spec) in kernels_of(&source) {
+            let mut name = match &source.names {
                 Some(prefix) => sanitize(&format!("{prefix}-{}", short_name(&dir_name))),
-                None => dir_name,
+                None => dir_name.clone(),
             };
+            if names.contains(&name) {
+                // The shell's environment lost the name to an earlier kernel
+                // (a `python3` installed with `--user`): name it after the
+                // environment instead.
+                match (&source.names, &source.env) {
+                    (None, Some(env)) if env.kind != Kind::System => {
+                        name = sanitize(&format!(
+                            "{}-{}-{}",
+                            env.kind.prefix(),
+                            env.name,
+                            short_name(&dir_name)
+                        ));
+                    }
+                    _ => continue,
+                }
+            }
             if !names.insert(name.clone()) {
                 continue;
             }
@@ -220,6 +240,18 @@ enum Kind {
     Pyenv,
     /// A plain installation such as `/usr` or Homebrew, not an environment.
     System,
+}
+
+impl Kind {
+    /// What the names of an environment's kernels start with.
+    fn prefix(self) -> &'static str {
+        match self {
+            Kind::Conda => "conda-env",
+            Kind::Venv => "venv",
+            Kind::Pyenv => "pyenv",
+            Kind::System => "system",
+        }
+    }
 }
 
 fn sources(search: &Search) -> Vec<Source> {
@@ -282,6 +314,63 @@ fn sources(search: &Search) -> Vec<Source> {
         }
     }
     sources
+}
+
+/// The kernels in a source's folder, and for an environment with ipykernel
+/// but no Python kernel there, the `python3` kernel Jupyter would start
+/// from it.
+fn kernels_of(source: &Source) -> Vec<(String, PathBuf, JupyterKernelspec)> {
+    let mut kernels = read_kernels(&source.data_dir);
+    if let Some(env) = &source.env
+        && env.kind != Kind::System
+        && !kernels
+            .iter()
+            .any(|(_, _, spec)| spec.language.to_lowercase().starts_with("python"))
+        && let Some(python) = ipykernel_python(&env.prefix)
+    {
+        let argv = [
+            &python,
+            "-m",
+            "ipykernel_launcher",
+            "-f",
+            "{connection_file}",
+        ];
+        kernels.push((
+            "python3".into(),
+            source.data_dir.join("kernels/python3"),
+            JupyterKernelspec {
+                argv: argv.map(String::from).to_vec(),
+                display_name: "Python 3 (ipykernel)".into(),
+                language: "python".into(),
+                metadata: None,
+                interrupt_mode: None,
+                env: None,
+            },
+        ));
+    }
+    kernels
+}
+
+/// The environment's Python, if ipykernel is installed in it.
+fn ipykernel_python(prefix: &Path) -> Option<String> {
+    let installed = std::fs::read_dir(prefix.join("lib"))
+        .ok()?
+        .flatten()
+        .any(|entry| {
+            entry.file_name().to_string_lossy().starts_with("python3")
+                && entry
+                    .path()
+                    .join("site-packages/ipykernel_launcher.py")
+                    .is_file()
+        });
+    if !installed {
+        return None;
+    }
+    ["python3", "python"]
+        .iter()
+        .map(|exe| prefix.join("bin").join(exe))
+        .find(|path| path.is_file())
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 /// Reads `<data_dir>/kernels/*/kernel.json`, skipping what doesn't parse.
@@ -490,12 +579,23 @@ fn sanitize(name: &str) -> String {
 }
 
 /// What a kernel runs, to spot the same kernel installed under two names.
+/// `python` and `python3` in one `bin` folder are the same program, but a
+/// venv's `python`, a link to the system's, is not: it runs with the venv's
+/// packages. Python's `-X` options (ipykernel adds `-Xfrozen_modules=off`)
+/// don't make it another kernel either.
 fn command_key(argv: &[String]) -> Vec<String> {
-    let mut key = argv.to_vec();
+    let mut key: Vec<String> = argv
+        .iter()
+        .enumerate()
+        .filter(|(i, arg)| *i == 0 || !arg.starts_with("-X"))
+        .map(|(_, arg)| arg.clone())
+        .collect();
     if let Some(program) = key.first_mut()
         && program.starts_with('/')
     {
-        *program = canonical(Path::new(program)).to_string_lossy().into_owned();
+        let path = Path::new(program.as_str());
+        let dir = path.parent().unwrap_or(path).display().to_string();
+        *program = format!("{dir}: {}", canonical(path).display());
     }
     key
 }
@@ -712,6 +812,117 @@ mod tests {
         let omicverse = &found[1].dir.kernelspec;
         assert_eq!(omicverse.display_name, "Python (omicverse)");
         assert_eq!(omicverse.argv[0], env.join("bin/python").to_str().unwrap());
+    }
+
+    #[test]
+    fn environments_with_ipykernel_but_no_kernel_json_are_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("miniforge3");
+        std::fs::create_dir_all(root.join("conda-meta")).unwrap();
+        let mut envs = Vec::new();
+        for name in ["omicverse", "scenicplus", "isoseq"] {
+            let env = root.join("envs").join(name);
+            std::fs::create_dir_all(env.join("conda-meta")).unwrap();
+            python(&env);
+            envs.push(env);
+        }
+        // ipykernel in omicverse and scenicplus, neither with a kernel.json.
+        for env in &envs[..2] {
+            let site = env.join("lib/python3.12/site-packages");
+            std::fs::create_dir_all(&site).unwrap();
+            std::fs::write(site.join("ipykernel_launcher.py"), "").unwrap();
+        }
+        let search = Search {
+            // The shell activates omicverse.
+            path: Some(format!("{}:/usr/bin", envs[0].join("bin").display()).into()),
+            conda_roots: vec![root],
+            ..Search::default()
+        };
+
+        let found = discover(&search);
+        assert_eq!(
+            names(&found),
+            [
+                ("python3", false),
+                ("conda-env-omicverse-py", true),
+                ("conda-env-scenicplus-py", false),
+            ]
+        );
+        let omicverse = &found[0].dir.kernelspec;
+        assert_eq!(omicverse.display_name, "Python (omicverse)");
+        assert_eq!(
+            omicverse.argv,
+            [
+                envs[0].join("bin/python3").to_str().unwrap(),
+                "-m",
+                "ipykernel_launcher",
+                "-f",
+                "{connection_file}"
+            ]
+        );
+        assert_eq!(
+            omicverse.env.as_ref().unwrap()["CONDA_DEFAULT_ENV"],
+            "omicverse"
+        );
+        assert_eq!(found[2].dir.kernelspec.display_name, "Python (scenicplus)");
+
+        // Registered by hand with `ipykernel install --user --name omicverse`,
+        // it is the same kernel and listed once.
+        let user = tmp.path().join("Jupyter");
+        let mut registered = ipykernel(envs[0].join("bin/python").to_str().unwrap());
+        registered["argv"]
+            .as_array_mut()
+            .unwrap()
+            .insert(1, json!("-Xfrozen_modules=off"));
+        kernel(&user, "omicverse", registered);
+        let search = Search {
+            user_dir: Some(user),
+            ..search
+        };
+        assert_eq!(
+            names(&discover(&search)),
+            [
+                ("omicverse", false),
+                ("python3", true),
+                ("conda-env-omicverse-py", true),
+                ("conda-env-scenicplus-py", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_venv_is_not_the_python_it_links_to() {
+        let tmp = tempfile::tempdir().unwrap();
+        let system = tmp.path().join("usr");
+        python(&system);
+        let user = tmp.path().join("Jupyter");
+        kernel(
+            &user,
+            "python3",
+            ipykernel(system.join("bin/python3").to_str().unwrap()),
+        );
+        // A project venv, whose python links to the system's.
+        let venv = tmp.path().join("atlas/.venv");
+        std::fs::create_dir_all(venv.join("bin")).unwrap();
+        std::os::unix::fs::symlink(system.join("bin/python"), venv.join("bin/python")).unwrap();
+        std::fs::write(venv.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
+        kernel(&venv.join("share/jupyter"), "python3", ipykernel("python"));
+        let search = Search {
+            user_dir: Some(user),
+            path: Some(venv.join("bin").into_os_string()),
+            ..Search::default()
+        };
+
+        let found = discover(&search);
+        assert_eq!(
+            names(&found),
+            [("python3", false), ("venv-atlas-py", false)]
+        );
+        assert_eq!(found[1].dir.kernelspec.display_name, "Python (atlas)");
+        assert_eq!(
+            found[1].dir.kernelspec.argv[0],
+            venv.join("bin/python").to_str().unwrap()
+        );
     }
 
     #[test]

@@ -205,7 +205,7 @@ Positron is the target experience. The plan is to keep its features and drop its
 | **Help pane** (`?fn`, docstrings) | MVP | Ark's help comm for R. Python: `inspect` and pydoc rendering. |
 | **Viewer pane** (htmlwidgets, HTML reports, Shiny) | v1 | A sandboxed WKWebView pane. Ports are forwarded over ssh. |
 | **Quarto inline output** | MVP | Already the core of §4. |
-| **Interpreter discovery and switching** (conda/mamba, venv, uv, renv, several R versions) | v1 | The daemon scans the server and remembers a choice per project. Started: kernels inside conda environments, pyenv versions and the shell's environment are found without `ipykernel install` and run with their environment activated. |
+| **Interpreter discovery and switching** (conda/mamba, venv, uv, renv, several R versions) | v1 | The daemon scans the server and remembers a choice per project. Started: kernels inside conda environments, pyenv versions and the shell's environment are found without `ipykernel install` and run with their environment activated, including environments that have ipykernel but no `kernel.json` (Jupyter starts those too). |
 | **MCP server for coding agents in live sessions** (Positron 2026.10, experimental) | MVP | Already the core of §5. Positron adding the same thing confirms the design. |
 | **Assistant aware of your session** (variables, plots, errors) | v1 | The same MCP tools, plus "Fix" and "Explain" buttons on errors. |
 | **Packages pane** | later | `pip`/`uv`/`conda`/`install.packages` wrappers. |
