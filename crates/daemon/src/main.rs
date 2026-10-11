@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
 }
 
 async fn serve(state: StateDir, socket: PathBuf) -> Result<()> {
+    sandhill_daemon::memory::configure();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),

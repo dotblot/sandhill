@@ -218,6 +218,8 @@ Positron is the target experience. The plan is to keep its features and drop its
 
 Keep the daemon protocol binary (msgpack), stream outputs incrementally, and never send blobs the client already has (content hashes).
 
+How notebooks stay small in the app (decided October 2026, after measuring three scanpy notebooks of 7, 7 and 25 MB): a `.ipynb` is mostly base64 plots, and every copy of that text costs memory in each process it passes through, which the allocator then keeps. So plots never travel as text. The daemon opens a notebook with `read_notebook`, which moves plots and outputs over 64 KB into the blob store and sends references; the web view loads them by URL. Saving sends the references back with `write_notebook`, and the daemon writes the values into the file. In the web view, images load lazily, far-away images are dropped until they scroll near, and off-screen outputs skip layout (`content-visibility`). After a large message the daemon and the app hand freed memory back to the system.
+
 ---
 
 ## 7. Build order (suggested MVP path)

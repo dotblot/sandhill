@@ -118,6 +118,9 @@ input, select { font: inherit; color: inherit; background: var(--bg); border: 1p
 
 /* Outputs */
 .cell-output { border-left: 2px solid var(--border); padding: 2px 0 2px 10px; margin: 4px 0; }
+/* Outputs far from view (big tables, plots) get no layout or paint; once
+   shown they keep their last height, so scrolling doesn't jump. */
+.nb-cell .cell-output { content-visibility: auto; contain-intrinsic-size: auto 240px; }
 .cell-output.empty { display: none; }
 .cell-output[data-phase="running"], .cell-output[data-phase="queued"] { border-left-color: var(--busy); }
 .cell-output[data-status="error"] { border-left-color: var(--danger); }

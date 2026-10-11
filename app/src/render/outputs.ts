@@ -60,6 +60,26 @@ export class OutputArea {
     this.element.classList.toggle("empty", outputs.length === 0);
     this.ctx.onResize();
   }
+
+  /**
+   * Lets go of plots while the area is far from view or in a hidden tab, so
+   * the web view can drop their decoded pixels; `resume` loads them again.
+   */
+  suspend() {
+    for (const img of this.element.querySelectorAll<HTMLImageElement>("img.out-image[src]")) {
+      // Keep the box the plot had, so the page doesn't jump.
+      if (img.offsetHeight) img.style.aspectRatio = `${img.offsetWidth} / ${img.offsetHeight}`;
+      img.dataset.src = img.getAttribute("src")!;
+      img.removeAttribute("src");
+    }
+  }
+
+  resume() {
+    for (const img of this.element.querySelectorAll<HTMLImageElement>("img.out-image[data-src]")) {
+      img.setAttribute("src", img.dataset.src!);
+      delete img.dataset.src;
+    }
+  }
 }
 
 export function renderOutput(output: Output, ctx: RenderContext): HTMLElement {
@@ -134,6 +154,10 @@ function renderImage(mime: string, value: unknown, meta: Record<string, any>, ct
   const img = document.createElement("img");
   img.className = "out out-image";
   img.alt = "plot";
+  // Set before src: plots far from view (or in a hidden tab) aren't fetched
+  // or decoded until they are scrolled near.
+  img.setAttribute("loading", "lazy");
+  img.decoding = "async";
   if (isBlobRef(value)) {
     img.src = ctx.blobUrl(value.sandhill_blob, mime);
   } else if (typeof value === "string") {
