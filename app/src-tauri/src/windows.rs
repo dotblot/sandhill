@@ -196,12 +196,13 @@ fn title_bar<'a, R: Runtime, M: Manager<R>>(
         ))
 }
 
-/// Where the close button's frame starts, in points from the window's top
-/// left. Its frame is a point wider than the 12pt light on each side.
+/// Where macOS puts the close button, in points. Measured on a Mac (the Mac
+/// check prints it): x 11 puts the red light at 12-24pt, and the lights'
+/// centre lands 2pt below y, so y 15 centres them on the toolbar's 17pt line.
 #[cfg(target_os = "macos")]
 const TRAFFIC_LIGHTS_X: f64 = 11.0;
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS_Y: f64 = 10.0;
+const TRAFFIC_LIGHTS_Y: f64 = 15.0;
 
 #[cfg(not(target_os = "macos"))]
 fn title_bar<'a, R: Runtime, M: Manager<R>>(

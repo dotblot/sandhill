@@ -1,7 +1,8 @@
 """Measures a screenshot of a Sandhill window and prints GitHub notices: where
 macOS drew the window buttons and the toolbar's first icon, in points, and
-small JPEG pictures of the window, base64 in pieces. This checks the look on
-a real Mac from the check's annotations.
+a small JPEG picture of its top left corner, base64 in pieces. This checks
+the look on a real Mac from the check's annotations, which keep at most 4096
+characters each and 10 notices a step.
 
     python look.py window.png WIDTH_IN_POINTS
 """
@@ -12,7 +13,7 @@ import sys
 
 from PIL import Image
 
-PIECE = 60_000
+PIECE = 4000
 
 
 def notice(title: str, message: str) -> None:
@@ -66,10 +67,8 @@ def main() -> None:
         f"screenshot {img.width}x{img.height} px, scale {scale:.2f}; "
         + "; ".join(f"{name}: {where}" for name, where in lights.items()),
     )
-    corner = img.crop((0, 0, round(520 * scale), round(130 * scale)))
-    picture("Top left", corner.resize((520, 130)), 85)
-    whole = img.resize((1100, round(img.height * 1100 / img.width)))
-    picture("Window", whole, 55)
+    corner = img.crop((0, 0, round(400 * scale), round(70 * scale)))
+    picture("Top left", corner.resize((400, 70)), 70)
 
 
 if __name__ == "__main__":
