@@ -6,7 +6,6 @@ import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
 import {
   bracketMatching,
-  HighlightStyle,
   indentOnInput,
   indentUnit,
   type Language,
@@ -24,7 +23,7 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
-import { tags as t } from "@lezer/highlight";
+import { highlightCode, tagHighlighter, tags as t } from "@lezer/highlight";
 
 const rLanguage = StreamLanguage.define(r);
 const pythonLanguage = python().language;
@@ -49,21 +48,56 @@ export function quartoLanguage(): Extension {
   });
 }
 
-const highlight = HighlightStyle.define([
-  { tag: [t.keyword, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], color: "var(--syn-keyword)" },
-  { tag: [t.string, t.special(t.string), t.regexp], color: "var(--syn-string)" },
-  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--syn-number)" },
-  { tag: [t.comment, t.lineComment, t.blockComment, t.meta], color: "var(--syn-comment)", fontStyle: "italic" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--syn-function)" },
-  { tag: [t.definition(t.variableName), t.className, t.typeName], color: "var(--syn-definition)" },
-  { tag: [t.operator, t.punctuation], color: "var(--syn-operator)" },
-  { tag: t.heading, fontWeight: "600", color: "var(--syn-heading)" },
-  { tag: t.emphasis, fontStyle: "italic" },
-  { tag: t.strong, fontWeight: "600" },
-  { tag: [t.link, t.url], color: "var(--syn-link)" },
-  { tag: t.monospace, color: "var(--syn-string)" },
-  { tag: t.processingInstruction, color: "var(--syn-comment)" },
+/**
+ * Classes for syntax tokens, colored in styles.css. Editors and the
+ * highlighted code shown for cells not being edited share them.
+ */
+const highlighter = tagHighlighter([
+  { tag: [t.keyword, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], class: "tok-keyword" },
+  { tag: [t.string, t.special(t.string), t.regexp], class: "tok-string" },
+  { tag: [t.number, t.bool, t.null, t.atom], class: "tok-number" },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.meta], class: "tok-comment" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], class: "tok-function" },
+  { tag: [t.definition(t.variableName), t.className, t.typeName], class: "tok-definition" },
+  { tag: [t.operator, t.punctuation], class: "tok-operator" },
+  { tag: t.heading, class: "tok-heading" },
+  { tag: t.emphasis, class: "tok-emphasis" },
+  { tag: t.strong, class: "tok-strong" },
+  { tag: [t.link, t.url], class: "tok-link" },
+  { tag: t.monospace, class: "tok-string" },
+  { tag: t.processingInstruction, class: "tok-instruction" },
 ]);
+
+/**
+ * Code as highlighted lines laid out like an editor's, for showing a cell
+ * without making an editor for it. Each line is a `div`, as in CodeMirror.
+ */
+export function highlightedLines(code: string, language: Language | undefined): HTMLElement[] {
+  const lines: HTMLElement[] = [];
+  let line = document.createElement("div");
+  const putText = (text: string, classes: string) => {
+    if (!classes) return line.append(text);
+    const span = document.createElement("span");
+    span.className = classes;
+    span.textContent = text;
+    line.append(span);
+  };
+  const putBreak = () => {
+    if (!line.firstChild) line.append(document.createElement("br"));
+    lines.push(line);
+    line = document.createElement("div");
+  };
+  if (language) {
+    highlightCode(code, language.parser.parse(code), highlighter, putText, putBreak);
+  } else {
+    code.split("\n").forEach((text, i) => {
+      if (i) putBreak();
+      putText(text, "");
+    });
+  }
+  putBreak();
+  return lines;
+}
 
 const theme = EditorView.theme({
   "&": { color: "var(--text)", backgroundColor: "transparent", fontSize: "13px" },
@@ -93,7 +127,7 @@ export function baseExtensions(opts: { lineNumbers?: boolean; wrap?: boolean } =
     autocompletion({ activateOnTyping: false }),
     highlightActiveLine(),
     highlightSelectionMatches(),
-    syntaxHighlighting(highlight),
+    syntaxHighlighting(highlighter),
     theme,
     opts.wrap ? EditorView.lineWrapping : [],
     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),

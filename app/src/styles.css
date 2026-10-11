@@ -116,6 +116,20 @@ input, select { font: inherit; color: inherit; background: var(--bg); border: 1p
 .status-bar[data-link="connecting"] .link-dot { background: var(--busy); }
 .status-bar[data-link="disconnected"] .link-dot { background: var(--danger); }
 
+/* Syntax colors, for editors and for cells not being edited */
+.tok-keyword { color: var(--syn-keyword); }
+.tok-string { color: var(--syn-string); }
+.tok-number { color: var(--syn-number); }
+.tok-comment { color: var(--syn-comment); font-style: italic; }
+.tok-function { color: var(--syn-function); }
+.tok-definition { color: var(--syn-definition); }
+.tok-operator { color: var(--syn-operator); }
+.tok-heading { color: var(--syn-heading); font-weight: 600; }
+.tok-emphasis { font-style: italic; }
+.tok-strong { font-weight: 600; }
+.tok-link { color: var(--syn-link); }
+.tok-instruction { color: var(--syn-comment); }
+
 /* Quarto chunks */
 .cm-chunk { background: var(--chunk-bg); }
 .cm-run-chunk { margin-left: 12px; padding: 0 7px; font: 11px var(--font-ui); border-radius: 5px; color: var(--accent); vertical-align: 1px; }
@@ -174,8 +188,12 @@ pre.out { font: 12.5px/1.45 var(--font-mono); white-space: pre-wrap; word-break:
 .nb-body { min-width: 0; }
 .nb-code .nb-body > .cm-editor, .nb-code .nb-placeholder, .nb-raw .nb-body > .cm-editor, .nb-raw .nb-placeholder { background: var(--chunk-bg); border: 1px solid var(--border); border-radius: 6px; }
 .nb-cell:focus-within .nb-body > .cm-editor { border-color: var(--accent); }
-.nb-placeholder { margin: 0; padding: 4px 6px; font: 13px/1.4 var(--font-mono); white-space: pre-wrap; min-height: 26px; cursor: text; }
-.nb-markdown .nb-placeholder { background: transparent; border: none; font-family: var(--font-ui); }
+/* A cell not being edited shows highlighted code laid out like the editor's
+   lines, so clicking it to make an editor moves nothing. */
+.nb-placeholder { margin: 0; padding: 4px 0; font: 13px/1.4 var(--font-mono); tab-size: 4; overflow-x: auto; cursor: text; }
+.nb-placeholder > div { padding: 0 2px 0 6px; white-space: pre; }
+.nb-markdown .nb-placeholder > div, .nb-raw .nb-placeholder > div { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
+.nb-markdown .nb-placeholder { background: transparent; border: none; }
 .nb-markdown { padding: 2px 8px; font-size: 14px; line-height: 1.55; }
 .nb-markdown h1, .nb-markdown h2, .nb-markdown h3 { margin: 0.4em 0 0.3em; }
 .nb-markdown p { margin: 0.4em 0; }
