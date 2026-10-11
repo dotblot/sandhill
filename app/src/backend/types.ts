@@ -63,6 +63,8 @@ export interface ProjectState {
   /** Open documents, in tab order. */
   tabs?: string[];
   active?: string;
+  /** Per document, the cells whose outputs are shown; the rest start hidden. */
+  outputs?: Record<string, string[]>;
 }
 
 export interface CellRef {

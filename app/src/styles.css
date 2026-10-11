@@ -97,6 +97,10 @@ input, select { font: inherit; color: inherit; background: var(--bg); border: 1p
 .kernel select { max-width: 230px; font-size: 12px; }
 .kernel button { padding: 1px 7px; font-size: 12px; }
 .kernel-lang { font-weight: 600; }
+.outputs-toggle { display: flex; }
+.outputs-toggle button { font-size: 12px; padding: 2px 8px; }
+.outputs-toggle button:first-child { border-radius: 6px 0 0 6px; }
+.outputs-toggle button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 .kernel-dot, .link-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); display: inline-block; }
 .kernel[data-state="idle"] .kernel-dot { background: var(--ok); }
 .kernel[data-state="busy"] .kernel-dot, .kernel[data-state="starting"] .kernel-dot { background: var(--busy); }
@@ -123,6 +127,13 @@ input, select { font: inherit; color: inherit; background: var(--bg); border: 1p
    shown they keep their last height, so scrolling doesn't jump. */
 .nb-cell .cell-output { content-visibility: auto; contain-intrinsic-size: auto 240px; }
 .cell-output.empty { display: none; }
+/* A hidden output is just its status line, so it needs no stand-in height. */
+.nb-cell .cell-output.collapsed { content-visibility: visible; contain-intrinsic-size: none; }
+.cell-output.has-outputs .cell-status { cursor: pointer; user-select: none; }
+.cell-output.has-outputs .cell-status:hover { color: var(--text-muted); }
+.cell-caret { display: inline-block; width: 12px; }
+.cell-output.has-outputs .cell-caret::before { content: "▾"; }
+.cell-output.has-outputs.collapsed .cell-caret::before { content: "▸"; }
 .cell-output[data-phase="running"], .cell-output[data-phase="queued"] { border-left-color: var(--busy); }
 .cell-output[data-status="error"] { border-left-color: var(--danger); }
 .cell-output.stale { opacity: 0.55; }

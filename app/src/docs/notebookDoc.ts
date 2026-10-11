@@ -30,6 +30,8 @@ interface CellView {
   body: HTMLElement;
   count: HTMLElement;
   editor?: EditorView;
+  /** The editor's state while its view is released far from view, with its undo history. */
+  parked?: EditorState;
   output?: CellOutput;
   preview?: HTMLElement;
 }
@@ -44,9 +46,9 @@ export class NotebookDoc extends Doc {
   private language: () => string;
   private setLanguage: Setter<string>;
 
-  static async open(ws: Workspace, path: string): Promise<NotebookDoc> {
+  static async open(ws: Workspace, path: string, shownOutputs: string[] = []): Promise<NotebookDoc> {
     const file = await readNotebook(ws, path);
-    const doc = new NotebookDoc(ws, file.path, parseNotebook(file.text));
+    const doc = new NotebookDoc(ws, file.path, parseNotebook(file.text), shownOutputs);
     doc.mtime = file.mtime_ms;
     await doc.mergeJournal();
     return doc;
@@ -56,8 +58,9 @@ export class NotebookDoc extends Doc {
     ws: Workspace,
     path: string,
     private nb: Notebook,
+    shownOutputs: string[],
   ) {
-    super(ws, path, () => nb.metadata?.kernelspec);
+    super(ws, path, () => nb.metadata?.kernelspec, shownOutputs);
     [this.language, this.setLanguage] = createSignal(normalizeLanguage(notebookLanguage(nb) ?? "python"));
     for (const cell of nb.cells) this.views.set(cell.id, this.createView(cell));
   }
@@ -73,9 +76,10 @@ export class NotebookDoc extends Doc {
     this.observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
           const view = this.views.get((entry.target as HTMLElement).dataset.id!);
-          if (view) this.ensureEditor(view);
+          if (!view) continue;
+          if (entry.isIntersecting) this.ensureEditor(view);
+          else this.parkEditor(view);
         }
       },
       { rootMargin: "600px" },
@@ -133,6 +137,10 @@ export class NotebookDoc extends Doc {
     this.setDirty(false);
   }
 
+  setAllOutputs(visible: boolean) {
+    for (const view of this.views.values()) if (view.output?.info) view.output.setVisible(visible);
+  }
+
   async runAll() {
     for (const cell of this.nb.cells) {
       if (cell.cell_type === "code") await this.runCell(cell.id);
@@ -150,6 +158,7 @@ export class NotebookDoc extends Doc {
     if (view.cell.cell_type !== "code") return;
     const code = this.sourceOf(view);
     const output = view.output!;
+    output.setVisible(true);
     output.showSaved({ phase: "queued", code, outputs: [] });
     this.recordKernel();
     try {
@@ -216,7 +225,12 @@ export class NotebookDoc extends Doc {
 
     const view: CellView = { cell, root, body, count };
     if (cell.cell_type === "code") {
-      view.output = new CellOutput(this.renderContext(() => {}), (info) => this.onOutput(view, info));
+      view.output = new CellOutput(
+        this.renderContext(() => {}),
+        (info) => this.onOutput(view, info),
+        this.outputShown(cell.id),
+        (visible) => this.outputToggled(cell.id, visible),
+      );
       if (cell.outputs.length || cell.execution_count !== null) {
         view.output.showSaved({
           phase: "done",
@@ -235,7 +249,7 @@ export class NotebookDoc extends Doc {
     return view;
   }
 
-  /** Plain text stands in for the editor until the cell scrolls into view. */
+  /** Plain text stands in for the editor while the cell is far from view. */
   private placeholder(cell: NbCell): HTMLElement {
     const pre = document.createElement("pre");
     pre.className = "nb-placeholder";
@@ -251,8 +265,10 @@ export class NotebookDoc extends Doc {
     if (view.editor || view.preview) return view.editor;
     const { cell } = view;
     const language = cell.cell_type === "code" ? languageFor(this.language()) : undefined;
+    const parked = view.parked;
+    view.parked = undefined;
     const editor = new EditorView({
-      state: EditorState.create({
+      state: parked ?? EditorState.create({
         doc: cell.source,
         extensions: [
           Prec.highest(
@@ -276,11 +292,32 @@ export class NotebookDoc extends Doc {
     return editor;
   }
 
+  /**
+   * Releases the editor of a cell far from view (each costs several hundred
+   * KB in the web view), keeping its state so text and undo history come
+   * back when it scrolls near again.
+   */
+  private parkEditor(view: CellView) {
+    const editor = view.editor;
+    if (!editor || editor.hasFocus) return;
+    view.cell.source = editor.state.doc.toString();
+    view.parked = editor.state;
+    const placeholder = this.placeholder(view.cell);
+    // Same height as the editor, so the page doesn't shift. A hidden tab
+    // measures 0, and the plain text is close enough there.
+    const height = editor.dom.offsetHeight;
+    if (height) placeholder.style.height = `${height}px`;
+    editor.dom.replaceWith(placeholder);
+    editor.destroy();
+    view.editor = undefined;
+  }
+
   private showPreview(view: CellView) {
     if (view.cell.cell_type !== "markdown") return;
     view.cell.source = this.sourceOf(view);
     view.editor?.destroy();
     view.editor = undefined;
+    view.parked = undefined;
     const preview = document.createElement("div");
     preview.className = "nb-markdown";
     preview.innerHTML = DOMPurify.sanitize(marked.parse(view.cell.source || "*Empty text cell*", { async: false }) as string);

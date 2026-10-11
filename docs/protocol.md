@@ -46,9 +46,9 @@ with `status` one of `starting`, `running`, `ended`.
 folder on the daemon's machine, named by its absolute path without a trailing
 slash (the daemon normalizes what it is given). `open_project` records it as
 opened now and returns the `state` the app last saved for it with
-`save_project_state` (any JSON; the app keeps its open tabs there), or `null`.
-The daemon keeps that state in its own journal, never in the folder, so
-opening a colleague's repository leaves no trace in it. `forget_project`
+`save_project_state` (any JSON; the app keeps its open tabs and shown outputs
+there), or `null`. The daemon keeps that state in its own journal, never in
+the folder, so opening a colleague's repository leaves no trace in it. `forget_project`
 removes a project from the recent list and touches no files. A session
 started with `project` lists it in its `SessionInfo`, also after a daemon
 restart.

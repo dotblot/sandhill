@@ -11,6 +11,14 @@ export function KernelBar(props: { ws: Workspace; doc: Doc; onError: (msg: strin
         {(language) => <KernelControl ws={props.ws} doc={props.doc} language={language} onError={props.onError} />}
       </For>
       <span class="spacer" />
+      <span class="outputs-toggle" role="group" aria-label="Outputs">
+        <button onClick={() => props.doc.setAllOutputs(true)} title="Show every output in this document">
+          Show outputs
+        </button>
+        <button onClick={() => props.doc.setAllOutputs(false)} title="Hide every output in this document">
+          Hide outputs
+        </button>
+      </span>
       <button onClick={() => props.doc.runAll().catch((e) => props.onError(String(e)))} title="Run all (⌥⌘R)">
         Run all
       </button>

@@ -37,9 +37,9 @@ export class QmdDoc extends Doc {
   private langs: Accessor<string[]>;
   private setLangs: Setter<string[]>;
 
-  static async open(ws: Workspace, path: string): Promise<QmdDoc> {
+  static async open(ws: Workspace, path: string, shownOutputs: string[] = []): Promise<QmdDoc> {
     const file = await ws.call<FileText>("read_file", { path });
-    const doc = new QmdDoc(ws, file.path, file.text);
+    const doc = new QmdDoc(ws, file.path, file.text, shownOutputs);
     doc.mtime = file.mtime_ms;
     await doc.loadOutputs();
     return doc;
@@ -49,9 +49,13 @@ export class QmdDoc extends Doc {
     ws: Workspace,
     path: string,
     private initialText: string,
+    shownOutputs: string[],
   ) {
-    super(ws, path, (language) =>
-      language === "python" ? { name: frontMatterKernel(this.text()) } : undefined,
+    super(
+      ws,
+      path,
+      (language) => (language === "python" ? { name: frontMatterKernel(this.text()) } : undefined),
+      shownOutputs,
     );
     [this.langs, this.setLangs] = createSignal<string[]>(chunkLanguages(parseChunks(initialText)));
     this.layoutField = this.createLayoutField();
@@ -121,6 +125,10 @@ export class QmdDoc extends Doc {
     this.setDirty(false);
   }
 
+  setAllOutputs(visible: boolean) {
+    for (const slot of this.slots.values()) if (slot.output.info) slot.output.setVisible(visible);
+  }
+
   async runAll() {
     for (const chunk of this.chunks()) {
       if (RUNNABLE.has(chunk.language)) await this.runChunk(chunk);
@@ -130,6 +138,9 @@ export class QmdDoc extends Doc {
   async runChunk(chunk: Chunk, code = chunk.code) {
     if (!RUNNABLE.has(chunk.language)) return;
     const slot = this.slotForRun(chunk);
+    slot.output.setVisible(true);
+    // The slot may have moved to the chunk's current id.
+    this.outputToggled(slot.key, true);
     slot.output.showSaved({ phase: "queued", code, outputs: [] });
     try {
       const run = await this.execute(chunk.language, code, chunk.cellId);
@@ -177,6 +188,8 @@ export class QmdDoc extends Doc {
       const output = new CellOutput(
         this.renderContext(() => this.view?.requestMeasure()),
         () => this.view?.requestMeasure(),
+        this.outputShown(key),
+        (visible) => this.outputToggled(slot!.key, visible),
       );
       slot = { key, output };
       this.slots.set(key, slot);
