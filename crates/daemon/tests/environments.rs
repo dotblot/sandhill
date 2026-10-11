@@ -46,19 +46,22 @@ async fn a_conda_environment_runs_its_own_python() {
         eprintln!("skipping: no python3 with ipykernel installed");
         return;
     };
-    let home = tempfile::tempdir().unwrap();
-    let root = home.path().join("miniconda3");
+    let tmp = tempfile::tempdir().unwrap();
+    // Python reports its path with symlinks resolved (on macOS the temp
+    // folder is under /var, a link to /private/var), so start resolved.
+    let home = tmp.path().canonicalize().unwrap();
+    let root = home.join("miniconda3");
     std::fs::create_dir_all(root.join("conda-meta")).unwrap();
     let env = root.join("envs/omicverse");
     conda_env(&env, &python);
 
-    let state = home.path().join("state");
+    let state = home.join("state");
     let mut command = Command::new(DAEMON);
     command
         .arg("--state-dir")
         .arg(&state)
         .arg("serve")
-        .env("HOME", home.path())
+        .env("HOME", &home)
         .env("PATH", "/usr/bin:/bin")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
