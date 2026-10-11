@@ -1,0 +1,18 @@
+# Install for your user on the analysis server:
+#   mkdir -p ~/.config/systemd/user
+#   cp sandhilld.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now sandhilld
+#   loginctl enable-linger "$USER"   # keep it running after you log out
+[Unit]
+Description=Sandhill daemon (kernels and outputs that outlive the app)
+
+[Service]
+ExecStart=%h/.local/bin/sandhilld serve
+Restart=on-failure
+# Stop or restart only the daemon. Kernels keep running and the next daemon
+# reattaches to them; the default (control-group) would kill your analyses.
+KillMode=process
+
+[Install]
+WantedBy=default.target
