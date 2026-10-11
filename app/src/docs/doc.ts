@@ -1,5 +1,7 @@
 // What the app shell needs from an open document, whatever its format.
 
+import type { Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { createSignal } from "solid-js";
 import type { KernelWanted, Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
@@ -29,6 +31,9 @@ export abstract class Doc {
    */
   readonly shownOutputs: () => string[];
   private setShownOutputs: (ids: string[]) => void;
+  /** Where the cursor is, like "Ln 24, Col 32", for the status bar. */
+  readonly cursor: () => string;
+  private setCursor: (text: string) => void;
   /** Modification time of the file as last read or written, to detect outside changes. */
   protected mtime = 0;
   /** The last run sent to a kernel, or being sent. */
@@ -50,6 +55,7 @@ export abstract class Doc {
     this.setDirty = setDirty;
     this.kernels = new DocKernels(ws, kernelFolder ?? this.dir, preferredKernel);
     [this.shownOutputs, this.setShownOutputs] = createSignal(shownOutputs);
+    [this.cursor, this.setCursor] = createSignal("");
   }
 
   /** Languages with code in this document, for the kernel bar. */
@@ -64,6 +70,17 @@ export abstract class Doc {
   abstract dispose(): void;
   /** Shows or hides every output in the document. */
   abstract setAllOutputs(visible: boolean): void;
+
+  /** Keeps `cursor` up to date from an editor of this document. */
+  protected trackCursor(): Extension {
+    return EditorView.updateListener.of((update) => {
+      if (!update.selectionSet && !update.docChanged && !update.focusChanged) return;
+      if (!update.view.hasFocus && !update.selectionSet) return;
+      const head = update.state.selection.main.head;
+      const line = update.state.doc.lineAt(head);
+      this.setCursor(`Ln ${line.number}, Col ${head - line.from + 1}`);
+    });
+  }
 
   /** Whether the output of `cellId` starts out shown. */
   protected outputShown(cellId: string): boolean {

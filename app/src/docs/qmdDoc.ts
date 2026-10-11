@@ -89,6 +89,7 @@ export class QmdDoc extends Doc {
           runKeys,
           quartoLanguage(),
           ...baseExtensions({ wrap: true }),
+          this.trackCursor(),
           this.layoutField,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {

@@ -181,6 +181,8 @@ impl Windows {
 
 /// On macOS the page draws the title bar, under the window buttons, so the
 /// panes can float on one background from the top of the window down.
+/// The buttons sit in the page's 34px toolbar row: the red one 12px from the
+/// left edge and centred on the row, as in the design (docs/design/ui/).
 #[cfg(target_os = "macos")]
 fn title_bar<'a, R: Runtime, M: Manager<R>>(
     builder: WebviewWindowBuilder<'a, R, M>,
@@ -188,7 +190,18 @@ fn title_bar<'a, R: Runtime, M: Manager<R>>(
     builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(
+            TRAFFIC_LIGHTS_X,
+            TRAFFIC_LIGHTS_Y,
+        ))
 }
+
+/// Where the close button's frame starts, in points from the window's top
+/// left. Its frame is a point wider than the 12pt light on each side.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS_X: f64 = 11.0;
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS_Y: f64 = 10.0;
 
 #[cfg(not(target_os = "macos"))]
 fn title_bar<'a, R: Runtime, M: Manager<R>>(

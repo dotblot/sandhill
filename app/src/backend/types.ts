@@ -47,6 +47,18 @@ export interface SessionInfo {
   project?: string;
   /** Runs sent to the kernel that have not finished: the one running and any queued. */
   pending_runs?: number;
+  /** The language's version as the kernel reports it, like "4.4.1". */
+  language_version?: string;
+}
+
+/** What the daemon's machine is doing. */
+export interface SystemStats {
+  cpu: { percent: number; cores: number; model: string; load: number };
+  memory: { total: number; used: number };
+  gpus: { name: string; percent: number; memory_used: number; memory_total: number }[];
+  disk?: { path: string; total: number; used: number; available: number };
+  /** Resident memory of each running kernel, with the processes it started. */
+  sessions: { session: string; rss: number }[];
 }
 
 /** A folder opened as a project on the daemon's machine. */

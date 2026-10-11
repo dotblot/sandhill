@@ -155,6 +155,13 @@ pub enum Call {
     ForgetProject {
         path: String,
     },
+    /// What the machine is doing: CPU, memory, GPUs, the disk `path` is on
+    /// (the home folder without it), and the memory each running kernel
+    /// holds. Returns [`SystemStats`].
+    SystemStats {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+    },
 }
 
 /// Prefix of the error returned when a write would overwrite changes made on
@@ -258,6 +265,9 @@ pub struct SessionInfo {
     /// any queued behind it. Always 0 once the session has ended.
     #[serde(default)]
     pub pending_runs: u32,
+    /// The language's version as the kernel reports it, like "4.4.1" for R.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_version: Option<String>,
 }
 
 /// A folder opened as a project on the daemon's machine.
@@ -323,6 +333,67 @@ pub enum EntryKind {
     File,
     Dir,
     Other,
+}
+
+/// A snapshot of the machine the daemon runs on.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SystemStats {
+    pub cpu: CpuStats,
+    pub memory: MemoryStats,
+    /// NVIDIA GPUs, as `nvidia-smi` reports them. Empty when there are none.
+    #[serde(default)]
+    pub gpus: Vec<GpuStats>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk: Option<DiskStats>,
+    /// Memory held by each running session's kernel, with the processes it started.
+    #[serde(default)]
+    pub sessions: Vec<SessionMemory>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CpuStats {
+    /// Share of all cores busy, 0 to 100, over the last moment.
+    pub percent: f64,
+    pub cores: u32,
+    /// The processor's name, like "Apple M3 Pro", when the system says.
+    #[serde(default)]
+    pub model: String,
+    /// One-minute load average.
+    pub load: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryStats {
+    pub total: u64,
+    /// Bytes in use: what programs hold, not counting caches the system can drop.
+    pub used: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GpuStats {
+    pub name: String,
+    /// Utilization, 0 to 100.
+    pub percent: f64,
+    pub memory_used: u64,
+    pub memory_total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiskStats {
+    /// The folder asked about.
+    pub path: String,
+    pub total: u64,
+    pub used: u64,
+    /// Bytes free for ordinary users (less than total minus used when some
+    /// space is reserved for root).
+    pub available: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionMemory {
+    pub session: String,
+    /// Resident memory, in bytes.
+    pub rss: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

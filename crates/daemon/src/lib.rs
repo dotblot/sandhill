@@ -15,6 +15,7 @@ pub mod projects;
 pub mod server;
 pub mod session;
 pub mod sidecar;
+pub mod system;
 pub mod version;
 
 pub use paths::StateDir;

@@ -308,6 +308,25 @@ impl Daemon {
                 blocking(move || Ok(journal.forget_project(&projects::normalize(&path)?)?)).await?;
                 Value::Null
             }
+            Call::SystemStats { path } => {
+                let journal = self.journal.clone();
+                serde_json::to_value(
+                    blocking(move || {
+                        let path = match path {
+                            Some(path) => files::resolve(&path)?,
+                            None => PathBuf::from(std::env::var_os("HOME").unwrap_or("/".into())),
+                        };
+                        let kernels: Vec<(String, u32)> = journal
+                            .sessions()?
+                            .into_iter()
+                            .filter(|s| s.status != SessionStatus::Ended)
+                            .filter_map(|s| Some((s.id, s.pid?)))
+                            .collect();
+                        Ok(crate::system::stats(&path, &kernels))
+                    })
+                    .await?,
+                )?
+            }
             Call::Subscribe { .. } | Call::Unsubscribe { .. } => unreachable!("handled earlier"),
         })
     }

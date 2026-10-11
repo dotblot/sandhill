@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::{
     Blob, Call, CellRef, DirEntry, Event, FileOutputs, FileText, FileWritten, HistoryPage,
     KernelspecInfo, Outcome, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
-    SessionInfo, Subscribed,
+    SessionInfo, Subscribed, SystemStats,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -250,6 +250,13 @@ impl Client {
 
     pub async fn list_recent_projects(&self) -> Result<Vec<ProjectInfo>> {
         self.call(Call::ListRecentProjects).await
+    }
+
+    pub async fn system_stats(&self, path: Option<&str>) -> Result<SystemStats> {
+        self.call(Call::SystemStats {
+            path: path.map(Into::into),
+        })
+        .await
     }
 
     pub async fn save_project_state(&self, path: &str, state: serde_json::Value) -> Result<()> {

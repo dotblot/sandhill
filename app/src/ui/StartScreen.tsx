@@ -70,7 +70,7 @@ export function StartScreen(props: { shell: Shell; workspace: (host: string) => 
 
   return (
     <div class="start-window">
-      <header class="titlebar" data-tauri-drag-region="deep" />
+      <div class="drag-strip" data-tauri-drag-region />
       <div class="start">
         <div class="start-in">
           <header class="brand">

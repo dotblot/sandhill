@@ -1,32 +1,28 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import type { DirEntry } from "../backend/types";
 import { docKind } from "../docs/doc";
+import { formatBytes } from "../model/machine";
 import type { Workspace } from "../model/workspace";
 import { FileIcon, Icon } from "./icons";
 
-export function FileTree(props: {
+interface TreeProps {
   ws: Workspace;
-  root: string;
   onOpen: (path: string) => void;
   activePath?: string;
   refreshKey: number;
-}) {
+  /** A dot after open files whose session is idle or busy. */
+  marker?: (path: string) => "idle" | "busy" | undefined;
+}
+
+export function FileTree(props: TreeProps & { root: string }) {
   return (
     <div class="tree" role="tree">
-      <Dir ws={props.ws} path={props.root} depth={0} onOpen={props.onOpen} activePath={props.activePath} refreshKey={props.refreshKey} open />
+      <Dir {...props} path={props.root} depth={0} open />
     </div>
   );
 }
 
-function Dir(props: {
-  ws: Workspace;
-  path: string;
-  depth: number;
-  open?: boolean;
-  onOpen: (path: string) => void;
-  activePath?: string;
-  refreshKey: number;
-}) {
+function Dir(props: TreeProps & { path: string; depth: number; open?: boolean }) {
   const [entries] = createResource(
     () => [props.path, props.refreshKey] as const,
     async ([path]) =>
@@ -49,6 +45,13 @@ function Dir(props: {
             >
               <FileIcon name={entry.name} />
               <span class="tree-name">{entry.name}</span>
+              <Show when={openable ? props.marker?.(path) : undefined} fallback={<Show when={!openable}><span class="tree-meta">{formatBytes(entry.size)}</span></Show>}>
+                {(state) => (
+                  <span class="tree-meta">
+                    <span class="dot" classList={{ busy: state() === "busy", idle: state() === "idle" }} />
+                  </span>
+                )}
+              </Show>
             </div>
           );
         }}
@@ -57,15 +60,7 @@ function Dir(props: {
   );
 }
 
-function DirNode(props: {
-  ws: Workspace;
-  path: string;
-  name: string;
-  depth: number;
-  onOpen: (path: string) => void;
-  activePath?: string;
-  refreshKey: number;
-}) {
+function DirNode(props: TreeProps & { path: string; name: string; depth: number }) {
   const [open, setOpen] = createSignal(false);
   return (
     <>

@@ -1,5 +1,7 @@
 import { createEffect, For, Show } from "solid-js";
+import type { SessionInfo } from "../backend/types";
 import type { Doc } from "../docs/doc";
+import { kernelShortName, languageLabel, languageVersion } from "../model/machine";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { Icon } from "./icons";
 
@@ -61,7 +63,13 @@ function KernelControl(props: { ws: Workspace; doc: Doc; language: string; onErr
     if (!id) return "none";
     return props.ws.isBusy(id) ? "busy" : "idle";
   };
-  const label = () => (props.language === "r" ? "R" : props.language === "python" ? "Python" : props.language);
+  const label = () => languageLabel(props.language);
+  /** "4.4.1 · Ark · 7f3a12": the version, the kernel and the session. */
+  const describe = (s: SessionInfo) =>
+    [languageVersion(s), kernelShortName(s.kernel, props.ws.kernelspecs()), s.id.slice(0, 6)]
+      // IRkernel is just "R", which the pill already says.
+      .filter((part, i) => part && !(i === 1 && part === label()))
+      .join(" · ");
   const specs = () => props.ws.kernelspecs().filter((k) => normalizeLanguage(k.language) === props.language);
   const others = () => props.ws.projectSessions(props.language).filter((s) => s.id !== session());
   const guard = (p: Promise<unknown>) => p.catch((e) => props.onError(String(e)));
@@ -95,16 +103,12 @@ function KernelControl(props: { ws: Workspace; doc: Doc; language: string; onErr
           </option>
           <Show when={info()}>
             {(s) => (
-              <option value={`session:${s().id}`}>
-                {s().kernel} · {s().id.slice(0, 6)}
-              </option>
+              <option value={`session:${s().id}`}>{describe(s())}</option>
             )}
           </Show>
           <For each={others()}>
             {(s) => (
-              <option value={`session:${s.id}`}>
-                Use {s.kernel} · {s.id.slice(0, 6)}
-              </option>
+              <option value={`session:${s.id}`}>Use {describe(s)}</option>
             )}
           </For>
           <For each={specs()}>{(k) => <option value={`new:${k.name}`}>New {k.display_name}</option>}</For>

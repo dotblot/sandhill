@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createResource, createSignal, For, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { LOCAL_HOST, type Shell } from "../backend";
 import {
   CONFLICT_ERROR,
@@ -6,26 +6,40 @@ import {
   type FileText,
   type ProjectInfo,
   type ProjectState,
-  type SessionInfo,
 } from "../backend/types";
 import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
 import { ScriptDoc } from "../docs/scriptDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
+import { languageLabel, sessionLabel } from "../model/machine";
+import { listProjectFiles } from "../model/projectFiles";
 import { pickKernel, type Workspace } from "../model/workspace";
-import smallIcon from "../../src-tauri/icons/32x32.png";
 import { ask, Dialogs, notify } from "./dialogs";
-import { FileTree } from "./FileTree";
-import { FileIcon, FilesRailIcon, Icon } from "./icons";
+import { FileIcon, Icon, type IconName } from "./icons";
 import { KernelBar } from "./KernelBar";
+import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
 import { linkText } from "./linkText";
+import { type Command, Palette } from "./Palette";
 
 const SAVE_STATE_MS = 300;
-const SIDEBAR_KEY = "sandhill.sidebar";
+const LEFT_KEY = "sandhill.sidebar";
+const LEFT_WIDTH_KEY = "sandhill.leftWidth";
+const CONSOLE_KEY = "sandhill.console";
+const CONSOLE_HEIGHT_KEY = "sandhill.consoleHeight";
+const LEFT_WIDTH = 260;
+const LEFT_MIN = 236;
+const CONSOLE_MIN = 90;
+const EDITOR_MIN = 120;
 
-/** A project window: the project's files, its open documents and their kernels. */
+type Pane = "editor" | "console";
+
+/**
+ * A project window: the toolbar over the left pane (files, kernels and the
+ * machine's resources), the editor with the Console under it, and the
+ * status bar. Panes float on the window background, 3px apart.
+ */
 export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const ws = props.ws;
   const root = () => props.project;
@@ -34,18 +48,42 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [docs, setDocs] = createSignal<Doc[]>([]);
   const [active, setActive] = createSignal<Doc>();
   const [treeKey, setTreeKey] = createSignal(0);
-  const [sidebar, setSidebar] = createSignal(stored(SIDEBAR_KEY) !== "hidden");
-  const toggleSidebar = () => {
-    setSidebar(!sidebar());
-    store(SIDEBAR_KEY, sidebar() ? "shown" : "hidden");
-  };
-  const hostName = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
+  const hostLabel = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
   const opening = new Map<string, Promise<Doc | undefined>>();
   const hosts = new Map<Doc, HTMLElement>();
   let docArea!: HTMLDivElement;
   const [restored, setRestored] = createSignal(false);
   /** Shown outputs of documents that are not open, as the project state keeps them. */
   let shownOutputs: Record<string, string[]> = {};
+
+  // The layout: which panes show, and their sizes.
+  const [left, setLeft] = createSignal(stored(LEFT_KEY) !== "hidden");
+  const [leftWidth, setLeftWidth] = createSignal(clampLeft(Number(stored(LEFT_WIDTH_KEY)) || LEFT_WIDTH));
+  const [consoleOn, setConsoleOn] = createSignal(stored(CONSOLE_KEY) !== "hidden");
+  /** The Console's height in px; 0 until dragged, for a share of the column. */
+  const [consoleHeight, setConsoleHeight] = createSignal(Number(stored(CONSOLE_HEIGHT_KEY)) || 0);
+  const [minimized, setMinimized] = createSignal<Pane[]>([]);
+  const [maximized, setMaximized] = createSignal<Pane>();
+  const [palette, setPalette] = createSignal(false);
+  const [menu, setMenu] = createSignal(false);
+  const toggleLeft = () => {
+    setLeft(!left());
+    store(LEFT_KEY, left() ? "shown" : "hidden");
+  };
+  const toggleConsole = () => {
+    setConsoleOn(!consoleOn());
+    store(CONSOLE_KEY, consoleOn() ? "shown" : "hidden");
+    if (!consoleOn() && maximized() === "console") setMaximized(undefined);
+  };
+  const isMin = (pane: Pane) => minimized().includes(pane) && maximized() !== pane;
+  const toggleMin = (pane: Pane) => {
+    setMaximized((m) => (m === pane ? undefined : m));
+    setMinimized((list) => (list.includes(pane) ? list.filter((p) => p !== pane) : [...list.filter((p) => p !== pane), pane]));
+  };
+  const toggleMax = (pane: Pane) => {
+    setMinimized((list) => list.filter((p) => p !== pane));
+    setMaximized((m) => (m === pane ? undefined : pane));
+  };
 
   // Once connected, reopen the documents that were open in this project.
   let restoring = false;
@@ -111,6 +149,31 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     }
     el.hidden = false;
     queueMicrotask(() => doc.focus());
+  });
+
+  // The Console shows the active script's runs, or the last script's while
+  // another kind of document is in front.
+  const [lastScript, setLastScript] = createSignal<ScriptDoc>();
+  createEffect(() => {
+    const doc = active();
+    if (doc instanceof ScriptDoc) setLastScript(doc);
+  });
+  const consoleDoc = (): ScriptDoc | undefined => {
+    const doc = active();
+    if (doc instanceof ScriptDoc) return doc;
+    const last = lastScript();
+    return last && docs().includes(last) ? last : undefined;
+  };
+  const [consoleBody, setConsoleBody] = createSignal<HTMLElement>();
+  const consoleHint = (
+    <p class="console-hint">Run a line of an R or Python script with ⌘↵ and it shows here.</p>
+  ) as HTMLElement;
+  createEffect(() => {
+    const body = consoleBody();
+    if (!body) return;
+    const doc = consoleDoc();
+    body.replaceChildren(doc ? doc.consoleElement : consoleHint);
+    doc?.consoleShown();
   });
 
   async function open(path: string, quiet = false): Promise<Doc | undefined> {
@@ -235,15 +298,48 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     if (name === "run-all" && doc) doc.runAll().catch((e) => notify(message(e)));
   }
 
+  /** What ⌘K offers besides files. */
+  const commands = (): Command[] => {
+    const doc = active();
+    const list: Command[] = [];
+    if (doc) {
+      list.push({ label: "Save", keys: "⌘S", run: () => command("save") });
+      list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
+      list.push({ label: doc.kind === "script" ? "Run file" : "Run all", keys: "⌥⌘R", run: () => command("run-all") });
+      for (const language of doc.languages()) {
+        const label = languageLabel(language);
+        list.push({ label: `${label}: Restart session`, run: () => void doc.kernels.restart(language).catch((e) => notify(message(e))) });
+        list.push({ label: `${label}: Interrupt`, run: () => void doc.kernels.interrupt(language).catch((e) => notify(message(e))) });
+      }
+    }
+    list.push(
+      { label: "New Quarto document", run: () => void createFile("qmd") },
+      { label: "New Jupyter notebook", run: () => void createFile("ipynb") },
+      { label: "New R script", run: () => void createFile("R") },
+      { label: "New Python script", run: () => void createFile("py") },
+      { label: left() ? "Hide left pane" : "Show left pane", keys: "⌘B", run: toggleLeft },
+      { label: consoleOn() ? "Hide console" : "Show console", keys: "⌘J", run: toggleConsole },
+      { label: "Refresh files", run: () => setTreeKey((k) => k + 1) },
+      { label: "Open project…", keys: "⌘O", run: () => void props.shell.showStart() },
+      { label: "Connect to server…", run: () => void props.shell.showStart() },
+    );
+    return list;
+  };
+
   onMount(() => {
     ws.backend.onMenu?.(command);
     ws.backend.onCloseRequested?.(confirmClose);
-    window.addEventListener("keydown", (e) => {
+    const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && !e.altKey && !e.shiftKey && e.key === "b") {
-        e.preventDefault();
-        toggleSidebar();
-        return;
+      if (e.key === "Escape" && menu()) setMenu(false);
+      if (mod && !e.altKey && !e.shiftKey) {
+        const key = e.key.toLowerCase();
+        const action = key === "b" ? toggleLeft : key === "j" ? toggleConsole : key === "k" ? () => setPalette(!palette()) : undefined;
+        if (action) {
+          e.preventDefault();
+          action();
+          return;
+        }
       }
       // In the Mac app the menu bar owns these shortcuts.
       if (!mod || ws.backend.onMenu) return;
@@ -252,259 +348,313 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       else if (e.altKey && (e.key === "r" || e.code === "KeyR")) command("run-all");
       else return;
       e.preventDefault();
-    });
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
     window.addEventListener("beforeunload", (e) => {
       if (docs().some((d) => d.dirty())) e.preventDefault();
     });
   });
 
+  /** Dragging the gap beside the left pane sets its width. */
+  const resizeLeft = (down: PointerEvent) => {
+    const start = leftWidth();
+    drag(down, "col-resize", (e) => setLeftWidth(clampLeft(start + e.clientX - down.clientX)), () =>
+      store(LEFT_WIDTH_KEY, String(leftWidth())),
+    );
+  };
+  let column!: HTMLElement;
+  let consolePane: HTMLDivElement | undefined;
+  /** Dragging the gap above the Console sets its height. */
+  const resizeConsole = (down: PointerEvent) => {
+    if (!consolePane) return;
+    const start = consolePane.getBoundingClientRect().height;
+    const room = column.getBoundingClientRect().height - EDITOR_MIN;
+    drag(down, "row-resize", (e) => setConsoleHeight(Math.round(Math.max(CONSOLE_MIN, Math.min(room, start - (e.clientY - down.clientY))))), () =>
+      store(CONSOLE_HEIGHT_KEY, String(consoleHeight())),
+    );
+  };
+
+  const usedBy = (id: string) => docs().filter((d) => d.kernels.sessions().includes(id)).map((d) => d.name);
+  const marker = (path: string) => {
+    const doc = docs().find((d) => d.path === path);
+    const sessions = doc?.kernels.sessions() ?? [];
+    if (!sessions.length) return undefined;
+    return sessions.some((s) => ws.isBusy(s)) ? "busy" : "idle";
+  };
+
   return (
-    <div class="window">
-      <header class="titlebar" data-tauri-drag-region="deep">
-        <button class="proj" title="Open another project (⌘O)" onClick={() => void props.shell.showStart()}>
-          <img class="proj-icon" src={smallIcon} alt="" />
-          <span class="proj-name" title={props.project}>
-            {name}
-          </span>
-          <span class="proj-host" data-link={ws.link().status}>
-            <span class="dot" />
-            {hostName}
-          </span>
-          <Icon name="chevron" small />
-        </button>
-        <span class="spacer" />
-        <button class="tbbtn" aria-pressed={sidebar()} title="Sidebar (⌘B)" onClick={toggleSidebar}>
-          <Icon name="sidebar" />
-        </button>
-      </header>
+    <div class="window" classList={{ "left-hidden": !left() }}>
+      <Toolbar
+        left={left()}
+        menu={menu()}
+        onLeft={toggleLeft}
+        onSearch={() => setPalette(true)}
+        onMenu={() => setMenu(!menu())}
+      />
       <div class="window-body">
-        <nav class="rail" aria-label="Views">
-          <button aria-pressed={sidebar()} title="Files (⌘B)" onClick={toggleSidebar}>
-            <FilesRailIcon />
-          </button>
-        </nav>
-        <Show when={sidebar()}>
-          <aside class="sidebar pane">
-            <div class="pane-head">
-              <span class="pane-title" title={props.project}>
-                {name}
-              </span>
-              <span class="spacer" />
-              <NewFileMenu onCreate={(kind) => void createFile(kind)} />
-              <button class="pane-button" title="Refresh" onClick={() => setTreeKey((k) => k + 1)}>
-                <Icon name="refresh" small />
-              </button>
-            </div>
-            <Show when={!missing() && ws.link().status === "connected"}>
-              <FileTree ws={ws} root={root()} onOpen={(p) => void open(p)} activePath={active()?.path} refreshKey={treeKey()} />
-            </Show>
-            <Sessions
-              ws={ws}
-              hostName={hostName}
-              usedBy={(id) => docs().filter((d) => d.kernels.sessions().includes(id)).map((d) => d.name)}
-            />
-          </aside>
+        <Show when={left()}>
+          <LeftPane
+            ws={ws}
+            shell={props.shell}
+            project={props.project}
+            name={name}
+            missing={missing()}
+            activePath={active()?.path}
+            refreshKey={treeKey()}
+            width={leftWidth()}
+            onOpen={(p) => void open(p)}
+            onRefresh={() => setTreeKey((k) => k + 1)}
+            onCreate={(kind) => void createFile(kind)}
+            usedBy={usedBy}
+            marker={marker}
+          />
+          <div class="split v" title="Drag to resize" onPointerDown={resizeLeft} />
         </Show>
-        <main class="editor pane">
-          <div class="tabs" role="tablist">
-            <For each={docs()}>
-              {(doc) => (
-                <div
-                  class="tab"
-                  role="tab"
-                  aria-selected={active() === doc}
-                  classList={{ active: active() === doc }}
-                  title={doc.path}
-                  onClick={() => setActive(doc)}
-                >
-                  <FileIcon name={doc.name} />
-                  <span class="tab-name">{doc.name}</span>
-                  <button
-                    class="tab-close"
-                    classList={{ dirty: doc.dirty() }}
-                    title={doc.dirty() ? "Unsaved changes" : "Close"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void close(doc);
-                    }}
+        <section class="editor-col" ref={column}>
+          <div
+            class="pane editor-pane"
+            classList={{ min: isMin("editor"), max: maximized() === "editor", hidden: maximized() === "console" }}
+          >
+            <div class="tabs" role="tablist" data-tauri-drag-region="deep">
+              <For each={docs()}>
+                {(doc) => (
+                  <div
+                    class="tab"
+                    role="tab"
+                    aria-selected={active() === doc}
+                    classList={{ active: active() === doc }}
+                    title={doc.path}
+                    onClick={() => setActive(doc)}
                   >
-                    ×
-                  </button>
-                </div>
-              )}
-            </For>
-          </div>
-          <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} onError={notify} />}</Show>
-          <div class="doc-area" ref={docArea}>
-            <Show when={!active()}>
-              <Show
-                when={!missing()}
-                fallback={
-                  <div class="empty-state">
-                    <p>Cannot open this project: {missing()}</p>
-                    <p>
-                      <button onClick={() => void props.shell.showStart()}>Show projects</button>
-                    </p>
+                    <FileIcon name={doc.name} />
+                    <span class="tab-name">{doc.name}</span>
+                    <button
+                      class="tab-close"
+                      classList={{ dirty: doc.dirty() }}
+                      title={doc.dirty() ? "Unsaved changes" : "Close"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void close(doc);
+                      }}
+                    >
+                      <Icon name="x" small />
+                    </button>
                   </div>
-                }
-              >
-                <div class="empty-state">
-                  <p>Open a .qmd, .Rmd, .ipynb, .R or .py file from the sidebar.</p>
-                  <p class="muted">Code runs in sessions that keep going when you close the app.</p>
-                </div>
+                )}
+              </For>
+              <PaneButtons pane="editor" min={isMin("editor")} max={maximized() === "editor"} onMin={toggleMin} onMax={toggleMax} />
+            </div>
+            <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} onError={notify} />}</Show>
+            <div class="doc-area" ref={docArea}>
+              <Show when={!active()}>
+                <Show
+                  when={!missing()}
+                  fallback={
+                    <div class="empty-state">
+                      <p>Cannot open this project: {missing()}</p>
+                      <p>
+                        <button onClick={() => void props.shell.showStart()}>Show projects</button>
+                      </p>
+                    </div>
+                  }
+                >
+                  <div class="empty-state">
+                    <p>Open a .qmd, .Rmd, .ipynb, .R or .py file from the left pane, or press ⌘K.</p>
+                    <p class="muted">Code runs in sessions that keep going when you close the app.</p>
+                  </div>
+                </Show>
               </Show>
-            </Show>
+            </div>
           </div>
-        </main>
+          <Show when={consoleOn()}>
+            <div class="split h" classList={{ hidden: !!maximized() }} title="Drag to resize" onPointerDown={resizeConsole} />
+            <div
+              class="pane console-pane"
+              ref={consolePane}
+              classList={{
+                min: isMin("console"),
+                max: maximized() === "console",
+                hidden: maximized() === "editor",
+                fill: isMin("editor") && !isMin("console"),
+              }}
+              style={consoleHeight() && !isMin("console") && !isMin("editor") ? { "flex-basis": `${consoleHeight()}px` } : undefined}
+            >
+              <div class="tabs" role="tablist" data-tauri-drag-region="deep">
+                <div class="tab active" role="tab" aria-selected="true" title={consoleDoc()?.path}>
+                  <span class="tab-name">Console</span>
+                  <Show when={consoleDoc() && consoleDoc() !== active()}>
+                    <span class="tab-detail">{consoleDoc()!.name}</span>
+                  </Show>
+                </div>
+                <span class="spacer" />
+                <Show when={consoleDoc()}>
+                  {(doc) => <ConsoleSession ws={ws} doc={doc()} />}
+                </Show>
+                <Show when={consoleDoc()}>
+                  {(doc) => (
+                    <button class="bar-button console-clear" title="Clear the console" onClick={() => doc().clearConsole()}>
+                      Clear
+                    </button>
+                  )}
+                </Show>
+                <PaneButtons pane="console" min={isMin("console")} max={maximized() === "console"} onMin={toggleMin} onMax={toggleMax} />
+              </div>
+              <div class="console" ref={setConsoleBody} />
+            </div>
+          </Show>
+        </section>
       </div>
       <footer class="status-bar" data-link={ws.link().status}>
         <span class="status-item" title={linkText(ws)}>
           <span class="link-dot" />
           {ws.link().status === "connected" && ws.host()
-            ? `${hostName} · sandhilld ${ws.host()!.daemon_version}`
+            ? `${hostLabel} · sandhilld ${ws.host()!.daemon_version}`
             : linkText(ws)}
         </span>
         <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
         <span class="spacer" />
-        <span class="status-item status-path">{active()?.path ?? ""}</span>
+        <span class="status-item">{active()?.cursor() ?? ""}</span>
       </footer>
+      <Show when={menu()}>
+        <MainMenu
+          ws={ws}
+          shell={props.shell}
+          project={props.project}
+          consoleOn={consoleOn()}
+          onConsole={toggleConsole}
+          onClose={() => setMenu(false)}
+        />
+      </Show>
+      <Show when={palette()}>
+        <Palette
+          root={props.project}
+          commands={commands()}
+          files={() => listProjectFiles((path) => ws.call<DirEntry[]>("list_dir", { path }), props.project)}
+          onOpenFile={(p) => void open(p)}
+          onClose={() => setPalette(false)}
+        />
+      </Show>
       <Dialogs />
     </div>
   );
 }
 
-type NewFile = "qmd" | "ipynb" | "R" | "py";
-
-/** The + menu in the sidebar: a new Quarto document, notebook or script. */
-function NewFileMenu(props: { onCreate: (kind: NewFile) => void }) {
-  const [open, setOpen] = createSignal(false);
-  let wrap!: HTMLSpanElement;
-  const close = (e: MouseEvent) => {
-    if (!wrap.contains(e.target as Node)) setOpen(false);
-  };
-  const escape = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-  document.addEventListener("mousedown", close);
-  document.addEventListener("keydown", escape);
-  onCleanup(() => {
-    document.removeEventListener("mousedown", close);
-    document.removeEventListener("keydown", escape);
-  });
-  const pick = (kind: NewFile) => {
-    setOpen(false);
-    props.onCreate(kind);
-  };
+/**
+ * The toolbar over the top of the left pane, after the window buttons: the
+ * left and right panes, Agents, ⌘K search and the menu.
+ */
+function Toolbar(props: { left: boolean; menu: boolean; onLeft: () => void; onSearch: () => void; onMenu: () => void }) {
   return (
-    <span class="menu-wrap" ref={wrap}>
-      <button class="pane-button" title="New file" aria-expanded={open()} onClick={() => setOpen(!open())}>
-        <Icon name="plus" small />
-      </button>
-      <Show when={open()}>
-        <div class="menu" role="menu">
-          <button role="menuitem" onClick={() => pick("qmd")}>
-            <FileIcon name="Untitled.qmd" />
-            Quarto document
-          </button>
-          <button role="menuitem" onClick={() => pick("ipynb")}>
-            <FileIcon name="Untitled.ipynb" />
-            Jupyter notebook
-          </button>
-          <button role="menuitem" onClick={() => pick("R")}>
-            <FileIcon name="Untitled.R" />
-            R script
-          </button>
-          <button role="menuitem" onClick={() => pick("py")}>
-            <FileIcon name="Untitled.py" />
-            Python script
-          </button>
-        </div>
+    <div class="toolbar" data-tauri-drag-region="deep">
+      <ToolButton icon="leftPane" title="Left pane (⌘B)" pressed={props.left} onClick={props.onLeft} />
+      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages, Git and Plots come in a later build" />
+      <ToolButton icon="chat" title="Agents: Claude Code, Codex and open models come in a later build" />
+      <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
+      <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
+    </div>
+  );
+}
+
+function ToolButton(props: { icon: IconName; title: string; pressed?: boolean; onClick?: () => void; menu?: boolean }) {
+  return (
+    <button
+      class="tbi"
+      classList={{ "main-menu-button": props.menu }}
+      title={props.title}
+      aria-pressed={props.onClick && !props.menu ? props.pressed : undefined}
+      aria-expanded={props.menu ? props.pressed : undefined}
+      aria-disabled={props.onClick ? undefined : "true"}
+      onClick={() => props.onClick?.()}
+    >
+      <Icon name={props.icon} />
+    </button>
+  );
+}
+
+/** The ☰ menu: other projects and servers, and showing the console. */
+function MainMenu(props: {
+  ws: Workspace;
+  shell: Shell;
+  project: string;
+  consoleOn: boolean;
+  onConsole: () => void;
+  onClose: () => void;
+}) {
+  const [recent] = createResource(() =>
+    props.ws
+      .call<ProjectInfo[]>("list_recent_projects")
+      .then((list) => list.filter((p) => p.exists && p.path !== props.project).slice(0, 5))
+      .catch(() => [] as ProjectInfo[]),
+  );
+  let menu!: HTMLDivElement;
+  const outside = (e: MouseEvent) => {
+    const target = e.target as Element;
+    if (!menu.contains(target) && !target.closest(".main-menu-button")) props.onClose();
+  };
+  document.addEventListener("mousedown", outside);
+  onCleanup(() => document.removeEventListener("mousedown", outside));
+  const item = (icon: IconName | undefined, label: JSX.Element, keys: string, run: () => void) => (
+    <button
+      class="mm-i"
+      role="menuitem"
+      onClick={() => {
+        props.onClose();
+        run();
+      }}
+    >
+      {icon ? <Icon name={icon} small /> : <span class="ico sm" />}
+      <span>{label}</span>
+      <kbd>{keys}</kbd>
+    </button>
+  );
+  return (
+    <div class="main-menu" role="menu" ref={menu}>
+      {item("cloud", "Connect to server…", "", () => void props.shell.showStart())}
+      {item("folder", "Open project…", "⌘O", () => void props.shell.showStart())}
+      <Show when={recent()?.length}>
+        <div class="mm-sep" />
+        <div class="mm-h">Recent on {hostName(props.ws.backend.host)}</div>
+        <For each={recent()}>
+          {(p) => item("folder", p.name, "", () => void props.shell.openProject(props.ws.backend.host, p.path))}
+        </For>
       </Show>
+      <div class="mm-sep" />
+      {item(props.consoleOn ? "check" : undefined, "Show console", "⌘J", props.onConsole)}
+    </div>
+  );
+}
+
+/** Minimize and maximize, at the right end of a pane's tab strip. */
+function PaneButtons(props: { pane: Pane; min: boolean; max: boolean; onMin: (p: Pane) => void; onMax: (p: Pane) => void }) {
+  return (
+    <span class="pwin">
+      <button title={props.min ? "Restore" : "Minimize"} onClick={() => props.onMin(props.pane)}>
+        <Icon name={props.min ? "restore" : "minimize"} small />
+      </button>
+      <button title={props.max ? "Restore" : "Maximize"} onClick={() => props.onMax(props.pane)}>
+        <Icon name={props.max ? "restore" : "maximize"} small />
+      </button>
     </span>
   );
 }
 
-/**
- * Kernels running for this project, under the file tree. They keep running
- * when files and the app close, so each has a stop button, and the ones no
- * open file uses can be stopped together.
- */
-export function Sessions(props: { ws: Workspace; hostName: string; usedBy: (session: string) => string[] }) {
-  const [now, setNow] = createSignal(Date.now());
-  // Also catches sessions started or stopped elsewhere, and long runs finishing.
-  const timer = setInterval(() => {
-    setNow(Date.now());
-    props.ws.refreshSessions().catch(() => {});
-  }, 60_000);
-  onCleanup(() => clearInterval(timer));
-  const sessions = () => props.ws.projectSessions();
-  const kernelName = (kernel: string) =>
-    props.ws.kernelspecs().find((k) => k.name === kernel)?.display_name ?? kernel;
-  const unused = () => sessions().filter((s) => !props.usedBy(s.id).length && !props.ws.isBusy(s.id));
-
-  const stop = async (s: SessionInfo) => {
-    const users = props.usedBy(s.id);
-    const detail = [
-      props.ws.isBusy(s.id) ? "The code it is running stops too." : "",
-      users.length ? `${users.join(", ")} will start a new session when you run code.` : "",
-      "Its variables are lost.",
-    ];
-    const choice = await ask(`Stop ${kernelName(s.kernel)}?`, ["Stop", "Cancel"], detail.filter(Boolean).join(" "));
-    if (choice === "Stop") await props.ws.shutdown(s.id).catch((e) => notify(`Could not stop the session: ${message(e)}`));
-  };
-
-  const stopUnused = async () => {
-    await props.ws.refreshSessions().catch(() => {});
-    const list = unused();
-    if (!list.length) return;
-    const choice = await ask(
-      list.length === 1 ? "Stop the session no open file uses?" : `Stop the ${list.length} sessions no open file uses?`,
-      ["Stop", "Cancel"],
-      "Their variables are lost. Sessions running code are left alone.",
-    );
-    if (choice !== "Stop") return;
-    for (const s of list) {
-      await props.ws.shutdown(s.id).catch((e) => notify(`Could not stop a session: ${message(e)}`));
-    }
-  };
-
+/** The session a script's console runs in, as a pill in the Console's tab strip. */
+function ConsoleSession(props: { ws: Workspace; doc: ScriptDoc }) {
+  const id = () => props.doc.kernels.session(props.doc.language);
+  const info = () => props.ws.sessions().find((s) => s.id === id());
+  const state = () =>
+    props.doc.kernels.isStarting(props.doc.language) ? "starting" : !id() ? "none" : props.ws.isBusy(id()!) ? "busy" : "idle";
   return (
-    <Show when={sessions().length}>
-      <div class="sessions">
-        <div class="pane-head sub">
-          <span class="pane-title">Running on {props.hostName}</span>
-          <span class="spacer" />
-          <Show when={unused().length}>
-            <button class="link stop-unused" onClick={() => void stopUnused()} title="Stop the sessions no open file uses">
-              Stop unused
-            </button>
-          </Show>
-        </div>
-        <For each={sessions()}>
-          {(s) => {
-            const users = () => props.usedBy(s.id);
-            return (
-              <div
-                class="session-row"
-                classList={{ unused: !users().length }}
-                title={`${s.kernel} · ${s.id.slice(0, 6)} · ${s.cwd}\n${users().length ? `Used by ${users().join(", ")}` : "No open file uses it"}`}
-              >
-                <span class="dot" classList={{ busy: props.ws.isBusy(s.id) }} />
-                <span class="session-name">{kernelName(s.kernel)}</span>
-                <span class="session-age">{users().length ? "" : "unused · "}{uptime(now() - s.created_ms)}</span>
-                <button class="session-stop" title="Stop this session" onClick={() => void stop(s)}>
-                  <Icon name="stop" small />
-                </button>
-              </div>
-            );
-          }}
-        </For>
-      </div>
-    </Show>
+    <span class="pill" data-state={state()} title={info() ? `${info()!.kernel} · ${info()!.id.slice(0, 6)}` : "Starts when you run code"}>
+      <span class="kernel-dot" />
+      {info() ? sessionLabel(info()!) : languageLabel(props.doc.language)}
+    </span>
   );
 }
 
 /** "R idle", "Python running" for the open document, in the status bar. */
 function KernelStates(props: { ws: Workspace; doc: Doc }) {
-  const label = (language: string) => (language === "r" ? "R" : language === "python" ? "Python" : language);
   const state = (language: string) => {
     if (props.doc.kernels.isStarting(language)) return "starting";
     const id = props.doc.kernels.session(language);
@@ -515,21 +665,40 @@ function KernelStates(props: { ws: Workspace; doc: Doc }) {
     <For each={props.doc.languages().filter((l) => state(l))}>
       {(language) => (
         <span class="status-item" data-state={state(language)}>
-          <span class="kernel-dot" />
-          {label(language)} {state(language)}
+          <Show when={state(language) === "idle"} fallback={<span class="spin" />}>
+            <Icon name="sessions" small />
+          </Show>
+          {languageLabel(language)} {state(language)}
         </span>
       )}
     </For>
   );
 }
 
-/** How long a session has run: "4 min", "5 h", "2 d". */
-export function uptime(ms: number): string {
-  const min = Math.max(0, Math.floor(ms / 60_000));
-  if (min < 60) return `${min} min`;
-  const hours = Math.floor(min / 60);
-  if (hours < 48) return `${hours} h`;
-  return `${Math.floor(hours / 24)} d`;
+/** Follows the pointer from `down` until it is released, with `cursor` over the whole window. */
+function drag(down: PointerEvent, cursor: string, move: (e: PointerEvent) => void, done: () => void) {
+  down.preventDefault();
+  const target = down.currentTarget as HTMLElement;
+  target.setPointerCapture?.(down.pointerId);
+  target.classList.add("dragging");
+  document.documentElement.style.cursor = cursor;
+  document.documentElement.classList.add("resizing");
+  const up = () => {
+    target.removeEventListener("pointermove", move);
+    target.removeEventListener("pointerup", up);
+    target.removeEventListener("pointercancel", up);
+    target.classList.remove("dragging");
+    document.documentElement.style.cursor = "";
+    document.documentElement.classList.remove("resizing");
+    done();
+  };
+  target.addEventListener("pointermove", move);
+  target.addEventListener("pointerup", up);
+  target.addEventListener("pointercancel", up);
+}
+
+function clampLeft(width: number): number {
+  return Math.round(Math.max(LEFT_MIN, Math.min(width, Math.max(LEFT_MIN, window.innerWidth * 0.5))));
 }
 
 function stored(key: string): string | null {
