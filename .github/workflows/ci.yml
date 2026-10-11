@@ -114,9 +114,18 @@ jobs:
             sleep 1
           done
           pgrep -fl "$app/Contents/MacOS/" || { echo "Sandhill.app did not start"; exit 1; }
+          # A picture of the start window as it opened, to check the look on a real Mac.
+          sleep 8
+          screencapture -x start-window.png || echo "could not take a screenshot"
           pkill -f "$app/Contents/MacOS/" || true
       - uses: actions/upload-artifact@v4
         with:
           name: Sandhill-macos-arm64
           path: Sandhill-macos-arm64.zip
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: start-window-screenshot
+          path: start-window.png
+          if-no-files-found: ignore
           retention-days: 14

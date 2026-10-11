@@ -2,6 +2,7 @@ import { createResource, createSignal, For, Show } from "solid-js";
 import type { DirEntry } from "../backend/types";
 import { docKind } from "../docs/doc";
 import type { Workspace } from "../model/workspace";
+import { FileIcon, Icon } from "./icons";
 
 export function FileTree(props: {
   ws: Workspace;
@@ -46,8 +47,8 @@ function Dir(props: {
               title={openable ? path : "Only .qmd, .Rmd and .ipynb files open in Sandhill for now"}
               onClick={() => openable && props.onOpen(path)}
             >
-              <span class="tree-icon">{iconFor(entry.name)}</span>
-              {entry.name}
+              <FileIcon name={entry.name} />
+              <span class="tree-name">{entry.name}</span>
             </div>
           );
         }}
@@ -68,9 +69,12 @@ function DirNode(props: {
   const [open, setOpen] = createSignal(false);
   return (
     <>
-      <div class="tree-item dir" style={indent(props.depth)} onClick={() => setOpen(!open())}>
-        <span class="tree-icon">{open() ? "▾" : "▸"}</span>
-        {props.name}
+      <div class="tree-item dir" classList={{ open: open() }} style={indent(props.depth)} onClick={() => setOpen(!open())}>
+        <span class="chev">
+          <Icon name="chevronRight" small />
+        </span>
+        <FileIcon name={props.name} dir />
+        <span class="tree-name">{props.name}</span>
       </div>
       <Show when={open()}>
         <Dir {...props} depth={props.depth + 1} />
@@ -79,13 +83,7 @@ function DirNode(props: {
   );
 }
 
+/** Files line up with the folder icons above them; each level indents 14px. */
 function indent(depth: number) {
-  return { "padding-left": `${8 + depth * 14}px` };
-}
-
-function iconFor(name: string): string {
-  const kind = docKind(name);
-  if (kind === "ipynb") return "◫";
-  if (kind === "qmd") return "◧";
-  return "·";
+  return { "padding-left": `${6 + depth * 14}px` };
 }

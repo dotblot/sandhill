@@ -7,7 +7,7 @@ import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from "
 import { type Accessor, createSignal, type Setter } from "solid-js";
 import type { FileText, FileWritten, SavedCell, SidecarIndex } from "../backend/types";
 import { baseExtensions, quartoLanguage } from "../editor/setup";
-import { type Chunk, frontMatterKernel, parseChunks, sameCode } from "../model/qmd";
+import { type Chunk, frontMatterKernel, parseChunks, proseLines, sameCode } from "../model/qmd";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { CellOutput } from "./cellOutput";
 import { Doc } from "./doc";
@@ -269,9 +269,13 @@ export class QmdDoc extends Doc {
 
   private createLayoutField(): StateField<Layout> {
     const build = (state: EditorState): Layout => {
-      const chunks = parseChunks(state.doc.toString());
+      const text = state.doc.toString();
+      const chunks = parseChunks(text);
       const slots = this.assign(chunks);
       const ranges = [];
+      for (const n of proseLines(text)) {
+        if (n <= state.doc.lines) ranges.push(Decoration.line({ class: "cm-prose" }).range(state.doc.line(n).from));
+      }
       for (const [i, chunk] of chunks.entries()) {
         const startLine = state.doc.line(chunk.openLine);
         const endLine = state.doc.line(chunk.closeLine);

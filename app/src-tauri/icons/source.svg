@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1254" height="1254" viewBox="0 0 1254 1254"
+     fill="none">
+  <title>Sandhill — two sandhill cranes</title>
+  <desc>Editable vector reconstruction of the latest Sandhill icon design. Transparent background.</desc>
+
+  <defs>
+    <linearGradient id="sunGradient" x1="0" y1="180" x2="0" y2="950" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD62B"/>
+      <stop offset="0.48" stop-color="#FFA51F"/>
+      <stop offset="1" stop-color="#FF5A0A"/>
+    </linearGradient>
+
+    <linearGradient id="reedGradient" x1="0" y1="720" x2="0" y2="1120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF9C18"/>
+      <stop offset="1" stop-color="#FFC928"/>
+    </linearGradient>
+
+    <linearGradient id="wingLight" x1="260" y1="470" x2="430" y2="820" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C7C8D0"/>
+      <stop offset="1" stop-color="#9EA0AC"/>
+    </linearGradient>
+
+    <linearGradient id="wingMid" x1="250" y1="560" x2="480" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#777C8A"/>
+      <stop offset="1" stop-color="#555A68"/>
+    </linearGradient>
+
+    <linearGradient id="wingDark" x1="200" y1="650" x2="420" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#444957"/>
+      <stop offset="1" stop-color="#202532"/>
+    </linearGradient>
+
+    <linearGradient id="neckGray" x1="470" y1="130" x2="520" y2="600" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BFC1CA"/>
+      <stop offset="1" stop-color="#8D909B"/>
+    </linearGradient>
+
+    <linearGradient id="beakGradient" x1="520" y1="120" x2="800" y2="55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1F2430"/>
+      <stop offset="1" stop-color="#3B4050"/>
+    </linearGradient>
+  </defs>
+
+  <!-- transparent canvas: no background rectangle -->
+
+  <g id="sun">
+    <circle cx="619" cy="565" r="383" fill="url(#sunGradient)"/>
+  </g>
+
+  <g id="water-ripples" fill="none" stroke="url(#reedGradient)" stroke-linecap="round">
+    <path d="M94 1094 C 270 1080, 488 1082, 704 1088" stroke-width="18"/>
+    <path d="M221 1127 C 335 1112, 476 1112, 609 1123 C 522 1145, 374 1149, 265 1138" stroke-width="17"/>
+    <path d="M367 1170 C 505 1155, 680 1157, 808 1175" stroke-width="14"/>
+    <path d="M526 1200 C 637 1190, 749 1191, 860 1201" stroke-width="13"/>
+
+    <path d="M665 1102 C 814 1088, 1003 1090, 1150 1100" stroke-width="17"/>
+    <path d="M715 1147 C 795 1131, 902 1132, 1004 1146 C 942 1164, 822 1167, 744 1157" stroke-width="16"/>
+  </g>
+
+  <g id="reeds-left" fill="url(#reedGradient)">
+    <path d="M88 1094 C 117 1014, 117 934, 93 845 C 129 917, 146 1007, 142 1093 Z"/>
+    <path d="M116 1095 C 152 1027, 181 962, 196 891 C 190 974, 172 1033, 152 1095 Z"/>
+    <path d="M144 1094 C 190 1047, 234 1017, 291 992 C 236 1031, 194 1065, 169 1096 Z"/>
+    <path d="M112 863 C 109 819, 107 784, 98 760 C 92 744, 82 741, 74 749 C 66 757, 67 774, 73 791 L 93 855 Z"/>
+    <path d="M92 870 C 95 850, 99 833, 105 818" stroke="#F6A51D" stroke-width="7" fill="none"/>
+  </g>
+
+  <g id="reeds-right" fill="url(#reedGradient)">
+    <path d="M1115 1100 C 1112 1026, 1126 945, 1163 879 C 1142 970, 1138 1030, 1143 1100 Z"/>
+    <path d="M1088 1100 C 1080 1035, 1065 982, 1038 929 C 1084 981, 1105 1041, 1114 1100 Z"/>
+    <path d="M1130 1100 C 1168 1050, 1202 1014, 1230 986 C 1194 1036, 1168 1072, 1154 1101 Z"/>
+    <path d="M1164 901 C 1173 869, 1185 837, 1194 810 C 1199 794, 1210 788, 1220 793 C 1231 799, 1233 814, 1227 829 L 1202 893 Z"/>
+  </g>
+
+  <!-- LEFT CRANE -->
+  <g id="crane-left">
+    <!-- legs -->
+    <path d="M405 780 C 408 868, 404 977, 401 1127" stroke="#242936" stroke-width="22" stroke-linecap="round"/>
+    <path d="M463 784 C 464 879, 468 982, 491 1128" stroke="#242936" stroke-width="22" stroke-linecap="round"/>
+    <path d="M399 1127 L365 1129" stroke="#242936" stroke-width="18" stroke-linecap="round"/>
+    <path d="M490 1128 L519 1129" stroke="#242936" stroke-width="18" stroke-linecap="round"/>
+
+    <!-- outer body -->
+    <path d="M174 846
+             C 192 706, 294 592, 420 520
+             C 466 493, 501 463, 516 419
+             C 536 360, 513 314, 485 269
+             C 456 223, 447 181, 468 147
+             C 492 109, 537 89, 581 96
+             C 617 101, 647 119, 661 145
+             C 624 150, 602 164, 589 185
+             C 568 219, 581 258, 608 302
+             C 650 370, 666 443, 635 522
+             C 608 590, 563 637, 508 678
+             C 464 711, 446 757, 439 815
+             C 433 865, 406 895, 367 906
+             C 327 917, 282 907, 246 889
+             C 215 875, 188 861, 174 846 Z"
+          fill="#FAFAF7"/>
+
+    <!-- gray neck -->
+    <path d="M479 151
+             C 465 191, 474 228, 503 274
+             C 541 335, 558 399, 541 459
+             C 525 516, 490 549, 451 579
+             C 481 576, 514 585, 539 602
+             C 582 547, 612 495, 615 441
+             C 618 385, 594 329, 559 278
+             C 528 232, 515 196, 529 164
+             C 539 141, 556 127, 579 118
+             C 544 106, 503 118, 479 151 Z"
+          fill="url(#neckGray)"/>
+
+    <!-- body wing dark -->
+    <path d="M177 835
+             C 209 738, 283 653, 380 611
+             C 450 581, 510 586, 548 616
+             C 523 697, 475 779, 410 842
+             C 353 898, 287 938, 223 956
+             C 205 913, 190 875, 177 835 Z"
+          fill="url(#wingDark)"/>
+
+    <!-- body wing mid -->
+    <path d="M208 789
+             C 246 704, 313 635, 390 607
+             C 451 586, 507 592, 541 617
+             C 523 675, 490 730, 451 774
+             C 405 827, 351 868, 292 897
+             C 251 870, 223 833, 208 789 Z"
+          fill="url(#wingMid)"/>
+
+    <!-- light upper feathers -->
+    <path d="M247 720
+             C 291 657, 351 612, 413 597
+             C 464 585, 505 592, 535 615
+             C 519 654, 494 690, 463 723
+             C 429 756, 392 782, 353 802
+             C 338 783, 336 757, 347 721
+             C 318 750, 291 771, 262 784
+             C 247 765, 241 744, 247 720 Z"
+          fill="url(#wingLight)"/>
+
+    <!-- layered feather cuts -->
+    <path d="M226 819 C 267 792, 302 764, 334 730 C 323 775, 329 808, 350 830 C 318 860, 282 887, 244 907 Z" fill="#3B404D"/>
+    <path d="M292 853 C 335 820, 373 783, 406 743 C 394 793, 399 827, 420 848 C 382 884, 340 912, 300 928 Z" fill="#2A2F3B"/>
+    <path d="M363 843 C 405 807, 438 770, 467 725 C 459 773, 468 804, 489 823 C 455 862, 419 891, 383 909 Z" fill="#454A58"/>
+
+    <!-- red crown -->
+    <path d="M467 148
+             C 469 110, 499 78, 542 69
+             C 584 60, 622 71, 648 97
+             C 615 92, 590 99, 570 114
+             C 548 130, 535 151, 532 180
+             C 509 166, 487 156, 467 148 Z"
+          fill="#E80B14"/>
+
+    <!-- white face -->
+    <path d="M530 142
+             C 555 116, 595 109, 628 120
+             C 639 124, 650 131, 660 143
+             C 643 153, 625 167, 610 181
+             C 596 194, 583 207, 568 219
+             C 549 204, 536 183, 530 160 Z"
+          fill="#FBFBF8"/>
+
+    <!-- black eye patch -->
+    <path d="M557 109
+             C 580 102, 608 107, 625 122
+             C 615 140, 594 151, 570 151
+             C 553 145, 547 128, 557 109 Z"
+          fill="#111620"/>
+
+    <!-- beak -->
+    <path d="M612 126 L793 38 L648 154 Z" fill="url(#beakGradient)"/>
+    <path d="M641 126 L786 48 L666 142 Z" fill="#313744"/>
+
+    <!-- eye -->
+    <circle cx="575" cy="121" r="11" fill="#05070B"/>
+    <circle cx="575" cy="121" r="6.5" fill="#FFC715"/>
+    <circle cx="575" cy="121" r="2.8" fill="#111"/>
+  </g>
+
+  <!-- RIGHT CRANE -->
+  <g id="crane-right">
+    <!-- legs -->
+    <path d="M806 827 C 808 915, 803 1016, 793 1147" stroke="#242936" stroke-width="20" stroke-linecap="round"/>
+    <path d="M860 829 C 863 923, 866 1024, 867 1148" stroke="#242936" stroke-width="20" stroke-linecap="round"/>
+    <path d="M793 1147 L766 1151" stroke="#242936" stroke-width="17" stroke-linecap="round"/>
+    <path d="M867 1148 L896 1151" stroke="#242936" stroke-width="17" stroke-linecap="round"/>
+
+    <!-- outer body + neck -->
+    <path d="M684 854
+             C 659 791, 647 726, 655 667
+             C 665 598, 702 552, 752 511
+             C 799 472, 818 435, 803 394
+             C 792 364, 768 344, 747 327
+             C 774 317, 802 314, 827 322
+             C 867 334, 893 361, 903 399
+             C 914 441, 894 486, 851 531
+             C 810 574, 799 618, 815 663
+             C 832 710, 869 735, 921 754
+             C 990 780, 1045 831, 1078 901
+             C 1100 949, 1109 996, 1100 1035
+             C 1035 1004, 979 966, 927 919
+             C 891 886, 860 857, 833 846
+             C 799 832, 754 840, 713 868
+             C 700 867, 690 862, 684 854 Z"
+          fill="#FAFAF7"/>
+
+    <!-- gray neck -->
+    <path d="M732 337
+             C 778 354, 806 383, 810 416
+             C 814 453, 792 488, 754 521
+             C 716 554, 692 589, 688 631
+             C 683 680, 702 724, 740 760
+             C 760 747, 784 741, 809 744
+             C 779 708, 766 670, 770 632
+             C 775 584, 801 547, 839 510
+             C 874 476, 891 442, 884 412
+             C 877 381, 855 356, 824 344
+             C 793 332, 762 330, 732 337 Z"
+          fill="url(#neckGray)"/>
+
+    <!-- dark wing -->
+    <path d="M738 781
+             C 797 747, 874 748, 944 781
+             C 1014 814, 1065 872, 1092 943
+             C 1107 982, 1110 1018, 1101 1044
+             C 1052 1020, 1004 991, 958 956
+             C 906 917, 861 882, 817 860
+             C 784 843, 757 820, 738 781 Z"
+          fill="url(#wingDark)"/>
+
+    <!-- mid wing -->
+    <path d="M759 765
+             C 818 742, 882 750, 940 779
+             C 994 807, 1037 853, 1066 910
+             C 1026 890, 990 866, 958 838
+             C 928 813, 903 794, 877 784
+             C 885 812, 885 838, 876 860
+             C 839 839, 803 810, 759 765 Z"
+          fill="url(#wingMid)"/>
+
+    <!-- light upper feathers -->
+    <path d="M770 757
+             C 822 742, 877 751, 927 776
+             C 966 797, 1002 829, 1028 866
+             C 994 849, 964 831, 939 811
+             C 918 794, 898 780, 876 772
+             C 884 803, 880 829, 866 850
+             C 832 832, 800 804, 770 757 Z"
+          fill="url(#wingLight)"/>
+
+    <!-- feather cuts -->
+    <path d="M889 821 C 927 839, 963 864, 995 894 C 973 895, 950 890, 927 879 C 938 910, 937 936, 924 956 C 895 927, 870 896, 848 863 Z" fill="#515665"/>
+    <path d="M948 855 C 990 882, 1025 913, 1053 948 C 1029 943, 1006 933, 984 918 C 995 949, 992 975, 979 995 C 951 966, 927 936, 907 903 Z" fill="#303541"/>
+
+    <!-- red crown -->
+    <path d="M788 327
+             C 812 300, 850 293, 884 307
+             C 915 320, 934 344, 935 374
+             C 907 360, 879 356, 851 361
+             C 829 351, 809 340, 788 327 Z"
+          fill="#E90B14"/>
+
+    <!-- white face -->
+    <path d="M792 347
+             C 820 326, 855 324, 885 337
+             C 900 343, 913 352, 924 365
+             C 908 377, 893 389, 879 404
+             C 862 419, 847 435, 833 453
+             C 812 437, 798 418, 791 395
+             C 786 378, 786 361, 792 347 Z"
+          fill="#FBFBF8"/>
+
+    <!-- black eye patch -->
+    <path d="M807 318
+             C 834 310, 861 316, 877 332
+             C 871 351, 850 363, 826 361
+             C 808 357, 800 339, 807 318 Z"
+          fill="#111620"/>
+
+    <!-- beak -->
+    <path d="M817 337 L660 260 L791 369 Z" fill="url(#beakGradient)"/>
+    <path d="M800 340 L673 267 L786 357 Z" fill="#313744"/>
+
+    <!-- eye -->
+    <circle cx="827" cy="330" r="10.5" fill="#05070B"/>
+    <circle cx="827" cy="330" r="6.2" fill="#FFC715"/>
+    <circle cx="827" cy="330" r="2.7" fill="#111"/>
+  </g>
+</svg>

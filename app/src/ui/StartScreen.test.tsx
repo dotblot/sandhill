@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LinkState, Shell } from "../backend";
-import type { ProjectInfo } from "../backend/types";
+import type { ProjectInfo, SessionInfo } from "../backend/types";
 import type { Workspace } from "../model/workspace";
 import { openedAgo, StartScreen } from "./StartScreen";
 
@@ -10,17 +10,19 @@ function project(name: string, exists = true): ProjectInfo {
   return { path: `/w/${name}`, name, opened_ms: Date.now(), exists, state: null };
 }
 
-function fakes(projects: ProjectInfo[], host = "local") {
+function fakes(projects: ProjectInfo[], host = "local", sessions: Partial<SessionInfo>[] = [], initialServers: string[] = []) {
   const calls: [string, unknown][] = [];
   const [link] = createSignal<LinkState>({ status: "connected" });
   const ws = {
     backend: { host },
     link,
+    sessions: () => sessions,
     host: () => ({ home: "/w", hostname: host === "local" ? "mac" : "lab-01", daemon_version: "0.1.0", protocol_version: 1 }),
     call: async (method: string, params?: { path?: string }) => {
       calls.push([method, params]);
       if (method === "list_recent_projects") return projects;
       if (method === "open_project") return project(params!.path!.split("/").pop()!);
+      if (method === "list_dir") return [];
       if (method === "forget_project") {
         projects = projects.filter((p) => p.path !== params!.path);
         return null;
@@ -28,7 +30,7 @@ function fakes(projects: ProjectInfo[], host = "local") {
       throw new Error(`unexpected ${method}`);
     },
   } as unknown as Workspace;
-  let servers: string[] = [];
+  let servers = initialServers;
   const shell = {
     openProject: vi.fn(async () => {}),
     closeWindow: vi.fn(async () => {}),
@@ -110,15 +112,17 @@ describe("StartScreen with servers", () => {
     localStorage.clear();
   });
 
+  const card = (root: HTMLElement, host: string) => root.querySelector(`.host-card[data-host="${host}"]`)!;
+
   it("adds a server, lists its projects and opens one there", async () => {
     const local = fakes([project("here")]);
     const lab = fakes([project("atlas")], "lab");
     let root: HTMLElement;
     ({ root, dispose } = startScreen(local.ws, local.shell, { lab: lab.ws }));
     await settle();
-    expect(root.querySelector(".recent-name")!.textContent).toBe("here");
+    expect(card(root, "local").querySelector(".recent-name")!.textContent).toBe("here");
 
-    (root.querySelector(".host.add") as HTMLButtonElement).click();
+    (root.querySelector(".start-actions .connect") as HTMLButtonElement).click();
     await settle();
     const input = root.querySelector(".add-server input") as HTMLInputElement;
     input.value = "lab";
@@ -127,19 +131,62 @@ describe("StartScreen with servers", () => {
     await settle();
     await settle();
 
-    expect([...root.querySelectorAll(".host")].map((b) => b.textContent)).toEqual(["This Mac", "lab", "+ Server…"]);
-    expect(root.querySelector(".host.active")!.textContent).toBe("lab");
-    expect(root.querySelector(".recent h2")!.textContent).toBe("On lab-01");
-    (root.querySelector(".recent-open") as HTMLButtonElement).click();
+    // Servers come first, then this Mac, each with its own projects.
+    expect([...root.querySelectorAll(".host-name")].map((n) => n.textContent)).toEqual(["lab", "This Mac"]);
+    expect(root.querySelector(".add-server")).toBeNull();
+    (card(root, "lab").querySelector(".recent-open") as HTMLButtonElement).click();
     await settle();
     expect(local.shell.openProject).toHaveBeenCalledWith("lab", "/w/atlas");
+  });
 
-    // The choice is remembered for the next time the start window opens.
-    dispose();
+  it("says which projects have kernels running", async () => {
+    const local = fakes([project("atlas"), project("quiet")], "local", [
+      { id: "a", project: "/w/atlas", status: "running" },
+      { id: "b", project: "/w/atlas", status: "running" },
+      { id: "c", project: "/w/quiet", status: "ended" },
+    ]);
+    let root: HTMLElement;
+    ({ root, dispose } = startScreen(local.ws, local.shell));
+    await settle();
+
+    const when = [...root.querySelectorAll(".recent-when")].map((w) => w.textContent);
+    expect(when).toEqual(["2 kernels", "opened today"]);
+  });
+
+  it("removes a server", async () => {
+    const local = fakes([], "local", [], ["lab"]);
+    const lab = fakes([project("atlas")], "lab");
+    let root: HTMLElement;
     ({ root, dispose } = startScreen(local.ws, local.shell, { lab: lab.ws }));
     await settle();
     await settle();
-    expect(root.querySelector(".host.active")!.textContent).toBe("lab");
+
+    (card(root, "lab").querySelector(".host-remove") as HTMLButtonElement).click();
+    await settle();
+    expect([...root.querySelectorAll(".host-name")].map((n) => n.textContent)).toEqual(["This Mac"]);
+    expect(card(root, "local").querySelector(".host-remove")).toBeNull();
+  });
+
+  it("opens the folder picker on the server used last", async () => {
+    const local = fakes([], "local", [], ["lab", "hpc"]);
+    const others = { lab: fakes([], "lab").ws, hpc: fakes([], "hpc").ws };
+    let root: HTMLElement;
+    ({ root, dispose } = startScreen(local.ws, local.shell, others));
+    await settle();
+    await settle();
+
+    const picker = () => root.querySelector(".picker-head select") as HTMLSelectElement | null;
+    const openFolder = () => (root.querySelector(".start-actions .primary") as HTMLButtonElement).click();
+    openFolder();
+    await settle();
+    expect(picker()!.value).toBe("lab");
+    openFolder();
+    expect(picker()).toBeNull();
+
+    localStorage.setItem("sandhill.startHost", "hpc");
+    openFolder();
+    await settle();
+    expect(picker()!.value).toBe("hpc");
   });
 });
 

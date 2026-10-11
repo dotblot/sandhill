@@ -98,6 +98,19 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 | Fork **Zed** (Rust/GPUI) | The fastest editor available, with ACP agents, SSH remote and a REPL already built. But GPUI has no HTML engine, so htmlwidgets, plotly and interactive tables are hard. Its upstream also moves very fast. Worth studying, not forking. |
 | Electron / VS Code fork | Excluded by you. It is also what Positron, Cursor and Erdos are. |
 
+### The look (added 2026-10-11)
+
+The app follows draft 11 of the UI mockup (https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9).
+Panes are translucent cards on a warm gradient, 3px apart. Chrome (title bar,
+tabs, toolbars, status bar, pane text) is 11px in the system font; code and
+outputs are 12px in JetBrains Mono, bundled with the app (OFL) so every Mac
+shows the same font, with ligatures off so `<-` stays as typed. Plots stay
+white in dark mode. On macOS the windows use an overlay title bar: the page
+draws the 27px bar under the window buttons. The panes skip `backdrop-filter`:
+over a smooth gradient a blur changes nothing you can see, and each blurred
+pane costs a window-sized compositing layer. Styles are in `app/src/styles.css`,
+icons in `app/src/ui/icons.tsx`.
+
 ---
 
 ## 4. Inline outputs that are saved and reappear

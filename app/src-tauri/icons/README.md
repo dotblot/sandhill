@@ -1,15 +1,17 @@
 # App icon
 
-`source.png` is the icon artwork (two large sandhill cranes in front of the
-sun, chosen in October 2026 because they read better at small sizes than the
-earlier sunset scene), 1024 px, with the light canvas around the rounded
-square made transparent and its shadow kept as translucent black. The other files
-are generated from it:
+`source.svg` is the icon artwork, as Huan drew it (October 2026): two
+sandhill cranes in front of an orange sun, on a transparent background. The
+other files are generated from it:
 
 ```sh
 cd app
-npx tauri icon src-tauri/icons/source.png -o /tmp/icons
+npm run icon
 ```
 
-then copy `32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png` and
-`icon.icns` here; those are the ones `tauri.conf.json` uses.
+`scripts/icon.mjs` fits the artwork into Apple's icon grid (824 of 1024 px),
+so it sits at the same size as other apps in the Dock. At 16 and 32 px the
+whole scene blurs, so those sizes in `icon.icns` (and `32x32.png`) come from
+a closer crop on the cranes and the sun, without the reeds and ripples. The
+crop is set in the script, in the artwork's coordinates; check it if the
+artwork changes.
