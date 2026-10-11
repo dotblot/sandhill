@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "bridge": "node dev/bridge.mjs",
     "tauri": "tauri",
-    "bundle": "node scripts/bundle.mjs"
+    "bundle": "node scripts/bundle.mjs",
+    "icon": "node scripts/icon.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
