@@ -8,7 +8,8 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import type { TerminalStore } from "../model/terminals";
 
-const FONT = '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace';
+const FONT = '"Maple Mono NF", ui-monospace, "SF Mono", Menlo, monospace';
+const FONT_SIZE = 13;
 /** Size changes while a pane is dragged are sent once it settles. */
 const RESIZE_MS = 120;
 
@@ -72,7 +73,7 @@ export class TermView {
     this.el.className = "term-view";
     this.term = new Terminal({
       fontFamily: FONT,
-      fontSize: 14,
+      fontSize: FONT_SIZE,
       // The font's own line height, so box-drawing lines join up.
       lineHeight: 1,
       cursorBlink: true,
@@ -101,7 +102,7 @@ export class TermView {
     if (this.el.parentElement !== parent) parent.append(this.el);
     this.opening ??= (async () => {
       // xterm measures the font once, so it has to be loaded first.
-      await document.fonts?.load(`14px ${FONT}`).catch(() => {});
+      await document.fonts?.load(`${FONT_SIZE}px ${FONT}`).catch(() => {});
       this.term.open(this.el);
       this.opened = true;
       this.observer = new ResizeObserver(() => this.refit());

@@ -1,0 +1,9 @@
+/* Maple Mono NF 7.8, the Nerd Font build of Maple Mono, from
+   https://github.com/subframe7536/maple-font/releases/tag/v7.8, repackaged as
+   WOFF2 with no other change. Copyright 2022 The Maple Mono Project Authors.
+   SIL Open Font License 1.1 (OFL.txt). */
+@font-face { font-family: "Maple Mono NF"; font-style: normal; font-weight: 400; font-display: swap; src: url("./MapleMono-NF-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Maple Mono NF"; font-style: italic; font-weight: 400; font-display: swap; src: url("./MapleMono-NF-Italic.woff2") format("woff2"); }
+@font-face { font-family: "Maple Mono NF"; font-style: normal; font-weight: 500; font-display: swap; src: url("./MapleMono-NF-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Maple Mono NF"; font-style: normal; font-weight: 600; font-display: swap; src: url("./MapleMono-NF-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "Maple Mono NF"; font-style: normal; font-weight: 700; font-display: swap; src: url("./MapleMono-NF-Bold.woff2") format("woff2"); }

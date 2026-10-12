@@ -3,8 +3,7 @@ import { createShell } from "./backend";
 import { Workspace } from "./model/workspace";
 import { App } from "./ui/App";
 import { StartScreen } from "./ui/StartScreen";
-import "@fontsource/jetbrains-mono/400.css";
-import "@fontsource/jetbrains-mono/700.css";
+import "./fonts/maple-mono.css";
 import "./styles.css";
 
 // The Mac app draws its own title bar, with the window buttons over it.

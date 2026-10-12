@@ -18,6 +18,8 @@ export interface AgentKind {
   models: ModelChoice[];
   /** Thinking effort levels the CLI takes, lowest first. */
   efforts: string[];
+  /** The level new sessions get when none is picked: the CLI's own default. */
+  recommended: string;
   placeholder: string;
 }
 
@@ -34,6 +36,7 @@ export const AGENT_KINDS: AgentKind[] = [
       { id: "haiku", label: "Haiku" },
     ],
     efforts: ["low", "medium", "high", "xhigh", "max"],
+    recommended: "high",
     placeholder: "Message Claude Code (runs in the terminal above)",
   },
   {
@@ -43,6 +46,7 @@ export const AGENT_KINDS: AgentKind[] = [
     plan: "Terminal · your ChatGPT plan",
     models: [{ label: "Codex's default model" }],
     efforts: ["minimal", "low", "medium", "high"],
+    recommended: "medium",
     placeholder: "Ask Codex to do anything",
   },
 ];
@@ -77,9 +81,19 @@ export function modelLabel(terminal: TerminalInfo): string {
   return kind?.models.find((m) => m.id === id)?.label ?? id ?? kind?.name ?? terminal.title;
 }
 
+/** The effort level the agent last reported, else the one it started with. */
+export function effortLevel(terminal: TerminalInfo): string | undefined {
+  return terminal.agent?.status?.effort ?? terminal.options?.effort;
+}
+
 export function effortLabel(terminal: TerminalInfo): string | undefined {
-  const effort = terminal.agent?.status?.effort ?? terminal.options?.effort;
-  return effort ? capitalize(effort) : undefined;
+  const effort = effortLevel(terminal);
+  return effort ? effortName(effort) : undefined;
+}
+
+/** "High", "Extra high". */
+export function effortName(level: string): string {
+  return level === "xhigh" ? "Extra high" : capitalize(level);
 }
 
 export function capitalize(text: string): string {

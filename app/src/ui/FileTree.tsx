@@ -78,7 +78,10 @@ function DirNode(props: TreeProps & { path: string; name: string; depth: number 
   );
 }
 
-/** Files line up with the folder icons above them; each level indents 14px. */
+/**
+ * Top-level icons start 14px from the window's edge, like the rest of the left
+ * pane; each level indents 15px, so files line up with their folder's icon.
+ */
 function indent(depth: number) {
-  return { "padding-left": `${6 + depth * 14}px` };
+  return { "padding-left": `${8 + depth * 15}px` };
 }
