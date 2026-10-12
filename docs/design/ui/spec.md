@@ -173,8 +173,14 @@ omp.
   the title, and the linked file, model and time in 11px. Rename and delete
   appear on hover. Opening a conversation also brings its linked file to the
   front of the editor.
-- **New conversation** (+): pick Claude Code, Codex or omp, see which file it
-  links to (the active editor file), then type in the message box.
+- **New conversation** (+): pick Claude Code, Codex or omp (each button shows
+  only the provider icon and name), see which file it links to (the active
+  editor file), then type in the message box. **Cancel** (next to the "New
+  conversation" heading, or the x on its tab, or esc) goes back to the
+  conversation you were in.
+- **omp's icon** is its pi-like mark: a top bar with a short left leg and a
+  longer right leg, filled with a pink to violet to light-blue gradient. Dark
+  mode uses a slightly brighter gradient so it reads on the dark glass.
 
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
@@ -211,6 +217,11 @@ omp.
   11px. In the Agents chat, step rows, thinking rows, code cards and the chips
   under the message box are 12px, and the context line under your messages, turn
   footers and history details are 11px.
+- **Every popup and drop-down is 11px** (icons 13px): the context breakdown,
+  model and effort, mode, gear menu, kernel and session drop-downs, usage,
+  command palette, context menus and the plot zoom dialog. The context
+  breakdown is 340px wide and the model popup 268px, aligned to the right edge
+  of the pane.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
 ## Open questions

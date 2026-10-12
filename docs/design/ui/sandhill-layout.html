@@ -1325,6 +1325,44 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 #agent .termbar button:hover { background: var(--hover); }
 #agent .abody-scroll:not(.chat) { flex: 1; min-height: 0; overflow: auto; }
 #agent .abody :not(svg, svg *, .ipill, .st-tool, pre, pre *, .term, .term *) { font-family: var(--ui); }
+/* ---------- draft 18b: smaller popups at 11px, new-conversation cancel, omp icon ---------- */
+.win { --ompfill: url(#ompg); }
+.win.dark { --ompfill: url(#ompgd); }
+#win :is(.usagepop, .apop, .ctxmenu, .ctxpop, .mainmenu, .palette, .respop, .kpop, .pzoom) :not(svg, svg *, .pz-x) { font-size: 11px !important; }
+#win :is(.usagepop, .apop, .ctxmenu, .ctxpop, .mainmenu, .respop, .kpop) .ico { width: 13px; height: 13px; }
+/* context breakdown */
+.ctxpop { width: 340px !important; padding: 8px 10px 7px !important; gap: 7px !important; }
+.ctxpop .cp-body { gap: 12px; }
+.ctxpop .waffle { grid-template-columns: repeat(10, 7px); gap: 2px; }
+.ctxpop .waffle i { width: 7px; height: 7px; border-radius: 1.5px; }
+.ctxpop .cp-t td { padding: 0; line-height: 1.45; }
+.ctxpop .cp-t td:nth-child(2), .ctxpop .cp-t td:nth-child(3) { padding-left: 8px; }
+.ctxpop .sw { width: 8px; height: 8px; margin-right: 5px; vertical-align: 0; }
+.ctxpop .cp-bar { height: 6px; }
+.ctxpop .cp-bar b { top: -2px; height: 10px; width: 2px; }
+.ctxpop .cp-foot { flex-wrap: wrap; row-gap: 5px; }
+.ctxpop .pk-go, .ctxpop .pk-cancel { padding: 2px 8px !important; }
+/* popups from the agent's message box */
+#agent .apop { padding: 6px; gap: 2px; }
+#agent .apop.model { left: auto; right: 8px; width: 268px; }
+#agent .apop .ap-opt { min-height: 22px; padding: 2px 6px !important; }
+#agent .apop .ap-h { padding: 0 4px; }
+#agent .apop.model .eff { margin: 6px 2px 0; gap: 4px; }
+#agent .apop.perm { width: 258px; }
+#agent .apop.perm .pm-opt { padding: 4px 6px !important; gap: 7px; }
+#agent .apop.perm .pm-opt small { line-height: 1.35; }
+#agent .apop.gear { width: 200px; }
+#agent .apop.gear .mm-i { height: 24px; }
+#agent .seg2 button { height: 20px; }
+/* new conversation */
+#agent .nc-h { display: flex; align-items: center; }
+#agent .nc-h b { flex: 1; font-size: 15px !important; font-weight: 600; }
+#agent .nc-cancel { height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: var(--muted); }
+#agent .nc-cancel:hover { color: var(--text); background: var(--hover); }
+#agent .nc-agents button { justify-content: center; padding: 9px; }
+#atabs .chat-title .ax { visibility: visible; width: 16px; height: 16px; display: grid; place-items: center; margin-left: 2px; border-radius: var(--r); color: var(--faint); }
+#atabs .chat-title .ax:hover { color: var(--text); background: var(--hover); }
+#atabs .chat-title .ax .ico { width: 11px; height: 11px; }
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -1399,6 +1437,7 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
   <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1.8 3.8 9h4.1l-1 5.2L12.2 7H8.1z"/></symbol>
   <symbol id="i-pencil" viewBox="0 0 16 16"><path d="M10.6 3.1l2.3 2.3-7.2 7.2H3.4v-2.3z"/></symbol>
   <symbol id="i-plan" viewBox="0 0 16 16"><path d="M6.5 4.5h6.5M6.5 8h6.5M6.5 11.5h6.5"/><path d="M2.8 4.5l.8.8 1.4-1.5M2.8 8l.8.8 1.4-1.5"/><circle cx="3.8" cy="11.5" r=".9"/></symbol>
+  <symbol id="i-omp" viewBox="0 0 16 16"><path style="fill:var(--ompfill,currentColor)" d="M1.7 1h12.6v2.85h-3.45V15H7.98V3.85H5.9v7.6H3.06v-7.6H1.7z"/></symbol><linearGradient id="ompg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d63fb0"/><stop offset=".55" stop-color="#7a32f0"/><stop offset="1" stop-color="#3f8ee6"/></linearGradient><linearGradient id="ompgd" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ec4fc4"/><stop offset=".55" stop-color="#9246ff"/><stop offset="1" stop-color="#63a7f2"/></linearGradient>
   <symbol id="i-x" viewBox="0 0 16 16"><path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5"/></symbol>
   <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
   <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z"/></symbol>
@@ -2157,7 +2196,7 @@ const MODELS = [
 ];
 const modelInfo = id => { for (const g of MODELS) for (const [k, long, short] of g.items) if (k === id) return { agent: g.agent, long, short, group: g.group }; };
 const EFFORT = { claude: ["Low", "Medium", "High", "Max"], codex: ["Minimal", "Low", "Medium", "High"], omp: ["Off", "Low", "High"] };
-const provIcon = model => model === "qwen" ? ico("chip", "ico prov open") : modelInfo(model).agent === "claude" ? `<svg class="ico prov"><use href="#i-claude"/></svg>` : `<svg class="ico prov"><use href="#i-openai"/></svg>`;
+const provIcon = model => modelInfo(model).agent === "omp" ? `<svg class="ico prov"><use href="#i-omp"/></svg>` : modelInfo(model).agent === "claude" ? `<svg class="ico prov"><use href="#i-claude"/></svg>` : `<svg class="ico prov"><use href="#i-openai"/></svg>`;
 const DOCS = ["analysis.qmd", "02_de.ipynb", "01_qc.R"];
 let sessSeq = 0;
 function newSession(model, docs, extra = {}) {
@@ -2493,24 +2532,27 @@ function historyView() {
 }
 function newChatView() {
   const p = S.pick;
-  const opts = [["claude", "opus", "Claude Code", "Your Claude plan"], ["codex", "gpt5codex", "Codex", "Your ChatGPT plan"], ["omp", "qwen", "omp", "Open models on gpu01"]];
+  const opts = [["claude", "opus", "Claude Code"], ["codex", "gpt5codex", "Codex"], ["omp", "qwen", "omp"]];
   return `<div class="newchat"><div class="nc-in">
-    <b>New conversation</b>
-    <div class="nc-agents">${opts.map(([a, m, n, sub]) => `<button class="${modelInfo(p.model).agent === a ? "on" : ""}" data-pickagent="${m}">${provIcon(m)}<span>${n}<small>${sub}</small></span></button>`).join("")}</div>
+    <div class="nc-h"><b>New conversation</b>${S.sessions.length ? `<button class="nc-cancel" data-pkcancel title="Back to the previous conversation (esc)">Cancel</button>` : ""}</div>
+    <div class="nc-agents">${opts.map(([a, m, n]) => `<button class="${modelInfo(p.model).agent === a ? "on" : ""}" data-pickagent="${m}" title="${MODELS.find(g => g.agent === a).sub.split(" · ")[1]}">${provIcon(m)}<span>${n}</span></button>`).join("")}</div>
     <p>Linked to ${flink(p.docs[0])}. Your variables, open files and current cell go with every message, and code goes into the file below your active cell.</p>
   </div></div>`;
 }
 
 function renderAgentTabs() {
   const s = curSess();
-  const title = S.hist ? `${ico("clock")}<span class="atl">History</span>` : S.picker ? `${ico("plus")}<span class="atl">New conversation</span>` : s ? `${provIcon(s.model)}<span class="atl">${s.title}</span>` : `<span class="atl">Agents</span>`;
+  const title = S.hist ? `${ico("clock")}<span class="atl">History</span>` : S.picker ? `${ico("plus")}<span class="atl">New conversation</span>${S.sessions.length ? `<button class="ax" data-pkcancel title="Cancel (esc)">${ico("x")}</button>` : ""}` : s ? `${provIcon(s.model)}<span class="atl">${s.title}</span>` : `<span class="atl">Agents</span>`;
   $("#atabs").innerHTML = `<div class="atab chat-title" role="tab" aria-selected="true">${title}</div><span class="spacer"></span>
     <button class="ib" data-newsess title="New conversation">${ico("plus")}</button><button class="ib ${S.hist ? "on" : ""}" data-hist title="Conversation history" aria-pressed="${!!S.hist}">${ico("clock")}${S.sessions.some(x => x.state === "wait" && x.id !== S.activeSess) ? `<span class="dot wait"></span>` : ""}</button><button class="ib" data-agear title="Conversation settings">${ico("gear")}</button>`;
   if (typeof paneCtl === "function" && S.pmin) paneCtl();
   $$("[data-newsess]").forEach(e => e.onclick = openPicker);
+  $$("#atabs [data-pkcancel]").forEach(e => e.onclick = cancelPicker);
   $("[data-hist]").onclick = () => { S.hist = !S.hist; S.apop = null; renderAgent(); };
   $("[data-agear]").onclick = ev => { ev.stopPropagation(); S.hist = false; S.apop = S.apop === "gear" ? null : "gear"; renderAgent(); };
 }
+function cancelPicker() { S.picker = false; S.apop = null; renderAgent(); }
+document.addEventListener("keydown", e => { if (e.key === "Escape" && S.picker && S.sessions.length) cancelPicker(); });
 function openPicker() { S.hist = false; S.picker = true; S.pick = { model: curSess()?.model || "opus", docs: [TABS.find(t => t.id === S.tab)?.name || "analysis.qmd"] }; renderAgent(); }
 
 function composer(s, newc) {
@@ -2547,6 +2589,7 @@ function renderAgent() {
   if (S.picker) {
     b.innerHTML = `<div class="sess-wrap">${newChatView()}${composer(null, true)}</div>`;
     $$("[data-pickagent]", b).forEach(x => x.onclick = () => { S.pick.model = x.dataset.pickagent; renderAgent(); });
+    $$("[data-pkcancel]", b).forEach(x => x.onclick = cancelPicker);
     $(".csend", b).onclick = () => { const txt = $(".ain", b).value.trim() || "Check the QC thresholds in 01_qc.R against this dataset."; const s = newSession(S.pick.model, S.pick.docs, { title: txt.length > 34 ? txt.slice(0, 32) + "…" : txt, first: txt, state: "busy", when: "now" }); S.sessions.unshift(s); S.activeSess = s.id; S.picker = false; renderAgent(); renderStatus(); };
     wireComposer(null, b);
     return;
