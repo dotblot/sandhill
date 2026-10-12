@@ -169,7 +169,10 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
     {
         args.extend(["--effort".into(), effort.clone()]);
     }
+    // Supervised is named too: without a mode, Claude Code takes the
+    // user's own default, which may be one that asks less.
     let mode = match options.permission.as_deref() {
+        Some("supervised") => Some("default"),
         Some("edits") => Some("acceptEdits"),
         Some("auto") if help.contains("\"auto\"") => Some("auto"),
         Some("full") => Some("bypassPermissions"),
@@ -433,6 +436,19 @@ mod tests {
         );
         // This CLI's help doesn't list --effort.
         assert!(!args.contains(&"--effort".to_string()));
+    }
+
+    #[test]
+    fn supervised_claude_asks_whatever_the_users_default() {
+        let options = AgentOptions {
+            permission: Some("supervised".into()),
+            ..Default::default()
+        };
+        let args = claude_args(&options, &context(), "--permission-mode");
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--permission-mode", "default"])
+        );
     }
 
     #[test]

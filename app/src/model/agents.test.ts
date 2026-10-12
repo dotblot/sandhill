@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TerminalInfo } from "../backend/types";
-import { effortLabel, effortName, modelLabel, planUsage, timeLeft, tokens } from "./agents";
+import { currentPermission, documentPath, effortLabel, effortName, modelLabel, planUsage, timeLeft, tokens } from "./agents";
 
 const terminal = (extra: Partial<TerminalInfo>): TerminalInfo => ({
   id: "a",
@@ -20,6 +20,18 @@ describe("agents", () => {
     expect(effortLabel(terminal({ options: { effort: "low" } }))).toBe("Low");
     expect(effortLabel(terminal({ options: { effort: "low" }, agent: { status: { effort: "max" } } as TerminalInfo["agent"] }))).toBe("Max");
     expect(effortLabel(terminal({}))).toBeUndefined();
+  });
+
+  it("shows the permission mode the agent reports, else the one it started in", () => {
+    expect(currentPermission(terminal({ options: { permission: "edits" } })).label).toBe("Auto-accept edits");
+    expect(currentPermission(terminal({ options: { permission: "supervised" }, agent: { mode: "auto" } })).label).toBe("Auto");
+    expect(currentPermission(terminal({ agent: { mode: "plan" } })).label).toBe("Plan");
+    expect(currentPermission(terminal({ options: { permission: "full" }, agent: { mode: "someday" } })).label).toBe("Full access");
+  });
+
+  it("finds a session's documents in its project", () => {
+    expect(documentPath("/data/pbmc", "analysis.qmd")).toBe("/data/pbmc/analysis.qmd");
+    expect(documentPath("/data/pbmc", "/home/h/notes.qmd")).toBe("/home/h/notes.qmd");
   });
 
   it("names the model as the agent reports it, else as it was started", () => {

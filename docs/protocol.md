@@ -136,8 +136,11 @@ than asked when that output is no longer kept (the last 4 MiB are). Other
 terminal messages carry `agent` (what an agent reported, below) or `exit`.
 
 Agents report through hooks that run `sandhilld terminal-event`: `agent` is
-`{state: "busy" | "waiting" | "idle", message?, status?, ts_ms}`. `waiting`
-means it asks the user something (a permission prompt, a question).
+`{state: "busy" | "waiting" | "idle", message?, mode?, status?, ts_ms}`.
+`waiting` means it asks the user something (a permission prompt, a question).
+`mode` is Claude Code's permission mode as its hooks last reported it
+(`default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`...), so a mode
+changed in the terminal shows.
 `status` comes from Claude Code's status line: `{model, model_id, context,
 context_size, effort?, rate_limits?, cost_usd?, version}`, with `context` the
 percent of the context window in use and `rate_limits` the plan's 5-hour and

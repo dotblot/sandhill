@@ -587,6 +587,7 @@ button.link:hover { text-decoration: underline; }
 .ai-l { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dchip { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: var(--r); background: var(--ink-6); color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
 .dchip .fi { width: 13px; height: 13px; }
+.dchip:hover { background: var(--ink-8); color: var(--text); }
 .agent-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .term-host { flex: 1; min-height: 0; position: relative; background: var(--term); }
 .term-view { position: absolute; inset: 4px 2px 2px 10px; }

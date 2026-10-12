@@ -5,6 +5,8 @@ import {
   AGENT_KINDS,
   type AgentKind,
   agentKind,
+  currentPermission,
+  documentPath,
   effortLevel,
   effortName,
   type ModelChoice,
@@ -48,6 +50,8 @@ export function AgentsPane(props: {
   onMax: (p: Pane) => void;
   /** Runs a command in the Console's Terminal tab, to install an agent. */
   onInstall: (command: string) => void;
+  /** Opens a file in the editor and brings it to the front. */
+  onOpen: (path: string) => void;
 }) {
   const store = props.store;
   const [picking, setPicking] = createSignal(false);
@@ -197,7 +201,7 @@ export function AgentsPane(props: {
         <PaneButtons pane="agents" min={props.min} max={props.max} onMin={props.onMin} onMax={props.onMax} />
       </div>
       <Show when={!picking() && current()}>
-        {(terminal) => <InfoLine terminal={terminal()} hostLabel={props.hostLabel} />}
+        {(terminal) => <InfoLine terminal={terminal()} hostLabel={props.hostLabel} project={props.project} onOpen={props.onOpen} />}
       </Show>
       <div class="agent-body">
         <Show when={picking()}>
@@ -286,7 +290,7 @@ export function ProviderIcon(props: { kind: string }) {
 }
 
 /** ">_ claude in a terminal on gpu01 · Opus 5.5", then the documents it is about. */
-function InfoLine(props: { terminal: TerminalInfo; hostLabel: string }) {
+function InfoLine(props: { terminal: TerminalInfo; hostLabel: string; project: string; onOpen: (path: string) => void }) {
   const kind = () => agentKind(props.terminal.kind);
   return (
     <div class="agent-info">
@@ -296,10 +300,10 @@ function InfoLine(props: { terminal: TerminalInfo; hostLabel: string }) {
       </span>
       <For each={props.terminal.options?.documents ?? []}>
         {(doc) => (
-          <span class="dchip">
+          <button class="dchip" title={`Open ${doc}`} onClick={() => props.onOpen(documentPath(props.project, doc))}>
             <FileIcon name={doc} />
             {doc}
-          </span>
+          </button>
         )}
       </For>
     </div>
@@ -535,7 +539,8 @@ function Composer(props: {
   onCleanup(() => document.removeEventListener("mousedown", closePopover));
 
   const status = () => props.terminal.agent?.status;
-  const perm = () => permission(props.terminal.options?.permission);
+  const perm = () => currentPermission(props.terminal);
+  const started = () => permission(props.terminal.options?.permission);
 
   return (
     <div class="composer">
@@ -640,8 +645,11 @@ function Composer(props: {
       </Show>
       <Show when={popover() === "perm"}>
         <div class="apop perm">
-          <div class="ap-h">Started as {perm().label}</div>
+          <div class="ap-h">{perm().label}</div>
           <p class="ap-n">{perm().detail}</p>
+          <Show when={started().id !== perm().id}>
+            <p class="ap-n">Started as {started().label}.</p>
+          </Show>
           <p class="ap-n">
             {props.terminal.kind === "claude" ? (
               <>
