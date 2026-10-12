@@ -303,7 +303,7 @@ async fn an_agent_reports_to_its_terminal() {
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     // Stands in for an agent whose hooks run `sandhilld terminal-event`.
     let script = format!(
-        "'{exe}' terminal-event state busy; echo '{{\"notification_type\":\"permission_prompt\",\"message\":\"May I?\"}}' | '{exe}' terminal-event notification; echo done; read wait; '{exe}' terminal-event state busy; echo again; read wait",
+        "echo '{{\"permission_mode\":\"acceptEdits\"}}' | '{exe}' terminal-event state busy; echo '{{\"notification_type\":\"permission_prompt\",\"message\":\"May I?\"}}' | '{exe}' terminal-event notification; echo done; read wait; '{exe}' terminal-event state busy; echo again; read wait",
         exe = sandhilld().display()
     );
     let info = terminals.start(sh(&script, dir.path())).await.unwrap();
@@ -321,6 +321,8 @@ async fn an_agent_reports_to_its_terminal() {
     let agent = terminals.info(&info.id).unwrap().agent.unwrap();
     assert_eq!(agent["state"], "waiting");
     assert_eq!(agent["message"], "May I?");
+    // The permission mode the hook was given.
+    assert_eq!(agent["mode"], "acceptEdits");
 
     // Once it gets going again, the question is gone.
     terminals
@@ -331,5 +333,7 @@ async fn an_agent_reports_to_its_terminal() {
     let agent = terminals.info(&info.id).unwrap().agent.unwrap();
     assert_eq!(agent["state"], "busy");
     assert!(agent.get("message").is_none(), "{agent}");
+    // Run from the terminal itself, with nothing on stdin: the mode stays.
+    assert_eq!(agent["mode"], "acceptEdits");
     terminals.close(&info.id).await.unwrap();
 }

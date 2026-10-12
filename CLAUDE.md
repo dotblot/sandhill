@@ -31,7 +31,9 @@ before making architectural changes; it records the decisions and why.
   Tests skip (with a message) when a kernel isn't installed.
 - Output building exists twice, in the daemon (`crates/daemon/src/outputs.rs`)
   and the UI (`app/src/model/outputs.ts`). Change both together, with a case
-  in `tests/fixtures/outputs.json`, which both test suites read.
+  in `tests/fixtures/outputs.json`, which both test suites read. Finding
+  Quarto chunks and their ids does too (`crates/daemon/src/qmd.rs`,
+  `app/src/model/qmd.ts`, `tests/fixtures/chunks.json`).
 - Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` and
   `cargo test --workspace` before committing, and `npm test` and
   `npm run build` in `app/` when the UI changed.

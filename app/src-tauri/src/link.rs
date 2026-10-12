@@ -3,7 +3,7 @@
 //!
 //! The UI reaches a daemon through three doors, which `app/src/backend/tauri.ts`
 //! wraps: the `daemon_call` command for requests, `daemon://event`,
-//! `daemon://terminal` and `daemon://link` events, and the `sandhill-blob:`
+//! `daemon://terminal`, `daemon://request` and `daemon://link` events, and the `sandhill-blob:`
 //! protocol for plots and other large outputs. A window first calls `use_host`; events for a host
 //! go only to the windows using it.
 
@@ -28,6 +28,9 @@ use sandhill_link::{Connection, Options, Target};
 
 pub const EVENT: &str = "daemon://event";
 pub const TERMINAL: &str = "daemon://terminal";
+/// Requests for windows (an agent's edit to an open document). Each window
+/// takes the ones for its project and answers with `daemon_call`.
+pub const REQUEST: &str = "daemon://request";
 pub const LINK: &str = "daemon://link";
 pub const BLOB_SCHEME: &str = "sandhill-blob";
 
@@ -244,9 +247,11 @@ impl Link {
     /// windows that use this host.
     async fn serve<R: Runtime>(&self, app: &AppHandle<R>, connection: Connection) {
         let Connection { mut client, child } = connection;
-        let (Some(mut events), Some(mut terminals)) =
-            (client.take_events(), client.take_terminal_events())
-        else {
+        let (Some(mut events), Some(mut terminals), Some(mut requests)) = (
+            client.take_events(),
+            client.take_terminal_events(),
+            client.take_requests(),
+        ) else {
             return;
         };
         *self.client.lock().unwrap() = Some(Arc::new(client));
@@ -264,7 +269,12 @@ impl Link {
                 links.emit(app, &self.host, EVENT, event);
             }
         };
-        tokio::join!(sessions, terminals);
+        let requests = async {
+            while let Some(request) = requests.recv().await {
+                links.emit(app, &self.host, REQUEST, request);
+            }
+        };
+        tokio::join!(sessions, terminals, requests);
         // Calls still waiting fail with "disconnected" once the client goes.
         self.client.lock().unwrap().take();
         drop(child);

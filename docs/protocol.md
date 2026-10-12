@@ -48,6 +48,11 @@ Responses can arrive out of order; match them by `id`.
 | `terminal_input` | `terminal`, `data` | `null` |
 | `resize_terminal` | `terminal`, `cols`, `rows` | `null` |
 | `close_terminal` | `terminal` | `null` once its program has ended and its files are gone |
+| `set_focus` | `project`, `focus` | `null` |
+| `get_focus` | `project` | `Focus` or `null` |
+| `add_cell` | `file`, `code`, `language?`, `after?`, `run?`, `project?` | `CellEdited` |
+| `edit_cell` | `file`, `cell_id`, `code`, `run?`, `project?` | `CellEdited` |
+| `answer` | `id`, `result?`, `error?` | `null` |
 
 `SessionInfo` is `{id, kernel, language, language_version?, cwd, pid, status, created_ms, ended_ms?, last_seq, project?}`
 with `status` one of `starting`, `running`, `ended`. `language_version` is
@@ -136,8 +141,11 @@ than asked when that output is no longer kept (the last 4 MiB are). Other
 terminal messages carry `agent` (what an agent reported, below) or `exit`.
 
 Agents report through hooks that run `sandhilld terminal-event`: `agent` is
-`{state: "busy" | "waiting" | "idle", message?, status?, ts_ms}`. `waiting`
-means it asks the user something (a permission prompt, a question).
+`{state: "busy" | "waiting" | "idle", message?, mode?, status?, ts_ms}`.
+`waiting` means it asks the user something (a permission prompt, a question).
+`mode` is Claude Code's permission mode as its hooks last reported it
+(`default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`...), so a mode
+changed in the terminal shows.
 `status` comes from Claude Code's status line: `{model, model_id, context,
 context_size, effort?, rate_limits?, cost_usd?, version}`, with `context` the
 percent of the context window in use and `rate_limits` the plan's 5-hour and
@@ -146,7 +154,46 @@ weekly use.
 Each agent gets Sandhill's MCP server, `sandhilld mcp --project <folder>`,
 which it starts itself. Its tools reach the user's live sessions through this
 same protocol: `list_sessions`, `list_variables`, `run_code` and
-`get_outputs`.
+`get_outputs`; and the user's documents (below): `get_focus`, `add_cell` and
+`edit_cell`. Claude Code's prompt hook (`terminal-event prompt`) adds where
+the user is to each prompt.
+
+## Windows and agents' edits
+
+A project window tells the daemon where the user is with `set_focus`:
+`Focus` is `{file?, cell?, line?, selection?, open, ts_ms}`, the document in
+front, its current cell (the chunk with the cursor, or the notebook cell last
+in focus), the cursor's line, the selected text, and every document open in
+the window. The daemon keeps the latest place per project, also after the
+window has gone (`ts_ms` says when); `get_focus` returns it.
+
+`add_cell` puts code into a document as a new cell after cell `after`, or
+after the last cell: a chunk in a `.qmd`/`.Rmd`, a code cell in a notebook,
+or code at the end of an `.R`/`.py` script. `edit_cell` replaces a cell's
+code. The result is `CellEdited`: `{file, cell_id, language, in_window,
+kernel?}`.
+
+- When a window has the file open (it is in that connection's `open`), the
+  daemon asks the window, which edits the document as the user would (one ⌘Z
+  undoes it), saves it, answers, and with `run` then runs the cell as its Run
+  button does. `in_window` is true. The run shows up in `file_outputs` under
+  `cell_id` (for a script, the console entry it runs as).
+- Otherwise the daemon edits the file itself and leaves running the cell to
+  the caller. `kernel` is the kernel the document asks for: a notebook's
+  kernelspec, or a Quarto document's `jupyter:`.
+- Either way, the project's place moves to the new cell, so the next one
+  goes below it.
+
+The daemon asks a window with
+
+```json
+{"type": "request", "request": {"id": 7, "project": "/data/pbmc", "method": "add_cell",
+  "params": {"file": "/data/pbmc/analysis.qmd", "code": "dim(seu)", "after": "qc", "run": true}}}
+```
+
+sent only to clients that called `set_focus`. The window working on
+`project` answers with `answer`: `{id, result: {cell_id, language}}` or
+`{id, error}`.
 
 ## Blobs
 

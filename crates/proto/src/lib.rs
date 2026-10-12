@@ -224,6 +224,113 @@ pub enum Call {
     CloseTerminal {
         terminal: String,
     },
+    /// A project window says where the user is, so agents can see it. The
+    /// daemon keeps the latest place per project (also once the window has
+    /// gone), and which files this connection's window has open: agents'
+    /// edits to those go through the window. Returns null.
+    SetFocus {
+        project: String,
+        focus: Focus,
+    },
+    /// Where the user last was in a project. Returns `Option<Focus>`.
+    GetFocus {
+        project: String,
+    },
+    /// Adds a code cell to a notebook or Quarto/R Markdown document, after
+    /// cell `after` or else after the last cell (a script gets the code at
+    /// its end). When a window has the file open, the window makes the edit
+    /// and saves, then with `run` runs the cell; otherwise the daemon edits
+    /// the file and leaves running it to the caller. Returns [`CellEdited`].
+    AddCell {
+        file: String,
+        code: String,
+        /// `r` or `python`; by default the language of the cell before it,
+        /// or of the document.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        run: bool,
+        /// The project asking, to pick its window when several have the file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
+    /// Replaces the code of a cell, as [`Call::AddCell`] adds one. Returns
+    /// [`CellEdited`].
+    EditCell {
+        file: String,
+        cell_id: String,
+        code: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        run: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
+    /// A window's answer to a [`ServerMessage::Request`]: `result`, or
+    /// `error`. Returns null.
+    Answer {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+}
+
+/// Where the user is in a project window.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Focus {
+    /// The document in front, absolute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Its current cell: the chunk with the cursor, or the selected
+    /// notebook cell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<String>,
+    /// The cursor's line, 1-based (in a notebook, within the cell).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    /// The selected text, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<String>,
+    /// Every document open in the window.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open: Vec<String>,
+    /// When the window said so; set by the daemon.
+    #[serde(default)]
+    pub ts_ms: i64,
+}
+
+/// A cell an agent added or changed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CellEdited {
+    pub file: String,
+    /// The cell's id now: a notebook cell id, a chunk label or
+    /// `chunk-<n>`. For a script, empty, or the console entry the window
+    /// runs the code as.
+    pub cell_id: String,
+    /// Lower case: `r`, `python`.
+    pub language: String,
+    /// True when an open window made the edit; it then also runs the cell
+    /// if asked to, as if the user pressed Run.
+    #[serde(default)]
+    pub in_window: bool,
+    /// The kernel the document asks for (a notebook's kernelspec, a Quarto
+    /// document's `jupyter:`), for whoever runs the cell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<String>,
+}
+
+/// Something the daemon asks a window to do (see [`Call::AddCell`]). The
+/// window that works on `project` answers with [`Call::Answer`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppRequest {
+    pub id: u64,
+    pub project: String,
+    /// `add_cell` or `edit_cell`, with that call's params.
+    pub method: String,
+    pub params: Value,
 }
 
 /// The `kind` of a plain shell terminal.
@@ -255,6 +362,11 @@ pub enum ServerMessage {
     /// Output and news from a terminal the client subscribed to.
     Terminal {
         terminal: TerminalEvent,
+    },
+    /// A request for a window, sent only to clients that said with
+    /// [`Call::SetFocus`] which files they have open.
+    Request {
+        request: AppRequest,
     },
 }
 
@@ -577,7 +689,7 @@ pub struct TerminalEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
     /// What an agent reported through its hooks and status line:
-    /// `{state: "busy" | "waiting" | "idle", status: {model, context,
+    /// `{state: "busy" | "waiting" | "idle", mode, status: {model, context,
     /// effort, rate_limits...}}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<Value>,

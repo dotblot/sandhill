@@ -18,6 +18,31 @@ export function docKind(path: string): DocKind | undefined {
   return undefined;
 }
 
+/** Where the user is in a document, for agents (see `set_focus`). */
+export interface Place {
+  /** The current cell: the chunk with the cursor, or the notebook cell last in focus. */
+  cell?: string;
+  /** The cursor's line, 1-based (in a notebook, within the cell). */
+  line?: number;
+  selection?: string;
+}
+
+/** A cell an agent added or changed: its id now, and its language. */
+export interface AgentCell {
+  cellId: string;
+  language: string;
+}
+
+/** Selections longer than this are cut before they go to agents. */
+const MAX_SELECTION = 4000;
+
+/** The selection of an editor, cut to a length agents take. */
+export function selectionOf(view: EditorView): string | undefined {
+  const { main } = view.state.selection;
+  if (main.empty) return undefined;
+  return view.state.sliceDoc(main.from, Math.min(main.to, main.from + MAX_SELECTION));
+}
+
 /** Marks an editor change that came from the file on disk, not from typing. */
 export const fromDisk = Annotation.define<boolean>();
 
@@ -66,6 +91,9 @@ export abstract class Doc {
   /** Where the cursor is, like "Ln 24, Col 32", for the status bar. */
   readonly cursor: () => string;
   private setCursor: (text: string) => void;
+  /** Bumped whenever the cursor or selection moves, so the window can tell agents. */
+  readonly moved: () => number;
+  private setMoved: (update: (n: number) => number) => void;
   /** Modification time of the file as last read or written, to detect outside changes. */
   protected mtime = 0;
   /** The last run sent to a kernel, or being sent. */
@@ -88,6 +116,7 @@ export abstract class Doc {
     this.kernels = new DocKernels(ws, kernelFolder ?? this.dir, preferredKernel);
     [this.shownOutputs, this.setShownOutputs] = createSignal(shownOutputs);
     [this.cursor, this.setCursor] = createSignal("");
+    [this.moved, this.setMoved] = createSignal(0);
   }
 
   /** Modification time of the file as last read or written. */
@@ -110,6 +139,18 @@ export abstract class Doc {
   abstract runAll(): Promise<void>;
   /** Scripts: runs the selection or the statement at the cursor. */
   runCurrent?(): boolean;
+  /** Where the user is in the document, for agents. */
+  abstract place(): Place;
+  /**
+   * An agent's code, as the user would add it: a new cell after `after`
+   * (else after the last cell), or for a script, code at its end. The cursor
+   * moves to it, so the agent's next cell goes below this one.
+   */
+  abstract addCell(code: string, language?: string, after?: string): AgentCell;
+  /** Replaces a cell's code, for an agent. */
+  abstract editCell(cellId: string, code: string): AgentCell;
+  /** Runs what `addCell` or `editCell` made, as its Run button would. */
+  abstract runAgentCell(cell: AgentCell, code: string): Promise<void>;
   abstract dispose(): void;
   /** Shows or hides every output in the document. */
   abstract setAllOutputs(visible: boolean): void;
@@ -122,6 +163,7 @@ export abstract class Doc {
       const head = update.state.selection.main.head;
       const line = update.state.doc.lineAt(head);
       this.setCursor(`Ln ${line.number}, Col ${head - line.from + 1}`);
+      this.setMoved((n) => n + 1);
     });
   }
 

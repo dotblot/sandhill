@@ -26,9 +26,10 @@ import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
 import { BUILD, buildText } from "../build";
-import { modelLabel, planUsage, timeLeft } from "../model/agents";
+import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
+import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane, ProviderIcon } from "./AgentsPane";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileIcon, Icon, type IconName, LangIcon } from "./icons";
@@ -107,9 +108,15 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     store(AGENTS_KEY, agentsOn() ? "shown" : "hidden");
     if (!agentsOn() && maximized() === "agents") setMaximized(undefined);
   };
+  /** Shows an agent session, and brings the first document it is about to the front. */
+  const selectAgent = (id: string | undefined) => {
+    setAgentTab(id);
+    const doc = terminals.list().find((t) => t.id === id)?.options?.documents?.[0];
+    if (doc) void open(documentPath(props.project, doc));
+  };
   /** Brings an agent session to the front, opening the pane if need be. */
   const showAgent = (id?: string) => {
-    if (id) setAgentTab(id);
+    if (id) selectAgent(id);
     if (!agentsOn()) toggleAgents();
     setMinimized((list) => list.filter((p) => p !== "agents"));
   };
@@ -264,6 +271,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     return doc;
   }
 
+  // Agents see where the user is, and their edits to open documents happen here.
+  const leaveDocuments = reportPlace(ws, props.project, docs, active);
+  serveAgentEdits(ws, props.project, open);
+
   // Documents follow their files: an agent's edits show up in the editor.
   /** Per document, the file version the person chose to keep their own changes over. */
   const keptOver = new Map<Doc, number>();
@@ -382,6 +393,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       }
     }
     if (saveTimer !== undefined) await saveState();
+    await leaveDocuments();
     return true;
   }
 
@@ -579,7 +591,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               docs={docs()}
               active={active()}
               selected={agentTab()}
-              onSelect={setAgentTab}
+              onSelect={selectAgent}
+              onOpen={(path) => void open(path)}
               width={agentsWidth()}
               min={isMin("agents")}
               max={maximized() === "agents"}

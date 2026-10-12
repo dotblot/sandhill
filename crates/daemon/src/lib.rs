@@ -6,6 +6,7 @@
 
 pub mod agents;
 pub mod blobs;
+pub mod cells;
 pub mod files;
 pub mod journal;
 pub mod kernel;
@@ -16,12 +17,14 @@ pub mod notebook;
 pub mod outputs;
 pub mod paths;
 pub mod projects;
+pub mod qmd;
 pub mod server;
 pub mod session;
 pub mod sidecar;
 pub mod system;
 pub mod terminal;
 pub mod version;
+pub mod windows;
 
 pub use paths::StateDir;
 pub use server::{Daemon, DaemonOptions};

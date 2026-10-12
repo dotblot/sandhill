@@ -7,10 +7,20 @@ import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from "
 import { type Accessor, createSignal, type Setter } from "solid-js";
 import type { FileText, FileWritten, SavedCell, SidecarIndex } from "../backend/types";
 import { baseExtensions, quartoLanguage } from "../editor/setup";
-import { type Chunk, frontMatterKernel, parseChunks, proseLines, sameCode } from "../model/qmd";
+import {
+  type Chunk,
+  chunkCodeChange,
+  chunkInsertion,
+  frontMatterKernel,
+  newChunkLanguage,
+  parseChunks,
+  proseLines,
+  sameCode,
+  type TextChange,
+} from "../model/qmd";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { CellOutput } from "./cellOutput";
-import { changedOnDisk, Doc, replaceText } from "./doc";
+import { type AgentCell, changedOnDisk, Doc, type Place, replaceText, selectionOf } from "./doc";
 
 /** Chunk languages that have kernels. */
 const RUNNABLE = new Set(["r", "python"]);
@@ -312,6 +322,61 @@ export class QmdDoc extends Doc {
         tr.docChanged || tr.effects.some((e) => e.is(refresh)) ? build(tr.state) : layout,
       provide: (field) => EditorView.decorations.from(field, (layout) => layout.decorations),
     });
+  }
+
+  place(): Place {
+    const view = this.view;
+    if (!view) return {};
+    const head = view.state.selection.main.head;
+    const chunk = this.chunks().find((c) => head >= c.from && head <= c.to);
+    return { cell: chunk?.cellId, line: view.state.doc.lineAt(head).number, selection: selectionOf(view) };
+  }
+
+  addCell(code: string, language?: string, after?: string): AgentCell {
+    const text = this.text();
+    const chunks = this.chunks();
+    const anchor = after === undefined ? chunks[chunks.length - 1] : this.chunkFor(after);
+    const lang = newChunkLanguage(text, chunks, anchor, language && normalizeLanguage(language), this.path);
+    if (!lang) throw new Error("say which `language` the cell is in (r or python)");
+    if (!RUNNABLE.has(lang)) throw new Error(`cells can be r or python, not ${lang}`);
+    const change = chunkInsertion(text, code, lang, anchor);
+    const chunk = this.change(change, change.start);
+    // The cursor goes into the new chunk, as if the user had typed it there.
+    this.view?.dispatch({ selection: { anchor: chunk.codeFrom }, scrollIntoView: true });
+    return { cellId: chunk.cellId, language: lang };
+  }
+
+  editCell(cellId: string, code: string): AgentCell {
+    const chunk = this.chunkFor(cellId);
+    const edited = this.change(chunkCodeChange(this.text(), chunk, code), chunk.from);
+    return { cellId: edited.cellId, language: normalizeLanguage(edited.language) };
+  }
+
+  async runAgentCell(cell: AgentCell) {
+    const chunk = this.chunks().find((c) => c.cellId === cell.cellId);
+    if (chunk) await this.runChunk(chunk);
+  }
+
+  private chunkFor(cellId: string): Chunk {
+    const chunks = this.chunks();
+    const chunk = chunks.find((c) => c.cellId === cellId);
+    if (chunk) return chunk;
+    const ids = chunks.map((c) => c.cellId).join(", ");
+    throw new Error(ids ? `${this.name} has no cell ${cellId}; its cells are ${ids}` : `${this.name} has no code chunks`);
+  }
+
+  /** Applies an agent's change like typing (one ⌘Z undoes it) and returns the chunk starting at `start`. */
+  private change(change: TextChange, start: number): Chunk {
+    if (this.view) {
+      this.view.dispatch({ changes: change, userEvent: "input.agent" });
+    } else {
+      this.initialText = this.initialText.slice(0, change.from) + change.insert + this.initialText.slice(change.to);
+      this.setLangs(chunkLanguages(parseChunks(this.initialText)));
+      this.setDirty(true);
+    }
+    const chunk = this.chunks().find((c) => c.from === start);
+    if (!chunk) throw new Error("the changed chunk could not be found again");
+    return chunk;
   }
 
   /** Called by a chunk's run button. */

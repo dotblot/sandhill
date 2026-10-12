@@ -2,7 +2,7 @@
 // connections; during development in a browser, dev/bridge.mjs relays a
 // WebSocket to the daemon. Both look the same to the rest of the UI.
 
-import type { DaemonEvent, TerminalEvent } from "./types";
+import type { AppRequest, DaemonEvent, TerminalEvent } from "./types";
 
 export type LinkStatus = "connecting" | "connected" | "disconnected";
 
@@ -27,6 +27,8 @@ export interface Backend {
   onEvent(listener: (event: DaemonEvent) => void): void;
   /** Output and news from every subscribed terminal. */
   onTerminal(listener: (event: TerminalEvent) => void): void;
+  /** Requests for windows, such as an agent's edit to an open document; answered with `answer`. */
+  onRequest(listener: (request: AppRequest) => void): void;
   /** Called with the current state right away and on every change. */
   onLink(listener: (state: LinkState) => void): void;
   /** A URL the webview can load a blob from, decoded to bytes for binary MIME types. */

@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sandhill_daemon::mcp::Tools;
-use sandhill_daemon::{Daemon, StateDir};
+use sandhill_daemon::{Daemon, DaemonOptions, StateDir};
 use sandhill_proto::client::Client;
-use sandhill_proto::{CellRef, EVENT_RUN_FINISHED};
+use sandhill_proto::{AgentOptions, Call, CellRef, EVENT_RUN_FINISHED, Focus, TerminalInfo};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -24,8 +24,15 @@ struct TestDaemon {
 impl TestDaemon {
     async fn start(state: &Path) -> TestDaemon {
         std::fs::create_dir_all(state).unwrap();
-        let daemon = Daemon::open(StateDir::new(state)).await.unwrap();
         let socket = state.join("test.sock");
+        // Terminals run under sandhilld, not this test.
+        let options = DaemonOptions {
+            executable: env!("CARGO_BIN_EXE_sandhilld").into(),
+            socket: socket.clone(),
+        };
+        let daemon = Daemon::open_with(StateDir::new(state), options)
+            .await
+            .unwrap();
         let listener = UnixListener::bind(&socket).unwrap();
         tokio::spawn({
             let daemon = daemon.clone();
@@ -284,7 +291,15 @@ async fn the_mcp_server_speaks_json_rpc_on_stdio() {
         .collect();
     assert_eq!(
         names,
-        ["list_sessions", "list_variables", "run_code", "get_outputs"]
+        [
+            "list_sessions",
+            "list_variables",
+            "run_code",
+            "get_focus",
+            "add_cell",
+            "edit_cell",
+            "get_outputs"
+        ]
     );
 
     let listed = ask(
@@ -311,4 +326,271 @@ async fn the_mcp_server_speaks_json_rpc_on_stdio() {
     assert_eq!(failed["result"]["isError"], true);
     let unknown = ask(5, "resources/list", json!({})).await;
     assert!(unknown["error"].is_object());
+}
+
+/// With no window open on it, the daemon writes the cell into the file and
+/// the tool runs it in the document's session.
+#[tokio::test]
+async fn agents_write_cells_into_documents_on_disk() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(project.join("notes")).unwrap();
+    let doc = project.join("notes").join("analysis.qmd");
+    std::fs::write(&doc, "# QC\n\n```{python}\nx = 21\n```\n\nText.\n").unwrap();
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    );
+
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"file": "notes/analysis.qmd", "code": "y = 6 * 7\nprint(y)"}),
+    )
+    .await;
+    assert!(
+        added.contains("Added Python cell chunk-2 to notes/analysis.qmd after the last cell"),
+        "{added}"
+    );
+    assert!(added.contains(" · ok · "), "{added}");
+    assert!(added.contains("42"), "{added}");
+    assert_eq!(
+        std::fs::read_to_string(&doc).unwrap(),
+        "# QC\n\n```{python}\nx = 21\n```\n\n```{python}\ny = 6 * 7\nprint(y)\n```\n\nText.\n"
+    );
+    // The run belongs to the cell, in a session in the document's folder,
+    // as the app would have started it.
+    let outputs = call(
+        &tools,
+        "get_outputs",
+        json!({"file": "notes/analysis.qmd", "cell": "chunk-2"}),
+    )
+    .await;
+    assert!(outputs.contains("42"), "{outputs}");
+    let client = daemon.client().await;
+    let sessions = client.list_sessions().await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(Path::new(&sessions[0].cwd), project.join("notes"));
+
+    // A failed cell is fixed in place, in the same session.
+    let fixed = call(
+        &tools,
+        "edit_cell",
+        json!({"file": "notes/analysis.qmd", "cell": "chunk-2", "code": "print(y + 1)"}),
+    )
+    .await;
+    assert!(fixed.contains("Changed Python cell chunk-2"), "{fixed}");
+    assert!(fixed.contains("43"), "{fixed}");
+    assert!(
+        std::fs::read_to_string(&doc)
+            .unwrap()
+            .contains("```{python}\nprint(y + 1)\n```")
+    );
+    assert_eq!(client.list_sessions().await.unwrap().len(), 1);
+
+    // Where the user is decides where the next cell goes, and the agent can
+    // see it.
+    let focus = Focus {
+        file: Some(doc.to_string_lossy().into()),
+        cell: Some("chunk-1".into()),
+        line: Some(4),
+        selection: Some("x = 21".into()),
+        ..Focus::default()
+    };
+    client
+        .set_focus(&project.to_string_lossy(), focus)
+        .await
+        .unwrap();
+    let seen = call(&tools, "get_focus", json!({})).await;
+    assert!(
+        seen.contains("The user is in notes/analysis.qmd, cell chunk-1, line 4."),
+        "{seen}"
+    );
+    assert!(seen.contains("```python\nx = 21\n```"), "{seen}");
+    // Claude Code's prompt hook adds it to each prompt.
+    let mut hook = tokio::process::Command::new(env!("CARGO_BIN_EXE_sandhilld"))
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .args(["terminal-event", "prompt"])
+        .arg(&project)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = hook.stdin.take().unwrap();
+    stdin
+        .write_all(br#"{"hook_event_name":"UserPromptSubmit","prompt":"fix this"}"#)
+        .await
+        .unwrap();
+    drop(stdin);
+    let printed = hook.wait_with_output().await.unwrap();
+    let context = String::from_utf8_lossy(&printed.stdout);
+    assert!(
+        context.starts_with(
+            "Sandhill: the user is in notes/analysis.qmd, cell chunk-1, line 4. They have selected:\n```\nx = 21\n```"
+        ),
+        "{context}"
+    );
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"file": "notes/analysis.qmd", "code": "print('here')", "run": false}),
+    )
+    .await;
+    assert!(added.contains("below cell chunk-1. Not run."), "{added}");
+    // The next one goes below that, in order.
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"file": "notes/analysis.qmd", "code": "print('then')", "run": false}),
+    )
+    .await;
+    assert!(added.contains("below cell chunk-2. Not run."), "{added}");
+    let text = std::fs::read_to_string(&doc).unwrap();
+    assert!(
+        text.starts_with("# QC\n\n```{python}\nx = 21\n```\n\n```{python}\nprint('here')\n```\n\n```{python}\nprint('then')\n```\n\n```{python}\nprint(y + 1)"),
+        "{text}"
+    );
+
+    for session in client.list_sessions().await.unwrap() {
+        client.shutdown(&session.id).await.unwrap();
+    }
+}
+
+/// A conversation started about a notebook writes there by default.
+#[tokio::test]
+async fn agents_write_into_the_document_their_conversation_is_about() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let notebook = json!({
+        "cells": [{"cell_type": "code", "execution_count": null, "id": "load", "metadata": {}, "outputs": [], "source": ["n = 7"]}],
+        "metadata": {"kernelspec": {"name": "python3", "display_name": "Python 3", "language": "python"}},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    });
+    std::fs::write(project.join("qc.ipynb"), notebook.to_string()).unwrap();
+    let client = daemon.client().await;
+    let terminal: TerminalInfo = client
+        .call(Call::StartTerminal {
+            kind: "shell".into(),
+            cwd: None,
+            project: Some(project.to_string_lossy().into()),
+            cols: None,
+            rows: None,
+            options: AgentOptions {
+                documents: vec!["qc.ipynb".into()],
+                ..AgentOptions::default()
+            },
+        })
+        .await
+        .unwrap();
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    )
+    .with_terminal(Some(terminal.id.clone()));
+
+    let added = call(&tools, "add_cell", json!({"code": "m = 6\nprint(m * 7)"})).await;
+    assert!(added.contains("to qc.ipynb after the last cell"), "{added}");
+    assert!(added.contains("42"), "{added}");
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(project.join("qc.ipynb")).unwrap()).unwrap();
+    let cells = written["cells"].as_array().unwrap();
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cells[1]["source"], json!(["m = 6\n", "print(m * 7)"]));
+    // Its output is in the journal for the app to bring in.
+    let id = cells[1]["id"].as_str().unwrap();
+    let outputs = client
+        .file_outputs(&project.join("qc.ipynb").to_string_lossy())
+        .await
+        .unwrap();
+    assert!(outputs.cells.iter().any(|c| c.cell_id == id));
+
+    client.close_terminal(&terminal.id).await.unwrap();
+    for session in client.list_sessions().await.unwrap() {
+        client.shutdown(&session.id).await.unwrap();
+    }
+}
+
+/// When a window has the document open, the window adds the cell and runs
+/// it as if the user had; the tool reports that run.
+#[tokio::test]
+async fn an_open_window_makes_the_edit_and_runs_the_cell() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let doc = project.join("analysis.qmd");
+    let original = "```{python}\n#| label: setup\nimport math\n```\n";
+    std::fs::write(&doc, original).unwrap();
+    let doc = doc.to_string_lossy().into_owned();
+
+    // Stands in for the app's window.
+    let mut window = daemon.client().await;
+    let focus = Focus {
+        file: Some(doc.clone()),
+        cell: Some("setup".into()),
+        open: vec![doc.clone()],
+        ..Focus::default()
+    };
+    window
+        .set_focus(&project.to_string_lossy(), focus)
+        .await
+        .unwrap();
+    let handled = tokio::spawn({
+        let doc = doc.clone();
+        async move {
+            let request = window.next_request().await.unwrap();
+            let params = request.params.clone();
+            window
+                .answer(
+                    request.id,
+                    Ok(json!({"cell_id": "chunk-2", "language": "python"})),
+                )
+                .await
+                .unwrap();
+            let session = window.start_session("python3", None).await.unwrap().id;
+            let cell = CellRef {
+                file: doc,
+                cell_id: "chunk-2".into(),
+            };
+            window
+                .execute(&session, params["code"].as_str().unwrap(), Some(cell))
+                .await
+                .unwrap();
+            (request, window, session)
+        }
+    });
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    );
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"file": "analysis.qmd", "code": "print(6 * 7)"}),
+    )
+    .await;
+    let (request, window, session) = handled.await.unwrap();
+    assert_eq!(request.method, "add_cell");
+    assert_eq!(request.params["after"], "setup");
+    assert_eq!(request.params["run"], true);
+    assert!(added.contains("below cell setup"), "{added}");
+    assert!(added.contains("Sandhill ran it"), "{added}");
+    assert!(added.contains("42"), "{added}");
+    // The window made the edit; the daemon left the file alone.
+    assert_eq!(std::fs::read_to_string(&doc).unwrap(), original);
+    window.shutdown(&session).await.unwrap();
 }

@@ -3,7 +3,12 @@
 //! `SANDHILL_TERMINAL`, which the daemon sets; outside a Sandhill terminal
 //! this does nothing.
 //!
-//! - `state busy|idle|waiting`: Claude Code's prompt, tool and stop hooks.
+//! - `state busy|idle|waiting`: Claude Code's tool and stop hooks. Their
+//!   JSON on stdin carries the permission mode, which is reported as
+//!   `mode`, so a mode changed with ⇧Tab shows in the app.
+//! - `prompt [project]`: Claude Code's prompt hook. Reports `busy` as
+//!   `state busy` does, and prints where the user is in the project, which
+//!   Claude Code adds to the prompt.
 //! - `notification`: Claude Code's Notification hook (JSON on stdin).
 //!   Asking for permission or input means waiting for the user; the
 //!   reminder it sends after a while idle doesn't.
@@ -12,6 +17,7 @@
 //!   they set one up, since this one takes its place.
 //! - `codex`: Codex's `notify` program, run when a turn ends.
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -22,8 +28,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const STDIN_TIMEOUT: Duration = Duration::from_secs(2);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(1);
 const STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+/// The prompt waits this long at most for where the user is.
+const CONTEXT_TIMEOUT: Duration = Duration::from_millis(1500);
 
-pub async fn run(args: &[String]) -> Result<()> {
+/// `socket` is the daemon's, for asking where the user is.
+pub async fn run(args: &[String], socket: &Path) -> Result<()> {
     let terminal = std::env::var_os("SANDHILL_TERMINAL").map(PathBuf::from);
     let what = args.first().map(String::as_str).unwrap_or("");
     match what {
@@ -32,7 +41,31 @@ pub async fn run(args: &[String]) -> Result<()> {
             if !["busy", "idle", "waiting"].contains(&state) {
                 bail!("unknown state {state:?}");
             }
-            send(terminal.as_deref(), json!({"state": state})).await
+            let input = read_stdin().await;
+            send(
+                terminal.as_deref(),
+                with_mode(json!({"state": state}), &input),
+            )
+            .await
+        }
+        "prompt" => {
+            let input = read_stdin().await;
+            let report = send(
+                terminal.as_deref(),
+                with_mode(json!({"state": "busy"}), &input),
+            );
+            let id = terminal
+                .as_deref()
+                .and_then(Path::file_name)
+                .map(|id| id.to_string_lossy().into_owned());
+            let tools = crate::mcp::Tools::new(socket.to_path_buf(), args.get(1).cloned())
+                .with_terminal(id);
+            let context = tokio::time::timeout(CONTEXT_TIMEOUT, tools.prompt_context());
+            let (reported, context) = tokio::join!(report, context);
+            if let Ok(Some(context)) = context {
+                println!("{context}");
+            }
+            reported
         }
         "notification" => {
             let input = read_stdin().await;
@@ -40,11 +73,8 @@ pub async fn run(args: &[String]) -> Result<()> {
                 Some("idle_prompt") => "idle",
                 _ => "waiting",
             };
-            send(
-                terminal.as_deref(),
-                json!({"state": state, "message": input["message"]}),
-            )
-            .await
+            let report = json!({"state": state, "message": input["message"]});
+            send(terminal.as_deref(), with_mode(report, &input)).await
         }
         "status" => {
             let raw = read_stdin_bytes().await;
@@ -75,6 +105,15 @@ async fn send(terminal: Option<&Path>, value: Value) -> Result<()> {
         .unwrap_or(Ok(()))
 }
 
+/// Adds the permission mode a Claude Code hook reported (`default`,
+/// `acceptEdits`, `plan`, `auto`, `bypassPermissions`...), when it did.
+fn with_mode(mut report: Value, input: &Value) -> Value {
+    if let Some(mode) = input["permission_mode"].as_str().filter(|m| !m.is_empty()) {
+        report["mode"] = json!(mode);
+    }
+    report
+}
+
 /// What the app shows of Claude Code's status line input.
 fn status(input: &Value) -> Value {
     let mut out = json!({
@@ -93,8 +132,13 @@ fn status(input: &Value) -> Value {
     out
 }
 
+/// What the hook was given on stdin. Nothing when stdin is a terminal,
+/// as when someone runs this by hand, so typing isn't swallowed.
 async fn read_stdin_bytes() -> Vec<u8> {
     let mut bytes = Vec::new();
+    if std::io::stdin().is_terminal() {
+        return bytes;
+    }
     let _ = tokio::time::timeout(STDIN_TIMEOUT, tokio::io::stdin().read_to_end(&mut bytes)).await;
     bytes
 }
@@ -154,6 +198,19 @@ fn own_status_command(project: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hooks_report_the_permission_mode() {
+        let input = json!({"hook_event_name": "Stop", "permission_mode": "plan"});
+        assert_eq!(
+            with_mode(json!({"state": "idle"}), &input),
+            json!({"state": "idle", "mode": "plan"})
+        );
+        assert_eq!(
+            with_mode(json!({"state": "idle"}), &Value::Null),
+            json!({"state": "idle"})
+        );
+    }
 
     #[test]
     fn the_status_keeps_what_the_app_shows() {
