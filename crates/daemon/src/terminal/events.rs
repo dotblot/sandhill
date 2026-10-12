@@ -3,9 +3,12 @@
 //! `SANDHILL_TERMINAL`, which the daemon sets; outside a Sandhill terminal
 //! this does nothing.
 //!
-//! - `state busy|idle|waiting`: Claude Code's prompt, tool and stop hooks.
-//!   Their JSON on stdin carries the permission mode, which is reported as
+//! - `state busy|idle|waiting`: Claude Code's tool and stop hooks. Their
+//!   JSON on stdin carries the permission mode, which is reported as
 //!   `mode`, so a mode changed with ⇧Tab shows in the app.
+//! - `prompt [project]`: Claude Code's prompt hook. Reports `busy` as
+//!   `state busy` does, and prints where the user is in the project, which
+//!   Claude Code adds to the prompt.
 //! - `notification`: Claude Code's Notification hook (JSON on stdin).
 //!   Asking for permission or input means waiting for the user; the
 //!   reminder it sends after a while idle doesn't.
@@ -25,8 +28,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const STDIN_TIMEOUT: Duration = Duration::from_secs(2);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(1);
 const STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+/// The prompt waits this long at most for where the user is.
+const CONTEXT_TIMEOUT: Duration = Duration::from_millis(1500);
 
-pub async fn run(args: &[String]) -> Result<()> {
+/// `socket` is the daemon's, for asking where the user is.
+pub async fn run(args: &[String], socket: &Path) -> Result<()> {
     let terminal = std::env::var_os("SANDHILL_TERMINAL").map(PathBuf::from);
     let what = args.first().map(String::as_str).unwrap_or("");
     match what {
@@ -41,6 +47,25 @@ pub async fn run(args: &[String]) -> Result<()> {
                 with_mode(json!({"state": state}), &input),
             )
             .await
+        }
+        "prompt" => {
+            let input = read_stdin().await;
+            let report = send(
+                terminal.as_deref(),
+                with_mode(json!({"state": "busy"}), &input),
+            );
+            let id = terminal
+                .as_deref()
+                .and_then(Path::file_name)
+                .map(|id| id.to_string_lossy().into_owned());
+            let tools = crate::mcp::Tools::new(socket.to_path_buf(), args.get(1).cloned())
+                .with_terminal(id);
+            let context = tokio::time::timeout(CONTEXT_TIMEOUT, tools.prompt_context());
+            let (reported, context) = tokio::join!(report, context);
+            if let Ok(Some(context)) = context {
+                println!("{context}");
+            }
+            reported
         }
         "notification" => {
             let input = read_stdin().await;

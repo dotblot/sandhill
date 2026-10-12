@@ -5,8 +5,10 @@
 //!
 //! The tools reach the user's live sessions, which is what plain file
 //! access can't: `list_sessions`, `list_variables`, `run_code` and
-//! `get_outputs`.
+//! `get_outputs`; and the user's documents as they work on them:
+//! `get_focus`, `add_cell` and `edit_cell`.
 
+mod documents;
 pub mod text;
 pub mod variables;
 
@@ -17,8 +19,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    BLOB_KEY, Call, EVENT_RUN_FINISHED, FileOutputs, KernelspecInfo, RunFinished, SessionInfo,
-    SessionStatus,
+    BLOB_KEY, Call, CellRef, EVENT_RUN_FINISHED, FileOutputs, KernelspecInfo, RunFinished,
+    SessionInfo, SessionStatus,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -38,18 +40,27 @@ const MAX_IMAGE: usize = 2 << 20;
 const INSTRUCTIONS: &str = "Sandhill is the IDE the user runs you in. These tools reach the \
 user's live R and Python sessions (Jupyter kernels) for this project: the objects they have \
 loaded and the outputs of their notebooks. Use list_variables and get_outputs to look before \
-recomputing anything; run_code runs code in the user's session, where its results stay.";
+recomputing anything. Code the user asks for goes into their document with add_cell, below the \
+cell they are in, and runs there, so they see the code and its output together; fix a cell \
+that failed with edit_cell rather than adding another. Use run_code only for quick looks they \
+don't need to keep. get_focus tells you where the user is (\"this cell\", the selection).";
 
 pub struct Tools {
     socket: PathBuf,
     /// The project folder the agent works on; sessions of other projects
     /// are left alone unless named.
     project: Option<String>,
+    /// The Sandhill terminal the agent runs in, whose session names the
+    /// documents it is about.
+    terminal: Option<String>,
 }
 
 /// Serves MCP on stdin and stdout until stdin closes.
 pub async fn serve(socket: PathBuf, project: Option<String>) -> Result<()> {
-    let tools = Arc::new(Tools { socket, project });
+    // The agent passes on its environment, which names its terminal.
+    let terminal = std::env::var_os("SANDHILL_TERMINAL")
+        .and_then(|dir| Some(Path::new(&dir).file_name()?.to_string_lossy().into_owned()));
+    let tools = Arc::new(Tools::new(socket, project).with_terminal(terminal));
     let (out, mut out_rx) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -95,7 +106,17 @@ fn error_reply(id: Value, code: i64, message: &str) -> Value {
 
 impl Tools {
     pub fn new(socket: PathBuf, project: Option<String>) -> Self {
-        Tools { socket, project }
+        Tools {
+            socket,
+            project,
+            terminal: None,
+        }
+    }
+
+    /// The tools of an agent in Sandhill terminal `terminal`.
+    pub fn with_terminal(mut self, terminal: Option<String>) -> Self {
+        self.terminal = terminal;
+        self
     }
 
     async fn handle(&self, method: &str, params: Value) -> Result<Value> {
@@ -138,16 +159,32 @@ impl Tools {
             "list_variables" => self.list_variables(text("session"), text("language")).await,
             "run_code" => {
                 let code = text("code").context("`code` is required")?;
-                let timeout = args["timeout_seconds"]
-                    .as_f64()
-                    .map(|s| Duration::from_secs_f64(s.max(1.0)).min(MAX_TIMEOUT))
-                    .unwrap_or(DEFAULT_TIMEOUT);
-                self.run_code(code, text("session"), text("language"), timeout)
+                self.run_code(code, text("session"), text("language"), timeout(args))
                     .await
             }
             "get_outputs" => {
                 let file = text("file").context("`file` is required")?;
                 self.get_outputs(file, text("cell")).await
+            }
+            "get_focus" => self.get_focus().await,
+            "add_cell" | "edit_cell" => {
+                let code = args["code"]
+                    .as_str()
+                    .filter(|c| !c.trim().is_empty())
+                    .context("`code` is required")?;
+                let edit = documents::Edit {
+                    file: text("file"),
+                    code,
+                    language: text("language"),
+                    cell: text(if name == "add_cell" { "after" } else { "cell" }),
+                    run: args["run"].as_bool().unwrap_or(true),
+                    timeout: timeout(args),
+                };
+                if name == "add_cell" {
+                    self.add_cell(edit).await
+                } else {
+                    self.edit_cell(edit).await
+                }
             }
             _ => bail!("no tool named {name}"),
         }
@@ -257,7 +294,7 @@ impl Tools {
                 short_id(&session.id)
             );
         }
-        let outcome = run(&mut client, &session, code, true, VARIABLES_TIMEOUT).await?;
+        let outcome = run(&mut client, &session, code, true, None, VARIABLES_TIMEOUT).await?;
         if !outcome.finished {
             bail!("listing the variables took too long; the session may be busy");
         }
@@ -294,27 +331,29 @@ impl Tools {
                 self.start_session(&client, language).await?
             }
         };
-        let outcome = run(&mut client, &session, code, false, timeout).await?;
-        let status = match (&outcome.status, outcome.finished) {
-            (Some(status), _) => status.clone(),
-            (None, true) => "unknown".into(),
-            (None, false) => format!(
-                "still running after {}; it keeps running in the session",
-                text::duration_ms(outcome.elapsed_ms)
-            ),
-        };
-        let mut items = vec![text_item(&format!(
-            "Ran in {} · {} · {}\n{}",
-            describe_session(&session),
-            status,
-            text::duration_ms(outcome.elapsed_ms),
-            outcome.rendered.finished_text()
-        ))];
-        items.extend(images(&client, &outcome.rendered).await);
-        Ok(items)
+        let outcome = run(&mut client, &session, code, false, None, timeout).await?;
+        Ok(report(
+            &client,
+            &format!("Ran in {}", describe_session(&session)),
+            &outcome,
+        )
+        .await)
     }
 
     async fn start_session(&self, client: &Client, language: &str) -> Result<SessionInfo> {
+        let cwd = self.project.clone().or_else(|| std::env::var("HOME").ok());
+        self.start_kernel(client, language, None, cwd).await
+    }
+
+    /// Starts `kernel` if it is installed, else the usual kernel for
+    /// `language`, in `cwd`.
+    async fn start_kernel(
+        &self,
+        client: &Client,
+        language: &str,
+        kernel: Option<&str>,
+        cwd: Option<String>,
+    ) -> Result<SessionInfo> {
         let language = normalize_language(language);
         let specs: Vec<KernelspecInfo> = client.list_kernelspecs().await?;
         let preferred: &[&str] = if language == "r" {
@@ -322,16 +361,19 @@ impl Tools {
         } else {
             &["python3"]
         };
-        let spec = preferred
-            .iter()
-            .find_map(|name| specs.iter().find(|s| s.name == *name))
+        let spec = kernel
+            .and_then(|name| specs.iter().find(|s| s.name == name))
+            .or_else(|| {
+                preferred
+                    .iter()
+                    .find_map(|name| specs.iter().find(|s| s.name == *name))
+            })
             .or_else(|| {
                 specs
                     .iter()
                     .find(|s| normalize_language(&s.language) == language)
             })
             .with_context(|| format!("no {language} kernel is installed on this machine"))?;
-        let cwd = self.project.clone().or_else(|| std::env::var("HOME").ok());
         Ok(client
             .call(Call::StartSession {
                 kernel: spec.name.clone(),
@@ -341,14 +383,31 @@ impl Tools {
             .await?)
     }
 
+    /// A file the agent named, relative to the project or absolute.
+    fn path(&self, file: &str) -> String {
+        let path = match (Path::new(file).is_absolute(), &self.project) {
+            (false, Some(project)) if !file.starts_with('~') => Path::new(project).join(file),
+            _ => PathBuf::from(file),
+        };
+        crate::windows::normalize(&path)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// `file` as the agent knows it: relative to the project when inside it.
+    fn shown(&self, file: &str) -> String {
+        match &self.project {
+            Some(project) => Path::new(file)
+                .strip_prefix(project)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| file.to_string()),
+            None => file.to_string(),
+        }
+    }
+
     async fn get_outputs(&self, file: &str, cell: Option<&str>) -> Result<Vec<Value>> {
         let client = self.client().await?;
-        let path = match (Path::new(file).is_absolute(), &self.project) {
-            (false, Some(project)) if !file.starts_with('~') => {
-                Path::new(project).join(file).to_string_lossy().into_owned()
-            }
-            _ => file.to_string(),
-        };
+        let path = self.path(file);
         let outputs: FileOutputs = client.file_outputs(&path).await?;
         let cells: Vec<_> = outputs
             .cells
@@ -396,6 +455,7 @@ impl Tools {
 }
 
 /// What a run printed and how it ended.
+#[derive(Default)]
 struct Outcome {
     rendered: Rendered,
     stdout: String,
@@ -405,12 +465,13 @@ struct Outcome {
 }
 
 /// Runs code in a session and collects its output until it finishes or
-/// `timeout` passes.
+/// `timeout` passes. With `cell`, the run belongs to that document cell.
 async fn run(
     client: &mut Client,
     session: &SessionInfo,
     code: &str,
     quiet: bool,
+    cell: Option<CellRef>,
     timeout: Duration,
 ) -> Result<Outcome> {
     client.subscribe(&session.id, None).await?;
@@ -418,41 +479,17 @@ async fn run(
     let run = if quiet {
         client.execute_quietly(&session.id, code).await?
     } else {
-        client.execute(&session.id, code, None).await?
+        client.execute(&session.id, code, cell).await?
     }
     .run;
-    let mut outcome = Outcome {
-        rendered: Rendered::default(),
-        stdout: String::new(),
-        status: None,
-        finished: false,
-        elapsed_ms: 0,
-    };
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let event = match tokio::time::timeout_at(deadline, client.next_event()).await {
-            Ok(Some(event)) => event,
-            Ok(None) => bail!("lost the connection to sandhilld"),
-            Err(_) => break,
-        };
-        if event.run.as_deref() != Some(run.as_str()) {
-            continue;
-        }
-        if event.msg_type == EVENT_RUN_FINISHED {
-            let finished: RunFinished = serde_json::from_value(event.content)?;
-            outcome.status = Some(finished.status);
-            outcome.finished = true;
-            break;
-        }
-        if event.msg_type == "stream" && event.content["name"] == "stdout" {
-            outcome
-                .stdout
-                .push_str(event.content["text"].as_str().unwrap_or(""));
-        }
-        outcome
-            .rendered
-            .add_message(&event.msg_type, &event.content);
-    }
+    let mut outcome = Outcome::default();
+    follow(
+        client,
+        &run,
+        &mut outcome,
+        tokio::time::Instant::now() + timeout,
+    )
+    .await?;
     let _ = client.unsubscribe(&session.id).await;
     outcome.elapsed_ms = started.elapsed().as_millis() as i64;
     // The variables listing is for the tool, not for the agent to read.
@@ -466,6 +503,48 @@ async fn run(
             .collect();
     }
     Ok(outcome)
+}
+
+/// Collects the events of `run` from the client's subscriptions until it
+/// finishes or `deadline` passes.
+async fn follow(
+    client: &mut Client,
+    run: &str,
+    outcome: &mut Outcome,
+    deadline: tokio::time::Instant,
+) -> Result<()> {
+    loop {
+        let event = match tokio::time::timeout_at(deadline, client.next_event()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => bail!("lost the connection to sandhilld"),
+            Err(_) => return Ok(()),
+        };
+        if event.run.as_deref() != Some(run) {
+            continue;
+        }
+        if event.msg_type == EVENT_RUN_FINISHED {
+            let finished: RunFinished = serde_json::from_value(event.content)?;
+            outcome.status = Some(finished.status);
+            outcome.finished = true;
+            return Ok(());
+        }
+        if event.msg_type == "stream" && event.content["name"] == "stdout" {
+            outcome
+                .stdout
+                .push_str(event.content["text"].as_str().unwrap_or(""));
+        }
+        outcome
+            .rendered
+            .add_message(&event.msg_type, &event.content);
+    }
+}
+
+/// How long a tool waits for code to finish.
+fn timeout(args: &Value) -> Duration {
+    args["timeout_seconds"]
+        .as_f64()
+        .map(|s| Duration::from_secs_f64(s.max(1.0)).min(MAX_TIMEOUT))
+        .unwrap_or(DEFAULT_TIMEOUT)
 }
 
 /// The plots of a reply as MCP image items, fetching stored ones.
@@ -526,6 +605,40 @@ fn tool_list() -> Value {
             "annotations": {"readOnlyHint": false, "destructiveHint": false},
         },
         {
+            "name": "get_focus",
+            "title": "See where the user is",
+            "description": "Where the user is in Sandhill: the document in front, its current cell (the chunk with the cursor, or the selected notebook cell) with that cell's code, the cursor line, the selected text, the documents open, and the document this conversation is about. Use it when the user says \"this cell\", \"here\" or \"the selection\".",
+            "inputSchema": {"type": "object", "properties": {}},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "add_cell",
+            "title": "Add code to the user's document",
+            "description": "Write code into the user's document as a new code cell and run it there, so the user sees the code and its output together, as if they had written it. By default the cell goes into the document this conversation is about (else the one in front), right below the user's current cell (else after the last cell). Runs in the document's own R or Python session and returns the output, errors and plots. A Quarto/R Markdown chunk, a notebook cell, or for a script, code at its end. If the document is open in Sandhill, the edit happens in the editor, so the user can undo it.",
+            "inputSchema": {"type": "object", "required": ["code"], "properties": {
+                "code": {"type": "string", "description": "The cell's code, without fences."},
+                "file": {"type": "string", "description": "The document, relative to the project folder or absolute."},
+                "after": {"type": "string", "description": "Put the cell after this cell id (a chunk label, chunk-<n>, or notebook cell id)."},
+                "language": {"type": "string", "enum": ["r", "python"], "description": "For a new chunk in a Quarto/R Markdown document; by default the language of the cell before it."},
+                "run": {"type": "boolean", "description": "Run the cell (default true)."},
+                "timeout_seconds": {"type": "number", "description": "How long to wait for it to finish (default 120)."},
+            }},
+            "annotations": {"readOnlyHint": false, "destructiveHint": false},
+        },
+        {
+            "name": "edit_cell",
+            "title": "Change a cell in the user's document",
+            "description": "Replace the code of a cell in the user's document and run it again, for fixing a cell that failed or changing one the user points at. Same defaults as add_cell for the document.",
+            "inputSchema": {"type": "object", "required": ["cell", "code"], "properties": {
+                "cell": {"type": "string", "description": "The cell id: a chunk label, chunk-<n>, or notebook cell id (as add_cell and get_focus give them)."},
+                "code": {"type": "string", "description": "The cell's new code."},
+                "file": {"type": "string", "description": "The document, relative to the project folder or absolute."},
+                "run": {"type": "boolean", "description": "Run the cell (default true)."},
+                "timeout_seconds": {"type": "number", "description": "How long to wait for it to finish (default 120)."},
+            }},
+            "annotations": {"readOnlyHint": false, "destructiveHint": true},
+        },
+        {
             "name": "get_outputs",
             "title": "Read a document's outputs",
             "description": "Read the outputs a Quarto (.qmd), R Markdown (.Rmd), Jupyter (.ipynb) document or R/Python script got the last time each of its cells ran in Sandhill: printed text, values, errors and plots. Cells are named by their chunk label (or chunk-<n>) or notebook cell id.",
@@ -536,6 +649,26 @@ fn tool_list() -> Value {
             "annotations": {"readOnlyHint": true},
         },
     ])
+}
+
+/// A run's result for the agent: `head`, how it ended, what it printed,
+/// and its plots.
+async fn report(client: &Client, head: &str, outcome: &Outcome) -> Vec<Value> {
+    let status = match (&outcome.status, outcome.finished) {
+        (Some(status), _) => status.clone(),
+        (None, true) => "unknown".into(),
+        (None, false) => format!(
+            "still running after {}; it keeps running in the session",
+            text::duration_ms(outcome.elapsed_ms)
+        ),
+    };
+    let mut items = vec![text_item(&format!(
+        "{head} · {status} · {}\n{}",
+        text::duration_ms(outcome.elapsed_ms),
+        outcome.rendered.finished_text()
+    ))];
+    items.extend(images(client, &outcome.rendered).await);
+    items
 }
 
 fn text_item(text: &str) -> Value {

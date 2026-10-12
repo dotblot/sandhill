@@ -23,6 +23,7 @@ function fakeBackend(terminals: TerminalInfo[]) {
     onTerminal(l) {
       listener = l;
     },
+    onRequest() {},
     onLink() {},
     blobUrl: () => "",
     openLink() {},

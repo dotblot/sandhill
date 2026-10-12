@@ -29,6 +29,7 @@ import { BUILD, buildText } from "../build";
 import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
+import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane, ProviderIcon } from "./AgentsPane";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileIcon, Icon, type IconName, LangIcon } from "./icons";
@@ -270,6 +271,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     return doc;
   }
 
+  // Agents see where the user is, and their edits to open documents happen here.
+  const leaveDocuments = reportPlace(ws, props.project, docs, active);
+  serveAgentEdits(ws, props.project, open);
+
   // Documents follow their files: an agent's edits show up in the editor.
   /** Per document, the file version the person chose to keep their own changes over. */
   const keptOver = new Map<Doc, number>();
@@ -388,6 +393,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       }
     }
     if (saveTimer !== undefined) await saveState();
+    await leaveDocuments();
     return true;
   }
 

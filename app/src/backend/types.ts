@@ -248,6 +248,31 @@ export interface TerminalSubscribed {
   from: number;
 }
 
+/** Where the user is in a project window, as `set_focus` tells the daemon. */
+export interface Focus {
+  file?: string;
+  cell?: string;
+  line?: number;
+  selection?: string;
+  /** Every document open in the window; agents' edits to these come to the window. */
+  open: string[];
+}
+
+/** Something the daemon asks the window working on `project` to do. */
+export interface AppRequest {
+  id: number;
+  project: string;
+  method: "add_cell" | "edit_cell" | string;
+  params: {
+    file: string;
+    code: string;
+    language?: string;
+    after?: string;
+    cell_id?: string;
+    run?: boolean;
+  };
+}
+
 /** News from a subscribed terminal: output, an agent report, or its end. */
 export interface TerminalEvent {
   terminal: string;

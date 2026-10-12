@@ -12,10 +12,10 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
-    AgentInfo, AgentOptions, Blob, Call, CellRef, DirEntry, Event, FileOutputs, FileStat, FileText,
-    FileWritten, HistoryPage, KernelspecInfo, Outcome, PingReply, ProjectInfo, Request, RunStarted,
-    ServerMessage, SessionInfo, Subscribed, SystemStats, TerminalEvent, TerminalInfo,
-    TerminalSubscribed,
+    AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
+    FileStat, FileText, FileWritten, Focus, HistoryPage, KernelspecInfo, Outcome, PingReply,
+    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, Subscribed, SystemStats,
+    TerminalEvent, TerminalInfo, TerminalSubscribed,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +39,7 @@ pub struct Client {
     pending: Pending,
     events: Option<mpsc::UnboundedReceiver<Event>>,
     terminal_events: Option<mpsc::UnboundedReceiver<TerminalEvent>>,
+    requests: Option<mpsc::UnboundedReceiver<AppRequest>>,
     next_id: AtomicU64,
 }
 
@@ -52,12 +53,20 @@ impl Client {
         let pending: Pending = Default::default();
         let (event_tx, events) = mpsc::unbounded_channel();
         let (terminal_tx, terminal_events) = mpsc::unbounded_channel();
-        tokio::spawn(read_loop(reader, pending.clone(), event_tx, terminal_tx));
+        let (request_tx, requests) = mpsc::unbounded_channel();
+        tokio::spawn(read_loop(
+            reader,
+            pending.clone(),
+            event_tx,
+            terminal_tx,
+            request_tx,
+        ));
         Client {
             writer: Mutex::new(Box::new(writer)),
             pending,
             events: Some(events),
             terminal_events: Some(terminal_events),
+            requests: Some(requests),
             next_id: AtomicU64::new(1),
         }
     }
@@ -126,6 +135,18 @@ impl Client {
     /// Takes the terminal messages, as [`Client::take_events`] does for sessions.
     pub fn take_terminal_events(&mut self) -> Option<mpsc::UnboundedReceiver<TerminalEvent>> {
         self.terminal_events.take()
+    }
+
+    /// Next request for a window (see [`Call::SetFocus`]); `None` once
+    /// disconnected.
+    pub async fn next_request(&mut self) -> Option<AppRequest> {
+        self.requests.as_mut()?.recv().await
+    }
+
+    /// Takes the requests for windows, as [`Client::take_events`] does for
+    /// sessions.
+    pub fn take_requests(&mut self) -> Option<mpsc::UnboundedReceiver<AppRequest>> {
+        self.requests.take()
     }
 
     pub async fn ping(&self) -> Result<PingReply> {
@@ -370,6 +391,34 @@ impl Client {
         })
         .await
     }
+
+    pub async fn set_focus(&self, project: &str, focus: Focus) -> Result<()> {
+        self.call(Call::SetFocus {
+            project: project.into(),
+            focus,
+        })
+        .await
+    }
+
+    pub async fn get_focus(&self, project: &str) -> Result<Option<Focus>> {
+        self.call(Call::GetFocus {
+            project: project.into(),
+        })
+        .await
+    }
+
+    /// Answers a window request with its result or error.
+    pub async fn answer(
+        &self,
+        id: u64,
+        result: std::result::Result<serde_json::Value, String>,
+    ) -> Result<()> {
+        let (result, error) = match result {
+            Ok(value) => (Some(value), None),
+            Err(message) => (None, Some(message)),
+        };
+        self.call(Call::Answer { id, result, error }).await
+    }
 }
 
 async fn read_loop<R: AsyncRead + Unpin>(
@@ -377,6 +426,7 @@ async fn read_loop<R: AsyncRead + Unpin>(
     pending: Pending,
     events: mpsc::UnboundedSender<Event>,
     terminal_events: mpsc::UnboundedSender<TerminalEvent>,
+    requests: mpsc::UnboundedSender<AppRequest>,
 ) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -394,6 +444,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
             }
             Ok(ServerMessage::Terminal { terminal }) => {
                 let _ = terminal_events.send(terminal);
+            }
+            Ok(ServerMessage::Request { request }) => {
+                let _ = requests.send(request);
             }
             // A newer daemon may send messages this client doesn't know.
             Err(_) => continue,

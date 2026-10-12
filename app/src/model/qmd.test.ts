@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { frontMatterKernel, parseChunks, proseLines, sameCode } from "./qmd";
+import {
+  chunkCodeChange,
+  chunkInsertion,
+  frontMatterKernel,
+  newChunkLanguage,
+  parseChunks,
+  proseLines,
+  sameCode,
+} from "./qmd";
 
 const doc = `---
 title: "Demo"
@@ -100,5 +108,41 @@ describe("proseLines", () => {
 
   it("treats a document without front matter as prose from the top", () => {
     expect(proseLines("# Title\r\n\r\n```{r}\nx\n```\nend")).toEqual([1, 2, 6]);
+  });
+});
+
+describe("agents' chunks", () => {
+  const apply = (text: string, c: { from: number; to: number; insert: string }) =>
+    text.slice(0, c.from) + c.insert + text.slice(c.to);
+
+  it("go after the chunk named, or at the end", () => {
+    const text = "# QC\n\n```{r setup}\nlibrary(x)\n```\n\nText.\n";
+    const chunks = parseChunks(text);
+    const change = chunkInsertion(text, "dim(x)\n", "r", chunks[0]);
+    const after = apply(text, change);
+    expect(after).toBe("# QC\n\n```{r setup}\nlibrary(x)\n```\n\n```{r}\ndim(x)\n```\n\nText.\n");
+    expect(parseChunks(after).find((c) => c.from === change.start)?.cellId).toBe("chunk-2");
+    expect(apply("Prose", chunkInsertion("Prose", "1", "python"))).toBe("Prose\n\n```{python}\n1\n```\n");
+    expect(apply("", chunkInsertion("", "1", "python"))).toBe("```{python}\n1\n```\n");
+  });
+
+  it("take the language of their neighbours or the front matter", () => {
+    const text = "---\njupyter: python3\n---\n\nNo code.\n";
+    expect(newChunkLanguage(text, [], undefined, undefined, "/a.qmd")).toBe("python");
+    expect(newChunkLanguage("x", [], undefined, undefined, "/a.Rmd")).toBe("r");
+    expect(newChunkLanguage("x", [], undefined, undefined, "/a.qmd")).toBeUndefined();
+    const chunks = parseChunks("```{r}\n1\n```\n");
+    expect(newChunkLanguage("", chunks, undefined, undefined, "/a.qmd")).toBe("r");
+  });
+
+  it("replace a chunk's code in place", () => {
+    const text = "```{r load}\nx <- read()\n```\n\n```{r}\n```\n";
+    const chunks = parseChunks(text);
+    expect(apply(text, chunkCodeChange(text, chunks[0], "x <- read('a')\n"))).toBe(
+      "```{r load}\nx <- read('a')\n```\n\n```{r}\n```\n",
+    );
+    expect(apply(text, chunkCodeChange(text, chunks[1], "head(x)"))).toBe(
+      "```{r load}\nx <- read()\n```\n\n```{r}\nhead(x)\n```\n",
+    );
   });
 });

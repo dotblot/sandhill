@@ -162,3 +162,71 @@ export function sameCode(a: string, b: string): boolean {
   const norm = (s: string) => s.replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "").trim();
   return norm(a) === norm(b);
 }
+
+/** Languages a chunk can run in. */
+const RUNNABLE = new Set(["r", "python"]);
+
+/** A change to a document's text, as CodeMirror applies it. */
+export interface TextChange {
+  from: number;
+  to: number;
+  insert: string;
+}
+
+/**
+ * The language of an agent's new chunk after `anchor`: the one asked for,
+ * else the anchor's, else the document's first runnable chunk's, else
+ * Python when the front matter names a Jupyter kernel, R in an R Markdown
+ * file. Undefined when nothing says (crates/daemon/src/cells.rs decides the
+ * same way for documents no window has open).
+ */
+export function newChunkLanguage(
+  text: string,
+  chunks: Chunk[],
+  anchor: Chunk | undefined,
+  asked: string | undefined,
+  path: string,
+): string | undefined {
+  if (asked) return asked;
+  if (anchor && RUNNABLE.has(anchor.language)) return anchor.language;
+  const first = chunks.find((c) => RUNNABLE.has(c.language));
+  if (first) return first.language;
+  if (frontMatterKernel(text)) return "python";
+  return path.toLowerCase().endsWith(".rmd") ? "r" : undefined;
+}
+
+/**
+ * Inserting a new chunk after `anchor`'s closing fence, or at the end of
+ * the document, a blank line apart. `start` is where the chunk's opening
+ * fence will be.
+ */
+export function chunkInsertion(text: string, code: string, language: string, anchor?: Chunk): TextChange & { start: number } {
+  const nl = text.includes("\r\n") ? "\r\n" : "\n";
+  const body = code.replace(/[\r\n]+$/, "").replace(/\r?\n/g, nl);
+  const chunk = `\`\`\`{${language}}${nl}${body}${nl}\`\`\``;
+  let at: number;
+  let insert: string;
+  if (anchor?.closed) {
+    at = anchor.to;
+    insert = `${nl}${nl}${chunk}`;
+  } else if (!text.trim()) {
+    at = 0;
+    insert = `${chunk}${nl}`;
+  } else if (text.endsWith("\n")) {
+    at = text.length;
+    insert = `${nl}${chunk}${nl}`;
+  } else {
+    at = text.length;
+    insert = `${nl}${nl}${chunk}${nl}`;
+  }
+  return { from: at, to: at, insert, start: at + insert.indexOf("```") };
+}
+
+/** Replacing a chunk's code, keeping its fences. */
+export function chunkCodeChange(text: string, chunk: Chunk, code: string): TextChange {
+  const nl = text.includes("\r\n") ? "\r\n" : "\n";
+  let insert = code.replace(/[\r\n]+$/, "").replace(/\r?\n/g, nl);
+  // An empty chunk's code starts where its closing fence does.
+  if (!chunk.code && chunk.closed && insert) insert += nl;
+  return { from: chunk.codeFrom, to: chunk.codeTo, insert };
+}

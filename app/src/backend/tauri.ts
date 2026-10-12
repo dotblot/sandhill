@@ -2,7 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type Backend, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
-import type { DaemonEvent, TerminalEvent } from "./types";
+import type { AppRequest, DaemonEvent, TerminalEvent } from "./types";
 
 export class TauriShell implements Shell {
   context(): Promise<WindowContext> {
@@ -44,6 +44,7 @@ export class TauriShell implements Shell {
 class TauriBackend implements Backend {
   private events = new Listeners<DaemonEvent>();
   private terminals = new Listeners<TerminalEvent>();
+  private requests = new Listeners<AppRequest>();
   private links = new Listeners<LinkState>();
   private link: LinkState = { status: "connecting" };
 
@@ -54,6 +55,7 @@ class TauriBackend implements Backend {
     // The app sends a host's events only to the windows using it.
     await listen<DaemonEvent>("daemon://event", (e) => backend.events.emit(e.payload));
     await listen<TerminalEvent>("daemon://terminal", (e) => backend.terminals.emit(e.payload));
+    await listen<AppRequest>("daemon://request", (e) => backend.requests.emit(e.payload));
     await listen<LinkState & { host: string }>("daemon://link", (e) => {
       if (e.payload.host === host) backend.setLink(e.payload);
     });
@@ -73,6 +75,10 @@ class TauriBackend implements Backend {
 
   onTerminal(listener: (event: TerminalEvent) => void) {
     this.terminals.add(listener);
+  }
+
+  onRequest(listener: (request: AppRequest) => void) {
+    this.requests.add(listener);
   }
 
   onLink(listener: (state: LinkState) => void) {
