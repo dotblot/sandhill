@@ -100,14 +100,16 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 
 ### The look (added 2026-10-11)
 
-The app follows draft 16 of the UI mockup, the agreed final layout, kept in
+The app follows the UI mockup, the agreed final layout, kept in
 `docs/design/ui/`: `spec.md` describes it, `sandhill-layout.html` is the
 clickable mockup (light and dark) and the PNGs are screenshots of it. Where
-the spec and the mockup differ, the mockup wins.
+the spec and the mockup differ, the mockup wins. The app was built from draft
+16; draft 17 (2026-10-12) is the current version, and the top of `spec.md`
+lists what it changed.
 
 There is no title bar row. On macOS the windows use an overlay title bar, with
 the window buttons placed in the page's 34px toolbar row (`title_bar()` in
-`app/src-tauri/src/windows.rs`); the toolbar (left pane, right pane, Agents,
+`app/src-tauri/src/windows.rs`); the toolbar (left pane, Agents, right pane,
 ⌘K, menu) floats over the top of the left pane. Panes reach the top of the
 window and sit 3px apart and 3px from its edges; the gaps are drag handles.
 The editor and Console are translucent cards on a warm gradient, each with
@@ -115,13 +117,17 @@ minimize and maximize buttons; the left pane sits directly on the background,
 with a Local / server tab pair, the project's files, its kernel rows (language,
 version, files using it, memory, and shutting down with an inline
 confirmation) and the machine's CPU, memory, GPU and disk (`system_stats`).
-One corner radius, 12px, for every rounded thing. All text is 14px except the
-11px kernel and resource rows: chrome in the system font, code and outputs in
-JetBrains Mono, bundled with the app (OFL) so every Mac shows the same font,
-with ligatures off so `<-` stays as typed. Plots stay white in dark mode. The
-panes skip `backdrop-filter`: over a smooth gradient a blur changes nothing you
-can see, and each blurred pane costs a window-sized compositing layer. Styles
-are in `app/src/styles.css`, icons in `app/src/ui/icons.tsx`.
+One corner radius, 12px, for every rounded thing. All text is 13px, the macOS
+standard size, except the kernel rows, resource rows and Git pane at 11px and
+the context bar at 9px. Chrome is in the system font. Code, outputs,
+Variables, the console and the agent terminals are in Maple Mono NF, the Nerd
+Font build of Maple Mono, bundled with the app (OFL) so every Mac shows the
+same font and shell prompts can show their icons; the Data Explorer uses the
+system font. Code ligatures are on, so `<-` shows as an arrow while the file
+keeps what was typed. Plots stay white in dark mode. The panes skip
+`backdrop-filter`: over a smooth gradient a blur changes nothing you can see,
+and each blurred pane costs a window-sized compositing layer. Styles are in
+`app/src/styles.css`, icons in `app/src/ui/icons.tsx`.
 
 The right pane (Variables, Help, Packages, Git, Plots) and Agents come with
 steps 4 and 5; until then their toolbar buttons show but do nothing.

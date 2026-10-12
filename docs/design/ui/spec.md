@@ -1,10 +1,22 @@
 # Sandhill window layout: agreed design
 
-Agreed with Huan on 2026-10-11 after 16 drafts. Draft 17 (2026-10-12) made the
-text 13px instead of 14px and replaced JetBrains Mono with Maple Mono NF. The
-clickable mockup is
-[sandhill-layout.html](sandhill-layout.html), also published at
-https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9. It has light and dark
+Agreed with Huan on 2026-10-11 after 16 drafts. Draft 17 (2026-10-12) changed:
+- Text is 13px instead of 14px.
+- Maple Mono NF replaces JetBrains Mono for all monospace text, with code
+  ligatures on; the Data Explorer uses the system font.
+- The toolbar order is left pane, Agents, right pane, search, menu.
+- Kernel and session pickers (editor, Variables, Packages, Console) show only
+  the language icon and version; a drop-down holds the details.
+- Resources are a 2 × 2 grid with no percent, and the left pane and status bar
+  share one left edge.
+- The Git pane's contents are 11px and never bold.
+- Plan usage in the status bar is shown as rings.
+- The thinking-effort control is new: a brain knob, and a star field at the top
+  level.
+
+The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
+published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
+at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
 themes and four screens: Workspace, Data Explorer, With agent and Start.
 The screenshots are `workspace-light.png`, `workspace-dark.png`,
 `with-agent-light.png` and `with-agent-dark.png`. They show a 1452 × 860 point
