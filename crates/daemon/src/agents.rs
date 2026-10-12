@@ -144,10 +144,20 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
     let mcp =
         json!({"mcpServers": {"sandhill": {"type": "stdio", "command": exe, "args": mcp_args}}});
     let hook = |what: &str| json!([{"hooks": [{"type": "command", "command": format!("{} terminal-event {what}", shell_quote(&exe))}]}]);
+    // Adds where the user is to each prompt.
+    let prompt = format!(
+        "{} --socket {} terminal-event prompt{}",
+        shell_quote(&exe),
+        shell_quote(&context.socket.to_string_lossy()),
+        context
+            .project
+            .map(|p| format!(" {}", shell_quote(p)))
+            .unwrap_or_default()
+    );
     let tool_hook = json!([{"matcher": "*", "hooks": [{"type": "command", "command": format!("{} terminal-event state busy", shell_quote(&exe))}]}]);
     let settings = json!({
         "hooks": {
-            "UserPromptSubmit": hook("state busy"),
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": prompt}]}],
             "PostToolUse": tool_hook,
             "Stop": hook("state idle"),
             "Notification": hook("notification"),
@@ -241,15 +251,20 @@ fn codex_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<
 /// What an agent is told about Sandhill when it starts.
 fn instructions(options: &AgentOptions) -> String {
     let mut text = String::from(
-        "You are running inside Sandhill, an IDE for R and Python data analysis, in a terminal \
-         next to the user's editor. The user's live R and Python sessions are reachable through \
-         the `sandhill` MCP tools: list_sessions, list_variables, run_code and get_outputs. Use \
+        "You are running inside Sandhill, an IDE for R and Python data analysis, next to the \
+         user's editor. The user's live R and Python sessions are reachable through the \
+         `sandhill` MCP tools: list_sessions, list_variables, run_code and get_outputs. Use \
          them to look at the objects and results the user already has in memory instead of \
-         recomputing them. Files you edit show up in the user's open editor.",
+         recomputing them. When the user asks you to compute, load, plot or make something, \
+         write the code into their document with add_cell: it goes below the cell they are in \
+         and runs in their session, so they see the code and the result together. If a cell \
+         you added fails, fix it with edit_cell instead of adding another. Use run_code only \
+         for quick looks they don't need to keep. get_focus says where the user is. Files you \
+         edit show up in the user's open editor.",
     );
     if !options.documents.is_empty() {
         text.push_str(&format!(
-            " The user started this session about: {}.",
+            " The user started this session about: {}; add_cell writes there.",
             options.documents.join(", ")
         ));
     }

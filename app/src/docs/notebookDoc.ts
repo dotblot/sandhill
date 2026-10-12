@@ -27,7 +27,7 @@ import {
 } from "../model/ipynb";
 import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
 import { CellOutput, type OutputInfo } from "./cellOutput";
-import { Doc } from "./doc";
+import { type AgentCell, Doc, type Place, selectionOf } from "./doc";
 
 interface CellView {
   cell: NbCell;
@@ -50,6 +50,8 @@ export class NotebookDoc extends Doc {
   private nearObserver?: IntersectionObserver;
   private language: () => string;
   private setLanguage: Setter<string>;
+  /** The cell whose editor last had focus. */
+  private current?: string;
 
   static async open(ws: Workspace, path: string, shownOutputs: string[] = []): Promise<NotebookDoc> {
     const file = await readNotebook(ws, path);
@@ -182,6 +184,58 @@ export class NotebookDoc extends Doc {
     }
   }
 
+  place(): Place {
+    const view = this.current ? this.views.get(this.current) : undefined;
+    if (!view) return {};
+    const editor = view.editor;
+    if (!editor) return { cell: view.cell.id };
+    const head = editor.state.selection.main.head;
+    return { cell: view.cell.id, line: editor.state.doc.lineAt(head).number, selection: selectionOf(editor) };
+  }
+
+  addCell(code: string, language?: string, after?: string): AgentCell {
+    const own = this.language();
+    if (language && normalizeLanguage(language) !== own) {
+      throw new Error(`${this.name} is a ${own} notebook; it can't hold ${language} code`);
+    }
+    const index = after === undefined ? this.nb.cells.length - 1 : this.indexOf(after);
+    const cell = newCell("code", code.replace(/\n+$/, ""));
+    this.nb.cells.splice(index + 1, 0, cell);
+    this.views.set(cell.id, this.createView(cell));
+    this.renderCells();
+    this.setDirty(true);
+    // The new cell takes the focus, as if the user had added it.
+    this.focusCell(cell.id);
+    this.current = cell.id;
+    return { cellId: cell.id, language: own };
+  }
+
+  editCell(cellId: string, code: string): AgentCell {
+    const view = this.views.get(this.nb.cells[this.indexOf(cellId)].id)!;
+    if (view.cell.cell_type !== "code") throw new Error(`cell ${cellId} of ${this.name} is not a code cell`);
+    const source = code.replace(/\n+$/, "");
+    if (view.editor) {
+      view.editor.dispatch({ changes: { from: 0, to: view.editor.state.doc.length, insert: source }, userEvent: "input.agent" });
+    } else {
+      view.cell.source = source;
+      view.parked = undefined;
+      view.body.querySelector(".nb-placeholder")?.replaceWith(this.placeholder(view));
+    }
+    this.setDirty(true);
+    view.root.scrollIntoView({ block: "nearest" });
+    return { cellId, language: this.language() };
+  }
+
+  async runAgentCell(cell: AgentCell) {
+    await this.runCell(cell.cellId);
+  }
+
+  private indexOf(cellId: string): number {
+    const index = this.nb.cells.findIndex((c) => c.id === cellId);
+    if (index < 0) throw new Error(`${this.name} has no cell ${cellId}`);
+    return index;
+  }
+
   /** Brings in runs that finished (or are still going) since the notebook was saved. */
   private async mergeJournal() {
     const snapshot = await this.ws.fileOutputs(this.path);
@@ -300,6 +354,7 @@ export class NotebookDoc extends Doc {
           this.trackCursor(),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) this.setDirty(true);
+            if (u.view.hasFocus) this.current = cell.id;
           }),
         ],
       }),

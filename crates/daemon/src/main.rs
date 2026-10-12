@@ -60,8 +60,9 @@ enum Command {
         program: Vec<std::ffi::OsString>,
     },
     /// Report an agent's state to the terminal it runs in, from its hooks:
-    /// `state busy|idle|waiting`, `notification` and `status` (Claude Code,
-    /// which sends JSON on stdin), `codex` (Codex's notify program).
+    /// `state busy|idle|waiting`, `prompt`, `notification` and `status`
+    /// (Claude Code, which sends JSON on stdin), `codex` (Codex's notify
+    /// program).
     #[command(hide = true)]
     TerminalEvent {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -112,7 +113,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::TerminalEvent { args } => {
             // A hook must never get in the agent's way: report what can be
             // reported and always succeed.
-            if let Err(err) = sandhill_daemon::terminal::events::run(&args).await {
+            if let Err(err) = sandhill_daemon::terminal::events::run(&args, &socket).await {
                 eprintln!("sandhilld terminal-event: {err:#}");
             }
             Ok(())

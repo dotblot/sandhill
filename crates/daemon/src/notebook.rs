@@ -281,7 +281,7 @@ impl Serialize for WithBlobs<'_> {
 
 /// Python's `str.splitlines(keepends=True)`, which nbformat uses to store
 /// text as a list of lines. The app's `splitLines` does the same.
-fn split_lines(text: &str) -> Vec<&str> {
+pub(crate) fn split_lines(text: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut chars = text.char_indices().peekable();

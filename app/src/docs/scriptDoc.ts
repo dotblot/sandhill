@@ -13,7 +13,7 @@ import { baseExtensions, highlightedLines, languageFor } from "../editor/setup";
 import { statements } from "../model/statements";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { CellOutput } from "./cellOutput";
-import { changedOnDisk, Doc, replaceText } from "./doc";
+import { type AgentCell, changedOnDisk, Doc, type Place, replaceText, selectionOf } from "./doc";
 
 /**
  * The console keeps this many runs. Runs are journaled under the cell ids
@@ -113,6 +113,46 @@ export class ScriptDoc extends Doc {
     this.mtime = file.mtime_ms;
     this.setDirty(false);
     return true;
+  }
+
+  place(): Place {
+    const view = this.view;
+    if (!view) return {};
+    const head = view.state.selection.main.head;
+    return { line: view.state.doc.lineAt(head).number, selection: selectionOf(view) };
+  }
+
+  /** An agent's code goes at the end of the script; the id is the console entry it will run as. */
+  addCell(code: string, language?: string): AgentCell {
+    if (language && normalizeLanguage(language) !== this.language) {
+      throw new Error(`${this.name} is a ${this.language} script; it can't hold ${language} code`);
+    }
+    const text = this.text();
+    const nl = text.includes("\r\n") ? "\r\n" : "\n";
+    const body = code.replace(/[\r\n]+$/, "").replace(/\r?\n/g, nl);
+    const separator = !text.trim() ? "" : text.endsWith("\n") ? nl : `${nl}${nl}`;
+    const insert = `${separator}${body}${nl}`;
+    if (this.view) {
+      const end = this.view.state.doc.length;
+      this.view.dispatch({
+        changes: { from: end, insert },
+        selection: { anchor: end + insert.length },
+        scrollIntoView: true,
+        userEvent: "input.agent",
+      });
+    } else {
+      this.initialText += insert;
+      this.setDirty(true);
+    }
+    return { cellId: `console-${this.nextSlot}`, language: this.language };
+  }
+
+  editCell(): AgentCell {
+    throw new Error(`a script has no cells; edit ${this.name} as a file instead`);
+  }
+
+  async runAgentCell(_cell: AgentCell, code: string) {
+    await this.run(code);
   }
 
   /** Called when the Console pane shows this script's console. */

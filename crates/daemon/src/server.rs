@@ -2,15 +2,16 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::terminal::{Terminals, ToHost};
 use anyhow::{Context, Result, anyhow};
 use sandhill_proto::{
-    Blob, Call, Event, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply, Request, ServerMessage,
-    SessionStatus, Subscribed,
+    Blob, Call, CellEdited, Event, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply, Request,
+    ServerMessage, SessionStatus, Subscribed,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc};
@@ -20,7 +21,8 @@ use crate::blobs::BlobStore;
 use crate::journal::Journal;
 use crate::paths::StateDir;
 use crate::session::SessionHandle;
-use crate::{files, memory, notebook, outputs, projects, sidecar};
+use crate::windows::Windows;
+use crate::{cells, files, memory, notebook, outputs, projects, sidecar, windows};
 
 const REPLAY_PAGE: u32 = 500;
 const HISTORY_LIMIT: u32 = 5000;
@@ -30,6 +32,8 @@ pub struct Daemon {
     journal: Arc<Journal>,
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
     terminals: Terminals,
+    windows: Windows,
+    next_connection: AtomicU64,
     options: DaemonOptions,
 }
 
@@ -73,6 +77,8 @@ impl Daemon {
             state,
             journal: journal.clone(),
             sessions: Mutex::new(HashMap::new()),
+            windows: Windows::default(),
+            next_connection: AtomicU64::new(1),
             options,
         });
         for record in journal.sessions()? {
@@ -120,6 +126,7 @@ impl Daemon {
         let (out, out_rx) = mpsc::unbounded_channel::<ServerMessage>();
         let writer_task = tokio::spawn(write_loop(writer, out_rx));
         let subscriptions: Subscriptions = Default::default();
+        let connection = self.next_connection.fetch_add(1, Ordering::Relaxed);
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             if line.trim().is_empty() {
@@ -142,7 +149,7 @@ impl Daemon {
             let out = out.clone();
             let subscriptions = subscriptions.clone();
             tokio::spawn(async move {
-                daemon.handle(request, out, subscriptions).await;
+                daemon.handle(request, connection, out, subscriptions).await;
                 if large {
                     memory::release_free_memory();
                 }
@@ -151,6 +158,7 @@ impl Daemon {
         for (_, task) in subscriptions.lock().unwrap().drain() {
             task.abort();
         }
+        self.windows.disconnected(connection);
         drop(out);
         let _ = writer_task.await;
     }
@@ -158,11 +166,16 @@ impl Daemon {
     async fn handle(
         self: Arc<Self>,
         request: Request,
+        connection: u64,
         out: mpsc::UnboundedSender<ServerMessage>,
         subscriptions: Subscriptions,
     ) {
         let id = request.id;
         let result = match request.call {
+            Call::SetFocus { project, focus } => projects::normalize(&project).map(|project| {
+                self.windows.set_focus(connection, &out, project, focus);
+                Value::Null
+            }),
             Call::Subscribe { session, since_seq } => {
                 // Answers and starts streaming itself, so the response always
                 // precedes the replayed events.
@@ -440,10 +453,72 @@ impl Daemon {
                 self.terminals.close(&terminal).await?;
                 Value::Null
             }
+            Call::GetFocus { project } => {
+                serde_json::to_value(self.windows.focus(&projects::normalize(&project)?))?
+            }
+            Call::AddCell {
+                file,
+                code,
+                language,
+                after,
+                run,
+                project,
+            } => {
+                let path = windows::normalize(&files::resolve(&file)?);
+                let file = path.to_string_lossy().into_owned();
+                let params = json!({"file": file, "code": code, "language": language, "after": after, "run": run});
+                let edited = match self.ask_window(&path, project, "add_cell", params).await? {
+                    Some(edited) => edited,
+                    None => {
+                        let edited = blocking({
+                            let file = file.clone();
+                            move || {
+                                cells::add_cell(&file, &code, language.as_deref(), after.as_deref())
+                            }
+                        })
+                        .await?;
+                        on_disk(file, edited)
+                    }
+                };
+                self.windows.moved_to(&path, &edited.cell_id);
+                serde_json::to_value(edited)?
+            }
+            Call::EditCell {
+                file,
+                cell_id,
+                code,
+                run,
+                project,
+            } => {
+                let path = windows::normalize(&files::resolve(&file)?);
+                let file = path.to_string_lossy().into_owned();
+                let params = json!({"file": file, "cell_id": cell_id, "code": code, "run": run});
+                let edited = match self.ask_window(&path, project, "edit_cell", params).await? {
+                    Some(edited) => edited,
+                    None => {
+                        let edited = blocking({
+                            let file = file.clone();
+                            move || cells::edit_cell(&file, &cell_id, &code)
+                        })
+                        .await?;
+                        on_disk(file, edited)
+                    }
+                };
+                serde_json::to_value(edited)?
+            }
+            Call::Answer { id, result, error } => {
+                let answer = match (result, error) {
+                    (_, Some(error)) => Err(error),
+                    (result, None) => Ok(result.unwrap_or(Value::Null)),
+                };
+                self.windows.answer(id, answer);
+                Value::Null
+            }
             Call::Subscribe { .. }
             | Call::Unsubscribe { .. }
             | Call::SubscribeTerminal { .. }
-            | Call::UnsubscribeTerminal { .. } => unreachable!("handled earlier"),
+            | Call::UnsubscribeTerminal { .. }
+            | Call::SetFocus { .. } => unreachable!("handled earlier"),
         })
     }
 
@@ -490,6 +565,29 @@ impl Daemon {
             old.abort();
         }
         Ok(())
+    }
+
+    /// Has the window with `path` open make an edit, if there is one.
+    async fn ask_window(
+        &self,
+        path: &std::path::Path,
+        project: Option<String>,
+        method: &str,
+        params: Value,
+    ) -> Result<Option<CellEdited>> {
+        let project = project.map(|p| projects::normalize(&p)).transpose()?;
+        let Some(answer) = self
+            .windows
+            .ask(path, project.as_deref(), method, params)
+            .await
+        else {
+            return Ok(None);
+        };
+        let mut answer = answer?;
+        answer["file"] = json!(path.to_string_lossy());
+        answer["in_window"] = json!(true);
+        let edited = serde_json::from_value(answer).context("the window's answer made no sense")?;
+        Ok(Some(edited))
     }
 
     fn insert(&self, handle: SessionHandle) {
@@ -600,6 +698,16 @@ async fn write_loop<W: AsyncWrite + Unpin>(
             drop(line);
             memory::release_free_memory();
         }
+    }
+}
+
+fn on_disk(file: String, edited: cells::Edited) -> CellEdited {
+    CellEdited {
+        file,
+        cell_id: edited.cell_id,
+        language: edited.language,
+        in_window: false,
+        kernel: edited.kernel,
     }
 }
 

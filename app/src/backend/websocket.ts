@@ -6,7 +6,7 @@
 // page instead of opening a window.
 
 import { type Backend, LOCAL_HOST, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
-import type { DaemonEvent, TerminalEvent } from "./types";
+import type { AppRequest, DaemonEvent, TerminalEvent } from "./types";
 
 export class BrowserShell implements Shell {
   private params = new URLSearchParams(location.search);
@@ -67,6 +67,7 @@ export class WebSocketBackend implements Backend {
   private queue: string[] = [];
   private events = new Listeners<DaemonEvent>();
   private terminals = new Listeners<TerminalEvent>();
+  private requests = new Listeners<AppRequest>();
   private links = new Listeners<LinkState>();
   private link: LinkState = { status: "connecting" };
   private retryMs = 500;
@@ -91,6 +92,10 @@ export class WebSocketBackend implements Backend {
 
   onTerminal(listener: (event: TerminalEvent) => void) {
     this.terminals.add(listener);
+  }
+
+  onRequest(listener: (request: AppRequest) => void) {
+    this.requests.add(listener);
   }
 
   onLink(listener: (state: LinkState) => void) {
@@ -122,6 +127,8 @@ export class WebSocketBackend implements Backend {
         this.events.emit(message.event);
       } else if (message.type === "terminal") {
         this.terminals.emit(message.terminal);
+      } else if (message.type === "request") {
+        this.requests.emit(message.request);
       } else if (message.type === "response") {
         const pending = this.pending.get(message.id);
         this.pending.delete(message.id);
