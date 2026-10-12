@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::terminal::{Terminals, ToHost};
 use anyhow::{Context, Result, anyhow};
 use sandhill_proto::{
     Blob, Call, Event, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply, Request, ServerMessage,
@@ -28,12 +29,38 @@ pub struct Daemon {
     state: StateDir,
     journal: Arc<Journal>,
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
+    terminals: Terminals,
+    options: DaemonOptions,
+}
+
+/// What the daemon needs to know about how it runs.
+#[derive(Debug, Clone)]
+pub struct DaemonOptions {
+    /// `sandhilld` itself: terminal hosts, agents' hooks and their MCP
+    /// server run it.
+    pub executable: PathBuf,
+    /// The socket clients reach it on, which agents' MCP servers use.
+    pub socket: PathBuf,
+}
+
+impl DaemonOptions {
+    pub fn for_state(state: &StateDir) -> Self {
+        DaemonOptions {
+            executable: crate::version::executable(),
+            socket: state.socket_path(),
+        }
+    }
 }
 
 impl Daemon {
     /// Opens the state directory and reconnects to kernels that kept running
     /// while the daemon was down.
     pub async fn open(state: StateDir) -> Result<Arc<Daemon>> {
+        let options = DaemonOptions::for_state(&state);
+        Self::open_with(state, options).await
+    }
+
+    pub async fn open_with(state: StateDir, options: DaemonOptions) -> Result<Arc<Daemon>> {
         state
             .create()
             .context("cannot create the state directory")?;
@@ -42,9 +69,11 @@ impl Daemon {
             BlobStore::new(state.blobs_dir()),
         )?);
         let daemon = Arc::new(Daemon {
+            terminals: Terminals::new(state.terminals_dir(), options.executable.clone()),
             state,
             journal: journal.clone(),
             sessions: Mutex::new(HashMap::new()),
+            options,
         });
         for record in journal.sessions()? {
             if record.status == SessionStatus::Ended {
@@ -148,6 +177,38 @@ impl Daemon {
                 }
                 Ok(Value::Null)
             }
+            Call::SubscribeTerminal { terminal, from } => {
+                match self.terminals.open(&terminal, from).await {
+                    Ok(stream) => {
+                        let _ = out.send(response(
+                            id,
+                            Ok(serde_json::to_value(stream.subscribed()).unwrap_or_default()),
+                        ));
+                        let task = tokio::spawn(stream.forward(out.clone()));
+                        if let Some(old) = subscriptions
+                            .lock()
+                            .unwrap()
+                            .insert(terminal_key(&terminal), task)
+                        {
+                            old.abort();
+                        }
+                    }
+                    Err(err) => {
+                        let _ = out.send(response(id, Err(err)));
+                    }
+                }
+                return;
+            }
+            Call::UnsubscribeTerminal { terminal } => {
+                if let Some(task) = subscriptions
+                    .lock()
+                    .unwrap()
+                    .remove(&terminal_key(&terminal))
+                {
+                    task.abort();
+                }
+                Ok(Value::Null)
+            }
             call => self.call(call).await,
         };
         let _ = out.send(response(id, result));
@@ -202,7 +263,8 @@ impl Daemon {
                 session,
                 code,
                 cell,
-            } => serde_json::to_value(self.live(&session)?.execute(code, cell).await?)?,
+                quiet,
+            } => serde_json::to_value(self.live(&session)?.execute(code, cell, quiet).await?)?,
             Call::Interrupt { session } => {
                 self.live(&session)?.interrupt().await?;
                 Value::Null
@@ -327,7 +389,61 @@ impl Daemon {
                     .await?,
                 )?
             }
-            Call::Subscribe { .. } | Call::Unsubscribe { .. } => unreachable!("handled earlier"),
+            Call::StatFiles { paths } => {
+                serde_json::to_value(blocking(move || Ok(files::stat(&paths))).await?)?
+            }
+            Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
+            Call::StartTerminal {
+                kind,
+                cwd,
+                project,
+                cols,
+                rows,
+                options,
+            } => {
+                let project = project.map(|p| projects::normalize(&p)).transpose()?;
+                let cwd = match cwd.or_else(|| project.clone()) {
+                    Some(cwd) => files::resolve(&cwd)?,
+                    None => PathBuf::from(std::env::var_os("HOME").unwrap_or("/".into())),
+                };
+                if !cwd.is_dir() {
+                    anyhow::bail!("{} is not a directory", cwd.display());
+                }
+                let context = crate::agents::Context {
+                    executable: &self.options.executable,
+                    socket: &self.options.socket,
+                    project: project.as_deref(),
+                    cwd: &cwd,
+                };
+                let mut launch = crate::agents::launch(&kind, &options, &context).await?;
+                launch.size = cols.zip(rows);
+                serde_json::to_value(self.terminals.start(launch).await?)?
+            }
+            Call::ListTerminals => serde_json::to_value(self.terminals.list())?,
+            Call::TerminalInput { terminal, data } => {
+                self.terminals
+                    .send(&terminal, ToHost::Input { data })
+                    .await?;
+                Value::Null
+            }
+            Call::ResizeTerminal {
+                terminal,
+                cols,
+                rows,
+            } => {
+                self.terminals
+                    .send(&terminal, ToHost::Resize { cols, rows })
+                    .await?;
+                Value::Null
+            }
+            Call::CloseTerminal { terminal } => {
+                self.terminals.close(&terminal).await?;
+                Value::Null
+            }
+            Call::Subscribe { .. }
+            | Call::Unsubscribe { .. }
+            | Call::SubscribeTerminal { .. }
+            | Call::UnsubscribeTerminal { .. } => unreachable!("handled earlier"),
         })
     }
 
@@ -404,7 +520,12 @@ impl Daemon {
     }
 }
 
+/// A connection's subscriptions: sessions by id, terminals by [`terminal_key`].
 type Subscriptions = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
+
+fn terminal_key(terminal: &str) -> String {
+    format!("terminal:{terminal}")
+}
 
 /// Replays journaled events after `from_seq`, then forwards live ones.
 async fn forward_events(

@@ -30,7 +30,12 @@ impl StateDir {
     }
 
     pub fn create(&self) -> std::io::Result<()> {
-        for dir in [self.root.clone(), self.kernels_dir(), self.blobs_dir()] {
+        for dir in [
+            self.root.clone(),
+            self.kernels_dir(),
+            self.blobs_dir(),
+            self.terminals_dir(),
+        ] {
             std::fs::create_dir_all(&dir)?;
             restrict_permissions(&dir)?;
         }
@@ -48,6 +53,11 @@ impl StateDir {
     /// Connection files and kernel logs.
     pub fn kernels_dir(&self) -> PathBuf {
         self.root.join("kernels")
+    }
+
+    /// One folder per terminal (see `terminal`).
+    pub fn terminals_dir(&self) -> PathBuf {
+        self.root.join("terminals")
     }
 
     pub fn socket_path(&self) -> PathBuf {

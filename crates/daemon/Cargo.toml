@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 sandhill-proto.workspace = true
 anyhow.workspace = true
+base64 = "0.22"
 clap.workspace = true
 jupyter-protocol.workspace = true
 jupyter-zmq-client.workspace = true

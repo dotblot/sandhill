@@ -42,6 +42,7 @@ enum Command {
     Execute {
         code: String,
         cell: Option<CellRef>,
+        quiet: bool,
         reply: oneshot::Sender<Result<RunStarted>>,
     },
     Interrupt {
@@ -240,9 +241,23 @@ impl SessionHandle {
         }
     }
 
-    pub async fn execute(&self, code: String, cell: Option<CellRef>) -> Result<RunStarted> {
+    /// Queues code. A `quiet` run stays out of the kernel's history and
+    /// execution count, and an error in it doesn't cancel the runs queued
+    /// after it: it is a tool looking around, not the user's code.
+    pub async fn execute(
+        &self,
+        code: String,
+        cell: Option<CellRef>,
+        quiet: bool,
+    ) -> Result<RunStarted> {
         let (reply, rx) = oneshot::channel();
-        self.send(Command::Execute { code, cell, reply }).await?;
+        self.send(Command::Execute {
+            code,
+            cell,
+            quiet,
+            reply,
+        })
+        .await?;
         rx.await.map_err(|_| ended())?
     }
 
@@ -332,8 +347,13 @@ impl Actor {
 
     async fn on_command(&mut self, command: Command) {
         match command {
-            Command::Execute { code, cell, reply } => {
-                let _ = reply.send(self.execute(code, cell).await);
+            Command::Execute {
+                code,
+                cell,
+                quiet,
+                reply,
+            } => {
+                let _ = reply.send(self.execute(code, cell, quiet).await);
             }
             Command::Interrupt { reply } => {
                 let _ = reply.send(self.interrupt().await);
@@ -342,14 +362,19 @@ impl Actor {
         }
     }
 
-    async fn execute(&mut self, code: String, cell: Option<CellRef>) -> Result<RunStarted> {
+    async fn execute(
+        &mut self,
+        code: String,
+        cell: Option<CellRef>,
+        quiet: bool,
+    ) -> Result<RunStarted> {
         let request = ExecuteRequest {
             code: code.clone(),
             silent: false,
-            store_history: true,
+            store_history: !quiet,
             user_expressions: None,
             allow_stdin: false,
-            stop_on_error: true,
+            stop_on_error: !quiet,
         };
         let msg = JupyterMessage::new(request, None);
         let msg_id = msg.header.msg_id.clone();
