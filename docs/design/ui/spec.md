@@ -156,7 +156,9 @@ omp.
   - right: the linked file with its language icon (opens the file; code goes into
     it), the context ring and tokens used (opens the context breakdown above
     the pointer), and the model with its effort, "Opus (High) ⌄" (opens the
-    model list and the effort knob from draft 17).
+    model list and the effort knob from draft 17). The effort track is 16px
+    tall, a little thinner than the 20px brain knob, and its filled part ends
+    exactly under the knob's centre.
 - **Mode picker** (the hand): Normal (safe steps run, risky ones ask), Auto (a
   second model reviews risky steps), YOLO (everything runs except steps marked
   dangerous; for Claude this restarts it on the same conversation), Restricted
