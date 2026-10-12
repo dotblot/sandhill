@@ -1076,6 +1076,9 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 .krow { padding-left: 8px; }
 .rrow { grid-template-columns: 14px 28px 1fr; } .rrow .ico { width: 14px; height: 14px; }
 .status { padding-left: 6px; } .status > .si:first-child { padding-left: 8px; }
+/* console session switch: language icon and version, like the kernel pickers */
+.ptabs .pill { padding: 0 8px 0 3px; gap: 5px; }
+/* code ligatures stay on (Maple Mono's default): <- shows as an arrow, |> as a triangle */
 /* kernel picker drop-down: details of the session, and switching */
 .kpop { position: absolute; z-index: 26; width: 270px; background: var(--bg); border: 1px solid var(--glass-edge); border-radius: var(--r); box-shadow: 0 16px 40px -12px rgba(0,0,0,.4); padding: 5px; display: flex; flex-direction: column; }
 .kp-h { display: flex; align-items: center; gap: 7px; padding: 5px 8px 3px; }
@@ -1230,8 +1233,8 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
               <button class="ptab" role="tab" data-ptab="problems" aria-selected="false">Problems</button>
               <span class="spacer"></span>
               <span id="consolePills" style="display:flex;gap:4px">
-                <button class="pill" data-csess="r" aria-pressed="true"><span class="dot idle"></span>R 4.4.1</button>
-                <button class="pill" data-csess="py" aria-pressed="false"><span class="dot busy"></span>Python 3.12</button>
+                <button class="pill" data-csess="r" aria-pressed="true" title="Show the R 4.4.1 console (idle)">R 4.4.1</button>
+                <button class="pill" data-csess="py" aria-pressed="false" title="Show the Python 3.12 console (busy)">Python 3.12</button>
               </span>
             </div>
             <div class="pbody" id="pbody"></div>
@@ -1779,7 +1782,7 @@ function openExplorer() { S.explorerOpen = true; S.tab = "explorer"; renderAll()
 function renderBottom() {
   $$("[data-ptab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.ptab === S.ptab)));
   $("#consolePills").style.visibility = S.ptab === "console" ? "visible" : "hidden";
-  $$("[data-csess]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.csess === S.csess)));
+  $$("[data-csess]").forEach(b => { b.setAttribute("aria-pressed", String(b.dataset.csess === S.csess)); b.innerHTML = langIcon(b.dataset.csess) + KERNELS[b.dataset.csess].ver; });
   const pb = $("#pbody");
   if (S.ptab === "console" && S.csess === "r") pb.innerHTML = `<div class="console"><span class="msg">R 4.4.1 · Ark 0.1.150 · renv project library · working directory ~/projects/pbmc-atlas</span>
 <span class="p">&gt;</span> table(seu$seurat_clusters)

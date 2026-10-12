@@ -79,6 +79,12 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - The Data Explorer uses the UI font, with tabular digits, and shows column names
   exactly as written (no capitals).
 
+## Console
+- The session switch at the right of the Console's tab strip shows each session
+  (R, Python) as its language icon and version, like the kernel pickers, with no
+  status dot or language name. Clicking one shows that session's console; the
+  tooltip gives the language, version and state.
+
 ## Agents pane
 - Tabs show **only the provider icon**: Claude, OpenAI, or a chip for open
   models via omp. Other details:
@@ -120,6 +126,8 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   command-line tools show their symbols. Maple Mono is under the SIL Open Font
   License; the mockup carries its regular, italic, medium, semibold and bold styles.
   There is no other monospace font.
+- Code ligatures are on (Maple Mono's default): `<-` shows as an arrow, `|>` as a
+  triangle, and so on. The characters in the file are unchanged.
 - The exceptions are the kernel and resource rows and the Git pane's contents at
   11px, and the context bar at 9px.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
