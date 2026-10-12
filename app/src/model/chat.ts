@@ -43,6 +43,8 @@ export interface ChatEvent {
   answer?: Answer | null;
   source?: string;
   model?: string;
+  /** For an ask: what allowing it for the chat or the project allows from then on. */
+  remember?: string[];
 }
 
 export interface ChatEntry {
@@ -57,6 +59,7 @@ export interface Ask {
   // biome-ignore lint: free-form JSON
   input: any;
   answer?: Answer | null;
+  remember?: string[];
 }
 
 export type StepStatus = "run" | "wait" | "done" | "fail" | "deny" | "cancel";
@@ -177,7 +180,13 @@ export function buildChat(entries: ChatEntry[], working: boolean): Chat {
           break;
         }
         case "ask": {
-          const ask: Ask = { id: event.id ?? `a${seq}`, tool: event.tool ?? "", input: event.input ?? {}, answer: answers.get(event.id ?? "") };
+          const ask: Ask = {
+            id: event.id ?? `a${seq}`,
+            tool: event.tool ?? "",
+            input: event.input ?? {},
+            answer: answers.get(event.id ?? ""),
+            remember: event.remember,
+          };
           if (ask.answer === undefined && !ended) waiting.push(ask);
           // Requests don't name their step: it is the latest one of that tool with the same input.
           const same = JSON.stringify(ask.input);
@@ -246,6 +255,21 @@ function sessionNote(event: ChatEvent): string | undefined {
   }
 }
 
+/** A conversation's title: its first message. */
+export function chatTitle(entries: ChatEntry[]): string | undefined {
+  const first = entries.find((e) => e.event.kind === "prompt" && e.event.text)?.event.text;
+  return first ? titleOf(first) : undefined;
+}
+
+/** When the conversation last changed, if it has. */
+export function lastActive(entries: ChatEntry[]): number | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const at = entries[i]?.event.at_ms;
+    if (at) return at;
+  }
+  return undefined;
+}
+
 function titleOf(text: string): string {
   const line = text.trim().split("\n")[0] ?? "";
   return line.length > 60 ? `${line.slice(0, 58).trimEnd()}…` : line;
@@ -306,7 +330,7 @@ export interface StepView {
 const SANDHILL = "mcp__sandhill__";
 
 /** What a step did, for its row and its card. */
-export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">): StepView {
+export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">, linked?: string): StepView {
   const input = step.input ?? {};
   const view: StepView = { name: displayName(step.tool), desc: "", images: contentImages(step.output) };
   const firstLine = (text: string) => (text ?? "").trim().split("\n")[0] ?? "";
@@ -325,17 +349,22 @@ export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">
         break;
       case "add_cell":
       case "edit_cell": {
-        const file = input.file ?? ran.file;
+        const file = input.file ?? ran.file ?? linked;
         view.file = file;
-        view.desc = view.name === "add_cell" ? `Add a cell to ${file ?? "the document"}` : `Change cell ${input.cell_id ?? ""} in ${file ?? "the document"}`.replace("  ", " ");
+        view.desc = view.name === "add_cell" ? `Add a cell to ${file ?? "the document"}` : `Change ${input.cell ?? "a cell"} in ${file ?? "the document"}`;
         view.code = input.code;
         view.language = input.language ?? ran.language;
         view.where = head;
         view.output = rest.join("\n").trimEnd();
-        view.added = lineCount(input.code);
-        view.removed = 0;
-        view.diff = (input.code ?? "").split("\n").map((l: string) => `+${l}`);
-        view.detail = ran.detail ?? `+${view.added}`;
+        if (view.name === "add_cell") {
+          view.added = lineCount(input.code);
+          view.removed = 0;
+          view.diff = (input.code ?? "").split("\n").map((l: string) => `+${l}`);
+        } else {
+          // The cell's old code isn't in the call, so there's no diff to show.
+          const n = lineCount(input.code);
+          view.detail = n === 1 ? "1 line" : `${n} lines`;
+        }
         break;
       }
       case "list_variables":
@@ -392,12 +421,13 @@ export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">
       view.file = input.file_path;
       view.desc = `Edit ${baseName(input.file_path)}`;
       const edits = step.tool === "Edit" ? [input] : (input.edits ?? []);
-      view.diff = edits.flatMap((e: { old_string?: string; new_string?: string }) => [
+      const diff: string[] = edits.flatMap((e: { old_string?: string; new_string?: string }) => [
         ...(e.old_string ?? "").split("\n").map((l) => `-${l}`),
         ...(e.new_string ?? "").split("\n").map((l) => `+${l}`),
       ]);
-      view.added = view.diff.filter((l) => l.startsWith("+")).length;
-      view.removed = view.diff.filter((l) => l.startsWith("-")).length;
+      view.diff = diff;
+      view.added = diff.filter((l) => l.startsWith("+")).length;
+      view.removed = diff.filter((l) => l.startsWith("-")).length;
       view.detail = `+${view.added} −${view.removed}`;
       break;
     }
@@ -405,7 +435,7 @@ export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">
       view.file = input.file_path;
       view.desc = `Write ${baseName(input.file_path)}`;
       view.diff = (input.content ?? "").split("\n").map((l: string) => `+${l}`);
-      view.added = view.diff.length;
+      view.added = lineCount(input.content);
       view.removed = 0;
       view.detail = `+${view.added}`;
       break;
@@ -435,6 +465,27 @@ export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">
       view.desc = input.description ?? "";
       view.output = contentText(out) || (typeof out === "string" ? out : "");
       break;
+    case "ToolSearch": {
+      // Claude Code loads tools it was told about only by name.
+      const query: string = input.query ?? "";
+      const names = query.startsWith("select:") ? query.slice(7).split(",").filter(Boolean) : [];
+      view.desc = names.length ? `Load ${names.map((n) => (n.startsWith("mcp__") ? displayName(n.trim()) : n.trim())).join(", ")}` : `Find tools for “${query}”`;
+      if (Array.isArray(out.matches)) view.output = out.matches.join("\n");
+      break;
+    }
+    case "AskUserQuestion": {
+      const questions: { question?: string }[] = input.questions ?? [];
+      const answers: Record<string, string> = out.answers ?? {};
+      view.desc = questions.length === 1 ? (questions[0]?.question ?? "") : `Ask ${questions.length} questions`;
+      const given = questions.map((q) => answers[q.question ?? ""]).filter(Boolean);
+      if (given.length) view.detail = given.join(", ");
+      view.output = questions.map((q) => `${q.question ?? ""}\n› ${answers[q.question ?? ""] ?? "no answer"}`).join("\n\n");
+      break;
+    }
+    case "ExitPlanMode":
+      view.desc = "Share a plan";
+      view.output = input.plan ?? "";
+      break;
     case "TodoWrite":
       view.desc = "Update the to-do list";
       view.output = (input.todos ?? [])
@@ -454,7 +505,16 @@ export function displayName(tool: string): string {
   if (tool.startsWith(SANDHILL)) return tool.slice(SANDHILL.length);
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
   if (mcp) return `${mcp[1]} · ${mcp[2]}`;
-  const names: Record<string, string> = { WebSearch: "web_search", WebFetch: "web_fetch", TodoWrite: "todo", MultiEdit: "edit", NotebookEdit: "edit_notebook" };
+  const names: Record<string, string> = {
+    WebSearch: "web_search",
+    WebFetch: "web_fetch",
+    TodoWrite: "todo",
+    MultiEdit: "edit",
+    NotebookEdit: "edit_notebook",
+    ToolSearch: "tools",
+    AskUserQuestion: "question",
+    ExitPlanMode: "plan",
+  };
   return names[tool] ?? tool.toLowerCase();
 }
 
@@ -500,8 +560,8 @@ export interface Question {
   options: { label: string; description?: string }[];
 }
 
-export function askView(ask: Ask): AskView {
-  const view = stepView({ tool: ask.tool, input: ask.input });
+export function askView(ask: Ask, linked?: string): AskView {
+  const view = stepView({ tool: ask.tool, input: ask.input }, linked);
   const input = ask.input ?? {};
   if (ask.tool === "AskUserQuestion") {
     return { title: "Claude has a question", view, questions: input.questions ?? [] };
@@ -511,9 +571,14 @@ export function askView(ask: Ask): AskView {
   }
   switch (view.name) {
     case "add_cell":
-      return { title: `Add a cell to ${view.file ?? "the document"}?`, file: view.file, detail: input.after ? `Below ${input.after}, then run it` : "Below your active cell, then run it", view };
+      return {
+        title: `Add a cell to ${view.file ?? "the document"}?`,
+        file: view.file,
+        detail: `${input.after ? `Below ${input.after}` : "Below your active cell"}${input.run === false ? "" : ", then run it"}`,
+        view,
+      };
     case "edit_cell":
-      return { title: `Change ${input.cell_id ?? "a cell"} in ${view.file ?? "the document"}?`, file: view.file, detail: "Then run it", view };
+      return { title: `Change ${input.cell ?? "a cell"} in ${view.file ?? "the document"}?`, file: view.file, detail: input.run === false ? undefined : "Then run it", view };
     case "run_code":
       return { title: `Run this ${view.language ? `${languageName(view.language)} ` : ""}code in your session?`, view };
     case "bash":

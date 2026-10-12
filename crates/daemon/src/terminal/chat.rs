@@ -13,9 +13,11 @@
 //!   of one message come in `index` order; the last can follow `stop`.
 //! - `step {turn, id, tool, input}`, then `step_done {turn, id, output, ms}`
 //!   or `step_failed {turn, id, error, interrupted}`.
-//! - `ask {turn, id, tool, input}`: the agent waits for the user's
-//!   permission (or answers, for a question) until an `answered {id,
+//! - `ask {turn, id, tool, input, remember?}`: the agent waits for the
+//!   user's permission (or answers, for a question) until an `answered {id,
 //!   answer}` entry. `answer` is null when the agent stopped waiting.
+//!   `remember` lists what allowing it for the chat or the project would
+//!   allow from then on (`Bash(npm test:*)`, `files in /data`).
 //! - `stop {turn}`: the agent finished its turn.
 //! - `session {source, model?}`: the agent's session started, resumed,
 //!   was cleared or compacted.
@@ -150,10 +152,46 @@ pub fn claude_ask(input: &Value, id: &str, at_ms: i64) -> Value {
         "input": shorten(&input["tool_input"]),
         "at_ms": at_ms,
     });
+    let remember: Vec<String> = input["permission_suggestions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(suggestion_text)
+        .collect();
+    if !remember.is_empty() {
+        event["remember"] = json!(remember);
+    }
     if let Some(map) = event.as_object_mut() {
         map.retain(|_, v| !v.is_null());
     }
     event
+}
+
+/// What a permission rule Claude Code suggests allows, in words.
+fn suggestion_text(suggestion: &Value) -> Vec<String> {
+    let list =
+        |key: &str| -> Vec<&Value> { suggestion[key].as_array().into_iter().flatten().collect() };
+    match suggestion["type"].as_str() {
+        Some("addRules") | Some("replaceRules") => list("rules")
+            .into_iter()
+            .filter_map(|rule| {
+                let tool = rule["toolName"].as_str()?;
+                Some(match rule["ruleContent"].as_str() {
+                    Some(content) => format!("{tool}({content})"),
+                    None => tool.to_string(),
+                })
+            })
+            .collect(),
+        Some("addDirectories") => list("directories")
+            .into_iter()
+            .filter_map(|d| d.as_str().map(|d| format!("files in {d}")))
+            .collect(),
+        Some("setMode") => suggestion["mode"]
+            .as_str()
+            .map(|m| vec![format!("the {m} mode")])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// Claude Code's answer to its `PermissionRequest` hook, from the user's
@@ -305,6 +343,14 @@ mod tests {
         assert_eq!(ask["kind"], "ask");
         assert_eq!(ask["tool"], "Bash");
         assert_eq!(ask["id"], "a1");
+        assert_eq!(ask["remember"], json!(["files in /data/pbmc-atlas"]));
+        let rules = json!({"permission_suggestions": [{"type": "addRules", "rules": [
+            {"toolName": "Bash", "ruleContent": "npm test:*"}, {"toolName": "mcp__sandhill__add_cell"}
+        ]}]});
+        assert_eq!(
+            claude_ask(&rules, "a2", 5)["remember"],
+            json!(["Bash(npm test:*)", "mcp__sandhill__add_cell"])
+        );
 
         let decision = |answer: Value| {
             claude_decision(&request, &answer)["hookSpecificOutput"]["decision"].clone()

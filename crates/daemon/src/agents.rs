@@ -201,6 +201,7 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
         Some("edits") => Some("acceptEdits"),
         Some("auto") if help.contains("\"auto\"") => Some("auto"),
         Some("full") => Some("bypassPermissions"),
+        Some("plan") => Some("plan"),
         _ => None,
     };
     if let Some(mode) = mode

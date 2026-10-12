@@ -480,7 +480,11 @@ impl Daemon {
             } => {
                 let path = windows::normalize(&files::resolve(&file)?);
                 let file = path.to_string_lossy().into_owned();
-                let params = json!({"file": file, "code": code, "language": language, "after": after, "run": run});
+                let mut params = json!({"file": file, "code": code, "language": language, "after": after, "run": run});
+                // Left out, not null: no `after` means after the last cell.
+                if let Some(map) = params.as_object_mut() {
+                    map.retain(|_, v| !v.is_null());
+                }
                 let edited = match self.ask_window(&path, project, "add_cell", params).await? {
                     Some(edited) => edited,
                     None => {

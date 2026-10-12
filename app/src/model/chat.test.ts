@@ -122,6 +122,16 @@ describe("stepView", () => {
     expect(add.diff?.every((l) => l.startsWith("+"))).toBe(true);
     expect(add.output).toBeTruthy();
     expect(stepView(steps[0]!).desc).toBe("See where you are");
+    // An edit has only the new code, so it shows as code, not as a diff.
+    const edit = stepView({ tool: "mcp__sandhill__edit_cell", input: { cell: "chunk-4", code: "a\nb" } }, "analysis.qmd");
+    expect(edit).toMatchObject({ desc: "Change chunk-4 in analysis.qmd", detail: "2 lines", code: "a\nb" });
+    expect(edit.diff).toBeUndefined();
+  });
+
+  it("shows a question with its answer", () => {
+    const question = { question: "Which plot?", header: "Plot", multiSelect: false, options: [{ label: "Bar" }, { label: "Scatter" }] };
+    const view = stepView({ tool: "AskUserQuestion", input: { questions: [question] }, output: { questions: [question], answers: { "Which plot?": "Scatter" } } });
+    expect(view).toMatchObject({ name: "question", desc: "Which plot?", detail: "Scatter", output: "Which plot?\n› Scatter" });
   });
 
   it("describes Claude Code's own tools", () => {

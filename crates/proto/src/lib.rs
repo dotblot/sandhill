@@ -636,7 +636,8 @@ pub struct AgentOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
     /// `supervised` (ask before commands and edits), `edits` (accept edits),
-    /// `auto` or `full`.
+    /// `auto`, `full`, or `plan` (Claude Code: plans first and asks before
+    /// carrying the plan out).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<String>,
     /// Documents the session is about, named to the agent at start.
