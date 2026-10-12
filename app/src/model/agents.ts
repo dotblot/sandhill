@@ -36,7 +36,8 @@ export const AGENT_KINDS: AgentKind[] = [
       { id: "haiku", label: "Haiku" },
     ],
     efforts: ["low", "medium", "high", "xhigh", "max"],
-    recommended: "high",
+    // What Claude Code 2.1 reports in its status line when none is given.
+    recommended: "medium",
     placeholder: "Ask Claude…",
   },
   {

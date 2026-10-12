@@ -200,6 +200,11 @@ fn suggestion_text(suggestion: &Value) -> Vec<String> {
 pub fn claude_decision(input: &Value, answer: &Value) -> Value {
     let decision = if answer["behavior"] == "allow" {
         let mut decision = json!({"behavior": "allow"});
+        // Claude Code takes a plan as approved only with `updatedInput`;
+        // otherwise it still asks in the terminal.
+        if input["tool_name"] == "ExitPlanMode" {
+            decision["updatedInput"] = input["tool_input"].clone();
+        }
         if let Some(answers) = answer["answers"].as_object() {
             // A question: its answers go with the tool's input.
             let mut updated = input["tool_input"].clone();
@@ -244,7 +249,16 @@ fn shorten(value: &Value) -> Value {
         Value::String(text) if text.len() > MAX_TEXT => Value::String(shorten_text(text)),
         Value::Array(items) => Value::Array(items.iter().map(shorten).collect()),
         Value::Object(map) => {
-            let image = map.get("type").and_then(Value::as_str) == Some("image");
+            // MCP's `{type: "image", data}`, or the API's `{type: "image",
+            // source: {type: "base64", media_type, data}}` that hooks get.
+            let image = match map.get("type").and_then(Value::as_str) {
+                Some("image") => true,
+                Some("base64") => map
+                    .get("media_type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| t.starts_with("image/")),
+                _ => false,
+            };
             Value::Object(
                 map.iter()
                     .map(|(key, value)| {
@@ -388,18 +402,39 @@ mod tests {
     }
 
     #[test]
+    fn plans_are_approved_with_the_input() {
+        let request = json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "ExitPlanMode",
+            "tool_input": {"plan": "1. Add the cell."},
+        });
+        let allow = json!({"behavior": "allow", "scope": "once"});
+        let decision = &claude_decision(&request, &allow)["hookSpecificOutput"]["decision"];
+        assert_eq!(decision["updatedInput"]["plan"], "1. Add the cell.");
+        // Other tools are allowed as they are.
+        let request = json!({"tool_name": "Bash", "tool_input": {"command": "ls"}});
+        let decision = &claude_decision(&request, &allow)["hookSpecificOutput"]["decision"];
+        assert!(decision.get("updatedInput").is_none());
+    }
+
+    #[test]
     fn long_output_is_shortened_but_images_are_kept() {
         let long = "line\n".repeat(20_000);
         let image = "A".repeat(100_000);
         let value = json!({
             "stdout": long,
-            "content": [{"type": "image", "data": image, "mimeType": "image/png"}],
+            "content": [
+                {"type": "image", "data": image, "mimeType": "image/png"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image}},
+            ],
         });
         let short = shorten(&value);
         let stdout = short["stdout"].as_str().unwrap();
         assert!(stdout.len() < MAX_TEXT + 100);
         assert!(stdout.contains("more lines"));
         assert_eq!(short["content"][0]["data"].as_str().unwrap().len(), 100_000);
+        let source = &short["content"][1]["source"]["data"];
+        assert_eq!(source.as_str().unwrap().len(), 100_000);
     }
 
     #[test]

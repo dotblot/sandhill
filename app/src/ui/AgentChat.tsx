@@ -301,9 +301,24 @@ function Description(props: { text: string; file?: string; onOpen: (path: string
         {(p) => (
           <>
             {p()[0]}
-            <button class="flink" title={`Open ${props.file}`} onClick={() => props.onOpen(props.file!)}>
+            {/* A span, not a button, so a long name is cut with an ellipsis rather than dropped whole. */}
+            <span
+              class="flink"
+              role="link"
+              tabindex="0"
+              title={`Open ${props.file}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onOpen(props.file!);
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.stopPropagation();
+                props.onOpen(props.file!);
+              }}
+            >
               {p()[1]}
-            </button>
+            </span>
             {p()[2]}
           </>
         )}

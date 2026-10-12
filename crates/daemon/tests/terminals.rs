@@ -377,19 +377,27 @@ async fn agents_started_by_an_older_build_are_marked() {
 }
 
 /// Reads entries of the agent's conversation until one of `kind` arrives.
+/// Collects a terminal's conversation until an entry of `kind` comes, and
+/// its output meanwhile: the two arrive in either order.
 async fn chat_until(
     events: &mut mpsc::UnboundedReceiver<ServerMessage>,
     entries: &mut Vec<sandhill_proto::ChatEntry>,
+    output: &mut Vec<u8>,
     kind: &str,
 ) {
+    let engine = base64::engine::general_purpose::STANDARD;
     while !entries.iter().any(|e| e.event["kind"] == kind) {
         let message = tokio::time::timeout(TIMEOUT, events.recv())
             .await
             .unwrap_or_else(|_| panic!("timed out waiting for {kind}; got {entries:?}"))
             .expect("stream ended");
-        if let ServerMessage::Terminal { terminal } = message
-            && let Some(entry) = terminal.chat
-        {
+        let ServerMessage::Terminal { terminal } = message else {
+            continue;
+        };
+        if let Some(data) = terminal.data {
+            output.extend(engine.decode(data).unwrap());
+        }
+        if let Some(entry) = terminal.chat {
             entries.push(entry);
         }
     }
@@ -419,7 +427,8 @@ async fn an_agents_conversation_is_kept_and_its_questions_answered() {
             .forward(out),
     );
     let mut entries = Vec::new();
-    chat_until(&mut events, &mut entries, "ask").await;
+    let mut output = Vec::new();
+    chat_until(&mut events, &mut entries, &mut output, "ask").await;
     let ask = entries.last().unwrap().event.clone();
     assert_eq!(ask["tool"], "Bash");
     // The agent waits for the user.
@@ -434,8 +443,7 @@ async fn an_agents_conversation_is_kept_and_its_questions_answered() {
         )
         .await
         .unwrap();
-    chat_until(&mut events, &mut entries, "stop").await;
-    let mut output = Vec::new();
+    chat_until(&mut events, &mut entries, &mut output, "stop").await;
     read_until(&mut events, &mut output, "done").await;
     let kinds: Vec<&str> = entries
         .iter()
@@ -477,7 +485,7 @@ async fn an_agents_conversation_is_kept_and_its_questions_answered() {
             .forward(out),
     );
     let mut later = Vec::new();
-    chat_until(&mut events, &mut later, "stop").await;
+    chat_until(&mut events, &mut later, &mut Vec::new(), "stop").await;
     assert_eq!(later.first().unwrap().seq, 6);
     assert_eq!(later.len(), 4);
 
@@ -501,7 +509,7 @@ async fn an_agents_conversation_is_kept_and_its_questions_answered() {
             .forward(out),
     );
     let mut ended = Vec::new();
-    chat_until(&mut events, &mut ended, "stop").await;
+    chat_until(&mut events, &mut ended, &mut Vec::new(), "stop").await;
     assert_eq!(ended.len(), 10);
     terminals.close(&info.id).await.unwrap();
 }

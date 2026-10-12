@@ -155,6 +155,18 @@ describe("stepView", () => {
   it("finds images in a tool's result", () => {
     const view = stepView({ tool: "mcp__sandhill__run_code", input: { code: "plot(1)" }, output: [{ type: "text", text: "Ran in R session 1 · ok · 0.2 s" }, { type: "image", data: "AAA", mimeType: "image/png" }] });
     expect(view.images).toEqual(["data:image/png;base64,AAA"]);
+    // As Claude Code's hooks get it, with where it saved the image.
+    const hooked = stepView({
+      tool: "mcp__sandhill__add_cell",
+      input: { code: "plot(1)" },
+      output: [
+        { type: "text", text: "Added R cell chunk-4 to analysis.qmd below cell chunk-3, and Sandhill ran it · ok · 0.4 s\n[plot 1]\n" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "BBB" } },
+        { type: "text", text: "[Image: source: /home/u/.claude/projects/p/1/tool-results/mcp-sandhill-blob-1.png]" },
+      ],
+    });
+    expect(hooked.images).toEqual(["data:image/png;base64,BBB"]);
+    expect(hooked.output).not.toContain("Image: source");
     expect(view.detail).toBe("R · 0.2 s");
   });
 });

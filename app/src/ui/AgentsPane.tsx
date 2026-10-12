@@ -411,8 +411,10 @@ export function AgentsPane(props: {
                 <button
                   class="mm-i"
                   onClick={() => {
+                    // Read before closing the menu, which unmounts `t`.
+                    const shown = t().id;
                     setGear(false);
-                    setTermShown((ids) => (ids.includes(t().id) ? ids.filter((id) => id !== t().id) : [...ids, t().id]));
+                    setTermShown((ids) => (ids.includes(shown) ? ids.filter((id) => id !== shown) : [...ids, shown]));
                   }}
                 >
                   <Icon name={chatMode(t()) ? "command" : "chat"} small />
@@ -423,8 +425,9 @@ export function AgentsPane(props: {
                 <button
                   class="mm-i"
                   onClick={() => {
+                    const term = t();
                     setGear(false);
-                    command(t(), "/compact");
+                    command(term, "/compact");
                   }}
                 >
                   <Icon name="restart" small />

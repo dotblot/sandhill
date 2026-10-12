@@ -287,22 +287,31 @@ function errorText(error: any): string {
 export function contentText(value: any): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
-    return value
-      .filter((c) => c?.type === "text" && typeof c.text === "string")
-      .map((c) => c.text)
-      .join("\n");
+    return (
+      value
+        // Claude Code adds where it saved each image: "[Image: source: /…/tool-results/….png]".
+        .filter((c) => c?.type === "text" && typeof c.text === "string" && !/^\[Image: source: [^\]]+\]$/.test(c.text))
+        .map((c) => c.text)
+        .join("\n")
+    );
   }
   if (value && typeof value === "object" && Array.isArray(value.content)) return contentText(value.content);
   return "";
 }
 
-/** Images in an MCP tool's result, as data URLs. */
+/** Images in a tool's result, as data URLs: MCP's `{type: "image", data, mimeType}`, or the
+ * `{type: "image", source: {data, media_type}}` Claude Code's hooks get. */
 // biome-ignore lint: free-form JSON
 export function contentImages(value: any): string[] {
-  const items = Array.isArray(value) ? value : Array.isArray(value?.content) ? value.content : [];
-  return items
-    .filter((c: { type?: string; data?: string }) => c?.type === "image" && typeof c.data === "string")
-    .map((c: { data: string; mimeType?: string }) => `data:${c.mimeType ?? "image/png"};base64,${c.data}`);
+  const items: unknown[] = Array.isArray(value) ? value : Array.isArray(value?.content) ? value.content : [];
+  return items.flatMap((c) => {
+    // biome-ignore lint: free-form JSON
+    const item = c as any;
+    if (item?.type !== "image") return [];
+    const data = item.data ?? item.source?.data;
+    const type = item.mimeType ?? item.source?.media_type ?? "image/png";
+    return typeof data === "string" ? [`data:${type};base64,${data}`] : [];
+  });
 }
 
 /** How a step's row and card show it. */
