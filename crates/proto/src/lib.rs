@@ -192,6 +192,9 @@ pub enum Call {
         /// For agents: model, effort, permissions and documents.
         #[serde(default, skip_serializing_if = "AgentOptions::is_empty")]
         options: AgentOptions,
+        /// For agents: the first message, which the agent answers as it starts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
     },
     /// Every terminal, including those whose program has ended, oldest
     /// first. Returns `Vec<TerminalInfo>`.
@@ -203,6 +206,18 @@ pub enum Call {
         terminal: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from: Option<u64>,
+        /// Also send the agent's conversation, from this entry on (see
+        /// [`ChatEntry`]). Without it, no conversation is sent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        chat_from: Option<u64>,
+    },
+    /// Answers what an agent asked in its conversation (an `ask` entry):
+    /// `{behavior: "allow" | "deny", scope?: "once" | "chat" | "project",
+    /// answers?: {question: answer}}`.
+    AnswerTerminal {
+        terminal: String,
+        id: String,
+        answer: Value,
     },
     UnsubscribeTerminal {
         terminal: String,
@@ -698,8 +713,22 @@ pub struct TerminalEvent {
     /// effort, rate_limits...}}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<Value>,
+    /// An entry of the agent's conversation, for subscriptions that asked
+    /// for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<ChatEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<TerminalExit>,
+}
+
+/// One entry of an agent's conversation, as its hooks reported it. `seq`
+/// counts from 0 per terminal. `event` has a `kind`: `prompt`, `text`,
+/// `step`, `step_done`, `step_failed`, `ask`, `answered`, `stop` or
+/// `session` (see `docs/protocol.md`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatEntry {
+    pub seq: u64,
+    pub event: Value,
 }
 
 /// Outputs of the latest run of each cell of one file.

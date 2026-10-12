@@ -490,6 +490,7 @@ async fn agents_write_into_the_document_their_conversation_is_about() {
                 documents: vec!["qc.ipynb".into()],
                 ..AgentOptions::default()
             },
+            prompt: None,
         })
         .await
         .unwrap();

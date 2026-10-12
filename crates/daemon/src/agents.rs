@@ -57,6 +57,8 @@ pub struct Context<'a> {
     pub socket: &'a Path,
     pub project: Option<&'a str>,
     pub cwd: &'a Path,
+    /// The first message, given to the CLI as its prompt.
+    pub prompt: Option<&'a str>,
 }
 
 /// The agents and whether this machine has their CLIs.
@@ -114,6 +116,7 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         CLAUDE => claude_args(options, context, &help),
         _ => codex_args(options, context, &help),
     };
+
     // An npm-installed CLI runs under `node` from the same folder, which may
     // not be on the daemon's PATH (as on a server reached over ssh).
     if let Some(dir) = program.parent() {
@@ -143,10 +146,11 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
     }
     let mcp =
         json!({"mcpServers": {"sandhill": {"type": "stdio", "command": exe, "args": mcp_args}}});
-    let hook = |what: &str| json!([{"hooks": [{"type": "command", "command": format!("{} terminal-event {what}", shell_quote(&exe))}]}]);
-    // Adds where the user is to each prompt.
-    let prompt = format!(
-        "{} --socket {} terminal-event prompt{}",
+    // One command for every hook: it reports the agent's state, keeps its
+    // conversation for the chat, adds where the user is to each prompt, and
+    // asks the user in the app for permissions.
+    let command = format!(
+        "{} --socket {} terminal-event hook{}",
         shell_quote(&exe),
         shell_quote(&context.socket.to_string_lossy()),
         context
@@ -154,14 +158,25 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
             .map(|p| format!(" {}", shell_quote(p)))
             .unwrap_or_default()
     );
-    let tool_hook = json!([{"matcher": "*", "hooks": [{"type": "command", "command": format!("{} terminal-event state busy", shell_quote(&exe))}]}]);
+    let hook = json!([{"hooks": [{"type": "command", "command": command}]}]);
+    let tool_hook = json!([{"matcher": "*", "hooks": [{"type": "command", "command": command}]}]);
+    // A permission waits for the user, who may be away for a while.
+    let ask_hook = json!([{"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": ASK_TIMEOUT_S}]}]);
     let settings = json!({
         "hooks": {
-            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": prompt}]}],
+            "SessionStart": hook,
+            "UserPromptSubmit": hook,
+            "MessageDisplay": hook,
+            "PreToolUse": tool_hook,
             "PostToolUse": tool_hook,
-            "Stop": hook("state idle"),
-            "Notification": hook("notification"),
+            "PostToolUseFailure": tool_hook,
+            "PermissionRequest": ask_hook,
+            "Notification": hook,
+            "Stop": hook,
         },
+        // Sandhill's tools that only look, like Claude Code's own Read and
+        // Grep, don't ask first.
+        "permissions": {"allow": crate::mcp::read_only_tools().iter().map(|t| format!("mcp__sandhill__{t}")).collect::<Vec<_>>()},
         "statusLine": {"type": "command", "command": format!("{} terminal-event status", shell_quote(&exe)), "padding": 0},
     });
     let mut args = vec!["--mcp-config".to_string(), mcp.to_string()];
@@ -193,6 +208,7 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
     {
         args.extend(["--permission-mode".into(), mode.into()]);
     }
+    push_prompt(&mut args, context);
     args
 }
 
@@ -245,8 +261,20 @@ fn codex_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<
         Some("full") => args.push("--dangerously-bypass-approvals-and-sandbox".into()),
         _ => {}
     }
+    push_prompt(&mut args, context);
     args
 }
+
+/// The first message, after `--` so one starting with a dash isn't taken for a flag.
+fn push_prompt(args: &mut Vec<String>, context: &Context<'_>) {
+    if let Some(prompt) = context.prompt.filter(|p| !p.trim().is_empty()) {
+        args.extend(["--".into(), prompt.into()]);
+    }
+}
+
+/// How long, in seconds, Claude Code waits for the user to answer a
+/// permission request in the app before asking in its terminal.
+const ASK_TIMEOUT_S: u64 = 24 * 60 * 60;
 
 /// What an agent is told about Sandhill when it starts.
 fn instructions(options: &AgentOptions) -> String {
@@ -410,7 +438,21 @@ mod tests {
             socket: Path::new("/state/sandhilld.sock"),
             project: Some("/data/pbmc"),
             cwd: Path::new("/data/pbmc"),
+            prompt: None,
         }
+    }
+
+    #[test]
+    fn the_first_message_comes_last() {
+        let context = Context {
+            prompt: Some("-v is what?"),
+            ..context()
+        };
+        let help = "--mcp-config --settings";
+        let args = claude_args(&AgentOptions::default(), &context, help);
+        assert_eq!(args[args.len() - 2..], ["--", "-v is what?"]);
+        let args = codex_args(&AgentOptions::default(), &context, "");
+        assert_eq!(args[args.len() - 2..], ["--", "-v is what?"]);
     }
 
     #[test]
@@ -439,14 +481,20 @@ mod tests {
             ])
         );
         let settings: serde_json::Value = serde_json::from_str(&args[3]).unwrap();
+        // Every hook runs the same command, which can ask the daemon where
+        // the user is in the project.
+        let command = r"'/opt/it'\''s/sandhilld' --socket '/state/sandhilld.sock' terminal-event hook '/data/pbmc'";
+        for event in ["UserPromptSubmit", "Stop", "MessageDisplay", "PreToolUse"] {
+            assert_eq!(settings["hooks"][event][0]["hooks"][0]["command"], command);
+        }
+        assert_eq!(settings["hooks"]["PreToolUse"][0]["matcher"], "*");
         assert_eq!(
-            settings["hooks"]["Stop"][0]["hooks"][0]["command"],
-            r"'/opt/it'\''s/sandhilld' terminal-event state idle"
+            settings["permissions"]["allow"][2],
+            "mcp__sandhill__get_focus"
         );
-        // The prompt hook asks the daemon where the user is in the project.
         assert_eq!(
-            settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-            r"'/opt/it'\''s/sandhilld' --socket '/state/sandhilld.sock' terminal-event prompt '/data/pbmc'"
+            settings["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+            ASK_TIMEOUT_S
         );
         assert!(args[5].contains("analysis.qmd"));
         assert!(args[5].contains("add_cell"));

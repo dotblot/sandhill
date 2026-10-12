@@ -16,12 +16,20 @@
 //!   context use and plan limits. Prints the user's own status line, if
 //!   they set one up, since this one takes its place.
 //! - `codex`: Codex's `notify` program, run when a turn ends.
+//! - `hook [project]`: every Claude Code hook of sessions started since
+//!   the agent's conversation is kept: does what `state`, `prompt` and
+//!   `notification` do, and adds the event to the conversation
+//!   ([`super::chat`]). A permission request waits for the user's answer
+//!   from the app; when the terminal goes away first, Claude Code asks in
+//!   its own terminal instead.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+
+use super::chat;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -92,7 +100,82 @@ pub async fn run(args: &[String], socket: &Path) -> Result<()> {
             // only kind Codex sends.
             send(terminal.as_deref(), json!({"state": "idle"})).await
         }
+        "hook" => match terminal {
+            Some(terminal) => hook(&terminal, args.get(1).cloned(), socket).await,
+            None => Ok(()),
+        },
         _ => bail!("unknown event {what:?}"),
+    }
+}
+
+/// One of Claude Code's hooks (`hook_event_name` on stdin).
+async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result<()> {
+    let at_ms = crate::journal::now_ms();
+    let input = read_stdin().await;
+    let state = |state: &str| send(Some(terminal), with_mode(json!({"state": state}), &input));
+    match input["hook_event_name"].as_str().unwrap_or("") {
+        "UserPromptSubmit" => {
+            let id = terminal
+                .file_name()
+                .map(|id| id.to_string_lossy().into_owned());
+            let tools = crate::mcp::Tools::new(socket.to_path_buf(), project).with_terminal(id);
+            let place = tokio::time::timeout(CONTEXT_TIMEOUT, tools.prompt_place());
+            let (reported, place) = tokio::join!(state("busy"), place);
+            let (context, place) = place.ok().flatten().unzip();
+            if let Some(context) = context {
+                println!("{context}");
+            }
+            add_chat(terminal, chat::from_claude(&input, at_ms, place)).await;
+            reported
+        }
+        "PermissionRequest" => {
+            let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+            let tool = input["tool_name"].as_str().unwrap_or("a tool");
+            let waiting =
+                json!({"state": "waiting", "message": format!("Claude asks to use {tool}")});
+            let _ = send(Some(terminal), with_mode(waiting, &input)).await;
+            let ask = chat::claude_ask(&input, &id, at_ms);
+            // No answer (the terminal went away): print nothing, and Claude
+            // Code asks in its own terminal.
+            if let Ok(Some(answer)) = super::ask(terminal, &id, ask).await {
+                println!("{}", chat::claude_decision(&input, &answer));
+                let _ = state("busy").await;
+            }
+            Ok(())
+        }
+        "Notification" => {
+            let state = match input["notification_type"].as_str() {
+                Some("idle_prompt") => "idle",
+                _ => "waiting",
+            };
+            let report = json!({"state": state, "message": input["message"]});
+            send(Some(terminal), with_mode(report, &input)).await
+        }
+        "Stop" => {
+            let (reported, ()) = tokio::join!(
+                state("idle"),
+                add_chat(terminal, chat::from_claude(&input, at_ms, None))
+            );
+            reported
+        }
+        "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => {
+            let (reported, ()) = tokio::join!(
+                state("busy"),
+                add_chat(terminal, chat::from_claude(&input, at_ms, None))
+            );
+            reported
+        }
+        _ => {
+            add_chat(terminal, chat::from_claude(&input, at_ms, None)).await;
+            Ok(())
+        }
+    }
+}
+
+/// Adds an entry to the conversation, if the hook made one.
+async fn add_chat(terminal: &Path, event: Option<Value>) {
+    if let Some(event) = event {
+        let _ = tokio::time::timeout(REPORT_TIMEOUT, super::add_chat(terminal, event)).await;
     }
 }
 

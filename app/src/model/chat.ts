@@ -1,0 +1,532 @@
+// An agent's conversation as the chat pane shows it. The daemon keeps what
+// the agent's hooks report (crates/daemon/src/terminal/chat.rs): the user's
+// messages, the parts of each reply, each step with its result, and what the
+// agent asks the user. Here that becomes a list of items: your messages,
+// replies, one row per step, cards for what waits on you, and a footer after
+// each turn.
+
+export interface Place {
+  file: string;
+  cell?: string;
+  line?: number;
+}
+
+/** What the user answers to an `ask`: allow (once, for the chat or the project), or deny. */
+export interface Answer {
+  behavior: "allow" | "deny";
+  scope?: "once" | "chat" | "project";
+  /** For a question: each question's answer. */
+  answers?: Record<string, string>;
+  message?: string;
+}
+
+export interface ChatEvent {
+  kind: string;
+  turn?: string;
+  at_ms?: number;
+  text?: string;
+  place?: Place;
+  message?: string;
+  index?: number;
+  final?: boolean;
+  id?: string;
+  tool?: string;
+  // Tools' inputs and outputs are whatever the agent's tools take and give.
+  // biome-ignore lint: free-form JSON
+  input?: any;
+  // biome-ignore lint: free-form JSON
+  output?: any;
+  // biome-ignore lint: free-form JSON
+  error?: any;
+  interrupted?: boolean;
+  ms?: number;
+  answer?: Answer | null;
+  source?: string;
+  model?: string;
+}
+
+export interface ChatEntry {
+  seq: number;
+  event: ChatEvent;
+}
+
+/** A request waiting for the user (or answered). `answer` is undefined while it waits, null if the agent stopped waiting. */
+export interface Ask {
+  id: string;
+  tool: string;
+  // biome-ignore lint: free-form JSON
+  input: any;
+  answer?: Answer | null;
+}
+
+export type StepStatus = "run" | "wait" | "done" | "fail" | "deny" | "cancel";
+
+export interface Step {
+  kind: "step";
+  key: string;
+  id: string;
+  tool: string;
+  // biome-ignore lint: free-form JSON
+  input: any;
+  // biome-ignore lint: free-form JSON
+  output?: any;
+  error?: string;
+  ms?: number;
+  status: StepStatus;
+  ask?: Ask;
+}
+
+export type ChatItem =
+  | { kind: "user"; key: string; text: string; place?: Place }
+  | { kind: "reply"; key: string; text: string }
+  | Step
+  /** A request with no step to show it on. */
+  | { kind: "ask"; key: string; ask: Ask }
+  | { kind: "footer"; key: string; at_ms?: number; ms?: number; text: string }
+  | { kind: "note"; key: string; text: string }
+  | { kind: "thinking"; key: string };
+
+export interface Chat {
+  items: ChatItem[];
+  /** Requests waiting for the user, oldest first. */
+  waiting: Ask[];
+  /** The first message, as a title. */
+  title?: string;
+}
+
+interface Turn {
+  id: string;
+  prompt?: ChatEvent;
+  events: ChatEntry[];
+  stop?: ChatEvent;
+}
+
+/**
+ * The chat from the conversation's entries. `working` is whether the agent
+ * says it is busy: a turn the agent was stopped in has no `stop` entry.
+ */
+export function buildChat(entries: ChatEntry[], working: boolean): Chat {
+  const answers = new Map<string, Answer | null>();
+  for (const { event } of entries) {
+    if (event.kind === "answered" && event.id) answers.set(event.id, event.answer ?? null);
+  }
+  // Turns in the order they started, with the notes between them.
+  const order: (Turn | ChatEntry)[] = [];
+  const turns = new Map<string, Turn>();
+  for (const entry of entries) {
+    const { event } = entry;
+    if (event.kind === "answered") continue;
+    if (!event.turn) {
+      if (event.kind === "session") order.push(entry);
+      continue;
+    }
+    let turn = turns.get(event.turn);
+    if (!turn) {
+      turn = { id: event.turn, events: [] };
+      turns.set(event.turn, turn);
+      order.push(turn);
+    }
+    if (event.kind === "prompt") turn.prompt = event;
+    else if (event.kind === "stop") turn.stop = event;
+    else turn.events.push(entry);
+  }
+
+  const items: ChatItem[] = [];
+  const waiting: Ask[] = [];
+  let title: string | undefined;
+  const lastTurn = [...order].reverse().find((t): t is Turn => "events" in t);
+  for (const part of order) {
+    if (!("events" in part)) {
+      const note = sessionNote(part.event);
+      if (note) items.push({ kind: "note", key: `n${part.seq}`, text: note });
+      continue;
+    }
+    const turn = part;
+    // A turn has ended when the agent said so, or when another began, or the agent is idle.
+    const ended = !!turn.stop || turn !== lastTurn || !working;
+    if (turn.prompt?.text !== undefined) {
+      items.push({ kind: "user", key: `u${turn.id}`, text: turn.prompt.text, place: turn.prompt.place });
+      title ??= titleOf(turn.prompt.text);
+    }
+    const steps = new Map<string, Step>();
+    const replies = new Map<string, { item: { kind: "reply"; key: string; text: string }; parts: Map<number, string> }>();
+    const replyTexts: string[] = [];
+    // Hooks run side by side: put things in the order they happened.
+    const events = [...turn.events].sort((a, b) => (a.event.at_ms ?? 0) - (b.event.at_ms ?? 0) || a.seq - b.seq);
+    for (const { seq, event } of events) {
+      switch (event.kind) {
+        case "step": {
+          const id = event.id ?? `s${seq}`;
+          const step: Step = { kind: "step", key: `s${id}`, id, tool: event.tool ?? "", input: event.input ?? {}, status: "run" };
+          steps.set(id, step);
+          items.push(step);
+          break;
+        }
+        case "step_done":
+        case "step_failed": {
+          const id = event.id ?? `s${seq}`;
+          let step = steps.get(id);
+          if (!step) {
+            step = { kind: "step", key: `s${id}`, id, tool: event.tool ?? "", input: {}, status: "run" };
+            steps.set(id, step);
+            items.push(step);
+          }
+          if (event.kind === "step_done") step.output = event.output;
+          else step.error = errorText(event.error) || (event.interrupted ? "Stopped" : "Failed");
+          step.ms = event.ms;
+          break;
+        }
+        case "ask": {
+          const ask: Ask = { id: event.id ?? `a${seq}`, tool: event.tool ?? "", input: event.input ?? {}, answer: answers.get(event.id ?? "") };
+          if (ask.answer === undefined && !ended) waiting.push(ask);
+          // Requests don't name their step: it is the latest one of that tool with the same input.
+          const same = JSON.stringify(ask.input);
+          const step = [...steps.values()]
+            .reverse()
+            .find((s) => s.tool === ask.tool && !s.ask && s.output === undefined && JSON.stringify(s.input) === same);
+          if (step) step.ask = ask;
+          else items.push({ kind: "ask", key: `a${ask.id}`, ask });
+          break;
+        }
+        case "text": {
+          const id = event.message ?? `m${seq}`;
+          let reply = replies.get(id);
+          if (!reply) {
+            reply = { item: { kind: "reply", key: `r${id}`, text: "" }, parts: new Map() };
+            replies.set(id, reply);
+            items.push(reply.item);
+          }
+          reply.parts.set(event.index ?? reply.parts.size, event.text ?? "");
+          reply.item.text = [...reply.parts.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([, text]) => text)
+            .join("");
+          break;
+        }
+      }
+    }
+    for (const step of steps.values()) step.status = stepStatus(step, ended);
+    for (const reply of replies.values()) replyTexts.push(reply.item.text.trim());
+    if (ended) {
+      const start = turn.prompt?.at_ms;
+      const end = turn.stop?.at_ms;
+      items.push({
+        kind: "footer",
+        key: `f${turn.id}`,
+        at_ms: end,
+        ms: start !== undefined && end !== undefined ? end - start : undefined,
+        text: replyTexts.filter(Boolean).join("\n\n"),
+      });
+    } else if (!waiting.length) {
+      items.push({ kind: "thinking", key: `t${turn.id}` });
+    }
+  }
+  return { items, waiting, title };
+}
+
+function stepStatus(step: Step, ended: boolean): StepStatus {
+  if (step.output !== undefined) return "done";
+  if (step.error !== undefined) return "fail";
+  if (step.ask?.answer?.behavior === "deny") return "deny";
+  if (ended) return "cancel";
+  if (step.ask && step.ask.answer === undefined) return "wait";
+  return "run";
+}
+
+function sessionNote(event: ChatEvent): string | undefined {
+  switch (event.source) {
+    case "compact":
+      return "Conversation compacted";
+    case "clear":
+      return "Conversation cleared";
+    case "resume":
+      return "Conversation resumed";
+    default:
+      return undefined;
+  }
+}
+
+function titleOf(text: string): string {
+  const line = text.trim().split("\n")[0] ?? "";
+  return line.length > 60 ? `${line.slice(0, 58).trimEnd()}…` : line;
+}
+
+// biome-ignore lint: free-form JSON
+function errorText(error: any): string {
+  if (error === undefined || error === null) return "";
+  if (typeof error === "string") return error;
+  return contentText(error) || JSON.stringify(error);
+}
+
+/** The text of an MCP tool's result: `[{type: "text", text}, …]`. */
+// biome-ignore lint: free-form JSON
+export function contentText(value: any): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .filter((c) => c?.type === "text" && typeof c.text === "string")
+      .map((c) => c.text)
+      .join("\n");
+  }
+  if (value && typeof value === "object" && Array.isArray(value.content)) return contentText(value.content);
+  return "";
+}
+
+/** Images in an MCP tool's result, as data URLs. */
+// biome-ignore lint: free-form JSON
+export function contentImages(value: any): string[] {
+  const items = Array.isArray(value) ? value : Array.isArray(value?.content) ? value.content : [];
+  return items
+    .filter((c: { type?: string; data?: string }) => c?.type === "image" && typeof c.data === "string")
+    .map((c: { data: string; mimeType?: string }) => `data:${c.mimeType ?? "image/png"};base64,${c.data}`);
+}
+
+/** How a step's row and card show it. */
+export interface StepView {
+  /** In bold code font: `run_code`, `bash`, `read`. */
+  name: string;
+  /** A short plain description. */
+  desc: string;
+  /** A file the description names, which opens on a click. */
+  file?: string;
+  /** On the right: "R · 0.5 s", "lines 1–40 of 120", "+7 −0". */
+  detail?: string;
+  added?: number;
+  removed?: number;
+  code?: string;
+  language?: string;
+  /** Where the code ran, for the card's header. */
+  where?: string;
+  output?: string;
+  images: string[];
+  /** A diff: lines with "+", "-" or " " in front. */
+  diff?: string[];
+}
+
+const SANDHILL = "mcp__sandhill__";
+
+/** What a step did, for its row and its card. */
+export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">): StepView {
+  const input = step.input ?? {};
+  const view: StepView = { name: displayName(step.tool), desc: "", images: contentImages(step.output) };
+  const firstLine = (text: string) => (text ?? "").trim().split("\n")[0] ?? "";
+  if (step.tool.startsWith(SANDHILL)) {
+    const text = contentText(step.output);
+    const [head, ...rest] = text.split("\n");
+    const ran = sandhillRun(head ?? "");
+    switch (view.name) {
+      case "run_code":
+        view.desc = input.description ?? firstLine(input.code);
+        view.code = input.code;
+        view.language = input.language ?? ran.language;
+        view.where = head;
+        view.output = rest.join("\n").trimEnd();
+        view.detail = ran.detail;
+        break;
+      case "add_cell":
+      case "edit_cell": {
+        const file = input.file ?? ran.file;
+        view.file = file;
+        view.desc = view.name === "add_cell" ? `Add a cell to ${file ?? "the document"}` : `Change cell ${input.cell_id ?? ""} in ${file ?? "the document"}`.replace("  ", " ");
+        view.code = input.code;
+        view.language = input.language ?? ran.language;
+        view.where = head;
+        view.output = rest.join("\n").trimEnd();
+        view.added = lineCount(input.code);
+        view.removed = 0;
+        view.diff = (input.code ?? "").split("\n").map((l: string) => `+${l}`);
+        view.detail = ran.detail ?? `+${view.added}`;
+        break;
+      }
+      case "list_variables":
+        view.desc = input.language ? `List the ${languageName(input.language)} session's variables` : "List the session's variables";
+        view.output = text;
+        break;
+      case "list_sessions":
+        view.desc = "List the running sessions";
+        view.output = text;
+        break;
+      case "get_focus":
+        view.desc = "See where you are";
+        view.output = text;
+        break;
+      case "get_outputs":
+        view.desc = input.cell ? `Read the outputs of ${input.cell}` : "Read the outputs";
+        view.file = input.file;
+        view.output = text;
+        break;
+      default:
+        view.desc = "";
+        view.output = text;
+    }
+    return view;
+  }
+  // biome-ignore lint: free-form JSON
+  const out: any = step.output ?? {};
+  switch (step.tool) {
+    case "Bash":
+      view.desc = input.description || firstLine(input.command);
+      view.code = input.command;
+      view.language = "shell";
+      view.output = [out.stdout, out.stderr].filter((s) => typeof s === "string" && s).join("\n");
+      break;
+    case "Read": {
+      view.file = input.file_path;
+      view.desc = baseName(input.file_path);
+      const file = out.file ?? {};
+      if (typeof file.content === "string") {
+        const start = file.startLine ?? 1;
+        view.output = file.content
+          .split("\n")
+          .map((line: string, i: number) => `${String(start + i).padStart(4)}  ${line}`)
+          .join("\n");
+        if (file.numLines !== undefined) {
+          const last = start + file.numLines - 1;
+          view.detail = file.totalLines && file.totalLines > file.numLines ? `lines ${start}–${last} of ${file.totalLines}` : `${file.numLines} lines`;
+        }
+      }
+      break;
+    }
+    case "Edit":
+    case "MultiEdit": {
+      view.file = input.file_path;
+      view.desc = `Edit ${baseName(input.file_path)}`;
+      const edits = step.tool === "Edit" ? [input] : (input.edits ?? []);
+      view.diff = edits.flatMap((e: { old_string?: string; new_string?: string }) => [
+        ...(e.old_string ?? "").split("\n").map((l) => `-${l}`),
+        ...(e.new_string ?? "").split("\n").map((l) => `+${l}`),
+      ]);
+      view.added = view.diff.filter((l) => l.startsWith("+")).length;
+      view.removed = view.diff.filter((l) => l.startsWith("-")).length;
+      view.detail = `+${view.added} −${view.removed}`;
+      break;
+    }
+    case "Write":
+      view.file = input.file_path;
+      view.desc = `Write ${baseName(input.file_path)}`;
+      view.diff = (input.content ?? "").split("\n").map((l: string) => `+${l}`);
+      view.added = view.diff.length;
+      view.removed = 0;
+      view.detail = `+${view.added}`;
+      break;
+    case "NotebookEdit":
+      view.file = input.notebook_path;
+      view.desc = `Edit a cell in ${baseName(input.notebook_path)}`;
+      view.code = input.new_source;
+      break;
+    case "Grep":
+      view.desc = `Search for “${input.pattern ?? ""}”${input.path ? ` in ${baseName(input.path)}` : ""}`;
+      view.output = typeof out.content === "string" ? out.content : (out.filenames ?? []).join("\n");
+      if (typeof out.numFiles === "number") view.detail = `${out.numFiles} ${out.numFiles === 1 ? "file" : "files"}`;
+      break;
+    case "Glob":
+      view.desc = `Find ${input.pattern ?? "files"}`;
+      view.output = (out.filenames ?? []).join("\n");
+      if (typeof out.numFiles === "number") view.detail = `${out.numFiles} ${out.numFiles === 1 ? "file" : "files"}`;
+      break;
+    case "WebSearch":
+      view.desc = input.query ?? "";
+      break;
+    case "WebFetch":
+      view.desc = input.url ?? "";
+      break;
+    case "Task":
+    case "Agent":
+      view.desc = input.description ?? "";
+      view.output = contentText(out) || (typeof out === "string" ? out : "");
+      break;
+    case "TodoWrite":
+      view.desc = "Update the to-do list";
+      view.output = (input.todos ?? [])
+        .map((t: { content?: string; status?: string }) => `${t.status === "completed" ? "✓" : t.status === "in_progress" ? "›" : "○"} ${t.content ?? ""}`)
+        .join("\n");
+      break;
+    default:
+      view.desc = "";
+      if (step.output !== undefined) view.output = contentText(step.output) || JSON.stringify(step.output, null, 1);
+      else if (Object.keys(input).length) view.output = JSON.stringify(input, null, 1);
+  }
+  return view;
+}
+
+/** "run_code" for Sandhill's tools, "bash" or "read" for the agent's own, "github · create_issue" for other servers'. */
+export function displayName(tool: string): string {
+  if (tool.startsWith(SANDHILL)) return tool.slice(SANDHILL.length);
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
+  if (mcp) return `${mcp[1]} · ${mcp[2]}`;
+  const names: Record<string, string> = { WebSearch: "web_search", WebFetch: "web_fetch", TodoWrite: "todo", MultiEdit: "edit", NotebookEdit: "edit_notebook" };
+  return names[tool] ?? tool.toLowerCase();
+}
+
+/** What Sandhill's run tools say first: "Ran in R session 1a2b (R 4.4.1, kernel ark) · idle · in /data · ok · 0.5 s". */
+function sandhillRun(head: string): { language?: string; detail?: string; file?: string } {
+  const language = /\b(R|Python)\b(?: session)?/.exec(head)?.[1];
+  const seconds = /· ([\d.]+ s)\s*$/.exec(head)?.[1];
+  const failed = /· (error|failed)\b/.test(head);
+  const file = /\bto (\S+?) (?:below|after)\b/.exec(head)?.[1] ?? /\bof (\S+\.\w+)\b/.exec(head)?.[1];
+  const parts = [language, failed ? "error" : seconds].filter(Boolean);
+  return { language: language?.toLowerCase(), detail: parts.length ? parts.join(" · ") : undefined, file };
+}
+
+function lineCount(text: string | undefined): number {
+  return text ? text.split("\n").length : 0;
+}
+
+function baseName(path: string | undefined): string {
+  if (!path) return "";
+  return path.split("/").pop() ?? path;
+}
+
+function languageName(language: string): string {
+  return language.toLowerCase() === "r" ? "R" : language.charAt(0).toUpperCase() + language.slice(1);
+}
+
+/** How a request is put to the user. */
+export interface AskView {
+  title: string;
+  /** Under the title: where it goes. */
+  detail?: string;
+  file?: string;
+  view: StepView;
+  questions?: Question[];
+  /** A plan to approve (Claude's plan mode). */
+  plan?: string;
+}
+
+export interface Question {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: { label: string; description?: string }[];
+}
+
+export function askView(ask: Ask): AskView {
+  const view = stepView({ tool: ask.tool, input: ask.input });
+  const input = ask.input ?? {};
+  if (ask.tool === "AskUserQuestion") {
+    return { title: "Claude has a question", view, questions: input.questions ?? [] };
+  }
+  if (ask.tool === "ExitPlanMode") {
+    return { title: "Carry out this plan?", view, plan: input.plan ?? "" };
+  }
+  switch (view.name) {
+    case "add_cell":
+      return { title: `Add a cell to ${view.file ?? "the document"}?`, file: view.file, detail: input.after ? `Below ${input.after}, then run it` : "Below your active cell, then run it", view };
+    case "edit_cell":
+      return { title: `Change ${input.cell_id ?? "a cell"} in ${view.file ?? "the document"}?`, file: view.file, detail: "Then run it", view };
+    case "run_code":
+      return { title: `Run this ${view.language ? `${languageName(view.language)} ` : ""}code in your session?`, view };
+    case "bash":
+      return { title: "Run this command?", detail: input.description, view };
+    case "edit":
+      return { title: `Edit ${baseName(view.file)}?`, file: view.file, view };
+    case "write":
+      return { title: `Write ${baseName(view.file)}?`, file: view.file, view };
+    case "web_fetch":
+      return { title: `Open ${input.url ?? "a web page"}?`, view };
+    case "web_search":
+      return { title: "Search the web?", detail: input.query, view };
+    default:
+      return { title: `Allow ${view.name}?`, detail: view.desc || undefined, view };
+  }
+}
