@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, onMount, Show } from "solid-js";
 import { LOCAL_HOST, type Shell } from "../backend";
 import type { DirEntry, ProjectInfo } from "../backend/types";
+import { buildText } from "../build";
 import type { Workspace } from "../model/workspace";
 import appIcon from "../../src-tauri/icons/icon.png";
 import { Dialogs, notify } from "./dialogs";
@@ -136,6 +137,8 @@ export function StartScreen(props: { shell: Shell; workspace: (host: string) => 
           </div>
           <p class="start-foot">
             Kernels keep running after you close a project. Reopening it reattaches to them and restores your tabs.
+            <br />
+            Sandhill {buildText()}
           </p>
         </div>
       </div>

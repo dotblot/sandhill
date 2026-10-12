@@ -95,6 +95,9 @@ jobs:
         env:
           # To download Ark's Linux builds.
           GH_TOKEN: ${{ github.token }}
+          # The commit the windows show, the branch's own rather than the
+          # merge commit a pull request's checkout is.
+          SANDHILL_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           npm ci
           npm run bundle -- --servers
