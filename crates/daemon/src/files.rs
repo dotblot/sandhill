@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
-use sandhill_proto::{CONFLICT_ERROR, DirEntry, EntryKind, FileText, FileWritten};
+use sandhill_proto::{CONFLICT_ERROR, DirEntry, EntryKind, FileStat, FileText, FileWritten};
 
 /// Notebooks bigger than this are almost certainly a mistake to open as text.
 const MAX_READ: u64 = 256 * 1024 * 1024;
@@ -117,6 +117,21 @@ fn write_atomic_with(
         let _ = std::fs::remove_file(&tmp);
     }
     result
+}
+
+/// Modification times, for noticing changes made outside the app.
+pub fn stat(paths: &[String]) -> Vec<FileStat> {
+    paths
+        .iter()
+        .map(|path| {
+            let meta = resolve(path).ok().and_then(|p| std::fs::metadata(p).ok());
+            FileStat {
+                path: path.clone(),
+                mtime_ms: meta.as_ref().map(mtime_ms),
+                size: meta.map_or(0, |m| m.len()),
+            }
+        })
+        .collect()
 }
 
 pub fn list_dir(path: &str) -> Result<Vec<DirEntry>> {

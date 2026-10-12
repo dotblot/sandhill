@@ -35,6 +35,7 @@ fn main() -> anyhow::Result<()> {
             windows::open_project_window,
             windows::show_start_window,
             windows::cancel_quit,
+            windows::open_link,
             servers::list_servers,
             servers::add_server,
             servers::remove_server,

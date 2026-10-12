@@ -1,0 +1,538 @@
+//! Terminals that outlive the daemon: shells, and the agent CLIs (Claude
+//! Code, Codex) running as their unmodified selves.
+//!
+//! Each terminal has a folder under `<state>/terminals/<id>/`:
+//!
+//! ```text
+//! meta.json    what it runs, where, for which project (written by the daemon)
+//! host.json    the terminal host's pid and the program's pid
+//! sock         the host's socket, while the program runs
+//! out.<n>      the output, in 1 MiB segments (see `log`)
+//! agent.json   what the agent last reported through its hooks
+//! exit.json    how the program ended
+//! host.log     the host's own errors
+//! ```
+//!
+//! The daemon starts a [`host`] process per terminal and talks to it over
+//! `sock` with one JSON message per line ([`ToHost`], [`FromHost`]). Once
+//! the program has ended, the daemon reads the folder instead.
+
+pub mod events;
+pub mod host;
+pub mod log;
+pub mod pty;
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use base64::Engine;
+use sandhill_proto::{
+    AgentOptions, ServerMessage, TerminalEvent, TerminalExit, TerminalInfo, TerminalSubscribed,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::net::UnixStream;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::sync::{Mutex, mpsc};
+
+use crate::journal::now_ms;
+
+/// Output replayed to a client that asks for recent output.
+pub const RECENT: u64 = 1 << 20;
+const DEFAULT_SIZE: (u16, u16) = (100, 30);
+const HOST_START_TIMEOUT: Duration = Duration::from_secs(10);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// From a client (the daemon, or an agent's hook) to a terminal host.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum ToHost {
+    /// Send the output from byte `from` on (recent output without it), then
+    /// follow along.
+    Subscribe {
+        from: Option<u64>,
+    },
+    Input {
+        data: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    /// End the program, as closing a terminal window does.
+    Hangup,
+    /// What an agent reports about itself; merged into its report.
+    Agent {
+        value: Value,
+    },
+}
+
+/// From a terminal host to a subscribed client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum FromHost {
+    /// The first message of a subscription: where its output starts.
+    Start {
+        from: u64,
+    },
+    /// Output at `offset`, base64.
+    Output {
+        offset: u64,
+        data: String,
+    },
+    Agent {
+        value: Value,
+    },
+    Exit {
+        exit: TerminalExit,
+    },
+}
+
+/// Longest socket path that works on both Linux (108) and macOS (104).
+const MAX_SOCKET_PATH: usize = 100;
+
+/// Where sockets go when the terminal's folder is too deep: private to the user.
+fn short_socket_dir() -> PathBuf {
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from(format!("/tmp/sandhill-{uid}"))
+}
+
+/// The files of one terminal.
+#[derive(Debug, Clone)]
+pub struct Paths {
+    dir: PathBuf,
+}
+
+impl Paths {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Paths { dir: dir.into() }
+    }
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+    /// The host's socket, in its folder. Socket paths are limited to about
+    /// 100 bytes, so a deep state folder gets one under /tmp instead, named
+    /// by the terminal's id.
+    pub fn socket(&self) -> PathBuf {
+        let path = self.dir.join("sock");
+        if path.as_os_str().len() < MAX_SOCKET_PATH {
+            return path;
+        }
+        let id = self.dir.file_name().unwrap_or_default();
+        short_socket_dir().join(id)
+    }
+    fn meta(&self) -> PathBuf {
+        self.dir.join("meta.json")
+    }
+    pub fn host(&self) -> PathBuf {
+        self.dir.join("host.json")
+    }
+    pub fn exit(&self) -> PathBuf {
+        self.dir.join("exit.json")
+    }
+    pub fn agent(&self) -> PathBuf {
+        self.dir.join("agent.json")
+    }
+    fn host_log(&self) -> PathBuf {
+        self.dir.join("host.log")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Meta {
+    id: String,
+    kind: String,
+    title: String,
+    cwd: String,
+    #[serde(default)]
+    project: Option<String>,
+    created_ms: i64,
+    #[serde(default)]
+    options: AgentOptions,
+    /// The program and its arguments, for the record.
+    #[serde(default)]
+    command: Vec<String>,
+}
+
+/// What to run in a new terminal.
+#[derive(Debug, Clone)]
+pub struct Launch {
+    pub kind: String,
+    pub title: String,
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    /// Added to the daemon's environment.
+    pub env: Vec<(String, String)>,
+    pub cwd: PathBuf,
+    pub project: Option<String>,
+    pub options: AgentOptions,
+    pub size: Option<(u16, u16)>,
+}
+
+/// Every terminal under `<state>/terminals`.
+pub struct Terminals {
+    root: PathBuf,
+    /// `sandhilld` itself, which runs the terminal hosts.
+    executable: PathBuf,
+    /// One connection per terminal for input and resizing.
+    inputs: Mutex<HashMap<String, OwnedWriteHalf>>,
+}
+
+impl Terminals {
+    pub fn new(root: PathBuf, executable: PathBuf) -> Self {
+        Terminals {
+            root,
+            executable,
+            inputs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn paths(&self, id: &str) -> Result<Paths> {
+        if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("no terminal {id}");
+        }
+        let paths = Paths::new(self.root.join(id));
+        if !paths.meta().is_file() {
+            bail!("no terminal {id}");
+        }
+        Ok(paths)
+    }
+
+    /// Starts `launch` in a new terminal.
+    pub async fn start(&self, launch: Launch) -> Result<TerminalInfo> {
+        let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+        let paths = Paths::new(self.root.join(&id));
+        std::fs::create_dir_all(paths.dir())?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700))?;
+            std::fs::set_permissions(paths.dir(), std::fs::Permissions::from_mode(0o700))?;
+        }
+        let mut command = vec![launch.program.to_string_lossy().into_owned()];
+        command.extend(launch.args.iter().cloned());
+        let meta = Meta {
+            id: id.clone(),
+            kind: launch.kind.clone(),
+            title: launch.title.clone(),
+            cwd: launch.cwd.to_string_lossy().into_owned(),
+            project: launch.project.clone(),
+            created_ms: now_ms(),
+            options: launch.options.clone(),
+            command,
+        };
+        std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
+
+        let (cols, rows) = launch.size.unwrap_or(DEFAULT_SIZE);
+        let log = std::fs::File::create(paths.host_log())?;
+        let mut host = tokio::process::Command::new(&self.executable);
+        host.arg("terminal-host")
+            .arg("--dir")
+            .arg(paths.dir())
+            .arg("--cwd")
+            .arg(&launch.cwd)
+            .arg("--cols")
+            .arg(cols.to_string())
+            .arg("--rows")
+            .arg(rows.to_string())
+            .arg("--")
+            .arg(&launch.program)
+            .args(&launch.args)
+            .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
+            .env("SANDHILL_TERMINAL", paths.dir())
+            .envs(launch.env.iter().map(|(k, v)| (k, v)))
+            .stdin(std::process::Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log)
+            // Its own process group, like kernels, so it outlives the daemon.
+            .process_group(0);
+        let mut child = host.spawn().context("cannot start the terminal host")?;
+        let started = async {
+            loop {
+                if UnixStream::connect(paths.socket()).await.is_ok() {
+                    return Ok(());
+                }
+                if let Ok(Some(_)) = child.try_wait() {
+                    let log = std::fs::read_to_string(paths.host_log()).unwrap_or_default();
+                    bail!("{}", log.trim());
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        let result = tokio::time::timeout(HOST_START_TIMEOUT, started).await;
+        // Reap the host when it exits; it doesn't depend on us otherwise.
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                let _ = std::fs::remove_dir_all(paths.dir());
+                return Err(err.context(format!("cannot start {}", launch.title)));
+            }
+            Err(_) => bail!("the terminal for {} did not start in time", launch.title),
+        }
+        self.info(&id)
+    }
+
+    /// Every terminal, oldest first.
+    pub fn list(&self) -> Vec<TerminalInfo> {
+        let mut list: Vec<TerminalInfo> = std::fs::read_dir(&self.root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| self.info(entry.file_name().to_str()?).ok())
+            .collect();
+        list.sort_by_key(|t| t.created_ms);
+        list
+    }
+
+    pub fn info(&self, id: &str) -> Result<TerminalInfo> {
+        let paths = self.paths(id)?;
+        let meta: Meta = serde_json::from_slice(&std::fs::read(paths.meta())?)?;
+        let exit = read_json::<TerminalExit>(&paths.exit());
+        let running = exit.is_none() && host_alive(&paths);
+        Ok(TerminalInfo {
+            id: meta.id,
+            kind: meta.kind,
+            title: meta.title,
+            cwd: meta.cwd,
+            project: meta.project,
+            created_ms: meta.created_ms,
+            running,
+            exit,
+            end: log::bounds(paths.dir()).1,
+            options: meta.options,
+            agent: read_json::<Value>(&paths.agent()),
+        })
+    }
+
+    /// Sends input, a resize or a hangup to a running terminal.
+    pub async fn send(&self, id: &str, message: ToHost) -> Result<()> {
+        let paths = self.paths(id)?;
+        let mut line = serde_json::to_vec(&message)?;
+        line.push(b'\n');
+        let mut inputs = self.inputs.lock().await;
+        for attempt in 0..2 {
+            if !inputs.contains_key(id) {
+                let stream = UnixStream::connect(paths.socket())
+                    .await
+                    .map_err(|_| anyhow!("terminal {id} has ended"))?;
+                inputs.insert(id.to_string(), stream.into_split().1);
+            }
+            let writer = inputs.get_mut(id).expect("inserted above");
+            match writer.write_all(&line).await {
+                Ok(()) => return Ok(()),
+                // The host went away (or was replaced): reconnect once.
+                Err(err) if attempt == 0 => {
+                    tracing::debug!("terminal {id}: {err}; reconnecting");
+                    inputs.remove(id);
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+        unreachable!()
+    }
+
+    /// Opens a terminal's output from byte `from` (recent output without
+    /// it). Forward it with [`TerminalStream::forward`].
+    pub async fn open(&self, id: &str, from: Option<u64>) -> Result<TerminalStream> {
+        let paths = self.paths(id)?;
+        if let Ok(stream) = UnixStream::connect(paths.socket()).await {
+            let (reader, mut writer) = stream.into_split();
+            let mut line = serde_json::to_vec(&ToHost::Subscribe { from })?;
+            line.push(b'\n');
+            writer.write_all(&line).await?;
+            let mut lines = BufReader::new(reader).lines();
+            if let Some(first) = lines.next_line().await?
+                && let Ok(FromHost::Start { from }) = serde_json::from_str(&first)
+            {
+                return Ok(TerminalStream {
+                    id: id.to_string(),
+                    from,
+                    source: Source::Live {
+                        lines,
+                        _writer: writer,
+                        paths,
+                    },
+                });
+            }
+            // The program ended as we connected; read the files instead.
+        }
+        let end = log::bounds(paths.dir()).1;
+        let from = from.unwrap_or(end.saturating_sub(RECENT)).min(end);
+        let (start, bytes) = log::read(paths.dir(), from, end)?;
+        Ok(TerminalStream {
+            id: id.to_string(),
+            from: start,
+            source: Source::Ended {
+                bytes,
+                agent: read_json(&paths.agent()),
+                exit: read_json(&paths.exit()).unwrap_or(TerminalExit {
+                    code: None,
+                    signal: None,
+                    ended_ms: now_ms(),
+                }),
+            },
+        })
+    }
+
+    /// Ends the program if it runs, waits for it, and removes the terminal.
+    pub async fn close(&self, id: &str) -> Result<()> {
+        let paths = self.paths(id)?;
+        if self.info(id)?.running {
+            self.send(id, ToHost::Hangup).await?;
+            let ended = async {
+                while paths.socket().exists() && host_alive(&paths) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            };
+            let _ = tokio::time::timeout(CLOSE_TIMEOUT, ended).await;
+        }
+        self.inputs.lock().await.remove(id);
+        std::fs::remove_dir_all(paths.dir())?;
+        Ok(())
+    }
+}
+
+/// A terminal's output on its way to a client.
+pub struct TerminalStream {
+    id: String,
+    /// Where the output starts.
+    pub from: u64,
+    source: Source,
+}
+
+enum Source {
+    Live {
+        lines: Lines<BufReader<OwnedReadHalf>>,
+        /// Kept so the host keeps the subscription open.
+        _writer: OwnedWriteHalf,
+        paths: Paths,
+    },
+    Ended {
+        bytes: Vec<u8>,
+        agent: Option<Value>,
+        exit: TerminalExit,
+    },
+}
+
+impl TerminalStream {
+    pub fn subscribed(&self) -> TerminalSubscribed {
+        TerminalSubscribed {
+            terminal: self.id.clone(),
+            from: self.from,
+        }
+    }
+
+    /// Sends the output to a client until the program ends or the client
+    /// goes away.
+    pub async fn forward(self, out: mpsc::UnboundedSender<ServerMessage>) {
+        let id = self.id;
+        let send = |event: TerminalEvent| {
+            out.send(ServerMessage::Terminal {
+                terminal: TerminalEvent {
+                    terminal: id.clone(),
+                    ..event
+                },
+            })
+            .is_ok()
+        };
+        match self.source {
+            Source::Ended { bytes, agent, exit } => {
+                let engine = base64::engine::general_purpose::STANDARD;
+                for (i, piece) in bytes.chunks(64 * 1024).enumerate() {
+                    if !send(TerminalEvent {
+                        offset: Some(self.from + (i * 64 * 1024) as u64),
+                        data: Some(engine.encode(piece)),
+                        ..Default::default()
+                    }) {
+                        return;
+                    }
+                }
+                if agent.is_some() {
+                    send(TerminalEvent {
+                        agent,
+                        ..Default::default()
+                    });
+                }
+                send(TerminalEvent {
+                    exit: Some(exit),
+                    ..Default::default()
+                });
+            }
+            Source::Live {
+                mut lines, paths, ..
+            } => {
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let event = match serde_json::from_str::<FromHost>(&line) {
+                        Ok(FromHost::Output { offset, data }) => TerminalEvent {
+                            offset: Some(offset),
+                            data: Some(data),
+                            ..Default::default()
+                        },
+                        Ok(FromHost::Agent { value }) => TerminalEvent {
+                            agent: Some(value),
+                            ..Default::default()
+                        },
+                        Ok(FromHost::Exit { exit }) => {
+                            send(TerminalEvent {
+                                exit: Some(exit),
+                                ..Default::default()
+                            });
+                            return;
+                        }
+                        Ok(FromHost::Start { .. }) | Err(_) => continue,
+                    };
+                    if !send(event) {
+                        return;
+                    }
+                }
+                // The host went away without saying how the program ended
+                // (it was killed): report what is known.
+                let exit = read_json(&paths.exit()).unwrap_or(TerminalExit {
+                    code: None,
+                    signal: None,
+                    ended_ms: now_ms(),
+                });
+                send(TerminalEvent {
+                    exit: Some(exit),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+}
+
+/// Reports to the terminal an agent runs in, from one of its hooks
+/// (`sandhilld terminal-event`). `SANDHILL_TERMINAL` names the terminal.
+pub async fn report(dir: &Path, value: Value) -> Result<()> {
+    let paths = Paths::new(dir);
+    let mut stream = UnixStream::connect(paths.socket())
+        .await
+        .with_context(|| format!("no terminal at {}", dir.display()))?;
+    let mut line = serde_json::to_vec(&ToHost::Agent { value })?;
+    line.push(b'\n');
+    stream.write_all(&line).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
+fn host_alive(paths: &Paths) -> bool {
+    let Some(host) = read_json::<Value>(&paths.host()) else {
+        // Written right after the host starts; a terminal without it is
+        // still starting.
+        return paths.socket().exists();
+    };
+    host.get("host")
+        .and_then(Value::as_u64)
+        .is_some_and(|pid| crate::kernel::pid_alive(pid as u32))
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}

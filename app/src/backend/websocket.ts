@@ -6,7 +6,7 @@
 // page instead of opening a window.
 
 import { type Backend, LOCAL_HOST, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
-import type { DaemonEvent } from "./types";
+import type { DaemonEvent, TerminalEvent } from "./types";
 
 export class BrowserShell implements Shell {
   private params = new URLSearchParams(location.search);
@@ -66,6 +66,7 @@ export class WebSocketBackend implements Backend {
   private pending = new Map<number, Pending>();
   private queue: string[] = [];
   private events = new Listeners<DaemonEvent>();
+  private terminals = new Listeners<TerminalEvent>();
   private links = new Listeners<LinkState>();
   private link: LinkState = { status: "connecting" };
   private retryMs = 500;
@@ -88,6 +89,10 @@ export class WebSocketBackend implements Backend {
     this.events.add(listener);
   }
 
+  onTerminal(listener: (event: TerminalEvent) => void) {
+    this.terminals.add(listener);
+  }
+
   onLink(listener: (state: LinkState) => void) {
     this.links.add(listener);
     listener(this.link);
@@ -97,6 +102,10 @@ export class WebSocketBackend implements Backend {
     const query = new URLSearchParams({ mime });
     if (near) query.set("near", near);
     return `http://${this.bridge}/blob/${hash}?${query}`;
+  }
+
+  openLink(url: string) {
+    window.open(url, "_blank", "noopener");
   }
 
   private connect() {
@@ -111,6 +120,8 @@ export class WebSocketBackend implements Backend {
       const message = JSON.parse(String(msg.data));
       if (message.type === "event") {
         this.events.emit(message.event);
+      } else if (message.type === "terminal") {
+        this.terminals.emit(message.terminal);
       } else if (message.type === "response") {
         const pending = this.pending.get(message.id);
         this.pending.delete(message.id);

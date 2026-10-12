@@ -2,9 +2,9 @@
 //! that works on that host.
 //!
 //! The UI reaches a daemon through three doors, which `app/src/backend/tauri.ts`
-//! wraps: the `daemon_call` command for requests, `daemon://event` and
-//! `daemon://link` events, and the `sandhill-blob:` protocol for plots and
-//! other large outputs. A window first calls `use_host`; events for a host
+//! wraps: the `daemon_call` command for requests, `daemon://event`,
+//! `daemon://terminal` and `daemon://link` events, and the `sandhill-blob:`
+//! protocol for plots and other large outputs. A window first calls `use_host`; events for a host
 //! go only to the windows using it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -27,6 +27,7 @@ use crate::memory;
 use sandhill_link::{Connection, Options, Target};
 
 pub const EVENT: &str = "daemon://event";
+pub const TERMINAL: &str = "daemon://terminal";
 pub const LINK: &str = "daemon://link";
 pub const BLOB_SCHEME: &str = "sandhill-blob";
 
@@ -243,16 +244,27 @@ impl Link {
     /// windows that use this host.
     async fn serve<R: Runtime>(&self, app: &AppHandle<R>, connection: Connection) {
         let Connection { mut client, child } = connection;
-        let Some(mut events) = client.take_events() else {
+        let (Some(mut events), Some(mut terminals)) =
+            (client.take_events(), client.take_terminal_events())
+        else {
             return;
         };
         *self.client.lock().unwrap() = Some(Arc::new(client));
         self.set_state(app, Status::Connected, None, None);
         tracing::info!("connected to sandhilld on {}", self.host);
         let links = app.state::<Arc<Links>>();
-        while let Some(event) = events.recv().await {
-            links.emit(app, &self.host, EVENT, event);
-        }
+        // Both end when the connection drops.
+        let terminals = async {
+            while let Some(event) = terminals.recv().await {
+                links.emit(app, &self.host, TERMINAL, event);
+            }
+        };
+        let sessions = async {
+            while let Some(event) = events.recv().await {
+                links.emit(app, &self.host, EVENT, event);
+            }
+        };
+        tokio::join!(sessions, terminals);
         // Calls still waiting fail with "disconnected" once the client goes.
         self.client.lock().unwrap().take();
         drop(child);

@@ -44,6 +44,8 @@ function fakeDaemon(sessions: SessionInfo[] = []) {
       return null as T;
     },
     onEvent() {},
+    onTerminal() {},
+    openLink() {},
     onLink() {},
     blobUrl: () => "",
   };

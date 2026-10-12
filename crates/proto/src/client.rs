@@ -12,9 +12,10 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
-    Blob, Call, CellRef, DirEntry, Event, FileOutputs, FileText, FileWritten, HistoryPage,
-    KernelspecInfo, Outcome, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
-    SessionInfo, Subscribed, SystemStats,
+    AgentInfo, AgentOptions, Blob, Call, CellRef, DirEntry, Event, FileOutputs, FileStat, FileText,
+    FileWritten, HistoryPage, KernelspecInfo, Outcome, PingReply, ProjectInfo, Request, RunStarted,
+    ServerMessage, SessionInfo, Subscribed, SystemStats, TerminalEvent, TerminalInfo,
+    TerminalSubscribed,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -37,6 +38,7 @@ pub struct Client {
     writer: Mutex<Box<dyn AsyncWrite + Send + Unpin>>,
     pending: Pending,
     events: Option<mpsc::UnboundedReceiver<Event>>,
+    terminal_events: Option<mpsc::UnboundedReceiver<TerminalEvent>>,
     next_id: AtomicU64,
 }
 
@@ -49,11 +51,13 @@ impl Client {
     {
         let pending: Pending = Default::default();
         let (event_tx, events) = mpsc::unbounded_channel();
-        tokio::spawn(read_loop(reader, pending.clone(), event_tx));
+        let (terminal_tx, terminal_events) = mpsc::unbounded_channel();
+        tokio::spawn(read_loop(reader, pending.clone(), event_tx, terminal_tx));
         Client {
             writer: Mutex::new(Box::new(writer)),
             pending,
             events: Some(events),
+            terminal_events: Some(terminal_events),
             next_id: AtomicU64::new(1),
         }
     }
@@ -114,6 +118,16 @@ impl Client {
         self.events.take()
     }
 
+    /// Next message from any subscribed terminal; `None` once disconnected.
+    pub async fn next_terminal_event(&mut self) -> Option<TerminalEvent> {
+        self.terminal_events.as_mut()?.recv().await
+    }
+
+    /// Takes the terminal messages, as [`Client::take_events`] does for sessions.
+    pub fn take_terminal_events(&mut self) -> Option<mpsc::UnboundedReceiver<TerminalEvent>> {
+        self.terminal_events.take()
+    }
+
     pub async fn ping(&self) -> Result<PingReply> {
         self.call(Call::Ping).await
     }
@@ -145,6 +159,19 @@ impl Client {
             session: session.into(),
             code: code.into(),
             cell,
+            quiet: false,
+        })
+        .await
+    }
+
+    /// Runs code without adding it to the kernel's history or execution
+    /// count, for tools that look at a session without changing it.
+    pub async fn execute_quietly(&self, session: &str, code: &str) -> Result<RunStarted> {
+        self.call(Call::Execute {
+            session: session.into(),
+            code: code.into(),
+            cell: None,
+            quiet: true,
         })
         .await
     }
@@ -270,12 +297,86 @@ impl Client {
     pub async fn forget_project(&self, path: &str) -> Result<()> {
         self.call(Call::ForgetProject { path: path.into() }).await
     }
+
+    pub async fn stat_files(&self, paths: Vec<String>) -> Result<Vec<FileStat>> {
+        self.call(Call::StatFiles { paths }).await
+    }
+
+    pub async fn list_agents(&self) -> Result<Vec<AgentInfo>> {
+        self.call(Call::ListAgents).await
+    }
+
+    pub async fn start_terminal(
+        &self,
+        kind: &str,
+        cwd: Option<&str>,
+        size: Option<(u16, u16)>,
+        options: AgentOptions,
+    ) -> Result<TerminalInfo> {
+        self.call(Call::StartTerminal {
+            kind: kind.into(),
+            cwd: cwd.map(Into::into),
+            project: None,
+            cols: size.map(|s| s.0),
+            rows: size.map(|s| s.1),
+            options,
+        })
+        .await
+    }
+
+    pub async fn list_terminals(&self) -> Result<Vec<TerminalInfo>> {
+        self.call(Call::ListTerminals).await
+    }
+
+    pub async fn subscribe_terminal(
+        &self,
+        terminal: &str,
+        from: Option<u64>,
+    ) -> Result<TerminalSubscribed> {
+        self.call(Call::SubscribeTerminal {
+            terminal: terminal.into(),
+            from,
+        })
+        .await
+    }
+
+    pub async fn unsubscribe_terminal(&self, terminal: &str) -> Result<()> {
+        self.call(Call::UnsubscribeTerminal {
+            terminal: terminal.into(),
+        })
+        .await
+    }
+
+    pub async fn terminal_input(&self, terminal: &str, data: &str) -> Result<()> {
+        self.call(Call::TerminalInput {
+            terminal: terminal.into(),
+            data: data.into(),
+        })
+        .await
+    }
+
+    pub async fn resize_terminal(&self, terminal: &str, cols: u16, rows: u16) -> Result<()> {
+        self.call(Call::ResizeTerminal {
+            terminal: terminal.into(),
+            cols,
+            rows,
+        })
+        .await
+    }
+
+    pub async fn close_terminal(&self, terminal: &str) -> Result<()> {
+        self.call(Call::CloseTerminal {
+            terminal: terminal.into(),
+        })
+        .await
+    }
 }
 
 async fn read_loop<R: AsyncRead + Unpin>(
     reader: R,
     pending: Pending,
     events: mpsc::UnboundedSender<Event>,
+    terminal_events: mpsc::UnboundedSender<TerminalEvent>,
 ) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -290,6 +391,9 @@ async fn read_loop<R: AsyncRead + Unpin>(
             }
             Ok(ServerMessage::Event { event }) => {
                 let _ = events.send(event);
+            }
+            Ok(ServerMessage::Terminal { terminal }) => {
+                let _ = terminal_events.send(terminal);
             }
             // A newer daemon may send messages this client doesn't know.
             Err(_) => continue,

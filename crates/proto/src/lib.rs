@@ -62,6 +62,10 @@ pub enum Call {
         code: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<CellRef>,
+        /// Leaves the kernel's history and execution count alone (Jupyter's
+        /// `store_history: false`), for code a tool runs to look around.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        quiet: bool,
     },
     Interrupt {
         session: String,
@@ -162,7 +166,68 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<String>,
     },
+    /// Modification times of files, to notice changes made outside the app
+    /// (by an agent, say). Returns `Vec<FileStat>` in the same order.
+    StatFiles {
+        paths: Vec<String>,
+    },
+    /// The coding agents this machine can run, and whether their CLIs are
+    /// installed. Returns `Vec<AgentInfo>`.
+    ListAgents,
+    /// Starts a program in a terminal that keeps running when clients
+    /// disconnect and when the daemon restarts: a shell, or an agent CLI.
+    /// Returns [`TerminalInfo`].
+    StartTerminal {
+        /// [`TERMINAL_SHELL`], or an agent's `kind` from `list_agents`.
+        kind: String,
+        /// Where it starts: the project folder, else the home folder.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cols: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rows: Option<u16>,
+        /// For agents: model, effort, permissions and documents.
+        #[serde(default, skip_serializing_if = "AgentOptions::is_empty")]
+        options: AgentOptions,
+    },
+    /// Every terminal, including those whose program has ended, oldest
+    /// first. Returns `Vec<TerminalInfo>`.
+    ListTerminals,
+    /// Streams a terminal's output as [`ServerMessage::Terminal`] messages:
+    /// what it printed from byte `from` on (or its recent output without
+    /// `from`), then new output as it comes. Returns [`TerminalSubscribed`].
+    SubscribeTerminal {
+        terminal: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+    },
+    UnsubscribeTerminal {
+        terminal: String,
+    },
+    /// Types into a terminal: keys and pasted text, as the terminal
+    /// emulator encodes them.
+    TerminalInput {
+        terminal: String,
+        data: String,
+    },
+    /// Sets a terminal's size, and asks the program to redraw.
+    ResizeTerminal {
+        terminal: String,
+        cols: u16,
+        rows: u16,
+    },
+    /// Ends a terminal's program if it still runs (as closing a terminal
+    /// window does) and forgets the terminal.
+    CloseTerminal {
+        terminal: String,
+    },
 }
+
+/// The `kind` of a plain shell terminal.
+pub const TERMINAL_SHELL: &str = "shell";
 
 /// Prefix of the error returned when a write would overwrite changes made on
 /// disk since the file was read.
@@ -186,6 +251,10 @@ pub enum ServerMessage {
     },
     Event {
         event: Event,
+    },
+    /// Output and news from a terminal the client subscribed to.
+    Terminal {
+        terminal: TerminalEvent,
     },
 }
 
@@ -402,6 +471,118 @@ pub struct DirEntry {
     pub kind: EntryKind,
     pub size: u64,
     pub mtime_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileStat {
+    pub path: String,
+    /// `None` when the file doesn't exist (or can't be read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime_ms: Option<i64>,
+    #[serde(default)]
+    pub size: u64,
+}
+
+/// A coding agent the daemon can start in a terminal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentInfo {
+    /// What `start_terminal` takes: `claude`, `codex`.
+    pub kind: String,
+    /// "Claude Code", "Codex".
+    pub name: String,
+    /// The CLI found on this machine; `None` when it isn't installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// A shell command that installs the CLI, for when it is missing.
+    pub install: String,
+}
+
+/// How to start an agent. Empty fields leave the CLI's own defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AgentOptions {
+    /// A model name or alias the CLI accepts (`opus`, `gpt-5-codex`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Thinking effort: `low`, `medium`, `high`...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// `supervised` (ask before commands and edits), `edits` (accept edits),
+    /// `auto` or `full`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
+    /// Documents the session is about, named to the agent at start.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<String>,
+}
+
+impl AgentOptions {
+    pub fn is_empty(&self) -> bool {
+        *self == AgentOptions::default()
+    }
+}
+
+/// A terminal the daemon keeps: a shell or an agent CLI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalInfo {
+    pub id: String,
+    /// [`TERMINAL_SHELL`] or an agent's kind.
+    pub kind: String,
+    /// "Terminal", "Claude Code", "Codex".
+    pub title: String,
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub created_ms: i64,
+    /// True while its program runs.
+    pub running: bool,
+    /// How the program ended, once it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<TerminalExit>,
+    /// Bytes of output so far: where new output will start.
+    pub end: u64,
+    #[serde(default, skip_serializing_if = "AgentOptions::is_empty")]
+    pub options: AgentOptions,
+    /// What the agent last reported about itself (see [`TerminalEvent::agent`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalExit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<i32>,
+    pub ended_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TerminalSubscribed {
+    pub terminal: String,
+    /// Where the replayed output starts. It can be later than the `from`
+    /// asked for when that output is no longer kept.
+    pub from: u64,
+}
+
+/// News from a terminal. Each carries one of `data`, `agent` or `exit`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TerminalEvent {
+    pub terminal: String,
+    /// Where `data` starts in the terminal's output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    /// Output bytes, base64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    /// What an agent reported through its hooks and status line:
+    /// `{state: "busy" | "waiting" | "idle", status: {model, context,
+    /// effort, rate_limits...}}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<TerminalExit>,
 }
 
 /// Outputs of the latest run of each cell of one file.

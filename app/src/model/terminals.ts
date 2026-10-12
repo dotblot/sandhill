@@ -1,0 +1,204 @@
+// The terminals of a project window: agents (Claude Code, Codex) and shells
+// that the daemon keeps running on its machine. The window follows each one
+// from the moment it opens: output goes to the terminal's view, and agents'
+// reports (busy, waiting for you, model and context) update `list`.
+
+import { createSignal, type Setter } from "solid-js";
+import type { Backend } from "../backend";
+import {
+  type AgentInfo,
+  type AgentOptions,
+  TERMINAL_SHELL,
+  type TerminalEvent,
+  type TerminalInfo,
+  type TerminalSubscribed,
+} from "../backend/types";
+
+/** Output kept for a terminal no view shows yet. Older output is dropped. */
+const MAX_PENDING = 4 << 20;
+
+/** Where a terminal's output goes. `reset` comes before a replay that doesn't follow on. */
+export interface TerminalSink {
+  write(data: Uint8Array): void;
+  reset?(): void;
+}
+
+interface Follow {
+  /** Bytes of output received: where the next output starts. -1 before any. */
+  end: number;
+  sink?: TerminalSink;
+  pending: Uint8Array[];
+  pendingBytes: number;
+  subscribed: boolean;
+}
+
+export class TerminalStore {
+  /** This project's terminals, oldest first. */
+  readonly list: () => TerminalInfo[];
+  private setList: Setter<TerminalInfo[]>;
+  private follows = new Map<string, Follow>();
+
+  constructor(
+    private backend: Backend,
+    /** The project folder; only its terminals are listed. */
+    readonly project: string,
+  ) {
+    [this.list, this.setList] = createSignal<TerminalInfo[]>([]);
+    backend.onTerminal((event) => this.onEvent(event));
+  }
+
+  agents(): TerminalInfo[] {
+    return this.list().filter((t) => t.kind !== TERMINAL_SHELL);
+  }
+
+  shells(): TerminalInfo[] {
+    return this.list().filter((t) => t.kind === TERMINAL_SHELL);
+  }
+
+  get(id: string): TerminalInfo | undefined {
+    return this.list().find((t) => t.id === id);
+  }
+
+  /** Agents waiting for the person: a question or a permission prompt. */
+  waiting(): TerminalInfo[] {
+    return this.agents().filter((t) => t.running && t.agent?.state === "waiting");
+  }
+
+  /**
+   * Fetches the project's terminals and follows each, picking up where it
+   * left off after a reconnect.
+   */
+  async refresh() {
+    const all = await this.backend.call<TerminalInfo[]>("list_terminals");
+    const mine = all.filter((t) => t.project === this.project).sort((a, b) => a.created_ms - b.created_ms);
+    this.setList(mine);
+    const ids = new Set(mine.map((t) => t.id));
+    for (const id of this.follows.keys()) if (!ids.has(id)) this.follows.delete(id);
+    for (const terminal of mine) {
+      const follow = this.follows.get(terminal.id);
+      if (follow) follow.subscribed = false;
+      await this.subscribe(terminal.id);
+    }
+  }
+
+  listAgents(): Promise<AgentInfo[]> {
+    return this.backend.call<AgentInfo[]>("list_agents");
+  }
+
+  async start(kind: string, options: AgentOptions, size?: { cols: number; rows: number }): Promise<TerminalInfo> {
+    const info = await this.backend.call<TerminalInfo>("start_terminal", {
+      kind,
+      project: this.project,
+      cols: size?.cols,
+      rows: size?.rows,
+      options,
+    });
+    // Nothing has been missed: its output starts at 0.
+    if (!this.follows.has(info.id)) this.follows.set(info.id, newFollow(0));
+    this.setList((list) => [...list.filter((t) => t.id !== info.id), info]);
+    await this.subscribe(info.id);
+    return info;
+  }
+
+  /** Sends output to `sink`, starting with what came before it attached. */
+  attach(id: string, sink: TerminalSink): () => void {
+    let follow = this.follows.get(id);
+    if (!follow) {
+      follow = newFollow(-1);
+      this.follows.set(id, follow);
+    }
+    follow.sink = sink;
+    for (const chunk of follow.pending.splice(0)) sink.write(chunk);
+    follow.pendingBytes = 0;
+    const attached = follow;
+    return () => {
+      if (attached.sink === sink) attached.sink = undefined;
+    };
+  }
+
+  input(id: string, data: string): Promise<void> {
+    return this.backend.call("terminal_input", { terminal: id, data });
+  }
+
+  resize(id: string, cols: number, rows: number): Promise<void> {
+    return this.backend.call("resize_terminal", { terminal: id, cols, rows });
+  }
+
+  /** Ends the program (as closing its window would) and forgets the terminal. */
+  async close(id: string) {
+    await this.backend.call("close_terminal", { terminal: id });
+    this.follows.delete(id);
+    this.setList((list) => list.filter((t) => t.id !== id));
+  }
+
+  private async subscribe(id: string) {
+    let follow = this.follows.get(id);
+    if (!follow) {
+      follow = newFollow(-1);
+      this.follows.set(id, follow);
+    }
+    if (follow.subscribed) return;
+    follow.subscribed = true;
+    try {
+      // From where this window got to; the first time, the recent output.
+      const from = follow.end >= 0 ? follow.end : undefined;
+      const reply = await this.backend.call<TerminalSubscribed>("subscribe_terminal", { terminal: id, from });
+      // Output we had is gone from the daemon's log: start over from what it kept.
+      if (follow.end >= 0 && reply.from > follow.end) {
+        follow.end = reply.from;
+        follow.sink?.reset?.();
+      }
+    } catch (err) {
+      follow.subscribed = false;
+      throw err;
+    }
+  }
+
+  private onEvent(event: TerminalEvent) {
+    const follow = this.follows.get(event.terminal);
+    if (!follow) return;
+    if (event.data !== undefined && event.offset !== undefined) {
+      let bytes = decodeBase64(event.data);
+      let offset = event.offset;
+      // Output seen before, as when two windows follow one terminal, or a replay overlaps.
+      if (follow.end >= 0 && offset < follow.end) {
+        bytes = bytes.subarray(Math.min(bytes.length, follow.end - offset));
+        offset = follow.end;
+      }
+      if (bytes.length) {
+        follow.end = offset + bytes.length;
+        this.deliver(follow, bytes);
+      }
+    }
+    // Each report is the agent's whole state.
+    if (event.agent) this.update(event.terminal, (t) => ({ ...t, agent: event.agent }));
+    if (event.exit) this.update(event.terminal, (t) => ({ ...t, running: false, exit: event.exit }));
+  }
+
+  private deliver(follow: Follow, bytes: Uint8Array) {
+    if (follow.sink) {
+      follow.sink.write(bytes);
+      return;
+    }
+    follow.pending.push(bytes);
+    follow.pendingBytes += bytes.length;
+    while (follow.pendingBytes > MAX_PENDING && follow.pending.length > 1) {
+      follow.pendingBytes -= follow.pending.shift()!.length;
+    }
+  }
+
+  private update(id: string, change: (t: TerminalInfo) => TerminalInfo) {
+    this.setList((list) => list.map((t) => (t.id === id ? change(t) : t)));
+  }
+}
+
+function newFollow(end: number): Follow {
+  return { end, pending: [], pendingBytes: 0, subscribed: false };
+}
+
+export function decodeBase64(data: string): Uint8Array {
+  const text = atob(data);
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
+  return bytes;
+}

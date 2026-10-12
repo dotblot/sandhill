@@ -52,6 +52,8 @@ function fakeWorkspace(journal: CellOutputs[] = []) {
       }
     },
     onEvent() {},
+    onTerminal() {},
+    openLink() {},
     onLink() {},
     blobUrl: () => "",
   };

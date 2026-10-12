@@ -4,7 +4,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use sandhill_daemon::kernel::{pid_alive, send_signal};
-use sandhill_daemon::{Daemon, StateDir, build_id};
+use sandhill_daemon::terminal::host::HostOptions;
+use sandhill_daemon::{Daemon, DaemonOptions, StateDir, build_id};
 use sandhill_proto::client::Client;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
@@ -37,11 +38,51 @@ enum Command {
         #[arg(long)]
         start: bool,
     },
+    /// Serve Sandhill's tools to a coding agent over MCP on stdin/stdout.
+    /// Claude Code and Codex start this themselves.
+    Mcp {
+        /// The project folder whose sessions the tools work with.
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Hold one terminal and the program in it (the daemon starts this).
+    #[command(hide = true)]
+    TerminalHost {
+        #[arg(long)]
+        dir: PathBuf,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, default_value_t = 100)]
+        cols: u16,
+        #[arg(long, default_value_t = 30)]
+        rows: u16,
+        #[arg(last = true, required = true)]
+        program: Vec<std::ffi::OsString>,
+    },
+    /// Report an agent's state to the terminal it runs in, from its hooks:
+    /// `state busy|idle|waiting`, `notification` and `status` (Claude Code,
+    /// which sends JSON on stdin), `codex` (Codex's notify program).
+    #[command(hide = true)]
+    TerminalEvent {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
+    // The daemon serves many clients at once; the helpers it and the agents
+    // start (one per terminal, one per hook call) need a single thread.
+    let runtime = match cli.command {
+        Command::Serve | Command::Attach { .. } => tokio::runtime::Builder::new_multi_thread(),
+        _ => tokio::runtime::Builder::new_current_thread(),
+    }
+    .enable_all()
+    .build()?;
+    runtime.block_on(run(cli))
+}
+
+async fn run(cli: Cli) -> Result<()> {
     let state = cli
         .state_dir
         .clone()
@@ -51,6 +92,31 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Serve => serve(state, socket).await,
         Command::Attach { start } => attach(&cli, state, socket, start).await,
+        Command::Mcp { ref project } => sandhill_daemon::mcp::serve(socket, project.clone()).await,
+        Command::TerminalHost {
+            dir,
+            cwd,
+            cols,
+            rows,
+            program,
+        } => {
+            sandhill_daemon::terminal::host::run(HostOptions {
+                dir,
+                cwd,
+                cols,
+                rows,
+                program,
+            })
+            .await
+        }
+        Command::TerminalEvent { args } => {
+            // A hook must never get in the agent's way: report what can be
+            // reported and always succeed.
+            if let Err(err) = sandhill_daemon::terminal::events::run(&args).await {
+                eprintln!("sandhilld terminal-event: {err:#}");
+            }
+            Ok(())
+        }
     }
 }
 
@@ -80,7 +146,12 @@ async fn serve(state: StateDir, socket: PathBuf) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     }
-    let daemon = Daemon::open(state).await?;
+    let options = DaemonOptions {
+        // Agents' MCP servers connect to it from their own folders.
+        socket: std::path::absolute(&socket).unwrap_or_else(|_| socket.clone()),
+        ..DaemonOptions::for_state(&state)
+    };
+    let daemon = Daemon::open_with(state, options).await?;
     tracing::info!("sandhilld listening on {}", socket.display());
 
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;

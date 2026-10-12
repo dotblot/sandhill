@@ -219,6 +219,14 @@ With an API key, the subscription restrictions above no longer apply, which open
   - *Read-only by default:* `list_variables` and `inspect` never change state. Running code in your session is a separate tool that asks permission.
 - Keep agent edits as ordinary file edits. The daemon notices file changes and pushes them to the open editor, and you see a diff and can re-run stale chunks.
 
+### What is built (2026-10-12)
+- **Terminals that outlive everything.** Each agent or shell runs under its own small holder process, `sandhilld terminal-host`, in its own process group, like kernels. The holder owns the pseudo-terminal, logs the output to disk (the last 4 MiB are kept) and serves it on a socket in the terminal's folder (`~/.local/state/sandhill/terminals/<id>/`). Closing the app or upgrading the daemon leaves the agent working; the app replays the recent output when it comes back. The protocol is in `docs/protocol.md`.
+- **The CLIs stay unmodified.** Sandhill configures Claude Code and Codex only through command-line flags (`--mcp-config`, `--settings`, `--append-system-prompt`, `--model`, `--effort`, `--permission-mode`; Codex's `-c` overrides). It never edits their config files and never reads their credentials; each signs in with its own login flow in the terminal. Flags an older CLI lacks are left out (the daemon checks `--help`).
+- **Agent state** comes from Claude Code's hooks (prompt, tool, stop, notification) and its status line, and from Codex's `notify` program, all of which run `sandhilld terminal-event`. That gives the busy and waiting dots, the "waiting for you" notice, the model, the context bar and the plan's 5-hour and weekly use. A status line the user set up themselves keeps working: Sandhill's status line runs it and prints its output.
+- **MCP tools, first set:** `list_sessions`, `list_variables` (a quiet, history-free execute with summaries of Seurat, SingleCellExperiment, AnnData and data frames), `run_code` (in the user's session, where results stay) and `get_outputs` (a document's saved outputs, with plots as images). The server is `sandhilld mcp`, which talks to the daemon over its socket. Not yet: `run_chunk`, `inspect`, jobs, and variable snapshots for busy kernels (listing a busy session says so instead).
+- **The app** has the Agents pane (a tab per session, the real terminal in xterm.js, a message box that pastes into it), a Terminal tab in the Console, and reloads open documents when their file changes on disk (checked every 1.5 s; unsaved changes are never replaced without asking).
+- **Next:** omp over ACP as a chat view for open models, the context breakdown, changing effort and permissions mid-session, and showing the agents' runs in the Console.
+
 ---
 
 ## 5b. Features to adopt from Positron (added 2026-10-11)

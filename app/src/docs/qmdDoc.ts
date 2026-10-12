@@ -10,7 +10,7 @@ import { baseExtensions, quartoLanguage } from "../editor/setup";
 import { type Chunk, frontMatterKernel, parseChunks, proseLines, sameCode } from "../model/qmd";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { CellOutput } from "./cellOutput";
-import { Doc } from "./doc";
+import { changedOnDisk, Doc, replaceText } from "./doc";
 
 /** Chunk languages that have kernels. */
 const RUNNABLE = new Set(["r", "python"]);
@@ -93,7 +93,7 @@ export class QmdDoc extends Doc {
           this.layoutField,
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-              this.setDirty(true);
+              if (!changedOnDisk(update.transactions)) this.setDirty(true);
               this.setLangs(chunkLanguages(update.state.field(this.layoutField).chunks));
             }
             if (update.docChanged || update.transactions.some((t) => t.effects.some((e) => e.is(refresh)))) {
@@ -124,6 +124,17 @@ export class QmdDoc extends Doc {
     });
     this.mtime = written.mtime_ms;
     this.setDirty(false);
+  }
+
+  reload(file: FileText): boolean {
+    if (this.view) replaceText(this.view, file.text);
+    else {
+      this.initialText = file.text;
+      this.setLangs(chunkLanguages(parseChunks(file.text)));
+    }
+    this.mtime = file.mtime_ms;
+    this.setDirty(false);
+    return true;
   }
 
   setAllOutputs(visible: boolean) {

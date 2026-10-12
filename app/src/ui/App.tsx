@@ -3,6 +3,7 @@ import { LOCAL_HOST, type Shell } from "../backend";
 import {
   CONFLICT_ERROR,
   type DirEntry,
+  type FileStat,
   type FileText,
   type ProjectInfo,
   type ProjectState,
@@ -14,7 +15,10 @@ import { ScriptDoc } from "../docs/scriptDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
+import { modelLabel, planUsage, timeLeft } from "../model/agents";
+import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
+import { AgentsPane, ProviderIcon } from "./AgentsPane";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileIcon, Icon, type IconName } from "./icons";
 import { KernelBar } from "./KernelBar";
@@ -22,18 +26,25 @@ import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
 import { linkText } from "./linkText";
 import { type Command, Palette } from "./Palette";
+import { type Pane, PaneButtons } from "./PaneButtons";
+import { type ShellApi, ShellTerminal } from "./ShellTerminal";
 
 const SAVE_STATE_MS = 300;
 const LEFT_KEY = "sandhill.sidebar";
 const LEFT_WIDTH_KEY = "sandhill.leftWidth";
 const CONSOLE_KEY = "sandhill.console";
 const CONSOLE_HEIGHT_KEY = "sandhill.consoleHeight";
+const AGENTS_KEY = "sandhill.agents";
+const AGENTS_WIDTH_KEY = "sandhill.agentsWidth";
+const AGENTS_WIDTH = 400;
+const AGENTS_MIN = 300;
+/** How often open documents are checked for changes on disk, as when an agent edits one. */
+const DISK_CHECK_MS = 1500;
 const LEFT_WIDTH = 260;
 const LEFT_MIN = 236;
 const CONSOLE_MIN = 90;
 const EDITOR_MIN = 120;
 
-type Pane = "editor" | "console";
 
 /**
  * A project window: the toolbar over the left pane (files, kernels and the
@@ -64,6 +75,11 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [consoleHeight, setConsoleHeight] = createSignal(Number(stored(CONSOLE_HEIGHT_KEY)) || 0);
   const [minimized, setMinimized] = createSignal<Pane[]>([]);
   const [maximized, setMaximized] = createSignal<Pane>();
+  const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) === "shown");
+  const [agentsWidth, setAgentsWidth] = createSignal(clampAgents(Number(stored(AGENTS_WIDTH_KEY)) || AGENTS_WIDTH));
+  /** The agent session in front in the Agents pane. */
+  const [agentTab, setAgentTab] = createSignal<string>();
+  const [consoleTab, setConsoleTab] = createSignal<"console" | "terminal">("console");
   const [palette, setPalette] = createSignal(false);
   const [menu, setMenu] = createSignal(false);
   const toggleLeft = () => {
@@ -74,6 +90,17 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     setConsoleOn(!consoleOn());
     store(CONSOLE_KEY, consoleOn() ? "shown" : "hidden");
     if (!consoleOn() && maximized() === "console") setMaximized(undefined);
+  };
+  const toggleAgents = () => {
+    setAgentsOn(!agentsOn());
+    store(AGENTS_KEY, agentsOn() ? "shown" : "hidden");
+    if (!agentsOn() && maximized() === "agents") setMaximized(undefined);
+  };
+  /** Brings an agent session to the front, opening the pane if need be. */
+  const showAgent = (id?: string) => {
+    if (id) setAgentTab(id);
+    if (!agentsOn()) toggleAgents();
+    setMinimized((list) => list.filter((p) => p !== "agents"));
   };
   const isMin = (pane: Pane) => minimized().includes(pane) && maximized() !== pane;
   const toggleMin = (pane: Pane) => {
@@ -111,6 +138,21 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       setRestored(true);
     })();
   });
+
+  // Agents and shells the daemon keeps for this project, followed from each connection.
+  const terminals = new TerminalStore(ws.backend, props.project);
+  let shellApi: ShellApi | undefined;
+  createEffect(() => {
+    if (ws.link().status !== "connected" || !ws.host()) return;
+    terminals.refresh().catch((err) => console.warn("could not list the terminals", err));
+  });
+  /** Runs a command in the Console's Terminal tab, as installing an agent does. */
+  const runInTerminal = (command: string) => {
+    if (!consoleOn()) toggleConsole();
+    setMinimized((list) => list.filter((p) => p !== "console"));
+    setConsoleTab("terminal");
+    void shellApi?.run(command);
+  };
 
   // The daemon keeps the open documents for next time, not the folder.
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -209,6 +251,72 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     const doc = await pending;
     if (doc && (!quiet || !openedWhileRestoring)) setActive(doc);
     return doc;
+  }
+
+  // Documents follow their files: an agent's edits show up in the editor.
+  /** Per document, the file version the person chose to keep their own changes over. */
+  const keptOver = new Map<Doc, number>();
+  let checking = false;
+  async function checkDisk() {
+    const list = docs();
+    if (checking || !list.length || ws.link().status !== "connected") return;
+    checking = true;
+    try {
+      const stats = await ws.call<FileStat[]>("stat_files", { paths: list.map((d) => d.path) });
+      for (const stat of stats) {
+        const doc = list.find((d) => d.path === stat.path);
+        if (!doc || stat.mtime_ms === undefined || stat.mtime_ms === doc.diskMtime() || !docs().includes(doc)) continue;
+        if (doc.dirty()) {
+          if (keptOver.get(doc) === stat.mtime_ms) continue;
+          const choice = await ask(
+            `${doc.name} changed on disk, and you have unsaved changes.`,
+            ["Keep mine", "Reload"],
+            "Reloading replaces your changes with the version on disk. Keeping yours asks again when you save.",
+          );
+          if (choice !== "Reload") {
+            keptOver.set(doc, stat.mtime_ms);
+            continue;
+          }
+        }
+        await reload(doc);
+      }
+    } catch (err) {
+      console.warn("could not check the open documents on disk", err);
+    } finally {
+      checking = false;
+    }
+  }
+  onMount(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void checkDisk();
+    }, DISK_CHECK_MS);
+    const now = () => void checkDisk();
+    window.addEventListener("focus", now);
+    onCleanup(() => {
+      clearInterval(timer);
+      window.removeEventListener("focus", now);
+    });
+  });
+
+  /** Takes a document's file from disk again, in place if it can. */
+  async function reload(doc: Doc) {
+    keptOver.delete(doc);
+    if (doc.kind !== "ipynb") {
+      const file = await ws.call<FileText>("read_file", { path: doc.path });
+      if (doc.reload(file)) return;
+    }
+    const shown = doc.shownOutputs();
+    const fresh = await NotebookDoc.open(ws, doc.path, shown);
+    const list = docs();
+    if (!list.includes(doc)) {
+      fresh.dispose();
+      return;
+    }
+    setDocs(list.map((d) => (d === doc ? fresh : d)));
+    if (active() === doc) setActive(fresh);
+    hosts.get(doc)?.remove();
+    hosts.delete(doc);
+    doc.dispose();
   }
 
   async function saveDoc(doc: Doc): Promise<boolean> {
@@ -319,6 +427,14 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       { label: "New Python script", run: () => void createFile("py") },
       { label: left() ? "Hide left pane" : "Show left pane", keys: "⌘B", run: toggleLeft },
       { label: consoleOn() ? "Hide console" : "Show console", keys: "⌘J", run: toggleConsole },
+      { label: agentsOn() ? "Hide agents" : "Show agents", keys: "⌘I", run: toggleAgents },
+      {
+        label: "Open terminal",
+        run: () => {
+          if (!consoleOn()) toggleConsole();
+          setConsoleTab("terminal");
+        },
+      },
       { label: "Refresh files", run: () => setTreeKey((k) => k + 1) },
       { label: "Open project…", keys: "⌘O", run: () => void props.shell.showStart() },
       { label: "Connect to server…", run: () => void props.shell.showStart() },
@@ -334,7 +450,16 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       if (e.key === "Escape" && menu()) setMenu(false);
       if (mod && !e.altKey && !e.shiftKey) {
         const key = e.key.toLowerCase();
-        const action = key === "b" ? toggleLeft : key === "j" ? toggleConsole : key === "k" ? () => setPalette(!palette()) : undefined;
+        const action =
+          key === "b"
+            ? toggleLeft
+            : key === "j"
+              ? toggleConsole
+              : key === "i"
+                ? toggleAgents
+                : key === "k"
+                  ? () => setPalette(!palette())
+                  : undefined;
         if (action) {
           e.preventDefault();
           action();
@@ -363,6 +488,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       store(LEFT_WIDTH_KEY, String(leftWidth())),
     );
   };
+  /** Dragging the gap beside the Agents pane sets its width. */
+  const resizeAgents = (down: PointerEvent) => {
+    const start = agentsWidth();
+    drag(down, "col-resize", (e) => setAgentsWidth(clampAgents(start + e.clientX - down.clientX)), () =>
+      store(AGENTS_WIDTH_KEY, String(agentsWidth())),
+    );
+  };
   let column!: HTMLElement;
   let consolePane: HTMLDivElement | undefined;
   /** Dragging the gap above the Console sets its height. */
@@ -384,11 +516,14 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   };
 
   return (
-    <div class="window" classList={{ "left-hidden": !left() }}>
+    <div class="window" classList={{ "left-hidden": !left(), "agents-shown": agentsOn() }}>
       <Toolbar
         left={left()}
         menu={menu()}
         onLeft={toggleLeft}
+        agents={agentsOn()}
+        waiting={terminals.waiting().length > 0}
+        onAgents={toggleAgents}
         onSearch={() => setPalette(true)}
         onMenu={() => setMenu(!menu())}
       />
@@ -410,6 +545,25 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
             marker={marker}
           />
           <div class="split v" title="Drag to resize" onPointerDown={resizeLeft} />
+        </Show>
+        <Show when={agentsOn()}>
+          <AgentsPane
+            ws={ws}
+            store={terminals}
+            project={props.project}
+            hostLabel={hostLabel}
+            docs={docs()}
+            active={active()}
+            selected={agentTab()}
+            onSelect={setAgentTab}
+            width={agentsWidth()}
+            min={isMin("agents")}
+            max={maximized() === "agents"}
+            onMin={toggleMin}
+            onMax={toggleMax}
+            onInstall={runInTerminal}
+          />
+          <div class="split v" title="Drag to resize" onPointerDown={resizeAgents} />
         </Show>
         <section class="editor-col" ref={column}>
           <div
@@ -481,17 +635,34 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               style={consoleHeight() && !isMin("console") && !isMin("editor") ? { "flex-basis": `${consoleHeight()}px` } : undefined}
             >
               <div class="tabs" role="tablist" data-tauri-drag-region="deep">
-                <div class="tab active" role="tab" aria-selected="true" title={consoleDoc()?.path}>
+                <div
+                  class="tab"
+                  role="tab"
+                  aria-selected={consoleTab() === "console"}
+                  classList={{ active: consoleTab() === "console" }}
+                  title={consoleDoc()?.path}
+                  onClick={() => setConsoleTab("console")}
+                >
                   <span class="tab-name">Console</span>
                   <Show when={consoleDoc() && consoleDoc() !== active()}>
                     <span class="tab-detail">{consoleDoc()!.name}</span>
                   </Show>
                 </div>
+                <div
+                  class="tab"
+                  role="tab"
+                  aria-selected={consoleTab() === "terminal"}
+                  classList={{ active: consoleTab() === "terminal" }}
+                  title={`A shell on ${hostLabel}, in this project's folder`}
+                  onClick={() => setConsoleTab("terminal")}
+                >
+                  <span class="tab-name">Terminal</span>
+                </div>
                 <span class="spacer" />
-                <Show when={consoleDoc()}>
+                <Show when={consoleTab() === "console" && consoleDoc()}>
                   {(doc) => <ConsoleSession ws={ws} doc={doc()} />}
                 </Show>
-                <Show when={consoleDoc()}>
+                <Show when={consoleTab() === "console" && consoleDoc()}>
                   {(doc) => (
                     <button class="bar-button console-clear" title="Clear the console" onClick={() => doc().clearConsole()}>
                       Clear
@@ -500,7 +671,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                 </Show>
                 <PaneButtons pane="console" min={isMin("console")} max={maximized() === "console"} onMin={toggleMin} onMax={toggleMax} />
               </div>
-              <div class="console" ref={setConsoleBody} />
+              <div class="console" ref={setConsoleBody} hidden={consoleTab() !== "console"} />
+              <ShellTerminal
+                store={terminals}
+                shown={consoleTab() === "terminal" && !isMin("console")}
+                openLink={(url) => ws.backend.openLink(url)}
+                api={(api) => (shellApi = api)}
+              />
             </div>
           </Show>
         </section>
@@ -514,6 +691,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         </span>
         <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
         <span class="spacer" />
+        <AgentStatus store={terminals} onShow={showAgent} />
         <span class="status-item">{active()?.cursor() ?? ""}</span>
       </footer>
       <Show when={menu()}>
@@ -544,19 +722,41 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
  * The toolbar over the top of the left pane, after the window buttons: the
  * left and right panes, Agents, ⌘K search and the menu.
  */
-function Toolbar(props: { left: boolean; menu: boolean; onLeft: () => void; onSearch: () => void; onMenu: () => void }) {
+function Toolbar(props: {
+  left: boolean;
+  agents: boolean;
+  waiting: boolean;
+  menu: boolean;
+  onLeft: () => void;
+  onAgents: () => void;
+  onSearch: () => void;
+  onMenu: () => void;
+}) {
   return (
     <div class="toolbar" data-tauri-drag-region="deep">
       <ToolButton icon="leftPane" title="Left pane (⌘B)" pressed={props.left} onClick={props.onLeft} />
       <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages, Git and Plots come in a later build" />
-      <ToolButton icon="chat" title="Agents: Claude Code, Codex and open models come in a later build" />
+      <ToolButton
+        icon="chat"
+        title={props.waiting ? "Agents (⌘I): an agent is waiting for you" : "Agents: Claude Code and Codex (⌘I)"}
+        pressed={props.agents}
+        onClick={props.onAgents}
+        dot={props.waiting}
+      />
       <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
       <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
     </div>
   );
 }
 
-function ToolButton(props: { icon: IconName; title: string; pressed?: boolean; onClick?: () => void; menu?: boolean }) {
+function ToolButton(props: {
+  icon: IconName;
+  title: string;
+  pressed?: boolean;
+  onClick?: () => void;
+  menu?: boolean;
+  dot?: boolean;
+}) {
   return (
     <button
       class="tbi"
@@ -568,6 +768,9 @@ function ToolButton(props: { icon: IconName; title: string; pressed?: boolean; o
       onClick={() => props.onClick?.()}
     >
       <Icon name={props.icon} />
+      <Show when={props.dot}>
+        <span class="dot" />
+      </Show>
     </button>
   );
 }
@@ -625,20 +828,6 @@ function MainMenu(props: {
   );
 }
 
-/** Minimize and maximize, at the right end of a pane's tab strip. */
-function PaneButtons(props: { pane: Pane; min: boolean; max: boolean; onMin: (p: Pane) => void; onMax: (p: Pane) => void }) {
-  return (
-    <span class="pwin">
-      <button title={props.min ? "Restore" : "Minimize"} onClick={() => props.onMin(props.pane)}>
-        <Icon name={props.min ? "restore" : "minimize"} small />
-      </button>
-      <button title={props.max ? "Restore" : "Maximize"} onClick={() => props.onMax(props.pane)}>
-        <Icon name={props.max ? "restore" : "maximize"} small />
-      </button>
-    </span>
-  );
-}
-
 /** The session a script's console runs in, as a pill in the Console's tab strip. */
 function ConsoleSession(props: { ws: Workspace; doc: ScriptDoc }) {
   const id = () => props.doc.kernels.session(props.doc.language);
@@ -650,6 +839,55 @@ function ConsoleSession(props: { ws: Workspace; doc: ScriptDoc }) {
       <span class="kernel-dot" />
       {info() ? sessionLabel(info()!) : languageLabel(props.doc.language)}
     </span>
+  );
+}
+
+/**
+ * In the status bar: which agent waits for you, then how much of the Claude
+ * plan's 5-hour and weekly limits is used, as Claude Code last reported.
+ */
+function AgentStatus(props: { store: TerminalStore; onShow: (id: string) => void }) {
+  const waiting = () => props.store.waiting()[0];
+  const usage = () => {
+    const reports = props.store
+      .agents()
+      .filter((t) => t.agent?.status?.rate_limits)
+      .sort((a, b) => (b.agent?.ts_ms ?? 0) - (a.agent?.ts_ms ?? 0));
+    return reports.length ? { kind: reports[0].kind, limits: planUsage(reports[0].agent?.status) } : undefined;
+  };
+  return (
+    <>
+      <Show when={waiting()}>
+        {(terminal) => (
+          <button class="status-item waiting" title={terminal().agent?.message ?? "Show the agent"} onClick={() => props.onShow(terminal().id)}>
+            <span class="dot wait" />
+            {modelLabel(terminal())} is waiting for you
+          </button>
+        )}
+      </Show>
+      <Show when={usage()?.limits.length}>
+        <span class="status-item usage" title="Plan usage, as the agent last reported it">
+          <ProviderIcon kind={usage()!.kind} />
+          <For each={usage()!.limits}>
+            {(limit, i) => (
+              <>
+                <Show when={i() > 0}>
+                  <span class="sep">·</span>
+                </Show>
+                <span title={limit.resetsAt ? `Resets in ${timeLeft(limit.resetsAt)}` : undefined}>{limit.label}</span>
+                <span class="meter">
+                  <i classList={{ hot: limit.percent >= 80 }} style={{ width: `${limit.percent}%` }} />
+                </span>
+                <span classList={{ hotx: limit.percent >= 80 }}>{limit.percent}%</span>
+                <Show when={limit.resetsAt}>
+                  <span class="rs">{timeLeft(limit.resetsAt!)}</span>
+                </Show>
+              </>
+            )}
+          </For>
+        </span>
+      </Show>
+    </>
   );
 }
 
@@ -695,6 +933,10 @@ function drag(down: PointerEvent, cursor: string, move: (e: PointerEvent) => voi
   target.addEventListener("pointermove", move);
   target.addEventListener("pointerup", up);
   target.addEventListener("pointercancel", up);
+}
+
+function clampAgents(width: number): number {
+  return Math.round(Math.max(AGENTS_MIN, Math.min(width, Math.max(AGENTS_MIN, window.innerWidth * 0.6))));
 }
 
 function clampLeft(width: number): number {
