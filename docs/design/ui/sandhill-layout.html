@@ -1059,6 +1059,17 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 .win { --fs-chrome: 13px; --fs-body: 13px; --fs-code: 13px; font-size: 13px; }
 .win :not(svg, svg *, .badge, .rail .badge) { font-size: 13px !important; }
 /* one mono font, Maple Mono NF, for code, data, the console and the agent terminals (set in --mono above) */
+/* Data Explorer in the UI font with tabular digits; column names keep their case */
+.win .de { --mono: var(--ui); }
+.de-stats h4 { text-transform: none; letter-spacing: 0; }
+/* resources: a 2 x 2 grid of icon, name and bar, no percent; content centred in the hover shading */
+.resources { grid-template-columns: 1fr 1fr; gap: 2px 4px; }
+.rrow { grid-template-columns: 13px 28px 1fr; gap: 6px; height: 22px; padding: 0 8px; }
+/* kernel pickers: the language icon replaces the status dot and the language name */
+.win svg.lang { width: 14px; height: 14px; flex: none; }
+.kern, .vtool .sel { padding-left: 3px; }
+/* Git pane: contents at 11px, no bold */
+.win .gitpane :not(svg, svg *, .badge, .rail .badge) { font-size: 11px !important; font-weight: 400 !important; }
 </style>
 <style id="maple-mono">
 /* Maple Mono NF 7.8 (Nerd Font, unhinted), from https://github.com/subframe7536/maple-font/releases/tag/v7.8,
@@ -1499,7 +1510,7 @@ function renderSidebar() {
     <div class="sb-head proj-head" title="${h.path}">${h.project}<span class="spacer"></span><button title="New file">${ico("plus")}</button><button title="Refresh">${ico("restart")}</button></div>
     <div class="tree">${tree}</div>
     <div class="kernels">${kern}</div>
-    <div class="resources">${RES.map(([k, ic, lab]) => { const p = h.res[k][0]; return `<button class="rrow ${S.resPop === k ? "on" : ""}" data-res="${k}" title="${h.res[k][1]}">${ico(ic, "ico")}<span class="rl">${lab}</span><span class="rb"><i style="width:${p}%" class="${p >= 80 ? "hot" : ""}"></i></span><span class="rp">${p}%</span></button>`; }).join("")}</div>`;
+    <div class="resources">${RES.map(([k, ic, lab]) => { const p = h.res[k][0]; return `<button class="rrow ${S.resPop === k ? "on" : ""}" data-res="${k}" title="${h.res[k][1]}" aria-label="${lab} ${p}%">${ico(ic, "ico")}<span class="rl">${lab}</span><span class="rb"><i style="width:${p}%" class="${p >= 80 ? "hot" : ""}"></i></span></button>`; }).join("")}</div>`;
   $$("[data-open]", sb).forEach(e => e.onclick = () => openTab(e.dataset.open));
   $$("[data-host]", sb).forEach(b => b.onclick = () => { S.host = b.dataset.host; S.resPop = null; S.kask = null; renderSidebar(); renderResPop(); });
   $$("[data-kask]", sb).forEach(b => b.onclick = () => { S.kask = b.dataset.kask; renderSidebar(); });
@@ -1528,19 +1539,19 @@ function renderTabs() {
   $$("#tabs [data-close]").forEach(e => e.onclick = () => { if (e.dataset.close === "explorer") { S.explorerOpen = false; if (S.tab === "explorer") S.tab = "analysis"; renderAll(); } if (e.dataset.close === "source") { S.src = null; if (S.tab === "source") S.tab = "analysis"; renderAll(); } });
 }
 function kern(lang, ver, kind, state, sess) {
-  return `<span class="kern"><span class="dot ${state}" title="${state}"></span><span class="lang">${lang}</span><button class="pick">${ver} · ${kind} · ${sess}${ico("chev")}</button><button class="kb" title="Interrupt" ${state === "busy" ? "" : "disabled"}>${ico("stop")}</button><button class="kb" title="Restart">${ico("restart")}</button></span>`;
+  return `<span class="kern" title="${lang} ${ver} · ${state}">${langIcon(lang === "Python" ? "py" : "r")}<button class="pick">${ver} · ${kind} · ${sess}${ico("chev")}</button><button class="kb" title="Interrupt" ${state === "busy" ? "" : "disabled"}>${ico("stop")}</button><button class="kb" title="Restart">${ico("restart")}</button></span>`;
 }
 function renderDocbar() {
   const db = $("#docbar");
   setTimeout(() => { const t = $("[data-oall]", db); if (t) t.onclick = () => { const ids = S.tab === "de" ? ["nb5", "nb6"] : ["load", "umap", "markers", "scanpy"]; const allOn = ids.every(i => S.shown.has(i)); ids.forEach(i => allOn ? S.shown.delete(i) : S.shown.add(i)); renderDocbar(); renderDoc(); }; });
-  if (S.tab === "source") { const py = isPy(S.src.pkg); db.innerHTML = `<span class="kern"><span class="dot idle"></span><span class="lang">${py ? "Python" : "R"}</span><span class="pick" style="padding-right:6px">Read-only · ${S.src.pkg} ${PKGVER[S.src.pkg] || ""} · installed in ${py ? "conda: scanpy" : "renv"} on gpu01</span></span><span class="spacer"></span><button class="dbtn" data-srchelp>${ico("search")}Help</button><button class="dbtn">${ico("copy")}Copy</button>`; $("[data-srchelp]", db).onclick = () => showHelp(S.src.kind === "pkg" ? "" : S.src.name, S.src.pkg); return; }
-  if (S.tab === "explorer") { db.innerHTML = `<span class="kern"><span class="dot idle"></span><span class="lang">R</span><span class="pick" style="padding-right:6px">seu@meta.data · live from R 4.4.1 · r-7f3a</span></span><span class="spacer"></span><button class="dbtn">${ico("copy")}Copy as code</button><button class="dbtn">${ico("save")}Export CSV</button>`; return; }
+  if (S.tab === "source") { const py = isPy(S.src.pkg); db.innerHTML = `<span class="kern" title="${py ? "Python" : "R"}">${langIcon(py ? "py" : "r")}<span class="pick" style="padding-right:6px">Read-only ·${S.src.pkg} ${PKGVER[S.src.pkg] || ""} · installed in ${py ? "conda: scanpy" : "renv"} on gpu01</span></span><span class="spacer"></span><button class="dbtn" data-srchelp>${ico("search")}Help</button><button class="dbtn">${ico("copy")}Copy</button>`; $("[data-srchelp]", db).onclick = () => showHelp(S.src.kind === "pkg" ? "" : S.src.name, S.src.pkg); return; }
+  if (S.tab === "explorer") { db.innerHTML = `<span class="kern" title="R">${langIcon("r")}<span class="pick" style="padding-right:6px">seu@meta.data · live from R 4.4.1 · r-7f3a</span></span><span class="spacer"></span><button class="dbtn">${ico("copy")}Copy as code</button><button class="dbtn">${ico("save")}Export CSV</button>`; return; }
   const ids = S.tab === "de" ? ["nb5", "nb6"] : ["load", "umap", "markers", "scanpy"];
   const allOn = ids.every(i => S.shown.has(i));
-  const run = `<button class="dbtn" data-oall title="${allOn ? "Hide" : "Show"} every output in this document">${ico(allOn ? "chev" : "chevr")}${allOn ? "Hide outputs" : "Show outputs"}<kbd>${ids.filter(i => S.shown.has(i)).length}/${ids.length}</kbd></button><button class="dbtn">${ico("play")}Run all <kbd>⌥⌘R</kbd></button><button class="dbtn">${ico("outline")}Outline</button><button class="dbtn">${ico("share")}Share</button>`;
+  const run = `<button class="dbtn" data-oall title="${allOn ? "Hide" : "Show"} every output in this document">${ico(allOn ? "chev" : "chevr")}${allOn ? "Hide outputs" : "Show outputs"}<kbd>${ids.filter(i => S.shown.has(i)).length}/${ids.length}</kbd></button><button class="dbtn" title="Run all ⌥⌘R">${ico("play")}Run all</button><button class="dbtn">${ico("outline")}Outline</button><button class="dbtn">${ico("share")}Share</button>`;
   if (S.tab === "analysis") db.innerHTML = kern("R", "4.4.1", "Ark", "idle", "r-7f3a") + kern("Python", "3.12", "ipykernel", "busy", "py-2c91") + `<span class="spacer"></span>` + run;
   else if (S.tab === "de") db.innerHTML = kern("Python", "3.12", "ipykernel", "busy", "py-2c91") + `<span class="spacer"></span>` + run;
-  else db.innerHTML = `<span class="kern"><span class="dot idle"></span><span class="lang">R</span><span class="pick" style="padding-right:6px">Sends to console · R 4.4.1 · r-7f3a</span></span><span class="spacer"></span><button class="dbtn">${ico("play")}Run line <kbd>⌘↩</kbd></button><button class="dbtn">${ico("play")}Source <kbd>⇧⌘S</kbd></button>`;
+  else db.innerHTML = `<span class="kern" title="R">${langIcon("r")}<span class="pick" style="padding-right:6px">Sends to console · R 4.4.1 · r-7f3a</span></span><span class="spacer"></span><button class="dbtn">${ico("play")}Run line <kbd>⌘↩</kbd></button><button class="dbtn">${ico("play")}Source <kbd>⇧⌘S</kbd></button>`;
 }
 
 /* ---------- qmd document ---------- */
@@ -1767,7 +1778,7 @@ function renderTop(fresh = false) {
   $$("[data-gt]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.gt === S.gt)));
   const g = $("#gtop");
   if (S.gt === "pkgs") {
-    g.innerHTML = `<div class="vtool"><span class="sel"><span class="dot idle"></span>R · renv${ico("chev")}</span><input placeholder="Filter packages" aria-label="Filter packages"><span class="vmem">142 installed</span></div>${[["Seurat", "5.1.0", "attached"], ["SeuratObject", "5.0.2", "attached"], ["DESeq2", "1.44.0", ""], ["ggplot2", "3.5.1", "attached"], ["dplyr", "1.1.4", "attached"], ["harmony", "1.2.1", "update 1.2.3"], ["scran", "1.32.0", ""]].map(([p, v, st]) => `<div class="var pkgrow" data-fn="${p}" data-pkg="${p}"><span></span>${ico("pkg")}<span class="nm">${p}</span><span class="sm">${v}</span><span class="sz ${st.startsWith("update") ? "upd" : ""}">${st}</span><span></span></div>`).join("")}`;
+    g.innerHTML = `<div class="vtool"><span class="sel" title="R · renv library">${langIcon("r")}renv${ico("chev")}</span><input placeholder="Filter packages" aria-label="Filter packages"><span class="vmem">142 installed</span></div>${[["Seurat", "5.1.0", "attached"], ["SeuratObject", "5.0.2", "attached"], ["DESeq2", "1.44.0", ""], ["ggplot2", "3.5.1", "attached"], ["dplyr", "1.1.4", "attached"], ["harmony", "1.2.1", "update 1.2.3"], ["scran", "1.32.0", ""]].map(([p, v, st]) => `<div class="var pkgrow" data-fn="${p}" data-pkg="${p}"><span></span>${ico("pkg")}<span class="nm">${p}</span><span class="sm">${v}</span><span class="sz ${st.startsWith("update") ? "upd" : ""}">${st}</span><span></span></div>`).join("")}`;
     return;
   }
   if (S.gt === "git") {
@@ -1789,7 +1800,7 @@ function renderTop(fresh = false) {
   const selMB = [...S.vsel].reduce((a, n) => a + (SIZE[n] || 0), 0);
   const tool = S.vsel.size
     ? `<div class="vtool vsel"><span class="vcount">${S.vsel.size} selected · ${mb(selMB)}</span><span class="spacer"></span><button class="vbtn" data-vclear>Cancel</button><button class="vbtn danger" data-vdel>${ico("trash")}Delete</button></div>`
-    : `<div class="vtool"><span class="sel"><span class="dot idle"></span>R · r-7f3a${ico("chev")}</span><input placeholder="Filter" aria-label="Filter variables"><span class="vmem" title="Memory used by this R session">2.1 GB</span></div>`;
+    : `<div class="vtool"><span class="sel" title="R session r-7f3a · idle">${langIcon("r")}r-7f3a${ico("chev")}</span><input placeholder="Filter" aria-label="Filter variables"><span class="vmem" title="Memory used by this R session">2.1 GB</span></div>`;
   g.innerHTML = `${tool}${S.vfreed ? `<div class="vfreed" title="Freed with rm() and gc() in the R session">${ico("check")}Removed ${S.vfreed.names.join(", ")} · ${mb(S.vfreed.mb)} freed</div>` : ""}
     ${S.vgone.has("seu") && S.vgone.has("markers") ? "" : `<div class="vh">Data</div>`}
     ${S.vgone.has("seu") ? "" : `<div class="var ${S.vsel.has("seu") ? "picked" : ""}" data-seu style="cursor:pointer">${ck("seu")}<span class="tw">${S.seuOpen ? "▼" : "▶"}</span><span class="nm">seu</span><span class="sm">2,638 cells × 13,714 genes <em>Seurat</em></span><span class="sz">412 MB</span><span></span></div>

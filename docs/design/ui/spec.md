@@ -56,8 +56,19 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - Kernel rows, **11px**: language icon (R, Python, Nextflow), name, what is
   attached, memory, and a trash button on hover. The trash button turns the row into an
   inline "Shut down X? Cancel / Shut down" confirmation.
-- Resource rows, **11px**: icon, label (CPU, MEM, GPU, Disk), a bar of the same
-  length for every row, and a percent. Clicking a row opens a details popover.
+- Resources, **11px**, in a 2 × 2 grid (CPU and MEM, then GPU and Disk). Each item
+  shows an icon, the label and a bar of the same length for every item, with no
+  percent. Items are 22px high with 8px side padding, so the content sits centred
+  in the hover shading. Clicking an item opens a details popover with the percent.
+
+## Editor
+- The document bar has one kernel picker per language. Each starts with the
+  language icon (R, Python), which replaces the status dot and the language name,
+  then the version, kernel and session. The icon is 14px and the picker's left
+  padding is 3px, so the icon sits evenly inside the rounded end.
+- Run all shows no keyboard shortcut; ⌥⌘R is in its tooltip.
+- The Data Explorer uses the UI font, with tabular digits, and shows column names
+  exactly as written (no capitals).
 
 ## Agents pane
 - Tabs show **only the provider icon**: Claude, OpenAI, or a chip for open
@@ -77,9 +88,11 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
   and `gc()` in that session.
+- The session pickers in Variables and Packages start with the language icon, like
+  the editor's kernel pickers, with no status dot or language name.
 - Help searches by package.
 - Git shows a commit graph with avatars, then staged and unstaged files with a
-  commit box.
+  commit box. Everything below its tab strip is **11px** and never bold.
 - Plots has a zoom dialog: set the size or pick a preset, then copy, or save as PNG, PDF
   or SVG. Plots stay white in dark mode.
 
@@ -92,12 +105,14 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - 13px for all UI text, in the macOS system font; 13px is the standard text size in
   macOS apps.
 - Maple Mono NF (the Nerd Font build of Maple Mono, version 7.8) at 13px for all
-  monospace text: the code editor and its outputs, the Data Explorer, Variables, the
-  console and terminal, the agent terminals, and code in Help and Git. Its Nerd Font
-  icons let shell prompts and command-line tools show their symbols. Maple Mono is
-  under the SIL Open Font License; the mockup carries its regular, italic, medium,
-  semibold and bold styles. There is no other monospace font.
-- The exceptions are the kernel and resource rows at 11px and the context bar at 9px.
+  monospace text: the code editor and its outputs, Variables, the console and
+  terminal, the agent terminals, and code in Help and Git. The Data Explorer is the
+  exception: it uses the UI font. The font's Nerd Font icons let shell prompts and
+  command-line tools show their symbols. Maple Mono is under the SIL Open Font
+  License; the mockup carries its regular, italic, medium, semibold and bold styles.
+  There is no other monospace font.
+- The exceptions are the kernel and resource rows and the Git pane's contents at
+  11px, and the context bar at 9px.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
 ## Open questions
