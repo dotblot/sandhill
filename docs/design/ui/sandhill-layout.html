@@ -1079,6 +1079,11 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 /* console session switch: language icon and version, like the kernel pickers */
 .ptabs .pill { padding: 0 8px 0 3px; gap: 5px; }
 /* code ligatures stay on (Maple Mono's default): <- shows as an arrow, |> as a triangle */
+/* plan usage in the status bar: a 14px ring instead of a bar, red from 80% */
+.uring { width: 14px; height: 14px; flex: none; fill: none; stroke-width: 2.5; }
+.uring .trk { stroke: color-mix(in srgb, var(--text) 14%, transparent); }
+.uring .val { stroke: var(--muted); stroke-linecap: round; }
+.uring.hot .val { stroke: var(--err); }
 /* kernel picker drop-down: details of the session, and switching */
 .kpop { position: absolute; z-index: 26; width: 270px; background: var(--bg); border: 1px solid var(--glass-edge); border-radius: var(--r); box-shadow: 0 16px 40px -12px rgba(0,0,0,.4); padding: 5px; display: flex; flex-direction: column; }
 .kp-h { display: flex; align-items: center; gap: 7px; padding: 5px 8px 3px; }
@@ -2134,7 +2139,8 @@ const USAGE = [
   { name: "Claude Code", short: "Claude", plan: "Claude Max plan", h5: 42, h5left: "2h 10m", h5reset: "15:30", wk: 61, wkleft: "2d 4h", wkreset: "Mon 09:00", banked: 2 },
   { name: "Codex", short: "Codex", plan: "ChatGPT Pro plan", h5: 87, h5left: "35m", h5reset: "13:55", wk: 33, wkleft: "5d 1h", wkreset: "Thu 11:20", banked: 0 },
 ];
-const meter = p => `<span class="meter"><i style="width:${p}%" class="${p >= 80 ? "hot" : ""}"></i></span>`;
+// plan usage as a small ring that fills clockwise from the top
+const meter = p => { const r = 5.25, c = 2 * Math.PI * r; return `<svg class="uring ${p >= 80 ? "hot" : ""}" viewBox="0 0 14 14" aria-hidden="true"><circle class="trk" cx="7" cy="7" r="${r}"/>${p > 0 ? `<circle class="val" cx="7" cy="7" r="${r}" stroke-dasharray="${(c * p / 100).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 7 7)"/>` : ""}</svg>`; };
 function renderStatus() {
   const waiting = S.sessions.some(s => s.state === "wait");
   $("#status").innerHTML = `<button class="si"><span class="dot"></span>gpu01 · sandhilld 0.3.0</button><span class="si">${ico("sessions")}R idle</span><span class="si"><span class="spin" style="width:9px;height:9px"></span>Python running</span><button class="si" data-goto="jobs">1 job</button>

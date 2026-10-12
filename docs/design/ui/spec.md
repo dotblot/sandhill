@@ -115,6 +115,9 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - Left: connection (`gpu01 · sandhilld`), R and Python kernel state, jobs.
 - Right: "agent is waiting" notice, then 5-hour and weekly plan usage for
   Claude Code and Codex, then cursor position.
+- Each usage figure is a **14px ring** (2.5px stroke) that fills clockwise from
+  the top, followed by the percent and the time until it resets. The ring is grey,
+  and red from 80%. The usage popup that opens on click keeps its bars.
 
 ## Type and colour
 - 13px for all UI text, in the macOS system font; 13px is the standard text size in
