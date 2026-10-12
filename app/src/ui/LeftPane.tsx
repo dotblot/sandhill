@@ -216,7 +216,7 @@ export function KernelRows(props: {
               <div
                 class="krow"
                 classList={{ unused: props.unused?.(s), busy: props.ws.isBusy(s.id) }}
-                title={`${s.kernel} · ${s.id.slice(0, 6)} · ${s.cwd}\n${props.describe(s)}`}
+                title={`${s.kernel} · ${s.cwd}\n${props.describe(s)}`}
               >
                 <span class="krow-icon">
                   <LangIcon language={s.language} />
@@ -348,7 +348,7 @@ export function resourceRows(stats: SystemStats, sessions: SessionInfo[]): Resou
   return rows;
 }
 
-/** 11px rows with a bar each; clicking one shows its details beside the pane. */
+/** 11px items with a bar each, two to a row; clicking one shows its percent and details beside the pane. */
 function Resources(props: { stats?: SystemStats; host: string; sessions: SessionInfo[] }) {
   const [open, setOpen] = createSignal<{ key: string; left: number; bottom: number }>();
   const rows = () => (props.stats ? resourceRows(props.stats, props.sessions) : []);
@@ -371,7 +371,7 @@ function Resources(props: { stats?: SystemStats; host: string; sessions: Session
             <button
               class="rrow"
               classList={{ on: open()?.key === r.key }}
-              title={r.main}
+              title={`${r.name}: ${r.percent}%`}
               onClick={(e) => {
                 if (open()?.key === r.key) return setOpen(undefined);
                 const box = e.currentTarget.getBoundingClientRect();
@@ -381,7 +381,6 @@ function Resources(props: { stats?: SystemStats; host: string; sessions: Session
               <Icon name={r.icon} />
               <span class="rl">{r.label}</span>
               <Bar percent={r.percent} />
-              <span class="rp">{r.percent}%</span>
             </button>
           )}
         </For>

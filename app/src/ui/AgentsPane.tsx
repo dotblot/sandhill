@@ -5,8 +5,9 @@ import {
   AGENT_KINDS,
   type AgentKind,
   agentKind,
-  capitalize,
-  effortLabel,
+  effortLevel,
+  effortName,
+  type ModelChoice,
   modelLabel,
   PERMISSIONS,
   permission,
@@ -16,12 +17,15 @@ import {
 import type { TerminalStore } from "../model/terminals";
 import type { Workspace } from "../model/workspace";
 import { ask, notify } from "./dialogs";
+import { EffortControl } from "./EffortControl";
 import { FileIcon, Icon } from "./icons";
 import { type Pane, PaneButtons } from "./PaneButtons";
 import { TermView } from "./termView";
 
 const COMPOSER_MIN = 34;
 const COMPOSER_MAX = 420;
+/** Effort is sent to the agent once the knob has rested this long. */
+const EFFORT_SETTLE_MS = 600;
 
 /**
  * The Agents pane: a tab per agent session in this project. Claude Code and
@@ -51,6 +55,7 @@ export function AgentsPane(props: {
   const [starting, setStarting] = createSignal<TermView>();
   const views = new Map<string, TermView>();
   let body!: HTMLDivElement;
+  let tabScroll!: HTMLDivElement;
 
   const current = (): TerminalInfo | undefined => {
     const agents = store.agents();
@@ -93,6 +98,12 @@ export function AgentsPane(props: {
   onCleanup(() => {
     for (const view of views.values()) view.dispose();
   });
+  // The New session tab is the last one: bring it into view.
+  createEffect(
+    on(picking, (on) => {
+      if (on) queueMicrotask(() => tabScroll.scrollTo?.({ left: tabScroll.scrollWidth }));
+    }),
+  );
 
   async function start(kind: AgentKind, options: AgentOptions) {
     // A view made first, so the agent starts at the size it will be shown at.
@@ -140,44 +151,46 @@ export function AgentsPane(props: {
       aria-label="Agents"
     >
       <div class="tabs" role="tablist" data-tauri-drag-region="deep">
-        <For each={store.agents()}>
-          {(terminal) => (
-            <div
-              class="tab atab"
-              role="tab"
-              aria-selected={!picking() && current()?.id === terminal.id}
-              classList={{ active: !picking() && current()?.id === terminal.id, ended: !terminal.running }}
-              title={tabTitle(terminal)}
-              aria-label={modelLabel(terminal)}
-              onClick={() => {
-                setPicking(false);
-                props.onSelect(terminal.id);
-              }}
-            >
-              <span class="prov-wrap">
-                <ProviderIcon kind={terminal.kind} />
-                <Show when={terminal.running && (terminal.agent?.state === "waiting" || terminal.agent?.state === "busy")}>
-                  <span class="dot" classList={{ wait: terminal.agent?.state === "waiting", busy: terminal.agent?.state === "busy" }} />
-                </Show>
-              </span>
-              <button
-                class="tab-close"
-                title="End session"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void end(terminal);
+        <div ref={tabScroll} class="tab-scroll">
+          <For each={store.agents()}>
+            {(terminal) => (
+              <div
+                class="tab atab"
+                role="tab"
+                aria-selected={!picking() && current()?.id === terminal.id}
+                classList={{ active: !picking() && current()?.id === terminal.id, ended: !terminal.running }}
+                title={tabTitle(terminal)}
+                aria-label={modelLabel(terminal)}
+                onClick={() => {
+                  setPicking(false);
+                  props.onSelect(terminal.id);
                 }}
               >
-                <Icon name="x" small />
-              </button>
+                <span class="prov-wrap">
+                  <ProviderIcon kind={terminal.kind} />
+                  <Show when={terminal.running && (terminal.agent?.state === "waiting" || terminal.agent?.state === "busy")}>
+                    <span class="dot" classList={{ wait: terminal.agent?.state === "waiting", busy: terminal.agent?.state === "busy" }} />
+                  </Show>
+                </span>
+                <button
+                  class="tab-close"
+                  title="End session"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void end(terminal);
+                  }}
+                >
+                  <Icon name="x" small />
+                </button>
+              </div>
+            )}
+          </For>
+          <Show when={picking()}>
+            <div class="tab active" role="tab" aria-selected="true">
+              New session
             </div>
-          )}
-        </For>
-        <Show when={picking()}>
-          <div class="tab active" role="tab" aria-selected="true">
-            New session
-          </div>
-        </Show>
+          </Show>
+        </div>
         <button class="pane-button" title="New session" onClick={() => setPicking(true)}>
           <Icon name="plus" small />
         </button>
@@ -387,16 +400,7 @@ function Picker(props: {
           </button>
         </div>
       </Show>
-      <div class="pk-h">Thinking effort</div>
-      <div class="pk-seg" role="radiogroup">
-        <For each={[undefined, ...kind().efforts]}>
-          {(level) => (
-            <button role="radio" aria-checked={effort() === level} classList={{ on: effort() === level }} onClick={() => setEffort(level)}>
-              {level ? capitalize(level) : "Default"}
-            </button>
-          )}
-        </For>
-      </div>
+      <EffortControl levels={kind().efforts} value={effort()} recommended={kind().recommended} onChange={setEffort} />
       <div class="pk-h">Refers to</div>
       <For each={props.docs.map((d) => relative(d.path))}>
         {(doc) => (
@@ -451,6 +455,28 @@ function Composer(props: {
   const kind = () => agentKind(props.terminal.kind);
   const [height, setHeight] = createSignal(COMPOSER_MIN);
   const [popover, setPopover] = createSignal<"model" | "perm" | "context">();
+  /** The effort just picked here, until the agent reports one. */
+  const [effortChoice, setEffortChoice] = createSignal<string>();
+  const effort = () => effortChoice() ?? effortLevel(props.terminal);
+  createEffect(on(() => props.terminal.agent?.status?.effort, () => setEffortChoice(undefined), { defer: true }));
+  let effortTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(effortTimer));
+  // A slash command typed while the agent asks a question would answer it, so
+  // commands wait until the question is answered.
+  const waiting = () => props.terminal.agent?.state === "waiting";
+  let held: (() => void) | undefined;
+  const whenFree = (run: () => void) => {
+    if (waiting()) held = run;
+    else run();
+  };
+  createEffect(
+    on(waiting, (now) => {
+      if (now || !held) return;
+      const run = held;
+      held = undefined;
+      run();
+    }),
+  );
   let input!: HTMLTextAreaElement;
 
   const send = () => {
@@ -462,10 +488,20 @@ function Composer(props: {
     setTimeout(() => void props.store.input(props.terminal.id, "\r"), SUBMIT_DELAY_MS);
     input.value = "";
   };
-  /** Types a slash command into the agent and runs it. */
-  const command = (text: string) => {
+  /** Sets Claude Code's effort with /effort once the knob settles, leaving the popup open. */
+  const changeEffort = (level: string) => {
+    setEffortChoice(level);
+    clearTimeout(effortTimer);
+    effortTimer = setTimeout(() => whenFree(() => type(`/effort ${level}`)), EFFORT_SETTLE_MS);
+  };
+  /** Types `text` into the agent, then Enter. */
+  const type = (text: string) => {
     void props.store.input(props.terminal.id, text);
     setTimeout(() => void props.store.input(props.terminal.id, "\r"), SUBMIT_DELAY_MS);
+  };
+  /** Runs a slash command in the agent, once it isn't waiting for an answer. */
+  const command = (text: string) => {
+    whenFree(() => type(text));
     setPopover(undefined);
     props.view()?.focus();
   };
@@ -549,8 +585,8 @@ function Composer(props: {
         <button class="cs modelbtn" title="Model and thinking effort" onClick={() => setPopover(popover() === "model" ? undefined : "model")}>
           <ProviderIcon kind={props.terminal.kind} />
           <span class="cs-model">{modelLabel(props.terminal)}</span>
-          <Show when={effortLabel(props.terminal)}>
-            <span class="eff-l">{effortLabel(props.terminal)}</span>
+          <Show when={effort()}>
+            <span class="eff-l">{effortName(effort()!)}</span>
           </Show>
           <Icon name="chevron" small />
         </button>
@@ -562,31 +598,43 @@ function Composer(props: {
       </div>
       <Show when={popover() === "model"}>
         <div class="apop">
+          <Show when={waiting()}>
+            <p class="ap-n">Changes here wait until you answer {kind()?.name ?? "the agent"} in the terminal.</p>
+          </Show>
           <div class="ap-h">Model</div>
           <Show
             when={props.terminal.kind === "claude"}
             fallback={
-              <>
-                <button class="ap-opt" onClick={() => command("/model")}>
-                  Choose in Codex…
-                </button>
-                <p class="ap-n">
-                  Opens Codex's <code>/model</code> menu in the terminal.
-                </p>
-              </>
+              <button class="ap-opt" title="Opens Codex's /model menu in the terminal" onClick={() => command("/model")}>
+                <ProviderIcon kind="codex" />
+                Choose in Codex…
+              </button>
             }
           >
             <For each={kind()?.models ?? []}>
               {(model) => (
-                <button class="ap-opt" onClick={() => command(`/model ${model.id}`)}>
+                <button class="ap-opt" title={`Switches with /model ${model.id}; the conversation carries over`} onClick={() => command(`/model ${model.id}`)}>
                   <ProviderIcon kind="claude" />
                   {model.label}
+                  <Show when={currentModel(props.terminal, model)}>
+                    <span class="ap-ck">
+                      <Icon name="check" small />
+                    </span>
+                  </Show>
                 </button>
               )}
             </For>
-            <p class="ap-n">
-              Sent to Claude Code as <code>/model</code>; the conversation carries over.
-            </p>
+          </Show>
+          <Show when={kind()}>
+            {(k) => (
+              <EffortControl
+                levels={k().efforts}
+                value={effort()}
+                recommended={k().recommended}
+                onChange={changeEffort}
+                disabled={props.terminal.kind === "claude" ? undefined : "Codex changes effort in its own /model menu"}
+              />
+            )}
           </Show>
         </div>
       </Show>
@@ -639,6 +687,13 @@ function ContextPopover(props: { terminal: TerminalInfo; onCompact: () => void }
       </div>
     </div>
   );
+}
+
+/** Whether `model` is the one the session runs: as the agent reports it, else as it started. */
+function currentModel(terminal: TerminalInfo, model: ModelChoice): boolean {
+  const reported = terminal.agent?.status?.model;
+  if (reported) return reported.toLowerCase().includes(model.label.toLowerCase());
+  return terminal.options?.model === model.id;
 }
 
 function message(err: unknown): string {

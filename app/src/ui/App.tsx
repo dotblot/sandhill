@@ -23,7 +23,7 @@ import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
 import { ScriptDoc } from "../docs/scriptDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
-import { languageLabel, sessionLabel } from "../model/machine";
+import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
 import { BUILD, buildText } from "../build";
 import { modelLabel, planUsage, timeLeft } from "../model/agents";
@@ -31,8 +31,8 @@ import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
 import { AgentsPane, ProviderIcon } from "./AgentsPane";
 import { ask, Dialogs, notify } from "./dialogs";
-import { FileIcon, Icon, type IconName } from "./icons";
-import { KernelBar } from "./KernelBar";
+import { FileIcon, Icon, type IconName, LangIcon } from "./icons";
+import { KernelBar, kernelState } from "./KernelBar";
 import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
 import { linkText } from "./linkText";
@@ -624,7 +624,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               </For>
               <PaneButtons pane="editor" min={isMin("editor")} max={maximized() === "editor"} onMin={toggleMin} onMax={toggleMax} />
             </div>
-            <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} onError={notify} />}</Show>
+            <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} usedBy={usedBy} onError={notify} />}</Show>
             <div class="doc-area" ref={docArea}>
               <Show when={!active()}>
                 <Show
@@ -746,7 +746,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
 
 /**
  * The toolbar over the top of the left pane, after the window buttons: the
- * left and right panes, Agents, ⌘K search and the menu.
+ * left pane, Agents, the right pane, ⌘K search and the menu.
  */
 function Toolbar(props: {
   left: boolean;
@@ -761,7 +761,6 @@ function Toolbar(props: {
   return (
     <div class="toolbar" data-tauri-drag-region="deep">
       <ToolButton icon="leftPane" title="Left pane (⌘B)" pressed={props.left} onClick={props.onLeft} />
-      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages, Git and Plots come in a later build" />
       <ToolButton
         icon="chat"
         title={props.waiting ? "Agents (⌘I): an agent is waiting for you" : "Agents: Claude Code and Codex (⌘I)"}
@@ -769,6 +768,7 @@ function Toolbar(props: {
         onClick={props.onAgents}
         dot={props.waiting}
       />
+      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages, Git and Plots come in a later build" />
       <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
       <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
     </div>
@@ -854,16 +854,27 @@ function MainMenu(props: {
   );
 }
 
-/** The session a script's console runs in, as a pill in the Console's tab strip. */
+/**
+ * The session a script's console runs in, in the Console's tab strip: its
+ * language icon and version, like the kernel pickers.
+ */
 function ConsoleSession(props: { ws: Workspace; doc: ScriptDoc }) {
   const id = () => props.doc.kernels.session(props.doc.language);
   const info = () => props.ws.sessions().find((s) => s.id === id());
-  const state = () =>
-    props.doc.kernels.isStarting(props.doc.language) ? "starting" : !id() ? "none" : props.ws.isBusy(id()!) ? "busy" : "idle";
+  const state = () => kernelState(props.ws, props.doc, props.doc.language);
+  const version = () => (info() ? languageVersion(info()!) : "");
   return (
-    <span class="pill" data-state={state()} title={info() ? `${info()!.kernel} · ${info()!.id.slice(0, 6)}` : "Starts when you run code"}>
-      <span class="kernel-dot" />
-      {info() ? sessionLabel(info()!) : languageLabel(props.doc.language)}
+    <span
+      class="pill"
+      data-state={state()}
+      title={
+        info()
+          ? `${sessionLabel(info()!)} · ${state()}`
+          : `${languageLabel(props.doc.language)} · starts when you run code`
+      }
+    >
+      <LangIcon language={props.doc.language} />
+      {version() || (state() === "starting" ? "starting…" : languageLabel(props.doc.language))}
     </span>
   );
 }
@@ -901,9 +912,7 @@ function AgentStatus(props: { store: TerminalStore; onShow: (id: string) => void
                   <span class="sep">·</span>
                 </Show>
                 <span title={limit.resetsAt ? `Resets in ${timeLeft(limit.resetsAt)}` : undefined}>{limit.label}</span>
-                <span class="meter">
-                  <i classList={{ hot: limit.percent >= 80 }} style={{ width: `${limit.percent}%` }} />
-                </span>
+                <UsageRing percent={limit.percent} />
                 <span classList={{ hotx: limit.percent >= 80 }}>{limit.percent}%</span>
                 <Show when={limit.resetsAt}>
                   <span class="rs">{timeLeft(limit.resetsAt!)}</span>
@@ -914,6 +923,28 @@ function AgentStatus(props: { store: TerminalStore; onShow: (id: string) => void
         </span>
       </Show>
     </>
+  );
+}
+
+/** A 14px ring that fills clockwise from the top, red from 80%. */
+function UsageRing(props: { percent: number }) {
+  const r = 5.25;
+  const circumference = 2 * Math.PI * r;
+  const percent = () => Math.min(100, Math.max(0, props.percent));
+  return (
+    <svg class="uring" classList={{ hot: percent() >= 80 }} viewBox="0 0 14 14" aria-hidden="true">
+      <circle class="trk" cx="7" cy="7" r={r} />
+      <Show when={percent() > 0}>
+        <circle
+          class="val"
+          cx="7"
+          cy="7"
+          r={r}
+          stroke-dasharray={`${((circumference * percent()) / 100).toFixed(2)} ${circumference.toFixed(2)}`}
+          transform="rotate(-90 7 7)"
+        />
+      </Show>
+    </svg>
   );
 }
 

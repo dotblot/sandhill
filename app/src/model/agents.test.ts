@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TerminalInfo } from "../backend/types";
-import { modelLabel, planUsage, timeLeft, tokens } from "./agents";
+import { effortLabel, effortName, modelLabel, planUsage, timeLeft, tokens } from "./agents";
 
 const terminal = (extra: Partial<TerminalInfo>): TerminalInfo => ({
   id: "a",
@@ -14,6 +14,14 @@ const terminal = (extra: Partial<TerminalInfo>): TerminalInfo => ({
 });
 
 describe("agents", () => {
+  it("names effort levels, preferring what the agent reports", () => {
+    expect(effortName("xhigh")).toBe("Extra high");
+    expect(effortName("max")).toBe("Max");
+    expect(effortLabel(terminal({ options: { effort: "low" } }))).toBe("Low");
+    expect(effortLabel(terminal({ options: { effort: "low" }, agent: { status: { effort: "max" } } as TerminalInfo["agent"] }))).toBe("Max");
+    expect(effortLabel(terminal({}))).toBeUndefined();
+  });
+
   it("names the model as the agent reports it, else as it was started", () => {
     expect(modelLabel(terminal({ options: { model: "opus" } }))).toBe("Opus");
     expect(modelLabel(terminal({ options: { model: "opus" }, agent: { status: { model: "Opus 5.5" } } }))).toBe("Opus 5.5");

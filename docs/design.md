@@ -103,9 +103,9 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 The app follows the UI mockup, the agreed final layout, kept in
 `docs/design/ui/`: `spec.md` describes it, `sandhill-layout.html` is the
 clickable mockup (light and dark) and the PNGs are screenshots of it. Where
-the spec and the mockup differ, the mockup wins. The app was built from draft
-16; draft 17 (2026-10-12) is the current version, and the top of `spec.md`
-lists what it changed.
+the spec and the mockup differ, the mockup wins. The app follows draft 17
+(2026-10-12); the top of `spec.md` lists what it changed from draft 16. The
+Data Explorer and the Git pane in the mockup are not built yet.
 
 There is no title bar row. On macOS the windows use an overlay title bar, with
 the window buttons placed in the page's 34px toolbar row (`title_bar()` in
@@ -129,8 +129,14 @@ keeps what was typed. Plots stay white in dark mode. The panes skip
 and each blurred pane costs a window-sized compositing layer. Styles are in
 `app/src/styles.css`, icons in `app/src/ui/icons.tsx`.
 
-The right pane (Variables, Help, Packages, Git, Plots) and Agents come with
-steps 4 and 5; until then their toolbar buttons show but do nothing.
+Kernel pickers, in the editor and the Console, show the language icon and
+version; their drop-down holds the kernel, environment, machine, the files
+using the session, its memory and the session switch, so session IDs appear
+only there. The Agents pane came with step 4 (section 5); its effort control
+is a track with a brain for a knob that turns into a star field at the top
+level, and plan usage shows as rings. The right pane (Variables, Help,
+Packages, Git, Plots) comes with step 5; until then its toolbar button shows
+but does nothing.
 
 ---
 
