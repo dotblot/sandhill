@@ -202,6 +202,8 @@ export interface AgentOptions {
 export interface AgentReport {
   state?: "busy" | "waiting" | "idle";
   message?: string;
+  /** Claude Code's permission mode, from its hooks: `default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`... */
+  mode?: string;
   status?: AgentStatus;
   ts_ms?: number;
 }

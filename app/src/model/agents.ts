@@ -55,6 +55,11 @@ export function agentKind(kind: string): AgentKind | undefined {
   return AGENT_KINDS.find((a) => a.kind === kind);
 }
 
+/** A document a session is about, as the picker stores it: relative to the project, unless outside it. */
+export function documentPath(project: string, doc: string): string {
+  return doc.startsWith("/") ? doc : `${project}/${doc}`;
+}
+
 export interface Permission {
   id: string;
   label: string;
@@ -70,6 +75,22 @@ export const PERMISSIONS: Permission[] = [
 
 export function permission(id?: string): Permission {
   return PERMISSIONS.find((p) => p.id === id) ?? PERMISSIONS[0];
+}
+
+/** Claude Code's permission modes, as its hooks report them. */
+const CLAUDE_MODES: Record<string, Permission> = {
+  default: PERMISSIONS[0],
+  acceptEdits: PERMISSIONS[1],
+  auto: PERMISSIONS[2],
+  bypassPermissions: PERMISSIONS[3],
+  plan: { id: "plan", label: "Plan", detail: "Plans first, and asks before changing anything." },
+  dontAsk: { id: "dontAsk", label: "Don't ask", detail: "Does only what is allowed in advance; denies the rest." },
+};
+
+/** The mode the agent last reported (it can change in the terminal), else the one it started in. */
+export function currentPermission(terminal: TerminalInfo): Permission {
+  const reported = terminal.agent?.mode;
+  return (reported && CLAUDE_MODES[reported]) || permission(terminal.options?.permission);
 }
 
 /** "Opus 5.5" once the agent says, else what the session was started with. */

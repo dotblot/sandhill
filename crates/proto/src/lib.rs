@@ -577,7 +577,7 @@ pub struct TerminalEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
     /// What an agent reported through its hooks and status line:
-    /// `{state: "busy" | "waiting" | "idle", status: {model, context,
+    /// `{state: "busy" | "waiting" | "idle", mode, status: {model, context,
     /// effort, rate_limits...}}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<Value>,

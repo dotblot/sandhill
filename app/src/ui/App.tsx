@@ -26,7 +26,7 @@ import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
 import { BUILD, buildText } from "../build";
-import { modelLabel, planUsage, timeLeft } from "../model/agents";
+import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
 import { AgentsPane, ProviderIcon } from "./AgentsPane";
@@ -107,9 +107,15 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     store(AGENTS_KEY, agentsOn() ? "shown" : "hidden");
     if (!agentsOn() && maximized() === "agents") setMaximized(undefined);
   };
+  /** Shows an agent session, and brings the first document it is about to the front. */
+  const selectAgent = (id: string | undefined) => {
+    setAgentTab(id);
+    const doc = terminals.list().find((t) => t.id === id)?.options?.documents?.[0];
+    if (doc) void open(documentPath(props.project, doc));
+  };
   /** Brings an agent session to the front, opening the pane if need be. */
   const showAgent = (id?: string) => {
-    if (id) setAgentTab(id);
+    if (id) selectAgent(id);
     if (!agentsOn()) toggleAgents();
     setMinimized((list) => list.filter((p) => p !== "agents"));
   };
@@ -579,7 +585,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               docs={docs()}
               active={active()}
               selected={agentTab()}
-              onSelect={setAgentTab}
+              onSelect={selectAgent}
+              onOpen={(path) => void open(path)}
               width={agentsWidth()}
               min={isMin("agents")}
               max={maximized() === "agents"}
