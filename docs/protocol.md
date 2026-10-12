@@ -121,11 +121,14 @@ unmodified in its own pseudo-terminal on the daemon's machine. `list_agents`
 says which agent CLIs are installed, and how to install the others.
 
 `TerminalInfo` is `{id, kind, title, cwd, project?, created_ms, running,
-exit?: {code?, signal?, ended_ms}, end, options?, agent?}`. `end` is the
-number of output bytes so far. `options` is what the agent was started with:
-`{model?, effort?, permission?, documents?}`, where `permission` is
-`supervised`, `edits`, `auto` or `full`. Without `cwd`, a terminal starts in
-the `project` folder, else the home folder.
+exit?: {code?, signal?, ended_ms}, end, options?, agent?, outdated?}`. `end`
+is the number of output bytes so far. `options` is what the agent was started
+with: `{model?, effort?, permission?, documents?}`, where `permission` is
+`supervised`, `edits`, `auto` or `full`. `outdated` is true for an agent that
+another build of sandhilld started, such as before an update: it keeps that
+build's MCP server, hooks and instructions until it is started again, so the
+app suggests a new session. Without `cwd`, a terminal starts in the `project`
+folder, else the home folder.
 
 After `subscribe_terminal`, output arrives as
 

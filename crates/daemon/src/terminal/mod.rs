@@ -29,7 +29,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use sandhill_proto::{
-    AgentOptions, ServerMessage, TerminalEvent, TerminalExit, TerminalInfo, TerminalSubscribed,
+    AgentOptions, ServerMessage, TERMINAL_SHELL, TerminalEvent, TerminalExit, TerminalInfo,
+    TerminalSubscribed,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -156,6 +157,9 @@ struct Meta {
     /// The program and its arguments, for the record.
     #[serde(default)]
     command: Vec<String>,
+    /// The daemon build that started it. Agents get that build's tools.
+    #[serde(default)]
+    build: String,
 }
 
 /// What to run in a new terminal.
@@ -223,6 +227,7 @@ impl Terminals {
             created_ms: now_ms(),
             options: launch.options.clone(),
             command,
+            build: crate::build_id().to_string(),
         };
         std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
 
@@ -296,6 +301,7 @@ impl Terminals {
         let meta: Meta = serde_json::from_slice(&std::fs::read(paths.meta())?)?;
         let exit = read_json::<TerminalExit>(&paths.exit());
         let running = exit.is_none() && host_alive(&paths);
+        let outdated = outdated(&meta);
         Ok(TerminalInfo {
             id: meta.id,
             kind: meta.kind,
@@ -308,6 +314,7 @@ impl Terminals {
             end: log::bounds(paths.dir()).1,
             options: meta.options,
             agent: read_json::<Value>(&paths.agent()),
+            outdated,
         })
     }
 
@@ -535,4 +542,44 @@ fn host_alive(paths: &Paths) -> bool {
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// Whether an agent was started by another build than this one. Agents
+/// started before builds were recorded are older than any build that
+/// records them.
+fn outdated(meta: &Meta) -> bool {
+    let ours = crate::build_id();
+    meta.kind != TERMINAL_SHELL && !ours.is_empty() && meta.build != ours
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agents_from_another_build_are_outdated() {
+        let meta = |kind: &str, build: &str| Meta {
+            id: "t".into(),
+            kind: kind.into(),
+            title: String::new(),
+            cwd: "/".into(),
+            project: None,
+            created_ms: 0,
+            options: AgentOptions::default(),
+            command: Vec::new(),
+            build: build.into(),
+        };
+        let ours = crate::build_id();
+        assert!(!ours.is_empty());
+        assert!(!outdated(&meta("claude", ours)));
+        assert!(outdated(&meta("claude", "0123456789abcdef")));
+        // Started before builds were recorded.
+        let old: Meta = serde_json::from_value(serde_json::json!({
+            "id": "t", "kind": "codex", "title": "Codex", "cwd": "/", "created_ms": 0
+        }))
+        .unwrap();
+        assert!(outdated(&old));
+        // A shell has no tools to miss.
+        assert!(!outdated(&meta(TERMINAL_SHELL, "")));
+    }
 }

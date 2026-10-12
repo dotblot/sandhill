@@ -659,6 +659,11 @@ pub struct TerminalInfo {
     /// What the agent last reported about itself (see [`TerminalEvent::agent`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<Value>,
+    /// An agent started by another build of sandhilld than the one running,
+    /// such as before an update. It keeps that build's tools and hooks
+    /// until it is started again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub outdated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
