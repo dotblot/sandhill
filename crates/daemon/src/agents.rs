@@ -443,7 +443,13 @@ mod tests {
             settings["hooks"]["Stop"][0]["hooks"][0]["command"],
             r"'/opt/it'\''s/sandhilld' terminal-event state idle"
         );
+        // The prompt hook asks the daemon where the user is in the project.
+        assert_eq!(
+            settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+            r"'/opt/it'\''s/sandhilld' --socket '/state/sandhilld.sock' terminal-event prompt '/data/pbmc'"
+        );
         assert!(args[5].contains("analysis.qmd"));
+        assert!(args[5].contains("add_cell"));
         assert!(args.windows(2).any(|w| w == ["--model", "opus"]));
         assert!(
             args.windows(2)
