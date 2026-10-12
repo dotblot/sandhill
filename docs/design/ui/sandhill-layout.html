@@ -1103,7 +1103,7 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 .eff-fill, .eff-stars { position: absolute; left: 0; right: 0; top: 3px; bottom: 3px; border-radius: 8px; pointer-events: none;
   clip-path: inset(0 calc((100% - 22px) * (1 - var(--f)) + 11px) 0 0 round 8px 0 0 8px); transition: clip-path .28s cubic-bezier(.3,.7,.3,1); }
 .eff-fill { background: linear-gradient(90deg, color-mix(in srgb, var(--eff-pink) 6%, transparent), color-mix(in srgb, var(--eff-pink) 48%, transparent) 40%, color-mix(in srgb, var(--eff-violet) 78%, transparent)); }
-.eff-stars { opacity: 0; transition: clip-path .28s cubic-bezier(.3,.7,.3,1), opacity .3s; }
+.eff-stars { width: 100%; height: calc(100% - 6px); opacity: 0; transition: clip-path .28s cubic-bezier(.3,.7,.3,1), opacity .3s; }
 .eff-track.galaxy .eff-stars { opacity: 1; }
 .eff-track.galaxy .eff-fill { opacity: 0; }
 .eff-stop { position: absolute; top: 50%; width: 3px; height: 3px; border-radius: 50%; background: color-mix(in srgb, var(--text) 28%, transparent); transform: translate(-50%, -50%); pointer-events: none; }
@@ -2315,7 +2315,7 @@ const stillMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches
 function replay(el, cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
 function starField(bar) {
   const cv = $(".eff-stars", bar); if (!cv || cv.dataset.on) return;
-  const w = bar.clientWidth, h = bar.clientHeight, dpr = window.devicePixelRatio || 1; if (!w) return;
+  const w = cv.clientWidth, h = cv.clientHeight, dpr = window.devicePixelRatio || 1; if (!w) return;
   cv.dataset.on = "1"; cv.width = w * dpr; cv.height = h * dpr;
   const g = cv.getContext("2d"); g.scale(dpr, dpr);
   const C = ["#241f5c", "#33299a", "#4a3cc8", "#6650e6", "#8a6cf2", "#ad8cf7", "#d1b0ff", "#f0a8dc", "#a6d4ff", "#ffffff"];
