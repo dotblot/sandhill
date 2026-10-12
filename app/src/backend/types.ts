@@ -167,3 +167,91 @@ export interface Blob {
   /** The original JSON string value (base64 for binary MIME types). */
   data: string;
 }
+
+/** `kind` of a plain shell terminal; agents use their own kind, like "claude". */
+export const TERMINAL_SHELL = "shell";
+
+export interface FileStat {
+  path: string;
+  /** Missing when the file doesn't exist. */
+  mtime_ms?: number;
+  size: number;
+}
+
+/** An agent CLI the daemon can start in a terminal. */
+export interface AgentInfo {
+  kind: string;
+  name: string;
+  /** Where the CLI is; missing when it isn't installed. */
+  path?: string;
+  version?: string;
+  /** A shell command that installs it. */
+  install: string;
+}
+
+/** How to start an agent. Missing fields leave the CLI's own defaults. */
+export interface AgentOptions {
+  model?: string;
+  effort?: string;
+  /** "supervised", "edits", "auto" or "full". */
+  permission?: string;
+  documents?: string[];
+}
+
+/** What an agent reports through its hooks and status line. */
+export interface AgentReport {
+  state?: "busy" | "waiting" | "idle";
+  message?: string;
+  status?: AgentStatus;
+  ts_ms?: number;
+}
+
+/** Claude Code's status line, as the daemon keeps it. */
+export interface AgentStatus {
+  model?: string;
+  model_id?: string;
+  /** Percent of the context window in use. */
+  context?: number;
+  context_size?: number;
+  effort?: string;
+  rate_limits?: Record<string, { used_percentage?: number; resets_at?: string | number }>;
+  cost_usd?: number;
+  version?: string;
+}
+
+export interface TerminalExit {
+  code?: number;
+  signal?: number;
+  ended_ms: number;
+}
+
+export interface TerminalInfo {
+  id: string;
+  kind: string;
+  title: string;
+  cwd: string;
+  project?: string;
+  created_ms: number;
+  running: boolean;
+  exit?: TerminalExit;
+  /** Bytes of output so far. */
+  end: number;
+  options?: AgentOptions;
+  agent?: AgentReport;
+}
+
+export interface TerminalSubscribed {
+  terminal: string;
+  /** Where the replayed output starts. */
+  from: number;
+}
+
+/** News from a subscribed terminal: output, an agent report, or its end. */
+export interface TerminalEvent {
+  terminal: string;
+  offset?: number;
+  /** Output bytes, base64. */
+  data?: string;
+  agent?: AgentReport;
+  exit?: TerminalExit;
+}

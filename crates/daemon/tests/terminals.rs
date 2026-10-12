@@ -175,6 +175,38 @@ async fn a_terminal_outlives_the_daemon_that_started_it() {
     assert!(terminals.list().is_empty());
 }
 
+#[tokio::test]
+async fn terminals_work_in_a_deep_state_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    // Too deep for a socket path: the socket goes under /tmp instead.
+    let root = dir.path().join("a".repeat(60)).join("terminals");
+    let terminals = Terminals::new(root, sandhilld().into());
+    let info = terminals
+        .start(sh("read line; echo \"got $line\"", dir.path()))
+        .await
+        .unwrap();
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    terminals
+        .send(
+            &info.id,
+            ToHost::Input {
+                data: "deep\n".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut output = Vec::new();
+    read_until(&mut events, &mut output, "got deep").await;
+    terminals.close(&info.id).await.unwrap();
+}
+
 struct TestDaemon {
     daemon: Arc<Daemon>,
     socket: std::path::PathBuf,
@@ -271,7 +303,7 @@ async fn an_agent_reports_to_its_terminal() {
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     // Stands in for an agent whose hooks run `sandhilld terminal-event`.
     let script = format!(
-        "'{exe}' terminal-event state busy; echo '{{\"notification_type\":\"permission_prompt\",\"message\":\"May I?\"}}' | '{exe}' terminal-event notification; echo done; read wait",
+        "'{exe}' terminal-event state busy; echo '{{\"notification_type\":\"permission_prompt\",\"message\":\"May I?\"}}' | '{exe}' terminal-event notification; echo done; read wait; '{exe}' terminal-event state busy; echo again; read wait",
         exe = sandhilld().display()
     );
     let info = terminals.start(sh(&script, dir.path())).await.unwrap();
@@ -289,5 +321,15 @@ async fn an_agent_reports_to_its_terminal() {
     let agent = terminals.info(&info.id).unwrap().agent.unwrap();
     assert_eq!(agent["state"], "waiting");
     assert_eq!(agent["message"], "May I?");
+
+    // Once it gets going again, the question is gone.
+    terminals
+        .send(&info.id, ToHost::Input { data: "\n".into() })
+        .await
+        .unwrap();
+    read_until(&mut events, &mut output, "again").await;
+    let agent = terminals.info(&info.id).unwrap().agent.unwrap();
+    assert_eq!(agent["state"], "busy");
+    assert!(agent.get("message").is_none(), "{agent}");
     terminals.close(&info.id).await.unwrap();
 }

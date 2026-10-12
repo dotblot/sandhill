@@ -114,6 +114,19 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         CLAUDE => claude_args(options, context, &help),
         _ => codex_args(options, context, &help),
     };
+    // An npm-installed CLI runs under `node` from the same folder, which may
+    // not be on the daemon's PATH (as on a server reached over ssh).
+    if let Some(dir) = program.parent() {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        if !std::env::split_paths(&path).any(|p| p == dir) {
+            let joined = std::env::join_paths(
+                std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&path)),
+            )?;
+            launch
+                .env
+                .push(("PATH".into(), joined.to_string_lossy().into_owned()));
+        }
+    }
     launch.program = program;
     Ok(launch)
 }

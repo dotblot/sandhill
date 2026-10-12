@@ -113,6 +113,11 @@ export class NotebookDoc extends Doc {
     }
   }
 
+  /** A notebook changed on disk is opened again, cells and outputs alike. */
+  reload(): boolean {
+    return false;
+  }
+
   async save(force = false) {
     for (const view of this.views.values()) view.cell.source = this.sourceOf(view);
     const expected_mtime_ms = force ? undefined : this.mtime;

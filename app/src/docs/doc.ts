@@ -1,8 +1,9 @@
 // What the app shell needs from an open document, whatever its format.
 
-import type { Extension } from "@codemirror/state";
+import { Annotation, type Extension, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createSignal } from "solid-js";
+import type { FileText } from "../backend/types";
 import type { KernelWanted, Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
 import { DocKernels } from "./kernels";
@@ -15,6 +16,37 @@ export function docKind(path: string): DocKind | undefined {
   if (ext === "ipynb") return "ipynb";
   if (ext === "r" || ext === "py") return "script";
   return undefined;
+}
+
+/** Marks an editor change that came from the file on disk, not from typing. */
+export const fromDisk = Annotation.define<boolean>();
+
+/** Whether an editor update came from the file on disk. */
+export function changedOnDisk(transactions: readonly Transaction[]): boolean {
+  return transactions.some((t) => t.annotation(fromDisk));
+}
+
+/**
+ * Replaces an editor's text with `text`, changing only the part that differs,
+ * so the cursor, scroll position and folds elsewhere stay put. The change can
+ * be undone like any edit.
+ */
+export function replaceText(view: EditorView, text: string) {
+  const old = view.state.doc.toString();
+  if (old === text) return;
+  const max = Math.min(old.length, text.length);
+  let start = 0;
+  while (start < max && old.charCodeAt(start) === text.charCodeAt(start)) start++;
+  let endOld = old.length;
+  let endNew = text.length;
+  while (endOld > start && endNew > start && old.charCodeAt(endOld - 1) === text.charCodeAt(endNew - 1)) {
+    endOld--;
+    endNew--;
+  }
+  view.dispatch({
+    changes: { from: start, to: endOld, insert: text.slice(start, endNew) },
+    annotations: [fromDisk.of(true), Transaction.addToHistory.of(true)],
+  });
 }
 
 export abstract class Doc {
@@ -57,6 +89,17 @@ export abstract class Doc {
     [this.shownOutputs, this.setShownOutputs] = createSignal(shownOutputs);
     [this.cursor, this.setCursor] = createSignal("");
   }
+
+  /** Modification time of the file as last read or written. */
+  diskMtime(): number {
+    return this.mtime;
+  }
+
+  /**
+   * Takes the file's new contents after something else changed it, such as
+   * an agent. Returns false when the document has to be opened again instead.
+   */
+  abstract reload(file: FileText): boolean;
 
   /** Languages with code in this document, for the kernel bar. */
   abstract languages(): string[];

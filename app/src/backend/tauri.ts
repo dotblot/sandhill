@@ -2,7 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type Backend, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
-import type { DaemonEvent } from "./types";
+import type { DaemonEvent, TerminalEvent } from "./types";
 
 export class TauriShell implements Shell {
   context(): Promise<WindowContext> {
@@ -43,6 +43,7 @@ export class TauriShell implements Shell {
 
 class TauriBackend implements Backend {
   private events = new Listeners<DaemonEvent>();
+  private terminals = new Listeners<TerminalEvent>();
   private links = new Listeners<LinkState>();
   private link: LinkState = { status: "connecting" };
 
@@ -52,6 +53,7 @@ class TauriBackend implements Backend {
     const backend = new TauriBackend(host);
     // The app sends a host's events only to the windows using it.
     await listen<DaemonEvent>("daemon://event", (e) => backend.events.emit(e.payload));
+    await listen<TerminalEvent>("daemon://terminal", (e) => backend.terminals.emit(e.payload));
     await listen<LinkState & { host: string }>("daemon://link", (e) => {
       if (e.payload.host === host) backend.setLink(e.payload);
     });
@@ -69,6 +71,10 @@ class TauriBackend implements Backend {
     this.events.add(listener);
   }
 
+  onTerminal(listener: (event: TerminalEvent) => void) {
+    this.terminals.add(listener);
+  }
+
   onLink(listener: (state: LinkState) => void) {
     this.links.add(listener);
     listener(this.link);
@@ -78,6 +84,10 @@ class TauriBackend implements Backend {
     const query = new URLSearchParams({ host: this.host, mime });
     if (near) query.set("near", near);
     return `${convertFileSrc(hash, "sandhill-blob")}?${query}`;
+  }
+
+  openLink(url: string) {
+    invoke("open_link", { url }).catch((err) => console.warn(err));
   }
 
   onMenu(listener: (command: string) => void) {

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use base64::Engine;
 use sandhill_proto::TerminalExit;
 use serde_json::{Value, json};
@@ -85,8 +85,25 @@ pub async fn run(options: HostOptions) -> Result<()> {
         pid,
         paths: paths.clone(),
     });
-    let _ = std::fs::remove_file(paths.socket());
-    let listener = UnixListener::bind(paths.socket())
+    let socket = paths.socket();
+    if let Some(parent) = socket.parent()
+        && parent != paths.dir()
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        use std::os::unix::fs::MetadataExt;
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent);
+        // SAFETY: getuid has no preconditions.
+        let uid = unsafe { libc::getuid() };
+        let meta = std::fs::symlink_metadata(parent)?;
+        if !meta.is_dir() || meta.uid() != uid || meta.mode() & 0o077 != 0 {
+            bail!("{} is not a private folder of this user", parent.display());
+        }
+    }
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket)
         .with_context(|| format!("cannot listen on {}", paths.socket().display()))?;
     tokio::spawn(write_input(master.clone(), input_rx));
     tokio::spawn(accept(shared.clone(), listener));
@@ -375,6 +392,10 @@ impl Shared {
                 *agent = json!({});
             }
             if let (Some(agent), Some(update)) = (agent.as_object_mut(), value.as_object()) {
+                // A new state replaces the message that came with the old one.
+                if update.contains_key("state") && !update.contains_key("message") {
+                    agent.remove("message");
+                }
                 for (key, value) in update {
                     agent.insert(key.clone(), value.clone());
                 }

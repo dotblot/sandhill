@@ -13,7 +13,7 @@ import { baseExtensions, highlightedLines, languageFor } from "../editor/setup";
 import { statements } from "../model/statements";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { CellOutput } from "./cellOutput";
-import { Doc } from "./doc";
+import { changedOnDisk, Doc, replaceText } from "./doc";
 
 /**
  * The console keeps this many runs. Runs are journaled under the cell ids
@@ -99,12 +99,20 @@ export class ScriptDoc extends Doc {
           ...baseExtensions(),
           this.trackCursor(),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) this.setDirty(true);
+            if (update.docChanged && !changedOnDisk(update.transactions)) this.setDirty(true);
           }),
         ],
       }),
     });
     this.consoleShown();
+  }
+
+  reload(file: FileText): boolean {
+    if (this.view) replaceText(this.view, file.text);
+    else this.initialText = file.text;
+    this.mtime = file.mtime_ms;
+    this.setDirty(false);
+    return true;
   }
 
   /** Called when the Console pane shows this script's console. */

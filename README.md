@@ -9,8 +9,9 @@ running on the server after you close the app, and Claude Code, Codex or open
 and local models (through omp) working directly in your live sessions.
 
 > Status: early development. The Mac app opens projects of Quarto and Jupyter
-> notebooks and R and Python scripts, and runs them on this Mac or on a Linux
-> server over ssh; agents are next. See the roadmap below.
+> notebooks and R and Python scripts, runs them on this Mac or on a Linux
+> server over ssh, and runs Claude Code and Codex next to them. See the
+> roadmap below.
 
 ## How it fits together
 
@@ -92,6 +93,31 @@ folder there, and the project window works as it does on the Mac.
 - Code keeps running on the server when the app quits or the network drops.
   The app reconnects on its own and shows what was printed in the meantime.
 
+### Agents
+
+The chat button in the toolbar (⌘I) opens the Agents pane. Pick Claude Code
+or Codex, a model, how much it may do without asking, and the files it should
+start from, then **Start session**. The agent is the real CLI, running in a
+terminal in the project's folder on the machine the project is on (the server,
+for a server project), so it works exactly as it does in Terminal: its own
+login, settings, slash commands and keys.
+
+- The agent must be installed there. If it isn't, the pane offers to install
+  it in the Console's Terminal tab. The first session asks you to sign in,
+  as it would in Terminal; Sandhill never sees the login.
+- Agents can use your live R and Python sessions through MCP tools
+  (`list_sessions`, `list_variables`, `run_code`, `get_outputs`), so they
+  look at the objects you already have in memory instead of recomputing them.
+- Files an agent edits reload in the editor. If you changed the file too,
+  you choose which version to keep.
+- Agent sessions and terminals keep running when the app quits, like
+  kernels, and come back with their scrollback when the project reopens.
+- The box under the terminal sends messages, adds files as `@path` context,
+  and switches model and permissions. The status bar shows when an agent is
+  waiting for you, and Claude's plan usage.
+
+The Console also has a **Terminal** tab: a login shell in the project's folder.
+
 To work on the UI, `cargo build -p sandhill-daemon` once, then
 `npm run tauri dev` in `app/` reloads the window as you edit. Without the
 app, `npm run bridge` and `npm run dev` serve the same UI to a browser; the
@@ -121,5 +147,5 @@ WebKitGTK development packages; see `.github/workflows/ci.yml`) and
 1. **Server core** (done): `sandhilld` starts Python and R kernels, runs code, and records every output so a client can disconnect and replay later.
 2. **First Mac app loop** (done): open `.qmd`/`.ipynb`, run a chunk, see inline output, close and reopen with outputs intact.
 3. **Server and projects** (done): RStudio-style projects, each in its own window; connect to an Ubuntu server over ssh, with work that keeps running when the app closes.
-4. **Agents**: Claude Code and Codex in a terminal pane, MCP tools for live sessions, omp chat for open and local models.
+4. **Agents** (in progress): Claude Code and Codex in a terminal pane and MCP tools for live sessions are done; omp chat for open and local models is next.
 5. **Positron-style panes**: Variables, Data Explorer, Plots, Help, Viewer.

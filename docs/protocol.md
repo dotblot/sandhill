@@ -21,7 +21,7 @@ Responses can arrive out of order; match them by `id`.
 | `list_kernelspecs` | | `[{name, display_name, language, env?}]` |
 | `start_session` | `kernel`, `cwd?`, `project?` | `SessionInfo` once the kernel is ready |
 | `list_sessions` | | `[SessionInfo]`, including ended sessions |
-| `execute` | `session`, `code`, `cell?: {file, cell_id}` | `{run, msg_id}` |
+| `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?` | `{run, msg_id}` |
 | `interrupt` | `session` | `null` |
 | `shutdown` | `session` | `null` |
 | `subscribe` | `session`, `since_seq?` | `{session, from_seq}`, then events |
@@ -39,6 +39,15 @@ Responses can arrive out of order; match them by `id`.
 | `save_project_state` | `path`, `state` | `null` |
 | `forget_project` | `path` | `null` |
 | `system_stats` | `path?` | `SystemStats` for the daemon's machine |
+| `stat_files` | `paths` | `[{path, mtime_ms?, size}]`; no `mtime_ms` when a file is missing |
+| `list_agents` | | `[{kind, name, path?, version?, install}]` |
+| `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?` | `TerminalInfo` |
+| `list_terminals` | | `[TerminalInfo]`, oldest first |
+| `subscribe_terminal` | `terminal`, `from?` | `{terminal, from}`, then terminal messages |
+| `unsubscribe_terminal` | `terminal` | `null` |
+| `terminal_input` | `terminal`, `data` | `null` |
+| `resize_terminal` | `terminal`, `cols`, `rows` | `null` |
+| `close_terminal` | `terminal` | `null` once its program has ended and its files are gone |
 
 `SessionInfo` is `{id, kernel, language, language_version?, cwd, pid, status, created_ms, ended_ms?, last_seq, project?}`
 with `status` one of `starting`, `running`, `ended`. `language_version` is
@@ -69,6 +78,9 @@ restart.
 app left it running) and starts its own build; kernels keep running and the
 new daemon reattaches to them.
 
+A `quiet` execute stores no history and doesn't stop the queue on an error,
+for code the user didn't write (the agents' variable listing).
+
 `list_kernelspecs` lists the kernels in Jupyter's standard folders and also
 those inside conda environments, pyenv versions and the environment of the
 first Python on `PATH`, which need no `ipykernel install`. Kernels found in a
@@ -95,6 +107,46 @@ names the environment a kernel runs in.
     kernel's `ok`, `error` or `aborted`, or `unknown` if the run ended while
     no daemon was connected to hear the reply.
   - `sandhill.session_ended` `{reason}`.
+
+## Terminals and agents
+
+The daemon keeps terminals: a shell (`kind` `shell`, the user's login shell)
+or a coding agent (`claude` for Claude Code, `codex` for Codex), each running
+unmodified in its own pseudo-terminal on the daemon's machine. `list_agents`
+says which agent CLIs are installed, and how to install the others.
+
+`TerminalInfo` is `{id, kind, title, cwd, project?, created_ms, running,
+exit?: {code?, signal?, ended_ms}, end, options?, agent?}`. `end` is the
+number of output bytes so far. `options` is what the agent was started with:
+`{model?, effort?, permission?, documents?}`, where `permission` is
+`supervised`, `edits`, `auto` or `full`. Without `cwd`, a terminal starts in
+the `project` folder, else the home folder.
+
+After `subscribe_terminal`, output arrives as
+
+```json
+{"type": "terminal", "terminal": {"terminal": "3f2a9c1e04b7", "offset": 1024, "data": "<base64>"}}
+```
+
+`offset` is where `data` starts in the terminal's output, so a client that
+reconnects subscribes with `from` set to the end of what it has. Without
+`from`, the replay starts at the recent output (the last MiB, from a line
+start). The reply's `from` is where the replay really starts; it is later
+than asked when that output is no longer kept (the last 4 MiB are). Other
+terminal messages carry `agent` (what an agent reported, below) or `exit`.
+
+Agents report through hooks that run `sandhilld terminal-event`: `agent` is
+`{state: "busy" | "waiting" | "idle", message?, status?, ts_ms}`. `waiting`
+means it asks the user something (a permission prompt, a question).
+`status` comes from Claude Code's status line: `{model, model_id, context,
+context_size, effort?, rate_limits?, cost_usd?, version}`, with `context` the
+percent of the context window in use and `rate_limits` the plan's 5-hour and
+weekly use.
+
+Each agent gets Sandhill's MCP server, `sandhilld mcp --project <folder>`,
+which it starts itself. Its tools reach the user's live sessions through this
+same protocol: `list_sessions`, `list_variables`, `run_code` and
+`get_outputs`.
 
 ## Blobs
 
@@ -156,3 +208,6 @@ the app edits files the same way locally and on a server.
   sent before the restart still arrive.
 - Output a kernel prints in the short window while no daemon is running is
   lost. Long jobs should write logs to files as well.
+- Terminals run under a small `sandhilld terminal-host` process each, in
+  their own process group, so they also survive a daemon restart, and their
+  output is kept on disk while no client is connected.

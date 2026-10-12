@@ -304,3 +304,23 @@ mod tests {
         assert!(!windows.keep_running());
     }
 }
+
+/// Opens a web link from the UI, like one in an agent's terminal, in the
+/// default browser.
+#[tauri::command]
+pub fn open_link(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(format!("not a web link: {url}"));
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let mut child = std::process::Command::new(opener)
+        .arg(&url)
+        .spawn()
+        .map_err(|err| format!("cannot open {url}: {err}"))?;
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}

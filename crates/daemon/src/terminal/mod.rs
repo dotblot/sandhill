@@ -91,6 +91,16 @@ pub enum FromHost {
     },
 }
 
+/// Longest socket path that works on both Linux (108) and macOS (104).
+const MAX_SOCKET_PATH: usize = 100;
+
+/// Where sockets go when the terminal's folder is too deep: private to the user.
+fn short_socket_dir() -> PathBuf {
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from(format!("/tmp/sandhill-{uid}"))
+}
+
 /// The files of one terminal.
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -104,8 +114,16 @@ impl Paths {
     pub fn dir(&self) -> &Path {
         &self.dir
     }
+    /// The host's socket, in its folder. Socket paths are limited to about
+    /// 100 bytes, so a deep state folder gets one under /tmp instead, named
+    /// by the terminal's id.
     pub fn socket(&self) -> PathBuf {
-        self.dir.join("sock")
+        let path = self.dir.join("sock");
+        if path.as_os_str().len() < MAX_SOCKET_PATH {
+            return path;
+        }
+        let id = self.dir.file_name().unwrap_or_default();
+        short_socket_dir().join(id)
     }
     fn meta(&self) -> PathBuf {
         self.dir.join("meta.json")
