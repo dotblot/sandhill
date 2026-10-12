@@ -594,8 +594,9 @@ button.link:hover { text-decoration: underline; }
 .term-view .xterm { height: 100%; }
 .term-view .xterm-viewport { background-color: var(--term) !important; }
 .agent-ended { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); background: var(--panel); }
-.agent-ended button { padding: 2px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); }
+.agent-ended button { flex: none; white-space: nowrap; padding: 2px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); }
 .agent-ended button:hover { border-color: var(--faint); }
+.agent-outdated { border-top: 0; border-bottom: 1px solid var(--line); }
 .agent-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 70px 28px; color: var(--muted); overflow: auto; }
 .agent-empty b { color: var(--text); }
 .agent-empty p { margin: 0 0 6px; line-height: 1.45; }

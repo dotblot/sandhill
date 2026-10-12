@@ -57,6 +57,8 @@ export function AgentsPane(props: {
   const [picking, setPicking] = createSignal(false);
   /** The view of a session being started, before the daemon has it. */
   const [starting, setStarting] = createSignal<TermView>();
+  /** Outdated sessions the user chose to keep using without the notice. */
+  const [keptOld, setKeptOld] = createSignal<string[]>([]);
   const views = new Map<string, TermView>();
   let body!: HTMLDivElement;
   let tabScroll!: HTMLDivElement;
@@ -233,6 +235,15 @@ export function AgentsPane(props: {
             </button>
           </div>
         </Show>
+        <Show when={!picking() && current()?.running && current()?.outdated && !keptOld().includes(current()!.id) && current()}>
+          {(terminal) => (
+            <Outdated
+              terminal={terminal()}
+              onAgain={(t) => void start(agentKind(t.kind)!, t.options ?? {})}
+              onKeep={(t) => setKeptOld((ids) => [...ids, t.id])}
+            />
+          )}
+        </Show>
         <div class="term-host" ref={body} hidden={picking() || (!current() && !starting())} />
         <Show when={!picking() && current() && !current()!.running}>
           <Ended terminal={current()!} onClose={() => void end(current()!)} onAgain={(t) => void start(agentKind(t.kind)!, t.options ?? {})} />
@@ -325,6 +336,24 @@ function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t
       <span class="spacer" />
       <button onClick={() => props.onAgain(props.terminal)}>Start again</button>
       <button onClick={props.onClose}>Close</button>
+    </div>
+  );
+}
+
+/**
+ * A session started before Sandhill was updated. The agent keeps the tools
+ * it started with, so it can't use what the update added (such as writing
+ * cells into the document) until a new session starts.
+ */
+function Outdated(props: { terminal: TerminalInfo; onAgain: (t: TerminalInfo) => void; onKeep: (t: TerminalInfo) => void }) {
+  return (
+    <div class="agent-ended agent-outdated" role="status">
+      <span>This session started before Sandhill was updated, so it doesn't have the newest tools.</span>
+      <span class="spacer" />
+      <button onClick={() => props.onAgain(props.terminal)}>Start a new session</button>
+      <button title="Keep using this session" onClick={() => props.onKeep(props.terminal)}>
+        Keep
+      </button>
     </div>
   );
 }

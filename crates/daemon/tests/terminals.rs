@@ -337,3 +337,34 @@ async fn an_agent_reports_to_its_terminal() {
     assert_eq!(agent["mode"], "acceptEdits");
     terminals.close(&info.id).await.unwrap();
 }
+
+#[tokio::test]
+async fn agents_started_by_an_older_build_are_marked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("terminals");
+    let terminals = Terminals::new(root.clone(), sandhilld().into());
+    let agent = Launch {
+        kind: "claude".into(),
+        ..sh("read wait", dir.path())
+    };
+    let info = terminals.start(agent).await.unwrap();
+    assert!(!info.outdated);
+    let shell = terminals.start(sh("read wait", dir.path())).await.unwrap();
+
+    // As if an update replaced the daemon after these started: the agent
+    // keeps the old build's tools, a shell has none to miss.
+    for id in [&info.id, &shell.id] {
+        let path = root.join(id).join("meta.json");
+        let mut meta: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        meta["build"] = "0123456789abcdef".into();
+        std::fs::write(&path, meta.to_string()).unwrap();
+    }
+    let listed = terminals.list();
+    let outdated = |id: &str| listed.iter().find(|t| t.id == id).unwrap().outdated;
+    assert!(outdated(&info.id));
+    assert!(!outdated(&shell.id));
+
+    terminals.close(&info.id).await.unwrap();
+    terminals.close(&shell.id).await.unwrap();
+}

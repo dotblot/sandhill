@@ -240,6 +240,8 @@ export interface TerminalInfo {
   end: number;
   options?: AgentOptions;
   agent?: AgentReport;
+  /** An agent started before the daemon was updated: it has the old tools. */
+  outdated?: boolean;
 }
 
 export interface TerminalSubscribed {
