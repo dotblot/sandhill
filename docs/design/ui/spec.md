@@ -14,12 +14,16 @@ Agreed with Huan on 2026-10-11 after 16 drafts. Draft 17 (2026-10-12) changed:
 - The thinking-effort control is new: a brain knob, and a star field at the top
   level.
 
+Draft 18 (2026-10-12) replaces the Agents pane with a chat laid out like Posit
+Assistant; see "Agents pane" below.
+
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
 at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
 themes and four screens: Workspace, Data Explorer, With agent and Start.
 The screenshots are `workspace-light.png`, `workspace-dark.png`,
-`with-agent-light.png` and `with-agent-dark.png`. They show a 1452 × 860 point
+`with-agent-light.png`, `with-agent-dark.png`, `agents-history-light.png` and
+`agents-history-dark.png`. They show a 1452 × 860 point
 window at 2× (2904 × 1720 pixels), tagged 144 dpi so they open at true size on a Mac.
 
 The mockup is the reference. Where this spec and the mockup differ, the mockup wins.
@@ -97,36 +101,88 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   status dot or language name. Clicking one shows that session's console; the
   tooltip gives the language, version and state.
 
-## Agents pane
-- Tabs show **only the provider icon**: Claude, OpenAI, or a chip for open
-  models via omp. Other details:
-  - A small dot on the icon shows waiting or busy.
-  - The close button appears on hover.
-  - The full model name is in the tooltip.
-- Claude Code and Codex are their real terminals. omp is a chat view.
-- A one-line context bar above the input, at **9px**. Clicking it opens the
-  context breakdown just above the pointer.
-- The input box is resizable by its grip and has a small send button. Its placeholder has no
-  "&gt;" prefix.
-- Below the input are the model + thinking-effort picker and the permission-mode picker.
-  - Choosing a model maps to `/model` in the CLI and Compact to `/compact`. The
-    model popup shows no note about this.
-- The thinking-effort control, in the model popup under the model list:
-  - A header with "Effort", the level name and a (?) help icon whose tooltip
-    explains effort. "Faster" and "Smarter" sit above the two ends of the track.
-  - The track is 22px high and fully rounded, with a dot at each level and a short
-    tick at the recommended level (the default for new sessions). "Recommended" is
-    centred under the tick.
-  - The knob is a 20px brain, two bumpy pink halves with a soft glow. A fill grows
-    behind it, from nearly clear on the left through pink to violet.
-  - The top level (Max for Claude Code, High for Codex and omp) is special: the fill
-    becomes a twinkling field of small purple, blue, pink and white squares, the
-    brain turns violet with a stronger glow, rotating light rays and a burst of
-    sparks, and the level name turns light blue.
-  - The knob and fill slide in 0.28s, the level name blurs in when it changes, and
-    the brain flashes white when you step down from the top level. With reduced
-    motion nothing animates and the stars hold still.
-  - Click a level, drag the knob, or use the arrow keys, Home and End.
+## Agents pane: a chat, after Posit Assistant (draft 18)
+Draft 18 replaces the terminal tabs with one chat pane laid out like Posit
+Assistant in Positron, in Sandhill's own fonts, colours and glass. The plan behind
+it is `agents-v2-plan.md` in the project's design folder. Claude Code and Codex
+both use it, still signed in with your own plans, and so do open models through
+omp.
+
+- **Header** (the pane's tab strip): the conversation's provider icon and title,
+  then + (new conversation), a clock (history) and a gear (conversation
+  settings), then minimize and maximize. The clock shows an orange dot when
+  another conversation is waiting for you.
+- **Your messages** are grey rounded bubbles on the right. Under each, in 11px
+  grey with an eye icon, is what went with it: the session (for example
+  "R 4.4.1 · 14 variables · analysis.qmd › markers").
+- **Replies** are plain text, without a bubble. Inline code, gene names and
+  file paths are small grey pills in the code font. File names are orange links
+  that open the file.
+- **Thinking rows**, "Thought for 3s ›", are 12px grey and collapsed; opening one
+  shows the reasoning with a grey rule on its left. Codex sends these. Claude
+  Code's hooks don't carry its thinking, so a Claude conversation shows only a
+  "Thinking…" row with a spinner while it works.
+- **Step rows**, one line each at 12px:
+  - a status icon: a check when done, a red x when it failed, a grey x when you
+    denied it, a spinner while it runs;
+  - the tool in bold code font (`run_code`, `run_cell`, `read`, `edit_cell`,
+    `add_cell`), then the agent's short description;
+  - a detail on the right: "R · 1.2 s · 1 plot", "lines 41–44 of 120",
+    "+2 −0";
+  - a › chevron. Opening a row shows the code, its output and any plot in one
+    card. The card's header names where it ran ("Console · R 4.4.1 · 1.2 s"),
+    and its foot has **Run again**, **Copy** and **Insert into file**. Edits open
+    to their diff; reads to the lines read.
+  - `run_code` runs in the Console, marked as the agent's. `run_cell` runs a cell
+    of the linked file as if you pressed Run. `add_cell` writes a new cell below
+    your active cell.
+- **Approval card**: a step that needs you waits where it will run, with an
+  orange edge. It names the action ("Add a cell to analysis.qmd?"), where it goes
+  and the session that runs it, and shows the code as a diff. The buttons are
+  **Allow once**, **For this chat**, **For this project** and **Deny**. Allow
+  adds the cell; denying leaves the step crossed out (grey x) and the agent asks
+  what to do instead. While a card waits, the status bar says the agent is waiting
+  for you.
+- **Turn footer**, after each finished reply: a copy button, the time and the
+  turn's tokens, in 11px grey. No cost is shown, because plan sign-ins aren't
+  billed per message.
+- **Message box**: rounded, with a paperclip on the left (files and images can
+  also be pasted or dragged in), "Ask Claude…" / "Ask Codex…" as the
+  placeholder, and a round orange send button that becomes a stop button while
+  the agent works. The grip on its top edge resizes it. Its bottom row:
+  - left: web search (globe), session context on or off (eye; off shows a
+    crossed-out eye) and the mode (hand). Any mode other than Normal shows its
+    icon and name in orange.
+  - right: the linked file with its language icon (opens the file; code goes into
+    it), the context ring and tokens used (opens the context breakdown above
+    the pointer), and the model with its effort, "Opus (High) ⌄" (opens the
+    model list and the effort knob from draft 17). The effort track is 16px
+    tall, a little thinner than the 20px brain knob, and its filled part ends
+    exactly under the knob's centre.
+- **Mode picker** (the hand): Normal (safe steps run, risky ones ask), Auto (a
+  second model reviews risky steps), YOLO (everything runs except steps marked
+  dangerous; for Claude this restarts it on the same conversation), Restricted
+  (asks before every step), Ask (read-only: no edits, no code runs) and Plan
+  (writes a plan, then asks before carrying it out). Under them, "Agent code
+  goes": **In the file** (the default) or **In the Console**.
+- **Gear menu**: Show terminal (the agent's own terminal, for the rare screen
+  the chat can't show yet, with "Back to chat"), Export as Markdown, HTML or
+  JSON, Write a report (`/report`), Write a notebook (`/notebook`), Rename and
+  Delete.
+- **History** (the clock) replaces the chat with a list of conversations
+  grouped as Needs you, Running, Today, Yesterday and Earlier, with a search box
+  at the top. Each row shows the provider icon (with a dot when waiting or busy),
+  the title, and the linked file, model and time in 11px. Rename and delete
+  appear on hover. Opening a conversation also brings its linked file to the
+  front of the editor.
+- **New conversation** (+): pick Claude Code, Codex or omp (each button shows
+  only the provider icon and name), see which file it links to (the active
+  editor file), then type in the message box. **Cancel** (next to the "New
+  conversation" heading, or the x on its tab, or esc) goes back to the
+  conversation you were in.
+- **omp's icon** is its pi-like mark: a top bar with a short left leg and a
+  longer right leg, filled with a pink to violet to light-blue gradient. Dark
+  mode uses a slightly brighter gradient so it reads on the dark glass.
 
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
@@ -152,7 +208,7 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   macOS apps.
 - Maple Mono NF (the Nerd Font build of Maple Mono, version 7.8) at 13px for all
   monospace text: the code editor and its outputs, Variables, the console and
-  terminal, the agent terminals, and code in Help and Git. The Data Explorer is the
+  terminal, the agent's terminal, and code in Help, Git and the Agents chat. The Data Explorer is the
   exception: it uses the UI font. The font's Nerd Font icons let shell prompts and
   command-line tools show their symbols. Maple Mono is under the SIL Open Font
   License; the mockup carries its regular, italic, medium, semibold and bold styles.
@@ -160,7 +216,14 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - Code ligatures are on (Maple Mono's default): `<-` shows as an arrow, `|>` as a
   triangle, and so on. The characters in the file are unchanged.
 - The exceptions are the kernel and resource rows and the Git pane's contents at
-  11px, and the context bar at 9px.
+  11px. In the Agents chat, step rows, thinking rows, code cards and the chips
+  under the message box are 12px, and the context line under your messages, turn
+  footers and history details are 11px.
+- **Every popup and drop-down is 11px** (icons 13px): the context breakdown,
+  model and effort, mode, gear menu, kernel and session drop-downs, usage,
+  command palette, context menus and the plot zoom dialog. The context
+  breakdown is 340px wide and the model popup 268px, aligned to the right edge
+  of the pane.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
 ## Open questions
