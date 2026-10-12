@@ -1,4 +1,14 @@
-import { createEffect, createResource, createSignal, For, type JSX, onCleanup, onMount, Show } from "solid-js";
+import {
+  createEffect,
+  createResource,
+  createSignal,
+  ErrorBoundary,
+  For,
+  type JSX,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import { LOCAL_HOST, type Shell } from "../backend";
 import {
   CONFLICT_ERROR,
@@ -15,6 +25,7 @@ import { ScriptDoc } from "../docs/scriptDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
+import { BUILD, buildText } from "../build";
 import { modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
@@ -547,22 +558,36 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
           <div class="split v" title="Drag to resize" onPointerDown={resizeLeft} />
         </Show>
         <Show when={agentsOn()}>
-          <AgentsPane
-            ws={ws}
-            store={terminals}
-            project={props.project}
-            hostLabel={hostLabel}
-            docs={docs()}
-            active={active()}
-            selected={agentTab()}
-            onSelect={setAgentTab}
-            width={agentsWidth()}
-            min={isMin("agents")}
-            max={maximized() === "agents"}
-            onMin={toggleMin}
-            onMax={toggleMax}
-            onInstall={runInTerminal}
-          />
+          <ErrorBoundary
+            fallback={(err, reset) => (
+              <div class="pane agents-pane" style={{ width: `${agentsWidth()}px` }} aria-label="Agents">
+                <div class="agent-empty">
+                  <b>The Agents pane stopped with an error</b>
+                  <p>{err instanceof Error ? err.message : String(err)}</p>
+                  <button class="primary" onClick={reset}>
+                    Try again
+                  </button>
+                </div>
+              </div>
+            )}
+          >
+            <AgentsPane
+              ws={ws}
+              store={terminals}
+              project={props.project}
+              hostLabel={hostLabel}
+              docs={docs()}
+              active={active()}
+              selected={agentTab()}
+              onSelect={setAgentTab}
+              width={agentsWidth()}
+              min={isMin("agents")}
+              max={maximized() === "agents"}
+              onMin={toggleMin}
+              onMax={toggleMax}
+              onInstall={runInTerminal}
+            />
+          </ErrorBoundary>
           <div class="split v" title="Drag to resize" onPointerDown={resizeAgents} />
         </Show>
         <section class="editor-col" ref={column}>
@@ -683,11 +708,12 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         </section>
       </div>
       <footer class="status-bar" data-link={ws.link().status}>
-        <span class="status-item" title={linkText(ws)}>
+        <span
+          class="status-item"
+          title={`${linkText(ws)}${ws.host() ? ` · sandhilld ${ws.host()!.daemon_version}` : ""} · Sandhill ${buildText()}`}
+        >
           <span class="link-dot" />
-          {ws.link().status === "connected" && ws.host()
-            ? `${hostLabel} · sandhilld ${ws.host()!.daemon_version}`
-            : linkText(ws)}
+          {ws.link().status === "connected" && ws.host() ? `${hostLabel} · built ${BUILD.when}` : linkText(ws)}
         </span>
         <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
         <span class="spacer" />
