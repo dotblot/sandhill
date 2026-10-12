@@ -57,12 +57,11 @@ builds always have them):
 `rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl`,
 `cargo install cargo-zigbuild` and `brew install zig`.
 
-CI builds the app only when started by hand, since Mac runners use up the
-account's Actions minutes ten times as fast: on GitHub's Actions tab pick
-**CI**, then **Run workflow**. When the run finishes, download
-**Sandhill-macos-arm64** under Artifacts. The app isn't notarized,
-so after unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once,
-or macOS will refuse to open it.
+Every CI run also builds the app: open the run on GitHub's Actions tab and
+download **Sandhill-macos-arm64** under Artifacts (to build one without a
+push, pick **CI** there, then **Run workflow**). The app isn't notarized, so
+after unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once, or
+macOS will refuse to open it.
 
 The app opens on a start window: open a folder with your analysis as a
 project, and it gets its own window. Projects open at Quit come back at the
