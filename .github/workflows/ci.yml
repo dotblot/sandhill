@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Run by hand from the Actions tab (CI, Run workflow) to build the Mac app.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -63,6 +65,9 @@ jobs:
 
   macos:
     name: macOS (Apple silicon, Python, app bundle)
+    # Only when run by hand: a Mac minute counts as ten of the account's
+    # included Actions minutes, so one run costs about 70 of them.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
