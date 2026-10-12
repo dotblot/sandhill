@@ -97,8 +97,24 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - The input box is resizable by its grip and has a small send button. Its placeholder has no
   "&gt;" prefix.
 - Below the input are the model + thinking-effort picker and the permission-mode picker.
-  - The effort slider track is 11px thick.
-  - Choosing a model maps to `/model` in the CLI; Compact maps to `/compact`.
+  - Choosing a model maps to `/model` in the CLI and Compact to `/compact`. The
+    model popup shows no note about this.
+- The thinking-effort control, in the model popup under the model list:
+  - A header with "Effort", the level name and a (?) help icon whose tooltip
+    explains effort. "Faster" and "Smarter" sit above the two ends of the track.
+  - The track is 22px high and fully rounded, with a dot at each level and a short
+    tick at the recommended level (the default for new sessions). "Recommended" is
+    centred under the tick.
+  - The knob is a 20px brain, two bumpy pink halves with a soft glow. A fill grows
+    behind it, from nearly clear on the left through pink to violet.
+  - The top level (Max for Claude Code, High for Codex and omp) is special: the fill
+    becomes a twinkling field of small purple, blue, pink and white squares, the
+    brain turns violet with a stronger glow, rotating light rays and a burst of
+    sparks, and the level name turns light blue.
+  - The knob and fill slide in 0.28s, the level name blurs in when it changes, and
+    the brain flashes white when you step down from the top level. With reduced
+    motion nothing animates and the stars hold still.
+  - Click a level, drag the knob, or use the arrow keys, Home and End.
 
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
