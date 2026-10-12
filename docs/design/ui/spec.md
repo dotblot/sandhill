@@ -1,7 +1,8 @@
 # Sandhill window layout: agreed design
 
 Agreed with Huan on 2026-10-11 after 16 drafts. Draft 17 (2026-10-12) made the
-text 13px instead of 14px. The clickable mockup is
+text 13px instead of 14px and tries Maple Mono in the code editor. The clickable
+mockup is
 [sandhill-layout.html](sandhill-layout.html), also published at
 https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9. It has light and dark
 themes and four screens: Workspace, Data Explorer, With agent and Start.
@@ -89,11 +90,15 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 
 ## Type and colour
 - 13px for all UI text, in the macOS system font; 13px is the standard text size in
-  macOS apps. JetBrains Mono at 13px for the code editor, the console and the agent
-  terminals.
+  macOS apps.
+- Code editor: Maple Mono at 13px, on trial against JetBrains Mono. The review page
+  has a Code font switch to compare the two. Maple Mono is under the SIL Open Font
+  License; the mockup carries its regular, italic, medium and bold styles.
+- Console and agent terminals: JetBrains Mono at 13px.
 - The exceptions are the kernel and resource rows at 11px and the context bar at 9px.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
 ## Open questions
+- Code editor font: Maple Mono or JetBrains Mono.
 - Where banked plan-usage resets come from.
 - Whether more panes should be movable by dragging.
