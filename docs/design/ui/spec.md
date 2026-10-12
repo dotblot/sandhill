@@ -1,11 +1,13 @@
 # Sandhill window layout: agreed design
 
-Agreed with Huan on 2026-10-11 after 16 drafts. The clickable mockup is
+Agreed with Huan on 2026-10-11 after 16 drafts. Draft 17 (2026-10-12) made the
+text 13px instead of 14px. The clickable mockup is
 [sandhill-layout.html](sandhill-layout.html), also published at
 https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9. It has light and dark
 themes and four screens: Workspace, Data Explorer, With agent and Start.
 The screenshots are `workspace-light.png`, `workspace-dark.png`,
-`with-agent-light.png` and `with-agent-dark.png`.
+`with-agent-light.png` and `with-agent-dark.png`. They show a 1452 × 860 point
+window at 2× (2904 × 1720 pixels), tagged 144 dpi so they open at true size on a Mac.
 
 The mockup is the reference. Where this spec and the mockup differ, the mockup wins.
 
@@ -86,8 +88,9 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   Claude Code and Codex, then cursor position.
 
 ## Type and colour
-- 14px for all UI text, in the macOS system font. JetBrains Mono at 14px for the code
-  editor, the console and the agent terminals.
+- 13px for all UI text, in the macOS system font; 13px is the standard text size in
+  macOS apps. JetBrains Mono at 13px for the code editor, the console and the agent
+  terminals.
 - The exceptions are the kernel and resource rows at 11px and the context bar at 9px.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
