@@ -40,8 +40,8 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - The toolbar floats over the top of the left pane, after the traffic lights. All the icons sit in one row with
   no gap between groups:
   - toggle left pane;
-  - toggle right pane;
   - Agents, a chat icon with an orange dot when an agent waits for you;
+  - toggle right pane;
   - search, which opens a ⌘K palette for files, symbols, commands and "search in files";
   - menu, with Connect to server, Open project, New project, Recent projects, Show console and Settings.
 - When the left pane is hidden, the first pane's tabs start just after the
@@ -60,12 +60,21 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   shows an icon, the label and a bar of the same length for every item, with no
   percent. Items are 22px high with 8px side padding, so the content sits centred
   in the hover shading. Clicking an item opens a details popover with the percent.
+- One left edge for the left pane and the status bar: every row's hover shading
+  starts 6px from the window's left edge, and its first icon or dot starts at 14px
+  (file tree, kernel rows, resources, the status bar's connection dot). The
+  Local | server tabs start at 6px and the project name at 14px. Files inside a
+  folder line up under the folder's icon.
 
 ## Editor
-- The document bar has one kernel picker per language. Each starts with the
-  language icon (R, Python), which replaces the status dot and the language name,
-  then the version, kernel and session. The icon is 14px and the picker's left
-  padding is 3px, so the icon sits evenly inside the rounded end.
+- The document bar has one kernel picker per language. It shows only the language
+  icon (R, Python) and the version, for example the R icon followed by "4.4.1",
+  with no status dot, language name, kernel or session ID. The icon is 14px and
+  the picker's left padding is 3px, so the icon sits evenly inside the rounded end.
+- Clicking a picker opens its drop-down: language, version and state, then the
+  kernel, library or environment, machine, the documents using it and memory, then
+  the session list (the current session's ID, New session, and another installed
+  version to switch to). Session IDs appear only there.
 - Run all shows no keyboard shortcut; ⌥⌘R is in its tooltip.
 - The Data Explorer uses the UI font, with tabular digits, and shows column names
   exactly as written (no capitals).
@@ -88,8 +97,8 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
   and `gc()` in that session.
-- The session pickers in Variables and Packages start with the language icon, like
-  the editor's kernel pickers, with no status dot or language name.
+- The session pickers in Variables and Packages are the same as the editor's kernel
+  pickers: language icon and version, with the same drop-down.
 - Help searches by package.
 - Git shows a commit graph with avatars, then staged and unstaged files with a
   commit box. Everything below its tab strip is **11px** and never bold.

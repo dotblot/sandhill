@@ -1070,6 +1070,19 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 .kern, .vtool .sel { padding-left: 3px; }
 /* Git pane: contents at 11px, no bold */
 .win .gitpane :not(svg, svg *, .badge, .rail .badge) { font-size: 11px !important; font-weight: 400 !important; }
+/* one left edge: in the left pane and the status bar, row shading starts 6px and the first icon 14px from the window edge */
+.hosttabs { margin-left: 6px; margin-right: 6px; }
+.ti { padding-left: 8px; } .ti.ind1 { padding-left: 23px; } .ti.ind2 { padding-left: 37px; }
+.krow { padding-left: 8px; }
+.rrow { grid-template-columns: 14px 28px 1fr; } .rrow .ico { width: 14px; height: 14px; }
+.status { padding-left: 6px; } .status > .si:first-child { padding-left: 8px; }
+/* kernel picker drop-down: details of the session, and switching */
+.kpop { position: absolute; z-index: 26; width: 270px; background: var(--bg); border: 1px solid var(--glass-edge); border-radius: var(--r); box-shadow: 0 16px 40px -12px rgba(0,0,0,.4); padding: 5px; display: flex; flex-direction: column; }
+.kp-h { display: flex; align-items: center; gap: 7px; padding: 5px 8px 3px; }
+.kp-h b { font-weight: 600; }
+.kp-st { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+.kp-d { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 2px 0 4px; padding: 0 8px; }
+.kp-d dt { color: var(--muted); } .kp-d dd { margin: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 <style id="maple-mono">
 /* Maple Mono NF 7.8 (Nerd Font, unhinted), from https://github.com/subframe7536/maple-font/releases/tag/v7.8,
@@ -1186,8 +1199,8 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
         <div class="tb-left" id="tbLeft">
           <div class="lights"><i></i><i></i><i></i></div>
           <button class="tbi" data-toggle="sidebar" aria-pressed="true" title="Left pane ⌘B"><svg class="ico"><use href="#i-sbl"/></svg></button>
-          <button class="tbi" data-toggle="session" aria-pressed="true" title="Right pane ⌥⌘B"><svg class="ico"><use href="#i-sbr"/></svg></button>
           <button class="tbi" data-toggle="agent" aria-pressed="false" title="Agents ⌘I"><svg class="ico"><use href="#i-chat"/></svg><span class="dot wait" id="agentDot"></span></button>
+          <button class="tbi" data-toggle="session" aria-pressed="true" title="Right pane ⌥⌘B"><svg class="ico"><use href="#i-sbr"/></svg></button>
           <button class="tbi" id="searchBtn" title="Go to file, symbol or command ⌘K"><svg class="ico"><use href="#i-search"/></svg></button>
           <button class="tbi" id="menuBtn" title="Menu"><svg class="ico"><use href="#i-menu"/></svg></button>
         </div>
@@ -1263,6 +1276,7 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
       <div class="mainmenu" id="mainMenu" role="menu" hidden></div>
       <div class="palette" id="palette" role="dialog" aria-label="Go to" hidden></div>
       <div class="respop" id="respop" hidden></div>
+      <div class="kpop" id="kpop" role="menu" hidden></div>
     </div>
   </div>
 
@@ -1277,7 +1291,7 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
     <li tabindex="0" data-target="#grpBot"><b>Zoom and export plots</b><span>The magnifier in the Plots pane opens the plot large. Set its size (or pick a preset), then copy it or save it as PNG, PDF or SVG; the kernel re-draws it at that size.</span></li>
     <li tabindex="0" data-target="#session"><b>Free memory from Variables</b><span>Tick variables in the Variables pane, see how much memory they hold, and delete them; Sandhill runs rm() and gc() in that session.</span></li>
     <li tabindex="0" data-target="#tabs"><b>Data Explorer opens as an editor tab</b><span>Click the table icon next to a data frame, or "Open in Data Explorer" under a table output. Sorting and filtering run in the kernel.</span></li>
-    <li tabindex="0" data-target="#tbLeft"><b>Toolbar over the left pane</b><span>Left pane, right pane and agents toggles sit next to the window buttons, followed by search (files, symbols, commands) and the menu (connect, open or create a project, recent projects, settings). The panes run up to the top of the window; with the left pane hidden, the first pane's tabs start after the toolbar.</span></li>
+    <li tabindex="0" data-target="#tbLeft"><b>Toolbar over the left pane</b><span>Left pane, agents and right pane toggles sit next to the window buttons, followed by search (files, symbols, commands) and the menu (connect, open or create a project, recent projects, settings). The panes run up to the top of the window; with the left pane hidden, the first pane's tabs start after the toolbar.</span></li>
     <li tabindex="0" data-target="#status"><b>Status bar shows plan usage</b><span>Claude Code and Codex, shown by their provider icons, each show 5-hour and weekly usage and the time left until each resets. Click one for details and to spend a banked reset. Also the daemon link, kernels, jobs, and a note when a session waits for you.</span></li>
     <li tabindex="0" data-target="#wbody"><b>Floating glass panes</b><span>Editor, console, Variables, Plots and agents are rounded, translucent cards floating on the window background, in the style of macOS Liquid Glass. The title bar, rail, the rail's side pane and the status bar sit directly on the background.</span></li>
     <li tabindex="0" data-target="#grpTop"><b>Git graph</b><span>The Git tab, next to Variables, Help and Packages, shows branches, a commit graph with author avatars (people, Claude Code, Codex) and the message, then staged and unstaged files with Write it, which asks an agent for a commit message.</span></li>
@@ -1538,20 +1552,41 @@ function renderTabs() {
   $$("#tabs [data-tab]").forEach(e => e.onclick = ev => { if (ev.target.closest("[data-close]")) return; openTab(e.dataset.tab); });
   $$("#tabs [data-close]").forEach(e => e.onclick = () => { if (e.dataset.close === "explorer") { S.explorerOpen = false; if (S.tab === "explorer") S.tab = "analysis"; renderAll(); } if (e.dataset.close === "source") { S.src = null; if (S.tab === "source") S.tab = "analysis"; renderAll(); } });
 }
-function kern(lang, ver, kind, state, sess) {
-  return `<span class="kern" title="${lang} ${ver} · ${state}">${langIcon(lang === "Python" ? "py" : "r")}<button class="pick">${ver} · ${kind} · ${sess}${ico("chev")}</button><button class="kb" title="Interrupt" ${state === "busy" ? "" : "disabled"}>${ico("stop")}</button><button class="kb" title="Restart">${ico("restart")}</button></span>`;
+/* kernel pickers show the language icon and version; the drop-down holds the rest */
+const KERNELS = {
+  r: { lang: "R", ver: "4.4.1", state: "idle", rows: [["Kernel", "Ark 0.1.150"], ["Library", "renv (project)"], ["Runs on", "gpu01"], ["Used by", "analysis.qmd, console"], ["Memory", "2.1 GB"]], sess: "r-7f3a", other: "R 4.3.3 (system)" },
+  py: { lang: "Python", ver: "3.12", state: "busy", rows: [["Kernel", "ipykernel 6.29"], ["Environment", "conda: scanpy"], ["Runs on", "gpu01"], ["Used by", "analysis.qmd, 02_de.ipynb"], ["Memory", "3.4 GB"]], sess: "py-2c91", other: "Python 3.11 (conda: base)" },
+};
+const kpick = (k, where) => `<button class="${where === "docbar" ? "pick" : "sel"}" data-kpick="${k}" data-kwhere="${where}" title="${KERNELS[k].lang} ${KERNELS[k].ver} · ${KERNELS[k].state}. Click for details">${where === "docbar" ? "" : langIcon(k)}${KERNELS[k].ver}${ico("chev")}</button>`;
+function kern(k) {
+  const K = KERNELS[k];
+  return `<span class="kern">${langIcon(k)}${kpick(k, "docbar")}<button class="kb" title="Interrupt" ${K.state === "busy" ? "" : "disabled"}>${ico("stop")}</button><button class="kb" title="Restart">${ico("restart")}</button></span>`;
+}
+function renderKpop() {
+  const pop = $("#kpop"), anchor = S.kpop && $(`[data-kpick="${S.kpop.k}"][data-kwhere="${S.kpop.where}"]`);
+  if (!anchor || !anchor.offsetParent) { S.kpop = null; pop.hidden = true; return; }
+  const K = KERNELS[S.kpop.k];
+  pop.innerHTML = `<div class="kp-h">${langIcon(S.kpop.k)}<b>${K.lang} ${K.ver}</b><span class="kp-st"><span class="dot ${K.state}"></span>${K.state}</span></div>
+    <dl class="kp-d">${K.rows.map(([a, b]) => `<dt>${a}</dt><dd title="${b}">${b}</dd>`).join("")}</dl>
+    <div class="mm-sep"></div><div class="mm-h">Session</div>
+    <button class="mm-i" data-kpclose>${ico("check")}<span>${K.sess}</span><kbd>current</kbd></button>
+    <button class="mm-i" data-kpclose>${ico("plus")}<span>New ${K.lang} ${K.ver} session</span><kbd></kbd></button>
+    <button class="mm-i" data-kpclose><span class="ico sm"></span><span>Switch to ${K.other}</span><kbd></kbd></button>`;
+  pop.hidden = false; pop.onclick = e => { e.stopPropagation(); if (e.target.closest("[data-kpclose]")) { S.kpop = null; renderKpop(); } };
+  const wr = win.getBoundingClientRect(), r = anchor.getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(r.left - wr.left - 4, wr.width - pop.offsetWidth - 8)) + "px"; pop.style.top = (r.bottom - wr.top + 4) + "px";
 }
 function renderDocbar() {
   const db = $("#docbar");
   setTimeout(() => { const t = $("[data-oall]", db); if (t) t.onclick = () => { const ids = S.tab === "de" ? ["nb5", "nb6"] : ["load", "umap", "markers", "scanpy"]; const allOn = ids.every(i => S.shown.has(i)); ids.forEach(i => allOn ? S.shown.delete(i) : S.shown.add(i)); renderDocbar(); renderDoc(); }; });
   if (S.tab === "source") { const py = isPy(S.src.pkg); db.innerHTML = `<span class="kern" title="${py ? "Python" : "R"}">${langIcon(py ? "py" : "r")}<span class="pick" style="padding-right:6px">Read-only ·${S.src.pkg} ${PKGVER[S.src.pkg] || ""} · installed in ${py ? "conda: scanpy" : "renv"} on gpu01</span></span><span class="spacer"></span><button class="dbtn" data-srchelp>${ico("search")}Help</button><button class="dbtn">${ico("copy")}Copy</button>`; $("[data-srchelp]", db).onclick = () => showHelp(S.src.kind === "pkg" ? "" : S.src.name, S.src.pkg); return; }
-  if (S.tab === "explorer") { db.innerHTML = `<span class="kern" title="R">${langIcon("r")}<span class="pick" style="padding-right:6px">seu@meta.data · live from R 4.4.1 · r-7f3a</span></span><span class="spacer"></span><button class="dbtn">${ico("copy")}Copy as code</button><button class="dbtn">${ico("save")}Export CSV</button>`; return; }
+  if (S.tab === "explorer") { db.innerHTML = `<span class="kern" title="R">${langIcon("r")}<span class="pick" style="padding-right:6px">4.4.1 · seu@meta.data, live</span></span><span class="spacer"></span><button class="dbtn">${ico("copy")}Copy as code</button><button class="dbtn">${ico("save")}Export CSV</button>`; return; }
   const ids = S.tab === "de" ? ["nb5", "nb6"] : ["load", "umap", "markers", "scanpy"];
   const allOn = ids.every(i => S.shown.has(i));
   const run = `<button class="dbtn" data-oall title="${allOn ? "Hide" : "Show"} every output in this document">${ico(allOn ? "chev" : "chevr")}${allOn ? "Hide outputs" : "Show outputs"}<kbd>${ids.filter(i => S.shown.has(i)).length}/${ids.length}</kbd></button><button class="dbtn" title="Run all ⌥⌘R">${ico("play")}Run all</button><button class="dbtn">${ico("outline")}Outline</button><button class="dbtn">${ico("share")}Share</button>`;
-  if (S.tab === "analysis") db.innerHTML = kern("R", "4.4.1", "Ark", "idle", "r-7f3a") + kern("Python", "3.12", "ipykernel", "busy", "py-2c91") + `<span class="spacer"></span>` + run;
-  else if (S.tab === "de") db.innerHTML = kern("Python", "3.12", "ipykernel", "busy", "py-2c91") + `<span class="spacer"></span>` + run;
-  else db.innerHTML = `<span class="kern" title="R">${langIcon("r")}<span class="pick" style="padding-right:6px">Sends to console · R 4.4.1 · r-7f3a</span></span><span class="spacer"></span><button class="dbtn">${ico("play")}Run line <kbd>⌘↩</kbd></button><button class="dbtn">${ico("play")}Source <kbd>⇧⌘S</kbd></button>`;
+  if (S.tab === "analysis") db.innerHTML = kern("r") + kern("py") + `<span class="spacer"></span>` + run;
+  else if (S.tab === "de") db.innerHTML = kern("py") + `<span class="spacer"></span>` + run;
+  else db.innerHTML = `<span class="kern" title="R">${langIcon("r")}<span class="pick" style="padding-right:6px">4.4.1 · sends to the console</span></span><span class="spacer"></span><button class="dbtn">${ico("play")}Run line <kbd>⌘↩</kbd></button><button class="dbtn">${ico("play")}Source <kbd>⇧⌘S</kbd></button>`;
 }
 
 /* ---------- qmd document ---------- */
@@ -1778,7 +1813,7 @@ function renderTop(fresh = false) {
   $$("[data-gt]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.gt === S.gt)));
   const g = $("#gtop");
   if (S.gt === "pkgs") {
-    g.innerHTML = `<div class="vtool"><span class="sel" title="R · renv library">${langIcon("r")}renv${ico("chev")}</span><input placeholder="Filter packages" aria-label="Filter packages"><span class="vmem">142 installed</span></div>${[["Seurat", "5.1.0", "attached"], ["SeuratObject", "5.0.2", "attached"], ["DESeq2", "1.44.0", ""], ["ggplot2", "3.5.1", "attached"], ["dplyr", "1.1.4", "attached"], ["harmony", "1.2.1", "update 1.2.3"], ["scran", "1.32.0", ""]].map(([p, v, st]) => `<div class="var pkgrow" data-fn="${p}" data-pkg="${p}"><span></span>${ico("pkg")}<span class="nm">${p}</span><span class="sm">${v}</span><span class="sz ${st.startsWith("update") ? "upd" : ""}">${st}</span><span></span></div>`).join("")}`;
+    g.innerHTML = `<div class="vtool">${kpick("r", "pkgs")}<input placeholder="Filter packages" aria-label="Filter packages"><span class="vmem">142 installed</span></div>${[["Seurat", "5.1.0", "attached"], ["SeuratObject", "5.0.2", "attached"], ["DESeq2", "1.44.0", ""], ["ggplot2", "3.5.1", "attached"], ["dplyr", "1.1.4", "attached"], ["harmony", "1.2.1", "update 1.2.3"], ["scran", "1.32.0", ""]].map(([p, v, st]) => `<div class="var pkgrow" data-fn="${p}" data-pkg="${p}"><span></span>${ico("pkg")}<span class="nm">${p}</span><span class="sm">${v}</span><span class="sz ${st.startsWith("update") ? "upd" : ""}">${st}</span><span></span></div>`).join("")}`;
     return;
   }
   if (S.gt === "git") {
@@ -1800,7 +1835,7 @@ function renderTop(fresh = false) {
   const selMB = [...S.vsel].reduce((a, n) => a + (SIZE[n] || 0), 0);
   const tool = S.vsel.size
     ? `<div class="vtool vsel"><span class="vcount">${S.vsel.size} selected · ${mb(selMB)}</span><span class="spacer"></span><button class="vbtn" data-vclear>Cancel</button><button class="vbtn danger" data-vdel>${ico("trash")}Delete</button></div>`
-    : `<div class="vtool"><span class="sel" title="R session r-7f3a · idle">${langIcon("r")}r-7f3a${ico("chev")}</span><input placeholder="Filter" aria-label="Filter variables"><span class="vmem" title="Memory used by this R session">2.1 GB</span></div>`;
+    : `<div class="vtool">${kpick("r", "vars")}<input placeholder="Filter" aria-label="Filter variables"><span class="vmem" title="Memory used by this R session">2.1 GB</span></div>`;
   g.innerHTML = `${tool}${S.vfreed ? `<div class="vfreed" title="Freed with rm() and gc() in the R session">${ico("check")}Removed ${S.vfreed.names.join(", ")} · ${mb(S.vfreed.mb)} freed</div>` : ""}
     ${S.vgone.has("seu") && S.vgone.has("markers") ? "" : `<div class="vh">Data</div>`}
     ${S.vgone.has("seu") ? "" : `<div class="var ${S.vsel.has("seu") ? "picked" : ""}" data-seu style="cursor:pointer">${ck("seu")}<span class="tw">${S.seuOpen ? "▼" : "▶"}</span><span class="nm">seu</span><span class="sm">2,638 cells × 13,714 genes <em>Seurat</em></span><span class="sz">412 MB</span><span></span></div>
@@ -1855,7 +1890,7 @@ function renderHelpResults() {
   const body = h[0] === "FindAllMarkers"
     ? `<h4>Description</h4><p>Finds markers (differentially expressed genes) for each of the identity classes in a dataset.</p><h4>Usage</h4><p><code>FindAllMarkers(object, assay = NULL, features = NULL, logfc.threshold = 0.1, test.use = "wilcox", min.pct = 0.01, only.pos = FALSE, ...)</code></p><h4>Arguments</h4><p><code>only.pos</code> Only return positive markers.</p><p><code>min.pct</code> Only test genes detected in at least this fraction of cells in either population.</p>`
     : `<h4>Description</h4><p>${h[3]}.</p><h4>Usage</h4><p><code>${h[2] === "Py" ? (h[1] === "scanpy" ? "sc." : "ad.") : ""}${h[0]}(...)</code></p>`;
-  doc.innerHTML = `<div class="helpdoc"><div class="hd-top"><div><h3 data-fn="${h[0]}" data-pkg="${h[1]}">${h[0]}</h3><div class="pkg">${h[1]} · ${h[2] === "Py" ? "Python 3.12 · py-2c91" : "R 4.4.1 · r-7f3a"}</div></div><button class="dbtn" data-srcbtn>${ico("files")}Source</button></div>${body}</div>`;
+  doc.innerHTML = `<div class="helpdoc"><div class="hd-top"><div><h3 data-fn="${h[0]}" data-pkg="${h[1]}">${h[0]}</h3><div class="pkg">${h[1]} · ${h[2] === "Py" ? "Python 3.12" : "R 4.4.1"}</div></div><button class="dbtn" data-srcbtn>${ico("files")}Source</button></div>${body}</div>`;
   $("[data-srcbtn]", doc).onclick = () => openSource("fn", h[0], h[1]);
 }
 function renderBot() {
@@ -2305,7 +2340,7 @@ function syncTitle() {
 }
 function renderAll() {
   renderLayout(); renderSidebar(); renderTabs(); renderDocbar(); renderDoc(); renderBottom(); renderTop(); renderBot(); renderAgent(); renderStatus(); renderStart();
-  paneCtl(); syncTitle(); renderResPop(); renderMenu();
+  paneCtl(); syncTitle(); renderResPop(); renderMenu(); renderKpop();
 }
 
 /* ---------- wiring ---------- */
@@ -2403,7 +2438,13 @@ $$("#notes li").forEach(li => {
 
 document.addEventListener("click", e => { hideMenu(); if (S.usagePop != null && !e.target.closest("#usagepop,[data-usage]")) { S.usagePop = null; S.bankConfirm = null; renderUsagePop(); } if (S.apop && !e.target.closest(".apop,#ctxpop")) { S.apop = null; renderAgent(); } });
 win.addEventListener("contextmenu", e => { const t = e.target.closest("[data-fn],[data-pkg]"); if (!t) return; e.preventDefault(); showMenu(e.clientX, e.clientY, t.dataset.fn || "", t.dataset.pkg); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { hideMenu(); if (S.apop) { S.apop = null; renderAgent(); } } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { hideMenu(); if (S.apop) { S.apop = null; renderAgent(); } if (S.kpop) { S.kpop = null; renderKpop(); } } });
+/* kernel picker drop-downs */
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-kpick]");
+  if (b) { const same = S.kpop && S.kpop.k === b.dataset.kpick && S.kpop.where === b.dataset.kwhere; S.kpop = same ? null : { k: b.dataset.kpick, where: b.dataset.kwhere }; renderKpop(); }
+  else if (S.kpop && !e.target.closest("#kpop")) { S.kpop = null; renderKpop(); }
+});
 applyTheme(); renderAll();
 })();
 </script>
