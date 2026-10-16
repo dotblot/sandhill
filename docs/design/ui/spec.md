@@ -17,6 +17,9 @@ Agreed with Huan on 2026-10-11 after 16 drafts. Draft 17 (2026-10-12) changed:
 Draft 18 (2026-10-12) replaces the Agents pane with a chat laid out like Posit
 Assistant; see "Agents pane" below.
 
+Draft 19 (2026-10-16) doubles the gap between panes, and from the panes to the
+window edges, from 3px to 6px.
+
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
 at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
@@ -37,9 +40,10 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - Agents, which only shows when toggled on;
   - the editor column, with the editor above and the Console below;
   - the right pane, with two groups: Variables / Help / Packages / Git on top, and Plots / Viewer below.
-- Every pane reaches the top of the window. The gap is **3px**: between
+- Every pane reaches the top of the window. The gap is **6px**: between
   panes, from the panes to the top and right window edges, and to the left edge
-  when the left pane is hidden.
+  when the left pane is hidden. The panes sit directly on the status bar, with
+  no gap below them. A maximized pane keeps the 6px at the right.
 - Gaps between panes are drag handles: dragging one resizes the panes on
   either side, and an orange line shows on hover. Console, Variables and Plots can be
   dragged by their tab strip to under the editor or into the right pane.
