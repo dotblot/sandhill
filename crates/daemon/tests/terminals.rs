@@ -277,8 +277,11 @@ async fn clients_run_a_shell_through_the_daemon() {
     let engine = base64::engine::general_purpose::STANDARD;
     let mut output = Vec::new();
     let expected = format!("42 {}", state.join("terminals").join(&info.id).display());
-    while !String::from_utf8_lossy(&output).contains(&expected)
-        || !String::from_utf8_lossy(&output).contains("40 120")
+    // `pwd` prints last, so wait for it too: it can come in a later chunk.
+    let folder = project.to_string_lossy().to_string();
+    while ![expected.as_str(), "40 120", &folder]
+        .iter()
+        .all(|part| String::from_utf8_lossy(&output).contains(part))
     {
         let event: TerminalEvent = tokio::time::timeout(TIMEOUT, client.next_terminal_event())
             .await
@@ -289,7 +292,6 @@ async fn clients_run_a_shell_through_the_daemon() {
             output.extend(engine.decode(data).unwrap());
         }
     }
-    assert!(String::from_utf8_lossy(&output).contains(&project.to_string_lossy().to_string()));
 
     let listed = client.list_terminals().await.unwrap();
     assert_eq!(listed.len(), 1);
