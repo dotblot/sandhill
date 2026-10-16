@@ -190,8 +190,12 @@ impl Daemon {
                 }
                 Ok(Value::Null)
             }
-            Call::SubscribeTerminal { terminal, from } => {
-                match self.terminals.open(&terminal, from).await {
+            Call::SubscribeTerminal {
+                terminal,
+                from,
+                chat_from,
+            } => {
+                match self.terminals.open(&terminal, from, chat_from).await {
                     Ok(stream) => {
                         let _ = out.send(response(
                             id,
@@ -413,6 +417,7 @@ impl Daemon {
                 cols,
                 rows,
                 options,
+                prompt,
             } => {
                 let project = project.map(|p| projects::normalize(&p)).transpose()?;
                 let cwd = match cwd.or_else(|| project.clone()) {
@@ -427,6 +432,7 @@ impl Daemon {
                     socket: &self.options.socket,
                     project: project.as_deref(),
                     cwd: &cwd,
+                    prompt: prompt.as_deref(),
                 };
                 let mut launch = crate::agents::launch(&kind, &options, &context).await?;
                 launch.size = cols.zip(rows);
@@ -437,6 +443,14 @@ impl Daemon {
                 self.terminals
                     .send(&terminal, ToHost::Input { data })
                     .await?;
+                Value::Null
+            }
+            Call::AnswerTerminal {
+                terminal,
+                id,
+                answer,
+            } => {
+                self.terminals.answer(&terminal, &id, answer).await?;
                 Value::Null
             }
             Call::ResizeTerminal {
@@ -466,7 +480,11 @@ impl Daemon {
             } => {
                 let path = windows::normalize(&files::resolve(&file)?);
                 let file = path.to_string_lossy().into_owned();
-                let params = json!({"file": file, "code": code, "language": language, "after": after, "run": run});
+                let mut params = json!({"file": file, "code": code, "language": language, "after": after, "run": run});
+                // Left out, not null: no `after` means after the last cell.
+                if let Some(map) = params.as_object_mut() {
+                    map.retain(|_, v| !v.is_null());
+                }
                 let edited = match self.ask_window(&path, project, "add_cell", params).await? {
                     Some(edited) => edited,
                     None => {

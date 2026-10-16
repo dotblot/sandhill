@@ -63,7 +63,8 @@ async function serve(ws: Workspace, request: AppRequest, open: (path: string) =>
     const found = await open(params.file);
     if (!found) throw new Error(`Sandhill could not open ${params.file}`);
     doc = found;
-    if (request.method === "add_cell") cell = doc.addCell(params.code, params.language, params.after);
+    // A daemon may send null for "not given".
+    if (request.method === "add_cell") cell = doc.addCell(params.code, params.language ?? undefined, params.after ?? undefined);
     else if (request.method === "edit_cell") cell = doc.editCell(params.cell_id ?? "", params.code);
     else throw new Error(`this window can't ${request.method}`);
     await doc.save();

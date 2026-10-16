@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TerminalInfo } from "../backend/types";
-import { currentPermission, documentPath, effortLabel, effortName, modelLabel, planUsage, timeLeft, tokens } from "./agents";
+import { currentMode, documentPath, screenMode, effortLabel, effortName, modelLabel, planUsage, timeLeft, tokens } from "./agents";
 
 const terminal = (extra: Partial<TerminalInfo>): TerminalInfo => ({
   id: "a",
@@ -23,10 +23,20 @@ describe("agents", () => {
   });
 
   it("shows the permission mode the agent reports, else the one it started in", () => {
-    expect(currentPermission(terminal({ options: { permission: "edits" } })).label).toBe("Auto-accept edits");
-    expect(currentPermission(terminal({ options: { permission: "supervised" }, agent: { mode: "auto" } })).label).toBe("Auto");
-    expect(currentPermission(terminal({ agent: { mode: "plan" } })).label).toBe("Plan");
-    expect(currentPermission(terminal({ options: { permission: "full" }, agent: { mode: "someday" } })).label).toBe("Full access");
+    expect(currentMode(terminal({ options: { permission: "edits" } })).label).toBe("Edits");
+    expect(currentMode(terminal({ options: { permission: "supervised" }, agent: { mode: "auto" } })).label).toBe("Auto");
+    expect(currentMode(terminal({ agent: { mode: "plan" } })).label).toBe("Plan");
+    expect(currentMode(terminal({ agent: { mode: "manual" } })).label).toBe("Normal");
+    expect(currentMode(terminal({ options: { permission: "full" }, agent: { mode: "someday" } })).label).toBe("YOLO");
+  });
+
+  it("reads the mode under Claude Code's prompt", () => {
+    expect(screenMode("❯ \n⏸ manual mode on · ? for shortcuts")?.id).toBe("normal");
+    expect(screenMode("⏸ manual mode on · ? for shortcuts\n⏵⏵ accept edits on (shift+tab to cycle)")?.id).toBe("edits");
+    expect(screenMode("⏸ plan mode on (shift+tab to cycle)")?.id).toBe("plan");
+    expect(screenMode("⏵⏵ bypass permissions on")?.id).toBe("yolo");
+    expect(screenMode("  ? for shortcuts")?.id).toBe("normal");
+    expect(screenMode("Do you trust the files in this folder?")).toBeUndefined();
   });
 
   it("finds a session's documents in its project", () => {

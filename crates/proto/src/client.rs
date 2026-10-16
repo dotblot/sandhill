@@ -341,6 +341,7 @@ impl Client {
             cols: size.map(|s| s.0),
             rows: size.map(|s| s.1),
             options,
+            prompt: None,
         })
         .await
     }
@@ -357,6 +358,36 @@ impl Client {
         self.call(Call::SubscribeTerminal {
             terminal: terminal.into(),
             from,
+            chat_from: None,
+        })
+        .await
+    }
+
+    /// Subscribes to a terminal's output and its agent's conversation.
+    pub async fn subscribe_chat(
+        &self,
+        terminal: &str,
+        from: Option<u64>,
+        chat_from: u64,
+    ) -> Result<TerminalSubscribed> {
+        self.call(Call::SubscribeTerminal {
+            terminal: terminal.into(),
+            from,
+            chat_from: Some(chat_from),
+        })
+        .await
+    }
+
+    pub async fn answer_terminal(
+        &self,
+        terminal: &str,
+        id: &str,
+        answer: serde_json::Value,
+    ) -> Result<()> {
+        self.call(Call::AnswerTerminal {
+            terminal: terminal.into(),
+            id: id.into(),
+            answer,
         })
         .await
     }

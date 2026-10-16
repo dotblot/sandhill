@@ -41,11 +41,12 @@ Responses can arrive out of order; match them by `id`.
 | `system_stats` | `path?` | `SystemStats` for the daemon's machine |
 | `stat_files` | `paths` | `[{path, mtime_ms?, size}]`; no `mtime_ms` when a file is missing |
 | `list_agents` | | `[{kind, name, path?, version?, install}]` |
-| `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?` | `TerminalInfo` |
+| `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?`, `prompt?` | `TerminalInfo` |
 | `list_terminals` | | `[TerminalInfo]`, oldest first |
-| `subscribe_terminal` | `terminal`, `from?` | `{terminal, from}`, then terminal messages |
+| `subscribe_terminal` | `terminal`, `from?`, `chat_from?` | `{terminal, from}`, then terminal messages |
 | `unsubscribe_terminal` | `terminal` | `null` |
 | `terminal_input` | `terminal`, `data` | `null` |
+| `answer_terminal` | `terminal`, `id`, `answer` | `null` |
 | `resize_terminal` | `terminal`, `cols`, `rows` | `null` |
 | `close_terminal` | `terminal` | `null` once its program has ended and its files are gone |
 | `set_focus` | `project`, `focus` | `null` |
@@ -124,11 +125,12 @@ says which agent CLIs are installed, and how to install the others.
 exit?: {code?, signal?, ended_ms}, end, options?, agent?, outdated?}`. `end`
 is the number of output bytes so far. `options` is what the agent was started
 with: `{model?, effort?, permission?, documents?}`, where `permission` is
-`supervised`, `edits`, `auto` or `full`. `outdated` is true for an agent that
+`supervised`, `edits`, `auto`, `full` or `plan`. `outdated` is true for an agent that
 another build of sandhilld started, such as before an update: it keeps that
 build's MCP server, hooks and instructions until it is started again, so the
 app suggests a new session. Without `cwd`, a terminal starts in the `project`
-folder, else the home folder.
+folder, else the home folder. An agent's `prompt` is its first message, which
+it answers as it starts.
 
 After `subscribe_terminal`, output arrives as
 
@@ -154,6 +156,26 @@ context_size, effort?, rate_limits?, cost_usd?, version}`, with `context` the
 percent of the context window in use and `rate_limits` the plan's 5-hour and
 weekly use.
 
+Claude Code's hooks also record its conversation, so the app can show it as
+a chat while the agent runs unmodified in its terminal. With `chat_from`,
+`subscribe_terminal` also sends the conversation from entry `chat_from` on (0
+for all of it), then each new entry, as terminal messages with `chat`:
+`{seq, event}`. Each `event` has a `kind` and `at_ms`:
+
+- `prompt {turn, text, place?}`: the user's message, with where they were.
+- `text {turn, message, index, text, final}`: part of a reply.
+- `step {turn, id, tool, input}`, then `step_done {turn, id, output, ms}` or
+  `step_failed {turn, id, error, interrupted}`.
+- `ask {turn, id, tool, input, remember?}`: the agent waits for permission,
+  or for answers to `AskUserQuestion`, until an `answered {id, answer}`
+  entry. `remember` is what allowing it for the chat or the project would
+  also allow from then on (`Bash(npm test:*)`, `files in /data`).
+- `stop {turn}`, and `session {source, model?}` when a session starts,
+  resumes, is cleared or compacted.
+
+`answer_terminal` answers an `ask`: `answer` is `{behavior: "allow" |
+"deny", scope?: "once" | "chat" | "project", answers?: {question: answer}}`.
+
 Each agent gets Sandhill's MCP server, `sandhilld mcp --project <folder>`,
 which it starts itself. Its tools reach the user's live sessions through this
 same protocol: `list_sessions`, `list_variables`, `run_code` and
@@ -171,7 +193,7 @@ the window. The daemon keeps the latest place per project, also after the
 window has gone (`ts_ms` says when); `get_focus` returns it.
 
 `add_cell` puts code into a document as a new cell after cell `after`, or
-after the last cell: a chunk in a `.qmd`/`.Rmd`, a code cell in a notebook,
+after the last cell (the request to a window then has no `after`): a chunk in a `.qmd`/`.Rmd`, a code cell in a notebook,
 or code at the end of an `.R`/`.py` script. `edit_cell` replaces a cell's
 code. The result is `CellEdited`: `{file, cell_id, language, in_window,
 kernel?}`.

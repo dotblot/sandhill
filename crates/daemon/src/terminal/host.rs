@@ -4,8 +4,11 @@
 //! running when the daemon restarts, as kernels do; the new daemon finds it
 //! by its socket. The host keeps the output on disk ([`super::log`]) and
 //! serves it, with input, resizing and agent reports, on a Unix socket in
-//! the terminal's folder.
+//! the terminal's folder. It also keeps an agent's conversation
+//! ([`super::chat`]), and holds its hooks' questions until the user
+//! answers.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
@@ -14,13 +17,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
-use sandhill_proto::TerminalExit;
+use sandhill_proto::{ChatEntry, TerminalExit};
 use serde_json::{Value, json};
 use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
+use super::chat::{self, ChatLog};
 use super::log::{self, LogWriter};
 use super::{FromHost, Paths, RECENT, ToHost, pty};
 use crate::journal::now_ms;
@@ -44,12 +48,16 @@ pub struct HostOptions {
 enum Live {
     Output(u64, Arc<Vec<u8>>),
     Agent(Value),
+    Chat(ChatEntry),
     Exit(TerminalExit),
 }
 
 struct Shared {
     paths: Paths,
     log: Mutex<LogWriter>,
+    chat: Mutex<ChatLog>,
+    /// Hooks waiting for the user's answer, by the ask's id.
+    asks: Mutex<HashMap<String, oneshot::Sender<Value>>>,
     live: broadcast::Sender<Live>,
     agent: Mutex<Value>,
     exit: Mutex<Option<TerminalExit>>,
@@ -77,6 +85,8 @@ pub async fn run(options: HostOptions) -> Result<()> {
     let (input, input_rx) = mpsc::unbounded_channel();
     let shared = Arc::new(Shared {
         log: Mutex::new(LogWriter::create(&options.dir)?),
+        chat: Mutex::new(ChatLog::open(&options.dir)?),
+        asks: Mutex::new(HashMap::new()),
         live: broadcast::channel(1024).0,
         agent: Mutex::new(Value::Null),
         exit: Mutex::new(None),
@@ -225,17 +235,24 @@ async fn serve(shared: Arc<Shared>, stream: UnixStream) {
         }
     });
     let mut subscription: Option<tokio::task::JoinHandle<()>> = None;
+    // What this connection's hook asked and still waits for.
+    let mut asked = Vec::new();
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(message) = serde_json::from_str::<ToHost>(&line) else {
             continue;
         };
         match message {
-            ToHost::Subscribe { from } => {
+            ToHost::Subscribe { from, chat_from } => {
                 if let Some(old) = subscription.take() {
                     old.abort();
                 }
-                subscription = Some(tokio::spawn(subscribe(shared.clone(), from, out.clone())));
+                subscription = Some(tokio::spawn(subscribe(
+                    shared.clone(),
+                    from,
+                    chat_from,
+                    out.clone(),
+                )));
             }
             ToHost::Input { data } => {
                 let _ = shared.input.send(data.into_bytes());
@@ -243,22 +260,47 @@ async fn serve(shared: Arc<Shared>, stream: UnixStream) {
             ToHost::Resize { cols, rows } => shared.resize(cols, rows),
             ToHost::Hangup => shared.hang_up(),
             ToHost::Agent { value } => shared.report(value),
+            ToHost::Chat { event } => shared.add_chat(event),
+            ToHost::Ask { id, event } => {
+                let (tx, rx) = oneshot::channel();
+                shared.asks.lock().unwrap().insert(id.clone(), tx);
+                shared.add_chat(event);
+                asked.push(id);
+                let out = out.clone();
+                tokio::spawn(async move {
+                    if let Ok(answer) = rx.await {
+                        let _ = out.send(FromHost::Answer { answer });
+                    }
+                });
+            }
+            ToHost::Answer { id, answer } => shared.answer(&id, answer),
         }
     }
     if let Some(task) = subscription {
         task.abort();
     }
+    // The hook stopped waiting (the agent gave up on it, or was stopped).
+    for id in asked {
+        shared.answer(&id, Value::Null);
+    }
     drop(out);
     let _ = writer_task.await;
 }
 
-/// Sends the output from `from` on, then follows it live.
-async fn subscribe(shared: Arc<Shared>, from: Option<u64>, out: mpsc::UnboundedSender<FromHost>) {
-    // Taking the live feed and the end together means nothing falls
+/// Sends the output from `from` on (and the conversation from `chat_from`
+/// on, if asked), then follows them live.
+async fn subscribe(
+    shared: Arc<Shared>,
+    from: Option<u64>,
+    chat_from: Option<u64>,
+    out: mpsc::UnboundedSender<FromHost>,
+) {
+    // Taking the live feed and the ends together means nothing falls
     // between what is read from disk and what arrives live.
-    let (mut live, end) = {
+    let (mut live, end, chat_end) = {
         let log = shared.log.lock().unwrap();
-        (shared.live.subscribe(), log.end())
+        let chat = shared.chat.lock().unwrap();
+        (shared.live.subscribe(), log.end(), chat.next())
     };
     let recent = from.is_none();
     let from = from.map_or_else(|| end.saturating_sub(RECENT), |f| f.min(end));
@@ -275,6 +317,13 @@ async fn subscribe(shared: Arc<Shared>, from: Option<u64>, out: mpsc::UnboundedS
     }
     send_output(&out, start, &bytes);
     let mut next = end;
+    // The conversation: what is on disk now, then what comes live.
+    let mut next_chat = chat_end;
+    if let Some(chat_from) = chat_from
+        && !send_chat(&out, &shared, chat_from, chat_end)
+    {
+        return;
+    }
     let agent = shared.agent.lock().unwrap().clone();
     if !agent.is_null() {
         let _ = out.send(FromHost::Agent { value: agent });
@@ -295,6 +344,13 @@ async fn subscribe(shared: Arc<Shared>, from: Option<u64>, out: mpsc::UnboundedS
             Ok(Live::Agent(value)) => {
                 let _ = out.send(FromHost::Agent { value });
             }
+            Ok(Live::Chat(entry)) if chat_from.is_some() && entry.seq >= next_chat => {
+                next_chat = entry.seq + 1;
+                if out.send(FromHost::Chat { entry }).is_err() {
+                    return;
+                }
+            }
+            Ok(Live::Chat(_)) => {}
             Ok(Live::Exit(exit)) => {
                 let _ = out.send(FromHost::Exit { exit });
                 return;
@@ -309,10 +365,25 @@ async fn subscribe(shared: Arc<Shared>, from: Option<u64>, out: mpsc::UnboundedS
                     return;
                 }
                 next = end;
+                if chat_from.is_some() {
+                    let chat_end = shared.chat.lock().unwrap().next();
+                    if !send_chat(&out, &shared, next_chat, chat_end) {
+                        return;
+                    }
+                    next_chat = chat_end;
+                }
             }
             Err(broadcast::error::RecvError::Closed) => return,
         }
     }
+}
+
+/// Sends the conversation's entries from `from` up to `end` from disk.
+fn send_chat(out: &mpsc::UnboundedSender<FromHost>, shared: &Shared, from: u64, end: u64) -> bool {
+    chat::read(shared.paths.dir(), from)
+        .into_iter()
+        .take_while(|entry| entry.seq < end)
+        .all(|entry| out.send(FromHost::Chat { entry }).is_ok())
 }
 
 fn send_output(out: &mpsc::UnboundedSender<FromHost>, offset: u64, bytes: &[u8]) -> bool {
@@ -405,6 +476,29 @@ impl Shared {
         };
         let _ = write_json(&self.paths.agent(), &merged);
         let _ = self.live.send(Live::Agent(merged));
+    }
+
+    /// Keeps an entry of the agent's conversation and tells the clients.
+    fn add_chat(&self, event: Value) {
+        let mut chat = self.chat.lock().unwrap();
+        match chat.append(event) {
+            Ok(entry) => {
+                let _ = self.live.send(Live::Chat(entry));
+            }
+            Err(err) => eprintln!("cannot save the conversation: {err}"),
+        }
+    }
+
+    /// Gives the user's answer to the hook waiting for it, and notes it in
+    /// the conversation. A null answer means the hook stopped waiting.
+    fn answer(&self, id: &str, answer: Value) {
+        let Some(waiting) = self.asks.lock().unwrap().remove(id) else {
+            return;
+        };
+        if !answer.is_null() {
+            let _ = waiting.send(answer.clone());
+        }
+        self.add_chat(json!({"kind": "answered", "id": id, "answer": answer, "at_ms": now_ms()}));
     }
 }
 

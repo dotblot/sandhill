@@ -17,6 +17,7 @@
 //! `sock` with one JSON message per line ([`ToHost`], [`FromHost`]). Once
 //! the program has ended, the daemon reads the folder instead.
 
+pub mod chat;
 pub mod events;
 pub mod host;
 pub mod log;
@@ -29,8 +30,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use sandhill_proto::{
-    AgentOptions, ServerMessage, TERMINAL_SHELL, TerminalEvent, TerminalExit, TerminalInfo,
-    TerminalSubscribed,
+    AgentOptions, ChatEntry, ServerMessage, TERMINAL_SHELL, TerminalEvent, TerminalExit,
+    TerminalInfo, TerminalSubscribed,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,9 +53,12 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ToHost {
     /// Send the output from byte `from` on (recent output without it), then
-    /// follow along.
+    /// follow along. With `chat_from`, also the conversation from that
+    /// entry on.
     Subscribe {
         from: Option<u64>,
+        #[serde(default)]
+        chat_from: Option<u64>,
     },
     Input {
         data: String,
@@ -68,6 +72,21 @@ pub enum ToHost {
     /// What an agent reports about itself; merged into its report.
     Agent {
         value: Value,
+    },
+    /// An entry for the agent's conversation, from one of its hooks.
+    Chat {
+        event: Value,
+    },
+    /// An `ask` entry from a hook that then waits on this connection for
+    /// the user's answer ([`FromHost::Answer`]).
+    Ask {
+        id: String,
+        event: Value,
+    },
+    /// The user's answer to an ask, from the daemon.
+    Answer {
+        id: String,
+        answer: Value,
     },
 }
 
@@ -86,6 +105,13 @@ pub enum FromHost {
     },
     Agent {
         value: Value,
+    },
+    Chat {
+        entry: ChatEntry,
+    },
+    /// To the hook that asked: the user's answer.
+    Answer {
+        answer: Value,
     },
     Exit {
         exit: TerminalExit,
@@ -345,13 +371,31 @@ impl Terminals {
         unreachable!()
     }
 
+    /// Answers an agent's `ask`: the hook waiting for it gets `answer`.
+    pub async fn answer(&self, id: &str, ask: &str, answer: Value) -> Result<()> {
+        self.send(
+            id,
+            ToHost::Answer {
+                id: ask.to_string(),
+                answer,
+            },
+        )
+        .await
+    }
+
     /// Opens a terminal's output from byte `from` (recent output without
-    /// it). Forward it with [`TerminalStream::forward`].
-    pub async fn open(&self, id: &str, from: Option<u64>) -> Result<TerminalStream> {
+    /// it), and its conversation from entry `chat_from` if asked. Forward it
+    /// with [`TerminalStream::forward`].
+    pub async fn open(
+        &self,
+        id: &str,
+        from: Option<u64>,
+        chat_from: Option<u64>,
+    ) -> Result<TerminalStream> {
         let paths = self.paths(id)?;
         if let Ok(stream) = UnixStream::connect(paths.socket()).await {
             let (reader, mut writer) = stream.into_split();
-            let mut line = serde_json::to_vec(&ToHost::Subscribe { from })?;
+            let mut line = serde_json::to_vec(&ToHost::Subscribe { from, chat_from })?;
             line.push(b'\n');
             writer.write_all(&line).await?;
             let mut lines = BufReader::new(reader).lines();
@@ -378,6 +422,7 @@ impl Terminals {
             from: start,
             source: Source::Ended {
                 bytes,
+                chat: chat_from.map_or_else(Vec::new, |from| chat::read(paths.dir(), from)),
                 agent: read_json(&paths.agent()),
                 exit: read_json(&paths.exit()).unwrap_or(TerminalExit {
                     code: None,
@@ -423,6 +468,7 @@ enum Source {
     },
     Ended {
         bytes: Vec<u8>,
+        chat: Vec<ChatEntry>,
         agent: Option<Value>,
         exit: TerminalExit,
     },
@@ -450,12 +496,25 @@ impl TerminalStream {
             .is_ok()
         };
         match self.source {
-            Source::Ended { bytes, agent, exit } => {
+            Source::Ended {
+                bytes,
+                chat,
+                agent,
+                exit,
+            } => {
                 let engine = base64::engine::general_purpose::STANDARD;
                 for (i, piece) in bytes.chunks(64 * 1024).enumerate() {
                     if !send(TerminalEvent {
                         offset: Some(self.from + (i * 64 * 1024) as u64),
                         data: Some(engine.encode(piece)),
+                        ..Default::default()
+                    }) {
+                        return;
+                    }
+                }
+                for entry in chat {
+                    if !send(TerminalEvent {
+                        chat: Some(entry),
                         ..Default::default()
                     }) {
                         return;
@@ -486,6 +545,10 @@ impl TerminalStream {
                             agent: Some(value),
                             ..Default::default()
                         },
+                        Ok(FromHost::Chat { entry }) => TerminalEvent {
+                            chat: Some(entry),
+                            ..Default::default()
+                        },
                         Ok(FromHost::Exit { exit }) => {
                             send(TerminalEvent {
                                 exit: Some(exit),
@@ -493,7 +556,7 @@ impl TerminalStream {
                             });
                             return;
                         }
-                        Ok(FromHost::Start { .. }) | Err(_) => continue,
+                        Ok(FromHost::Start { .. } | FromHost::Answer { .. }) | Err(_) => continue,
                     };
                     if !send(event) {
                         return;
@@ -518,11 +581,44 @@ impl TerminalStream {
 /// Reports to the terminal an agent runs in, from one of its hooks
 /// (`sandhilld terminal-event`). `SANDHILL_TERMINAL` names the terminal.
 pub async fn report(dir: &Path, value: Value) -> Result<()> {
+    tell(dir, &ToHost::Agent { value }).await
+}
+
+/// Adds an entry to the conversation of the terminal an agent runs in.
+pub async fn add_chat(dir: &Path, event: Value) -> Result<()> {
+    tell(dir, &ToHost::Chat { event }).await
+}
+
+/// Adds an `ask` to the conversation and waits for the user's answer.
+/// `None` if the terminal went away first.
+pub async fn ask(dir: &Path, id: &str, event: Value) -> Result<Option<Value>> {
+    let paths = Paths::new(dir);
+    let stream = UnixStream::connect(paths.socket())
+        .await
+        .with_context(|| format!("no terminal at {}", dir.display()))?;
+    let (reader, mut writer) = stream.into_split();
+    let mut line = serde_json::to_vec(&ToHost::Ask {
+        id: id.to_string(),
+        event,
+    })?;
+    line.push(b'\n');
+    writer.write_all(&line).await?;
+    // The write side stays open: closing it would read as giving up.
+    let mut lines = BufReader::new(reader).lines();
+    while let Some(line) = lines.next_line().await? {
+        if let Ok(FromHost::Answer { answer }) = serde_json::from_str(&line) {
+            return Ok(Some(answer));
+        }
+    }
+    Ok(None)
+}
+
+async fn tell(dir: &Path, message: &ToHost) -> Result<()> {
     let paths = Paths::new(dir);
     let mut stream = UnixStream::connect(paths.socket())
         .await
         .with_context(|| format!("no terminal at {}", dir.display()))?;
-    let mut line = serde_json::to_vec(&ToHost::Agent { value })?;
+    let mut line = serde_json::to_vec(message)?;
     line.push(b'\n');
     stream.write_all(&line).await?;
     stream.shutdown().await?;

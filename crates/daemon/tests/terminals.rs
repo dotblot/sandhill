@@ -81,7 +81,7 @@ async fn a_program_gets_input_and_its_output_is_kept_after_it_ends() {
     assert!(info.running);
 
     let (out, mut events) = mpsc::unbounded_channel();
-    let stream = terminals.open(&info.id, Some(0)).await.unwrap();
+    let stream = terminals.open(&info.id, Some(0), None).await.unwrap();
     assert_eq!(stream.from, 0);
     tokio::spawn(stream.forward(out));
     let mut output = Vec::new();
@@ -111,7 +111,7 @@ async fn a_program_gets_input_and_its_output_is_kept_after_it_ends() {
     assert_eq!(info.end, output.len() as u64);
     let (out, mut events) = mpsc::unbounded_channel();
     terminals
-        .open(&info.id, None)
+        .open(&info.id, None, None)
         .await
         .unwrap()
         .forward(out)
@@ -165,7 +165,13 @@ async fn a_terminal_outlives_the_daemon_that_started_it() {
         .await
         .unwrap();
     let (out, mut events) = mpsc::unbounded_channel();
-    tokio::spawn(terminals.open(&id, Some(0)).await.unwrap().forward(out));
+    tokio::spawn(
+        terminals
+            .open(&id, Some(0), None)
+            .await
+            .unwrap()
+            .forward(out),
+    );
     let mut output = Vec::new();
     read_until(&mut events, &mut output, "echo:two").await;
     assert!(String::from_utf8_lossy(&output).contains("echo:one"));
@@ -188,7 +194,7 @@ async fn terminals_work_in_a_deep_state_folder() {
     let (out, mut events) = mpsc::unbounded_channel();
     tokio::spawn(
         terminals
-            .open(&info.id, Some(0))
+            .open(&info.id, Some(0), None)
             .await
             .unwrap()
             .forward(out),
@@ -251,6 +257,7 @@ async fn clients_run_a_shell_through_the_daemon() {
             cols: Some(80),
             rows: Some(24),
             options: AgentOptions::default(),
+            prompt: None,
         })
         .await
         .unwrap();
@@ -310,7 +317,7 @@ async fn an_agent_reports_to_its_terminal() {
     let (out, mut events) = mpsc::unbounded_channel();
     tokio::spawn(
         terminals
-            .open(&info.id, Some(0))
+            .open(&info.id, Some(0), None)
             .await
             .unwrap()
             .forward(out),
@@ -367,4 +374,142 @@ async fn agents_started_by_an_older_build_are_marked() {
 
     terminals.close(&info.id).await.unwrap();
     terminals.close(&shell.id).await.unwrap();
+}
+
+/// Reads entries of the agent's conversation until one of `kind` arrives.
+/// Collects a terminal's conversation until an entry of `kind` comes, and
+/// its output meanwhile: the two arrive in either order.
+async fn chat_until(
+    events: &mut mpsc::UnboundedReceiver<ServerMessage>,
+    entries: &mut Vec<sandhill_proto::ChatEntry>,
+    output: &mut Vec<u8>,
+    kind: &str,
+) {
+    let engine = base64::engine::general_purpose::STANDARD;
+    while !entries.iter().any(|e| e.event["kind"] == kind) {
+        let message = tokio::time::timeout(TIMEOUT, events.recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {kind}; got {entries:?}"))
+            .expect("stream ended");
+        let ServerMessage::Terminal { terminal } = message else {
+            continue;
+        };
+        if let Some(data) = terminal.data {
+            output.extend(engine.decode(data).unwrap());
+        }
+        if let Some(entry) = terminal.chat {
+            entries.push(entry);
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_agents_conversation_is_kept_and_its_questions_answered() {
+    let dir = tempfile::tempdir().unwrap();
+    let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
+    // Stands in for Claude Code: runs its hooks with what Claude Code gave
+    // them in a recorded turn. The permission request waits for an answer.
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/claude-hooks.jsonl");
+    let script = format!(
+        "n=0; while IFS= read -r line; do printf '%s' \"$line\" | '{exe}' --socket '{sock}' terminal-event hook > out.$n; n=$((n+1)); done < '{fixture}'; echo done; read wait",
+        exe = sandhilld().display(),
+        sock = dir.path().join("no-daemon.sock").display(),
+        fixture = fixture.display(),
+    );
+    let info = terminals.start(sh(&script, dir.path())).await.unwrap();
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut entries = Vec::new();
+    let mut output = Vec::new();
+    chat_until(&mut events, &mut entries, &mut output, "ask").await;
+    let ask = entries.last().unwrap().event.clone();
+    assert_eq!(ask["tool"], "Bash");
+    // The agent waits for the user.
+    let agent = terminals.info(&info.id).unwrap().agent.unwrap();
+    assert_eq!(agent["state"], "waiting");
+
+    terminals
+        .answer(
+            &info.id,
+            ask["id"].as_str().unwrap(),
+            serde_json::json!({"behavior": "allow", "scope": "chat"}),
+        )
+        .await
+        .unwrap();
+    chat_until(&mut events, &mut entries, &mut output, "stop").await;
+    read_until(&mut events, &mut output, "done").await;
+    let kinds: Vec<&str> = entries
+        .iter()
+        .map(|e| e.event["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "session",
+            "prompt",
+            "step",
+            "ask",
+            "answered",
+            "step_done",
+            "text",
+            "text",
+            "text",
+            "stop"
+        ]
+    );
+    assert!(entries.iter().enumerate().all(|(i, e)| e.seq == i as u64));
+    assert_eq!(entries[4].event["answer"]["scope"], "chat");
+    // Claude Code was told to allow it for this conversation.
+    let decision: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("out.3")).unwrap()).unwrap();
+    let decision = &decision["hookSpecificOutput"]["decision"];
+    assert_eq!(decision["behavior"], "allow");
+    assert_eq!(decision["updatedPermissions"][0]["destination"], "session");
+    // Hooks print nothing else.
+    assert!(std::fs::read(dir.path().join("out.2")).unwrap().is_empty());
+
+    // A client that comes later gets the rest from where it asks.
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, None, Some(6))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut later = Vec::new();
+    chat_until(&mut events, &mut later, &mut Vec::new(), "stop").await;
+    assert_eq!(later.first().unwrap().seq, 6);
+    assert_eq!(later.len(), 4);
+
+    // And after the agent has ended.
+    terminals
+        .send(&info.id, ToHost::Input { data: "\n".into() })
+        .await
+        .unwrap();
+    let mut output = Vec::new();
+    assert!(
+        read_until(&mut events, &mut output, "never")
+            .await
+            .is_some()
+    );
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, None, Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut ended = Vec::new();
+    chat_until(&mut events, &mut ended, &mut Vec::new(), "stop").await;
+    assert_eq!(ended.len(), 10);
+    terminals.close(&info.id).await.unwrap();
 }

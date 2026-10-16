@@ -1,38 +1,47 @@
-import { createEffect, createMemo, createResource, createSignal, For, type JSX, on, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, Show, Switch } from "solid-js";
 import type { AgentInfo, AgentOptions, TerminalInfo } from "../backend/types";
 import type { Doc } from "../docs/doc";
 import {
   AGENT_KINDS,
   type AgentKind,
   agentKind,
-  currentPermission,
+  currentMode,
   documentPath,
   effortLevel,
-  effortName,
+  type Mode,
+  MODES,
   type ModelChoice,
   modelLabel,
-  PERMISSIONS,
-  permission,
   SUBMIT_DELAY_MS,
-  tokens,
+  screenMode,
 } from "../model/agents";
+import { type Answer, type Ask, buildChat, chatTitle, lastActive } from "../model/chat";
 import type { TerminalStore } from "../model/terminals";
 import type { Workspace } from "../model/workspace";
+import { AgentChat, when } from "./AgentChat";
+import { AgentComposer } from "./AgentComposer";
 import { ask, notify } from "./dialogs";
-import { EffortControl } from "./EffortControl";
-import { FileIcon, Icon } from "./icons";
+import { FileIcon, Icon, ProviderIcon } from "./icons";
 import { type Pane, PaneButtons } from "./PaneButtons";
 import { TermView } from "./termView";
 
-const COMPOSER_MIN = 34;
-const COMPOSER_MAX = 420;
 /** Effort is sent to the agent once the knob has rested this long. */
 const EFFORT_SETTLE_MS = 600;
+/** A conversation that shows nothing this long after it started may be asking something in its terminal. */
+const START_GRACE_MS = 8000;
+/** Switching mode presses ⇧Tab at most this often, this far apart, until the terminal shows the mode. */
+const MODE_TRIES = 6;
+const MODE_STEP_MS = 350;
+/** Between moving to "Yes, I trust this folder" and choosing it. */
+const TRUST_KEY_MS = 500;
 
 /**
- * The Agents pane: a tab per agent session in this project. Claude Code and
- * Codex are their real terminals, kept running by the daemon, with a
- * message box under them.
+ * The Agents pane (draft 18): one conversation at a time as a chat, with a
+ * history of the project's conversations and a new-conversation view. Claude
+ * Code and Codex run unmodified in terminals the daemon keeps; the chat is
+ * built from what Claude Code's hooks report, and its terminal is a click
+ * away. Codex, and Claude sessions started before chats existed, show their
+ * terminal.
  */
 export function AgentsPane(props: {
   ws: Workspace;
@@ -51,22 +60,49 @@ export function AgentsPane(props: {
   /** Runs a command in the Console's Terminal tab, to install an agent. */
   onInstall: (command: string) => void;
   /** Opens a file in the editor and brings it to the front. */
-  onOpen: (path: string) => void;
+  onOpen: (path: string) => Promise<Doc | undefined>;
 }) {
   const store = props.store;
   const [picking, setPicking] = createSignal(false);
+  const [history, setHistory] = createSignal(false);
+  const [gear, setGear] = createSignal(false);
   /** The view of a session being started, before the daemon has it. */
-  const [starting, setStarting] = createSignal<TermView>();
+  const [starting, setStarting] = createSignal<{ view: TermView; kind: string }>();
   /** Outdated sessions the user chose to keep using without the notice. */
   const [keptOld, setKeptOld] = createSignal<string[]>([]);
+  /** Conversations showing their terminal instead of the chat. */
+  const [termShown, setTermShown] = createSignal<string[]>([]);
+  /** Asks answered here, until the daemon records the answer. */
+  const [sent, setSent] = createSignal<Set<string>>(new Set());
+  /** Conversations stopped here: Claude Code reports no end to a turn it was stopped in. */
+  const [stopped, setStopped] = createSignal<string[]>([]);
+  /** Modes switched to here, until the agent reports one. */
+  const [modeChoice, setModeChoice] = createSignal<Record<string, Mode>>({});
+  const [effortChoice, setEffortChoice] = createSignal<Record<string, string>>({});
+  const [sentAt, setSentAt] = createSignal(0);
+  const [now, setNow] = createSignal(Date.now());
+  /** The current terminal's last lines, while its conversation hasn't started. */
+  const [screen, setScreen] = createSignal("");
   const views = new Map<string, TermView>();
   let body!: HTMLDivElement;
-  let tabScroll!: HTMLDivElement;
+  let input: HTMLTextAreaElement | undefined;
 
   const current = (): TerminalInfo | undefined => {
     const agents = store.agents();
     return agents.find((t) => t.id === props.selected) ?? agents[agents.length - 1];
   };
+  const relative = (path: string) => (path.startsWith(`${props.project}/`) ? path.slice(props.project.length + 1) : path);
+  const activeFile = () => (props.active ? relative(props.active.path) : undefined);
+  /** Claude conversations show as a chat; those started before chats existed keep their terminal. */
+  const canChat = (t: TerminalInfo) => t.kind === "claude" && (store.chat(t.id).length > 0 || (!t.outdated && t.running));
+  const chatMode = (t: TerminalInfo) => canChat(t) && !termShown().includes(t.id);
+  const working = (t: TerminalInfo) =>
+    t.running && (t.agent?.state === "busy" || t.agent?.state === "waiting") && !stopped().includes(t.id);
+  const title = (t: TerminalInfo) => chatTitle(store.chat(t.id)) ?? `${t.title} · ${modelLabel(t)}`;
+  const chat = createMemo(() => {
+    const t = current();
+    return t && canChat(t) ? buildChat(store.chat(t.id), working(t)) : undefined;
+  });
 
   const viewFor = (id: string): TermView => {
     let view = views.get(id);
@@ -77,9 +113,10 @@ export function AgentsPane(props: {
     return view;
   };
 
-  // Show the current session's terminal; keep the others' alive but hidden.
-  // While a session starts, its own view shows, not one made for it here.
-  const shown = createMemo(() => (picking() || starting() ? undefined : current()?.id));
+  // The current conversation's terminal is always mounted, behind its chat if
+  // it has one: it keeps its size, and the mode can be read from it. The
+  // others are kept alive but hidden.
+  const shown = createMemo(() => (picking() || history() || starting() ? undefined : current()?.id));
   createEffect(
     on(shown, (id) => {
       for (const [other, view] of views) view.el.hidden = other !== id;
@@ -88,7 +125,10 @@ export function AgentsPane(props: {
       view.el.hidden = false;
       void view.mount(body).then(() => {
         view.bind(id);
-        if (!props.min) view.focus();
+        if (props.min) return;
+        const t = current();
+        if (t && chatMode(t)) input?.focus();
+        else view.focus();
       });
     }),
   );
@@ -96,7 +136,7 @@ export function AgentsPane(props: {
   createEffect(() => {
     const ids = new Set(store.list().map((t) => t.id));
     for (const [id, view] of views) {
-      if (ids.has(id) || view === starting()) continue;
+      if (ids.has(id) || view === starting()?.view) continue;
       view.dispose();
       views.delete(id);
     }
@@ -104,26 +144,74 @@ export function AgentsPane(props: {
   onCleanup(() => {
     for (const view of views.values()) view.dispose();
   });
-  // The New session tab is the last one: bring it into view.
+  // A mode or effort the agent reports replaces the one picked here.
   createEffect(
-    on(picking, (on) => {
-      if (on) queueMicrotask(() => tabScroll.scrollTo?.({ left: tabScroll.scrollWidth }));
-    }),
+    on(
+      () => current()?.agent?.mode,
+      () => {
+        const id = current()?.id;
+        if (id) setModeChoice(({ [id]: _, ...rest }) => rest);
+      },
+      { defer: true },
+    ),
   );
+  createEffect(
+    on(
+      () => current()?.agent?.status?.effort,
+      () => {
+        const id = current()?.id;
+        if (id) setEffortChoice(({ [id]: _, ...rest }) => rest);
+      },
+      { defer: true },
+    ),
+  );
+  // While a new conversation shows nothing yet, check now and then whether it is stuck.
+  createEffect(() => {
+    const t = current();
+    if (!t?.running || !chatMode(t) || store.chat(t.id).length) return;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      setScreen(views.get(t.id)?.screenText(24) ?? "");
+    }, 1000);
+    onCleanup(() => clearInterval(timer));
+  });
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (gear()) setGear(false);
+    else if (history() && store.agents().length) setHistory(false);
+    else if (picking() && store.agents().length) setPicking(false);
+  };
+  document.addEventListener("keydown", onKey);
+  onCleanup(() => document.removeEventListener("keydown", onKey));
+  const closeGear = (e: MouseEvent) => {
+    if (!(e.target as Element).closest(".apop.gear, .gear-btn")) setGear(false);
+  };
+  document.addEventListener("mousedown", closeGear);
+  onCleanup(() => document.removeEventListener("mousedown", closeGear));
 
-  async function start(kind: AgentKind, options: AgentOptions) {
+  function openNew() {
+    setHistory(false);
+    setGear(false);
+    setPicking(true);
+    queueMicrotask(() => input?.focus());
+  }
+
+  async function start(kind: AgentKind, options: AgentOptions, prompt?: string) {
     // A view made first, so the agent starts at the size it will be shown at.
     const view = new TermView(store, (url) => props.ws.backend.openLink(url));
-    setStarting(view);
+    setStarting({ view, kind: kind.kind });
     setPicking(false);
+    setHistory(false);
     for (const other of views.values()) other.el.hidden = true;
     await view.mount(body);
     try {
-      const info = await store.start(kind.kind, options, view.size());
+      const info = await store.start(kind.kind, options, view.size(), prompt);
       views.set(info.id, view);
       view.bind(info.id);
       props.onSelect(info.id);
-      view.focus();
+      setSentAt(Date.now());
+      if (kind.kind === "claude") input?.focus();
+      else view.focus();
     } catch (err) {
       view.dispose();
       notify(`Could not start ${kind.name}: ${message(err)}`);
@@ -134,20 +222,126 @@ export function AgentsPane(props: {
   }
 
   async function end(terminal: TerminalInfo) {
+    setGear(false);
     if (terminal.running) {
       const choice = await ask(
-        `End this ${terminal.title} session?`,
-        ["End session", "Cancel"],
-        "The agent stops, along with anything it is running.",
+        `End this ${terminal.title} conversation?`,
+        ["End conversation", "Cancel"],
+        "The agent stops, along with anything it is running, and the conversation leaves the history.",
       );
-      if (choice !== "End session") return;
+      if (choice !== "End conversation") return;
     }
     try {
       await store.close(terminal.id);
     } catch (err) {
-      notify(`Could not end the session: ${message(err)}`);
+      notify(`Could not end the conversation: ${message(err)}`);
     }
   }
+
+  /** Sends a message as if typed into the agent's terminal. */
+  function send(t: TerminalInfo, text: string): boolean {
+    if (chat()?.waiting.length) {
+      notify(`Answer ${agentName(t)}'s question above first.`);
+      return false;
+    }
+    setStopped((ids) => ids.filter((id) => id !== t.id));
+    const view = views.get(t.id);
+    if (view) {
+      view.paste(text);
+      // Enter on its own, once the paste has landed.
+      setTimeout(() => void store.input(t.id, "\r"), SUBMIT_DELAY_MS);
+    } else {
+      void store.say(t.id, text);
+    }
+    setSentAt(Date.now());
+    return true;
+  }
+
+  function stop(t: TerminalInfo) {
+    void store.interrupt(t.id);
+    setStopped((ids) => [...ids.filter((id) => id !== t.id), t.id]);
+  }
+
+  function answer(t: TerminalInfo, a: Ask, reply: Answer) {
+    setSent((ids) => new Set(ids).add(a.id));
+    store.answer(t.id, a.id, reply).catch((err) => {
+      notify(`Could not answer: ${message(err)}`);
+      setSent((ids) => {
+        const next = new Set(ids);
+        next.delete(a.id);
+        return next;
+      });
+    });
+  }
+
+  /** Types a command, then Enter; while the agent waits for an answer, it would answer it, so it waits. */
+  let held: (() => void) | undefined;
+  createEffect(
+    on(
+      () => current()?.agent?.state === "waiting",
+      (waiting) => {
+        if (waiting || !held) return;
+        const run = held;
+        held = undefined;
+        run();
+      },
+    ),
+  );
+  function command(t: TerminalInfo, text: string) {
+    const run = () => {
+      void store.input(t.id, text);
+      setTimeout(() => void store.input(t.id, "\r"), SUBMIT_DELAY_MS);
+    };
+    if (t.agent?.state === "waiting") held = run;
+    else run();
+  }
+  let effortTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(effortTimer));
+  function changeEffort(t: TerminalInfo, level: string) {
+    setEffortChoice((all) => ({ ...all, [t.id]: level }));
+    clearTimeout(effortTimer);
+    effortTimer = setTimeout(() => command(t, `/effort ${level}`), EFFORT_SETTLE_MS);
+  }
+
+  /** Switches Claude Code's mode as ⇧Tab does, until its terminal shows the mode. */
+  async function switchMode(t: TerminalInfo, mode: Mode) {
+    const view = views.get(t.id);
+    if (!view) return;
+    for (let i = 0; i <= MODE_TRIES; i++) {
+      const shownMode = screenMode(view.screenText());
+      if (!shownMode) break;
+      if (shownMode.id === mode.id) {
+        setModeChoice((all) => ({ ...all, [t.id]: mode }));
+        return;
+      }
+      if (i === MODE_TRIES) break;
+      await store.input(t.id, "\x1b[Z");
+      await new Promise((done) => setTimeout(done, MODE_STEP_MS));
+    }
+    const back = screenMode(view.screenText());
+    if (back) setModeChoice((all) => ({ ...all, [t.id]: back }));
+    notify(`Claude Code didn't switch to ${mode.label} mode here. Its terminal (gear menu) shows the modes it offers: ⇧Tab switches.`);
+  }
+
+  async function insert(t: TerminalInfo, code: string, language?: string) {
+    const file = t.options?.documents?.[0];
+    const path = file ? documentPath(props.project, file) : props.active?.path;
+    if (!path) {
+      notify("Open a document to insert the code into.");
+      return;
+    }
+    const doc = await props.onOpen(path);
+    if (!doc) return;
+    try {
+      doc.addCell(code, language, doc.place().cell);
+      await doc.save();
+    } catch (err) {
+      notify(`Could not insert the code: ${message(err)}`);
+    }
+  }
+
+  const openPath = (path: string) => void props.onOpen(documentPath(props.project, path));
+  const othersWaiting = () => store.waiting().some((t) => t.id !== current()?.id);
 
   return (
     <div
@@ -156,110 +350,548 @@ export function AgentsPane(props: {
       style={{ width: `${props.width}px` }}
       aria-label="Agents"
     >
-      <div class="tabs" role="tablist" data-tauri-drag-region="deep">
-        <div ref={tabScroll} class="tab-scroll">
-          <For each={store.agents()}>
-            {(terminal) => (
-              <div
-                class="tab atab"
-                role="tab"
-                aria-selected={!picking() && current()?.id === terminal.id}
-                classList={{ active: !picking() && current()?.id === terminal.id, ended: !terminal.running }}
-                title={tabTitle(terminal)}
-                aria-label={modelLabel(terminal)}
-                onClick={() => {
-                  setPicking(false);
-                  props.onSelect(terminal.id);
-                }}
-              >
-                <span class="prov-wrap">
-                  <ProviderIcon kind={terminal.kind} />
-                  <Show when={terminal.running && (terminal.agent?.state === "waiting" || terminal.agent?.state === "busy")}>
-                    <span class="dot" classList={{ wait: terminal.agent?.state === "waiting", busy: terminal.agent?.state === "busy" }} />
-                  </Show>
-                </span>
-                <button
-                  class="tab-close"
-                  title="End session"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void end(terminal);
-                  }}
-                >
+      <div class="tabs agent-head" role="tablist" data-tauri-drag-region="deep">
+        <div class="tab active chat-title" role="tab" aria-selected="true">
+          <Switch fallback={<span class="atl">Agents</span>}>
+            <Match when={history()}>
+              <Icon name="clock" small />
+              <span class="atl">History</span>
+            </Match>
+            <Match when={picking() || starting()}>
+              <Icon name="plus" small />
+              <span class="atl">New conversation</span>
+              <Show when={picking() && store.agents().length}>
+                <button class="ax" title="Cancel (esc)" onClick={() => setPicking(false)}>
                   <Icon name="x" small />
                 </button>
-              </div>
-            )}
-          </For>
-          <Show when={picking()}>
-            <div class="tab active" role="tab" aria-selected="true">
-              New session
-            </div>
-          </Show>
+              </Show>
+            </Match>
+            <Match when={current()}>
+              {(t) => (
+                <>
+                  <ProviderIcon kind={t().kind} />
+                  <span class="atl" title={tabTitle(t())}>
+                    {title(t())}
+                  </span>
+                </>
+              )}
+            </Match>
+          </Switch>
         </div>
-        <button class="pane-button" title="New session" onClick={() => setPicking(true)}>
+        <span class="spacer" />
+        <button class="pane-button" title="New conversation" onClick={openNew}>
           <Icon name="plus" small />
+        </button>
+        <button
+          class="pane-button hist-btn"
+          classList={{ on: history() }}
+          aria-pressed={history()}
+          title={othersWaiting() ? "Conversation history: another conversation is waiting for you" : "Conversation history"}
+          onClick={() => {
+            setPicking(false);
+            setGear(false);
+            setHistory(!history());
+          }}
+        >
+          <Icon name="clock" small />
+          <Show when={othersWaiting()}>
+            <span class="dot wait" />
+          </Show>
+        </button>
+        <button class="pane-button gear-btn" title="Conversation settings" disabled={!current() || history() || picking()} onClick={() => setGear(!gear())}>
+          <Icon name="gear" small />
         </button>
         <PaneButtons pane="agents" min={props.min} max={props.max} onMin={props.onMin} onMax={props.onMax} />
       </div>
-      <Show when={!picking() && current()}>
-        {(terminal) => <InfoLine terminal={terminal()} hostLabel={props.hostLabel} project={props.project} onOpen={props.onOpen} />}
-      </Show>
       <div class="agent-body">
-        <Show when={picking()}>
-          <Picker
+        <Show when={gear() && current()}>
+          {(t) => (
+            <div class="apop gear">
+              <Show when={canChat(t())}>
+                <button
+                  class="mm-i"
+                  onClick={() => {
+                    // Read before closing the menu, which unmounts `t`.
+                    const shown = t().id;
+                    setGear(false);
+                    setTermShown((ids) => (ids.includes(shown) ? ids.filter((id) => id !== shown) : [...ids, shown]));
+                  }}
+                >
+                  <Icon name={chatMode(t()) ? "command" : "chat"} small />
+                  <span>{chatMode(t()) ? "Show terminal" : "Back to chat"}</span>
+                </button>
+              </Show>
+              <Show when={t().running && t().kind === "claude"}>
+                <button
+                  class="mm-i"
+                  onClick={() => {
+                    const term = t();
+                    setGear(false);
+                    command(term, "/compact");
+                  }}
+                >
+                  <Icon name="restart" small />
+                  <span>Compact conversation</span>
+                  <kbd>/compact</kbd>
+                </button>
+              </Show>
+              <div class="mm-sep" />
+              <button class="mm-i" onClick={() => void end(t())}>
+                <Icon name="trash" small />
+                <span>{t().running ? "End conversation" : "Remove from history"}</span>
+              </button>
+            </div>
+          )}
+        </Show>
+        <Show when={history()}>
+          <History
             store={store}
-            docs={props.docs}
-            active={props.active}
-            project={props.project}
+            current={current()?.id}
             hostLabel={props.hostLabel}
-            onStart={(kind, options) => void start(kind, options)}
-            onCancel={() => setPicking(false)}
-            onInstall={props.onInstall}
-            canCancel={store.agents().length > 0}
+            title={title}
+            onOpen={(t) => {
+              setHistory(false);
+              props.onSelect(t.id);
+            }}
+            onEnd={(t) => void end(t)}
           />
         </Show>
-        <Show when={!picking() && !current() && !starting()}>
+        <Show when={picking()}>
+          <NewConversation store={store} hostLabel={props.hostLabel} file={activeFile()} onOpen={openPath} onInstall={props.onInstall} choice={newChoice} />
+        </Show>
+        <Show when={!picking() && !history() && !current() && !starting()}>
           <div class="agent-empty">
             <div class="ae-ico">
               <Icon name="chat" />
             </div>
-            <b>No agent sessions</b>
+            <b>No conversations</b>
             <p>
-              Each session runs Claude Code or Codex in a terminal on {props.hostLabel}, in this project's folder. They can
-              read your R and Python sessions through Sandhill's tools, and keep running when you close the window.
+              Chat with Claude Code or Codex about this project. They run on {props.hostLabel} with your own plan, can run code
+              in your live R and Python sessions, and add cells to your files.
             </p>
-            <button class="primary" onClick={() => setPicking(true)}>
+            <button class="primary" onClick={openNew}>
               <Icon name="plus" small />
-              New session
+              New conversation
             </button>
           </div>
         </Show>
-        <Show when={!picking() && current()?.running && current()?.outdated && !keptOld().includes(current()!.id) && current()}>
-          {(terminal) => (
-            <Outdated
-              terminal={terminal()}
-              onAgain={(t) => void start(agentKind(t.kind)!, t.options ?? {})}
-              onKeep={(t) => setKeptOld((ids) => [...ids, t.id])}
-            />
+        <Show when={!picking() && !history() && current()?.running && current()?.outdated && !keptOld().includes(current()!.id) && current()}>
+          {(t) => (
+            <Outdated terminal={t()} onAgain={(o) => void start(agentKind(o.kind)!, o.options ?? {})} onKeep={(o) => setKeptOld((ids) => [...ids, o.id])} />
           )}
         </Show>
-        <div class="term-host" ref={body} hidden={picking() || (!current() && !starting())} />
-        <Show when={!picking() && current() && !current()!.running}>
-          <Ended terminal={current()!} onClose={() => void end(current()!)} onAgain={(t) => void start(agentKind(t.kind)!, t.options ?? {})} />
+        <Show when={!picking() && !history() && !starting() && current() && !chatMode(current()!) && current()}>
+          {(t) => (
+            <div class="termbar">
+              <Icon name="command" small />
+              <span class="tb-l">
+                {agentKind(t().kind)?.program ?? t().kind} in a terminal on {props.hostLabel} · {modelLabel(t())}
+              </span>
+              <span class="spacer" />
+              <Show when={canChat(t())}>
+                <button onClick={() => setTermShown((ids) => ids.filter((id) => id !== t().id))}>
+                  <Icon name="chat" small />
+                  Back to chat
+                </button>
+              </Show>
+            </div>
+          )}
+        </Show>
+        <Show when={!picking() && !history() && (starting()?.kind === "claude" || (!starting() && current() && chatMode(current()!)))}>
+          <AgentChat
+            chat={(!starting() && chat()) || { items: [], waiting: [] }}
+            agent={agentName(current())}
+            sent={sent()}
+            sentAt={sentAt()}
+            onAnswer={(a, reply) => answer(current()!, a, reply)}
+            onOpen={openPath}
+            onLink={(url) => props.ws.backend.openLink(url)}
+            onInsert={(code, language) => void insert(current()!, code, language)}
+            linked={current()?.options?.documents?.[0]}
+          >
+            <ChatNotes
+              terminal={starting() ? undefined : current()}
+              starting={!!starting()}
+              entries={current() ? store.chat(current()!.id).length : 0}
+              waitingCards={chat()?.waiting.length ?? 0}
+              now={now()}
+              trust={/Yes, I trust this folder/.test(screen())}
+              onTrust={(t) => {
+                setScreen("");
+                // The second choice of Claude Code's own question.
+                void store.input(t.id, "\x1b[B").then(() => setTimeout(() => void store.input(t.id, "\r"), TRUST_KEY_MS));
+              }}
+              onShowTerminal={(t) => setTermShown((ids) => [...ids, t.id])}
+            />
+          </AgentChat>
+        </Show>
+        <div
+          class="term-host"
+          ref={body}
+          classList={{ behind: starting()?.kind === "claude" || (!starting() && !!current() && chatMode(current()!)) }}
+          hidden={picking() || history() || (!current() && !starting())}
+        />
+        <Show when={!picking() && !history() && current() && !current()!.running && current()}>
+          {(t) => <Ended terminal={t()} onClose={() => void end(t())} onAgain={(o) => void start(agentKind(o.kind)!, o.options ?? {})} />}
         </Show>
       </div>
-      <Show when={!picking() && current()?.running && current()}>
-        {(terminal) => (
-          <Composer
-            terminal={terminal()}
-            store={store}
-            view={() => views.get(terminal().id)}
-            active={props.active}
-            project={props.project}
-          />
-        )}
+      <Show when={picking()}>
+        <NewComposer
+          choice={newChoice}
+          file={activeFile()}
+          onOpenFile={() => activeFile() && openPath(activeFile()!)}
+          ref={(el) => (input = el)}
+          onSend={(kind, options, text) => {
+            void start(kind, options, text);
+            return true;
+          }}
+        />
       </Show>
+      <Show when={!picking() && !history() && !starting() && current()?.running && current()}>
+        {(t) => {
+          const kind = () => agentKind(t().kind)!;
+          const mode = () => modeChoice()[t().id] ?? currentMode(t());
+          const waiting = () => t().agent?.state === "waiting";
+          return (
+            <AgentComposer
+              kind={kind()}
+              model={modelLabel(t())}
+              isModel={(m) => currentModel(t(), m)}
+              effort={effortChoice()[t().id] ?? effortLevel(t())}
+              effortNote={t().kind === "claude" ? undefined : "Codex changes effort in its own /model menu"}
+              mode={mode()}
+              modeNote={(m) => {
+                if (t().kind !== "claude") return m.id === mode().id ? undefined : "Codex changes this with /approvals in its terminal";
+                if (waiting()) return m.id === mode().id ? undefined : `Answer ${agentName(t())} first`;
+                if (m.id === "yolo" && mode().id !== "yolo") return "Start a new conversation in YOLO mode";
+                return undefined;
+              }}
+              file={t().options?.documents?.[0]}
+              status={t().agent?.status}
+              busy={working(t())}
+              modelNote={waiting() ? `Changes here wait until you answer ${agentName(t())}.` : undefined}
+              mention={activeFile()}
+              ref={(el) => (input = el)}
+              onSend={(text) => send(t(), text)}
+              onStop={() => stop(t())}
+              onModel={(m: ModelChoice) => {
+                if (t().kind === "claude" && m.id) command(t(), `/model ${m.id}`);
+                else {
+                  setTermShown((ids) => [...ids, t().id]);
+                  command(t(), "/model");
+                }
+              }}
+              onEffort={(level) => changeEffort(t(), level)}
+              onMode={(m) => void switchMode(t(), m)}
+              onOpenFile={() => t().options?.documents?.[0] && openPath(t().options!.documents![0])}
+              onCompact={() => command(t(), "/compact")}
+            />
+          );
+        }}
+      </Show>
+    </div>
+  );
+}
+
+/** What a new conversation will be: the agent, its model and effort, and its mode. */
+interface NewChoice {
+  kind: () => AgentKind;
+  setKind: (kind: string) => void;
+  model: () => ModelChoice;
+  setModel: (model: ModelChoice) => void;
+  effort: () => string | undefined;
+  setEffort: (level: string) => void;
+  mode: () => Mode;
+  setMode: (mode: Mode) => void;
+}
+
+const [newKind, setNewKind] = createSignal("claude");
+const [newModel, setNewModel] = createSignal<Record<string, ModelChoice>>({});
+const [newEffort, setNewEffort] = createSignal<Record<string, string>>({});
+const [newMode, setNewMode] = createSignal<Mode>(MODES[0]);
+const newChoice: NewChoice = {
+  kind: () => agentKind(newKind()) ?? AGENT_KINDS[0],
+  setKind: setNewKind,
+  model: () => newModel()[newKind()] ?? (agentKind(newKind()) ?? AGENT_KINDS[0]).models[0],
+  setModel: (model) => setNewModel((all) => ({ ...all, [newKind()]: model })),
+  effort: () => newEffort()[newKind()],
+  setEffort: (level) => setNewEffort((all) => ({ ...all, [newKind()]: level })),
+  mode: () => newMode(),
+  setMode: setNewMode,
+};
+
+/** New conversation: which agent, and the file it is linked to. The message box under it starts it. */
+function NewConversation(props: {
+  store: TerminalStore;
+  hostLabel: string;
+  file?: string;
+  choice: NewChoice;
+  onOpen: (path: string) => void;
+  onInstall: (command: string) => void;
+}) {
+  const [installed] = createResource(() => props.store.listAgents().catch(() => [] as AgentInfo[]));
+  const info = (kind: string) => installed()?.find((a) => a.kind === kind);
+  const kind = () => props.choice.kind();
+  const missing = () => installed() && !info(kind().kind)?.path;
+  return (
+    <div class="newchat">
+      <div class="nc-in">
+        <div class="nc-agents">
+          <For each={AGENT_KINDS}>
+            {(agent) => (
+              <button
+                classList={{ on: kind().kind === agent.kind }}
+                aria-pressed={kind().kind === agent.kind}
+                title={info(agent.kind)?.path ? `${agent.plan}${info(agent.kind)?.version ? ` · ${info(agent.kind)!.version}` : ""}` : `Not installed on ${props.hostLabel}`}
+                onClick={() => props.choice.setKind(agent.kind)}
+              >
+                <ProviderIcon kind={agent.kind} />
+                <span>{agent.name}</span>
+              </button>
+            )}
+          </For>
+        </div>
+        <Show when={missing()}>
+          <div class="pk-install">
+            <span>
+              {kind().name} isn't installed on {props.hostLabel}. Install it with <code>{info(kind().kind)?.install}</code>
+            </span>
+            <button class="primary" onClick={() => props.onInstall(info(kind().kind)!.install)}>
+              Install in a terminal
+            </button>
+          </div>
+        </Show>
+        <p>
+          <Show when={props.file} fallback="Not linked to a file: open a document first to have code go into it.">
+            Linked to{" "}
+            <button class="flink" onClick={() => props.onOpen(props.file!)}>
+              {props.file}
+            </button>
+            . Where you are in it goes with every message, and code goes into it below your active cell.
+          </Show>
+        </p>
+        <Show when={kind().kind !== "claude"}>
+          <p>{kind().name} works in its own terminal here; its chat comes later.</p>
+        </Show>
+        <p class="nc-sign">
+          Runs on {props.hostLabel} in this project's folder, signed in with your own {kind().name} account.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function NewComposer(props: {
+  choice: NewChoice;
+  file?: string;
+  onOpenFile: () => void;
+  ref: (el: HTMLTextAreaElement) => void;
+  onSend: (kind: AgentKind, options: AgentOptions, text: string) => boolean;
+}) {
+  const c = props.choice;
+  return (
+    <AgentComposer
+      kind={c.kind()}
+      model={c.model().label}
+      isModel={(m) => m.id === c.model().id}
+      effort={c.effort()}
+      mode={c.mode()}
+      modeNote={(m) => (c.kind().kind === "claude" || m.id !== "plan" ? undefined : "Claude Code only")}
+      file={props.file}
+      mention={props.file}
+      ref={props.ref}
+      onSend={(text) =>
+        props.onSend(
+          c.kind(),
+          {
+            model: c.model().id,
+            effort: c.effort(),
+            permission: c.mode().permission,
+            documents: props.file ? [props.file] : undefined,
+          },
+          text,
+        )
+      }
+      onModel={c.setModel}
+      onEffort={c.setEffort}
+      onMode={c.setMode}
+      onOpenFile={props.onOpenFile}
+    />
+  );
+}
+
+/** Notes at the end of the chat: starting, or waiting on something only the terminal shows. */
+function ChatNotes(props: {
+  terminal?: TerminalInfo;
+  starting: boolean;
+  entries: number;
+  waitingCards: number;
+  now: number;
+  /** Claude Code asks whether to trust the project's folder, as it does the first time. */
+  trust: boolean;
+  onTrust: (t: TerminalInfo) => void;
+  onShowTerminal: (t: TerminalInfo) => void;
+}) {
+  const name = () => agentName(props.terminal);
+  const stuck = () => {
+    const t = props.terminal;
+    if (!t?.running) return false;
+    if (t.agent?.state === "waiting" && !props.waitingCards) return true;
+    return !props.entries && props.now - t.created_ms > START_GRACE_MS;
+  };
+  return (
+    <Switch>
+      <Match when={props.trust && !props.entries && props.terminal}>
+        {(t) => (
+          <div class="approve" role="group" aria-label="Trust this folder?">
+            <div class="ap-top">
+              <Icon name="hand" />
+              <span>
+                <b>Trust this folder?</b>
+                <small>
+                  The first time in a folder, Claude Code asks whether to trust it. It can then read, edit and run files here.
+                </small>
+              </span>
+            </div>
+            <div class="ap-btns">
+              <button class="apb pri" onClick={() => props.onTrust(t())}>
+                Trust this folder
+              </button>
+              <span class="spacer" />
+              <button class="apb" onClick={() => props.onShowTerminal(t())}>
+                Show terminal
+              </button>
+            </div>
+          </div>
+        )}
+      </Match>
+      <Match when={stuck() && props.terminal}>
+        {(t) => (
+          <div class="chat-stuck">
+            <span>
+              {props.entries
+                ? `${name()} is asking something in its terminal.`
+                : `${name()} hasn't started the conversation. It may be asking something in its terminal, such as whether to trust this folder.`}
+            </span>
+            <button onClick={() => props.onShowTerminal(t())}>
+              <Icon name="command" small />
+              Show terminal
+            </button>
+          </div>
+        )}
+      </Match>
+      <Match when={props.starting || (props.terminal?.running && !props.entries)}>
+        <div class="thinking">
+          <span class="spin" />
+          Starting {name()}…
+        </div>
+      </Match>
+    </Switch>
+  );
+}
+
+/** The project's conversations: those waiting for you, running, then by day. */
+function History(props: {
+  store: TerminalStore;
+  current?: string;
+  hostLabel: string;
+  title: (t: TerminalInfo) => string;
+  onOpen: (t: TerminalInfo) => void;
+  onEnd: (t: TerminalInfo) => void;
+}) {
+  const [search, setSearch] = createSignal("");
+  const rows = createMemo(() => {
+    const q = search().trim().toLowerCase();
+    return props.store
+      .agents()
+      .map((t) => ({ t, title: props.title(t), last: lastActive(props.store.chat(t.id)) ?? t.exit?.ended_ms ?? t.created_ms }))
+      .filter((r) => !q || r.title.toLowerCase().includes(q) || (r.t.options?.documents ?? []).some((d) => d.toLowerCase().includes(q)))
+      .sort((a, b) => b.last - a.last);
+  });
+  const day = (ms: number) => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  const today = day(Date.now());
+  const groups = createMemo(() => {
+    const all = rows();
+    const state = (t: TerminalInfo) => (t.running ? t.agent?.state : undefined);
+    const rest = all.filter((r) => state(r.t) !== "waiting" && state(r.t) !== "busy");
+    return [
+      { name: "Needs you", rows: all.filter((r) => state(r.t) === "waiting") },
+      { name: "Running", rows: all.filter((r) => state(r.t) === "busy") },
+      { name: "Today", rows: rest.filter((r) => day(r.last) === today) },
+      { name: "Yesterday", rows: rest.filter((r) => day(r.last) === today - 86_400_000) },
+      { name: "Earlier", rows: rest.filter((r) => day(r.last) < today - 86_400_000) },
+    ].filter((g) => g.rows.length);
+  });
+  const detail = (t: TerminalInfo, last: number) => {
+    if (!t.running) return `ended · ${when(last)}`;
+    if (t.agent?.state === "waiting") return "waiting for you";
+    if (t.agent?.state === "busy") return "running";
+    return when(last);
+  };
+  return (
+    <div class="hist">
+      <label class="hsearch2">
+        <Icon name="search" small />
+        <input placeholder="Search conversations" value={search()} onInput={(e) => setSearch(e.currentTarget.value)} />
+      </label>
+      <Show when={groups().length} fallback={<p class="hnone">{search() ? "No conversations match." : "No conversations yet."}</p>}>
+        <For each={groups()}>
+          {(group) => (
+            <>
+              <div class="hgrp">{group.name}</div>
+              <For each={group.rows}>
+                {(row) => (
+                  <div
+                    class="hrow"
+                    classList={{ on: row.t.id === props.current }}
+                    role="button"
+                    tabindex="0"
+                    onClick={(e) => {
+                      if (!(e.target as Element).closest(".hr-acts")) props.onOpen(row.t);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") props.onOpen(row.t);
+                    }}
+                  >
+                    <span class="hr-ic">
+                      <ProviderIcon kind={row.t.kind} />
+                      <Show when={row.t.running && (row.t.agent?.state === "waiting" || row.t.agent?.state === "busy")}>
+                        <span class="dot" classList={{ wait: row.t.agent?.state === "waiting", busy: row.t.agent?.state === "busy" }} />
+                      </Show>
+                    </span>
+                    <span class="hr-t">
+                      <b>{row.title}</b>
+                      <small>
+                        <Show when={row.t.options?.documents?.[0]}>
+                          {(doc) => (
+                            <>
+                              <FileIcon name={doc()} />
+                              {doc()} ·{" "}
+                            </>
+                          )}
+                        </Show>
+                        {modelLabel(row.t)} · {detail(row.t, row.last)}
+                      </small>
+                    </span>
+                    <span class="hr-acts">
+                      <button title={row.t.running ? "End conversation" : "Remove from history"} onClick={() => props.onEnd(row.t)}>
+                        <Icon name="trash" small />
+                      </button>
+                    </span>
+                  </div>
+                )}
+              </For>
+            </>
+          )}
+        </For>
+      </Show>
+      <p class="hfoot">
+        Conversations are kept by sandhilld on {props.hostLabel}, and keep running when you close the window. Ended ones stay
+        here until you remove them.
+      </p>
     </div>
   );
 }
@@ -274,51 +906,10 @@ function tabTitle(terminal: TerminalInfo): string {
   return parts.join(" · ");
 }
 
-/** Claude's mark, OpenAI's, or a chip for anything else. */
-export function ProviderIcon(props: { kind: string }) {
-  return (
-    <Show
-      when={props.kind === "claude"}
-      fallback={
-        <svg class="ico prov" viewBox="0 0 16 16" aria-hidden="true">
-          <Show when={props.kind === "codex"} fallback={<rect x="3" y="3" width="10" height="10" rx="2" />}>
-            <g stroke-width="1.15">
-              <path d="M8 2.2 13 5.1v5.8L8 13.8 3 10.9V5.1z" />
-              <path d="M8 2.2c-2.1 1.3-2.1 4.4 0 5.8M13 5.1c-2.2-1.2-4.9.4-5 2.9M13 10.9c0-2.5-2.7-4.1-5-2.9M8 13.8c2.1-1.3 2.1-4.4 0-5.8M3 10.9c2.2 1.2 4.9-.4 5-2.9M3 5.1c0 2.5 2.7 4.1 5 2.9" />
-            </g>
-          </Show>
-        </svg>
-      }
-    >
-      <svg class="ico prov claude" viewBox="0 0 16 16" aria-hidden="true">
-        <path
-          stroke-width="1.7"
-          d="M8 1.6v4.2M8 10.2v4.2M1.6 8h4.2M10.2 8h4.2M3.5 3.5l3 3M9.5 9.5l3 3M3.5 12.5l3-3M9.5 6.5l3-3M5.2 2.3l1.4 3.9M9.4 9.8l1.4 3.9M2.3 10.8l3.9-1.4M9.8 6.6l3.9-1.4"
-        />
-      </svg>
-    </Show>
-  );
-}
-
-/** ">_ claude in a terminal on gpu01 · Opus 5.5", then the documents it is about. */
-function InfoLine(props: { terminal: TerminalInfo; hostLabel: string; project: string; onOpen: (path: string) => void }) {
-  const kind = () => agentKind(props.terminal.kind);
-  return (
-    <div class="agent-info">
-      <span class="ai-l">
-        <Icon name="command" small />
-        {kind()?.program ?? props.terminal.kind} in a terminal on {props.hostLabel} · {modelLabel(props.terminal)}
-      </span>
-      <For each={props.terminal.options?.documents ?? []}>
-        {(doc) => (
-          <button class="dchip" title={`Open ${doc}`} onClick={() => props.onOpen(documentPath(props.project, doc))}>
-            <FileIcon name={doc} />
-            {doc}
-          </button>
-        )}
-      </For>
-    </div>
-  );
+/** "Claude", "Codex". */
+function agentName(terminal: TerminalInfo | undefined): string {
+  if (!terminal) return "Claude";
+  return terminal.kind === "claude" ? "Claude" : (agentKind(terminal.kind)?.name ?? terminal.title);
 }
 
 function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t: TerminalInfo) => void }) {
@@ -335,7 +926,7 @@ function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t
       </span>
       <span class="spacer" />
       <button onClick={() => props.onAgain(props.terminal)}>Start again</button>
-      <button onClick={props.onClose}>Close</button>
+      <button onClick={props.onClose}>Remove</button>
     </div>
   );
 }
@@ -348,380 +939,12 @@ function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t
 function Outdated(props: { terminal: TerminalInfo; onAgain: (t: TerminalInfo) => void; onKeep: (t: TerminalInfo) => void }) {
   return (
     <div class="agent-ended agent-outdated" role="status">
-      <span>This session started before Sandhill was updated, so it doesn't have the newest tools.</span>
+      <span>This conversation started before Sandhill was updated, so it doesn't have the newest tools.</span>
       <span class="spacer" />
-      <button onClick={() => props.onAgain(props.terminal)}>Start a new session</button>
-      <button title="Keep using this session" onClick={() => props.onKeep(props.terminal)}>
+      <button onClick={() => props.onAgain(props.terminal)}>Start a new one</button>
+      <button title="Keep using this conversation" onClick={() => props.onKeep(props.terminal)}>
         Keep
       </button>
-    </div>
-  );
-}
-
-/** New session: which agent and model, what it is about, and what it may do unasked. */
-function Picker(props: {
-  store: TerminalStore;
-  docs: Doc[];
-  active?: Doc;
-  project: string;
-  hostLabel: string;
-  canCancel: boolean;
-  onStart: (kind: AgentKind, options: AgentOptions) => void;
-  onCancel: () => void;
-  onInstall: (command: string) => void;
-}) {
-  const [installed] = createResource(() => props.store.listAgents().catch(() => [] as AgentInfo[]));
-  const info = (kind: string) => installed()?.find((a) => a.kind === kind);
-  const [choice, setChoice] = createSignal({ kind: "claude", model: "opus" as string | undefined });
-  const [effort, setEffort] = createSignal<string>();
-  const [perm, setPerm] = createSignal("supervised");
-  const relative = (path: string) => (path.startsWith(`${props.project}/`) ? path.slice(props.project.length + 1) : path);
-  const [docs, setDocs] = createSignal<string[]>(props.active ? [relative(props.active.path)] : []);
-  const kind = () => agentKind(choice().kind)!;
-  const missing = () => installed() && !info(choice().kind)?.path;
-  const toggleDoc = (doc: string, on: boolean) => setDocs((list) => (on ? [...list, doc] : list.filter((d) => d !== doc)));
-  const go = () =>
-    props.onStart(kind(), {
-      model: choice().model,
-      effort: effort(),
-      permission: perm(),
-      documents: docs().length ? docs() : undefined,
-    });
-  return (
-    <div class="picker">
-      <div class="pk-h">Agent and model</div>
-      <For each={AGENT_KINDS}>
-        {(agent) => (
-          <div class="pk-group">
-            <div class="pk-g">
-              <ProviderIcon kind={agent.kind} />
-              {agent.name}
-              <small>
-                {installed.loading
-                  ? agent.plan
-                  : info(agent.kind)?.path
-                    ? `${agent.plan}${info(agent.kind)?.version ? ` · ${info(agent.kind)!.version}` : ""}`
-                    : `Not installed on ${props.hostLabel}`}
-              </small>
-            </div>
-            <For each={agent.models}>
-              {(model) => (
-                <label class="pk-opt" classList={{ on: choice().kind === agent.kind && choice().model === model.id }}>
-                  <input
-                    type="radio"
-                    name="pk-model"
-                    checked={choice().kind === agent.kind && choice().model === model.id}
-                    onChange={() => {
-                      if (choice().kind !== agent.kind) setEffort(undefined);
-                      setChoice({ kind: agent.kind, model: model.id });
-                    }}
-                  />
-                  {model.label}
-                </label>
-              )}
-            </For>
-          </div>
-        )}
-      </For>
-      <Show when={missing()}>
-        <div class="pk-install">
-          <span>
-            {kind().name} isn't installed on {props.hostLabel}. Install it with <code>{info(choice().kind)?.install}</code>
-          </span>
-          <button class="primary" onClick={() => props.onInstall(info(choice().kind)!.install)}>
-            Install in a terminal
-          </button>
-        </div>
-      </Show>
-      <EffortControl levels={kind().efforts} value={effort()} recommended={kind().recommended} onChange={setEffort} />
-      <div class="pk-h">Refers to</div>
-      <For each={props.docs.map((d) => relative(d.path))}>
-        {(doc) => (
-          <label class="pk-opt" classList={{ on: docs().includes(doc) }}>
-            <input type="checkbox" checked={docs().includes(doc)} onChange={(e) => toggleDoc(doc, e.currentTarget.checked)} />
-            <FileIcon name={doc} />
-            {doc}
-          </label>
-        )}
-      </For>
-      <label class="pk-opt" classList={{ on: !docs().length }}>
-        <input type="checkbox" checked={!docs().length} onChange={(e) => e.currentTarget.checked && setDocs([])} />
-        <FileIcon name="project" dir />
-        Whole project
-      </label>
-      <div class="pk-h">Permissions</div>
-      <For each={PERMISSIONS}>
-        {(p) => (
-          <label class="pk-opt pk-perm" classList={{ on: perm() === p.id }}>
-            <input type="radio" name="pk-perm" checked={perm() === p.id} onChange={() => setPerm(p.id)} />
-            <span>
-              <b>{p.label}</b>
-              <small>{p.detail}</small>
-            </span>
-          </label>
-        )}
-      </For>
-      <p class="pk-note">
-        The session starts in this project's folder on {props.hostLabel}, signed in with your own {kind().name} account. It can
-        reach your R and Python sessions through Sandhill's tools.
-      </p>
-      <div class="pk-act">
-        <Show when={props.canCancel}>
-          <button onClick={props.onCancel}>Cancel</button>
-        </Show>
-        <button class="primary" disabled={!!missing()} onClick={go}>
-          Start session
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** The message box under a terminal, and the model and permission controls. */
-function Composer(props: {
-  terminal: TerminalInfo;
-  store: TerminalStore;
-  view: () => TermView | undefined;
-  active?: Doc;
-  project: string;
-}) {
-  const kind = () => agentKind(props.terminal.kind);
-  const [height, setHeight] = createSignal(COMPOSER_MIN);
-  const [popover, setPopover] = createSignal<"model" | "perm" | "context">();
-  /** The effort just picked here, until the agent reports one. */
-  const [effortChoice, setEffortChoice] = createSignal<string>();
-  const effort = () => effortChoice() ?? effortLevel(props.terminal);
-  createEffect(on(() => props.terminal.agent?.status?.effort, () => setEffortChoice(undefined), { defer: true }));
-  let effortTimer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(effortTimer));
-  // A slash command typed while the agent asks a question would answer it, so
-  // commands wait until the question is answered.
-  const waiting = () => props.terminal.agent?.state === "waiting";
-  let held: (() => void) | undefined;
-  const whenFree = (run: () => void) => {
-    if (waiting()) held = run;
-    else run();
-  };
-  createEffect(
-    on(waiting, (now) => {
-      if (now || !held) return;
-      const run = held;
-      held = undefined;
-      run();
-    }),
-  );
-  let input!: HTMLTextAreaElement;
-
-  const send = () => {
-    const text = input.value.replace(/\s+$/, "");
-    const view = props.view();
-    if (!text || !view) return;
-    view.paste(text);
-    // Enter on its own, once the paste has landed.
-    setTimeout(() => void props.store.input(props.terminal.id, "\r"), SUBMIT_DELAY_MS);
-    input.value = "";
-  };
-  /** Sets Claude Code's effort with /effort once the knob settles, leaving the popup open. */
-  const changeEffort = (level: string) => {
-    setEffortChoice(level);
-    clearTimeout(effortTimer);
-    effortTimer = setTimeout(() => whenFree(() => type(`/effort ${level}`)), EFFORT_SETTLE_MS);
-  };
-  /** Types `text` into the agent, then Enter. */
-  const type = (text: string) => {
-    void props.store.input(props.terminal.id, text);
-    setTimeout(() => void props.store.input(props.terminal.id, "\r"), SUBMIT_DELAY_MS);
-  };
-  /** Runs a slash command in the agent, once it isn't waiting for an answer. */
-  const command = (text: string) => {
-    whenFree(() => type(text));
-    setPopover(undefined);
-    props.view()?.focus();
-  };
-  const addContext = () => {
-    const doc = props.active;
-    if (!doc) return;
-    const path = doc.path.startsWith(`${props.project}/`) ? doc.path.slice(props.project.length + 1) : doc.path;
-    const at = input.selectionStart ?? input.value.length;
-    const before = input.value.slice(0, at);
-    const mention = `${before && !/\s$/.test(before) ? " " : ""}@${path} `;
-    input.setRangeText(mention, at, input.selectionEnd ?? at, "end");
-    input.focus();
-  };
-  const grip = (down: PointerEvent) => {
-    down.preventDefault();
-    const target = down.currentTarget as HTMLElement;
-    target.setPointerCapture(down.pointerId);
-    const start = height();
-    const move = (e: PointerEvent) => setHeight(Math.max(COMPOSER_MIN, Math.min(COMPOSER_MAX, start + down.clientY - e.clientY)));
-    const up = () => {
-      target.removeEventListener("pointermove", move);
-      target.removeEventListener("pointerup", up);
-    };
-    target.addEventListener("pointermove", move);
-    target.addEventListener("pointerup", up);
-  };
-  const closePopover = (e: MouseEvent) => {
-    if (!(e.target as Element).closest(".apop, .cs, .ctxline")) setPopover(undefined);
-  };
-  document.addEventListener("mousedown", closePopover);
-  onCleanup(() => document.removeEventListener("mousedown", closePopover));
-
-  const status = () => props.terminal.agent?.status;
-  const perm = () => currentPermission(props.terminal);
-  const started = () => permission(props.terminal.options?.permission);
-
-  return (
-    <div class="composer">
-      <Show when={status()?.context !== undefined}>
-        <button
-          class="ctxline"
-          title={`Context: ${status()!.context}% used. Click to compact.`}
-          onClick={() => setPopover(popover() === "context" ? undefined : "context")}
-        >
-          <span class="cl-pct">{Math.round(status()!.context!)}%</span>
-          <span class="cl-track">
-            <i classList={{ warn: status()!.context! >= 70 }} style={{ width: `${Math.max(1, status()!.context!)}%` }} />
-          </span>
-          <Show when={status()!.context_size}>
-            <span class="cl-max">{tokens(status()!.context_size!)}</span>
-          </Show>
-        </button>
-      </Show>
-      <div class="cbox">
-        <span class="grip" title="Drag to resize the message box" onPointerDown={grip} />
-        <textarea
-          ref={input}
-          class="ain"
-          rows={1}
-          style={{ height: `${height()}px` }}
-          placeholder={kind()?.placeholder ?? "Message the agent"}
-          aria-label="Message"
-          onKeyDown={(e) => {
-            // Enter sends; Shift+Enter is a new line. Not while an input method composes.
-            if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
-        <div class="crow">
-          <button class="chip" disabled={!props.active} title="Mention the open document" onClick={addContext}>
-            @ Add context
-          </button>
-          <span class="spacer" />
-          <button class="send" title="Send ↩" onClick={send}>
-            <Icon name="up" small />
-          </button>
-        </div>
-      </div>
-      <div class="cstrip">
-        <button class="cs modelbtn" title="Model and thinking effort" onClick={() => setPopover(popover() === "model" ? undefined : "model")}>
-          <ProviderIcon kind={props.terminal.kind} />
-          <span class="cs-model">{modelLabel(props.terminal)}</span>
-          <Show when={effort()}>
-            <span class="eff-l">{effortName(effort()!)}</span>
-          </Show>
-          <Icon name="chevron" small />
-        </button>
-        <span class="spacer" />
-        <button class="cs permbtn" title="Permissions" onClick={() => setPopover(popover() === "perm" ? undefined : "perm")}>
-          <span>{perm().label}</span>
-          <Icon name="chevron" small />
-        </button>
-      </div>
-      <Show when={popover() === "model"}>
-        <div class="apop">
-          <Show when={waiting()}>
-            <p class="ap-n">Changes here wait until you answer {kind()?.name ?? "the agent"} in the terminal.</p>
-          </Show>
-          <div class="ap-h">Model</div>
-          <Show
-            when={props.terminal.kind === "claude"}
-            fallback={
-              <button class="ap-opt" title="Opens Codex's /model menu in the terminal" onClick={() => command("/model")}>
-                <ProviderIcon kind="codex" />
-                Choose in Codex…
-              </button>
-            }
-          >
-            <For each={kind()?.models ?? []}>
-              {(model) => (
-                <button class="ap-opt" title={`Switches with /model ${model.id}; the conversation carries over`} onClick={() => command(`/model ${model.id}`)}>
-                  <ProviderIcon kind="claude" />
-                  {model.label}
-                  <Show when={currentModel(props.terminal, model)}>
-                    <span class="ap-ck">
-                      <Icon name="check" small />
-                    </span>
-                  </Show>
-                </button>
-              )}
-            </For>
-          </Show>
-          <Show when={kind()}>
-            {(k) => (
-              <EffortControl
-                levels={k().efforts}
-                value={effort()}
-                recommended={k().recommended}
-                onChange={changeEffort}
-                disabled={props.terminal.kind === "claude" ? undefined : "Codex changes effort in its own /model menu"}
-              />
-            )}
-          </Show>
-        </div>
-      </Show>
-      <Show when={popover() === "perm"}>
-        <div class="apop perm">
-          <div class="ap-h">{perm().label}</div>
-          <p class="ap-n">{perm().detail}</p>
-          <Show when={started().id !== perm().id}>
-            <p class="ap-n">Started as {started().label}.</p>
-          </Show>
-          <p class="ap-n">
-            {props.terminal.kind === "claude" ? (
-              <>
-                Press <kbd>⇧Tab</kbd> in the terminal to switch modes for this session.
-              </>
-            ) : (
-              <>
-                Type <code>/approvals</code> in the terminal to change it for this session.
-              </>
-            )}
-          </p>
-        </div>
-      </Show>
-      <Show when={popover() === "context"}>
-        <ContextPopover terminal={props.terminal} onCompact={() => command("/compact")} />
-      </Show>
-    </div>
-  );
-}
-
-function ContextPopover(props: { terminal: TerminalInfo; onCompact: () => void }): JSX.Element {
-  const status = () => props.terminal.agent?.status;
-  const used = () => {
-    const size = status()?.context_size;
-    const percent = status()?.context ?? 0;
-    return size ? `${tokens(Math.round((size * percent) / 100))} of ${tokens(size)}` : `${percent}%`;
-  };
-  return (
-    <div class="apop">
-      <div class="ap-h">
-        Context <small>{used()} used</small>
-      </div>
-      <div class="cl-track big">
-        <i style={{ width: `${Math.max(1, status()?.context ?? 0)}%` }} classList={{ warn: (status()?.context ?? 0) >= 70 }} />
-      </div>
-      <p class="ap-n">
-        Compacting replaces the conversation with a summary, to make room. Sent to the agent as <code>/compact</code>.
-      </p>
-      <div class="ap-act">
-        <button class="primary" onClick={props.onCompact}>
-          Compact now
-        </button>
-      </div>
     </div>
   );
 }

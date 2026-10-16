@@ -46,8 +46,8 @@ describe("TerminalStore", () => {
     const subscribed = fake.calls.filter((c) => c.method === "subscribe_terminal").map((c) => c.params);
     // The first time, the daemon picks the recent output.
     expect(subscribed).toEqual([
-      { terminal: "c", from: undefined },
-      { terminal: "a", from: undefined },
+      { terminal: "c", from: undefined, chat_from: undefined },
+      { terminal: "a", from: undefined, chat_from: 0 },
     ]);
   });
 
@@ -76,7 +76,7 @@ describe("TerminalStore", () => {
     // After a reconnect it asks for what came after.
     fake.calls.length = 0;
     await store.refresh();
-    expect(fake.calls.find((c) => c.method === "subscribe_terminal")?.params).toEqual({ terminal: "a", from: 6 });
+    expect(fake.calls.find((c) => c.method === "subscribe_terminal")?.params).toEqual({ terminal: "a", from: 6, chat_from: 0 });
   });
 
   it("tracks what agents report and when they end", async () => {
@@ -97,10 +97,47 @@ describe("TerminalStore", () => {
     const store = new TerminalStore(fake.backend, "/p");
     await store.start("claude", { model: "opus" }, { cols: 90, rows: 30 });
     expect(fake.calls.map((c) => c.method)).toEqual(["start_terminal", "subscribe_terminal"]);
-    expect(fake.calls[0].params).toEqual({ kind: "claude", project: "/p", cols: 90, rows: 30, options: { model: "opus" } });
-    expect(fake.calls[1].params).toEqual({ terminal: "new", from: 0 });
+    expect(fake.calls[0].params).toEqual({ kind: "claude", project: "/p", cols: 90, rows: 30, options: { model: "opus" }, prompt: undefined });
+    expect(fake.calls[1].params).toEqual({ terminal: "new", from: 0, chat_from: 0 });
     expect(store.agents().map((t) => t.id)).toEqual(["new"]);
     await store.close("new");
     expect(store.list()).toEqual([]);
   });
+
+  it("keeps an agent's conversation and picks it up after a reconnect", async () => {
+    const fake = fakeBackend([info("a")]);
+    const store = new TerminalStore(fake.backend, "/p");
+    await store.refresh();
+    const entry = (seq: number, kind: string) => ({ seq, event: { kind, turn: "t" } });
+    fake.emit({ terminal: "a", chat: entry(0, "prompt") });
+    fake.emit({ terminal: "a", chat: entry(1, "step") });
+    // A replay that overlaps.
+    fake.emit({ terminal: "a", chat: entry(1, "step") });
+    await tick();
+    expect(store.chat("a").map((e) => e.seq)).toEqual([0, 1]);
+    fake.calls.length = 0;
+    await store.refresh();
+    expect(fake.calls.find((c) => c.method === "subscribe_terminal")?.params).toMatchObject({ terminal: "a", chat_from: 2 });
+    fake.emit({ terminal: "a", chat: entry(2, "stop") });
+    await tick();
+    expect(store.chat("a").map((e) => e.event.kind)).toEqual(["prompt", "step", "stop"]);
+  });
+
+  it("answers, sends messages as one paste and stops the agent", async () => {
+    const fake = fakeBackend([info("a")]);
+    const store = new TerminalStore(fake.backend, "/p");
+    await store.refresh();
+    fake.calls.length = 0;
+    await store.answer("a", "q1", { behavior: "allow", scope: "chat" });
+    await store.say("a", "two\nlines");
+    await store.interrupt("a");
+    expect(fake.calls).toEqual([
+      { method: "answer_terminal", params: { terminal: "a", id: "q1", answer: { behavior: "allow", scope: "chat" } } },
+      { method: "terminal_input", params: { terminal: "a", data: "\x1b[200~two\rlines\x1b[201~" } },
+      { method: "terminal_input", params: { terminal: "a", data: "\r" } },
+      { method: "terminal_input", params: { terminal: "a", data: "\x1b" } },
+    ]);
+  });
 });
+
+const tick = () => new Promise((done) => setTimeout(done, 0));

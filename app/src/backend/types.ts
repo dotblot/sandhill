@@ -1,6 +1,8 @@
 // Wire types shared with the daemon. The Rust definitions in
 // crates/proto/src/lib.rs are the source of truth.
 
+import type { ChatEntry } from "../model/chat";
+
 export const EVENT_RUN_STARTED = "sandhill.run_started";
 export const EVENT_RUN_FINISHED = "sandhill.run_finished";
 export const EVENT_SESSION_ENDED = "sandhill.session_ended";
@@ -283,4 +285,6 @@ export interface TerminalEvent {
   data?: string;
   agent?: AgentReport;
   exit?: TerminalExit;
+  /** An entry of the agent's conversation (see `model/chat.ts`). */
+  chat?: ChatEntry;
 }

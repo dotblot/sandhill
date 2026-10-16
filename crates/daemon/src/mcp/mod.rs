@@ -573,6 +573,18 @@ async fn images(client: &Client, rendered: &Rendered) -> Vec<Value> {
     items
 }
 
+/// The tools that only look (`readOnlyHint`), which agents may use without asking.
+pub fn read_only_tools() -> Vec<String> {
+    let tools = tool_list();
+    tools
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|t| t["annotations"]["readOnlyHint"] == true)
+        .filter_map(|t| t["name"].as_str().map(String::from))
+        .collect()
+}
+
 fn tool_list() -> Value {
     json!([
         {
