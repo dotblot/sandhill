@@ -24,6 +24,8 @@ Draft 19 (2026-10-17) changed:
 - The Kernels and Resources sections in the left pane can be collapsed.
 - The effort knob is 50% bigger (30px); the bar keeps its height and is a little
   shorter.
+- The status bar's connection item shows the machine's icon instead of a dot,
+  follows the Local | server tab, and opens a connection pop-up.
 
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
@@ -108,7 +110,7 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - One left edge for the left pane and the status bar: every row's hover shading
   starts 6px from the window's left edge, and its first icon or dot starts at 14px
   (file tree, section headers' chevrons, kernel rows, resources, the status bar's
-  connection dot). The
+  connection icon). The
   Local | server tabs start at 6px and the project name at 14px. Files inside a
   folder line up under the folder's icon.
 
@@ -228,7 +230,25 @@ omp.
   or SVG. Plots stay white in dark mode.
 
 ## Status bar (26px)
-- Left: connection (`gpu01 · sandhilld`), R and Python kernel state, jobs.
+- Left: the connection, then the kernel state ("R idle", "Python running") and
+  jobs of the machine picked in the left pane's Local | server tabs.
+- The connection item is the machine's icon and name: a cloud and "gpu01", or a
+  screen and "Local". The icon is the same one as on the Local | server tabs, and
+  it shows the state. There is no status dot:
+  - connected: the plain icon;
+  - reconnecting: the icon in orange, pulsing (steady orange with reduced motion);
+  - disconnected: the icon in red with a slash through it, and the name in red.
+    The kernel state and jobs are hidden until it reconnects.
+  The Local | server tab's icon shows the same state.
+- Its tooltip reads "gpu01 · sandhilld 0.3.0 · connected".
+- Clicking it opens a pop-up above it, at 11px like the other pop-ups:
+  - A server shows: name and state, then address, how it connects (ssh and the
+    user), the sandhilld version and how it runs, time connected, latency and
+    kernels. Its actions are Reconnect, Disconnect (or Connect when
+    disconnected) and Open the sandhilld log.
+  - Local shows "This Mac", state "running", the sandhilld version (launchd
+    agent), how long it has run and kernels, with Restart sandhilld and Open the
+    sandhilld log.
 - Right: "agent is waiting" notice, then 5-hour and weekly plan usage for
   Claude Code and Codex, then cursor position.
 - Each usage figure is a **14px ring** (2.5px stroke) that fills clockwise from

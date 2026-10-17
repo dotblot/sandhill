@@ -1382,6 +1382,17 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 .resources { padding-top: 3px; }
 .krow[data-kpick] { cursor: default; }
 .krow .kn { font-variant-numeric: tabular-nums; }
+/* status bar connection: the machine's icon, no dot. Plain when connected, orange and pulsing while
+   reconnecting, red with a slash when disconnected. The Local | server tabs show the same icon */
+.conn-ico { position: relative; display: inline-grid; place-items: center; width: 14px; height: 14px; flex: none; }
+.conn-ico .ico { width: 14px; height: 14px; }
+.conn-ico.busy { color: var(--accent); animation: connpulse 1s ease-in-out infinite alternate; }
+.conn-ico.off { color: var(--err); }
+.conn-ico.off::after { content: ""; position: absolute; left: -1px; right: -1px; top: 50%; height: 1.5px; margin-top: -.75px; border-radius: 1px; background: currentColor; box-shadow: 0 0 0 1px var(--bg); transform: rotate(-40deg); }
+@keyframes connpulse { from { opacity: 1; } to { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .conn-ico.busy { animation: none; } }
+.status .conn.off { color: var(--err); }
+.connpop { width: 260px; }
 /* effort knob 30px (was 20); the bar stays 16px high and is 4px shorter at each end */
 .eff-track { height: 30px; }
 .eff-track::before, .eff-fill, .eff-stars { left: 4px; right: 4px; top: 7px; bottom: 7px; }
@@ -1587,6 +1598,7 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
       <div class="palette" id="palette" role="dialog" aria-label="Go to" hidden></div>
       <div class="respop" id="respop" hidden></div>
       <div class="kpop" id="kpop" role="menu" hidden></div>
+      <div class="kpop connpop" id="connpop" role="dialog" aria-label="Connection" hidden></div>
     </div>
   </div>
 
@@ -1856,7 +1868,7 @@ function renderSidebar() {
   const RES = [["cpu", "chip", "CPU"], ["mem", "mem", "MEM"], ["gpu", "gpu", "GPU"], ["disk", "disk", "Disk"]];
   const sec = (k, label, extra = "") => { const shut = S.secShut.has(k); return `<button class="sec-h" data-sec="${k}" aria-expanded="${!shut}"><span class="chev ${shut ? "" : "open"}">${ico("chevr")}</span>${label}${shut && extra ? `<span class="sec-n">${extra}</span>` : ""}</button>`; };
   const hot = RES.filter(([k]) => h.res[k][0] >= 80).map(([, , l]) => l);
-  sb.innerHTML = `<div class="hosttabs" role="tablist">${Object.entries(HOSTS).map(([k, v]) => `<button role="tab" data-host="${k}" aria-selected="${k === S.host}">${ico(v.icon, "ico")}${v.label}</button>`).join("")}</div>
+  sb.innerHTML = `<div class="hosttabs" role="tablist">${Object.entries(HOSTS).map(([k, v]) => `<button role="tab" data-host="${k}" aria-selected="${k === S.host}">${connIco(k)}${v.label}</button>`).join("")}</div>
     <div class="sb-head proj-head" title="${h.path}">${h.project}<span class="spacer"></span><button title="New file">${ico("plus")}</button><button title="Refresh">${ico("restart")}</button></div>
     <div class="tree">${tree}</div>
     <div class="kernels">${sec("kernels", "Kernels", live.length ? String(live.length) : "")}${S.secShut.has("kernels") ? "" : kern}</div>
@@ -1864,11 +1876,11 @@ function renderSidebar() {
   $$("[data-open]", sb).forEach(e => e.onclick = () => openTab(e.dataset.open));
   $$("[data-dir]", sb).forEach(e => e.onclick = () => { const k = e.dataset.dir; S.treeOpen.has(k) ? S.treeOpen.delete(k) : S.treeOpen.add(k); renderSidebar(); });
   $$("[data-sec]", sb).forEach(b => b.onclick = () => { const k = b.dataset.sec; S.secShut.has(k) ? S.secShut.delete(k) : S.secShut.add(k); if (k === "resources") S.resPop = null; if (k === "kernels") { S.kpop = null; renderKpop(); } renderSidebar(); renderResPop(); });
-  $$("[data-host]", sb).forEach(b => b.onclick = () => { S.host = b.dataset.host; S.resPop = null; S.kask = null; S.kpop = null; renderSidebar(); renderResPop(); renderKpop(); });
+  $$("[data-host]", sb).forEach(b => b.onclick = () => { S.host = b.dataset.host; S.resPop = null; S.kask = null; S.kpop = null; S.connPop = false; renderSidebar(); renderResPop(); renderKpop(); renderStatus(); });
   $$("[data-kask]", sb).forEach(b => b.onclick = ev => { ev.stopPropagation(); S.kask = b.dataset.kask; S.kpop = null; renderSidebar(); renderKpop(); });
   $$(".krow[data-kpick]", sb).forEach(r => r.onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); r.click(); } });
   const kn = $("[data-kno]", sb); if (kn) kn.onclick = () => { S.kask = null; renderSidebar(); };
-  const ky = $("[data-kyes]", sb); if (ky) ky.onclick = () => { S.kgone.add(ky.dataset.kyes); S.kask = null; renderSidebar(); };
+  const ky = $("[data-kyes]", sb); if (ky) ky.onclick = () => { S.kgone.add(ky.dataset.kyes); S.kask = null; renderSidebar(); renderStatus(); };
   $$("[data-res]", sb).forEach(b => b.onclick = ev => { ev.stopPropagation(); S.resPop = S.resPop === b.dataset.res ? null : b.dataset.res; renderSidebar(); renderResPop(); });
 }
 function renderResPop() {
@@ -2700,14 +2712,45 @@ const USAGE = [
 ];
 // plan usage as a small ring that fills clockwise from the top
 const meter = p => { const r = 5.25, c = 2 * Math.PI * r; return `<svg class="uring ${p >= 80 ? "hot" : ""}" viewBox="0 0 14 14" aria-hidden="true"><circle class="trk" cx="7" cy="7" r="${r}"/>${p > 0 ? `<circle class="val" cx="7" cy="7" r="${r}" stroke-dasharray="${(c * p / 100).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 7 7)"/>` : ""}</svg>`; };
+/* connection: the machine's icon (as on the Local | server tabs) shows the state; no dot */
+const CONN = {
+  local: { name: "This Mac", rows: [["sandhilld", "0.3.0 · launchd agent"], ["Running for", "2 d 4 h"]] },
+  gpu01: { name: "gpu01", rows: [["Address", "gpu01.lab.example.org"], ["Via", "ssh, as huan"], ["sandhilld", "0.3.0 · systemd user service"], ["Connected for", "3 h 12 min"], ["Latency", "18 ms"]] },
+};
+const connState = h => (S.conn && S.conn[h]) || "on";
+const connWord = (h, st) => h === "local" && st === "on" ? "running" : { on: "connected", busy: "reconnecting", off: "disconnected" }[st];
+const connIco = h => `<span class="conn-ico ${connState(h)}">${ico(HOSTS[h].icon, "ico")}</span>`;
+function setConn(h, st) {
+  S.conn = S.conn || {}; S.conn[h] = st; renderSidebar(); renderStatus();
+  if (st === "busy") setTimeout(() => { if (connState(h) === "busy") setConn(h, "on"); }, 1400);
+}
+function renderConnPop() {
+  const pop = $("#connpop"), btn = $("[data-conn]");
+  if (!S.connPop || !btn) { pop.hidden = true; return; }
+  const h = S.host, C = CONN[h], st = connState(h), live = HOSTS[h].kernels.filter(x => !S.kgone.has(h + x.k)), jobs = live.filter(x => sideK(h, x.k).job).length;
+  const kn = `${live.length - jobs} running${jobs ? `, ${jobs} job${jobs > 1 ? "s" : ""}` : ""}`;
+  const act = (k, ic, l) => `<button class="mm-i" data-connact="${k}">${ico(ic)}<span>${l}</span><kbd></kbd></button>`;
+  pop.innerHTML = `<div class="kp-h">${connIco(h)}<b>${C.name}</b><span class="kp-st">${connWord(h, st)}</span></div>
+    <dl class="kp-d">${(st === "off" ? C.rows.filter(([a]) => !["Connected for", "Latency"].includes(a)) : C.rows).map(([a, b]) => `<dt>${a}</dt><dd title="${b}">${b}</dd>`).join("")}${st === "off" ? "" : `<dt>Kernels</dt><dd>${kn}</dd>`}</dl>
+    <div class="mm-sep"></div>${h === "local" ? act("restart", "restart", "Restart sandhilld") : st === "off" ? act("connect", "cloud", "Connect") : act("reconnect", "restart", "Reconnect") + act("disconnect", "x", "Disconnect")}${act("log", "files", "Open the sandhilld log")}`;
+  pop.hidden = false; pop.onclick = e => e.stopPropagation();
+  $$("[data-connact]", pop).forEach(b => b.onclick = () => { const a = b.dataset.connact; S.connPop = false; if (a === "disconnect") setConn(h, "off"); else if (a !== "log") setConn(h, "busy"); renderConnPop(); });
+  const wr = win.getBoundingClientRect(), r = btn.getBoundingClientRect();
+  pop.style.left = (r.left - wr.left) + "px"; pop.style.top = (r.top - wr.top - pop.offsetHeight - 6) + "px";
+}
 function renderStatus() {
   const waiting = S.sessions.some(s => s.state === "wait");
-  $("#status").innerHTML = `<button class="si"><span class="dot"></span>gpu01 · sandhilld 0.3.0</button><span class="si">${ico("sessions")}R idle</span><span class="si"><span class="spin" style="width:9px;height:9px"></span>Python running</span><button class="si" data-goto="jobs">1 job</button>
+  const H = S.host || "gpu01", st = connState(H), live = HOSTS[H].kernels.filter(x => !S.kgone.has(H + x.k)).map(x => ({ ...x, K: sideK(H, x.k) }));
+  const kst = live.filter(x => !x.K.job).map(({ k, K }) => K.state === "busy" ? `<span class="si"><span class="spin" style="width:9px;height:9px"></span>${K.lang} running</span>` : `<span class="si">${ico("sessions")}${K.lang} ${K.state}</span>`).join("");
+  const nj = live.filter(x => x.K.job).length;
+  $("#status").innerHTML = `<button class="si conn ${st}" data-conn title="${CONN[H].name} · sandhilld 0.3.0 · ${connWord(H, st)}">${connIco(H)}${HOSTS[H].label}</button>${st === "off" ? "" : kst + (nj ? `<button class="si" data-goto="jobs">${nj} job${nj > 1 ? "s" : ""}</button>` : "")}
   <span class="spacer"></span>${waiting ? `<button class="si waiting" data-goto="agent"><span class="dot wait"></span>Opus 5.5 is waiting for you</button>` : ""}
   ${USAGE.map((u, i) => `<button class="si usage" data-usage="${i}" title="${u.name} plan usage"><svg class="ico prov" aria-label="${u.name}"><use href="#i-${u.short === "Claude" ? "claude" : "openai"}"/></svg>5h ${meter(u.h5)}<span class="${u.h5 >= 80 ? "hotx" : ""}">${u.h5}%</span><span class="rs" title="Time until the 5-hour window resets">${u.h5left}</span><span class="sep">·</span>Week ${meter(u.wk)}<span class="${u.wk >= 80 ? "hotx" : ""}">${u.wk}%</span><span class="rs" title="Time until the weekly limit resets">${u.wkleft}</span></button>`).join("")}
   <span class="si">${S.tab === "explorer" ? "618 rows" : S.tab === "qc" ? "Ln 13, Col 1" : "Ln 24, Col 32"}</span>`;
   $$("[data-goto]").forEach(b => b.onclick = () => { if (b.dataset.goto === "jobs") { S.bottom = true; S.ptab = "jobs"; } else { setLayout("pair"); } renderAll(); });
   $$("[data-usage]").forEach(b => b.onclick = ev => { ev.stopPropagation(); S.usagePop = S.usagePop === +b.dataset.usage ? null : +b.dataset.usage; renderUsagePop(); });
+  $("[data-conn]").onclick = ev => { ev.stopPropagation(); S.connPop = !S.connPop; renderConnPop(); };
+  renderConnPop();
   $("#agentDot").hidden = !waiting;
   renderUsagePop();
 }
@@ -3004,9 +3047,9 @@ $$("#notes li").forEach(li => {
   });
 });
 
-document.addEventListener("click", e => { hideMenu(); if (S.usagePop != null && !e.target.closest("#usagepop,[data-usage]")) { S.usagePop = null; S.bankConfirm = null; renderUsagePop(); } if (S.apop && !e.target.closest(".apop,#ctxpop")) { S.apop = null; renderAgent(); } });
+document.addEventListener("click", e => { hideMenu(); if (S.connPop && !e.target.closest("#connpop,[data-conn]")) { S.connPop = false; renderConnPop(); } if (S.usagePop != null && !e.target.closest("#usagepop,[data-usage]")) { S.usagePop = null; S.bankConfirm = null; renderUsagePop(); } if (S.apop && !e.target.closest(".apop,#ctxpop")) { S.apop = null; renderAgent(); } });
 win.addEventListener("contextmenu", e => { const t = e.target.closest("[data-fn],[data-pkg]"); if (!t) return; e.preventDefault(); showMenu(e.clientX, e.clientY, t.dataset.fn || "", t.dataset.pkg); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { hideMenu(); if (S.apop) { S.apop = null; renderAgent(); } if (S.kpop) { S.kpop = null; renderKpop(); } } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { hideMenu(); if (S.connPop) { S.connPop = false; renderConnPop(); } if (S.apop) { S.apop = null; renderAgent(); } if (S.kpop) { S.kpop = null; renderKpop(); } } });
 /* kernel picker drop-downs */
 document.addEventListener("click", e => {
   const b = e.target.closest("[data-kpick]");
