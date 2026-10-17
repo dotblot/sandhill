@@ -170,13 +170,14 @@ function replay(el: Element, cls: string) {
  * `going()` holds.
  */
 function starField(canvas: HTMLCanvasElement, track: HTMLElement, going: () => boolean) {
-  const w = track.clientWidth;
-  const h = track.clientHeight;
+  // The canvas, not the track: it is the thinner bar inside the track.
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
   const g = canvas.getContext?.("2d");
   if (!g) return;
   // Not laid out yet, as in a popover just opened: try once it is.
   if (!w || !h) {
-    requestAnimationFrame(() => going() && track.clientWidth && starField(canvas, track, going));
+    requestAnimationFrame(() => going() && canvas.clientWidth && starField(canvas, track, going));
     return;
   }
   const dpr = window.devicePixelRatio || 1;

@@ -1,7 +1,7 @@
 // What the Agents pane offers: the agent CLIs, their models, thinking effort
 // and permission modes, and how to read what they report.
 
-import type { AgentStatus, TerminalInfo } from "../backend/types";
+import type { AgentModel, AgentStatus, TerminalInfo } from "../backend/types";
 
 export interface ModelChoice {
   /** What the CLI takes; undefined leaves the CLI's own choice. */
@@ -36,20 +36,49 @@ export const AGENT_KINDS: AgentKind[] = [
       { id: "haiku", label: "Haiku" },
     ],
     efforts: ["low", "medium", "high", "xhigh", "max"],
-    recommended: "high",
-    placeholder: "Message Claude Code (runs in the terminal above)",
+    // What Claude Code 2.1 reports in its status line when none is given.
+    recommended: "medium",
+    placeholder: "Ask Claude…",
   },
   {
     kind: "codex",
     name: "Codex",
     program: "codex",
-    plan: "Terminal · your ChatGPT plan",
+    plan: "Codex app-server · your ChatGPT plan",
+    // Until a conversation starts and Codex lists its models.
     models: [{ label: "Codex's default model" }],
-    efforts: ["minimal", "low", "medium", "high"],
+    efforts: ["low", "medium", "high", "xhigh"],
     recommended: "medium",
-    placeholder: "Ask Codex to do anything",
+    placeholder: "Ask Codex…",
   },
 ];
+
+/**
+ * Agents whose chat Sandhill drives itself (Codex, through its app-server):
+ * messages, modes and models go to it as commands rather than as keys typed
+ * into its terminal.
+ */
+export function drivesChat(kind: string): boolean {
+  return kind === "codex";
+}
+
+/** An agent kind with the models a running agent offers, and the efforts of the one it uses. */
+export function withModels(kind: AgentKind, terminal: TerminalInfo): AgentKind {
+  const models = terminal.agent?.models;
+  if (!models?.length) return kind;
+  const current = currentAgentModel(models, terminal);
+  return {
+    ...kind,
+    models: models.map((m) => ({ id: m.id, label: m.label })),
+    efforts: current?.efforts?.length ? current.efforts : kind.efforts,
+    recommended: current?.effort ?? kind.recommended,
+  };
+}
+
+function currentAgentModel(models: AgentModel[], terminal: TerminalInfo): AgentModel | undefined {
+  const id = terminal.agent?.status?.model_id ?? terminal.options?.model;
+  return models.find((m) => m.id === id) ?? models.find((m) => m.default);
+}
 
 export function agentKind(kind: string): AgentKind | undefined {
   return AGENT_KINDS.find((a) => a.kind === kind);
@@ -60,37 +89,68 @@ export function documentPath(project: string, doc: string): string {
   return doc.startsWith("/") ? doc : `${project}/${doc}`;
 }
 
-export interface Permission {
+/**
+ * A mode: what the agent may do without asking (draft 18 uses Posit
+ * Assistant's names). `permission` is what the daemon starts the agent with,
+ * `claude` the matching Claude Code permission mode.
+ */
+export interface Mode {
   id: string;
   label: string;
   detail: string;
+  permission: string;
+  claude: string;
+  icon: "hand" | "spark" | "bolt" | "plan" | "edits";
+  /** Offered in the mode picker. */
+  offered: boolean;
 }
 
-export const PERMISSIONS: Permission[] = [
-  { id: "supervised", label: "Supervised", detail: "Asks before commands and file changes." },
-  { id: "edits", label: "Auto-accept edits", detail: "Edits files without asking; asks before other actions." },
-  { id: "auto", label: "Auto", detail: "The agent's own reviewer approves or denies actions." },
-  { id: "full", label: "Full access", detail: "Runs commands and edits without asking. Only for folders you can afford to lose." },
+export const MODES: Mode[] = [
+  { id: "normal", label: "Normal", detail: "Safe steps run. Risky ones ask first.", permission: "supervised", claude: "default", icon: "hand", offered: true },
+  { id: "auto", label: "Auto", detail: "A second model reviews risky steps.", permission: "auto", claude: "auto", icon: "spark", offered: true },
+  {
+    id: "yolo",
+    label: "YOLO",
+    detail: "Everything runs without asking. Only for folders you can afford to lose.",
+    permission: "full",
+    claude: "bypassPermissions",
+    icon: "bolt",
+    offered: true,
+  },
+  { id: "plan", label: "Plan", detail: "Writes a plan first, then asks before carrying it out.", permission: "plan", claude: "plan", icon: "plan", offered: true },
+  // Claude Code's own mode between Normal and Plan, reached with ⇧Tab in its terminal.
+  { id: "edits", label: "Edits", detail: "Edits files without asking. Other steps ask first.", permission: "edits", claude: "acceptEdits", icon: "edits", offered: false },
 ];
 
-export function permission(id?: string): Permission {
-  return PERMISSIONS.find((p) => p.id === id) ?? PERMISSIONS[0];
+/** The mode a session started in: by its `permission`. */
+export function startMode(permission?: string): Mode {
+  return MODES.find((m) => m.permission === permission) ?? MODES[0];
 }
 
-/** Claude Code's permission modes, as its hooks report them. */
-const CLAUDE_MODES: Record<string, Permission> = {
-  default: PERMISSIONS[0],
-  acceptEdits: PERMISSIONS[1],
-  auto: PERMISSIONS[2],
-  bypassPermissions: PERMISSIONS[3],
-  plan: { id: "plan", label: "Plan", detail: "Plans first, and asks before changing anything." },
-  dontAsk: { id: "dontAsk", label: "Don't ask", detail: "Does only what is allowed in advance; denies the rest." },
-};
+/** The mode for a Claude Code permission mode, as its hooks or terminal report it. */
+export function claudeMode(mode: string | undefined): Mode | undefined {
+  // `manual` is what newer versions call `default`.
+  return MODES.find((m) => m.claude === (mode === "manual" ? "default" : mode));
+}
 
 /** The mode the agent last reported (it can change in the terminal), else the one it started in. */
-export function currentPermission(terminal: TerminalInfo): Permission {
-  const reported = terminal.agent?.mode;
-  return (reported && CLAUDE_MODES[reported]) || permission(terminal.options?.permission);
+export function currentMode(terminal: TerminalInfo): Mode {
+  return claudeMode(terminal.agent?.mode) ?? startMode(terminal.agent?.permission ?? terminal.options?.permission);
+}
+
+/** The mode Claude Code's terminal shows under its prompt ("⏸ plan mode on"), from its last lines. */
+export function screenMode(screen: string): Mode | undefined {
+  const shown = [...screen.matchAll(/(manual mode|accept edits|plan mode|auto mode|bypass permissions) on/g)].pop()?.[1];
+  const modes: Record<string, string> = {
+    "manual mode": "default",
+    "accept edits": "acceptEdits",
+    "plan mode": "plan",
+    "auto mode": "auto",
+    "bypass permissions": "bypassPermissions",
+  };
+  if (shown) return claudeMode(modes[shown]);
+  // Older versions show nothing in the default mode.
+  return /\? for shortcuts/.test(screen) ? MODES[0] : undefined;
 }
 
 /** "Opus 5.5" once the agent says, else what the session was started with. */

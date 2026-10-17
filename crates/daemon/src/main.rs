@@ -59,6 +59,25 @@ enum Command {
         #[arg(last = true, required = true)]
         program: Vec<std::ffi::OsString>,
     },
+    /// Run Codex's conversation for Sandhill's chat, through `codex
+    /// app-server` (a Codex conversation's terminal runs this).
+    #[command(hide = true)]
+    CodexChat {
+        /// The `codex` CLI.
+        #[arg(long)]
+        codex: PathBuf,
+        #[arg(long)]
+        project: Option<String>,
+        /// Model, effort, mode and documents, as JSON.
+        #[arg(long, default_value = "{}")]
+        options: String,
+        /// The first message.
+        #[arg(long, allow_hyphen_values = true)]
+        prompt: Option<String>,
+        /// More arguments for `codex app-server`.
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
     /// Report an agent's state to the terminal it runs in, from its hooks:
     /// `state busy|idle|waiting`, `prompt`, `notification` and `status`
     /// (Claude Code, which sends JSON on stdin), `codex` (Codex's notify
@@ -109,6 +128,29 @@ async fn run(cli: Cli) -> Result<()> {
                 program,
             })
             .await
+        }
+        Command::CodexChat {
+            codex,
+            project,
+            options,
+            prompt,
+            args,
+        } => {
+            let options: sandhill_proto::AgentOptions =
+                serde_json::from_str(&options).context("--options is not valid")?;
+            let instructions = sandhill_daemon::agents::instructions(&options);
+            let code =
+                sandhill_daemon::terminal::codex::run(sandhill_daemon::terminal::codex::Options {
+                    codex,
+                    args,
+                    daemon: socket,
+                    project,
+                    options,
+                    prompt,
+                    instructions,
+                })
+                .await?;
+            std::process::exit(code)
         }
         Command::TerminalEvent { args } => {
             // A hook must never get in the agent's way: report what can be

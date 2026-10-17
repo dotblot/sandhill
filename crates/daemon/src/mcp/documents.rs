@@ -59,12 +59,25 @@ impl Tools {
     /// UserPromptSubmit hook): where the user is, so "this cell" and "the
     /// selection" mean something. `None` when Sandhill doesn't know.
     pub async fn prompt_context(&self) -> Option<String> {
+        self.prompt_place().await.map(|(text, _)| text)
+    }
+
+    /// The prompt's context, and the place it names for the conversation:
+    /// `{file, cell?, line?}`, the file as shown to the agent.
+    pub async fn prompt_place(&self) -> Option<(String, Value)> {
         let client = self.client().await.ok()?;
         let focus = self.focus(&client).await?;
         if now_ms() - focus.ts_ms > STALE_FOCUS_MS {
             return None;
         }
         let file = focus.file.as_deref()?;
+        let mut place = json!({"file": self.shown(file)});
+        if let Some(cell) = &focus.cell {
+            place["cell"] = json!(cell);
+        }
+        if let Some(line) = focus.line {
+            place["line"] = json!(line);
+        }
         let mut text = format!("Sandhill: the user is in {}", self.shown(file));
         if let Some(cell) = &focus.cell {
             text.push_str(&format!(", cell {cell}"));
@@ -79,7 +92,7 @@ impl Tools {
                 text::shorten(selection, MAX_PROMPT_SELECTION)
             ));
         }
-        Some(text)
+        Some((text, place))
     }
 
     pub(super) async fn add_cell(&self, edit: Edit<'_>) -> Result<Vec<Value>> {

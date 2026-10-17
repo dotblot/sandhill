@@ -30,9 +30,9 @@ import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
 import { reportPlace, serveAgentEdits } from "./agentEdits";
-import { AgentsPane, ProviderIcon } from "./AgentsPane";
+import { AgentsPane } from "./AgentsPane";
 import { ask, Dialogs, notify } from "./dialogs";
-import { FileIcon, Icon, type IconName, LangIcon } from "./icons";
+import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
 import { KernelBar, kernelState } from "./KernelBar";
 import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
@@ -592,7 +592,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               active={active()}
               selected={agentTab()}
               onSelect={selectAgent}
-              onOpen={(path) => void open(path)}
+              onOpen={open}
               width={agentsWidth()}
               min={isMin("agents")}
               max={maximized() === "agents"}

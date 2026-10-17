@@ -1,6 +1,8 @@
 // Wire types shared with the daemon. The Rust definitions in
 // crates/proto/src/lib.rs are the source of truth.
 
+import type { ChatEntry } from "../model/chat";
+
 export const EVENT_RUN_STARTED = "sandhill.run_started";
 export const EVENT_RUN_FINISHED = "sandhill.run_finished";
 export const EVENT_SESSION_ENDED = "sandhill.session_ended";
@@ -198,14 +200,34 @@ export interface AgentOptions {
   documents?: string[];
 }
 
-/** What an agent reports through its hooks and status line. */
+/** What an agent reports through its hooks and status line, or (Codex) what Sandhill's bridge to it reports. */
 export interface AgentReport {
   state?: "busy" | "waiting" | "idle";
   message?: string;
   /** Claude Code's permission mode, from its hooks: `default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`... */
   mode?: string;
+  /** Codex: the mode it is in, as `AgentOptions.permission` names it. */
+  permission?: string;
   status?: AgentStatus;
+  /** Codex: the models it offers. */
+  models?: AgentModel[];
+  /** Codex: the account it is signed in with, null when it isn't. */
+  account?: { type?: string; email?: string; plan?: string } | null;
+  /** Codex: it needs signing in to OpenAI to work (not when it uses another provider). */
+  auth_required?: boolean;
+  /** Codex: a sign-in in progress: where to go, the code to enter there, or what went wrong. */
+  login?: { url?: string; code?: string; error?: string } | null;
   ts_ms?: number;
+}
+
+/** A model an agent offers, with its thinking efforts. */
+export interface AgentModel {
+  id: string;
+  label: string;
+  efforts?: string[];
+  /** Its default effort. */
+  effort?: string;
+  default?: boolean;
 }
 
 /** Claude Code's status line, as the daemon keeps it. */
@@ -283,4 +305,6 @@ export interface TerminalEvent {
   data?: string;
   agent?: AgentReport;
   exit?: TerminalExit;
+  /** An entry of the agent's conversation (see `model/chat.ts`). */
+  chat?: ChatEntry;
 }

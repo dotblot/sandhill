@@ -138,6 +138,15 @@ export class TermView {
     this.term.focus();
   }
 
+  /** The last `rows` lines on screen, as text. */
+  screenText(rows = 8): string {
+    const buffer = this.term.buffer.active;
+    const end = buffer.baseY + this.term.rows;
+    const lines: string[] = [];
+    for (let i = Math.max(0, end - rows); i < end; i++) lines.push(buffer.getLine(i)?.translateToString(true) ?? "");
+    return lines.join("\n");
+  }
+
   /** Types `text` as one paste, as if dropped on the terminal. */
   paste(text: string) {
     this.term.paste(text);

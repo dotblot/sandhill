@@ -490,6 +490,7 @@ async fn agents_write_into_the_document_their_conversation_is_about() {
                 documents: vec!["qc.ipynb".into()],
                 ..AgentOptions::default()
             },
+            prompt: None,
         })
         .await
         .unwrap();
@@ -519,6 +520,54 @@ async fn agents_write_into_the_document_their_conversation_is_about() {
     for session in client.list_sessions().await.unwrap() {
         client.shutdown(&session.id).await.unwrap();
     }
+}
+
+/// When the user is in no cell, the window is asked to add the cell after
+/// the last one: with no `after`, rather than a null one.
+#[tokio::test]
+async fn a_window_adds_after_the_last_cell_when_the_user_is_in_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let doc = project.join("analysis.qmd");
+    std::fs::write(&doc, "---\ntitle: x\n---\n\n```{r}\nx <- 1\n```\n").unwrap();
+    let doc = doc.to_string_lossy().into_owned();
+    let mut window = daemon.client().await;
+    let focus = Focus {
+        file: Some(doc.clone()),
+        line: Some(1),
+        open: vec![doc.clone()],
+        ..Focus::default()
+    };
+    window
+        .set_focus(&project.to_string_lossy(), focus)
+        .await
+        .unwrap();
+    let handled = tokio::spawn(async move {
+        let request = window.next_request().await.unwrap();
+        window
+            .answer(
+                request.id,
+                Ok(json!({"cell_id": "chunk-2", "language": "r"})),
+            )
+            .await
+            .unwrap();
+        request
+    });
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    );
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"file": "analysis.qmd", "code": "y <- 2", "run": false}),
+    )
+    .await;
+    let request = handled.await.unwrap();
+    assert!(request.params.get("after").is_none(), "{}", request.params);
+    assert!(added.contains("after the last cell"), "{added}");
 }
 
 /// When a window has the document open, the window adds the cell and runs

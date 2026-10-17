@@ -1,9 +1,10 @@
 // The terminals of a project window: agents (Claude Code, Codex) and shells
 // that the daemon keeps running on its machine. The window follows each one
-// from the moment it opens: output goes to the terminal's view, and agents'
-// reports (busy, waiting for you, model and context) update `list`.
+// from the moment it opens: output goes to the terminal's view, agents'
+// reports (busy, waiting for you, model and context) update `list`, and an
+// agent's conversation, as its hooks report it, goes to `chat`.
 
-import { createSignal, type Setter } from "solid-js";
+import { type Accessor, createSignal, type Setter } from "solid-js";
 import type { Backend } from "../backend";
 import {
   type AgentInfo,
@@ -13,6 +14,8 @@ import {
   type TerminalInfo,
   type TerminalSubscribed,
 } from "../backend/types";
+import { SUBMIT_DELAY_MS } from "./agents";
+import type { Answer, ChatEntry } from "./chat";
 
 /** Output kept for a terminal no view shows yet. Older output is dropped. */
 const MAX_PENDING = 4 << 20;
@@ -32,11 +35,23 @@ interface Follow {
   subscribed: boolean;
 }
 
+/** An agent's conversation so far. */
+interface Conversation {
+  entries: Accessor<ChatEntry[]>;
+  set: Setter<ChatEntry[]>;
+  /** The next entry's number: where a replay starts. */
+  next: number;
+  /** Entries received but not shown yet: a replay comes as many events. */
+  pending: ChatEntry[];
+  flush?: ReturnType<typeof setTimeout>;
+}
+
 export class TerminalStore {
   /** This project's terminals, oldest first. */
   readonly list: () => TerminalInfo[];
   private setList: Setter<TerminalInfo[]>;
   private follows = new Map<string, Follow>();
+  private chats = new Map<string, Conversation>();
 
   constructor(
     private backend: Backend,
@@ -74,6 +89,7 @@ export class TerminalStore {
     this.setList(mine);
     const ids = new Set(mine.map((t) => t.id));
     for (const id of this.follows.keys()) if (!ids.has(id)) this.follows.delete(id);
+    for (const id of this.chats.keys()) if (!ids.has(id)) this.forgetChat(id);
     for (const terminal of mine) {
       const follow = this.follows.get(terminal.id);
       if (follow) follow.subscribed = false;
@@ -85,13 +101,15 @@ export class TerminalStore {
     return this.backend.call<AgentInfo[]>("list_agents");
   }
 
-  async start(kind: string, options: AgentOptions, size?: { cols: number; rows: number }): Promise<TerminalInfo> {
+  /** Starts an agent or a shell; `prompt` is an agent's first message. */
+  async start(kind: string, options: AgentOptions, size?: { cols: number; rows: number }, prompt?: string): Promise<TerminalInfo> {
     const info = await this.backend.call<TerminalInfo>("start_terminal", {
       kind,
       project: this.project,
       cols: size?.cols,
       rows: size?.rows,
       options,
+      prompt,
     });
     // Nothing has been missed: its output starts at 0.
     if (!this.follows.has(info.id)) this.follows.set(info.id, newFollow(0));
@@ -120,6 +138,37 @@ export class TerminalStore {
     return this.backend.call("terminal_input", { terminal: id, data });
   }
 
+  /** An agent's conversation, as its hooks report it; empty for one that keeps none. */
+  chat(id: string): ChatEntry[] {
+    return this.conversation(id).entries();
+  }
+
+  /** Answers what the agent asked (an `ask` entry). */
+  answer(id: string, ask: string, answer: Answer): Promise<void> {
+    return this.backend.call("answer_terminal", { terminal: id, id: ask, answer });
+  }
+
+  /**
+   * Tells an agent whose chat Sandhill drives (Codex) what the user did:
+   * `{kind: "say", text}`, `{kind: "interrupt"}`, `{kind: "set", model?, effort?, permission?}`,
+   * `{kind: "compact"}` or `{kind: "login", method}`.
+   */
+  tell(id: string, command: Record<string, unknown>): Promise<void> {
+    return this.backend.call("tell_terminal", { terminal: id, command });
+  }
+
+  /** Sends a message as if typed: one paste, so line breaks don't send it early, then Enter. */
+  async say(id: string, text: string) {
+    await this.input(id, `\x1b[200~${text.replace(/\r?\n/g, "\r")}\x1b[201~`);
+    await new Promise((done) => setTimeout(done, SUBMIT_DELAY_MS));
+    await this.input(id, "\r");
+  }
+
+  /** Stops what the agent is doing, as Esc does. */
+  interrupt(id: string): Promise<void> {
+    return this.input(id, "\x1b");
+  }
+
   resize(id: string, cols: number, rows: number): Promise<void> {
     return this.backend.call("resize_terminal", { terminal: id, cols, rows });
   }
@@ -128,6 +177,7 @@ export class TerminalStore {
   async close(id: string) {
     await this.backend.call("close_terminal", { terminal: id });
     this.follows.delete(id);
+    this.forgetChat(id);
     this.setList((list) => list.filter((t) => t.id !== id));
   }
 
@@ -142,7 +192,10 @@ export class TerminalStore {
     try {
       // From where this window got to; the first time, the recent output.
       const from = follow.end >= 0 ? follow.end : undefined;
-      const reply = await this.backend.call<TerminalSubscribed>("subscribe_terminal", { terminal: id, from });
+      // An agent's conversation too, from the entry this window got to.
+      const agent = this.get(id)?.kind !== TERMINAL_SHELL;
+      const chat_from = agent ? this.conversation(id).next : undefined;
+      const reply = await this.backend.call<TerminalSubscribed>("subscribe_terminal", { terminal: id, from, chat_from });
       // Output we had is gone from the daemon's log: start over from what it kept.
       if (follow.end >= 0 && reply.from > follow.end) {
         follow.end = reply.from;
@@ -170,9 +223,39 @@ export class TerminalStore {
         this.deliver(follow, bytes);
       }
     }
+    if (event.chat) this.addChat(event.terminal, event.chat);
     // Each report is the agent's whole state.
     if (event.agent) this.update(event.terminal, (t) => ({ ...t, agent: event.agent }));
     if (event.exit) this.update(event.terminal, (t) => ({ ...t, running: false, exit: event.exit }));
+  }
+
+  private conversation(id: string): Conversation {
+    let chat = this.chats.get(id);
+    if (!chat) {
+      const [entries, set] = createSignal<ChatEntry[]>([]);
+      chat = { entries, set, next: 0, pending: [] };
+      this.chats.set(id, chat);
+    }
+    return chat;
+  }
+
+  private addChat(id: string, entry: ChatEntry) {
+    const chat = this.conversation(id);
+    // Seen before, as when a replay overlaps.
+    if (entry.seq < chat.next) return;
+    chat.next = entry.seq + 1;
+    chat.pending.push(entry);
+    chat.flush ??= setTimeout(() => {
+      chat.flush = undefined;
+      const added = chat.pending.splice(0);
+      chat.set((entries) => [...entries, ...added]);
+    });
+  }
+
+  private forgetChat(id: string) {
+    const chat = this.chats.get(id);
+    if (chat?.flush) clearTimeout(chat.flush);
+    this.chats.delete(id);
   }
 
   private deliver(follow: Follow, bytes: Uint8Array) {

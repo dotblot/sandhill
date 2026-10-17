@@ -43,6 +43,8 @@ export class QmdDoc extends Doc {
   readonly kind = "qmd";
   private view?: EditorView;
   private slots = new Map<string, Slot>();
+  /** Counts outputs kept aside by `rekey`. */
+  private asides = 0;
   private layoutField: StateField<Layout>;
   private langs: Accessor<string[]>;
   private setLangs: Setter<string[]>;
@@ -279,7 +281,7 @@ export class QmdDoc extends Doc {
     chunks.forEach((c, i) => {
       if (result[i] || c.label) return;
       for (const slot of this.slots.values()) {
-        if (!taken.has(slot) && /^chunk-\d+$/.test(slot.key) && sameCode(codeOf(slot), c.code)) {
+        if (!taken.has(slot) && /^chunk-\d+(#\d+)?$/.test(slot.key) && sameCode(codeOf(slot), c.code)) {
           take(i, slot);
           break;
         }
@@ -289,11 +291,33 @@ export class QmdDoc extends Doc {
     return result;
   }
 
+  /**
+   * Files each shown output under its chunk's current id. Unlabeled chunks are
+   * numbered in order, so a chunk added above others gives them new ids; their
+   * outputs follow them, and the new chunk's id must not find one of theirs.
+   */
+  private rekey(chunks: Chunk[], slots: (Slot | undefined)[]) {
+    const moved = slots.flatMap((slot, i) => (slot && slot.key !== chunks[i]!.cellId ? [{ slot, id: chunks[i]!.cellId }] : []));
+    for (const { slot } of moved) if (this.slots.get(slot.key) === slot) this.slots.delete(slot.key);
+    for (const { slot, id } of moved) {
+      // Whatever had this id is shown nowhere now; it is kept aside, so its
+      // chunk finds it again by its code (after an undo, say).
+      const old = this.slots.get(id);
+      if (old && old !== slot && !slots.includes(old)) {
+        old.key = `${id}#${++this.asides}`;
+        this.slots.set(old.key, old);
+      }
+      slot.key = id;
+      this.slots.set(id, slot);
+    }
+  }
+
   private createLayoutField(): StateField<Layout> {
     const build = (state: EditorState): Layout => {
       const text = state.doc.toString();
       const chunks = parseChunks(text);
       const slots = this.assign(chunks);
+      this.rekey(chunks, slots);
       const ranges = [];
       for (const n of proseLines(text)) {
         if (n <= state.doc.lines) ranges.push(Decoration.line({ class: "cm-prose" }).range(state.doc.line(n).from));
