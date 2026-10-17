@@ -23,6 +23,19 @@ export interface PingReply {
   daemon_version: string;
   home: string;
   hostname: string;
+  /** The user the daemon runs as. */
+  user?: string;
+  /** When the daemon started, in ms since the epoch; 0 from older daemons. */
+  started_ms?: number;
+  /** "app" (attach --start), "launchd", "systemd", or empty when started by hand. Missing from older daemons. */
+  started_by?: string;
+}
+
+/** The end of the daemon's log. */
+export interface LogTail {
+  path: string;
+  text: string;
+  size: number;
 }
 
 export interface KernelspecInfo {

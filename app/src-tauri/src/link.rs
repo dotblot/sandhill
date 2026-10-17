@@ -8,6 +8,7 @@
 //! go only to the windows using it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,6 +37,9 @@ pub const BLOB_SCHEME: &str = "sandhill-blob";
 
 const RETRY_MIN: Duration = Duration::from_millis(500);
 const RETRY_MAX: Duration = Duration::from_secs(5);
+/// Tries that may fail while a link still shows as reconnecting rather
+/// than disconnected.
+const RECONNECTING_TRIES: u32 = 3;
 /// Decoded blobs kept in memory per host, so reopening a document doesn't
 /// fetch its plots again (that matters over ssh). The web view keeps its own
 /// copy of every image it shows, so this only needs to cover recent ones.
@@ -58,6 +62,9 @@ pub struct LinkState {
     /// What a slow connect is doing, such as installing sandhilld on a server.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Disconnected on request: it waits to be connected again.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stopped: bool,
 }
 
 /// Every host's connection, and which windows use which host.
@@ -102,6 +109,26 @@ impl Links {
             })
             .clone();
         Ok(link.state())
+    }
+
+    /// Drops `host`'s connection, if any, and connects again at once.
+    fn reconnect<R: Runtime>(&self, app: &AppHandle<R>, host: &str) -> Result<(), String> {
+        let target = Target::parse(host).map_err(|err| err.to_string())?;
+        let mut hosts = self.hosts.lock().unwrap();
+        if let Some(old) = hosts.remove(host) {
+            old.stop();
+        }
+        let link = Link::start(app.clone(), host.to_string(), target, self.options.clone());
+        hosts.insert(host.to_string(), link);
+        Ok(())
+    }
+
+    /// Drops `host`'s connection until `reconnect`.
+    fn disconnect<R: Runtime>(&self, app: &AppHandle<R>, host: &str) {
+        if let Some(link) = self.link(host) {
+            link.stop();
+            link.set_state(app, Status::Disconnected, None, None);
+        }
     }
 
     fn link(&self, host: &str) -> Option<Arc<Link>> {
@@ -151,6 +178,7 @@ pub struct Link {
     state: Mutex<LinkState>,
     blobs: Mutex<BlobCache>,
     task: Mutex<Option<JoinHandle<()>>>,
+    stopped: AtomicBool,
 }
 
 impl Link {
@@ -171,14 +199,17 @@ impl Link {
                 status: Status::Connecting,
                 error: None,
                 detail: None,
+                stopped: false,
             }),
             blobs: Mutex::default(),
             task: Mutex::new(None),
+            stopped: AtomicBool::new(false),
         });
         let task = tauri::async_runtime::spawn({
             let link = link.clone();
             async move {
                 let mut delay = RETRY_MIN;
+                let mut failures = 0;
                 let progress = |note: &str| {
                     link.set_state(&app, Status::Connecting, None, Some(note.to_string()));
                 };
@@ -186,19 +217,26 @@ impl Link {
                     match sandhill_link::connect(&target, &options, &progress).await {
                         Ok(connection) => {
                             delay = RETRY_MIN;
+                            failures = 0;
                             link.serve(&app, connection).await;
                             tracing::warn!("lost the connection to sandhilld on {}", link.host);
                             link.set_state(
                                 &app,
-                                Status::Disconnected,
+                                Status::Connecting,
                                 Some("lost the connection to sandhilld".into()),
                                 None,
                             );
                         }
                         Err(err) => {
                             tracing::warn!("cannot reach sandhilld on {}: {err:#}", link.host);
-                            let error = Some(err.to_string());
-                            link.set_state(&app, Status::Disconnected, error, None);
+                            // Reconnecting for the first few tries, then disconnected.
+                            failures += 1;
+                            let status = if failures < RECONNECTING_TRIES {
+                                Status::Connecting
+                            } else {
+                                Status::Disconnected
+                            };
+                            link.set_state(&app, status, Some(err.to_string()), None);
                         }
                     }
                     tokio::time::sleep(delay).await;
@@ -211,6 +249,7 @@ impl Link {
     }
 
     fn stop(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
         if let Some(task) = self.task.lock().unwrap().take() {
             // Dropping the connection kills its `attach` process.
             task.abort();
@@ -238,6 +277,7 @@ impl Link {
             status,
             error,
             detail,
+            stopped: self.stopped.load(Ordering::Relaxed),
         };
         *self.state.lock().unwrap() = state.clone();
         app.state::<Arc<Links>>().emit(app, &self.host, LINK, state);
@@ -293,6 +333,23 @@ pub fn use_host<R: Runtime>(
     links.use_host(&app, window.label(), &host)
 }
 
+/// Drops the connection to `host` and connects again, as the status bar's
+/// Reconnect and Connect do.
+#[tauri::command]
+pub fn reconnect_host<R: Runtime>(
+    app: AppHandle<R>,
+    links: State<'_, Arc<Links>>,
+    host: String,
+) -> Result<(), String> {
+    links.reconnect(&app, &host)
+}
+
+/// Drops the connection to `host` until `reconnect_host`.
+#[tauri::command]
+pub fn disconnect_host<R: Runtime>(app: AppHandle<R>, links: State<'_, Arc<Links>>, host: String) {
+    links.disconnect(&app, &host);
+}
+
 /// Sends one protocol request to `host`. `method` and `params` are exactly
 /// what the daemon takes on the wire (see docs/protocol.md).
 #[tauri::command]
@@ -339,7 +396,6 @@ fn text_size(value: &Value) -> usize {
 /// Releases freed memory once the reply has been handed to the web view
 /// and its copies dropped. Calls close together share one release.
 fn release_soon() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     static PENDING: AtomicBool = AtomicBool::new(false);
     if PENDING.swap(true, Ordering::AcqRel) {
         return;

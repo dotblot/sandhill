@@ -29,6 +29,7 @@ impl TestDaemon {
         let options = DaemonOptions {
             executable: env!("CARGO_BIN_EXE_sandhilld").into(),
             socket: socket.clone(),
+            started_by: String::new(),
         };
         let daemon = Daemon::open_with(StateDir::new(state), options)
             .await

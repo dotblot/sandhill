@@ -166,6 +166,16 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<String>,
     },
+    /// The end of the daemon's log, at most `bytes` of it (64 KiB without).
+    /// Returns [`LogTail`].
+    ReadLog {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+    },
+    /// Stops the daemon once it has answered. Kernels and terminals keep
+    /// running, and the next `attach --start` starts a daemon that
+    /// reattaches to them. Returns `null`.
+    StopDaemon,
     /// Modification times of files, to notice changes made outside the app
     /// (by an agent, say). Returns `Vec<FileStat>` in the same order.
     StatFiles {
@@ -428,6 +438,27 @@ pub struct PingReply {
     /// a daemon an older app left running. Empty from older daemons.
     #[serde(default)]
     pub build: String,
+    /// The user the daemon runs as. Empty from older daemons.
+    #[serde(default)]
+    pub user: String,
+    /// When the daemon started, in milliseconds since the Unix epoch; 0
+    /// from older daemons.
+    #[serde(default)]
+    pub started_ms: i64,
+    /// What started the daemon: `app` (`attach --start`), `launchd` or
+    /// `systemd`. Empty when it was started by hand, and from older daemons.
+    #[serde(default)]
+    pub started_by: String,
+}
+
+/// The end of the daemon's log file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LogTail {
+    pub path: String,
+    /// Whole lines from the end of the file.
+    pub text: String,
+    /// The file's size in bytes.
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -25,18 +25,17 @@ import { ScriptDoc } from "../docs/scriptDoc";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
-import { BUILD, buildText } from "../build";
 import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { pickKernel, type Workspace } from "../model/workspace";
 import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane } from "./AgentsPane";
+import { ConnectionItem, connState, HostKernelStates } from "./Connection";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
 import { KernelBar, kernelState } from "./KernelBar";
 import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
-import { linkText } from "./linkText";
 import { type Command, Palette } from "./Palette";
 import { type Pane, PaneButtons } from "./PaneButtons";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
@@ -72,6 +71,17 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [active, setActive] = createSignal<Doc>();
   const [treeKey, setTreeKey] = createSignal(0);
   const hostLabel = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
+  /** The machine the status bar shows: the one picked in the left pane. */
+  const [statusHost, setStatusHost] = createSignal(ws);
+  // Another machine's sessions aren't followed live, so ask for them now and then.
+  createEffect(() => {
+    const other = statusHost();
+    if (other === ws) return;
+    const timer = setInterval(() => {
+      if (other.link().status === "connected") other.refreshSessions().catch(() => {});
+    }, 5000);
+    onCleanup(() => clearInterval(timer));
+  });
   const opening = new Map<string, Promise<Doc | undefined>>();
   const hosts = new Map<Doc, HTMLElement>();
   let docArea!: HTMLDivElement;
@@ -566,6 +576,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
             onCreate={(kind) => void createFile(kind)}
             usedBy={usedBy}
             marker={marker}
+            onHost={setStatusHost}
           />
           <div class="split v" title="Drag to resize" onPointerDown={resizeLeft} />
         </Show>
@@ -720,15 +731,14 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
           </Show>
         </section>
       </div>
-      <footer class="status-bar" data-link={ws.link().status}>
-        <span
-          class="status-item"
-          title={`${linkText(ws)}${ws.host() ? ` · sandhilld ${ws.host()!.daemon_version}` : ""} · Sandhill ${buildText()}`}
-        >
-          <span class="link-dot" />
-          {ws.link().status === "connected" && ws.host() ? `${hostLabel} · built ${BUILD.when}` : linkText(ws)}
-        </span>
-        <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
+      <footer class="status-bar" data-link={statusHost().link().status}>
+        <ConnectionItem ws={statusHost()} />
+        {/* Kernel states, hidden while the machine is disconnected. */}
+        <Show when={connState(statusHost()) !== "off"}>
+          <Show when={statusHost() === ws} fallback={<HostKernelStates ws={statusHost()} />}>
+            <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
+          </Show>
+        </Show>
         <span class="spacer" />
         <AgentStatus store={terminals} onShow={showAgent} />
         <span class="status-item">{active()?.cursor() ?? ""}</span>

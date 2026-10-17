@@ -14,7 +14,7 @@ use sandhill_proto::{
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{Notify, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::blobs::BlobStore;
@@ -25,6 +25,8 @@ use crate::windows::Windows;
 use crate::{cells, files, memory, notebook, outputs, projects, sidecar, windows};
 
 const REPLAY_PAGE: u32 = 500;
+/// How much of its log `read_log` returns unless asked for another amount.
+const LOG_TAIL: u64 = 64 * 1024;
 const HISTORY_LIMIT: u32 = 5000;
 
 pub struct Daemon {
@@ -35,6 +37,11 @@ pub struct Daemon {
     windows: Windows,
     next_connection: AtomicU64,
     options: DaemonOptions,
+    /// Milliseconds since the Unix epoch.
+    started_ms: i64,
+    user: String,
+    /// Ends `serve`, for `stop_daemon`.
+    stop: Arc<Notify>,
 }
 
 /// What the daemon needs to know about how it runs.
@@ -45,6 +52,9 @@ pub struct DaemonOptions {
     pub executable: PathBuf,
     /// The socket clients reach it on, which agents' MCP servers use.
     pub socket: PathBuf,
+    /// What started it, as `ping` reports: `app`, `launchd`, `systemd` or
+    /// empty.
+    pub started_by: String,
 }
 
 impl DaemonOptions {
@@ -52,6 +62,7 @@ impl DaemonOptions {
         DaemonOptions {
             executable: crate::version::executable(),
             socket: state.socket_path(),
+            started_by: String::new(),
         }
     }
 }
@@ -80,6 +91,9 @@ impl Daemon {
             windows: Windows::default(),
             next_connection: AtomicU64::new(1),
             options,
+            started_ms: crate::journal::now_ms(),
+            user: user_name(),
+            stop: Arc::default(),
         });
         for record in journal.sessions()? {
             if record.status == SessionStatus::Ended {
@@ -109,9 +123,13 @@ impl Daemon {
         }
     }
 
+    /// Serves clients until `stop_daemon` asks it to stop.
     pub async fn serve(self: Arc<Self>, listener: UnixListener) -> std::io::Result<()> {
         loop {
-            let (stream, _) = listener.accept().await?;
+            let (stream, _) = tokio::select! {
+                accepted = listener.accept() => accepted?,
+                _ = self.stop.notified() => return Ok(()),
+            };
             let (reader, writer) = stream.into_split();
             tokio::spawn(self.clone().serve_connection(reader, writer));
         }
@@ -239,6 +257,9 @@ impl Daemon {
                 home: std::env::var("HOME").unwrap_or_default(),
                 hostname: hostname(),
                 build: crate::build_id().to_string(),
+                user: self.user.clone(),
+                started_ms: self.started_ms,
+                started_by: self.options.started_by.clone(),
             })?,
             Call::ListKernelspecs => serde_json::to_value(crate::kernel::list_kernelspecs().await)?,
             Call::StartSession {
@@ -405,6 +426,30 @@ impl Daemon {
                     })
                     .await?,
                 )?
+            }
+            Call::ReadLog { bytes } => {
+                let path = self.state.log_path();
+                let tail = blocking(move || crate::logfile::tail(&path, bytes.unwrap_or(LOG_TAIL)))
+                    .await
+                    .map_err(|err| match self.options.started_by.as_str() {
+                        // Then the service manager keeps the log.
+                        "launchd" | "systemd" => anyhow!(
+                            "{err:#}; sandhilld runs under {}, which keeps its log",
+                            self.options.started_by
+                        ),
+                        _ => err,
+                    })?;
+                serde_json::to_value(tail)?
+            }
+            Call::StopDaemon => {
+                tracing::info!("stopping, as a client asked");
+                // Answer first: the reply goes out before the daemon stops.
+                let stop = self.stop.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    stop.notify_one();
+                });
+                Value::Null
             }
             Call::StatFiles { paths } => {
                 serde_json::to_value(blocking(move || Ok(files::stat(&paths))).await?)?
@@ -750,6 +795,30 @@ fn hostname() -> String {
     }
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     String::from_utf8_lossy(&buf[..end]).into_owned()
+}
+
+/// The user the daemon runs as, from the environment or the password
+/// database.
+fn user_name() -> String {
+    if let Some(user) = ["USER", "LOGNAME"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|user| !user.is_empty())
+    {
+        return user;
+    }
+    // SAFETY: getpwuid returns null or a pointer to a record that stays
+    // valid until the next call; the name is copied out at once. This runs
+    // once, as the daemon opens.
+    unsafe {
+        let record = libc::getpwuid(libc::getuid());
+        if record.is_null() || (*record).pw_name.is_null() {
+            return String::new();
+        }
+        std::ffi::CStr::from_ptr((*record).pw_name)
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 fn response(id: u64, result: Result<Value>) -> ServerMessage {

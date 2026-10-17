@@ -30,7 +30,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run the daemon in the foreground (systemd and launchd use this).
-    Serve,
+    Serve {
+        /// What started it, when it can't tell: `attach --start` says `app`.
+        #[arg(long, hide = true)]
+        started_by: Option<String>,
+    },
     /// Bridge stdin/stdout to the daemon's socket. The Mac app runs
     /// `ssh host sandhilld attach --start` to reach a remote daemon.
     Attach {
@@ -94,7 +98,9 @@ fn main() -> Result<()> {
     // The daemon serves many clients at once; the helpers it and the agents
     // start (one per terminal, one per hook call) need a single thread.
     let runtime = match cli.command {
-        Command::Serve | Command::Attach { .. } => tokio::runtime::Builder::new_multi_thread(),
+        Command::Serve { .. } | Command::Attach { .. } => {
+            tokio::runtime::Builder::new_multi_thread()
+        }
         _ => tokio::runtime::Builder::new_current_thread(),
     }
     .enable_all()
@@ -110,7 +116,10 @@ async fn run(cli: Cli) -> Result<()> {
         .unwrap_or_else(StateDir::default_location);
     let socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
     match cli.command {
-        Command::Serve => serve(state, socket).await,
+        Command::Serve { ref started_by } => {
+            let started_by = started_by.clone().unwrap_or_else(service_manager);
+            serve(state, socket, started_by).await
+        }
         Command::Attach { start } => attach(&cli, state, socket, start).await,
         Command::Mcp { ref project } => sandhill_daemon::mcp::serve(socket, project.clone()).await,
         Command::TerminalHost {
@@ -163,13 +172,29 @@ async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-async fn serve(state: StateDir, socket: PathBuf) -> Result<()> {
+/// `systemd` or `launchd` when one of them started the daemon, else empty.
+fn service_manager() -> String {
+    let var = |name: &str| std::env::var(name).unwrap_or_default();
+    if !var("INVOCATION_ID").is_empty() {
+        return "systemd".into();
+    }
+    // launchd names its jobs here; apps and shells get "application.…" or "0".
+    let job = var("XPC_SERVICE_NAME");
+    if !job.is_empty() && job != "0" && !job.starts_with("application.") {
+        return "launchd".into();
+    }
+    String::new()
+}
+
+async fn serve(state: StateDir, socket: PathBuf, started_by: String) -> Result<()> {
     sandhill_daemon::memory::configure();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with_writer(std::io::stderr)
+        // No colour codes in a log file.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
 
     state
@@ -192,6 +217,7 @@ async fn serve(state: StateDir, socket: PathBuf) -> Result<()> {
     let options = DaemonOptions {
         // Agents' MCP servers connect to it from their own folders.
         socket: std::path::absolute(&socket).unwrap_or_else(|_| socket.clone()),
+        started_by,
         ..DaemonOptions::for_state(&state)
     };
     let daemon = Daemon::open_with(state, options).await?;
@@ -303,7 +329,7 @@ fn start_detached(cli: &Cli, state: &StateDir) -> Result<()> {
         command.arg("--socket").arg(socket);
     }
     command
-        .arg("serve")
+        .args(["serve", "--started-by", "app"])
         .stdin(std::process::Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)

@@ -5,6 +5,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use sandhill_proto::client::Client;
+use sandhill_proto::{Call, LogTail, SessionInfo, SessionStatus};
 use tokio::net::UnixStream;
 use tokio::process::Command;
 
@@ -125,4 +126,70 @@ async fn attach_start_replaces_a_daemon_of_another_build() {
 
     // SAFETY: plain syscall on the daemon this test started.
     unsafe { libc::kill(new_pid, libc::SIGTERM) };
+}
+
+#[tokio::test]
+async fn a_daemon_says_how_it_runs_shows_its_log_and_stops_when_asked() {
+    let state = tempfile::tempdir().unwrap();
+    let socket = state.path().join("sandhilld.sock");
+    let attach = || {
+        let mut attach = Command::new(DAEMON);
+        attach
+            .arg("--state-dir")
+            .arg(state.path())
+            .args(["attach", "--start"]);
+        attach
+    };
+    let (client, _bridge) = Client::connect_command(attach()).await.unwrap();
+    let reply = client.ping().await.unwrap();
+    assert_eq!(reply.started_by, "app");
+    assert!(!reply.user.is_empty());
+    let now = sandhill_daemon::journal::now_ms();
+    assert!(
+        reply.started_ms > now - 60_000 && reply.started_ms <= now,
+        "{reply:?}"
+    );
+    let log: LogTail = client.call(Call::ReadLog { bytes: None }).await.unwrap();
+    assert!(log.text.contains("sandhilld listening on"), "{log:?}");
+
+    // A kernel keeps running while the daemon restarts.
+    let kernel = sandhill_daemon::kernel::find_kernelspec("python3")
+        .await
+        .is_ok();
+    let session = if kernel {
+        let info: SessionInfo = client
+            .call(Call::StartSession {
+                kernel: "python3".into(),
+                cwd: Some(state.path().display().to_string()),
+                project: None,
+            })
+            .await
+            .unwrap();
+        Some(info.id)
+    } else {
+        eprintln!("skipping the kernel part: Jupyter kernel \"python3\" is not installed");
+        None
+    };
+    let old_pid = daemon_pid(&socket).await;
+    let _: serde_json::Value = client.call(Call::StopDaemon).await.unwrap();
+    let mut stopped = false;
+    for _ in 0..100 {
+        if UnixStream::connect(&socket).await.is_err() {
+            stopped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(stopped, "the daemon kept running");
+
+    let (client, _bridge) = Client::connect_command(attach()).await.unwrap();
+    client.ping().await.unwrap();
+    assert_ne!(daemon_pid(&socket).await, old_pid);
+    if let Some(session) = session {
+        let sessions: Vec<SessionInfo> = client.call(Call::ListSessions).await.unwrap();
+        let info = sessions.iter().find(|s| s.id == session).unwrap();
+        assert_eq!(info.status, SessionStatus::Running, "{info:?}");
+        let _: serde_json::Value = client.call(Call::Shutdown { session }).await.unwrap();
+    }
+    let _: serde_json::Value = client.call(Call::StopDaemon).await.unwrap();
 }

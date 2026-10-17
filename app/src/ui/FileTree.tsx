@@ -17,12 +17,18 @@ interface TreeProps {
 export function FileTree(props: TreeProps & { root: string }) {
   return (
     <div class="tree" role="tree">
-      <Dir {...props} path={props.root} depth={0} open />
+      <Dir {...props} path={props.root} depth={0} lines={[]} />
     </div>
   );
 }
 
-function Dir(props: TreeProps & { path: string; depth: number; open?: boolean }) {
+/** Where a row sits: its depth, and for each level above it whether that level's guide line runs on past it. */
+interface Place {
+  depth: number;
+  lines: boolean[];
+}
+
+function Dir(props: TreeProps & Place & { path: string }) {
   const [entries] = createResource(
     () => [props.path, props.refreshKey] as const,
     async ([path]) =>
@@ -31,9 +37,10 @@ function Dir(props: TreeProps & { path: string; depth: number; open?: boolean })
   return (
     <Show when={!entries.error} fallback={<div class="tree-note" style={indent(props.depth)}>{String(entries.error)}</div>}>
       <For each={entries()}>
-        {(entry) => {
+        {(entry, i) => {
           const path = `${props.path.replace(/\/$/, "")}/${entry.name}`;
-          if (entry.kind === "dir") return <DirNode {...props} path={path} name={entry.name} />;
+          const last = () => i() === entries()!.length - 1;
+          if (entry.kind === "dir") return <DirNode {...props} path={path} name={entry.name} last={last()} />;
           const openable = !!docKind(entry.name);
           return (
             <div
@@ -43,6 +50,7 @@ function Dir(props: TreeProps & { path: string; depth: number; open?: boolean })
               title={openable ? path : "Only .qmd, .Rmd, .ipynb, .R and .py files open in Sandhill for now"}
               onClick={() => openable && props.onOpen(path)}
             >
+              <Guides depth={props.depth} lines={props.lines} last={last()} />
               <FileIcon name={entry.name} />
               <span class="tree-name">{entry.name}</span>
               <Show when={openable ? props.marker?.(path) : undefined} fallback={<Show when={!openable}><span class="tree-meta">{formatBytes(entry.size)}</span></Show>}>
@@ -60,11 +68,18 @@ function Dir(props: TreeProps & { path: string; depth: number; open?: boolean })
   );
 }
 
-function DirNode(props: TreeProps & { path: string; name: string; depth: number }) {
+function DirNode(props: TreeProps & Place & { path: string; name: string; last: boolean }) {
   const [open, setOpen] = createSignal(false);
   return (
     <>
-      <div class="tree-item dir" classList={{ open: open() }} style={indent(props.depth)} onClick={() => setOpen(!open())}>
+      <div
+        class="tree-item dir"
+        classList={{ open: open() }}
+        style={indent(props.depth)}
+        aria-expanded={open()}
+        onClick={() => setOpen(!open())}
+      >
+        <Guides depth={props.depth} lines={props.lines} last={props.last} />
         <span class="chev">
           <Icon name="chevronRight" small />
         </span>
@@ -72,9 +87,25 @@ function DirNode(props: TreeProps & { path: string; name: string; depth: number 
         <span class="tree-name">{props.name}</span>
       </div>
       <Show when={open()}>
-        <Dir {...props} depth={props.depth + 1} />
+        <Dir {...props} depth={props.depth + 1} lines={[...props.lines, !props.last]} />
       </Show>
     </>
+  );
+}
+
+/**
+ * A row's guide lines: one running down from each open folder above it whose
+ * children go on past this row, and an elbow from its own folder's line. Each
+ * line runs down from the centre of its folder's chevron.
+ */
+function Guides(props: Place & { last: boolean }) {
+  const x = (level: number) => ({ left: `${14 + 15 * level}px` });
+  return (
+    <Show when={props.depth > 0}>
+      <For each={props.lines.slice(1)}>{(on, level) => <Show when={on}>{<i class="tg" style={x(level())} />}</Show>}</For>
+      <i class="tg" classList={{ end: props.last }} style={x(props.depth - 1)} />
+      <i class="te" style={x(props.depth - 1)} />
+    </Show>
   );
 }
 

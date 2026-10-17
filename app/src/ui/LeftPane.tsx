@@ -2,14 +2,16 @@
 // running there and how busy the machine is. It sits directly on the window
 // background, under the toolbar.
 
-import { createResource, createSignal, For, type JSX, onCleanup, Show } from "solid-js";
+import { createEffect, createResource, createSignal, For, type JSX, on, onCleanup, Show } from "solid-js";
 import { LOCAL_HOST, type Shell } from "../backend";
 import type { ProjectInfo, SessionInfo, SystemStats } from "../backend/types";
-import { formatBytes, percentOf, sessionLabel, watchMachine } from "../model/machine";
+import { formatBytes, languageLabel, languageVersion, percentOf, sessionLabel, watchMachine } from "../model/machine";
 import { Workspace } from "../model/workspace";
+import { ConnIcon } from "./Connection";
 import { notify } from "./dialogs";
 import { FileTree } from "./FileTree";
 import { FileIcon, Icon, type IconName, LangIcon } from "./icons";
+import { SessionMenu } from "./KernelBar";
 import { linkText } from "./linkText";
 
 export type NewFile = "qmd" | "ipynb" | "R" | "py";
@@ -31,6 +33,8 @@ export function LeftPane(props: {
   usedBy: (session: string) => string[];
   /** State of the session an open file runs in, for a dot in the tree. */
   marker: (path: string) => "idle" | "busy" | undefined;
+  /** The picked machine's workspace, once it has one, for the status bar. */
+  onHost?: (ws: Workspace) => void;
 }) {
   const own = props.ws.backend.host;
   const [servers] = createResource(() => props.shell.listServers().catch(() => [] as string[]));
@@ -41,14 +45,27 @@ export function LeftPane(props: {
   const [selected, setSelected] = createSignal(own);
   // One connection per other machine, made when its tab is first chosen.
   const others = new Map<string, Promise<Workspace>>();
+  const [made, setMade] = createSignal<Record<string, Workspace>>({});
   const workspaceFor = (host: string) => {
     let ws = others.get(host);
     if (!ws) {
-      ws = props.shell.connect(host).then((backend) => new Workspace(backend));
+      ws = props.shell.connect(host).then((backend) => {
+        const ws = new Workspace(backend);
+        setMade((all) => ({ ...all, [host]: ws }));
+        return ws;
+      });
       others.set(host, ws);
     }
     return ws;
   };
+  // The status bar follows the picked tab, and the window's own machine once the pane closes.
+  createEffect(
+    on(selected, (host) => {
+      if (host === own) return props.onHost?.(props.ws);
+      void workspaceFor(host).then((ws) => selected() === host && props.onHost?.(ws));
+    }),
+  );
+  onCleanup(() => props.onHost?.(props.ws));
 
   return (
     <aside class="left-pane" style={{ width: `${props.width}px` }}>
@@ -62,7 +79,7 @@ export function LeftPane(props: {
               title={host === LOCAL_HOST ? "This Mac" : host}
               onClick={() => setSelected(host)}
             >
-              <Icon name={host === LOCAL_HOST ? "monitor" : "cloud"} />
+              <ConnIcon host={host} ws={host === own ? props.ws : made()[host]} />
               <span>{host === LOCAL_HOST ? "Local" : host}</span>
             </button>
           )}
@@ -115,6 +132,7 @@ function ProjectFiles(props: Parameters<typeof LeftPane>[0]) {
         stats={stats()}
         describe={(s) => props.usedBy(s.id).join(", ") || "not used by an open file"}
         unused={(s) => !props.usedBy(s.id).length}
+        usedBy={(s) => props.usedBy(s.id)}
       />
       <Resources stats={stats()} host={ws.backend.host} sessions={ws.liveSessions()} />
     </>
@@ -191,9 +209,14 @@ export function KernelRows(props: {
   describe: (session: SessionInfo) => string;
   /** Sessions no open file uses, which "Shut down unused" stops together. */
   unused?: (session: SessionInfo) => boolean;
+  /** The open documents using a session, for its details. */
+  usedBy?: (session: SessionInfo) => string[];
 }) {
   /** The session id whose row asks for confirmation, or UNUSED. */
   const [asking, setAsking] = createSignal<string>();
+  /** The row whose details are open. */
+  const [details, setDetails] = createSignal<{ session: SessionInfo; row: HTMLElement }>();
+  const open = sectionOpen("kernels");
   const memory = (id: string) => props.stats?.sessions.find((m) => m.session === id)?.rss;
   const unusedIdle = () => (props.unused ? props.sessions.filter((s) => props.unused!(s) && !props.ws.isBusy(s.id)) : []);
 
@@ -206,73 +229,107 @@ export function KernelRows(props: {
 
   return (
     <div class="kernels">
-      <For each={props.sessions} fallback={<div class="krow dim">
-            <span class="kn">No kernels running</span>
-          </div>}>
-        {(s) => (
-          <Show
-            when={asking() === s.id}
-            fallback={
-              <div
-                class="krow"
-                classList={{ unused: props.unused?.(s), busy: props.ws.isBusy(s.id) }}
-                title={`${s.kernel} · ${s.cwd}\n${props.describe(s)}`}
-              >
+      <SectionHead name="Kernels" section="kernels" summary={props.sessions.length ? String(props.sessions.length) : undefined} />
+      <Show when={open()}>
+        <For each={props.sessions} fallback={<div class="krow dim">
+              <span class="kn">No kernels running</span>
+            </div>}>
+          {(s) => (
+            <Show
+              when={asking() === s.id}
+              fallback={
+                <div
+                  class="krow"
+                  classList={{ unused: props.unused?.(s), busy: props.ws.isBusy(s.id), on: details()?.session.id === s.id }}
+                  role="button"
+                  tabindex="0"
+                  aria-haspopup="menu"
+                  title={`${sessionLabel(s)} · ${props.ws.isBusy(s.id) ? "busy" : "idle"}. Click for details`}
+                  onClick={(e) => setDetails(details()?.session.id === s.id ? undefined : { session: s, row: e.currentTarget })}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    e.currentTarget.click();
+                  }}
+                >
+                  <span class="krow-icon">
+                    <LangIcon language={s.language} />
+                  </span>
+                  {/* The icon says the language; the row names only the version. */}
+                  <span class="kn">
+                    {languageVersion(s) || languageLabel(s.language)}
+                    <small>{props.describe(s)}</small>
+                  </span>
+                  <span class="km">{memory(s.id) === undefined ? "" : formatBytes(memory(s.id)!)}</span>
+                  <button
+                    class="kx"
+                    title="Shut down this session"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDetails(undefined);
+                      setAsking(s.id);
+                    }}
+                  >
+                    <Icon name="trash" small />
+                  </button>
+                </div>
+              }
+            >
+              <div class="krow ask" title={props.ws.isBusy(s.id) ? "Its running code stops and its variables are lost" : "Its variables are lost"}>
                 <span class="krow-icon">
                   <LangIcon language={s.language} />
                 </span>
-                <span class="kn">
-                  {sessionLabel(s)}
-                  <small>{props.describe(s)}</small>
-                </span>
-                <span class="km">{memory(s.id) === undefined ? "" : formatBytes(memory(s.id)!)}</span>
-                <button class="kx" title="Shut down this session" onClick={() => setAsking(s.id)}>
-                  <Icon name="trash" small />
+                <span class="kn">Shut down {sessionLabel(s)}?</span>
+                <button class="kbtn" onClick={() => setAsking(undefined)}>
+                  Cancel
+                </button>
+                <button class="kbtn danger" onClick={() => void stop([s])}>
+                  Shut down
                 </button>
               </div>
-            }
-          >
-            <div class="krow ask" title={props.ws.isBusy(s.id) ? "Its running code stops and its variables are lost" : "Its variables are lost"}>
-              <span class="krow-icon">
-                <LangIcon language={s.language} />
-              </span>
-              <span class="kn">Shut down {sessionLabel(s)}?</span>
-              <button class="kbtn" onClick={() => setAsking(undefined)}>
-                Cancel
-              </button>
-              <button class="kbtn danger" onClick={() => void stop([s])}>
-                Shut down
-              </button>
-            </div>
-          </Show>
-        )}
-      </For>
-      <Show when={unusedIdle().length}>
-        {(n) => (
-          <Show
-            when={asking() === UNUSED}
-            fallback={
-              <button class="krow kunused" onClick={() => setAsking(UNUSED)} title="Shut down the sessions no open file uses">
+            </Show>
+          )}
+        </For>
+        <Show when={unusedIdle().length}>
+          {(n) => (
+            <Show
+              when={asking() === UNUSED}
+              fallback={
+                <button class="krow kunused" onClick={() => setAsking(UNUSED)} title="Shut down the sessions no open file uses">
+                  <span class="krow-icon">
+                    <Icon name="trash" small />
+                  </span>
+                  <span class="kn">Shut down {n() === 1 ? "the unused session" : `${n()} unused sessions`}</span>
+                </button>
+              }
+            >
+              <div class="krow ask" title="Their variables are lost. Sessions running code are left alone.">
                 <span class="krow-icon">
                   <Icon name="trash" small />
                 </span>
-                <span class="kn">Shut down {n() === 1 ? "the unused session" : `${n()} unused sessions`}</span>
-              </button>
-            }
-          >
-            <div class="krow ask" title="Their variables are lost. Sessions running code are left alone.">
-              <span class="krow-icon">
-                <Icon name="trash" small />
-              </span>
-              <span class="kn">Shut down {n() === 1 ? "1 session" : `${n()} sessions`}?</span>
-              <button class="kbtn" onClick={() => setAsking(undefined)}>
-                Cancel
-              </button>
-              <button class="kbtn danger" onClick={() => void stop(unusedIdle())}>
-                Shut down
-              </button>
-            </div>
-          </Show>
+                <span class="kn">Shut down {n() === 1 ? "1 session" : `${n()} sessions`}?</span>
+                <button class="kbtn" onClick={() => setAsking(undefined)}>
+                  Cancel
+                </button>
+                <button class="kbtn danger" onClick={() => void stop(unusedIdle())}>
+                  Shut down
+                </button>
+              </div>
+            </Show>
+          )}
+        </Show>
+      </Show>
+      {/* Keyed: another row's details are a new pop-up beside that row. */}
+      <Show when={details()} keyed>
+        {(d) => (
+          <SessionMenu
+            ws={props.ws}
+            session={d.session}
+            usedBy={props.usedBy?.(d.session) ?? []}
+            anchor={d.row}
+            onClose={() => setDetails(undefined)}
+            onShutDown={() => setAsking(d.session.id)}
+          />
         )}
       </Show>
     </div>
@@ -280,6 +337,49 @@ export function KernelRows(props: {
 }
 
 const UNUSED = "unused";
+
+/** Which of the left pane's sections are collapsed, remembered across windows. */
+const SECTIONS_KEY = "sandhill.collapsedSections";
+const [collapsed, setCollapsed] = createSignal<string[]>(readCollapsed());
+
+function readCollapsed(): string[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function sectionOpen(section: string) {
+  return () => !collapsed().includes(section);
+}
+
+function toggleSection(section: string) {
+  const list = collapsed().includes(section) ? collapsed().filter((s) => s !== section) : [...collapsed(), section];
+  setCollapsed(list);
+  try {
+    localStorage.setItem(SECTIONS_KEY, JSON.stringify(list));
+  } catch {
+    // Private mode; the choice lasts while the window is open.
+  }
+}
+
+/** A section's header row: click to collapse or expand it. Collapsed, it shows `summary`. */
+function SectionHead(props: { name: string; section: string; summary?: JSX.Element }) {
+  const open = sectionOpen(props.section);
+  return (
+    <button class="sec-h" aria-expanded={open()} onClick={() => toggleSection(props.section)}>
+      <span class="chev" classList={{ open: open() }}>
+        <Icon name="chevronRight" small />
+      </span>
+      {props.name}
+      <Show when={!open() && props.summary}>
+        <span class="sec-n">{props.summary}</span>
+      </Show>
+    </button>
+  );
+}
 
 interface Resource {
   key: string;
@@ -353,6 +453,8 @@ function Resources(props: { stats?: SystemStats; host: string; sessions: Session
   const [open, setOpen] = createSignal<{ key: string; left: number; bottom: number }>();
   const rows = () => (props.stats ? resourceRows(props.stats, props.sessions) : []);
   const shown = () => rows().find((r) => r.key === open()?.key);
+  const expanded = sectionOpen("resources");
+  const hot = () => rows().filter((r) => r.percent >= 80).map((r) => r.label);
   const close = (e: Event) => {
     if (!(e.target as Element).closest?.(".res-pop, .rrow")) setOpen(undefined);
   };
@@ -366,7 +468,19 @@ function Resources(props: { stats?: SystemStats; host: string; sessions: Session
   return (
     <Show when={rows().length}>
       <div class="resources">
-        <For each={rows()}>
+        <SectionHead
+          name="Resources"
+          section="resources"
+          summary={
+            hot().length ? (
+              <>
+                <span class="hotdot" />
+                {hot().join(", ")} high
+              </>
+            ) : undefined
+          }
+        />
+        <For each={expanded() ? rows() : []}>
           {(r) => (
             <button
               class="rrow"
@@ -384,7 +498,7 @@ function Resources(props: { stats?: SystemStats; host: string; sessions: Session
             </button>
           )}
         </For>
-        <Show when={shown()}>
+        <Show when={expanded() && shown()}>
           {(r) => (
             <div class="res-pop" role="dialog" style={{ left: `${open()!.left}px`, bottom: `${open()!.bottom}px` }}>
               <div class="rp-head">

@@ -71,6 +71,10 @@ export class WebSocketBackend implements Backend {
   private links = new Listeners<LinkState>();
   private link: LinkState = { status: "connecting" };
   private retryMs = 500;
+  private retry?: ReturnType<typeof setTimeout>;
+  /** Closes in a row without opening; after a few the link shows as disconnected. */
+  private failures = 0;
+  private stopped = false;
 
   constructor(private bridge: string) {
     this.connect();
@@ -103,6 +107,22 @@ export class WebSocketBackend implements Backend {
     listener(this.link);
   }
 
+  async reconnect() {
+    this.stopped = false;
+    this.retryMs = 500;
+    clearTimeout(this.retry);
+    // Closing reconnects; with nothing open, connect now.
+    if (this.socket && this.socket.readyState <= WebSocket.OPEN) this.socket.close();
+    else this.connect();
+  }
+
+  async disconnect() {
+    this.stopped = true;
+    clearTimeout(this.retry);
+    this.socket?.close();
+    this.setLink({ status: "disconnected", stopped: true });
+  }
+
   blobUrl(hash: string, mime: string, near?: string): string {
     const query = new URLSearchParams({ mime });
     if (near) query.set("near", near);
@@ -118,6 +138,7 @@ export class WebSocketBackend implements Backend {
     this.socket = socket;
     socket.onopen = () => {
       this.retryMs = 500;
+      this.failures = 0;
       for (const line of this.queue.splice(0)) socket.send(line);
       this.setLink({ status: "connected" });
     };
@@ -140,14 +161,17 @@ export class WebSocketBackend implements Backend {
     socket.onclose = () => {
       for (const p of this.pending.values()) p.reject(new Error("connection to the daemon closed"));
       this.pending.clear();
-      this.setLink({ status: "disconnected", error: "lost the connection to sandhilld" });
-      setTimeout(() => this.connect(), this.retryMs);
+      if (this.socket !== socket || this.stopped) return;
+      // Reconnecting for the first few tries, then disconnected, as in the Mac app.
+      this.failures += 1;
+      this.setLink({ status: this.failures < 3 ? "connecting" : "disconnected", error: "lost the connection to sandhilld" });
+      this.retry = setTimeout(() => this.connect(), this.retryMs);
       this.retryMs = Math.min(this.retryMs * 2, 5000);
     };
   }
 
   private setLink(state: LinkState) {
-    if (state.status === this.link.status) return;
+    if (state.status === this.link.status && !!state.stopped === !!this.link.stopped) return;
     this.link = state;
     this.links.emit(state);
   }

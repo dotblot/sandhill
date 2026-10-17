@@ -57,6 +57,8 @@ function fakeWorkspace(journal: CellOutputs[] = []) {
     openLink() {},
     onLink() {},
     blobUrl: () => "",
+    reconnect: async () => {},
+    disconnect: async () => {},
   };
   const ws = new Workspace(backend, "/p");
   return { ws, executed };

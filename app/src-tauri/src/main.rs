@@ -31,6 +31,8 @@ fn main() -> anyhow::Result<()> {
         .invoke_handler(tauri::generate_handler![
             link::use_host,
             link::daemon_call,
+            link::reconnect_host,
+            link::disconnect_host,
             windows::window_context,
             windows::open_project_window,
             windows::show_start_window,

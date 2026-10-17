@@ -55,6 +55,8 @@ function fakeWorkspace() {
     openLink() {},
     onLink() {},
     blobUrl: () => "",
+    reconnect: async () => {},
+    disconnect: async () => {},
   };
   return { ws: new Workspace(backend, "/p"), executed };
 }

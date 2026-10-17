@@ -37,6 +37,9 @@ function setup(initial: SessionInfo[], usedBy: Record<string, string[]>, machine
   const [sessions, setSessions] = createSignal(initial);
   const stopped: string[] = [];
   const ws = {
+    backend: { host: "local" },
+    kernelspecs: () => [{ name: "python3", display_name: "Python 3 (ipykernel)", language: "python", env: "omicverse" }],
+    call: async () => machine,
     isBusy: (id: string) => (sessions().find((s) => s.id === id)?.pending_runs ?? 0) > 0,
     shutdown: async (id: string) => {
       stopped.push(id);
@@ -52,6 +55,7 @@ function setup(initial: SessionInfo[], usedBy: Record<string, string[]>, machine
         stats={machine}
         describe={(s) => (usedBy[s.id] ?? []).join(", ") || "not used by an open file"}
         unused={(s) => !usedBy[s.id]?.length}
+        usedBy={(s) => usedBy[s.id] ?? []}
       />
     ),
     root,
@@ -67,16 +71,14 @@ function setup(initial: SessionInfo[], usedBy: Record<string, string[]>, machine
 }
 
 describe("KernelRows", () => {
-  it("shows each session's language, version, files and memory", () => {
+  it("shows each session's version, files and memory, with its language as the icon", () => {
     const t = setup(
       [session("aaaaaa1"), session("bbbbbb2", { language: "r", kernel: "ark", language_version: "4.4.1" })],
       { aaaaaa1: ["a.qmd", "b.py"] },
       stats({ sessions: [{ session: "bbbbbb2", rss: 2.1 * GB }] }),
     );
-    expect(t.rows().map((r) => r.querySelector(".kn")?.textContent)).toEqual([
-      "Python 3.12a.qmd, b.py",
-      "R 4.4.1not used by an open file",
-    ]);
+    expect(t.rows().map((r) => r.querySelector(".kn")?.textContent)).toEqual(["3.12a.qmd, b.py", "4.4.1not used by an open file"]);
+    expect(t.rows()[1].title).toBe("R 4.4.1 · idle. Click for details");
     expect(t.rows().map((r) => r.querySelector(".km")?.textContent)).toEqual(["", "2.1 GB"]);
     expect(t.rows()[1].classList.contains("unused")).toBe(true);
     t.dispose();
@@ -114,7 +116,44 @@ describe("KernelRows", () => {
 
   it("says when no kernels run", () => {
     const t = setup([], {});
-    expect(t.root.textContent).toBe("No kernels running");
+    expect(t.root.querySelector(".krow.dim")?.textContent).toBe("No kernels running");
+    t.dispose();
+  });
+
+  it("opens a session's details beside its row", async () => {
+    const t = setup([session("aaaaaa1"), session("bbbbbb2")], { aaaaaa1: ["a.qmd"] }, stats({ sessions: [{ session: "aaaaaa1", rss: GB }] }));
+    await t.click(t.rows()[0]);
+    const pop = () => document.querySelector(".kpop");
+    expect(pop()?.querySelector(".kp-h")?.textContent).toBe("Python 3.12idle");
+    const details = () => [...pop()!.querySelectorAll("dt")].map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`);
+    expect(details()).toEqual([
+      "Kernel: Python 3 (ipykernel)",
+      "Environment: omicverse",
+      "Runs on: This Mac",
+      "Used by: a.qmd",
+      "Memory: 1.0 GB",
+      "Session ID: aaaaaa1",
+    ]);
+    // Shut down… asks in the row, as the trash button does.
+    await t.click([...pop()!.querySelectorAll("button")].find((b) => b.textContent === "Shut down…"));
+    expect(pop()).toBeNull();
+    expect(t.rows()[0].textContent).toContain("Shut down Python 3.12?");
+    // The trash button asks without opening the details.
+    await t.click(t.rows()[1].querySelector(".kx"));
+    expect(pop()).toBeNull();
+    t.dispose();
+  });
+
+  it("collapses to a count from its header", async () => {
+    const t = setup([session("aaaaaa1"), session("bbbbbb2")], {});
+    const head = t.root.querySelector(".sec-h") as HTMLElement;
+    expect(head.textContent).toBe("Kernels");
+    await t.click(head);
+    expect(t.rows()).toHaveLength(0);
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    expect(head.textContent).toBe("Kernels2");
+    await t.click(head);
+    expect(t.rows()).toHaveLength(2);
     t.dispose();
   });
 });
