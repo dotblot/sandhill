@@ -84,6 +84,8 @@ export function AgentsPane(props: {
   /** Modes switched to here, until the agent reports one. */
   const [modeChoice, setModeChoice] = createSignal<Record<string, Mode>>({});
   const [effortChoice, setEffortChoice] = createSignal<Record<string, string>>({});
+  /** Models picked here, until the agent reports one: Claude Code reports it with its next status line. */
+  const [modelChoice, setModelChoice] = createSignal<Record<string, ModelChoice>>({});
   const [sentAt, setSentAt] = createSignal(0);
   const [now, setNow] = createSignal(Date.now());
   /** The current terminal's last lines, while its conversation hasn't started. */
@@ -174,6 +176,16 @@ export function AgentsPane(props: {
       () => {
         const id = current()?.id;
         if (id) setEffortChoice(({ [id]: _, ...rest }) => rest);
+      },
+      { defer: true },
+    ),
+  );
+  createEffect(
+    on(
+      () => current()?.agent?.status?.model_id ?? current()?.agent?.status?.model,
+      () => {
+        const id = current()?.id;
+        if (id) setModelChoice(({ [id]: _, ...rest }) => rest);
       },
       { defer: true },
     ),
@@ -596,8 +608,11 @@ export function AgentsPane(props: {
           return (
             <AgentComposer
               kind={kind()}
-              model={modelLabel(t())}
-              isModel={(m) => currentModel(t(), m)}
+              model={modelChoice()[t().id]?.label ?? modelLabel(t())}
+              isModel={(m) => {
+                const picked = modelChoice()[t().id];
+                return picked ? picked.id === m.id : currentModel(t(), m);
+              }}
               effort={effortChoice()[t().id] ?? effortLevel(t())}
               effortNote={t().kind === "claude" || driven(t()) ? undefined : "Codex changes effort in its own /model menu"}
               mode={mode()}
@@ -617,9 +632,13 @@ export function AgentsPane(props: {
               onSend={(text) => send(t(), text)}
               onStop={() => stop(t())}
               onModel={(m: ModelChoice) => {
-                if (driven(t())) tell(t(), { kind: "set", model: m.id ?? null });
-                else if (t().kind === "claude" && m.id) command(t(), `/model ${m.id}`);
-                else {
+                if (driven(t())) {
+                  setModelChoice((all) => ({ ...all, [t().id]: m }));
+                  tell(t(), { kind: "set", model: m.id ?? null });
+                } else if (t().kind === "claude" && m.id) {
+                  setModelChoice((all) => ({ ...all, [t().id]: m }));
+                  command(t(), `/model ${m.id}`);
+                } else {
                   setTermShown((ids) => [...ids, t().id]);
                   command(t(), "/model");
                 }

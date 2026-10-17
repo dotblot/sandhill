@@ -159,7 +159,8 @@ export function AgentComposer(props: ComposerProps) {
             <ProviderIcon kind={props.kind.kind} />
             <span>
               {props.model}
-              <Show when={props.effort ?? props.kind.recommended}>{(effort) => ` (${effortName(effort())})`}</Show>
+              {/* JSX, not a string, so it changes as the effort does. */}
+              <Show when={props.effort ?? props.kind.recommended}>{(effort) => <> ({effortName(effort())})</>}</Show>
             </span>
             <Icon name="chevron" small />
           </button>

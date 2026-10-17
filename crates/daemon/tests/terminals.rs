@@ -68,6 +68,53 @@ async fn read_until(
 }
 
 #[tokio::test]
+async fn a_terminal_followed_while_it_starts_is_followed_live() {
+    let dir = tempfile::tempdir().unwrap();
+    let terminals = Arc::new(Terminals::new(
+        dir.path().join("terminals"),
+        sandhilld().into(),
+    ));
+    let starting = tokio::spawn({
+        let terminals = terminals.clone();
+        let cwd = dir.path().to_path_buf();
+        async move {
+            terminals
+                .start(sh("read line; echo \"got $line\"", &cwd))
+                .await
+                .unwrap()
+        }
+    });
+    // A window lists the terminals as this one starts, and follows it.
+    let id = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            if let Some(info) = terminals.list().pop() {
+                break info.id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let (out, mut events) = mpsc::unbounded_channel();
+    let stream = terminals.open(&id, Some(0), None).await.unwrap();
+    tokio::spawn(stream.forward(out));
+    starting.await.unwrap();
+    terminals
+        .send(
+            &id,
+            ToHost::Input {
+                data: "hello\n".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut output = Vec::new();
+    let exit = read_until(&mut events, &mut output, "got hello").await;
+    assert!(exit.is_none(), "followed as ended: {exit:?}");
+    terminals.close(&id).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_program_gets_input_and_its_output_is_kept_after_it_ends() {
     let dir = tempfile::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());

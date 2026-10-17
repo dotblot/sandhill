@@ -408,26 +408,38 @@ impl Terminals {
         chat_from: Option<u64>,
     ) -> Result<TerminalStream> {
         let paths = self.paths(id)?;
-        if let Ok(stream) = UnixStream::connect(paths.socket()).await {
-            let (reader, mut writer) = stream.into_split();
-            let mut line = serde_json::to_vec(&ToHost::Subscribe { from, chat_from })?;
-            line.push(b'\n');
-            writer.write_all(&line).await?;
-            let mut lines = BufReader::new(reader).lines();
-            if let Some(first) = lines.next_line().await?
-                && let Ok(FromHost::Start { from }) = serde_json::from_str(&first)
-            {
-                return Ok(TerminalStream {
-                    id: id.to_string(),
-                    from,
-                    source: Source::Live {
-                        lines,
-                        _writer: writer,
-                        paths,
-                    },
-                });
+        let deadline = tokio::time::Instant::now() + HOST_START_TIMEOUT;
+        loop {
+            if let Ok(stream) = UnixStream::connect(paths.socket()).await {
+                let (reader, mut writer) = stream.into_split();
+                let mut line = serde_json::to_vec(&ToHost::Subscribe { from, chat_from })?;
+                line.push(b'\n');
+                writer.write_all(&line).await?;
+                let mut lines = BufReader::new(reader).lines();
+                if let Some(first) = lines.next_line().await?
+                    && let Ok(FromHost::Start { from }) = serde_json::from_str(&first)
+                {
+                    return Ok(TerminalStream {
+                        id: id.to_string(),
+                        from,
+                        source: Source::Live {
+                            lines,
+                            _writer: writer,
+                            paths,
+                        },
+                    });
+                }
+                // The program ended as we connected; read the files instead.
+                break;
             }
-            // The program ended as we connected; read the files instead.
+            // Listed but still starting, as when a window lists the
+            // terminals while one starts: follow it once its host is up.
+            let starting =
+                paths.meta().exists() && !paths.host().exists() && !paths.exit().exists();
+            if !starting || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
         let end = log::bounds(paths.dir()).1;
         let from = from.unwrap_or(end.saturating_sub(RECENT)).min(end);
