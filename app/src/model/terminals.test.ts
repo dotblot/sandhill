@@ -26,6 +26,8 @@ function fakeBackend(terminals: TerminalInfo[]) {
     onRequest() {},
     onLink() {},
     blobUrl: () => "",
+    reconnect: async () => {},
+    disconnect: async () => {},
     openLink() {},
   };
   const send = (terminal: string, offset: number, text: string) =>

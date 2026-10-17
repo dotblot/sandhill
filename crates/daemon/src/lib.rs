@@ -11,6 +11,7 @@ pub mod files;
 pub mod journal;
 pub mod kernel;
 pub mod kernelspecs;
+pub mod logfile;
 pub mod mcp;
 pub mod memory;
 pub mod notebook;

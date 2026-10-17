@@ -17,7 +17,7 @@ Responses can arrive out of order; match them by `id`.
 
 | Method | Params | Result |
 |---|---|---|
-| `ping` | | `{protocol_version, daemon_version, home, hostname, build}` |
+| `ping` | | `{protocol_version, daemon_version, home, hostname, build, user, started_ms, started_by}` |
 | `list_kernelspecs` | | `[{name, display_name, language, env?}]` |
 | `start_session` | `kernel`, `cwd?`, `project?` | `SessionInfo` once the kernel is ready |
 | `list_sessions` | | `[SessionInfo]`, including ended sessions |
@@ -39,6 +39,8 @@ Responses can arrive out of order; match them by `id`.
 | `save_project_state` | `path`, `state` | `null` |
 | `forget_project` | `path` | `null` |
 | `system_stats` | `path?` | `SystemStats` for the daemon's machine |
+| `read_log` | `bytes?` | `{path, text, size}`: whole lines from the end of the daemon's log, 64 KiB unless `bytes` says |
+| `stop_daemon` | | `null`, then the daemon stops; kernels and terminals keep running for the next one |
 | `stat_files` | `paths` | `[{path, mtime_ms?, size}]`; no `mtime_ms` when a file is missing |
 | `list_agents` | | `[{kind, name, path?, version?, install}]` |
 | `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?`, `prompt?` | `TerminalInfo` |
@@ -84,6 +86,10 @@ restart.
 --start` stops a running daemon whose `build` differs from its own (an older
 app left it running) and starts its own build; kernels keep running and the
 new daemon reattaches to them.
+
+`started_by` says what started the daemon: `app` (`attach --start`),
+`launchd` or `systemd`, or empty when it was run by hand. The app's
+connection pop-up shows it, with `user` and how long ago `started_ms` was.
 
 A `quiet` execute stores no history and doesn't stop the queue on an error,
 for code the user didn't write (the agents' variable listing).

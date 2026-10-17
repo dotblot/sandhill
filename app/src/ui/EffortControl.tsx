@@ -35,7 +35,8 @@ export function EffortControl(props: {
   const level = () => props.levels[index()];
   const galaxy = () => index() === top();
   const fraction = (i: number) => (top() > 0 ? i / top() : 0);
-  const x = (i: number) => `calc(11px + (100% - 22px) * ${fraction(i)})`;
+  // The 30px knob's centre stops 15px from each end.
+  const x = (i: number) => `calc(15px + (100% - 30px) * ${fraction(i)})`;
   const recommendedAt = () => Math.max(0, props.levels.indexOf(props.recommended));
 
   let track!: HTMLDivElement;
@@ -51,7 +52,7 @@ export function EffortControl(props: {
   };
   const fromX = (clientX: number) => {
     const box = track.getBoundingClientRect();
-    return Math.round(Math.min(1, Math.max(0, (clientX - box.left - 11) / (box.width - 22))) * top());
+    return Math.round(Math.min(1, Math.max(0, (clientX - box.left - 15) / (box.width - 30))) * top());
   };
   const onPointerDown = (e: PointerEvent) => {
     if (props.disabled) return;
@@ -140,7 +141,7 @@ export function EffortControl(props: {
   );
 }
 
-/** Two bumpy halves of a brain, 20px. */
+/** Two bumpy halves of a brain, drawn at 20px and shown at 30px. */
 function Brain() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">

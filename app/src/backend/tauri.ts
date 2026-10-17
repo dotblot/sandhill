@@ -86,6 +86,14 @@ class TauriBackend implements Backend {
     listener(this.link);
   }
 
+  reconnect(): Promise<void> {
+    return invoke("reconnect_host", { host: this.host });
+  }
+
+  disconnect(): Promise<void> {
+    return invoke("disconnect_host", { host: this.host });
+  }
+
   blobUrl(hash: string, mime: string, near?: string): string {
     const query = new URLSearchParams({ host: this.host, mime });
     if (near) query.set("near", near);
@@ -110,7 +118,7 @@ class TauriBackend implements Backend {
   }
 
   private setLink(state: LinkState) {
-    this.link = { status: state.status, error: state.error, detail: state.detail };
+    this.link = { status: state.status, error: state.error, detail: state.detail, stopped: state.stopped };
     this.links.emit(this.link);
   }
 }

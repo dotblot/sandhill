@@ -10,8 +10,10 @@ export function linkText(ws: Workspace): string {
       return info ? `Connected to sandhilld ${info.daemon_version} on ${info.hostname}` : "Connected";
     case "connecting":
       if (link.detail) return link.detail;
-      return ws.backend.host === LOCAL_HOST ? "Connecting to sandhilld…" : `Connecting to ${ws.backend.host}…`;
+      // An error means the link was up, or a try failed: it is reconnecting.
+      return `${link.error ? "Reconnecting" : "Connecting"} to ${ws.backend.host === LOCAL_HOST ? "sandhilld" : ws.backend.host}…`;
     default:
+      if (link.stopped) return "Disconnected";
       return `Disconnected${link.error ? `: ${link.error}` : ""}. Retrying…`;
   }
 }

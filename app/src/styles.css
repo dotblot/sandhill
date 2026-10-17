@@ -203,7 +203,7 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .menu button:hover { background: var(--accent); color: var(--accent-text); }
 
 .tree { flex: 1; min-height: 0; overflow: auto; padding: 2px 6px 10px; }
-.tree-item { display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: var(--r); white-space: nowrap; cursor: default; }
+.tree-item { position: relative; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: var(--r); white-space: nowrap; cursor: default; }
 .tree-item.dir, .tree-item.openable { cursor: pointer; }
 .tree-item.file:not(.openable) { color: var(--faint); }
 .tree-item:hover { background: var(--ink-7); }
@@ -214,10 +214,25 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .chev .ico { width: 11px; height: 11px; transition: transform 0.1s; }
 .tree-item.open .chev .ico { transform: rotate(90deg); }
 .tree-note { color: var(--err); padding: 4px 8px; }
+/* Guide lines: down from each open folder's chevron, with an elbow to each child. */
+.tree { --tree-line: color-mix(in srgb, var(--text) 24%, transparent); }
+.tree-item .tg { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--tree-line); pointer-events: none; }
+.tree-item .tg.end { bottom: 50%; }
+.tree-item .te { position: absolute; top: 50%; width: 6px; height: 1px; background: var(--tree-line); pointer-events: none; }
 
 /* Kernels and resources, 11px */
 .kernels, .resources { flex: none; border-top: 1px solid var(--ink-12); font-size: var(--fs-small); }
-.kernels { padding: 4px 6px; }
+.kernels { padding: 3px 6px 4px; }
+/* Kernels and Resources collapse from their header rows. */
+.sec-h { grid-column: 1 / -1; display: flex; align-items: center; gap: 5px; width: 100%; height: 22px; padding: 0 8px; border-radius: var(--r); color: var(--muted); font-weight: 600; text-align: left; }
+.sec-h:hover { background: var(--ink-7); color: var(--text); }
+.sec-h .chev { margin-right: -1px; }
+.sec-h .chev.open .ico { transform: rotate(90deg); }
+.sec-n { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+.sec-n .hotdot { width: 6px; height: 6px; border-radius: 50%; background: var(--err); }
+.krow[role="button"] { cursor: default; }
+.krow.on { background: var(--ink-7); }
+.krow .kn { font-variant-numeric: tabular-nums; }
 .krow { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 18px; align-items: center; gap: 6px; width: 100%; height: 22px; padding: 0 4px 0 8px; border-radius: var(--r); text-align: left; }
 .krow:hover { background: var(--ink-7); }
 .krow-icon { width: 14px; height: 14px; display: grid; place-items: center; color: var(--faint); }
@@ -244,7 +259,7 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .kbtn.danger { background: var(--err); color: #fff; }
 .kbtn.danger:hover { background: var(--err); filter: brightness(1.08); }
 /* A 2 × 2 grid of icon, name and bar; the percent is in the details. */
-.resources { padding: 4px 6px 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 4px; }
+.resources { padding: 3px 6px 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 4px; }
 .rrow { display: grid; grid-template-columns: 14px 28px 1fr; align-items: center; gap: 6px; width: 100%; height: 22px; padding: 0 8px; border-radius: var(--r); text-align: left; color: var(--muted); }
 .rrow:hover, .rrow.on { background: var(--ink-7); color: var(--text); }
 .rrow .ico { width: 14px; height: 14px; }
@@ -327,7 +342,7 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .kernel-button:hover:not(:disabled) { background: var(--ink-8); color: var(--text); }
 .kernel-button:disabled { opacity: 0.35; }
 .kernel-none { color: var(--faint); padding-left: 5px; }
-.kernel-dot, .link-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; flex: none; }
+.kernel-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; flex: none; }
 [data-state="idle"] > .kernel-dot { background: var(--ok); }
 [data-state="busy"] > .kernel-dot, [data-state="running"] > .kernel-dot, [data-state="starting"] > .kernel-dot { background: var(--busy); }
 .bar-button { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: var(--r); color: var(--muted); flex: none; white-space: nowrap; }
@@ -350,9 +365,23 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 /* One left edge with the left pane: the connection dot starts 14px from the window's edge. */
 .status-bar > .status-item:first-child { padding-left: 8px; }
 .status-item .spin { width: 10px; height: 10px; }
-[data-link="connected"] .link-dot { background: var(--ok); }
-[data-link="connecting"] .link-dot { background: var(--busy); }
-[data-link="disconnected"] .link-dot { background: var(--err); }
+/* Draft 19: the connection is the machine's icon, here and on the machine
+   tabs. Plain when connected, orange and pulsing while reconnecting, red and
+   struck through when disconnected. */
+.conn-ico { position: relative; display: inline-grid; place-items: center; width: 14px; height: 14px; flex: none; }
+.conn-ico .ico { width: 14px; height: 14px; }
+.conn-ico.busy { color: var(--accent); animation: connpulse 1s ease-in-out infinite alternate; }
+.conn-ico.off { color: var(--err); }
+.conn-ico.off::after { content: ""; position: absolute; left: -1px; right: -1px; top: 50%; height: 1.5px; margin-top: -0.75px; border-radius: 1px; background: currentColor; box-shadow: 0 0 0 1px var(--chrome); transform: rotate(-40deg); }
+@keyframes connpulse { from { opacity: 1; } to { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .conn-ico.busy { animation: none; } }
+.status-item.conn { border-radius: var(--r); }
+.status-item.conn:hover, .status-item.conn[aria-expanded="true"] { background: var(--ink-7); color: var(--text); }
+.status-item.conn.off { color: var(--err); }
+.connpop { width: 260px; }
+.modal.log-modal { width: min(760px, calc(100vw - 32px)); }
+.log-modal .modal-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-text { margin: 0; max-height: 55vh; overflow: auto; padding: 8px 10px; border-radius: 8px; background: var(--ink-6); font: var(--fs-small)/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
 
 /* The ☰ menu */
 .main-menu { position: absolute; top: 32px; left: calc(var(--tb-right) - 28px); z-index: 40; width: 250px; padding: 5px; display: flex; flex-direction: column; }
@@ -834,33 +863,34 @@ pre.diff { padding: 6px 0; }
 .eff-help { margin-left: auto; color: var(--faint); display: inline-flex; cursor: help; }
 .eff-help .ico { width: 15px; height: 15px; }
 .eff-ends { display: flex; justify-content: space-between; color: var(--muted); padding: 0 2px; margin-top: 4px; }
-/* Draft 18b: the bar is 16px, a little thinner than the 20px knob, and its
-   fill ends under the knob's centre. */
-.eff-track { position: relative; height: 22px; cursor: pointer; touch-action: none; --f: 0; }
-.eff-track::before { content: ""; position: absolute; left: 0; right: 0; top: 3px; bottom: 3px; border-radius: 8px; background: color-mix(in srgb, var(--text) 9%, transparent); pointer-events: none; }
+/* Draft 19: the bar is 16px and the knob 30px, so the knob stands out above
+   and below it. The knob's centre stops 15px from each end, the bar is inset
+   4px at each end, and its fill ends under the knob's centre. */
+.eff-track { position: relative; height: 30px; cursor: pointer; touch-action: none; --f: 0; }
+.eff-track::before { content: ""; position: absolute; left: 4px; right: 4px; top: 7px; bottom: 7px; border-radius: 8px; background: color-mix(in srgb, var(--text) 9%, transparent); pointer-events: none; }
 .eff.off .eff-track { cursor: default; }
 .eff-track:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 9px; }
-.eff-fill, .eff-stars { position: absolute; left: 0; right: 0; top: 3px; bottom: 3px; border-radius: 8px; pointer-events: none;
+.eff-fill, .eff-stars { position: absolute; left: 4px; right: 4px; top: 7px; bottom: 7px; border-radius: 8px; pointer-events: none;
   clip-path: inset(0 calc((100% - 22px) * (1 - var(--f)) + 11px) 0 0 round 8px 0 0 8px); transition: clip-path 0.28s cubic-bezier(0.3, 0.7, 0.3, 1); }
 .eff-fill { background: linear-gradient(90deg, color-mix(in srgb, var(--eff-pink) 6%, transparent), color-mix(in srgb, var(--eff-pink) 48%, transparent) 40%, color-mix(in srgb, var(--eff-violet) 78%, transparent)); }
-.eff-stars { width: 100%; height: calc(100% - 6px); opacity: 0; transition: clip-path 0.28s cubic-bezier(0.3, 0.7, 0.3, 1), opacity 0.3s; }
+.eff-stars { width: calc(100% - 8px); height: calc(100% - 14px); opacity: 0; transition: clip-path 0.28s cubic-bezier(0.3, 0.7, 0.3, 1), opacity 0.3s; }
 .eff-track.galaxy .eff-stars { opacity: 1; }
 .eff-track.galaxy .eff-fill { opacity: 0; }
 .eff-stop { position: absolute; top: 50%; width: 3px; height: 3px; border-radius: 50%; background: color-mix(in srgb, var(--text) 28%, transparent); transform: translate(-50%, -50%); pointer-events: none; }
 .eff-stop.rec { width: 2px; height: 9px; border-radius: 1px; background: color-mix(in srgb, var(--text) 70%, transparent); }
 .eff-track.galaxy .eff-stop:not(.rec) { opacity: 0; }
 .eff-track.galaxy .eff-stop.rec { background: rgba(255, 255, 255, 0.85); }
-.eff-knob { position: absolute; top: 50%; left: calc(11px + (100% - 22px) * var(--f)); width: 20px; height: 20px; transform: translate(-50%, -50%); transition: left 0.28s cubic-bezier(0.3, 0.7, 0.3, 1); pointer-events: none;
+.eff-knob { position: absolute; top: 50%; left: calc(15px + (100% - 30px) * var(--f)); width: 30px; height: 30px; transform: translate(-50%, -50%); transition: left 0.28s cubic-bezier(0.3, 0.7, 0.3, 1); pointer-events: none;
   --bf: #f59cc4; --bl: #a8305f; --glow: drop-shadow(0 0 3px rgba(240, 110, 170, 0.55)); }
-.eff-knob svg { position: relative; width: 20px; height: 20px; display: block; filter: var(--glow); transition: filter 0.3s; }
+.eff-knob svg { position: relative; width: 30px; height: 30px; display: block; filter: var(--glow); transition: filter 0.3s; }
 .eff-knob .b-fill { fill: var(--bf); stroke: var(--bl); stroke-width: 1.1; stroke-linejoin: round; transition: fill 0.3s; }
 .eff-knob .b-line { fill: none; stroke: var(--bl); stroke-width: 1.1; stroke-linecap: round; }
 .eff-track.galaxy .eff-knob { --bf: #9d8cff; --bl: #ece8ff; --glow: drop-shadow(0 0 4px rgba(150, 130, 255, 0.95)) drop-shadow(0 0 10px rgba(110, 140, 255, 0.7)); }
 .eff-knob.flash svg { animation: effflash 0.45s ease-out; }
 @keyframes effflash { from { filter: brightness(2.6) drop-shadow(0 0 8px #fff); } }
-.eff-rays { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px; border-radius: 50%; opacity: 0; transition: opacity 0.3s;
+.eff-rays { position: absolute; left: 50%; top: 50%; width: 69px; height: 69px; margin: -34.5px; border-radius: 50%; opacity: 0; transition: opacity 0.3s;
   background: repeating-conic-gradient(rgba(200, 190, 255, 0.7) 0 1.4deg, transparent 1.4deg 20deg);
-  -webkit-mask: radial-gradient(circle, transparent 0 10px, #000 12px 16px, transparent 23px); mask: radial-gradient(circle, transparent 0 10px, #000 12px 16px, transparent 23px); }
+  -webkit-mask: radial-gradient(circle, transparent 0 15px, #000 18px 24px, transparent 34.5px); mask: radial-gradient(circle, transparent 0 15px, #000 18px 24px, transparent 34.5px); }
 .eff-track.galaxy .eff-rays { opacity: 1; animation: effrays 7s linear infinite; }
 @keyframes effrays { to { transform: rotate(360deg); } }
 .eff-spark { position: absolute; left: 50%; top: 50%; width: 2px; height: 2px; margin: -1px; animation: effspark 0.9s ease-out forwards; }

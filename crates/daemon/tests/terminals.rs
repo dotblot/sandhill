@@ -271,6 +271,7 @@ impl TestDaemon {
         let options = DaemonOptions {
             executable: sandhilld().into(),
             socket: socket.clone(),
+            started_by: String::new(),
         };
         let daemon = Daemon::open_with(StateDir::new(state), options)
             .await

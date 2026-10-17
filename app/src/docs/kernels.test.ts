@@ -49,6 +49,8 @@ function fakeDaemon(sessions: SessionInfo[] = []) {
     openLink() {},
     onLink() {},
     blobUrl: () => "",
+    reconnect: async () => {},
+    disconnect: async () => {},
   };
   return { backend, sessions, started };
 }

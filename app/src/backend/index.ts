@@ -11,6 +11,8 @@ export interface LinkState {
   error?: string;
   /** What a slow connect is doing, such as installing sandhilld on a server. */
   detail?: string;
+  /** Disconnected on request: it waits for `reconnect`. */
+  stopped?: boolean;
 }
 
 /** The daemon on this Mac. A server is named by its ssh destination, like `lab` or `me@host`. */
@@ -31,6 +33,10 @@ export interface Backend {
   onRequest(listener: (request: AppRequest) => void): void;
   /** Called with the current state right away and on every change. */
   onLink(listener: (state: LinkState) => void): void;
+  /** Drops the connection and connects again at once. */
+  reconnect(): Promise<void>;
+  /** Drops the connection until `reconnect`. */
+  disconnect(): Promise<void>;
   /** A URL the webview can load a blob from, decoded to bytes for binary MIME types. */
   blobUrl(hash: string, mime: string, near?: string): string;
   /** Native menu commands (the Mac app only): "save", "close-tab", "run-all". */

@@ -22,6 +22,8 @@ export class Workspace {
   readonly runs = new RunStore();
   readonly link: () => LinkState;
   readonly host: () => PingReply | undefined;
+  /** When the link last came up (Date.now()), while it is up. */
+  readonly connectedSince: () => number | undefined;
   readonly kernelspecs: () => KernelspecInfo[];
   readonly sessions: () => SessionInfo[];
   /** Bumped whenever a run starts or finishes, for busy indicators. */
@@ -31,6 +33,7 @@ export class Workspace {
 
   private setLink: Setter<LinkState>;
   private setHost: Setter<PingReply | undefined>;
+  private setConnectedSince: Setter<number | undefined>;
   private setKernelspecs: Setter<KernelspecInfo[]>;
   private setSessions: Setter<SessionInfo[]>;
   private setActivity: Setter<number>;
@@ -49,6 +52,7 @@ export class Workspace {
   ) {
     [this.link, this.setLink] = createSignal<LinkState>({ status: "connecting" });
     [this.host, this.setHost] = createSignal<PingReply>();
+    [this.connectedSince, this.setConnectedSince] = createSignal<number>();
     [this.kernelspecs, this.setKernelspecs] = createSignal<KernelspecInfo[]>([]);
     [this.sessions, this.setSessions] = createSignal<SessionInfo[]>([]);
     [this.activity, this.setActivity] = createSignal(0);
@@ -56,6 +60,8 @@ export class Workspace {
 
     backend.onEvent((event) => this.onEvent(event));
     backend.onLink((state) => {
+      const up = state.status === "connected";
+      if (up !== (this.link().status === "connected")) this.setConnectedSince(up ? Date.now() : undefined);
       this.setLink(state);
       if (state.status === "connected") void this.onConnected();
     });

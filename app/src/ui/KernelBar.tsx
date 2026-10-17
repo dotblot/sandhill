@@ -1,10 +1,12 @@
-import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { LOCAL_HOST } from "../backend";
-import type { SystemStats } from "../backend/types";
+import type { SessionInfo, SystemStats } from "../backend/types";
 import type { Doc } from "../docs/doc";
 import { formatBytes, languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
+import { notify } from "./dialogs";
 import { Icon, LangIcon } from "./icons";
+import { closeOnOutside } from "./popup";
 
 /**
  * One kernel picker per language in the document: the language's icon and
@@ -158,6 +160,107 @@ export function kernelState(ws: Workspace, doc: Doc, language: string): KernelSt
  * list: the current one, others in the project, and new sessions of each
  * installed kernel for the language. Session IDs appear only here.
  */
+/**
+ * A left-pane kernel row's pop-up, beside the row: the same details as a
+ * kernel picker's, then what can be done to the session from there.
+ */
+export function SessionMenu(props: {
+  ws: Workspace;
+  session: SessionInfo;
+  /** The documents using it. */
+  usedBy: string[];
+  anchor: HTMLElement;
+  onClose: () => void;
+  onShutDown: () => void;
+}) {
+  const ws = props.ws;
+  const state = () => (ws.isBusy(props.session.id) ? "busy" : "idle");
+  const memory = sessionMemory(ws, () => props.session.id);
+  const rows = () => [...sessionRows(ws, props.session, props.usedBy, memory()), ["Session ID", props.session.id.slice(0, 8)] as [string, string]];
+  const box = props.anchor.getBoundingClientRect();
+  const [top, setTop] = createSignal(box.top - 6);
+  let menu!: HTMLDivElement;
+  closeOnOutside(() => menu, props.anchor, props.onClose);
+  // Beside the row, moved up as far as it must to stay in the window.
+  queueMicrotask(() => setTop(Math.max(8, Math.min(box.top - 6, window.innerHeight - menu.offsetHeight - 8))));
+  const interrupt = () => {
+    props.onClose();
+    props.ws.interrupt(props.session.id).catch((e) => notify(`Could not interrupt ${sessionLabel(props.session)}: ${String(e)}`));
+  };
+  return (
+    <div ref={menu} class="kpop" role="menu" style={{ left: `${box.right + 8}px`, top: `${top()}px` }}>
+      <KernelHead language={props.session.language} name={sessionLabel(props.session)} state={state()} rows={rows()} />
+      <div class="mm-sep" />
+      <div class="mm-h">Session</div>
+      <button class="mm-i" role="menuitem" disabled={state() !== "busy"} onClick={interrupt}>
+        <Icon name="stop" small />
+        <span>Interrupt</span>
+        <kbd />
+      </button>
+      <button
+        class="mm-i"
+        role="menuitem"
+        onClick={() => {
+          props.onShutDown();
+          props.onClose();
+        }}
+      >
+        <Icon name="trash" small />
+        <span>Shut down…</span>
+        <kbd />
+      </button>
+    </div>
+  );
+}
+
+/** A kernel pop-up's top: the language, name and state, then the details. */
+function KernelHead(props: { language: string; name: string; state: KernelState; rows: [string, string][] }) {
+  return (
+    <>
+      <div class="kp-h">
+        <LangIcon language={props.language} />
+        <b>{props.name}</b>
+        <span class="kp-st" data-state={props.state}>
+          <span class="kernel-dot" />
+          {STATE_TEXT[props.state]}
+        </span>
+      </div>
+      <Show when={props.rows.length}>
+        <dl class="kp-d">
+          <For each={props.rows}>
+            {([name, value]) => (
+              <>
+                <dt>{name}</dt>
+                <dd title={value}>{value}</dd>
+              </>
+            )}
+          </For>
+        </dl>
+      </Show>
+    </>
+  );
+}
+
+/** A session's kernel, environment, machine, documents and memory. */
+function sessionRows(ws: Workspace, s: SessionInfo, usedBy: string[], memory?: number): [string, string][] {
+  const spec = ws.kernelspecs().find((k) => k.name === s.kernel);
+  const rows: [string, string][] = [["Kernel", spec?.display_name ?? s.kernel]];
+  if (spec?.env) rows.push(["Environment", spec.env]);
+  rows.push(["Runs on", ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host]);
+  if (usedBy.length) rows.push(["Used by", usedBy.join(", ")]);
+  if (memory !== undefined) rows.push(["Memory", formatBytes(memory)]);
+  return rows;
+}
+
+/** The memory a session's kernel holds, asked for once. */
+function sessionMemory(ws: Workspace, session: () => string | undefined) {
+  const [memory] = createResource(session, async (id) => {
+    const stats = await ws.call<SystemStats>("system_stats", {}).catch(() => undefined);
+    return stats?.sessions.find((m) => m.session === id)?.rss;
+  });
+  return memory;
+}
+
 function KernelMenu(props: {
   ws: Workspace;
   doc: Doc;
@@ -173,64 +276,24 @@ function KernelMenu(props: {
   const info = () => ws.sessions().find((s) => s.id === session());
   const state = () => kernelState(ws, props.doc, props.language);
   const specs = () => ws.kernelspecs().filter((k) => normalizeLanguage(k.language) === props.language);
-  const spec = () => ws.kernelspecs().find((k) => k.name === info()?.kernel);
   const others = () => ws.projectSessions(props.language).filter((s) => s.id !== session());
-  const [memory] = createResource(session, async (id) => {
-    const stats = await ws.call<SystemStats>("system_stats", {}).catch(() => undefined);
-    return stats?.sessions.find((m) => m.session === id)?.rss;
-  });
-  const host = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
-  const rows = (): [string, string][] => {
-    const s = info();
-    if (!s) return [];
-    const list: [string, string][] = [["Kernel", spec()?.display_name ?? s.kernel]];
-    if (spec()?.env) list.push(["Environment", spec()!.env!]);
-    list.push(["Runs on", host]);
-    const docs = props.usedBy?.(s.id) ?? [];
-    if (docs.length) list.push(["Used by", docs.join(", ")]);
-    if (memory() !== undefined) list.push(["Memory", formatBytes(memory()!)]);
-    return list;
-  };
+  const memory = sessionMemory(ws, session);
+  const rows = () => (info() ? sessionRows(ws, info()!, props.usedBy?.(info()!.id) ?? [], memory()) : []);
   const run = (action: () => unknown) => {
     props.onClose();
     void (async () => action())().catch((e) => props.onError(String(e)));
   };
-
   let menu!: HTMLDivElement;
-  const outside = (e: MouseEvent) => {
-    const target = e.target as Node;
-    if (!menu.contains(target) && !props.anchor.contains(target)) props.onClose();
-  };
-  const escape = (e: KeyboardEvent) => e.key === "Escape" && props.onClose();
-  document.addEventListener("mousedown", outside);
-  document.addEventListener("keydown", escape);
-  onCleanup(() => {
-    document.removeEventListener("mousedown", outside);
-    document.removeEventListener("keydown", escape);
-  });
+  closeOnOutside(() => menu, props.anchor, props.onClose);
 
   return (
     <div ref={menu} class="kpop" role="menu" style={{ left: `${props.at.left}px`, top: `${props.at.top}px` }}>
-      <div class="kp-h">
-        <LangIcon language={props.language} />
-        <b>{info() ? sessionLabel(info()!) : languageLabel(props.language)}</b>
-        <span class="kp-st" data-state={state()}>
-          <span class="kernel-dot" />
-          {STATE_TEXT[state()]}
-        </span>
-      </div>
-      <Show when={rows().length}>
-        <dl class="kp-d">
-          <For each={rows()}>
-            {([name, value]) => (
-              <>
-                <dt>{name}</dt>
-                <dd title={value}>{value}</dd>
-              </>
-            )}
-          </For>
-        </dl>
-      </Show>
+      <KernelHead
+        language={props.language}
+        name={info() ? sessionLabel(info()!) : languageLabel(props.language)}
+        state={state()}
+        rows={rows()}
+      />
       <div class="mm-sep" />
       <div class="mm-h">Session</div>
       <Show when={info()}>
