@@ -35,6 +35,8 @@ const FRAME: usize = 64 * 1024;
 const DRAIN: Duration = Duration::from_millis(200);
 /// How long a hung-up program gets before it is killed.
 const HANGUP_GRACE: Duration = Duration::from_secs(3);
+/// Commands kept for a program that doesn't listen yet.
+const MAX_QUEUED: usize = 64;
 
 pub struct HostOptions {
     pub dir: PathBuf,
@@ -58,6 +60,10 @@ struct Shared {
     chat: Mutex<ChatLog>,
     /// Hooks waiting for the user's answer, by the ask's id.
     asks: Mutex<HashMap<String, oneshot::Sender<Value>>>,
+    /// Connections that take the user's commands, and commands that came
+    /// before any did.
+    listeners: Mutex<Vec<mpsc::UnboundedSender<FromHost>>>,
+    queued: Mutex<Vec<Value>>,
     live: broadcast::Sender<Live>,
     agent: Mutex<Value>,
     exit: Mutex<Option<TerminalExit>>,
@@ -87,6 +93,8 @@ pub async fn run(options: HostOptions) -> Result<()> {
         log: Mutex::new(LogWriter::create(&options.dir)?),
         chat: Mutex::new(ChatLog::open(&options.dir)?),
         asks: Mutex::new(HashMap::new()),
+        listeners: Mutex::new(Vec::new()),
+        queued: Mutex::new(Vec::new()),
         live: broadcast::channel(1024).0,
         agent: Mutex::new(Value::Null),
         exit: Mutex::new(None),
@@ -274,6 +282,8 @@ async fn serve(shared: Arc<Shared>, stream: UnixStream) {
                 });
             }
             ToHost::Answer { id, answer } => shared.answer(&id, answer),
+            ToHost::Listen => shared.listen(out.clone()),
+            ToHost::Command { command } => shared.command(command),
         }
     }
     if let Some(task) = subscription {
@@ -283,6 +293,11 @@ async fn serve(shared: Arc<Shared>, stream: UnixStream) {
     for id in asked {
         shared.answer(&id, Value::Null);
     }
+    shared
+        .listeners
+        .lock()
+        .unwrap()
+        .retain(|listener| !listener.same_channel(&out));
     drop(out);
     let _ = writer_task.await;
 }
@@ -486,6 +501,34 @@ impl Shared {
                 let _ = self.live.send(Live::Chat(entry));
             }
             Err(err) => eprintln!("cannot save the conversation: {err}"),
+        }
+    }
+
+    /// Takes the user's commands on `out` from now on, starting with those
+    /// that waited.
+    fn listen(&self, out: mpsc::UnboundedSender<FromHost>) {
+        let mut listeners = self.listeners.lock().unwrap();
+        for command in self.queued.lock().unwrap().drain(..) {
+            let _ = out.send(FromHost::Command { command });
+        }
+        listeners.push(out);
+    }
+
+    /// Passes a command from the user to the listening program.
+    fn command(&self, command: Value) {
+        let mut listeners = self.listeners.lock().unwrap();
+        listeners.retain(|out| !out.is_closed());
+        if listeners.is_empty() {
+            let mut queued = self.queued.lock().unwrap();
+            if queued.len() < MAX_QUEUED {
+                queued.push(command);
+            }
+            return;
+        }
+        for out in listeners.iter() {
+            let _ = out.send(FromHost::Command {
+                command: command.clone(),
+            });
         }
     }
 

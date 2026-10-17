@@ -453,6 +453,12 @@ impl Daemon {
                 self.terminals.answer(&terminal, &id, answer).await?;
                 Value::Null
             }
+            Call::TellTerminal { terminal, command } => {
+                self.terminals
+                    .send(&terminal, ToHost::Command { command })
+                    .await?;
+                Value::Null
+            }
             Call::ResizeTerminal {
                 terminal,
                 cols,

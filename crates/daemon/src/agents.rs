@@ -8,10 +8,11 @@
 //! - for Claude Code, hooks and a status line that report what it is doing
 //!   (busy, waiting for the user, model, context use) to its terminal
 //!   through `sandhilld terminal-event`;
-//! - for Codex, its `notify` program, which says when a turn ends.
+//! - for Codex, nothing: Sandhill drives its conversation through `codex
+//!   app-server` (see `terminal::codex`), and tells it the same things.
 //!
 //! Sandhill never reads their logins: each signs in through its own
-//! `/login` (or an API key the user set up for it).
+//! `/login` or sign-in (or an API key the user set up for it).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -112,10 +113,24 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
     };
     let help = help_text(&program).await;
     launch.title = agent.name.into();
-    launch.args = match kind {
-        CLAUDE => claude_args(options, context, &help),
-        _ => codex_args(options, context, &help),
-    };
+    match kind {
+        CLAUDE => {
+            launch.args = claude_args(options, context, &help);
+            launch.program = program.clone();
+        }
+        _ => {
+            if !help.contains("app-server") {
+                bail!(
+                    "this Codex is too old for Sandhill's chat; update it with `{}`",
+                    agent.install
+                );
+            }
+            // Sandhill drives Codex's conversation itself (see
+            // `terminal::codex`), with Codex underneath.
+            launch.args = codex_args(options, context, &program);
+            launch.program = context.executable.to_path_buf();
+        }
+    }
 
     // An npm-installed CLI runs under `node` from the same folder, which may
     // not be on the daemon's PATH (as on a server reached over ssh).
@@ -130,7 +145,6 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
                 .push(("PATH".into(), joined.to_string_lossy().into_owned()));
         }
     }
-    launch.program = program;
     Ok(launch)
 }
 
@@ -213,7 +227,9 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
     args
 }
 
-fn codex_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<String> {
+/// `sandhilld codex-chat`'s arguments: the conversation's settings, and
+/// Sandhill's MCP server for `codex app-server`.
+fn codex_args(options: &AgentOptions, context: &Context<'_>, codex: &Path) -> Vec<String> {
     let exe = context.executable.to_string_lossy();
     let mut mcp_args = vec![
         "--socket".to_string(),
@@ -224,45 +240,27 @@ fn codex_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<
         mcp_args.extend(["--project".into(), project.into()]);
     }
     let mut args = vec![
-        "-c".to_string(),
+        "--socket".to_string(),
+        context.socket.to_string_lossy().into_owned(),
+        "codex-chat".into(),
+        "--codex".into(),
+        codex.to_string_lossy().into_owned(),
+        "--options".into(),
+        serde_json::to_string(options).unwrap_or_else(|_| "{}".into()),
+    ];
+    if let Some(project) = context.project {
+        args.extend(["--project".into(), project.into()]);
+    }
+    if let Some(prompt) = context.prompt.filter(|p| !p.trim().is_empty()) {
+        args.extend(["--prompt".into(), prompt.into()]);
+    }
+    args.extend([
+        "--".into(),
+        "-c".into(),
         format!("mcp_servers.sandhill.command={}", toml_string(&exe)),
         "-c".into(),
         format!("mcp_servers.sandhill.args={}", toml_array(&mcp_args)),
-        "-c".into(),
-        format!(
-            "notify={}",
-            toml_array(&[exe.into_owned(), "terminal-event".into(), "codex".into()])
-        ),
-        "-c".into(),
-        format!(
-            "developer_instructions={}",
-            toml_string(&instructions(options))
-        ),
-    ];
-    if let Some(model) = &options.model {
-        args.extend(["-m".into(), model.clone()]);
-    }
-    if let Some(effort) = &options.effort {
-        args.extend([
-            "-c".into(),
-            format!("model_reasoning_effort={}", toml_string(effort)),
-        ]);
-    }
-    match options.permission.as_deref() {
-        Some("supervised") => {
-            args.extend(["-s", "read-only", "-a", "on-request"].map(String::from))
-        }
-        Some("edits") => {
-            args.extend(["-s", "workspace-write", "-a", "on-request"].map(String::from))
-        }
-        Some("auto") if help.contains("--approve-for-me") => args.push("--approve-for-me".into()),
-        Some("auto") => {
-            args.extend(["-s", "workspace-write", "-a", "on-request"].map(String::from))
-        }
-        Some("full") => args.push("--dangerously-bypass-approvals-and-sandbox".into()),
-        _ => {}
-    }
-    push_prompt(&mut args, context);
+    ]);
     args
 }
 
@@ -278,7 +276,7 @@ fn push_prompt(args: &mut Vec<String>, context: &Context<'_>) {
 const ASK_TIMEOUT_S: u64 = 24 * 60 * 60;
 
 /// What an agent is told about Sandhill when it starts.
-fn instructions(options: &AgentOptions) -> String {
+pub fn instructions(options: &AgentOptions) -> String {
     let mut text = String::from(
         "You are running inside Sandhill, an IDE for R and Python data analysis, next to the \
          user's editor. The user's live R and Python sessions are reachable through the \
@@ -452,8 +450,9 @@ mod tests {
         let help = "--mcp-config --settings";
         let args = claude_args(&AgentOptions::default(), &context, help);
         assert_eq!(args[args.len() - 2..], ["--", "-v is what?"]);
-        let args = codex_args(&AgentOptions::default(), &context, "");
-        assert_eq!(args[args.len() - 2..], ["--", "-v is what?"]);
+        // Codex's goes to Sandhill's bridge, which sends it as a message.
+        let args = codex_args(&AgentOptions::default(), &context, Path::new("codex"));
+        assert!(args.windows(2).any(|w| w == ["--prompt", "-v is what?"]));
     }
 
     #[test]
@@ -522,19 +521,34 @@ mod tests {
     }
 
     #[test]
-    fn codex_gets_its_settings_as_toml() {
+    fn codex_runs_under_sandhills_bridge_with_the_mcp_server() {
         let options = AgentOptions {
             permission: Some("full".into()),
             ..Default::default()
         };
-        let args = codex_args(&options, &context(), "");
-        assert!(
-            args.contains(&r#"mcp_servers.sandhill.command="/opt/it's/sandhilld""#.to_string())
+        let args = codex_args(&options, &context(), Path::new("/usr/bin/codex"));
+        assert_eq!(
+            args[..5],
+            [
+                "--socket",
+                "/state/sandhilld.sock",
+                "codex-chat",
+                "--codex",
+                "/usr/bin/codex"
+            ]
         );
-        assert!(args.contains(
+        let settings: AgentOptions =
+            serde_json::from_str(&args[args.iter().position(|a| a == "--options").unwrap() + 1])
+                .unwrap();
+        assert_eq!(settings, options);
+        // After `--`: for `codex app-server`.
+        let rest = &args[args.iter().position(|a| a == "--").unwrap() + 1..];
+        assert!(
+            rest.contains(&r#"mcp_servers.sandhill.command="/opt/it's/sandhilld""#.to_string())
+        );
+        assert!(rest.contains(
             &r#"mcp_servers.sandhill.args=["--socket", "/state/sandhilld.sock", "mcp", "--project", "/data/pbmc"]"#
                 .to_string()
         ));
-        assert!(args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
     }
 }
