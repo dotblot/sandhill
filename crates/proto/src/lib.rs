@@ -206,6 +206,24 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
     },
+    /// Starts a terminal's program again in the same terminal, keeping its
+    /// output and conversation: an agent resumes where it left off (Claude
+    /// Code its session, Codex its thread). A program still running is
+    /// ended first. Returns [`TerminalInfo`].
+    RestartTerminal {
+        terminal: String,
+        /// For agents: the settings to start again with, in place of the
+        /// ones it started with.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<AgentOptions>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cols: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rows: Option<u16>,
+        /// For agents: a message to go on with.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+    },
     /// Every terminal, including those whose program has ended, oldest
     /// first. Returns `Vec<TerminalInfo>`.
     ListTerminals,
@@ -702,6 +720,10 @@ pub struct TerminalInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub created_ms: i64,
+    /// When its program last started: later than `created_ms` once it
+    /// has been restarted. An exit from before this is the old program's.
+    #[serde(default)]
+    pub started_ms: i64,
     /// True while its program runs.
     pub running: bool,
     /// How the program ended, once it has.

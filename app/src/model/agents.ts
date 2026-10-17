@@ -1,7 +1,7 @@
 // What the Agents pane offers: the agent CLIs, their models, thinking effort
 // and permission modes, and how to read what they report.
 
-import type { AgentModel, AgentStatus, TerminalInfo } from "../backend/types";
+import type { AgentModel, AgentOptions, AgentStatus, TerminalInfo } from "../backend/types";
 
 export interface ModelChoice {
   /** What the CLI takes; undefined leaves the CLI's own choice. */
@@ -151,6 +151,26 @@ export function screenMode(screen: string): Mode | undefined {
   if (shown) return claudeMode(modes[shown]);
   // Older versions show nothing in the default mode.
   return /\? for shortcuts/.test(screen) ? MODES[0] : undefined;
+}
+
+/** Whether the agent can be started again on its conversation: it said which one it is. */
+export function canResume(terminal: TerminalInfo): boolean {
+  if (terminal.kind === "claude") return !!terminal.agent?.session_id;
+  return drivesChat(terminal.kind) && !!terminal.agent?.thread;
+}
+
+/**
+ * What the agent runs with now, as it last reported: its model, effort and
+ * mode can change while it runs. What it starts again with.
+ */
+export function liveOptions(terminal: TerminalInfo): AgentOptions {
+  const options = terminal.options ?? {};
+  return {
+    ...options,
+    model: terminal.agent?.status?.model_id ?? options.model,
+    effort: effortLevel(terminal),
+    permission: currentMode(terminal).permission,
+  };
 }
 
 /** "Opus 5.5" once the agent says, else what the session was started with. */

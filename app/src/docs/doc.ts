@@ -96,6 +96,10 @@ export abstract class Doc {
   private setMoved: (update: (n: number) => number) => void;
   /** Modification time of the file as last read or written, to detect outside changes. */
   protected mtime = 0;
+  /** The element the document is shown in, which scrolls it. */
+  protected host?: HTMLElement;
+  /** Stops following an agent's output into view (see `followOutput`). */
+  protected following?: () => void;
   /** The last run sent to a kernel, or being sent. */
   private sending: Promise<unknown> = Promise.resolve();
 

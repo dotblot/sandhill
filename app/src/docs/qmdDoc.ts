@@ -21,6 +21,7 @@ import {
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { CellOutput } from "./cellOutput";
 import { type AgentCell, changedOnDisk, Doc, type Place, replaceText, selectionOf } from "./doc";
+import { followOutput } from "./follow";
 
 /** Chunk languages that have kernels. */
 const RUNNABLE = new Set(["r", "python"]);
@@ -86,6 +87,7 @@ export class QmdDoc extends Doc {
   }
 
   mount(parent: HTMLElement) {
+    this.host = parent;
     const runKeys = Prec.highest(
       keymap.of([
         { key: "Mod-Enter", run: () => this.runAtCursor(false) },
@@ -123,6 +125,7 @@ export class QmdDoc extends Doc {
   }
 
   dispose() {
+    this.following?.();
     for (const slot of this.slots.values()) slot.output.dispose();
     this.view?.destroy();
   }
@@ -378,7 +381,19 @@ export class QmdDoc extends Doc {
 
   async runAgentCell(cell: AgentCell) {
     const chunk = this.chunks().find((c) => c.cellId === cell.cellId);
-    if (chunk) await this.runChunk(chunk);
+    if (!chunk) return;
+    await this.runChunk(chunk);
+    // The user sees the agent's result come in, under the chunk.
+    const view = this.view;
+    const slot = this.slots.get(chunk.cellId);
+    this.following?.();
+    if (view && slot && this.host) {
+      const top = () => {
+        const now = this.chunks().find((c) => c.cellId === cell.cellId);
+        return now ? view.lineBlockAt(now.from).top + view.documentTop : undefined;
+      };
+      this.following = followOutput(slot.output, this.host, top);
+    }
   }
 
   private chunkFor(cellId: string): Chunk {

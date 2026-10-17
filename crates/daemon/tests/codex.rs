@@ -21,6 +21,9 @@ const TIMEOUT: Duration = Duration::from_secs(90);
 /// What the bridge printed in its terminal, for when the test fails.
 static OUTPUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
+/// The message the conversation goes on with once Codex is started again.
+const RESUMED: &str = "Go on";
+
 /// What the stand-in model does, one request after another: the output
 /// items of each response.
 fn script() -> Vec<Value> {
@@ -78,10 +81,17 @@ async fn model(script: Vec<Value>) -> (u16, Arc<Mutex<Vec<Value>>>) {
                     seen.push(serde_json::from_slice(&body).unwrap_or(Value::Null));
                     seen.len() - 1
                 };
-                let items = script.get(n).cloned().unwrap_or_else(|| {
-                    json!([{"type": "message", "role": "assistant", "id": format!("m{n}"),
-                            "content": [{"type": "output_text", "text": "(nothing more)"}]}])
-                });
+                // The stopped turn may end before Codex asks the model, so
+                // the message after it is answered by what it says.
+                let resumed = String::from_utf8_lossy(&body).contains(RESUMED);
+                let items = script
+                    .get(n)
+                    .filter(|_| !resumed)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        json!([{"type": "message", "role": "assistant", "id": format!("m{n}"),
+                                "content": [{"type": "output_text", "text": "(nothing more)"}]}])
+                    });
                 let created =
                     json!({"type": "response.created", "response": {"id": format!("r{n}")}});
                 if items == "hang" {
@@ -269,6 +279,7 @@ async fn codex_works_through_the_chat() {
         project: Some(&project_name),
         cwd: &project,
         prompt: Some("Add a cell that prints 6 times 7"),
+        resume: None,
     };
     let mut launch = agents::launch("codex", &options, &context).await.unwrap();
     launch
@@ -448,6 +459,59 @@ async fn codex_works_through_the_chat() {
     chat_until(&mut events, &mut entries, after, "stop").await;
     let agent = terminals.info(&info.id).unwrap().agent.unwrap();
     assert_eq!(agent["state"], "idle");
+
+    // Started again (as when switching it, or after it ended), Codex goes
+    // on with its thread, in the same chat.
+    let before = terminals.info(&info.id).unwrap();
+    let thread = agents::resume_id("codex", before.agent.as_ref()).unwrap();
+    let context = Context {
+        executable: &exe,
+        socket: &socket,
+        project: Some(&project_name),
+        cwd: &project,
+        prompt: Some(RESUMED),
+        resume: Some(&thread),
+    };
+    let mut launch = agents::launch("codex", &options, &context).await.unwrap();
+    launch
+        .env
+        .push(("CODEX_HOME".into(), home.to_string_lossy().into()));
+    let restarted = terminals
+        .restart(&info.id, launch, &agents::RESUME_KEYS)
+        .await
+        .unwrap();
+    assert!(restarted.running && restarted.exit.is_none());
+    assert!(restarted.started_ms > before.started_ms);
+    assert_eq!(restarted.created_ms, before.created_ms);
+    assert_eq!(restarted.agent.unwrap()["thread"], thread.as_str());
+    let (out, mut events) = mpsc::unbounded_channel();
+    let stream = terminals
+        .open(&info.id, Some(before.end), Some(entries.len() as u64))
+        .await
+        .unwrap();
+    // Its output goes on from the old program's.
+    assert_eq!(stream.from, before.end);
+    tokio::spawn(stream.forward(out));
+    let after = entries.len();
+    chat_until(&mut events, &mut entries, after, "stop").await;
+    assert_eq!(
+        kinds(&entries[after..]),
+        ["session", "prompt", "text", "stop"]
+    );
+    assert_eq!(entries[after].seq, after as u64);
+    assert_eq!(entries[after].event["source"], "resume");
+    assert_eq!(entries[after + 1].event["text"], RESUMED);
+    assert_eq!(entries[after + 2].event["text"], "(nothing more)");
+    // Codex had the conversation so far.
+    let resumed = requests.lock().unwrap().last().unwrap()["input"].to_string();
+    assert!(
+        resumed.contains("Make a file") && resumed.contains(RESUMED),
+        "{resumed}"
+    );
+    assert_eq!(
+        terminals.info(&info.id).unwrap().agent.unwrap()["thread"],
+        thread.as_str()
+    );
 
     terminals.close(&info.id).await.unwrap();
 }

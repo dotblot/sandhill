@@ -165,6 +165,15 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
             );
             reported
         }
+        "SessionStart" => {
+            // The session to resume if Claude Code is started again: a new
+            // one after /clear.
+            let (reported, ()) = tokio::join!(
+                send(Some(terminal), with_mode(json!({}), &input)),
+                add_chat(terminal, chat::from_claude(&input, at_ms, None))
+            );
+            reported
+        }
         _ => {
             add_chat(terminal, chat::from_claude(&input, at_ms, None)).await;
             Ok(())
@@ -189,10 +198,14 @@ async fn send(terminal: Option<&Path>, value: Value) -> Result<()> {
 }
 
 /// Adds the permission mode a Claude Code hook reported (`default`,
-/// `acceptEdits`, `plan`, `auto`, `bypassPermissions`...), when it did.
+/// `acceptEdits`, `plan`, `auto`, `bypassPermissions`...) and its session,
+/// when it did.
 fn with_mode(mut report: Value, input: &Value) -> Value {
     if let Some(mode) = input["permission_mode"].as_str().filter(|m| !m.is_empty()) {
         report["mode"] = json!(mode);
+    }
+    if let Some(session) = input["session_id"].as_str().filter(|s| !s.is_empty()) {
+        report["session_id"] = json!(session);
     }
     report
 }
@@ -283,11 +296,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hooks_report_the_permission_mode() {
-        let input = json!({"hook_event_name": "Stop", "permission_mode": "plan"});
+    fn hooks_report_the_permission_mode_and_session() {
+        let input =
+            json!({"hook_event_name": "Stop", "permission_mode": "plan", "session_id": "5f3c"});
         assert_eq!(
             with_mode(json!({"state": "idle"}), &input),
-            json!({"state": "idle", "mode": "plan"})
+            json!({"state": "idle", "mode": "plan", "session_id": "5f3c"})
         );
         assert_eq!(
             with_mode(json!({"state": "idle"}), &Value::Null),

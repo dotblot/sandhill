@@ -219,6 +219,10 @@ export interface AgentReport {
   message?: string;
   /** Claude Code's permission mode, from its hooks: `default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`... */
   mode?: string;
+  /** Claude Code's session, from its hooks: what `restart_terminal` resumes. */
+  session_id?: string;
+  /** Codex's thread: what `restart_terminal` resumes. */
+  thread?: string;
   /** Codex: the mode it is in, as `AgentOptions.permission` names it. */
   permission?: string;
   status?: AgentStatus;
@@ -269,6 +273,8 @@ export interface TerminalInfo {
   cwd: string;
   project?: string;
   created_ms: number;
+  /** When its program last started; an exit from before is the old program's. */
+  started_ms?: number;
   running: boolean;
   exit?: TerminalExit;
   /** Bytes of output so far. */

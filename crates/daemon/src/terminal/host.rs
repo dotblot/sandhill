@@ -125,7 +125,8 @@ pub async fn run(options: HostOptions) -> Result<()> {
         listeners: Mutex::new(Vec::new()),
         queued: Mutex::new(Vec::new()),
         live: broadcast::channel(1024).0,
-        agent: Mutex::new(Value::Null),
+        // What a restarted program's terminal kept of the agent's report.
+        agent: Mutex::new(super::read_json(&paths.agent()).unwrap_or(Value::Null)),
         exit: Mutex::new(None),
         input,
         master: master.clone(),

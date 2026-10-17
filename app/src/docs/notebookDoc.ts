@@ -28,6 +28,7 @@ import {
 import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
 import { CellOutput, type OutputInfo } from "./cellOutput";
 import { type AgentCell, Doc, type Place, selectionOf } from "./doc";
+import { followOutput } from "./follow";
 
 interface CellView {
   cell: NbCell;
@@ -77,6 +78,7 @@ export class NotebookDoc extends Doc {
   }
 
   mount(parent: HTMLElement) {
+    this.host = parent;
     this.root = document.createElement("div");
     this.root.className = "notebook";
     parent.append(this.root);
@@ -107,6 +109,7 @@ export class NotebookDoc extends Doc {
   }
 
   dispose() {
+    this.following?.();
     this.observer?.disconnect();
     this.nearObserver?.disconnect();
     for (const view of this.views.values()) {
@@ -228,6 +231,10 @@ export class NotebookDoc extends Doc {
 
   async runAgentCell(cell: AgentCell) {
     await this.runCell(cell.cellId);
+    // The user sees the agent's result come in.
+    const view = this.views.get(cell.cellId);
+    this.following?.();
+    if (view?.output && this.host) this.following = followOutput(view.output, this.host, () => view.root.getBoundingClientRect().top);
   }
 
   private indexOf(cellId: string): number {

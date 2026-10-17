@@ -191,6 +191,9 @@ struct Meta {
     #[serde(default)]
     project: Option<String>,
     created_ms: i64,
+    /// When the program last started, if it was restarted.
+    #[serde(default)]
+    started_ms: i64,
     #[serde(default)]
     options: AgentOptions,
     /// The program and its arguments, for the record.
@@ -255,21 +258,85 @@ impl Terminals {
             std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700))?;
             std::fs::set_permissions(paths.dir(), std::fs::Permissions::from_mode(0o700))?;
         }
-        let mut command = vec![launch.program.to_string_lossy().into_owned()];
-        command.extend(launch.args.iter().cloned());
+        let now = now_ms();
         let meta = Meta {
             id: id.clone(),
             kind: launch.kind.clone(),
             title: launch.title.clone(),
             cwd: launch.cwd.to_string_lossy().into_owned(),
             project: launch.project.clone(),
-            created_ms: now_ms(),
+            created_ms: now,
+            started_ms: now,
             options: launch.options.clone(),
-            command,
+            command: command_of(&launch),
             build: crate::build_id().to_string(),
         };
         std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
+        if let Err(err) = self.spawn_host(&paths, &launch).await {
+            // A host that failed leaves nothing behind; one still starting
+            // keeps its folder.
+            if !host_alive(&paths) {
+                let _ = std::fs::remove_dir_all(paths.dir());
+            }
+            return Err(err);
+        }
+        self.info(&id)
+    }
 
+    /// Starts a terminal's program again with `launch`, in the same folder:
+    /// its output goes on from where it was, and its conversation and what
+    /// `keep` names of the agent's report stay. A program still running is
+    /// ended first.
+    pub async fn restart(&self, id: &str, launch: Launch, keep: &[&str]) -> Result<TerminalInfo> {
+        let paths = self.paths(id)?;
+        if self.info(id)?.running {
+            self.send(id, ToHost::Hangup).await?;
+            let ended = async {
+                while host_alive(&paths) && !paths.exit().exists() {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            };
+            if tokio::time::timeout(CLOSE_TIMEOUT, ended).await.is_err() {
+                bail!("{} did not end", launch.title);
+            }
+            // Its host lets go of the socket after writing how it ended.
+            let gone = async {
+                while paths.socket().exists() && host_alive(&paths) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            };
+            let _ = tokio::time::timeout(CLOSE_TIMEOUT, gone).await;
+        }
+        self.inputs.lock().await.remove(id);
+        let mut meta: Meta = serde_json::from_slice(&std::fs::read(paths.meta())?)?;
+        meta.started_ms = now_ms();
+        meta.options = launch.options.clone();
+        meta.command = command_of(&launch);
+        meta.build = crate::build_id().to_string();
+        std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
+        // What the old program reported no longer holds, except what
+        // finds its conversation again.
+        let kept: serde_json::Map<String, Value> = read_json::<Value>(&paths.agent())
+            .and_then(|agent| agent.as_object().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(key, _)| keep.contains(&key.as_str()))
+            .collect();
+        if kept.is_empty() {
+            let _ = std::fs::remove_file(paths.agent());
+        } else {
+            std::fs::write(paths.agent(), serde_json::to_vec(&kept)?)?;
+        }
+        for file in [paths.exit(), paths.host()] {
+            let _ = std::fs::remove_file(file);
+        }
+        self.spawn_host(&paths, &launch).await?;
+        self.info(id)
+    }
+
+    /// Starts the terminal host for `launch` in its folder and waits until
+    /// it serves.
+    async fn spawn_host(&self, paths: &Paths, launch: &Launch) -> Result<()> {
         let (cols, rows) = launch.size.unwrap_or(DEFAULT_SIZE);
         let log = std::fs::File::create(paths.host_log())?;
         let mut host = tokio::process::Command::new(&self.executable);
@@ -315,14 +382,10 @@ impl Terminals {
             let _ = child.wait().await;
         });
         match result {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                let _ = std::fs::remove_dir_all(paths.dir());
-                return Err(err.context(format!("cannot start {}", launch.title)));
-            }
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(err.context(format!("cannot start {}", launch.title))),
             Err(_) => bail!("the terminal for {} did not start in time", launch.title),
         }
-        self.info(&id)
     }
 
     /// Every terminal, oldest first.
@@ -350,6 +413,10 @@ impl Terminals {
             cwd: meta.cwd,
             project: meta.project,
             created_ms: meta.created_ms,
+            started_ms: match meta.started_ms {
+                0 => meta.created_ms,
+                ms => ms,
+            },
             running,
             exit,
             end: log::bounds(paths.dir()).1,
@@ -657,6 +724,13 @@ async fn tell(dir: &Path, message: &ToHost) -> Result<()> {
     Ok(())
 }
 
+/// The program and its arguments, for the record.
+fn command_of(launch: &Launch) -> Vec<String> {
+    let mut command = vec![launch.program.to_string_lossy().into_owned()];
+    command.extend(launch.args.iter().cloned());
+    command
+}
+
 fn host_alive(paths: &Paths) -> bool {
     let Some(host) = read_json::<Value>(&paths.host()) else {
         // Written right after the host starts; a terminal without it is
@@ -693,6 +767,7 @@ mod tests {
             cwd: "/".into(),
             project: None,
             created_ms: 0,
+            started_ms: 0,
             options: AgentOptions::default(),
             command: Vec::new(),
             build: build.into(),

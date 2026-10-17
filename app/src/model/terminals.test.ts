@@ -17,6 +17,7 @@ function fakeBackend(terminals: TerminalInfo[]) {
       if (method === "list_terminals") return terminals as T;
       if (method === "subscribe_terminal") return { terminal: params!.terminal, from: params!.from ?? 0 } as T;
       if (method === "start_terminal") return info("new", { kind: params!.kind as string }) as T;
+      if (method === "restart_terminal") return info(params!.terminal as string, { started_ms: 10, options: params!.options as TerminalInfo["options"] }) as T;
       return null as T;
     },
     onEvent() {},
@@ -104,6 +105,29 @@ describe("TerminalStore", () => {
     expect(store.agents().map((t) => t.id)).toEqual(["new"]);
     await store.close("new");
     expect(store.list()).toEqual([]);
+  });
+
+  it("starts an ended agent again and follows it on from where it got to", async () => {
+    const fake = fakeBackend([info("a", { running: false, exit: { code: 0, ended_ms: 5 }, agent: { session_id: "s1" } })]);
+    const store = new TerminalStore(fake.backend, "/p");
+    await store.refresh();
+    fake.send("a", 0, "abc");
+    fake.emit({ terminal: "a", chat: { seq: 0, event: { kind: "stop" } } });
+    fake.emit({ terminal: "a", exit: { code: 0, ended_ms: 5 } });
+    fake.calls.length = 0;
+    const again = await store.restart("a", { permission: "full" }, { cols: 90, rows: 30 }, "go on");
+    expect(fake.calls[0]).toEqual({
+      method: "restart_terminal",
+      params: { terminal: "a", options: { permission: "full" }, cols: 90, rows: 30, prompt: "go on" },
+    });
+    expect(fake.calls[1].params).toEqual({ terminal: "a", from: 3, chat_from: 1 });
+    expect(again.running).toBe(true);
+    expect(store.get("a")?.options).toEqual({ permission: "full" });
+    // The old program's end, arriving late, doesn't end the new one.
+    fake.emit({ terminal: "a", exit: { code: 0, ended_ms: 5 } });
+    expect(store.get("a")?.running).toBe(true);
+    fake.emit({ terminal: "a", exit: { code: 1, ended_ms: 12 } });
+    expect(store.get("a")?.running).toBe(false);
   });
 
   it("keeps an agent's conversation and picks it up after a reconnect", async () => {
