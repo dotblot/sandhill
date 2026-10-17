@@ -17,6 +17,16 @@ Agreed with Huan on 2026-10-11 after 16 drafts. Draft 17 (2026-10-12) changed:
 Draft 18 (2026-10-12) replaces the Agents pane with a chat laid out like Posit
 Assistant; see "Agents pane" below.
 
+Draft 19 (2026-10-17) changed:
+- Kernel rows in the left pane show no name, only the language icon and version;
+  clicking a row opens its details.
+- The file tree has guide lines, and folders open and close.
+- The Kernels and Resources sections in the left pane can be collapsed.
+- The effort knob is 50% bigger (30px); the bar keeps its height and is a little
+  shorter.
+- The status bar's connection item shows the machine's icon instead of a dot,
+  follows the Local | server tab, and opens a connection pop-up.
+
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
 at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
@@ -39,7 +49,8 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - the right pane, with two groups: Variables / Help / Packages / Git on top, and Plots / Viewer below.
 - Every pane reaches the top of the window. The gap is **3px**: between
   panes, from the panes to the top and right window edges, and to the left edge
-  when the left pane is hidden.
+  when the left pane is hidden. The panes sit directly on the status bar, with
+  no gap below them.
 - Gaps between panes are drag handles: dragging one resizes the panes on
   either side, and an orange line shows on hover. Console, Variables and Plots can be
   dragged by their tab strip to under the editor or into the right pane.
@@ -69,16 +80,37 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   content.
 - Project name row, with + (new file) and refresh at the right, then the file tree.
   Files use flat coloured icons in a muted palette.
-- Kernel rows, **11px**: language icon (R, Python, Nextflow), name, what is
-  attached, memory, and a trash button on hover. The trash button turns the row into an
-  inline "Shut down X? Cancel / Shut down" confirmation.
+- The file tree:
+  - Each level is indented 15px.
+  - A 1px guide line (the text colour at 24%) runs down from a folder's chevron,
+    with a 6px elbow to each child. The line stops at the last child.
+  - Clicking a folder opens or closes it, and its chevron turns to point down
+    when open.
+- Under the tree are two sections, **Kernels** and **Resources**:
+  - Each has a header row: a chevron and the name, 22px high, in the muted colour
+    and semibold.
+  - Clicking the header collapses or expands the section, and the file tree takes
+    the space.
+  - Collapsed, Kernels shows how many are running, and Resources names anything
+    at 80% or more with a red dot ("GPU high").
+- Kernel rows, **11px**:
+  - Each row shows the language icon (R, Python, Nextflow), the version (a
+    pipeline job shows its progress, "14/22"), what is attached, memory, and a
+    trash button on hover.
+  - No kernel name, so "R" and "Python" do not appear.
+  - Clicking a row opens the same details pop-up as the kernel pickers, to the
+    right of the row. A pipeline job's pop-up shows its progress, run time,
+    executor and work directory, with Open the log and Show in Jobs.
+  - The trash button turns the row into an inline "Shut down R 4.4.1? Cancel /
+    Shut down" confirmation.
 - Resources, **11px**, in a 2 × 2 grid (CPU and MEM, then GPU and Disk). Each item
   shows an icon, the label and a bar of the same length for every item, with no
   percent. Items are 22px high with 8px side padding, so the content sits centred
   in the hover shading. Clicking an item opens a details popover with the percent.
 - One left edge for the left pane and the status bar: every row's hover shading
   starts 6px from the window's left edge, and its first icon or dot starts at 14px
-  (file tree, kernel rows, resources, the status bar's connection dot). The
+  (file tree, section headers' chevrons, kernel rows, resources, the status bar's
+  connection icon). The
   Local | server tabs start at 6px and the project name at 14px. Files inside a
   folder line up under the folder's icon.
 
@@ -156,9 +188,11 @@ omp.
   - right: the linked file with its language icon (opens the file; code goes into
     it), the context ring and tokens used (opens the context breakdown above
     the pointer), and the model with its effort, "Opus (High) ⌄" (opens the
-    model list and the effort knob from draft 17). The effort track is 16px
-    tall, a little thinner than the 20px brain knob, and its filled part ends
-    exactly under the knob's centre.
+    model list and the effort knob from draft 17). The effort bar is 16px
+    tall and the brain knob 30px, so the knob stands out above and below the bar.
+    The knob's centre stops 15px from each end, so the knob stays inside the
+    pop-up. The bar is inset 4px at each end, and its filled part ends exactly
+    under the knob's centre.
 - **Mode picker** (the hand): Normal (safe steps run, risky ones ask), Auto (a
   second model reviews risky steps), YOLO (everything runs except steps marked
   dangerous; for Claude this restarts it on the same conversation), Restricted
@@ -196,7 +230,25 @@ omp.
   or SVG. Plots stay white in dark mode.
 
 ## Status bar (26px)
-- Left: connection (`gpu01 · sandhilld`), R and Python kernel state, jobs.
+- Left: the connection, then the kernel state ("R idle", "Python running") and
+  jobs of the machine picked in the left pane's Local | server tabs.
+- The connection item is the machine's icon and name: a cloud and "gpu01", or a
+  screen and "Local". The icon is the same one as on the Local | server tabs, and
+  it shows the state. There is no status dot:
+  - connected: the plain icon;
+  - reconnecting: the icon in orange, pulsing (steady orange with reduced motion);
+  - disconnected: the icon in red with a slash through it, and the name in red.
+    The kernel state and jobs are hidden until it reconnects.
+  The Local | server tab's icon shows the same state.
+- Its tooltip reads "gpu01 · sandhilld 0.3.0 · connected".
+- Clicking it opens a pop-up above it, at 11px like the other pop-ups:
+  - A server shows: name and state, then address, how it connects (ssh and the
+    user), the sandhilld version and how it runs, time connected, latency and
+    kernels. Its actions are Reconnect, Disconnect (or Connect when
+    disconnected) and Open the sandhilld log.
+  - Local shows "This Mac", state "running", the sandhilld version (launchd
+    agent), how long it has run and kernels, with Restart sandhilld and Open the
+    sandhilld log.
 - Right: "agent is waiting" notice, then 5-hour and weekly plan usage for
   Claude Code and Codex, then cursor position.
 - Each usage figure is a **14px ring** (2.5px stroke) that fills clockwise from
