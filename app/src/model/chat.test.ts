@@ -107,6 +107,49 @@ describe("buildChat", () => {
     expect(view.questions?.[0]?.question).toBe("Which?");
   });
 
+  it("puts Codex's requests on the step they name", () => {
+    const chat = buildChat(
+      turn("t1", [
+        { kind: "prompt", text: "make a file", at_ms: 1 },
+        { kind: "step", id: "call_1", tool: "Bash", input: { command: "echo hi > made.txt" }, at_ms: 2 },
+        // The request has the command's reason in its input, so the input doesn't match the step's.
+        {
+          kind: "ask",
+          id: "q1",
+          step: "call_1",
+          tool: "Bash",
+          input: { command: "echo hi > made.txt", description: "Write made.txt" },
+          remember: ["this command"],
+          scopes: ["chat"],
+          at_ms: 3,
+        },
+      ]),
+      true,
+    );
+    expect(chat.items.map((i) => i.kind)).toEqual(["user", "step"]);
+    const step = chat.items[1] as Step;
+    expect(step.status).toBe("wait");
+    expect(step.ask).toMatchObject({ id: "q1", scopes: ["chat"] });
+    expect(chat.waiting.map((a) => a.id)).toEqual(["q1"]);
+  });
+
+  it("shows what went wrong, in a turn or before one", () => {
+    const chat = buildChat(
+      [
+        entry({ kind: "session", source: "startup", model: "gpt-5.5" }),
+        entry({ kind: "error", text: "Codex couldn't compact the conversation" }),
+        ...turn("t1", [
+          { kind: "prompt", text: "hi", at_ms: 1 },
+          { kind: "error", text: "You've hit your usage limit.", at_ms: 2 },
+          { kind: "stop", at_ms: 3 },
+        ]),
+      ],
+      false,
+    );
+    expect(chat.items.map((i) => i.kind)).toEqual(["error", "user", "error", "footer"]);
+    expect(chat.items[2]).toMatchObject({ text: "You've hit your usage limit." });
+  });
+
   it("notes a compacted or resumed conversation", () => {
     const chat = buildChat([entry({ kind: "session", source: "startup" }), entry({ kind: "session", source: "compact" })], false);
     expect(chat.items).toEqual([expect.objectContaining({ kind: "note", text: "Conversation compacted" })]);
@@ -150,6 +193,46 @@ describe("stepView", () => {
     expect(read.detail).toBe("lines 1–2 of 10");
     expect(read.output).toBe("   1  a\n   2  b");
     expect(displayName("mcp__github__create_issue")).toBe("github · create_issue");
+  });
+
+  it("describes Codex's own steps", () => {
+    const add = stepView({ tool: "apply_patch", input: { changes: [{ path: "R/qc.R", kind: "add", diff: "a <- 1\nb <- 2\n" }] }, output: { status: "completed" } });
+    expect(add).toMatchObject({ name: "edit", desc: "Add qc.R", file: "R/qc.R", added: 2, removed: 0, diff: ["+a <- 1", "+b <- 2"] });
+    const edits = stepView({
+      tool: "apply_patch",
+      input: {
+        changes: [
+          { path: "a.R", kind: "update", diff: "@@ -1,2 +1,2 @@\n keep\n-x <- 1\n+x <- 2\n@@ -9 +9 @@\n-y\n+z\n" },
+          { path: "old.R", kind: "delete", diff: "gone\n" },
+        ],
+      },
+    });
+    expect(edits).toMatchObject({ desc: "Edit 2 files", added: 2, removed: 3 });
+    expect(edits.file).toBeUndefined();
+    expect(edits.diff).toEqual([" a.R", " keep", "-x <- 1", "+x <- 2", " ⋯", "-y", "+z", " old.R", "-gone"]);
+    const moved = stepView({ tool: "apply_patch", input: { changes: [{ path: "a.R", kind: "update", move_path: "b.R", diff: "" }] } });
+    expect(moved.desc).toBe("Move a.R to b.R");
+
+    const thinking = stepView({ tool: "reasoning", input: { text: "**Planning the QC plot**\n\nI'll read the data first." } });
+    expect(thinking).toMatchObject({ name: "thinking", desc: "Planning the QC plot", output: "**Planning the QC plot**\n\nI'll read the data first." });
+    expect(stepView({ tool: "view_image", input: { path: "/p/umap.png" } })).toMatchObject({ name: "view_image", desc: "Look at umap.png" });
+    expect(stepView({ tool: "WebSearch", input: { query: null }, output: { query: "scanpy umap" } }).desc).toBe("scanpy umap");
+  });
+
+  it("asks Codex's questions in its words", () => {
+    const patch = askView({ id: "1", tool: "apply_patch", input: { changes: [{ path: "a.R", kind: "update", diff: "-a\n+b" }], reason: "Outside the folder" } });
+    expect(patch).toMatchObject({ title: "Edit a.R?", file: "a.R", detail: "Outside the folder" });
+    const access = askView(
+      { id: "2", tool: "permissions", input: { reason: "To download the data", permissions: { network: { enabled: true }, fileSystem: { write: ["/data"] } } } },
+      undefined,
+      "Codex",
+    );
+    expect(access).toMatchObject({ title: "Give Codex more access?", detail: "To download the data" });
+    expect(access.view.output).toBe("Use the network\nWrite to /data");
+    const server = askView({ id: "3", tool: "mcp__github", input: { message: "Sign in to GitHub", url: "https://github.com/login" } });
+    expect(server).toMatchObject({ title: "Sign in to GitHub", detail: "https://github.com/login" });
+    expect(displayName("mcp__github")).toBe("github");
+    expect(askView({ id: "4", tool: "AskUserQuestion", input: { questions: [] } }, undefined, "Codex").title).toBe("Codex has a question");
   });
 
   it("finds images in a tool's result", () => {

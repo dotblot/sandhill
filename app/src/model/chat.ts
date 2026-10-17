@@ -45,6 +45,10 @@ export interface ChatEvent {
   model?: string;
   /** For an ask: what allowing it for the chat or the project allows from then on. */
   remember?: string[];
+  /** For an ask: for how long it can be allowed (`chat`, `project`); both when not given. */
+  scopes?: string[];
+  /** For an ask: the id of the step it is about, when the agent says. */
+  step?: string;
 }
 
 export interface ChatEntry {
@@ -60,6 +64,7 @@ export interface Ask {
   input: any;
   answer?: Answer | null;
   remember?: string[];
+  scopes?: string[];
 }
 
 export type StepStatus = "run" | "wait" | "done" | "fail" | "deny" | "cancel";
@@ -87,6 +92,8 @@ export type ChatItem =
   | { kind: "ask"; key: string; ask: Ask }
   | { kind: "footer"; key: string; at_ms?: number; ms?: number; text: string }
   | { kind: "note"; key: string; text: string }
+  /** Something went wrong: the agent couldn't start a turn, or a turn failed. */
+  | { kind: "error"; key: string; text: string }
   | { kind: "thinking"; key: string };
 
 export interface Chat {
@@ -120,7 +127,7 @@ export function buildChat(entries: ChatEntry[], working: boolean): Chat {
     const { event } = entry;
     if (event.kind === "answered") continue;
     if (!event.turn) {
-      if (event.kind === "session") order.push(entry);
+      if (event.kind === "session" || event.kind === "error") order.push(entry);
       continue;
     }
     let turn = turns.get(event.turn);
@@ -140,6 +147,10 @@ export function buildChat(entries: ChatEntry[], working: boolean): Chat {
   const lastTurn = [...order].reverse().find((t): t is Turn => "events" in t);
   for (const part of order) {
     if (!("events" in part)) {
+      if (part.event.kind === "error") {
+        items.push({ kind: "error", key: `e${part.seq}`, text: part.event.text ?? "" });
+        continue;
+      }
       const note = sessionNote(part.event);
       if (note) items.push({ kind: "note", key: `n${part.seq}`, text: note });
       continue;
@@ -186,17 +197,17 @@ export function buildChat(entries: ChatEntry[], working: boolean): Chat {
             input: event.input ?? {},
             answer: answers.get(event.id ?? ""),
             remember: event.remember,
+            scopes: event.scopes,
           };
           if (ask.answer === undefined && !ended) waiting.push(ask);
-          // Requests don't name their step: it is the latest one of that tool with the same input.
-          const same = JSON.stringify(ask.input);
-          const step = [...steps.values()]
-            .reverse()
-            .find((s) => s.tool === ask.tool && !s.ask && s.output === undefined && JSON.stringify(s.input) === same);
+          const step = askedStep(steps, ask, event.step);
           if (step) step.ask = ask;
           else items.push({ kind: "ask", key: `a${ask.id}`, ask });
           break;
         }
+        case "error":
+          items.push({ kind: "error", key: `e${seq}`, text: event.text ?? "" });
+          break;
         case "text": {
           const id = event.message ?? `m${seq}`;
           let reply = replies.get(id);
@@ -231,6 +242,20 @@ export function buildChat(entries: ChatEntry[], working: boolean): Chat {
     }
   }
   return { items, waiting, title };
+}
+
+/**
+ * The step a request is about: the one it names (Codex), else the latest one
+ * of that tool with the same input (Claude Code's hooks don't say).
+ */
+function askedStep(steps: Map<string, Step>, ask: Ask, id: string | undefined): Step | undefined {
+  // A step can ask more than once (Codex: more access, then the command); the latest shows.
+  const named = id !== undefined ? steps.get(id) : undefined;
+  if (named) return named;
+  const same = JSON.stringify(ask.input);
+  return [...steps.values()]
+    .reverse()
+    .find((s) => s.tool === ask.tool && !s.ask && s.output === undefined && JSON.stringify(s.input) === same);
 }
 
 function stepStatus(step: Step, ended: boolean): StepStatus {
@@ -464,7 +489,8 @@ export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">
       if (typeof out.numFiles === "number") view.detail = `${out.numFiles} ${out.numFiles === 1 ? "file" : "files"}`;
       break;
     case "WebSearch":
-      view.desc = input.query ?? "";
+      // Codex knows the query only once it has searched.
+      view.desc = input.query || out.query || "";
       break;
     case "WebFetch":
       view.desc = input.url ?? "";
@@ -495,6 +521,32 @@ export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">
       view.desc = "Share a plan";
       view.output = input.plan ?? "";
       break;
+    case "apply_patch": {
+      // Codex's edits: each file's change, as a whole file or a unified diff.
+      const changes: PatchChange[] = input.changes ?? [];
+      const one = changes.length === 1 ? changes[0] : undefined;
+      view.file = one?.path;
+      view.desc = one ? patchTitle(one) : `Edit ${changes.length} files`;
+      view.diff = changes.flatMap((change) => [...(one ? [] : [` ${change.path}`]), ...patchLines(change)]);
+      view.added = view.diff.filter((l) => l.startsWith("+")).length;
+      view.removed = view.diff.filter((l) => l.startsWith("-")).length;
+      break;
+    }
+    case "reasoning": {
+      // Codex's summary of what it is thinking: a bold title, then more.
+      const text: string = input.text ?? out.text ?? "";
+      view.desc = firstLine(text).replace(/\*\*/g, "");
+      view.output = text;
+      break;
+    }
+    case "view_image":
+      view.file = input.path;
+      view.desc = `Look at ${baseName(input.path)}`;
+      break;
+    case "permissions":
+      view.desc = input.reason ?? "";
+      view.output = permissionLines(input.permissions).join("\n");
+      break;
     case "TodoWrite":
       view.desc = "Update the to-do list";
       view.output = (input.todos ?? [])
@@ -514,6 +566,9 @@ export function displayName(tool: string): string {
   if (tool.startsWith(SANDHILL)) return tool.slice(SANDHILL.length);
   const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
   if (mcp) return `${mcp[1]} · ${mcp[2]}`;
+  // A request from a server (Codex): `mcp__github`.
+  const server = /^mcp__(.+)$/.exec(tool);
+  if (server) return server[1] ?? tool;
   const names: Record<string, string> = {
     WebSearch: "web_search",
     WebFetch: "web_fetch",
@@ -523,6 +578,8 @@ export function displayName(tool: string): string {
     ToolSearch: "tools",
     AskUserQuestion: "question",
     ExitPlanMode: "plan",
+    apply_patch: "edit",
+    reasoning: "thinking",
   };
   return names[tool] ?? tool.toLowerCase();
 }
@@ -535,6 +592,50 @@ function sandhillRun(head: string): { language?: string; detail?: string; file?:
   const file = /\bto (\S+?) (?:below|after)\b/.exec(head)?.[1] ?? /\bof (\S+\.\w+)\b/.exec(head)?.[1];
   const parts = [language, failed ? "error" : seconds].filter(Boolean);
   return { language: language?.toLowerCase(), detail: parts.length ? parts.join(" · ") : undefined, file };
+}
+
+/** A file in a Codex patch: `diff` is the whole file when it is added or deleted. */
+interface PatchChange {
+  path: string;
+  kind?: "add" | "delete" | "update";
+  diff?: string;
+  move_path?: string;
+}
+
+function patchTitle(change: PatchChange): string {
+  const name = baseName(change.path);
+  if (change.move_path) return `Move ${name} to ${baseName(change.move_path)}`;
+  if (change.kind === "add") return `Add ${name}`;
+  if (change.kind === "delete") return `Delete ${name}`;
+  return `Edit ${name}`;
+}
+
+/** A patch's lines with "+", "-" or " " in front; hunks after the first start with " ⋯". */
+function patchLines(change: PatchChange): string[] {
+  const lines = (change.diff ?? "").replace(/\n$/, "").split("\n");
+  if (change.kind === "add") return lines.map((l) => `+${l}`);
+  if (change.kind === "delete") return lines.map((l) => `-${l}`);
+  const out: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      if (out.length) out.push(" ⋯");
+    } else if (!line.startsWith("--- ") && !line.startsWith("+++ ") && !line.startsWith("\\")) {
+      out.push(/^[+\- ]/.test(line) ? line : ` ${line}`);
+    }
+  }
+  return out;
+}
+
+/** What more access Codex asks for: `{network: {enabled}, fileSystem: {read, write}}`. */
+// biome-ignore lint: free-form JSON
+function permissionLines(permissions: any): string[] {
+  if (!permissions || typeof permissions !== "object") return [];
+  const lines: string[] = [];
+  if (permissions.network?.enabled) lines.push("Use the network");
+  const files = permissions.fileSystem ?? permissions.file_system ?? {};
+  for (const path of files.write ?? []) lines.push(`Write to ${path}`);
+  for (const path of files.read ?? []) lines.push(`Read ${path}`);
+  return lines.length ? lines : [JSON.stringify(permissions, null, 1)];
 }
 
 function lineCount(text: string | undefined): number {
@@ -569,14 +670,18 @@ export interface Question {
   options: { label: string; description?: string }[];
 }
 
-export function askView(ask: Ask, linked?: string): AskView {
+export function askView(ask: Ask, linked?: string, agent = "Claude"): AskView {
   const view = stepView({ tool: ask.tool, input: ask.input }, linked);
   const input = ask.input ?? {};
   if (ask.tool === "AskUserQuestion") {
-    return { title: "Claude has a question", view, questions: input.questions ?? [] };
+    return { title: `${agent} has a question`, view, questions: input.questions ?? [] };
   }
   if (ask.tool === "ExitPlanMode") {
     return { title: "Carry out this plan?", view, plan: input.plan ?? "" };
+  }
+  if (/^mcp__/.test(ask.tool) && !ask.tool.slice(5).includes("__")) {
+    // A server asking for something other than a tool call (through Codex).
+    return { title: input.message || `${view.name} asks for your answer`, detail: input.url ?? undefined, view: { ...view, output: undefined } };
   }
   switch (view.name) {
     case "add_cell":
@@ -593,9 +698,13 @@ export function askView(ask: Ask, linked?: string): AskView {
     case "bash":
       return { title: "Run this command?", detail: input.description, view };
     case "edit":
+      // Codex's patches say why, when it asks for more than the sandbox allows.
+      if (ask.tool === "apply_patch") return { title: `${view.desc}?`, file: view.file, detail: input.reason, view };
       return { title: `Edit ${baseName(view.file)}?`, file: view.file, view };
     case "write":
       return { title: `Write ${baseName(view.file)}?`, file: view.file, view };
+    case "permissions":
+      return { title: `Give ${agent} more access?`, detail: input.reason, view: { ...view, desc: "" } };
     case "web_fetch":
       return { title: `Open ${input.url ?? "a web page"}?`, view };
     case "web_search":

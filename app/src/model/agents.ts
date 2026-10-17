@@ -1,7 +1,7 @@
 // What the Agents pane offers: the agent CLIs, their models, thinking effort
 // and permission modes, and how to read what they report.
 
-import type { AgentStatus, TerminalInfo } from "../backend/types";
+import type { AgentModel, AgentStatus, TerminalInfo } from "../backend/types";
 
 export interface ModelChoice {
   /** What the CLI takes; undefined leaves the CLI's own choice. */
@@ -44,13 +44,41 @@ export const AGENT_KINDS: AgentKind[] = [
     kind: "codex",
     name: "Codex",
     program: "codex",
-    plan: "Terminal · your ChatGPT plan",
+    plan: "Codex app-server · your ChatGPT plan",
+    // Until a conversation starts and Codex lists its models.
     models: [{ label: "Codex's default model" }],
-    efforts: ["minimal", "low", "medium", "high"],
+    efforts: ["low", "medium", "high", "xhigh"],
     recommended: "medium",
     placeholder: "Ask Codex…",
   },
 ];
+
+/**
+ * Agents whose chat Sandhill drives itself (Codex, through its app-server):
+ * messages, modes and models go to it as commands rather than as keys typed
+ * into its terminal.
+ */
+export function drivesChat(kind: string): boolean {
+  return kind === "codex";
+}
+
+/** An agent kind with the models a running agent offers, and the efforts of the one it uses. */
+export function withModels(kind: AgentKind, terminal: TerminalInfo): AgentKind {
+  const models = terminal.agent?.models;
+  if (!models?.length) return kind;
+  const current = currentAgentModel(models, terminal);
+  return {
+    ...kind,
+    models: models.map((m) => ({ id: m.id, label: m.label })),
+    efforts: current?.efforts?.length ? current.efforts : kind.efforts,
+    recommended: current?.effort ?? kind.recommended,
+  };
+}
+
+function currentAgentModel(models: AgentModel[], terminal: TerminalInfo): AgentModel | undefined {
+  const id = terminal.agent?.status?.model_id ?? terminal.options?.model;
+  return models.find((m) => m.id === id) ?? models.find((m) => m.default);
+}
 
 export function agentKind(kind: string): AgentKind | undefined {
   return AGENT_KINDS.find((a) => a.kind === kind);
@@ -107,7 +135,7 @@ export function claudeMode(mode: string | undefined): Mode | undefined {
 
 /** The mode the agent last reported (it can change in the terminal), else the one it started in. */
 export function currentMode(terminal: TerminalInfo): Mode {
-  return claudeMode(terminal.agent?.mode) ?? startMode(terminal.options?.permission);
+  return claudeMode(terminal.agent?.mode) ?? startMode(terminal.agent?.permission ?? terminal.options?.permission);
 }
 
 /** The mode Claude Code's terminal shows under its prompt ("⏸ plan mode on"), from its last lines. */

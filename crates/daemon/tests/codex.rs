@@ -308,6 +308,7 @@ async fn codex_works_through_the_chat() {
     assert_eq!(
         kinds(&entries),
         [
+            "session",
             "prompt",
             "step",
             "step_done",
@@ -326,17 +327,21 @@ async fn codex_works_through_the_chat() {
             .map(|r| r["input"].to_string())
             .unwrap_or_default()
     );
-    let prompt = &entries[0].event;
+    // The conversation's start, which the app waits for, names the model.
+    assert_eq!(entries[0].event["source"], "startup");
+    assert_eq!(entries[0].event["model"], "gpt-5.5");
+    let prompt = &entries[1].event;
     assert_eq!(prompt["text"], "Add a cell that prints 6 times 7");
     // Its thinking, then the cell, which ran in the user's kernel.
-    assert_eq!(entries[1].event["tool"], "reasoning");
-    assert_eq!(entries[2].event["output"]["text"], "**Adding a cell**");
-    let added = entries[6].event["output"].to_string();
+    assert_eq!(entries[2].event["tool"], "reasoning");
+    assert_eq!(entries[3].event["output"]["text"], "**Adding a cell**");
+    let added = entries[7].event["output"].to_string();
     assert!(added.contains("42"), "{added}");
-    assert_eq!(entries[7].event["text"], "The cell printed 42.");
+    assert_eq!(entries[8].event["text"], "The cell printed 42.");
     assert!(
         entries
             .iter()
+            .skip(1)
             .filter(|e| e.event["kind"] != "answered")
             .all(|e| e.event["turn"] == prompt["turn"])
     );

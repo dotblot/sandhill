@@ -47,6 +47,7 @@ Responses can arrive out of order; match them by `id`.
 | `unsubscribe_terminal` | `terminal` | `null` |
 | `terminal_input` | `terminal`, `data` | `null` |
 | `answer_terminal` | `terminal`, `id`, `answer` | `null` |
+| `tell_terminal` | `terminal`, `command` | `null` |
 | `resize_terminal` | `terminal`, `cols`, `rows` | `null` |
 | `close_terminal` | `terminal` | `null` once its program has ended and its files are gone |
 | `set_focus` | `project`, `focus` | `null` |
@@ -166,15 +167,41 @@ for all of it), then each new entry, as terminal messages with `chat`:
 - `text {turn, message, index, text, final}`: part of a reply.
 - `step {turn, id, tool, input}`, then `step_done {turn, id, output, ms}` or
   `step_failed {turn, id, error, interrupted}`.
-- `ask {turn, id, tool, input, remember?}`: the agent waits for permission,
-  or for answers to `AskUserQuestion`, until an `answered {id, answer}`
-  entry. `remember` is what allowing it for the chat or the project would
-  also allow from then on (`Bash(npm test:*)`, `files in /data`).
+- `ask {turn, id, tool, input, remember?, scopes?, step?}`: the agent waits
+  for permission, or for answers to `AskUserQuestion`, until an
+  `answered {id, answer}` entry. `remember` is what allowing it for the chat
+  or the project would also allow from then on (`Bash(npm test:*)`,
+  `files in /data`); `scopes` says which of `chat` and `project` it can be
+  allowed for, when not both. `step` is the id of the step it is about, when
+  the agent says (Codex); otherwise it is the latest step of that tool with
+  the same input.
 - `stop {turn}`, and `session {source, model?}` when a session starts,
   resumes, is cleared or compacted.
+- `error {turn?, text}`: something went wrong, such as a turn Codex couldn't
+  start or finish; without `turn` it is about the conversation.
 
 `answer_terminal` answers an `ask`: `answer` is `{behavior: "allow" |
 "deny", scope?: "once" | "chat" | "project", answers?: {question: answer}}`.
+
+Codex runs differently: `start_terminal` with kind `codex` runs Sandhill's
+bridge, `sandhilld codex-chat`, in the terminal, and the bridge runs
+`codex app-server` and writes the conversation and the agent's reports
+itself, from what Codex sends. The terminal shows a transcript. Codex's
+steps take the shapes above where there is one (`Bash`, `TodoWrite`,
+`mcp__sandhill__add_cell`); its own are `apply_patch` (`{changes: [{path,
+kind: "add" | "delete" | "update", diff, move_path?}]}`, `diff` being the
+whole file when added or deleted) and `reasoning` (`{text}`, its summary of
+what it is thinking). `permissions` asks for more access
+(`{reason, permissions}`). What the user does in the chat goes to the bridge
+with `tell_terminal`; `command` is one of `{kind: "say", text}`,
+`{kind: "interrupt"}`, `{kind: "set", model?, effort?, permission?}` (from
+the next turn on; `model: null` is Codex's default), `{kind: "compact"}` and
+`{kind: "login", method: "browser" | "code"}`. Commands sent while the bridge
+isn't connected wait for it. Its `agent` reports also have `permission` (the
+mode it is in, named as in `options`), `models` (`[{id, label, efforts?,
+effort?, default?}]`), `account` (`{type, email?, plan?}`, or null when it
+isn't signed in), `auth_required` and `login` (`{url, code?}` while signing
+in, or `{error}`).
 
 Each agent gets Sandhill's MCP server, `sandhilld mcp --project <folder>`,
 which it starts itself. Its tools reach the user's live sessions through this

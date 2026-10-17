@@ -635,6 +635,8 @@ button.flink { display: inline; font: inherit; }
 code.flink { color: var(--accent); }
 .thinking { display: inline-flex; align-items: center; gap: 7px; color: var(--faint); font-size: 12px; }
 .chat-note { align-self: center; color: var(--faint); font-size: 11px; }
+.chat-error { display: flex; align-items: flex-start; gap: 7px; padding: 7px 10px; border-radius: var(--r); background: var(--err-soft); color: var(--text); line-height: 1.4; overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-error .ico { flex: none; width: 15px; height: 15px; margin-top: 1px; color: var(--err); }
 .chat-stuck { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--r); background: var(--accent-soft); line-height: 1.4; }
 .chat-stuck button { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); white-space: nowrap; }
 /* Step rows: an icon, the tool and what it does, a detail, and a chevron that opens it */
@@ -765,6 +767,7 @@ pre.diff { padding: 6px 0; }
 .pm-opt small { color: var(--muted); line-height: 1.35; font-size: inherit; }
 .ap-n { margin: 0; padding: 0 4px; color: var(--faint); line-height: 1.4; }
 .ap-n kbd { color: var(--muted); }
+.ap-n.err { color: var(--err); overflow-wrap: anywhere; }
 .ap-act { display: flex; justify-content: flex-end; gap: 6px; }
 .cl-track { position: relative; height: 6px; border-radius: 3px; background: var(--line); }
 .cl-track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--muted); }

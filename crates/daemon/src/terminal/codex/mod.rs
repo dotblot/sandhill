@@ -333,6 +333,9 @@ impl Bridge {
             self.cwd.display()
         );
         self.report(json!({"thread": thread})).await;
+        // The conversation has started, as Claude Code's SessionStart hook says.
+        self.chat(json!({"kind": "session", "source": "startup", "model": started["model"]}))
+            .await;
         // What the app shows besides: the models, the account and its limits.
         tokio::spawn(self.clone().look_around());
         Ok(())
