@@ -529,8 +529,8 @@ impl Bridge {
                 }
                 self.chat(json!({"kind": "error", "turn": turn, "text": format!("{err:#}")}))
                     .await;
-                self.chat(json!({"kind": "stop", "turn": turn})).await;
                 self.report(json!({})).await;
+                self.chat(json!({"kind": "stop", "turn": turn})).await;
             }
         }
     }
@@ -910,10 +910,12 @@ impl Bridge {
                 tokio::spawn(self.clone().decide_plan(id, plan));
             }
             _ => {
+                // Idle before the turn shows as ended, so a client that sees
+                // the end also sees the agent idle.
+                self.report(json!({})).await;
                 if shown || turn["status"] == "failed" {
                     self.chat(json!({"kind": "stop", "turn": id})).await;
                 }
-                self.report(json!({})).await;
                 self.next();
             }
         }
@@ -943,14 +945,19 @@ impl Bridge {
         self.state.lock().unwrap().waiting += 1;
         self.report(json!({})).await;
         let answer = super::ask(&self.dir, &id, event).await.ok().flatten();
-        self.state.lock().unwrap().waiting -= 1;
+        let carry_out = answer.as_ref().is_some_and(|a| a["behavior"] == "allow");
+        {
+            let mut state = self.state.lock().unwrap();
+            state.waiting -= 1;
+            if carry_out {
+                state.permission = Some("supervised".into());
+            }
+        }
+        self.report(json!({})).await;
         self.chat(json!({"kind": "stop", "turn": turn})).await;
-        if answer.as_ref().is_some_and(|a| a["behavior"] == "allow") {
-            self.state.lock().unwrap().permission = Some("supervised".into());
-            self.report(json!({})).await;
+        if carry_out {
             tokio::spawn(self.clone().say(CARRY_OUT.to_string(), false));
         } else {
-            self.report(json!({})).await;
             self.next();
         }
     }
@@ -987,9 +994,15 @@ impl Bridge {
         }
         println!("  ? {} (waiting for you)", ask.tool);
         let key = id.to_string();
+        // Asked once the agent reports waiting, so a client that sees the
+        // ask also sees the agent waiting.
+        let (go, ready) = tokio::sync::oneshot::channel::<()>();
         let waiting = tokio::spawn({
             let dir = self.dir.clone();
-            async move { super::ask(&dir, &ask_id, event).await }
+            async move {
+                let _ = ready.await;
+                super::ask(&dir, &ask_id, event).await
+            }
         });
         {
             let mut state = self.state.lock().unwrap();
@@ -998,6 +1011,7 @@ impl Bridge {
         }
         self.report(json!({"message": format!("Codex asks to use {}", short_tool(&ask.tool))}))
             .await;
+        let _ = go.send(());
         let answer = waiting.await;
         {
             let mut state = self.state.lock().unwrap();

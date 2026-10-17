@@ -297,7 +297,9 @@ impl Terminals {
         let mut child = host.spawn().context("cannot start the terminal host")?;
         let started = async {
             loop {
-                if UnixStream::connect(paths.socket()).await.is_ok() {
+                // The host listens first, then starts the program and says
+                // which it is.
+                if paths.host().exists() && UnixStream::connect(paths.socket()).await.is_ok() {
                     return Ok(());
                 }
                 if let Ok(Some(_)) = child.try_wait() {

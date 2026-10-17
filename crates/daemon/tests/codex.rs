@@ -182,7 +182,10 @@ async fn chat_until(
                 entries.push(entry);
             }
             if let Some(exit) = terminal.exit {
-                panic!("Codex ended ({exit:?}) waiting for {kind}; got {entries:#?}");
+                panic!(
+                    "Codex ended ({exit:?}) waiting for {kind}; got {entries:#?}\nterminal:\n{}",
+                    String::from_utf8_lossy(&OUTPUT.lock().unwrap())
+                );
             }
         }
     }

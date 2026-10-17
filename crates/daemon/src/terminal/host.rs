@@ -76,10 +76,39 @@ struct Shared {
 pub async fn run(options: HostOptions) -> Result<()> {
     let paths = Paths::new(&options.dir);
     let (program, args) = options.program.split_first().context("no program to run")?;
+    // Listening before the program starts: what it runs to talk to the
+    // terminal (Codex's bridge, Claude Code's hooks) may connect at once.
+    let socket = paths.socket();
+    if let Some(parent) = socket.parent()
+        && parent != paths.dir()
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        use std::os::unix::fs::MetadataExt;
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent);
+        // SAFETY: getuid has no preconditions.
+        let uid = unsafe { libc::getuid() };
+        let meta = std::fs::symlink_metadata(parent)?;
+        if !meta.is_dir() || meta.uid() != uid || meta.mode() & 0o077 != 0 {
+            bail!("{} is not a private folder of this user", parent.display());
+        }
+    }
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket)
+        .with_context(|| format!("cannot listen on {}", socket.display()))?;
+
     let mut command = std::process::Command::new(program);
     command.args(args).current_dir(&options.cwd);
-    let pty::Pty { master, mut child } = pty::spawn(&mut command, options.cols, options.rows)
-        .with_context(|| format!("cannot start {}", program.to_string_lossy()))?;
+    let pty::Pty { master, mut child } = match pty::spawn(&mut command, options.cols, options.rows)
+    {
+        Ok(pty) => pty,
+        Err(err) => {
+            let _ = std::fs::remove_file(&socket);
+            return Err(err).with_context(|| format!("cannot start {}", program.to_string_lossy()));
+        }
+    };
     let pid = child.id();
     write_json(
         &paths.host(),
@@ -103,26 +132,6 @@ pub async fn run(options: HostOptions) -> Result<()> {
         pid,
         paths: paths.clone(),
     });
-    let socket = paths.socket();
-    if let Some(parent) = socket.parent()
-        && parent != paths.dir()
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        use std::os::unix::fs::MetadataExt;
-        let _ = std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(parent);
-        // SAFETY: getuid has no preconditions.
-        let uid = unsafe { libc::getuid() };
-        let meta = std::fs::symlink_metadata(parent)?;
-        if !meta.is_dir() || meta.uid() != uid || meta.mode() & 0o077 != 0 {
-            bail!("{} is not a private folder of this user", parent.display());
-        }
-    }
-    let _ = std::fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket)
-        .with_context(|| format!("cannot listen on {}", paths.socket().display()))?;
     tokio::spawn(write_input(master.clone(), input_rx));
     tokio::spawn(accept(shared.clone(), listener));
 
