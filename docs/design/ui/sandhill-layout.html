@@ -1364,12 +1364,32 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 #atabs .chat-title .ax { visibility: visible; width: 16px; height: 16px; display: grid; place-items: center; margin-left: 2px; border-radius: var(--r); color: var(--faint); }
 #atabs .chat-title .ax:hover { color: var(--text); background: var(--hover); }
 #atabs .chat-title .ax .ico { width: 11px; height: 11px; }
-/* ---------- draft 19: 6px between panes and to the window edges ---------- */
-.wbody { padding: 6px 6px 0 0 !important; }
-.wbody:has(> #sidebar[hidden]) { padding-left: 6px !important; }
-.split.v { width: 6px; } .split.h { height: 6px; }
-.split.v::after { left: 2px; } .split.h::after { top: 2px; }
-.pane-max { inset: 0 6px 0 0; }
+/* ---------- draft 19: kernel rows without names, a file tree with guide lines, collapsible sections, a bigger effort knob ---------- */
+.win { --tree-line: color-mix(in srgb, var(--text) 24%, transparent); }
+.sidebar .ti { position: relative; }
+.ti .tg { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--tree-line); pointer-events: none; }
+.ti .tg.end { bottom: 50%; }
+.ti .te { position: absolute; top: 50%; width: 6px; height: 1px; background: var(--tree-line); pointer-events: none; }
+.sidebar .chev .ico { transition: transform .12s; }
+.sidebar .chev.open .ico { transform: rotate(90deg); }
+.sec-h { grid-column: 1 / -1; display: flex; align-items: center; gap: 5px; width: 100%; height: 22px; padding: 0 8px; border-radius: var(--r); color: var(--muted); font-weight: 600; text-align: left; }
+.sec-h:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
+.sec-h .chev { width: 12px; display: grid; place-items: center; color: var(--faint); margin-right: -1px; flex: none; }
+.sec-h .chev .ico { width: 11px; height: 11px; }
+.sec-n { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+.sec-n .hotdot { width: 6px; height: 6px; border-radius: 50%; background: var(--err); }
+.kernels { padding-top: 3px; }
+.resources { padding-top: 3px; }
+.krow[data-kpick] { cursor: default; }
+.krow .kn { font-variant-numeric: tabular-nums; }
+/* effort knob 30px (was 20); the bar stays 16px high and is 4px shorter at each end */
+.eff-track { height: 30px; }
+.eff-track::before, .eff-fill, .eff-stars { left: 4px; right: 4px; top: 7px; bottom: 7px; }
+.eff-stars { width: calc(100% - 8px); height: calc(100% - 14px); }
+.eff-knob { left: calc(15px + (100% - 30px) * var(--f)); width: 30px; height: 30px; }
+.eff-knob svg { width: 30px; height: 30px; }
+.eff-rays { width: 69px; height: 69px; margin: -34.5px;
+  -webkit-mask: radial-gradient(circle, transparent 0 15px, #000 18px 24px, transparent 34.5px); mask: radial-gradient(circle, transparent 0 15px, #000 18px 24px, transparent 34.5px); }
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -1786,10 +1806,16 @@ function sysStats() {
 const HOSTS = {
   local: { label: "Local", icon: "monitor", project: "thesis-figures", path: "~/Documents/thesis-figures",
     res: { cpu: [22, "Apple M3 Pro · 12 cores", "Load 2.6 · R 140%, Sandhill 6%"], mem: [61, "22 of 36 GB used", "R 1.2 GB · Sandhill 0.3 GB · other apps 20 GB"], gpu: [9, "M3 Pro GPU · 18 cores", "Metal · idle"], disk: [74, "740 of 1,000 GB used", "Macintosh HD · 260 GB free"] },
-    kernels: [["r", "R 4.4.1", "fig3.qmd", "1.2 GB"]] },
+    kernels: [{ k: "r", sub: "fig3.qmd", mem: "1.2 GB" }],
+    tree: [["figures", [["fig2_umap.pdf", { meta: "1.8 MB", dim: 1 }], ["fig3_volcano.pdf", { meta: "0.9 MB", dim: 1 }]]], ["results", [["volcano_table.csv", { meta: "0.4 MB", dim: 1 }]]],
+      ["fig2_umap.qmd"], ["fig3.qmd", { dot: 1 }], ["theme.R"], ["refs.bib", { dim: 1 }], ["renv.lock", { dim: 1 }]] },
   gpu01: { label: "gpu01", icon: "cloud", project: "pbmc-atlas", path: "~/projects/pbmc-atlas",
     res: { cpu: [38, "2 × Xeon Gold 6338 · 32 cores", "Load 12.1 · R 220%, Python 140%, nf-core 380%"], mem: [41, "52 of 128 GB used", "Python 3.4 GB · R 2.1 GB · nf-core 31 GB · other 15 GB"], gpu: [84, "NVIDIA A100 40 GB", "33 of 40 GB · Python (scvi) 84% util"], disk: [61, "612 GB of 1 TB used on /home", "/scratch 2.1 of 8 TB"] },
-    kernels: [["r", "R 4.4.1", "analysis.qmd, console", "2.1 GB"], ["py", "Python 3.12", "analysis.qmd, 02_de.ipynb", "3.4 GB"], ["nf", "nf-core/rnaseq", "job · 14/22", "1:12:40"]] },
+    kernels: [{ k: "r", sub: "analysis.qmd, console", mem: "2.1 GB" }, { k: "py", sub: "analysis.qmd, 02_de.ipynb", mem: "3.4 GB" }, { k: "nf", sub: "job", mem: "1:12:40" }],
+    tree: [["data", [["pbmc3k_seurat.rds", { meta: "41 MB", dim: 1 }], ["pbmc3k_processed.h5ad", { meta: "23 MB", dim: 1 }], ["ifnb_counts.mtx.gz", { meta: "112 MB", dim: 1 }]]],
+      ["results", [["figures", [["umap_clusters.pdf", { meta: "1.4 MB", dim: 1 }], ["dotplot_markers.pdf", { meta: "0.6 MB", dim: 1 }]]], ["markers.csv", { meta: "2.3 MB", dim: 1 }], ["de_cd14_mono.csv", { meta: "0.8 MB", dim: 1 }]]],
+      ["analysis.qmd", { dot: 1, tab: "analysis" }], ["01_qc.R", { meta: "M", tab: "qc" }], ["02_de.ipynb", { dot: 1, tab: "de" }], ["utils.py"], ["CLAUDE.md"], ["renv.lock", { dim: 1 }], ["environment.yml", { dim: 1 }],
+      [".sandhill", [["project.toml", { dim: 1 }], ["agents.json", { dim: 1 }]], { dim: 1 }]] },
 };
 function langIcon(k) {
   const svg = b => `<svg class="lang" viewBox="0 0 16 16" aria-hidden="true">${b}</svg>`;
@@ -1797,29 +1823,50 @@ function langIcon(k) {
   if (k === "py") return svg(`<path d="M8 1.2c-3 0-3 1.3-3 2.2v1.4h3.1v.5H3.5C2.2 5.3 1.2 6.4 1.2 8.1s1 2.9 2.3 2.9h1.2V9.2c0-1.4 1.2-2.6 2.6-2.6h3.1c1.1 0 2-.9 2-2V3.4c0-1-.9-2.2-4.4-2.2z" fill="#3a76ad"/><path d="M8 14.8c3 0 3-1.3 3-2.2v-1.4H7.9v-.5h4.6c1.3 0 2.3-1.1 2.3-2.8s-1-2.9-2.3-2.9h-1.2v1.8c0 1.4-1.2 2.6-2.6 2.6H5.6c-1.1 0-2 .9-2 2v1.2c0 1 .9 2.2 4.4 2.2z" fill="#f2c53d"/><circle cx="6.2" cy="2.9" r=".6" fill="#fff"/><circle cx="9.8" cy="13.1" r=".6" fill="#fff"/>`);
   return svg(`<rect x="1" y="1" width="14" height="14" rx="4" fill="#1fa784"/><text x="8" y="11" text-anchor="middle" font-size="7.5" font-weight="800" fill="#fff" font-family="system-ui,sans-serif">nf</text>`);
 }
+/* the left pane's kernel rows open the same pop-up as the kernel pickers */
+const SIDEK = {
+  local: { r: { lang: "R", ver: "4.4.1", state: "idle", rows: [["Kernel", "Ark 0.1.150"], ["Library", "renv (project)"], ["Runs on", "this Mac"], ["Used by", "fig3.qmd"], ["Memory", "1.2 GB"]], sess: "r-41d0", other: "R 4.3.3 (system)" } },
+  gpu01: { nf: { lang: "nf-core/rnaseq", ver: "3.14.0", state: "running", job: true, short: "14/22",
+    rows: [["Progress", "14 of 22 processes"], ["Running for", "1:12:40"], ["Executor", "slurm · 6 jobs queued"], ["Work dir", "/scratch/pbmc-atlas/work"], ["Started", "today 08:02"]] } },
+};
+const sideK = (host, k) => (SIDEK[host] || {})[k] || KERNELS[k];
 function renderSidebar() {
   const sb = $("#sidebar"); S.host = S.host || "gpu01"; S.kgone = S.kgone || new Set();
+  S.treeOpen = S.treeOpen || new Set(["gpu01/data", "local/figures"]); S.secShut = S.secShut || new Set();
   const h = HOSTS[S.host];
-  const it = (name, ext, cls = "", meta = "", tab = "") => `<div class="ti ${cls} ${S.tab === tab && tab ? "on" : ""}" ${tab ? `data-open="${tab}"` : ""}>${ext === "dir" ? `<span class="chev">${ico("chevr")}</span>${fileIcon(name, true)}` : fileIcon(name)}${name}${meta ? `<span class="meta">${meta}</span>` : ""}</div>`;
-  const tree = S.host === "gpu01"
-    ? `${it("data", "dir")}${it("pbmc3k_seurat.rds", "data", "ind1 dim", "41 MB")}${it("pbmc3k_processed.h5ad", "data", "ind1 dim", "23 MB")}${it("ifnb_counts.mtx.gz", "data", "ind1 dim", "112 MB")}
-      ${it("results", "dir")}${it("analysis.qmd", "qmd", "", `<span class="dot idle" title="R session attached"></span>`, "analysis")}${it("01_qc.R", "r", "", "M", "qc")}${it("02_de.ipynb", "ipynb", "", `<span class="dot idle"></span>`, "de")}${it("utils.py", "py")}${it("CLAUDE.md", "md")}${it("renv.lock", "data", "dim")}${it("environment.yml", "data", "dim")}${it(".sandhill", "dir", "dim")}`
-    : `${it("figures", "dir")}${it("fig2_umap.pdf", "data", "ind1 dim", "1.8 MB")}${it("fig3_volcano.pdf", "data", "ind1 dim", "0.9 MB")}${it("results", "dir")}${it("fig2_umap.qmd", "qmd")}${it("fig3.qmd", "qmd", "", `<span class="dot idle"></span>`)}${it("theme.R", "r")}${it("refs.bib", "txt", "dim")}${it("renv.lock", "data", "dim")}`;
-  const kern = h.kernels.filter(k => !S.kgone.has(S.host + k[1])).map(([l, n, sub, m]) => {
-    const id = S.host + n;
+  // tree: each level indents 15px; a guide line runs down from the parent's chevron, with an elbow to each child
+  const gx = d => 14 + 15 * d;
+  const rows = (nodes, depth, path, cont) => nodes.map(([name, a, b], i) => {
+    const kids = Array.isArray(a) ? a : null, o = (kids ? b : a) || {}, last = i === nodes.length - 1, key = `${path}/${name}`, open = kids && S.treeOpen.has(key);
+    let guides = "";
+    for (let d = 1; d < depth; d++) if (cont[d]) guides += `<i class="tg" style="left:${gx(d - 1)}px"></i>`;
+    if (depth) guides += `<i class="tg ${last ? "end" : ""}" style="left:${gx(depth - 1)}px"></i><i class="te" style="left:${gx(depth - 1)}px"></i>`;
+    const meta = o.dot ? `<span class="dot idle" title="Session attached"></span>` : o.meta || "";
+    const row = `<div class="ti ${o.dim ? "dim" : ""} ${o.tab && S.tab === o.tab ? "on" : ""}" style="padding-left:${8 + 15 * depth}px" ${o.tab ? `data-open="${o.tab}"` : ""} ${kids ? `data-dir="${key}" aria-expanded="${!!open}"` : ""}>${guides}${kids ? `<span class="chev ${open ? "open" : ""}">${ico("chevr")}</span>${fileIcon(name, true)}` : fileIcon(name)}${name}${meta ? `<span class="meta">${meta}</span>` : ""}</div>`;
+    return row + (open ? rows(kids, depth + 1, key, { ...cont, [depth]: !last }) : "");
+  }).join("");
+  const tree = rows(h.tree, 0, S.host, {});
+  const live = h.kernels.filter(x => !S.kgone.has(S.host + x.k));
+  const kern = live.map(({ k, sub, mem }) => {
+    const id = S.host + k, K = sideK(S.host, k);
     return S.kask === id
-      ? `<div class="krow ask">${langIcon(l)}<span class="kn">Shut down ${n}?</span><button class="kbtn" data-kno>Cancel</button><button class="kbtn danger" data-kyes="${id}">Shut down</button></div>`
-      : `<div class="krow" title="${n} · ${sub}">${langIcon(l)}<span class="kn">${n}<small>${sub}</small></span><span class="km">${m}</span><button class="kx" data-kask="${id}" title="Shut down this session">${ico("trash")}</button></div>`;
+      ? `<div class="krow ask">${langIcon(k)}<span class="kn">Shut down ${K.lang} ${K.ver}?</span><button class="kbtn" data-kno>Cancel</button><button class="kbtn danger" data-kyes="${id}">Shut down</button></div>`
+      : `<div class="krow" data-kpick="${k}" data-kwhere="side" role="button" tabindex="0" title="${K.lang} ${K.ver} · ${K.state}. Click for details">${langIcon(k)}<span class="kn">${K.short || K.ver}<small>${sub}</small></span><span class="km">${mem}</span><button class="kx" data-kask="${id}" title="${K.job ? "Cancel this job" : "Shut down this session"}">${ico("trash")}</button></div>`;
   }).join("") || `<div class="krow dim"><span class="kn">No kernels running</span></div>`;
   const RES = [["cpu", "chip", "CPU"], ["mem", "mem", "MEM"], ["gpu", "gpu", "GPU"], ["disk", "disk", "Disk"]];
+  const sec = (k, label, extra = "") => { const shut = S.secShut.has(k); return `<button class="sec-h" data-sec="${k}" aria-expanded="${!shut}"><span class="chev ${shut ? "" : "open"}">${ico("chevr")}</span>${label}${shut && extra ? `<span class="sec-n">${extra}</span>` : ""}</button>`; };
+  const hot = RES.filter(([k]) => h.res[k][0] >= 80).map(([, , l]) => l);
   sb.innerHTML = `<div class="hosttabs" role="tablist">${Object.entries(HOSTS).map(([k, v]) => `<button role="tab" data-host="${k}" aria-selected="${k === S.host}">${ico(v.icon, "ico")}${v.label}</button>`).join("")}</div>
     <div class="sb-head proj-head" title="${h.path}">${h.project}<span class="spacer"></span><button title="New file">${ico("plus")}</button><button title="Refresh">${ico("restart")}</button></div>
     <div class="tree">${tree}</div>
-    <div class="kernels">${kern}</div>
-    <div class="resources">${RES.map(([k, ic, lab]) => { const p = h.res[k][0]; return `<button class="rrow ${S.resPop === k ? "on" : ""}" data-res="${k}" title="${h.res[k][1]}" aria-label="${lab} ${p}%">${ico(ic, "ico")}<span class="rl">${lab}</span><span class="rb"><i style="width:${p}%" class="${p >= 80 ? "hot" : ""}"></i></span></button>`; }).join("")}</div>`;
+    <div class="kernels">${sec("kernels", "Kernels", live.length ? String(live.length) : "")}${S.secShut.has("kernels") ? "" : kern}</div>
+    <div class="resources">${sec("resources", "Resources", hot.length ? `<span class="hotdot"></span>${hot.join(", ")} high` : "")}${S.secShut.has("resources") ? "" : RES.map(([k, ic, lab]) => { const p = h.res[k][0]; return `<button class="rrow ${S.resPop === k ? "on" : ""}" data-res="${k}" title="${h.res[k][1]}" aria-label="${lab} ${p}%">${ico(ic, "ico")}<span class="rl">${lab}</span><span class="rb"><i style="width:${p}%" class="${p >= 80 ? "hot" : ""}"></i></span></button>`; }).join("")}</div>`;
   $$("[data-open]", sb).forEach(e => e.onclick = () => openTab(e.dataset.open));
-  $$("[data-host]", sb).forEach(b => b.onclick = () => { S.host = b.dataset.host; S.resPop = null; S.kask = null; renderSidebar(); renderResPop(); });
-  $$("[data-kask]", sb).forEach(b => b.onclick = () => { S.kask = b.dataset.kask; renderSidebar(); });
+  $$("[data-dir]", sb).forEach(e => e.onclick = () => { const k = e.dataset.dir; S.treeOpen.has(k) ? S.treeOpen.delete(k) : S.treeOpen.add(k); renderSidebar(); });
+  $$("[data-sec]", sb).forEach(b => b.onclick = () => { const k = b.dataset.sec; S.secShut.has(k) ? S.secShut.delete(k) : S.secShut.add(k); if (k === "resources") S.resPop = null; if (k === "kernels") { S.kpop = null; renderKpop(); } renderSidebar(); renderResPop(); });
+  $$("[data-host]", sb).forEach(b => b.onclick = () => { S.host = b.dataset.host; S.resPop = null; S.kask = null; S.kpop = null; renderSidebar(); renderResPop(); renderKpop(); });
+  $$("[data-kask]", sb).forEach(b => b.onclick = ev => { ev.stopPropagation(); S.kask = b.dataset.kask; S.kpop = null; renderSidebar(); renderKpop(); });
+  $$(".krow[data-kpick]", sb).forEach(r => r.onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); r.click(); } });
   const kn = $("[data-kno]", sb); if (kn) kn.onclick = () => { S.kask = null; renderSidebar(); };
   const ky = $("[data-kyes]", sb); if (ky) ky.onclick = () => { S.kgone.add(ky.dataset.kyes); S.kask = null; renderSidebar(); };
   $$("[data-res]", sb).forEach(b => b.onclick = ev => { ev.stopPropagation(); S.resPop = S.resPop === b.dataset.res ? null : b.dataset.res; renderSidebar(); renderResPop(); });
@@ -1857,15 +1904,18 @@ function kern(k) {
 function renderKpop() {
   const pop = $("#kpop"), anchor = S.kpop && $(`[data-kpick="${S.kpop.k}"][data-kwhere="${S.kpop.where}"]`);
   if (!anchor || !anchor.offsetParent) { S.kpop = null; pop.hidden = true; return; }
-  const K = KERNELS[S.kpop.k];
-  pop.innerHTML = `<div class="kp-h">${langIcon(S.kpop.k)}<b>${K.lang} ${K.ver}</b><span class="kp-st"><span class="dot ${K.state}"></span>${K.state}</span></div>
+  const side = S.kpop.where === "side", K = side ? sideK(S.host, S.kpop.k) : KERNELS[S.kpop.k];
+  pop.innerHTML = `<div class="kp-h">${langIcon(S.kpop.k)}<b>${K.lang} ${K.ver}</b><span class="kp-st"><span class="dot ${K.state === "running" ? "busy" : K.state}"></span>${K.state}</span></div>
     <dl class="kp-d">${K.rows.map(([a, b]) => `<dt>${a}</dt><dd title="${b}">${b}</dd>`).join("")}</dl>
-    <div class="mm-sep"></div><div class="mm-h">Session</div>
+    <div class="mm-sep"></div>${K.job ? `<div class="mm-h">Job</div>
+    <button class="mm-i" data-kpclose>${ico("files")}<span>Open the log</span><kbd></kbd></button>
+    <button class="mm-i" data-kpclose>${ico("chevr")}<span>Show in Jobs</span><kbd></kbd></button>` : `<div class="mm-h">Session</div>
     <button class="mm-i" data-kpclose>${ico("check")}<span>${K.sess}</span><kbd>current</kbd></button>
     <button class="mm-i" data-kpclose>${ico("plus")}<span>New ${K.lang} ${K.ver} session</span><kbd></kbd></button>
-    <button class="mm-i" data-kpclose><span class="ico sm"></span><span>Switch to ${K.other}</span><kbd></kbd></button>`;
+    <button class="mm-i" data-kpclose><span class="ico sm"></span><span>Switch to ${K.other}</span><kbd></kbd></button>`}`;
   pop.hidden = false; pop.onclick = e => { e.stopPropagation(); if (e.target.closest("[data-kpclose]")) { S.kpop = null; renderKpop(); } };
   const wr = win.getBoundingClientRect(), r = anchor.getBoundingClientRect();
+  if (side) { pop.style.left = (r.right - wr.left + 8) + "px"; pop.style.top = Math.max(8, Math.min(r.top - wr.top - 6, wr.height - pop.offsetHeight - 8)) + "px"; return; }
   pop.style.left = Math.max(8, Math.min(r.left - wr.left - 4, wr.width - pop.offsetWidth - 8)) + "px"; pop.style.top = (r.bottom - wr.top + 4) + "px";
 }
 function renderDocbar() {
@@ -2283,7 +2333,7 @@ function renderAgentPop(s) {
   }
   const g = MODELS.find(g => g.agent === s.agent), levels = EFFORT[s.agent], n = levels.length, top = n - 1, at = Math.max(0, levels.indexOf(s.effort));
   const rec = s.agent === "omp" ? 1 : 2; // the default level for new sessions
-  const frac = i => n > 1 ? i / (n - 1) : 0, x = i => `calc(11px + (100% - 22px) * ${frac(i)})`;
+  const frac = i => n > 1 ? i / (n - 1) : 0, x = i => `calc(15px + (100% - 30px) * ${frac(i)})`;
   pop.innerHTML = `<div class="ap-h">Model<small>${g.group}</small></div>
     ${g.items.map(([k, long]) => `<button class="ap-opt ${k === s.model ? "on" : ""}" data-setmodel="${k}">${provIcon(k)}<span>${long}</span>${k === s.model ? `<span class="ap-ck">${ico("check")}</span>` : ""}</button>`).join("")}
     <div class="eff">
@@ -2308,7 +2358,7 @@ function renderAgentPop(s) {
     if (i === top) { starField(bar); sparks(knob); } else if (was === top) replay(knob, "flash");
     const l = $(".eff-l"); if (l) l.textContent = s.effort;
   };
-  const fromX = cx => { const r = bar.getBoundingClientRect(); return Math.round(Math.min(1, Math.max(0, (cx - r.left - 11) / (r.width - 22))) * top); };
+  const fromX = cx => { const r = bar.getBoundingClientRect(); return Math.round(Math.min(1, Math.max(0, (cx - r.left - 15) / (r.width - 30))) * top); };
   bar.onpointerdown = e => { bar.setPointerCapture(e.pointerId); setI(fromX(e.clientX)); bar.onpointermove = ev => setI(fromX(ev.clientX)); bar.onpointerup = () => { bar.onpointermove = null; }; };
   bar.onkeydown = e => { const d = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[e.key], i = levels.indexOf(s.effort);
     if (d) { e.preventDefault(); setI(Math.max(0, Math.min(top, i + d))); } else if (e.key === "Home") setI(0); else if (e.key === "End") setI(top); };
