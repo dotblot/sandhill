@@ -244,7 +244,7 @@ pub fn claude_decision(input: &Value, answer: &Value) -> Value {
 }
 
 /// `value` with long strings shortened. Image data is kept, within reason.
-fn shorten(value: &Value) -> Value {
+pub(crate) fn shorten(value: &Value) -> Value {
     match value {
         Value::String(text) if text.len() > MAX_TEXT => Value::String(shorten_text(text)),
         Value::Array(items) => Value::Array(items.iter().map(shorten).collect()),

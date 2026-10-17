@@ -18,6 +18,7 @@
 //! the program has ended, the daemon reads the folder instead.
 
 pub mod chat;
+pub mod codex;
 pub mod events;
 pub mod host;
 pub mod log;
@@ -88,6 +89,14 @@ pub enum ToHost {
         id: String,
         answer: Value,
     },
+    /// From the program that drives an agent's chat (Codex's bridge): send
+    /// the user's commands ([`FromHost::Command`]) on this connection.
+    Listen,
+    /// What the user did in the chat, from the daemon, for the listening
+    /// program. Kept until one listens.
+    Command {
+        command: Value,
+    },
 }
 
 /// From a terminal host to a subscribed client.
@@ -112,6 +121,10 @@ pub enum FromHost {
     /// To the hook that asked: the user's answer.
     Answer {
         answer: Value,
+    },
+    /// To a listening program: what the user did in the chat.
+    Command {
+        command: Value,
     },
     Exit {
         exit: TerminalExit,
@@ -284,7 +297,9 @@ impl Terminals {
         let mut child = host.spawn().context("cannot start the terminal host")?;
         let started = async {
             loop {
-                if UnixStream::connect(paths.socket()).await.is_ok() {
+                // The host listens first, then starts the program and says
+                // which it is.
+                if paths.host().exists() && UnixStream::connect(paths.socket()).await.is_ok() {
                     return Ok(());
                 }
                 if let Ok(Some(_)) = child.try_wait() {
@@ -556,7 +571,12 @@ impl TerminalStream {
                             });
                             return;
                         }
-                        Ok(FromHost::Start { .. } | FromHost::Answer { .. }) | Err(_) => continue,
+                        Ok(
+                            FromHost::Start { .. }
+                            | FromHost::Answer { .. }
+                            | FromHost::Command { .. },
+                        )
+                        | Err(_) => continue,
                     };
                     if !send(event) {
                         return;

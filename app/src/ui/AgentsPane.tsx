@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, Show, Switch } from "solid-js";
-import type { AgentInfo, AgentOptions, TerminalInfo } from "../backend/types";
+import { LOCAL_HOST } from "../backend";
+import type { AgentInfo, AgentOptions, AgentReport, TerminalInfo } from "../backend/types";
 import type { Doc } from "../docs/doc";
 import {
   AGENT_KINDS,
@@ -7,6 +8,7 @@ import {
   agentKind,
   currentMode,
   documentPath,
+  drivesChat,
   effortLevel,
   type Mode,
   MODES,
@@ -14,6 +16,7 @@ import {
   modelLabel,
   SUBMIT_DELAY_MS,
   screenMode,
+  withModels,
 } from "../model/agents";
 import { type Answer, type Ask, buildChat, chatTitle, lastActive } from "../model/chat";
 import type { TerminalStore } from "../model/terminals";
@@ -38,10 +41,12 @@ const TRUST_KEY_MS = 500;
 /**
  * The Agents pane (draft 18): one conversation at a time as a chat, with a
  * history of the project's conversations and a new-conversation view. Claude
- * Code and Codex run unmodified in terminals the daemon keeps; the chat is
- * built from what Claude Code's hooks report, and its terminal is a click
- * away. Codex, and Claude sessions started before chats existed, show their
- * terminal.
+ * Code and Codex run unmodified in terminals the daemon keeps, and the
+ * terminal is a click away. Claude Code's chat is built from what its hooks
+ * report, and it takes messages as typed keys. Codex runs as its app-server
+ * under a bridge in the daemon, which writes the chat and takes messages,
+ * models and modes as commands. Sessions started before chats existed show
+ * their terminal.
  */
 export function AgentsPane(props: {
   ws: Workspace;
@@ -93,8 +98,16 @@ export function AgentsPane(props: {
   };
   const relative = (path: string) => (path.startsWith(`${props.project}/`) ? path.slice(props.project.length + 1) : path);
   const activeFile = () => (props.active ? relative(props.active.path) : undefined);
-  /** Claude conversations show as a chat; those started before chats existed keep their terminal. */
-  const canChat = (t: TerminalInfo) => t.kind === "claude" && (store.chat(t.id).length > 0 || (!t.outdated && t.running));
+  /** Conversations show as a chat; those started before chats existed keep their terminal. */
+  const canChat = (t: TerminalInfo) =>
+    (t.kind === "claude" || drivesChat(t.kind)) && (store.chat(t.id).length > 0 || (!t.outdated && t.running));
+  /** Conversations whose chat Sandhill drives (Codex): what the user does goes to it as commands. */
+  const driven = (t: TerminalInfo) => drivesChat(t.kind) && canChat(t);
+  /** A new conversation that shows as a chat while it starts. */
+  const chatStarting = () => {
+    const kind = starting()?.kind;
+    return kind !== undefined && (kind === "claude" || drivesChat(kind));
+  };
   const chatMode = (t: TerminalInfo) => canChat(t) && !termShown().includes(t.id);
   const working = (t: TerminalInfo) =>
     t.running && (t.agent?.state === "busy" || t.agent?.state === "waiting") && !stopped().includes(t.id);
@@ -147,7 +160,7 @@ export function AgentsPane(props: {
   // A mode or effort the agent reports replaces the one picked here.
   createEffect(
     on(
-      () => current()?.agent?.mode,
+      () => current()?.agent?.mode ?? current()?.agent?.permission,
       () => {
         const id = current()?.id;
         if (id) setModeChoice(({ [id]: _, ...rest }) => rest);
@@ -210,7 +223,7 @@ export function AgentsPane(props: {
       view.bind(info.id);
       props.onSelect(info.id);
       setSentAt(Date.now());
-      if (kind.kind === "claude") input?.focus();
+      if (kind.kind === "claude" || drivesChat(kind.kind)) input?.focus();
       else view.focus();
     } catch (err) {
       view.dispose();
@@ -238,7 +251,7 @@ export function AgentsPane(props: {
     }
   }
 
-  /** Sends a message as if typed into the agent's terminal. */
+  /** Sends a message: to Codex's bridge, or as if typed into the agent's terminal. */
   function send(t: TerminalInfo, text: string): boolean {
     if (chat()?.waiting.length) {
       notify(`Answer ${agentName(t)}'s question above first.`);
@@ -246,7 +259,9 @@ export function AgentsPane(props: {
     }
     setStopped((ids) => ids.filter((id) => id !== t.id));
     const view = views.get(t.id);
-    if (view) {
+    if (driven(t)) {
+      tell(t, { kind: "say", text });
+    } else if (view) {
       view.paste(text);
       // Enter on its own, once the paste has landed.
       setTimeout(() => void store.input(t.id, "\r"), SUBMIT_DELAY_MS);
@@ -258,8 +273,18 @@ export function AgentsPane(props: {
   }
 
   function stop(t: TerminalInfo) {
-    void store.interrupt(t.id);
+    if (driven(t)) tell(t, { kind: "interrupt" });
+    else void store.interrupt(t.id);
     setStopped((ids) => [...ids.filter((id) => id !== t.id), t.id]);
+  }
+
+  function tell(t: TerminalInfo, command: Record<string, unknown>) {
+    store.tell(t.id, command).catch((err) => notify(`Could not reach ${agentName(t)}: ${message(err)}`));
+  }
+
+  function compact(t: TerminalInfo) {
+    if (driven(t)) tell(t, { kind: "compact" });
+    else command(t, "/compact");
   }
 
   function answer(t: TerminalInfo, a: Ask, reply: Answer) {
@@ -300,11 +325,19 @@ export function AgentsPane(props: {
   function changeEffort(t: TerminalInfo, level: string) {
     setEffortChoice((all) => ({ ...all, [t.id]: level }));
     clearTimeout(effortTimer);
-    effortTimer = setTimeout(() => command(t, `/effort ${level}`), EFFORT_SETTLE_MS);
+    effortTimer = setTimeout(() => {
+      if (driven(t)) tell(t, { kind: "set", effort: level });
+      else command(t, `/effort ${level}`);
+    }, EFFORT_SETTLE_MS);
   }
 
-  /** Switches Claude Code's mode as ⇧Tab does, until its terminal shows the mode. */
+  /** Switches Codex's mode for its next turn, or Claude Code's as ⇧Tab does, until its terminal shows the mode. */
   async function switchMode(t: TerminalInfo, mode: Mode) {
+    if (driven(t)) {
+      setModeChoice((all) => ({ ...all, [t.id]: mode }));
+      tell(t, { kind: "set", permission: mode.permission });
+      return;
+    }
     const view = views.get(t.id);
     if (!view) return;
     for (let i = 0; i <= MODE_TRIES; i++) {
@@ -421,13 +454,13 @@ export function AgentsPane(props: {
                   <span>{chatMode(t()) ? "Show terminal" : "Back to chat"}</span>
                 </button>
               </Show>
-              <Show when={t().running && t().kind === "claude"}>
+              <Show when={t().running && (t().kind === "claude" || driven(t()))}>
                 <button
                   class="mm-i"
                   onClick={() => {
                     const term = t();
                     setGear(false);
-                    command(term, "/compact");
+                    compact(term);
                   }}
                 >
                   <Icon name="restart" small />
@@ -497,7 +530,7 @@ export function AgentsPane(props: {
             </div>
           )}
         </Show>
-        <Show when={!picking() && !history() && (starting()?.kind === "claude" || (!starting() && current() && chatMode(current()!)))}>
+        <Show when={!picking() && !history() && (chatStarting() || (!starting() && current() && chatMode(current()!)))}>
           <AgentChat
             chat={(!starting() && chat()) || { items: [], waiting: [] }}
             agent={agentName(current())}
@@ -511,6 +544,10 @@ export function AgentsPane(props: {
           >
             <ChatNotes
               terminal={starting() ? undefined : current()}
+              agentName={starting() ? kindName(starting()!.kind) : undefined}
+              local={props.ws.backend.host === LOCAL_HOST}
+              onLogin={(t, method) => tell(t, { kind: "login", method })}
+              onLink={(url) => props.ws.backend.openLink(url)}
               starting={!!starting()}
               entries={current() ? store.chat(current()!.id).length : 0}
               waitingCards={chat()?.waiting.length ?? 0}
@@ -528,7 +565,7 @@ export function AgentsPane(props: {
         <div
           class="term-host"
           ref={body}
-          classList={{ behind: starting()?.kind === "claude" || (!starting() && !!current() && chatMode(current()!)) }}
+          classList={{ behind: chatStarting() || (!starting() && !!current() && chatMode(current()!)) }}
           hidden={picking() || history() || (!current() && !starting())}
         />
         <Show when={!picking() && !history() && current() && !current()!.running && current()}>
@@ -549,18 +586,23 @@ export function AgentsPane(props: {
       </Show>
       <Show when={!picking() && !history() && !starting() && current()?.running && current()}>
         {(t) => {
-          const kind = () => agentKind(t().kind)!;
+          const kind = () => withModels(agentKind(t().kind)!, t());
           const mode = () => modeChoice()[t().id] ?? currentMode(t());
           const waiting = () => t().agent?.state === "waiting";
+          const modelNote = () => {
+            if (driven(t())) return working(t()) ? "Changes apply from your next message." : undefined;
+            return waiting() ? `Changes here wait until you answer ${agentName(t())}.` : undefined;
+          };
           return (
             <AgentComposer
               kind={kind()}
               model={modelLabel(t())}
               isModel={(m) => currentModel(t(), m)}
               effort={effortChoice()[t().id] ?? effortLevel(t())}
-              effortNote={t().kind === "claude" ? undefined : "Codex changes effort in its own /model menu"}
+              effortNote={t().kind === "claude" || driven(t()) ? undefined : "Codex changes effort in its own /model menu"}
               mode={mode()}
               modeNote={(m) => {
+                if (driven(t())) return undefined;
                 if (t().kind !== "claude") return m.id === mode().id ? undefined : "Codex changes this with /approvals in its terminal";
                 if (waiting()) return m.id === mode().id ? undefined : `Answer ${agentName(t())} first`;
                 if (m.id === "yolo" && mode().id !== "yolo") return "Start a new conversation in YOLO mode";
@@ -569,13 +611,14 @@ export function AgentsPane(props: {
               file={t().options?.documents?.[0]}
               status={t().agent?.status}
               busy={working(t())}
-              modelNote={waiting() ? `Changes here wait until you answer ${agentName(t())}.` : undefined}
+              modelNote={modelNote()}
               mention={activeFile()}
               ref={(el) => (input = el)}
               onSend={(text) => send(t(), text)}
               onStop={() => stop(t())}
               onModel={(m: ModelChoice) => {
-                if (t().kind === "claude" && m.id) command(t(), `/model ${m.id}`);
+                if (driven(t())) tell(t(), { kind: "set", model: m.id ?? null });
+                else if (t().kind === "claude" && m.id) command(t(), `/model ${m.id}`);
                 else {
                   setTermShown((ids) => [...ids, t().id]);
                   command(t(), "/model");
@@ -584,7 +627,7 @@ export function AgentsPane(props: {
               onEffort={(level) => changeEffort(t(), level)}
               onMode={(m) => void switchMode(t(), m)}
               onOpenFile={() => t().options?.documents?.[0] && openPath(t().options!.documents![0])}
-              onCompact={() => command(t(), "/compact")}
+              onCompact={() => compact(t())}
             />
           );
         }}
@@ -670,9 +713,6 @@ function NewConversation(props: {
             . Where you are in it goes with every message, and code goes into it below your active cell.
           </Show>
         </p>
-        <Show when={kind().kind !== "claude"}>
-          <p>{kind().name} works in its own terminal here; its chat comes later.</p>
-        </Show>
         <p class="nc-sign">
           Runs on {props.hostLabel} in this project's folder, signed in with your own {kind().name} account.
         </p>
@@ -696,7 +736,6 @@ function NewComposer(props: {
       isModel={(m) => m.id === c.model().id}
       effort={c.effort()}
       mode={c.mode()}
-      modeNote={(m) => (c.kind().kind === "claude" || m.id !== "plan" ? undefined : "Claude Code only")}
       file={props.file}
       mention={props.file}
       ref={props.ref}
@@ -720,9 +759,15 @@ function NewComposer(props: {
   );
 }
 
-/** Notes at the end of the chat: starting, or waiting on something only the terminal shows. */
+/** Notes at the end of the chat: starting, signing in, or waiting on something only the terminal shows. */
 function ChatNotes(props: {
   terminal?: TerminalInfo;
+  /** The agent's name, for one starting. */
+  agentName?: string;
+  /** The agent runs on this Mac, where a browser sign-in can come back to it. */
+  local: boolean;
+  onLogin: (t: TerminalInfo, method: "browser" | "code") => void;
+  onLink: (url: string) => void;
   starting: boolean;
   entries: number;
   waitingCards: number;
@@ -732,7 +777,7 @@ function ChatNotes(props: {
   onTrust: (t: TerminalInfo) => void;
   onShowTerminal: (t: TerminalInfo) => void;
 }) {
-  const name = () => agentName(props.terminal);
+  const name = () => props.agentName ?? agentName(props.terminal);
   const stuck = () => {
     const t = props.terminal;
     if (!t?.running) return false;
@@ -741,6 +786,17 @@ function ChatNotes(props: {
   };
   return (
     <Switch>
+      <Match when={props.terminal?.running && props.terminal.agent?.auth_required && props.terminal.agent.account === null && props.terminal}>
+        {(t) => (
+          <SignIn
+            name={name()}
+            login={t().agent?.login}
+            local={props.local}
+            onLogin={(method) => props.onLogin(t(), method)}
+            onLink={props.onLink}
+          />
+        )}
+      </Match>
       <Match when={props.trust && !props.entries && props.terminal}>
         {(t) => (
           <div class="approve" role="group" aria-label="Trust this folder?">
@@ -787,6 +843,83 @@ function ChatNotes(props: {
         </div>
       </Match>
     </Switch>
+  );
+}
+
+/**
+ * Codex isn't signed in: it signs in with ChatGPT in a browser, which comes
+ * back to it on this Mac only, or with a code entered on any device. Codex
+ * keeps the sign-in; Sandhill only shows where to go.
+ */
+function SignIn(props: {
+  name: string;
+  login?: AgentReport["login"];
+  local: boolean;
+  onLogin: (method: "browser" | "code") => void;
+  onLink: (url: string) => void;
+}) {
+  // The browser opens once Codex says where.
+  let opening = false;
+  createEffect(
+    on(
+      () => props.login?.url,
+      (url) => {
+        if (url && opening && !props.login?.code) props.onLink(url);
+        if (url) opening = false;
+      },
+    ),
+  );
+  const browser = () => {
+    opening = true;
+    props.onLogin("browser");
+  };
+  return (
+    <div class="approve" role="group" aria-label={`Sign in to ${props.name}`}>
+      <div class="ap-top">
+        <Icon name="hand" />
+        <span>
+          <b>Sign in to {props.name}</b>
+          <small>{props.name} needs your ChatGPT account. It keeps the sign-in itself; Sandhill never sees it.</small>
+        </span>
+      </div>
+      <Show when={props.login?.code ? props.login : undefined}>
+        {(login) => (
+          <p class="ap-n">
+            Go to{" "}
+            <button class="flink" onClick={() => props.onLink(login().url!)}>
+              {login().url}
+            </button>{" "}
+            and enter the code <code>{login().code}</code>
+          </p>
+        )}
+      </Show>
+      <Show when={props.login?.url && !props.login.code}>
+        <p class="ap-n">
+          Finish signing in in your browser.{" "}
+          <button class="flink" onClick={() => props.onLink(props.login!.url!)}>
+            Open the page again
+          </button>
+        </p>
+      </Show>
+      <Show when={props.login?.error}>{(error) => <p class="ap-n err">{error()}</p>}</Show>
+      <div class="ap-btns">
+        <Show
+          when={props.local}
+          fallback={
+            <button class="apb pri" onClick={() => props.onLogin("code")}>
+              Sign in with a code
+            </button>
+          }
+        >
+          <button class="apb pri" onClick={browser}>
+            Sign in with ChatGPT
+          </button>
+          <button class="apb" title="Sign in on another device, with a code" onClick={() => props.onLogin("code")}>
+            Use a code
+          </button>
+        </Show>
+      </div>
+    </div>
   );
 }
 
@@ -909,7 +1042,11 @@ function tabTitle(terminal: TerminalInfo): string {
 /** "Claude", "Codex". */
 function agentName(terminal: TerminalInfo | undefined): string {
   if (!terminal) return "Claude";
-  return terminal.kind === "claude" ? "Claude" : (agentKind(terminal.kind)?.name ?? terminal.title);
+  return agentKind(terminal.kind) ? kindName(terminal.kind) : terminal.title;
+}
+
+function kindName(kind: string): string {
+  return kind === "claude" ? "Claude" : (agentKind(kind)?.name ?? kind);
 }
 
 function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t: TerminalInfo) => void }) {
@@ -951,6 +1088,8 @@ function Outdated(props: { terminal: TerminalInfo; onAgain: (t: TerminalInfo) =>
 
 /** Whether `model` is the one the session runs: as the agent reports it, else as it started. */
 function currentModel(terminal: TerminalInfo, model: ModelChoice): boolean {
+  // Codex says which of the models it listed.
+  if (terminal.agent?.models?.length) return model.id === terminal.agent.status?.model_id;
   const reported = terminal.agent?.status?.model;
   if (reported) return reported.toLowerCase().includes(model.label.toLowerCase());
   return terminal.options?.model === model.id;

@@ -148,6 +148,15 @@ export class TerminalStore {
     return this.backend.call("answer_terminal", { terminal: id, id: ask, answer });
   }
 
+  /**
+   * Tells an agent whose chat Sandhill drives (Codex) what the user did:
+   * `{kind: "say", text}`, `{kind: "interrupt"}`, `{kind: "set", model?, effort?, permission?}`,
+   * `{kind: "compact"}` or `{kind: "login", method}`.
+   */
+  tell(id: string, command: Record<string, unknown>): Promise<void> {
+    return this.backend.call("tell_terminal", { terminal: id, command });
+  }
+
   /** Sends a message as if typed: one paste, so line breaks don't send it early, then Enter. */
   async say(id: string, text: string) {
     await this.input(id, `\x1b[200~${text.replace(/\r?\n/g, "\r")}\x1b[201~`);

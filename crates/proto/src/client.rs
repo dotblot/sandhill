@@ -392,6 +392,14 @@ impl Client {
         .await
     }
 
+    pub async fn tell_terminal(&self, terminal: &str, command: serde_json::Value) -> Result<()> {
+        self.call(Call::TellTerminal {
+            terminal: terminal.into(),
+            command,
+        })
+        .await
+    }
+
     pub async fn unsubscribe_terminal(&self, terminal: &str) -> Result<()> {
         self.call(Call::UnsubscribeTerminal {
             terminal: terminal.into(),

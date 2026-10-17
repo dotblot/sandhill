@@ -219,6 +219,14 @@ pub enum Call {
         id: String,
         answer: Value,
     },
+    /// Tells an agent whose chat Sandhill drives (Codex) what the user did
+    /// in the chat: `{kind: "say", text}`, `{kind: "interrupt"}`, `{kind:
+    /// "set", model?, effort?, permission?}`, `{kind: "compact"}` or
+    /// `{kind: "login", method: "browser" | "code"}`. Returns null.
+    TellTerminal {
+        terminal: String,
+        command: Value,
+    },
     UnsubscribeTerminal {
         terminal: String,
     },

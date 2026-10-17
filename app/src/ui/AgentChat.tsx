@@ -144,6 +144,14 @@ function ItemView(props: {
       </Match>
       <Match when={props.item.kind === "footer" && props.item}>{(item) => <TurnFooter at={item().at_ms} ms={item().ms} text={item().text} />}</Match>
       <Match when={props.item.kind === "note" && props.item}>{(item) => <div class="chat-note">{item().text}</div>}</Match>
+      <Match when={props.item.kind === "error" && props.item}>
+        {(item) => (
+          <div class="chat-error" role="alert">
+            <Icon name="failed" />
+            <span>{item().text}</span>
+          </div>
+        )}
+      </Match>
       <Match when={props.item.kind === "thinking"}>
         <div class="thinking">
           <span class="spin" />
@@ -441,7 +449,7 @@ function CopyButton(props: { text: string; label?: boolean; class?: string; titl
 
 /** A card for what waits on the user: a permission, a question, or a plan. */
 function AskCard(props: { ask: Ask; agent: string; linked?: string; sent: boolean; onAnswer: (ask: Ask, answer: Answer) => void; onOpen: (path: string) => void }) {
-  const view = createMemo(() => askView(props.ask, props.linked));
+  const view = createMemo(() => askView(props.ask, props.linked, props.agent));
   const answer = (a: Answer) => {
     if (!props.sent) props.onAnswer(props.ask, a);
   };
@@ -461,6 +469,8 @@ function Permission(props: { ask: Ask; view: AskView; sent: boolean; onAnswer: (
   const v = () => props.view.view;
   const remember = () => props.ask.remember ?? [];
   const also = () => `Also allows ${remember().join(", ")}`;
+  /** For how long it can be allowed: both, unless the agent says. */
+  const scope = (s: string) => remember().length > 0 && (props.ask.scopes ?? ["chat", "project"]).includes(s);
   return (
     <div class="approve" role="group" aria-label="Approval needed">
       <div class="ap-top">
@@ -485,10 +495,12 @@ function Permission(props: { ask: Ask; view: AskView; sent: boolean; onAnswer: (
         <button class="apb pri" disabled={props.sent} onClick={() => props.onAnswer({ behavior: "allow", scope: "once" })}>
           Allow once
         </button>
-        <Show when={remember().length}>
+        <Show when={scope("chat")}>
           <button class="apb" disabled={props.sent} title={`${also()} for the rest of this conversation`} onClick={() => props.onAnswer({ behavior: "allow", scope: "chat" })}>
             For this chat
           </button>
+        </Show>
+        <Show when={scope("project")}>
           <button class="apb" disabled={props.sent} title={`${also()} in this project from now on`} onClick={() => props.onAnswer({ behavior: "allow", scope: "project" })}>
             For this project
           </button>

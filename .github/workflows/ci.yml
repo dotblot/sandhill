@@ -46,6 +46,10 @@ jobs:
           gh release download "$tag" --repo posit-dev/ark --pattern "ark-$tag-linux-x64.zip" --dir /tmp/ark
           unzip -o "/tmp/ark/ark-$tag-linux-x64.zip" -d /tmp/ark
           /tmp/ark/ark --install
+      - name: Install Codex, for the Codex chat test
+        # The version the bridge was written against; the test talks to a
+        # stand-in model, so it needs no login.
+        run: npm install -g @openai/codex@0.163.0
       - name: List installed kernels
         run: |
           ls -d ~/.local/share/jupyter/kernels/* /usr/share/jupyter/kernels/*
