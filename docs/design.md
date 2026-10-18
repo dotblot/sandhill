@@ -135,8 +135,8 @@ using the session, its memory and the session switch, so session IDs appear
 only there. The Agents pane came with step 4 (section 5); its effort control
 is a track with a brain for a knob that turns into a star field at the top
 level, and plan usage shows as rings. The right pane (⌥⌘B) came with step 5
-(section 5b), one pane per build: Variables first, then Plots, the Data
-Explorer, Help and Packages, and Git.
+(section 5b), one pane per build: Variables first, then Plots (below
+Variables), the Data Explorer, Help and Packages, and Git.
 
 ---
 
@@ -281,6 +281,12 @@ Positron is the target experience. The plan is to keep its features and drop its
 - *The prompt* is a small CodeMirror editor: Enter runs the code once it is complete (brackets and strings closed, no trailing operator in R, no open block in Python), otherwise it starts a new line; ⇧Enter always does; ↑/↓ walk the session's history, Ctrl-C interrupts and Ctrl-L clears.
 - *Variables* uses neither Ark's comm nor the debug protocol for now: the daemon runs a quiet, history-free snippet in the session (`list_variables`), which works the same for Ark, IRkernel and ipykernel. It knows data frames, factors, lists and dicts, Seurat and SummarizedExperiment objects, and AnnData (`X`, `obs`, `var`, `obsm`, `layers`, `uns`, `raw`) with the columns of `obs` and `var` a click away. The list is read again after each run in the session, never while it is busy. Ticked variables can be deleted (`delete_variables`), which also runs `gc()` / `gc.collect()` and, in Python, drops IPython's references to old outputs, so the memory really comes back; the pane says how much. The agents' `list_variables` tool reads the same list.
 - *Agent code in the Console.* Under the modes, "Agent code goes: In the file / In the Console" decides what the agent's `add_cell` does: add a cell to the linked file (the default), or run the code in the document's session, where it shows in the Console as the agent's. The choice can change while the agent runs.
+
+**Built: Plots (step 5, part 2, 2026-10-18).**
+- *One history for the project.* The right pane is now two cards, Variables over Plots, with a gap between them to drag; each minimizes and maximizes on its own. Plots shows every image the project's live sessions drew, R and Python together and in time order, whatever ran the code: the Console, a script, a notebook or Quarto chunk (labelled "analysis.qmd · umap" when the chunk has a label) or an agent. A new plot comes to the front as it is drawn; the arrows, ← and →, and the thumbnails go back through the rest.
+- *From the journal.* Outputs are already journaled, so the pane reads each session's latest 100 images (`session_plots`) when it opens and then follows the sessions' events; nothing is kept by the app. Clear hides the plots so far on this Mac only; they stay in the Console and under their cells. A session's plots go when the session ends, as in RStudio.
+- *Zoom, copy and save.* The magnifier opens a plot large. An SVG plot can be saved as SVG, or as a PNG drawn from the SVG at a size you type or pick (4 × 3 in, 6 × 4 in or a 16:9 slide, at 300 dpi, written into the PNG so Word and PowerPoint place it at that size); the plot keeps its shape on a white background. A PNG plot is saved or copied as the kernel drew it. Save asks for a path in the project, `figures/<chunk label or file name>.png` at first and then the folder used last, and asks before replacing a file; the daemon writes the bytes (`write_file` with `base64`). Copy puts a PNG on the clipboard.
+- *Not yet: re-drawing.* Positron re-draws a plot at the pane's size and at the size you save it, through Ark's plot comm (R) and by keeping matplotlib figures (Python). Here plots show as the kernel drew them, so a PNG doesn't get sharper when the pane grows. That needs the plot comm, and comes later; ask a kernel for SVG (`%config InlineBackend.figure_formats = ["svg"]`, or `options(jupyter.plot_mimetypes = "image/svg+xml")` in IRkernel) to save at any size today.
 
 ### What code can be reused
 - **Ark** (R kernel, LSP and the variables, data-explorer, plots and help comms) and **Air** (R formatter) are **MIT**. Use them freely. Ark alone gives the R side of most of the MVP panes.

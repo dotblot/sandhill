@@ -14,8 +14,8 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, HistoryPage, KernelspecInfo, Outcome, PingReply,
-    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, SessionRuns, Subscribed,
-    SystemStats, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
+    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, SessionPlots, SessionRuns,
+    Subscribed, SystemStats, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -264,6 +264,7 @@ impl Client {
             path: path.into(),
             text: text.into(),
             expected_mtime_ms,
+            base64: false,
         })
         .await
     }
@@ -296,6 +297,14 @@ impl Client {
 
     pub async fn session_runs(&self, session: &str, limit: Option<u32>) -> Result<SessionRuns> {
         self.call(Call::SessionRuns {
+            session: session.into(),
+            limit,
+        })
+        .await
+    }
+
+    pub async fn session_plots(&self, session: &str, limit: Option<u32>) -> Result<SessionPlots> {
+        self.call(Call::SessionPlots {
             session: session.into(),
             limit,
         })

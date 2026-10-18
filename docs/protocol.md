@@ -23,6 +23,7 @@ Responses can arrive out of order; match them by `id`.
 | `list_sessions` | | `[SessionInfo]`, including ended sessions |
 | `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?`, `by?` | `{run, msg_id}` |
 | `session_runs` | `session`, `limit?` | `{session, runs, seq}`: the session's latest runs, for its Console |
+| `session_plots` | `session`, `limit?` | `{session, plots, seq}`: the images the session's runs showed, for the Plots pane |
 | `list_variables` | `session`, `path?` | `Variables` |
 | `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
 | `interrupt` | `session` | `null` |
@@ -34,7 +35,7 @@ Responses can arrive out of order; match them by `id`.
 | `read_file` | `path` | `{path, text, mtime_ms}` |
 | `read_notebook` | `path` | `{path, text, mtime_ms}`, plots and large values as blob references |
 | `write_notebook` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}`; blob references in outputs are written out as their values |
-| `write_file` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}` |
+| `write_file` | `path`, `text`, `expected_mtime_ms?`, `base64?` | `{path, mtime_ms}` |
 | `list_dir` | `path` | `[{name, kind, size, mtime_ms}]`, directories first |
 | `file_outputs` | `file` | `{file, cells, seq}` |
 | `open_project` | `path` | `ProjectInfo` with its saved `state` |
@@ -106,6 +107,14 @@ app's Console shows for the session, whatever ran the code (the Console's
 prompt, a script line, a notebook cell, an agent). Each run is `{run, cell?,
 by?, code, started_ms, finished_ms?, status?, execution_count?, outputs}`,
 outputs as in `file_outputs`. `seq` is where to subscribe from.
+
+`session_plots` returns the images a session's runs showed, oldest first (the
+latest 100 unless `limit` says, at most 500), leaving out quiet runs: every
+`display_data` and `execute_result` with a PNG, JPEG, GIF or SVG, whatever ran
+the code. Each is `{run, seq, ts_ms, cell?, by?, code, data, metadata}`:
+`data` is the output's MIME bundle, with images as blob references (an SVG
+under 64 KB stays inline), and `ts_ms` is when the kernel sent it. `seq` is
+where to subscribe from.
 
 `list_variables` runs a quiet snippet in the session and returns `Variables`:
 `{session, path, variables: [{name, kind, class, size?, children, summary}],
@@ -326,9 +335,10 @@ The data is the original JSON string (base64 for images).
 Paths are absolute on the daemon's machine (a leading `~` is expanded), so
 the app edits files the same way locally and on a server.
 
-- `write_file` replaces the file atomically. Pass the `mtime_ms` you read to
-  refuse the write, with an error starting `conflict:`, if the file changed
-  on disk in the meantime.
+- `write_file` replaces the file atomically, making its folder if need be.
+  Pass the `mtime_ms` you read to refuse the write, with an error starting
+  `conflict:`, if the file changed on disk in the meantime. With
+  `base64: true`, `text` is the file's bytes in base64, for a saved plot.
 - To tie a run to a notebook cell, pass `cell: {file, cell_id}` to `execute`.
   For `.ipynb` the cell id is the notebook's own cell `id`. For `.qmd` and
   `.Rmd` it is the chunk label, or `chunk-<n>` (1-based position) for an
