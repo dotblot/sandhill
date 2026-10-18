@@ -29,6 +29,10 @@ Responses can arrive out of order; match them by `id`.
 | `table_rows` | `session`, `path`, `offset?`, `limit?`, `sort?`, `filters?` | `TableRows`: a page of a data frame or matrix, for the Data Explorer |
 | `table_summary` | `session`, `path`, `filters?` | `TableSummary`: each column's counts, range and commonest values |
 | `table_export` | `session`, `path`, `sort?`, `filters?`, `file` | `{path, mtime_ms}` once the CSV is written |
+| `help_topics` | `session`, `query?`, `package?`, `limit?` | `HelpTopics`: the help topics that match, for the Help pane |
+| `help_page` | `session`, `topic`, `package?` | `HelpPage`: R's page as HTML, or Python's signature, docstring and members |
+| `help_source` | `session`, `topic`, `package?` | `{session, topic, package, text, file?, line?}`: a function's source |
+| `list_packages` | `session` | `Packages`: what's installed for the session's language |
 | `interrupt` | `session` | `null` |
 | `shutdown` | `session` | `null` |
 | `subscribe` | `session`, `since_seq?` | `{session, from_seq}`, then events |
@@ -167,6 +171,50 @@ at most 10).
 `table_export` writes the rows that pass the filters, sorted, to a CSV `file`
 (made with its folders if need be; R's `write.csv`, pandas' `to_csv`), with
 the row names or index first when the table has them, and returns the file's `{path, mtime_ms}`.
+
+`help_topics`, `help_page`, `help_source` and `list_packages` also run quiet
+snippets, so they fail while the session runs other code.
+
+`help_topics` returns `{session, topics, more}`, each topic `{topic, package,
+title}`, at most `limit` of them (50 unless asked, at most 500), and how many
+more matched. In R the topics are every installed package's help aliases (read
+from each package's `Meta/Rd.rds` once, then kept in the session in
+`options("sandhill.help")` until a library folder changes), leaving out
+internal ones and S4 methods' aliases; the title is searched too. In Python
+they are the public functions, classes and modules of the modules already
+imported, each by its shortest public name (`pandas.read_csv`), with `package`
+its top-level module. An exact name comes first, then names that start with
+the query, then names (and in R titles) that contain it; packages the user
+attached or imported come first among equals. `package` keeps one package, or
+those its name starts with when none has that exact name; without `query` it
+lists that package's topics.
+
+`help_page` returns `{session, topic, package, title, version, ...}`. For R,
+`html` is the page from `tools::Rd2HTML` without its `<head>`, its links to
+other topics as `../../{package}/help/{topic}` and to its examples as
+`../Example/{topic}`; without `package`, the first attached, then loaded, then
+installed package with the topic is used, and `alternatives` lists the others
+as topics. For Python, `topic` is a dotted name, which may start with the
+user's own name for a module (`sc.pp.neighbors`, shown as
+`scanpy.pp.neighbors`); a module named that way is imported if need be, as
+`pydoc` does. The page has `kind` (`module`, `class`, `function`, `method`,
+`property` or `value`), `signature` from `inspect.signature`, `text` (the
+docstring) and `members`, a module's or class's public names as `{name, kind,
+title}`.
+
+`help_source` gives a function's source: R's deparsed, Python's from its file
+(`inspect.getsource`) with the `file` and the `line` it starts on.
+
+`list_packages` returns `{session, packages, libraries, cran, bioconductor,
+conda}`. Packages, by name, are `{name, version, title, library, attached,
+loaded, base, modules?, installer?}`: in R, from `installed.packages()` with
+`attached` meaning `library()`'d and `base` R's own; in Python, the
+environment's distributions, `attached` meaning the user's code imported one
+of its `modules`, and `installer` what installed it (`pip`, `conda`).
+`libraries` are R's `.libPaths()` or the Python environment's prefix; `cran`
+says R has a CRAN mirror set, `bioconductor` that BiocManager is installed, and
+`conda` that the Python environment is a conda one. Installing and removing
+aren't calls: the app runs the code in the Console, where its output shows.
 
 `list_kernelspecs` lists the kernels in Jupyter's standard folders and also
 those inside conda environments, pyenv versions and the environment of the

@@ -10,8 +10,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
-    Blob, Call, CellEdited, Event, FileWritten, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply,
-    Request, ServerMessage, SessionStatus, Subscribed, TableRows, TableSummary, Variables,
+    Blob, Call, CellEdited, Event, FileWritten, HelpPage, HelpSource, HelpTopics, HistoryPage,
+    Outcome, PROTOCOL_VERSION, Packages, PingReply, Request, ServerMessage, SessionStatus,
+    Subscribed, TableRows, TableSummary, Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -25,7 +26,8 @@ use crate::paths::StateDir;
 use crate::session::SessionHandle;
 use crate::windows::Windows;
 use crate::{
-    cells, files, memory, notebook, outputs, projects, sidecar, tables, variables, windows,
+    cells, files, help, memory, notebook, outputs, packages, projects, sidecar, tables, variables,
+    windows,
 };
 
 const REPLAY_PAGE: u32 = 500;
@@ -414,6 +416,106 @@ impl Daemon {
                     path,
                     rows: summary.rows,
                     columns: summary.columns,
+                })?
+            }
+            Call::HelpTopics {
+                session,
+                query,
+                package,
+                limit,
+            } => {
+                let ask = help::Ask {
+                    mode: help::Mode::Topics,
+                    query: query.trim(),
+                    package: package.as_deref().unwrap_or("").trim(),
+                    topic: "",
+                    limit: limit.unwrap_or(help::TOPICS).min(help::MAX_TOPICS),
+                };
+                let printed = self
+                    .quietly(&session, "search the help", |language| {
+                        help::code(language, &ask)
+                    })
+                    .await?;
+                let found = help::parse_topics(&printed.stdout);
+                serde_json::to_value(HelpTopics {
+                    session,
+                    more: found.matched.saturating_sub(found.topics.len() as u64),
+                    topics: found.topics,
+                })?
+            }
+            Call::HelpPage {
+                session,
+                topic,
+                package,
+            } => {
+                let ask = help::Ask {
+                    mode: help::Mode::Page,
+                    query: "",
+                    package: package.as_deref().unwrap_or("").trim(),
+                    topic: topic.trim(),
+                    limit: 0,
+                };
+                let printed = self
+                    .quietly(&session, "read the help", |language| {
+                        help::code(language, &ask)
+                    })
+                    .await?;
+                let page = help::parse_page(&printed.stdout)
+                    .with_context(|| format!("no help for {topic}"))?;
+                serde_json::to_value(HelpPage {
+                    session,
+                    topic: page.topic,
+                    package: page.package,
+                    title: page.title,
+                    version: page.version,
+                    html: page.html,
+                    kind: page.kind,
+                    signature: page.signature,
+                    text: page.text,
+                    members: page.members,
+                    alternatives: page.alternatives,
+                })?
+            }
+            Call::HelpSource {
+                session,
+                topic,
+                package,
+            } => {
+                let ask = help::Ask {
+                    mode: help::Mode::Source,
+                    query: "",
+                    package: package.as_deref().unwrap_or("").trim(),
+                    topic: topic.trim(),
+                    limit: 0,
+                };
+                let printed = self
+                    .quietly(&session, "read the source", |language| {
+                        help::code(language, &ask)
+                    })
+                    .await?;
+                let source = help::parse_source(&printed.stdout)
+                    .with_context(|| format!("no source for {topic}"))?;
+                serde_json::to_value(HelpSource {
+                    session,
+                    topic: source.topic,
+                    package: source.package,
+                    text: source.text,
+                    file: source.file,
+                    line: source.line,
+                })?
+            }
+            Call::ListPackages { session } => {
+                let printed = self
+                    .quietly(&session, "list the packages", packages::code)
+                    .await?;
+                let listed = packages::parse(&printed.stdout);
+                serde_json::to_value(Packages {
+                    session,
+                    packages: listed.packages,
+                    libraries: listed.libraries,
+                    cran: listed.cran,
+                    bioconductor: listed.bioconductor,
+                    conda: listed.conda,
                 })?
             }
             Call::TableExport {

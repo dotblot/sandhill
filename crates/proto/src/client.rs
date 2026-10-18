@@ -13,10 +13,10 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
-    FileStat, FileText, FileWritten, Focus, HistoryPage, KernelspecInfo, Outcome, PingReply,
-    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, SessionPlots, SessionRuns,
-    Subscribed, SystemStats, TableFilter, TableRows, TableSort, TableSummary, TerminalEvent,
-    TerminalInfo, TerminalSubscribed, Variables,
+    FileStat, FileText, FileWritten, Focus, HelpPage, HelpSource, HelpTopics, HistoryPage,
+    KernelspecInfo, Outcome, Packages, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
+    SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows,
+    TableSort, TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -376,6 +376,57 @@ impl Client {
             sort: sort.to_vec(),
             filters: filters.to_vec(),
             file: file.into(),
+        })
+        .await
+    }
+
+    pub async fn help_topics(
+        &self,
+        session: &str,
+        query: &str,
+        package: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<HelpTopics> {
+        self.call(Call::HelpTopics {
+            session: session.into(),
+            query: query.into(),
+            package: package.map(Into::into),
+            limit,
+        })
+        .await
+    }
+
+    pub async fn help_page(
+        &self,
+        session: &str,
+        topic: &str,
+        package: Option<&str>,
+    ) -> Result<HelpPage> {
+        self.call(Call::HelpPage {
+            session: session.into(),
+            topic: topic.into(),
+            package: package.map(Into::into),
+        })
+        .await
+    }
+
+    pub async fn help_source(
+        &self,
+        session: &str,
+        topic: &str,
+        package: Option<&str>,
+    ) -> Result<HelpSource> {
+        self.call(Call::HelpSource {
+            session: session.into(),
+            topic: topic.into(),
+            package: package.map(Into::into),
+        })
+        .await
+    }
+
+    pub async fn list_packages(&self, session: &str) -> Result<Packages> {
+        self.call(Call::ListPackages {
+            session: session.into(),
         })
         .await
     }

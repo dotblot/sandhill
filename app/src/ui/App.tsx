@@ -10,6 +10,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
+import { EditorView } from "@codemirror/view";
 import { LOCAL_HOST, type Shell } from "../backend";
 import {
   CONFLICT_ERROR,
@@ -25,6 +26,7 @@ import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
 import { ScriptDoc } from "../docs/scriptDoc";
+import { type HelpRequest, nameAt } from "../model/help";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
@@ -36,12 +38,14 @@ import { AgentsPane } from "./AgentsPane";
 import { ConnectionItem, connState, HostKernelStates } from "./Connection";
 import { DataExplorer, type TableTab, tableId, tableTab } from "./DataExplorer";
 import { ask, Dialogs, notify } from "./dialogs";
+import { HelpPane } from "./HelpPane";
 import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
 import { KernelBar } from "./KernelBar";
 import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
 import { type Command, Palette } from "./Palette";
 import { type Pane, PaneButtons } from "./PaneButtons";
+import { PackagesPane } from "./PackagesPane";
 import { PlotsPane } from "./PlotsPane";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
 import { VariablesPane } from "./VariablesPane";
@@ -58,6 +62,12 @@ const RIGHT_MIN = 240;
 const VARIABLES_HEIGHT_KEY = "sandhill.variablesHeight";
 const VARIABLES_MIN = 90;
 const PLOTS_MIN = 120;
+/** The right pane's top group of tabs. */
+const TOP_TABS = [
+  ["variables", "Variables"],
+  ["help", "Help"],
+  ["packages", "Packages"],
+] as const;
 const AGENTS_KEY = "sandhill.agents";
 const AGENTS_WIDTH_KEY = "sandhill.agentsWidth";
 const AGENTS_WIDTH = 400;
@@ -119,6 +129,12 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [variablesHeight, setVariablesHeight] = createSignal(Number(stored(VARIABLES_HEIGHT_KEY)) || 0);
   /** Bumped by the Variables pane's refresh button. */
   const [variablesKey, setVariablesKey] = createSignal(0);
+  /** The tab in front in the right pane's top group, and its refresh key. */
+  const [topTab, setTopTab] = createSignal<"variables" | "help" | "packages">("variables");
+  const [helpKey, setHelpKey] = createSignal(0);
+  const [packagesKey, setPackagesKey] = createSignal(0);
+  /** A topic for the Help pane to show; `n` changes each time. */
+  const [helpAsk, setHelpAsk] = createSignal<HelpRequest & { n: number }>();
   const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) === "shown");
   const [agentsWidth, setAgentsWidth] = createSignal(clampAgents(Number(stored(AGENTS_WIDTH_KEY)) || AGENTS_WIDTH));
   /** The agent session in front in the Agents pane. */
@@ -158,7 +174,16 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     if (!agentsOn()) toggleAgents();
     setMinimized((list) => list.filter((p) => p !== "agents"));
   };
+  /** Shows help in the right pane's Help tab, opening the pane if need be. */
+  const openHelp = (request: HelpRequest) => {
+    if (!rightOn()) toggleRight();
+    setMinimized((list) => list.filter((p) => p !== "variables"));
+    setTopTab("help");
+    setHelpAsk({ ...request, n: (helpAsk()?.n ?? 0) + 1 });
+  };
   const isMin = (pane: Pane) => minimized().includes(pane) && maximized() !== pane;
+  /** Whether a tab of the right pane's top group shows. A function: an expression in a prop would be a memo read outside it. */
+  const topShown = (tab: "variables" | "help" | "packages") => !isMin("variables") && topTab() === tab;
   const toggleMin = (pane: Pane) => {
     setMaximized((m) => (m === pane ? undefined : m));
     setMinimized((list) => (list.includes(pane) ? list.filter((p) => p !== pane) : [...list.filter((p) => p !== pane), pane]));
@@ -269,6 +294,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         openFile: (path) => void open(path),
         shortName: relative,
         onError: (text) => notify(text),
+        openHelp,
       });
       consoles.set(id, found);
     }
@@ -349,6 +375,14 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const foregroundConsole = () => {
     const id = foreground();
     return id ? consoles.get(id) : undefined;
+  };
+  /** Runs code in a session's Console, where its output shows: examples, installing packages. */
+  const runInConsole = (session: string, code: string) => {
+    if (!consoleOn()) toggleConsole();
+    setMinimized((list) => list.filter((p) => p !== "console"));
+    setConsoleTab("console");
+    setForeground(session);
+    void consoleFor(session)?.run(code);
   };
   /** A path as shown: inside the project, from its folder. */
   function relative(path: string): string {
@@ -622,6 +656,19 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === "Escape" && menu()) setMenu(false);
+      // F1 shows help for the name under the cursor, in the language of the session in front.
+      if (e.key === "F1" && !mod) {
+        const editor = (document.activeElement as HTMLElement | null)?.closest(".cm-editor");
+        const view = editor instanceof HTMLElement ? EditorView.findFromDOM(editor) : null;
+        if (!view) return;
+        e.preventDefault();
+        const { head, from, to } = view.state.selection.main;
+        const line = view.state.doc.lineAt(head);
+        const language = foregroundInfo()?.language ?? "r";
+        const picked = from !== to ? nameAt(view.state.sliceDoc(from, to), 0, language) : nameAt(line.text, head - line.from, language);
+        if (picked) openHelp(picked);
+        return;
+      }
       if (mod && e.altKey && !e.shiftKey && e.code === "KeyB") {
         e.preventDefault();
         toggleRight();
@@ -947,25 +994,71 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               style={variablesHeight() && !isMin("variables") && !isMin("plots") ? { "flex-basis": `${variablesHeight()}px` } : undefined}
             >
               <div class="tabs" role="tablist" data-tauri-drag-region="deep">
-                <div class="tab active" role="tab" aria-selected="true">
-                  <span class="tab-name">Variables</span>
-                </div>
+                <For each={TOP_TABS}>
+                  {([tab, label]) => (
+                    <div
+                      class="tab"
+                      role="tab"
+                      aria-selected={topTab() === tab}
+                      classList={{ active: topTab() === tab }}
+                      onClick={() => {
+                        setTopTab(tab);
+                        if (isMin("variables")) toggleMin("variables");
+                      }}
+                    >
+                      <span class="tab-name">{label}</span>
+                    </div>
+                  )}
+                </For>
                 <span class="spacer" />
-                <button class="tab-btn" title="Read the variables again" onClick={() => setVariablesKey((k) => k + 1)}>
+                <button
+                  class="tab-btn"
+                  title={topTab() === "variables" ? "Read the variables again" : topTab() === "help" ? "Search the help again" : "Read the packages again"}
+                  onClick={() => (topTab() === "variables" ? setVariablesKey : topTab() === "help" ? setHelpKey : setPackagesKey)((k) => k + 1)}
+                >
                   <Icon name="refresh" small />
                 </button>
                 <PaneButtons pane="variables" min={isMin("variables")} max={maximized() === "variables"} onMin={toggleMin} onMax={toggleMax} />
               </div>
-              <VariablesPane
-                ws={ws}
-                session={foregroundInfo()}
-                sessions={consoleSessions()}
-                usedBy={usedBy}
-                onSession={setForeground}
-                onView={(path) => foreground() && openTable(foreground()!, path)}
-                shown={!isMin("variables")}
-                refreshKey={variablesKey()}
-              />
+              <div class="top-body" hidden={topTab() !== "variables"}>
+                <VariablesPane
+                  ws={ws}
+                  session={foregroundInfo()}
+                  sessions={consoleSessions()}
+                  usedBy={usedBy}
+                  onSession={setForeground}
+                  onView={(path) => foreground() && openTable(foreground()!, path)}
+                  shown={topShown("variables")}
+                  refreshKey={variablesKey()}
+                />
+              </div>
+              <div class="top-body" hidden={topTab() !== "help"}>
+                <HelpPane
+                  ws={ws}
+                  session={foregroundInfo()}
+                  sessions={consoleSessions()}
+                  usedBy={usedBy}
+                  onSession={setForeground}
+                  request={helpAsk()}
+                  onRun={runInConsole}
+                  openLink={(url) => ws.backend.openLink(url)}
+                  shown={topShown("help")}
+                  refreshKey={helpKey()}
+                />
+              </div>
+              <div class="top-body" hidden={topTab() !== "packages"}>
+                <PackagesPane
+                  ws={ws}
+                  session={foregroundInfo()}
+                  sessions={consoleSessions()}
+                  usedBy={usedBy}
+                  onSession={setForeground}
+                  onHelp={openHelp}
+                  onRun={runInConsole}
+                  shown={topShown("packages")}
+                  refreshKey={packagesKey()}
+                />
+              </div>
             </div>
             <div class="split h" classList={{ hidden: !!maximized() }} title="Drag to resize" onPointerDown={resizeVariables} />
             <PlotsPane
@@ -1042,7 +1135,7 @@ function Toolbar(props: {
         onClick={props.onAgents}
         dot={props.waiting}
       />
-      <ToolButton icon="rightPane" title="Right pane: Variables and Plots (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
+      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages and Plots (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
       <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
       <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
     </div>
