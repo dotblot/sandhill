@@ -427,6 +427,56 @@ const LINE_ICONS = {
       <path d="M12 2.5v2.8H9.2" />
     </>
   ),
+  branch: () => (
+    <>
+      <circle cx="4.5" cy="3.5" r="1.4" />
+      <circle cx="4.5" cy="12.5" r="1.4" />
+      <circle cx="11.5" cy="4.5" r="1.4" />
+      <path d="M4.5 4.9v6.2M11.5 5.9c0 3-7 2.2-7 5.2" />
+    </>
+  ),
+  pull: () => <path d="M8 2.5v8M4.8 7.3 8 10.5l3.2-3.2M3.5 13.5h9" />,
+  push: () => <path d="M8 13.5v-8M4.8 8.7 8 5.5l3.2 3.2M3.5 2.5h9" />,
+  fetch: () => (
+    <>
+      <path d="M4.6 11.5a2.9 2.9 0 0 1-.4-5.8 3.9 3.9 0 0 1 7.5-.7 2.9 2.9 0 0 1 .4 6.5" />
+      <path d="M8 7.5v6M6 11.5l2 2 2-2" />
+    </>
+  ),
+  undo: () => <path d="M5.5 3.5 2.5 6.5l3 3M2.5 6.5h7a3.5 3.5 0 0 1 0 7h-2" />,
+  stash: () => (
+    <>
+      <rect x="2.5" y="3" width="11" height="3" rx=".8" />
+      <path d="M3.5 6v6.5h9V6M6.5 8.5h3" />
+    </>
+  ),
+  more: () => (
+    <>
+      <circle cx="3.5" cy="8" r=".9" fill="currentColor" />
+      <circle cx="8" cy="8" r=".9" fill="currentColor" />
+      <circle cx="12.5" cy="8" r=".9" fill="currentColor" />
+    </>
+  ),
+  tag: () => (
+    <>
+      <path d="M2.5 2.5h5.2l5.8 5.8-5.2 5.2-5.8-5.8z" />
+      <circle cx="5.4" cy="5.4" r=".9" />
+    </>
+  ),
+  globe: () => (
+    <>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M2.5 8h11M8 2.5c-2.4 3-2.4 8 0 11M8 2.5c2.4 3 2.4 8 0 11" />
+    </>
+  ),
+  minus: () => <path d="M3.5 8h9" />,
+  discard: () => (
+    <>
+      <path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2" />
+      <path d="M4 2.5v2.8h2.8" />
+    </>
+  ),
+  open: () => <path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4" />,
 } satisfies Record<string, () => JSX.Element>;
 
 export type IconName = keyof typeof LINE_ICONS;

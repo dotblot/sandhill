@@ -347,6 +347,111 @@ export interface Packages {
   conda: boolean;
 }
 
+/** A repository's state, from `git_status`; `repo` is empty outside one. */
+export interface GitStatus {
+  repo: string;
+  /** The branch checked out; absent when HEAD is detached. */
+  branch?: string;
+  /** HEAD's commit; absent before the first commit. */
+  head?: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  files: GitFile[];
+  more: boolean;
+  stashes: number;
+  /** "merging", "rebasing", "cherry-picking" or "reverting". */
+  state?: string;
+  /** Changes whenever a branch, tag or HEAD moves. */
+  refs: string;
+  branches: string[];
+  remote_branches: string[];
+  remotes: string[];
+  user_name: string;
+  user_email: string;
+}
+
+export interface GitLines {
+  added: number;
+  removed: number;
+  binary?: boolean;
+}
+
+export interface GitFile {
+  /** Relative to the repository; a folder ends with "/". */
+  path: string;
+  from?: string;
+  /** M, A, D, R, C or T; absent when nothing is staged. */
+  staged?: string;
+  /** M, D, T, ? (untracked) or U (conflict). */
+  unstaged?: string;
+  conflict?: boolean;
+  staged_lines?: GitLines;
+  lines?: GitLines;
+  size?: number;
+}
+
+export interface GitRef {
+  kind: "head" | "branch" | "remote" | "tag";
+  name: string;
+}
+
+export interface GitCommit {
+  sha: string;
+  parents: string[];
+  author: string;
+  email: string;
+  time_ms: number;
+  subject: string;
+  refs?: GitRef[];
+  coauthors?: string[];
+}
+
+export interface GitLog {
+  commits: GitCommit[];
+  more: boolean;
+}
+
+export interface GitChange {
+  path: string;
+  from?: string;
+  status: string;
+  lines?: GitLines;
+}
+
+export interface GitCommitInfo {
+  sha: string;
+  parents: string[];
+  author: string;
+  email: string;
+  time_ms: number;
+  message: string;
+  files: GitChange[];
+}
+
+export interface GitDiff {
+  file: string;
+  text: string;
+  truncated: boolean;
+  binary: boolean;
+}
+
+export type GitAction =
+  | { op: "stage" | "unstage"; files: string[] }
+  | { op: "discard"; files: string[] }
+  | { op: "commit"; message: string; amend: boolean }
+  | { op: "fetch" | "pull" | "push" | "undo_commit" | "stash_pop" | "abort" | "init" }
+  | { op: "switch"; branch: string }
+  | { op: "create_branch"; name: string }
+  | { op: "stash"; message?: string }
+  | { op: "set_user"; name: string; email: string };
+
+export interface GitMessage {
+  summary: string;
+  body: string;
+  agent: string;
+}
+
 /** An nbformat 4 output object. */
 export interface Output {
   output_type: "stream" | "display_data" | "execute_result" | "error" | string;

@@ -518,6 +518,27 @@ impl Daemon {
                     conda: listed.conda,
                 })?
             }
+            Call::GitStatus { path } => serde_json::to_value(crate::git::status(&path).await?)?,
+            Call::GitLog { path, skip, limit } => {
+                serde_json::to_value(crate::git::log(&path, skip, limit).await?)?
+            }
+            Call::GitShow { path, sha } => {
+                serde_json::to_value(crate::git::show(&path, &sha).await?)?
+            }
+            Call::GitDiff {
+                path,
+                file,
+                staged,
+                sha,
+            } => {
+                serde_json::to_value(crate::git::diff(&path, &file, staged, sha.as_deref()).await?)?
+            }
+            Call::GitRun { path, action } => {
+                serde_json::to_value(crate::git::run_action(&path, action).await?)?
+            }
+            Call::GitWriteMessage { path, agent } => {
+                serde_json::to_value(crate::git::write_message(&path, agent.as_deref()).await?)?
+            }
             Call::TableExport {
                 session,
                 path,

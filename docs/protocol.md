@@ -33,6 +33,12 @@ Responses can arrive out of order; match them by `id`.
 | `help_page` | `session`, `topic`, `package?` | `HelpPage`: R's page as HTML, or Python's signature, docstring and members |
 | `help_source` | `session`, `topic`, `package?` | `{session, topic, package, text, file?, line?}`: a function's source |
 | `list_packages` | `session` | `Packages`: what's installed for the session's language |
+| `git_status` | `path` | `GitStatus`: the branch, the changed files and the refs of the repository `path` is in |
+| `git_log` | `path`, `skip?`, `limit?` | `{commits, more}`: a page of every branch's commits, newest first |
+| `git_show` | `path`, `sha` | `GitCommitInfo`: a commit's whole message and the files it changed |
+| `git_diff` | `path`, `file`, `staged?`, `sha?` | `{file, text, truncated, binary}`: a file's unified diff |
+| `git_run` | `path`, `action` | `{output}` once git has done it: stage, commit, push and the rest |
+| `git_write_message` | `path`, `agent?` | `{summary, body, agent}`: a commit message an agent wrote for the staged changes |
 | `interrupt` | `session` | `null` |
 | `shutdown` | `session` | `null` |
 | `subscribe` | `session`, `since_seq?` | `{session, from_seq}`, then events |
@@ -215,6 +221,58 @@ of its `modules`, and `installer` what installed it (`pip`, `conda`).
 says R has a CRAN mirror set, `bioconductor` that BiocManager is installed, and
 `conda` that the Python environment is a conda one. Installing and removing
 aren't calls: the app runs the code in the Console, where its output shows.
+
+The `git_*` calls run the `git` program on the daemon's machine (a command
+line git, which on macOS is the Xcode one only when its tools are installed),
+in the root of the repository that `path` is in. Git never asks for a password
+there: a remote that needs one fails with git's message, so ssh keys or a
+credential helper must already work in a terminal. Reads time out after a
+minute, changes after five.
+
+`git_status` returns `{repo, branch?, head?, upstream?, ahead, behind, files,
+more, stashes, state?, refs, branches, remote_branches, remotes, user_name,
+user_email}`; `repo` is empty when `path` isn't in a repository. `branch` is
+missing on a detached HEAD and `head` before the first commit. Files are
+`{path, from?, staged?, unstaged?, conflict, staged_lines?, lines?, size?}`:
+`staged` and `unstaged` are git's letters (`M`, `A`, `D`, `R`, `C`, `T`, and
+`?` for a new file), `from` a renamed file's old path, `staged_lines` and
+`lines` `{added, removed, binary}`, and `size` a new file's bytes. A new folder
+is one entry ending in `/`. At most 2000 files are listed; `more` counts the
+rest. `state` is `rebasing`, `merging`, `cherry-picking` or `reverting` while
+git is stopped in one. `refs` changes whenever a branch, tag or HEAD moves, so
+a client reads the log again only then. `user_name` and `user_email` are what
+a commit would be signed with.
+
+`git_log` lists the commits of every branch, remote branch and tag, and HEAD,
+in date order: `limit` of them (200 unless asked, at most 2000) after the
+first `skip`. A commit is `{sha, parents, author, email, time_ms, subject,
+refs, coauthors?}`, each ref `{kind, name}` with `kind` `head` (the branch
+checked out, or `HEAD` when detached), `branch`, `remote` or `tag`, and
+`coauthors` from `Co-authored-by:` lines. `git_show` gives one commit's
+`message` and its `files` as `{path, from?, status, lines?}`.
+
+`git_diff` with `sha` is what that commit changed in `file`; without it, the
+file's staged changes when `staged`, else the ones not staged (all of a new
+file). The text is git's unified diff from the first `@@`, cut at 2 MB.
+
+`git_run`'s `action` has an `op`: `stage`, `unstage` and `discard` take
+`files` (discarding a new file deletes it); `commit` takes `message` and
+`amend`; `fetch` fetches every remote; `pull` merges unless `pull.rebase` or
+`pull.ff` says otherwise; `push` sets the branch's upstream the first time,
+on `origin` or the only remote; `undo_commit` moves the branch back one commit
+and keeps its changes staged; `switch` takes a `branch` (a remote one makes or
+checks out the local branch that tracks it); `create_branch` takes a `name`
+and switches to it; `stash` (with an optional `message`, new files included)
+and `stash_pop`; `abort` stops a merge, rebase, cherry-pick or revert; `init`
+makes `path` a repository; and `set_user` sets the global `user.name` and
+`user.email`. A failure's message is git's own.
+
+`git_write_message` asks Claude Code (`claude -p` with the small model and no
+tools) or else Codex (`codex exec` in a read-only sandbox), or the `agent`
+named, for a message for the staged changes. It is given the recent commit
+subjects and the staged diff, at most 4000 bytes of each file and 40,000 in
+all, and returns the summary line, the rest as `body`, and which agent wrote
+it. It runs the agent as its CLI, signed in as the user is in a terminal.
 
 `list_kernelspecs` lists the kernels in Jupyter's standard folders and also
 those inside conda environments, pyenv versions and the environment of the
