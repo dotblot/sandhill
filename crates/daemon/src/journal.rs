@@ -133,6 +133,18 @@ pub struct ConsoleRun {
     pub execution_count: Option<u64>,
 }
 
+/// An output with an image, and the run that showed it.
+#[derive(Debug, Clone)]
+pub struct PlotRecord {
+    pub run_id: String,
+    pub seq: i64,
+    pub ts_ms: i64,
+    pub content: Value,
+    pub cell: Option<sandhill_proto::CellRef>,
+    pub by: Option<String>,
+    pub code: String,
+}
+
 /// A run that came from a notebook cell.
 #[derive(Debug, Clone)]
 pub struct CellRun {
@@ -369,6 +381,46 @@ impl Journal {
         let mut runs = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         runs.reverse();
         Ok(runs)
+    }
+
+    /// A session's latest outputs that hold an image, oldest first, leaving
+    /// out quiet runs.
+    pub fn session_plots(&self, session_id: &str, limit: u32) -> Result<Vec<PlotRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT e.run_id, e.seq, e.ts_ms, e.content, r.cell_file, r.cell_id, r.origin, r.code
+             FROM events e JOIN runs r ON r.id = e.run_id
+             WHERE e.session_id = ?1 AND r.quiet = 0
+               AND e.msg_type IN ('display_data', 'execute_result')
+               AND e.content LIKE '%\"image/%'
+             ORDER BY e.seq DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![session_id, limit], |row| {
+            let file: Option<String> = row.get(4)?;
+            let cell_id: Option<String> = row.get(5)?;
+            Ok((
+                PlotRecord {
+                    run_id: row.get(0)?,
+                    seq: row.get(1)?,
+                    ts_ms: row.get(2)?,
+                    content: Value::Null,
+                    cell: file
+                        .zip(cell_id)
+                        .map(|(file, cell_id)| sandhill_proto::CellRef { file, cell_id }),
+                    by: row.get(6)?,
+                    code: row.get(7)?,
+                },
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut plots = Vec::new();
+        for row in rows {
+            let (mut plot, content) = row?;
+            plot.content = serde_json::from_str(&content)?;
+            plots.push(plot);
+        }
+        plots.reverse();
+        Ok(plots)
     }
 
     pub fn finish_run(&self, id: &str, status: &str, execution_count: Option<u64>) -> Result<()> {

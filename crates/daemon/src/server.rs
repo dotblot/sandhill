@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::terminal::{Terminals, ToHost};
 use anyhow::{Context, Result, anyhow, bail};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
     Blob, Call, CellEdited, Event, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply, Request,
     ServerMessage, SessionStatus, Subscribed, Variables,
@@ -31,6 +33,9 @@ const HISTORY_LIMIT: u32 = 5000;
 /// How many runs the Console gets back unless it asks for another number.
 const CONSOLE_RUNS: u32 = 100;
 const MAX_CONSOLE_RUNS: u32 = 1000;
+/// How many plots the Plots pane gets back unless it asks for another number.
+const PLOTS: u32 = 100;
+const MAX_PLOTS: u32 = 500;
 
 pub struct Daemon {
     state: StateDir,
@@ -307,6 +312,14 @@ impl Daemon {
                 quiet,
                 by,
             } => serde_json::to_value(self.live(&session)?.execute(code, cell, quiet, by).await?)?,
+            Call::SessionPlots { session, limit } => {
+                let journal = self.journal.clone();
+                let limit = limit.unwrap_or(PLOTS).min(MAX_PLOTS);
+                serde_json::to_value(
+                    blocking(move || Ok(outputs::session_plots(&journal, &session, limit)?))
+                        .await?,
+                )?
+            }
             Call::SessionRuns { session, limit } => {
                 let journal = self.journal.clone();
                 let limit = limit.unwrap_or(CONSOLE_RUNS).min(MAX_CONSOLE_RUNS);
@@ -405,9 +418,19 @@ impl Daemon {
                 path,
                 text,
                 expected_mtime_ms,
-            } => serde_json::to_value(
-                blocking(move || files::write_text(&path, &text, expected_mtime_ms)).await?,
-            )?,
+                base64,
+            } => {
+                let bytes = if base64 {
+                    BASE64
+                        .decode(text.trim())
+                        .context("the file's bytes are not valid base64")?
+                } else {
+                    text.into_bytes()
+                };
+                serde_json::to_value(
+                    blocking(move || files::write_bytes(&path, &bytes, expected_mtime_ms)).await?,
+                )?
+            }
             Call::ListDir { path } => {
                 serde_json::to_value(blocking(move || files::list_dir(&path)).await?)?
             }

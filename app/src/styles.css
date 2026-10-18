@@ -940,9 +940,12 @@ pre.diff { padding: 6px 0; }
 }
 .ap-ck { margin-left: auto; color: var(--accent); display: inline-flex; }
 
-/* The right pane (step 5): Variables now; Plots, Data, Help, Packages and Git later. */
-.right-pane { flex: none; min-width: 0; }
-.right-pane.min { align-self: flex-start; }
+/* The right pane (step 5): Variables over Plots, 3px apart; Data, Help, Packages and Git later. */
+.right-col { flex: none; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.variables-pane { flex: 0 1 50%; min-height: 90px; }
+.variables-pane.fill { flex: 1 1 auto !important; }
+.plots-pane { flex: 1 1 0; min-height: 120px; }
+.tab-btn:disabled { opacity: 0.4; background: none; color: var(--faint); }
 .tab-btn { width: 22px; height: 22px; display: grid; place-items: center; flex: none; border-radius: var(--r); color: var(--faint); }
 .tab-btn:hover { color: var(--text); background: var(--ink-8); }
 .tab-btn .ico { width: 13px; height: 13px; }
@@ -982,6 +985,55 @@ pre.diff { padding: 6px 0; }
 .var-note.err { color: var(--err); white-space: pre-wrap; }
 .vbusy { padding: 4px 10px; color: var(--busy); }
 .vempty { margin: 0; padding: 10px; color: var(--faint); }
+
+/* Plots: the plot in front, where it came from, and thumbnails of the rest.
+   Plots stay white in dark mode. */
+.plots { flex: 1; min-height: 0; display: flex; flex-direction: column; outline: none; }
+.plot-stage { flex: 1 1 0; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; overflow: hidden; }
+.plot-img { display: block; background: #fff; border-radius: 4px; }
+.plot-meta { flex: none; display: flex; gap: 8px; justify-content: space-between; padding: 0 10px 6px; font-size: var(--fs-small); color: var(--faint); white-space: nowrap; }
+.plot-from { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.plot-when { flex: none; font-variant-numeric: tabular-nums; }
+.plot-thumbs { flex: none; display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--line); overflow-x: auto; }
+.plot-thumbs button { width: 52px; height: 40px; flex: none; padding: 2px; border: 1px solid var(--line); border-radius: 4px; background: #fff; overflow: hidden; }
+.plot-thumbs button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.plot-thumbs img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* A plot large: its size and format, then copy or save. 11px, like every popup. */
+.pzoom { position: fixed; inset: 0; z-index: 30; background: rgb(20 14 10 / 0.35); display: grid; place-items: center; font-size: var(--fs-small); }
+.pz-card { width: min(980px, calc(100% - 60px)); height: min(720px, calc(100% - 60px)); display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--glass-edge); border-radius: 12px; box-shadow: var(--pop-shadow); overflow: hidden; }
+.pz-h { height: 30px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.pz-h b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pz-sub { color: var(--faint); flex: none; }
+.pzoom .ib { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: var(--r); color: var(--muted); }
+.pzoom .ib:hover { background: var(--hover); color: var(--text); }
+.pzoom .ib:disabled { opacity: 0.4; background: none; }
+.pzoom .ico { width: 13px; height: 13px; }
+.pz-stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 16px; background: repeating-conic-gradient(var(--hover) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.pz-plot { background: #fff; box-shadow: 0 2px 10px rgb(0 0 0 / 0.18); }
+.pz-plot img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pz-foot { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pz-l { color: var(--muted); font-weight: 600; }
+.pz-num { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); }
+.pz-num input { width: 42px; padding: 0; border: 0; background: none; color: var(--text); font: 11px var(--font-mono); outline: none; text-align: right; }
+.pz-num span { color: var(--faint); }
+.pz-num:focus-within { border-color: var(--accent); }
+.pzoom .pz-lock.on { color: var(--accent); }
+.pz-unit { color: var(--faint); white-space: nowrap; }
+.pz-presets { display: inline-flex; gap: 2px; margin-left: 6px; }
+.pz-presets button { height: 20px; padding: 0 7px; border-radius: 5px; color: var(--muted); white-space: nowrap; }
+.pz-presets button:hover, .pz-presets button.on { background: var(--hover); color: var(--text); }
+.pz-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.pz-seg button { height: 20px; padding: 0 8px; color: var(--muted); }
+.pz-seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.pz-btn { height: 22px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 6px; white-space: nowrap; }
+.pz-btn:hover { background: var(--hover); }
+.pz-btn.pri { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.pz-btn.pri:hover { filter: brightness(1.06); }
+.pz-btn:disabled { opacity: 0.5; filter: none; }
+.pz-btn .ico { width: 12px; height: 12px; }
+.pz-note { flex: none; padding: 0 12px 8px; color: var(--faint); }
+.pz-note code { font-family: var(--font-mono); color: var(--muted); }
 
 /* Under the modes: where the agent's code goes. */
 .dest-h { margin: 6px 6px 2px; }

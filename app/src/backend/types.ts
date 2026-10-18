@@ -164,6 +164,28 @@ export interface SessionRuns {
   seq: number;
 }
 
+/** An image a run showed, for the Plots pane (`session_plots`). */
+export interface Plot {
+  run: string;
+  /** Where it is in the journal. */
+  seq: number;
+  ts_ms: number;
+  /** The document cell the run came from; none for the Console or an agent's run_code. */
+  cell?: CellRef;
+  /** The agent that ran it, like "Claude". */
+  by?: string;
+  code: string;
+  /** The output's MIME bundle: images as blob references, small SVGs inline. */
+  data: Record<string, unknown>;
+  metadata?: Record<string, any> | null;
+}
+
+export interface SessionPlots {
+  session: string;
+  plots: Plot[];
+  seq: number;
+}
+
 /** A session's variable, or a part of one (`list_variables`). */
 export interface Variable {
   name: string;

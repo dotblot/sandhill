@@ -41,6 +41,7 @@ import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
 import { type Command, Palette } from "./Palette";
 import { type Pane, PaneButtons } from "./PaneButtons";
+import { PlotsPane } from "./PlotsPane";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
 import { VariablesPane } from "./VariablesPane";
 
@@ -53,6 +54,9 @@ const RIGHT_KEY = "sandhill.right";
 const RIGHT_WIDTH_KEY = "sandhill.rightWidth";
 const RIGHT_WIDTH = 320;
 const RIGHT_MIN = 240;
+const VARIABLES_HEIGHT_KEY = "sandhill.variablesHeight";
+const VARIABLES_MIN = 90;
+const PLOTS_MIN = 120;
 const AGENTS_KEY = "sandhill.agents";
 const AGENTS_WIDTH_KEY = "sandhill.agentsWidth";
 const AGENTS_WIDTH = 400;
@@ -107,6 +111,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [maximized, setMaximized] = createSignal<Pane>();
   const [rightOn, setRightOn] = createSignal(stored(RIGHT_KEY) === "shown");
   const [rightWidth, setRightWidth] = createSignal(clampRight(Number(stored(RIGHT_WIDTH_KEY)) || RIGHT_WIDTH));
+  /** The Variables pane's height in px, over Plots; 0 until dragged, for half the column. */
+  const [variablesHeight, setVariablesHeight] = createSignal(Number(stored(VARIABLES_HEIGHT_KEY)) || 0);
   /** Bumped by the Variables pane's refresh button. */
   const [variablesKey, setVariablesKey] = createSignal(0);
   const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) === "shown");
@@ -128,7 +134,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const toggleRight = () => {
     setRightOn(!rightOn());
     store(RIGHT_KEY, rightOn() ? "shown" : "hidden");
-    if (!rightOn() && maximized() === "right") setMaximized(undefined);
+    const max = maximized();
+    if (!rightOn() && (max === "variables" || max === "plots")) setMaximized(undefined);
   };
   const toggleAgents = () => {
     setAgentsOn(!agentsOn());
@@ -640,6 +647,17 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       store(RIGHT_WIDTH_KEY, String(rightWidth())),
     );
   };
+  let rightColumn: HTMLElement | undefined;
+  let variablesPane: HTMLDivElement | undefined;
+  /** Dragging the gap between Variables and Plots sets their heights. */
+  const resizeVariables = (down: PointerEvent) => {
+    if (!variablesPane || !rightColumn) return;
+    const start = variablesPane.getBoundingClientRect().height;
+    const room = rightColumn.getBoundingClientRect().height - PLOTS_MIN;
+    drag(down, "row-resize", (e) => setVariablesHeight(Math.round(Math.max(VARIABLES_MIN, Math.min(room, start + e.clientY - down.clientY)))), () =>
+      store(VARIABLES_HEIGHT_KEY, String(variablesHeight())),
+    );
+  };
   /** Dragging the gap above the Console sets its height. */
   const resizeConsole = (down: PointerEvent) => {
     if (!consolePane) return;
@@ -841,30 +859,42 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         </section>
         <Show when={rightOn()}>
           <div class="split v" title="Drag to resize" onPointerDown={resizeRight} />
-          <aside
-            class="pane right-pane"
-            classList={{ min: isMin("right"), max: maximized() === "right" }}
-            style={{ width: `${rightWidth()}px` }}
-            aria-label="Right pane"
-          >
-            <div class="tabs" role="tablist" data-tauri-drag-region="deep">
-              <div class="tab active" role="tab" aria-selected="true">
-                <span class="tab-name">Variables</span>
+          <aside class="right-col" ref={rightColumn} style={{ width: `${rightWidth()}px` }} aria-label="Right pane">
+            <div
+              class="pane variables-pane"
+              ref={variablesPane}
+              classList={{ min: isMin("variables"), max: maximized() === "variables", fill: isMin("plots") && !isMin("variables") }}
+              style={variablesHeight() && !isMin("variables") && !isMin("plots") ? { "flex-basis": `${variablesHeight()}px` } : undefined}
+            >
+              <div class="tabs" role="tablist" data-tauri-drag-region="deep">
+                <div class="tab active" role="tab" aria-selected="true">
+                  <span class="tab-name">Variables</span>
+                </div>
+                <span class="spacer" />
+                <button class="tab-btn" title="Read the variables again" onClick={() => setVariablesKey((k) => k + 1)}>
+                  <Icon name="refresh" small />
+                </button>
+                <PaneButtons pane="variables" min={isMin("variables")} max={maximized() === "variables"} onMin={toggleMin} onMax={toggleMax} />
               </div>
-              <span class="spacer" />
-              <button class="tab-btn" title="Read the variables again" onClick={() => setVariablesKey((k) => k + 1)}>
-                <Icon name="refresh" small />
-              </button>
-              <PaneButtons pane="right" min={isMin("right")} max={maximized() === "right"} onMin={toggleMin} onMax={toggleMax} />
+              <VariablesPane
+                ws={ws}
+                session={foregroundInfo()}
+                sessions={consoleSessions()}
+                usedBy={usedBy}
+                onSession={setForeground}
+                shown={!isMin("variables")}
+                refreshKey={variablesKey()}
+              />
             </div>
-            <VariablesPane
+            <div class="split h" classList={{ hidden: !!maximized() }} title="Drag to resize" onPointerDown={resizeVariables} />
+            <PlotsPane
               ws={ws}
-              session={foregroundInfo()}
+              project={props.project}
               sessions={consoleSessions()}
-              usedBy={usedBy}
-              onSession={setForeground}
-              shown={!isMin("right")}
-              refreshKey={variablesKey()}
+              shortName={relative}
+              hostLabel={hostLabel}
+              classList={{ min: isMin("plots"), max: maximized() === "plots" }}
+              buttons={<PaneButtons pane="plots" min={isMin("plots")} max={maximized() === "plots"} onMin={toggleMin} onMax={toggleMax} />}
             />
           </aside>
         </Show>
@@ -931,7 +961,7 @@ function Toolbar(props: {
         onClick={props.onAgents}
         dot={props.waiting}
       />
-      <ToolButton icon="rightPane" title="Right pane: Variables (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
+      <ToolButton icon="rightPane" title="Right pane: Variables and Plots (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
       <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
       <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
     </div>

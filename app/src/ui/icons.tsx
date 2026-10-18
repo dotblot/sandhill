@@ -221,6 +221,14 @@ export function FileIcon(props: { name: string; dir?: boolean }) {
 const LINE_ICONS = {
   chevron: () => <path d="M5 6.5 8 9.5l3-3" />,
   chevronRight: () => <path d="M6.5 5 9.5 8l-3 3" />,
+  chevronLeft: () => <path d="M9.5 5 6.5 8l3 3" />,
+  zoom: () => (
+    <>
+      <circle cx="7" cy="7" r="4.3" />
+      <path d="M10.2 10.2 13.5 13.5M7 5v4M5 7h4" />
+    </>
+  ),
+  save: () => <path d="M8 2.5v7M5 6.5l3 3 3-3M3 12.5h10" />,
   plus: () => <path d="M8 3.5v9M3.5 8h9" />,
   refresh: () => (
     <>

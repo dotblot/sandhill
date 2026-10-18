@@ -80,6 +80,15 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
+    /// The session's latest plots, oldest first, for the Plots pane: every
+    /// image a run in it showed (a PNG, JPEG or SVG), whatever ran the code.
+    /// Quiet runs are left out. Returns [`SessionPlots`].
+    SessionPlots {
+        session: String,
+        /// How many plots, at most; 100 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
     /// Lists a session's variables, or the parts of one: `path` is a
     /// variable's name, then the names of its parts as they were listed
     /// (a data frame's columns, an AnnData's `obs`). Runs a short piece of
@@ -151,14 +160,18 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_mtime_ms: Option<i64>,
     },
-    /// Replaces a text file atomically. With `expected_mtime_ms`, fails with
-    /// an error starting with [`CONFLICT_ERROR`] if the file changed on disk
-    /// since it was read. Returns [`FileWritten`].
+    /// Replaces a text file atomically, making its folder if need be. With
+    /// `expected_mtime_ms`, fails with an error starting with
+    /// [`CONFLICT_ERROR`] if the file changed on disk since it was read. With
+    /// `base64`, `text` holds the file's bytes in base64 (a saved plot).
+    /// Returns [`FileWritten`].
     WriteFile {
         path: String,
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_mtime_ms: Option<i64>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        base64: bool,
     },
     /// Returns `Vec<DirEntry>`, directories first, then by name.
     ListDir {
@@ -899,6 +912,37 @@ pub struct SessionRun {
     pub execution_count: Option<u64>,
     /// nbformat 4 output objects. Large values are blob references.
     pub outputs: Vec<Value>,
+}
+
+/// A session's plots, for the Plots pane.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionPlots {
+    pub session: String,
+    pub plots: Vec<Plot>,
+    /// The journal position these plots reflect.
+    pub seq: i64,
+}
+
+/// An image a run showed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Plot {
+    pub run: String,
+    /// Where the image is in the journal.
+    pub seq: i64,
+    pub ts_ms: i64,
+    /// The document cell the run came from; `None` for the Console or an agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<CellRef>,
+    /// The agent that ran it, if one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// The run's code.
+    pub code: String,
+    /// The output's MIME bundle: images as blob references (SVG inline when
+    /// small), and its text.
+    pub data: Value,
+    #[serde(default)]
+    pub metadata: Value,
 }
 
 /// A session's variables, or the parts of one.
