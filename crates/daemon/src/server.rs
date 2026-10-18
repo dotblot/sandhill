@@ -379,6 +379,7 @@ impl Daemon {
                     session,
                     path,
                     code: rows.code,
+                    matrix: rows.matrix,
                     columns: rows.columns,
                     width: rows.width,
                     total: rows.total,

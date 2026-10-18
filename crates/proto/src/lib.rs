@@ -1060,6 +1060,10 @@ pub struct TableRows {
     /// The table as code in the session's language, like `seu@meta.data`
     /// or `adata.obs`.
     pub code: String,
+    /// Whether it's a matrix (or, in Python, an array) rather than a data
+    /// frame.
+    #[serde(default)]
+    pub matrix: bool,
     /// Its columns; the first 500 of a wider table.
     pub columns: Vec<TableColumn>,
     /// How many columns it has.

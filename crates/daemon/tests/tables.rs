@@ -121,6 +121,7 @@ async fn check_meta(client: &Client, session: &str, code: &str, text: &[&str], t
     let all = rows(client, session, &["meta"], 0, &[], &[]).await;
     assert_eq!((all.total, all.rows, all.width), (5, 5, 4));
     assert_eq!(all.code, code);
+    assert!(!all.matrix);
     let names: Vec<&str> = all.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["cell", "cluster", "n_genes", "pct"]);
     let kinds: Vec<&str> = all.columns.iter().map(|c| c.kind.as_str()).collect();
@@ -314,6 +315,7 @@ async fn r_tables_are_read_filtered_sorted_and_exported() {
     check_meta(&client, &session, "meta", &["chr"], ["fct", "int", "dbl"]).await;
 
     let m = rows(&client, &session, &["m"], 0, &[], &[]).await;
+    assert!(m.matrix);
     let names: Vec<&str> = m.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["[,1]", "[,2]", "[,3]"]);
     assert_eq!(m.labels, ["1", "2"]);
@@ -387,6 +389,7 @@ async fn python_tables_are_read_filtered_sorted_and_exported() {
     .await;
 
     let m = rows(&client, &session, &["m"], 0, &[], &[]).await;
+    assert!(m.matrix);
     let names: Vec<&str> = m.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(names, ["0", "1", "2"]);
     assert_eq!(m.labels, ["0", "1"]);

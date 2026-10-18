@@ -229,6 +229,13 @@ const LINE_ICONS = {
     </>
   ),
   save: () => <path d="M8 2.5v7M5 6.5l3 3 3-3M3 12.5h10" />,
+  table: () => (
+    <>
+      <rect x="2.5" y="3" width="11" height="10" rx="1" />
+      <path d="M2.5 6.5h11M2.5 10h11M6.5 6.5V13" />
+    </>
+  ),
+  filter: () => <path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" />,
   plus: () => <path d="M8 3.5v9M3.5 8h9" />,
   refresh: () => (
     <>

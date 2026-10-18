@@ -26,6 +26,9 @@ Responses can arrive out of order; match them by `id`.
 | `session_plots` | `session`, `limit?` | `{session, plots, seq}`: the images the session's runs showed, for the Plots pane |
 | `list_variables` | `session`, `path?` | `Variables` |
 | `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
+| `table_rows` | `session`, `path`, `offset?`, `limit?`, `sort?`, `filters?` | `TableRows`: a page of a data frame or matrix, for the Data Explorer |
+| `table_summary` | `session`, `path`, `filters?` | `TableSummary`: each column's counts, range and commonest values |
+| `table_export` | `session`, `path`, `sort?`, `filters?`, `file` | `{path, mtime_ms}` once the CSV is written |
 | `interrupt` | `session` | `null` |
 | `shutdown` | `session` | `null` |
 | `subscribe` | `session`, `since_seq?` | `{session, from_seq}`, then events |
@@ -117,9 +120,10 @@ under 64 KB stays inline), and `ts_ms` is when the kernel sent it. `seq` is
 where to subscribe from.
 
 `list_variables` runs a quiet snippet in the session and returns `Variables`:
-`{session, path, variables: [{name, kind, class, size?, children, summary}],
-more}`. `kind` is `data`, `value` or `function`; `size` is in bytes when the
-language can tell; `children` says whether the variable has parts. With an
+`{session, path, variables: [{name, kind, class, size?, children, table,
+summary}], more}`. `kind` is `data`, `value` or `function`; `size` is in bytes
+when the language can tell; `children` says whether the variable has parts;
+`table` whether it opens in the Data Explorer (a data frame or a matrix). With an
 empty `path` it lists the session's global variables; with a `path` (a
 variable's name, then the names of parts within it) it lists the parts: a data
 frame's columns, a list's items, an AnnData's `X`, `obs`, `var`, `obsm`,
@@ -129,6 +133,40 @@ assays and metadata. At most 200 come back; `more` counts the rest.
 memory (R: `rm()` and `gc()`; Python: `del`, IPython's output history, and
 `gc.collect()`). Both refuse while the session runs other code, and give up
 after 30 seconds.
+
+The `table_*` calls read a data frame or matrix by the same `path` as
+`list_variables` (`["seu", "meta.data"]`, `["adata", "obs"]`), in a quiet
+snippet that filters and sorts in the session, so only the rows asked for
+leave it. They refuse while the session runs other code, as listing does.
+Columns are named by position from 0. `sort` is `[{column, descending?}]`,
+first key first, with missing values last. `filters` is `[{column, op,
+values}]`, all of which a row must pass: `<`, `<=`, `>`, `>=`, `=` and `!=`
+take one value, `between` two, `in` and `not in` any number, `contains` one
+(ignoring case), and `missing` and `present` none. Values are text, read as
+numbers for a number column; a row whose value is missing passes no filter
+but `missing`.
+
+`table_rows` returns `{session, path, code, matrix, columns, width, total,
+rows, offset, labels, values}`: `code` is the table as code in the session's
+language (`seu@meta.data`, `adata.obs`); `matrix` says it is a matrix (or a
+NumPy array) rather than a data frame; `columns` is `[{name, kind, type}]` for
+the first 500 columns of the `width`, `kind` being `number`, `text`,
+`category`, `logical`, `date` or `other` and `type` the language's own
+(`dbl`, `fct`, `float64`); `total` counts the table's rows and `rows` those
+that pass the filters. Then from `offset`, `limit` rows (200 unless asked, at
+most 2000): each row's name or index label in `labels`, and its cells in
+`values`, numbers in number columns, text otherwise, `null` where missing.
+
+`table_summary` returns `{session, path, rows, columns}` for the rows that
+pass the filters, a summary per column: `{column, missing, distinct?, min?,
+max?, mean?, median?, histogram, top}`, with a 20-bin `histogram` from `min` to
+`max` for numbers, and for other columns of at most 1000 distinct values the
+10 commonest as `top: [{value, count}]` (a factor's in level order when it has
+at most 10).
+
+`table_export` writes the rows that pass the filters, sorted, to a CSV `file`
+(made with its folders if need be; R's `write.csv`, pandas' `to_csv`), with
+the row names or index first when the table has them, and returns the file's `{path, mtime_ms}`.
 
 `list_kernelspecs` lists the kernels in Jupyter's standard folders and also
 those inside conda environments, pyenv versions and the environment of the

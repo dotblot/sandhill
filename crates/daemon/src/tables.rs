@@ -126,7 +126,7 @@ __WALK__
   }
   .cols <- seq_len(min(.width, 500))
   if (.mode == "rows") {
-    .line("SANDHILL_TABLE", .n, length(.idx), .width, .esc(.found$code))
+    .line("SANDHILL_TABLE", .n, length(.idx), .width, .esc(.found$code), as.integer(.matrix))
     for (.j in .cols) {
       .v <- .col(.j)
       .line("SANDHILL_COL", .esc(.names[[.j]]), .kind(.v), .type(.v))
@@ -275,7 +275,7 @@ __WALK__
         idx = idx[order.index.to_numpy()]
 
     if mode == "rows":
-        line("SANDHILL_TABLE", n, len(idx), width, esc(code))
+        line("SANDHILL_TABLE", n, len(idx), width, esc(code), int(t is not v))
         for c in cols:
             s = t.iloc[:, c]
             line("SANDHILL_COL", esc(str(t.columns[c])), kind(s), str(s.dtype))
@@ -425,6 +425,7 @@ pub struct Rows {
     pub rows: u64,
     pub width: u64,
     pub code: String,
+    pub matrix: bool,
     pub columns: Vec<TableColumn>,
     pub labels: Vec<String>,
     pub values: Vec<Vec<Value>>,
@@ -448,6 +449,7 @@ pub fn parse_rows(stdout: &str) -> Rows {
                 parsed.rows = number(fields.next());
                 parsed.width = number(fields.next());
                 parsed.code = unescape(fields.next().unwrap_or(""));
+                parsed.matrix = fields.next() == Some("1");
             }
             Some("SANDHILL_COL") => parsed.columns.push(TableColumn {
                 name: unescape(fields.next().unwrap_or("")),
@@ -587,7 +589,7 @@ mod tests {
 
     #[test]
     fn parses_rows_with_numbers_text_and_missing_cells() {
-        let out = "noise\nSANDHILL_TABLE\t2638\t618\t7\tseu@meta.data\n\
+        let out = "noise\nSANDHILL_TABLE\t2638\t618\t7\tseu@meta.data\t0\n\
                    SANDHILL_COL\tnCount_RNA\tnumber\tdbl\n\
                    SANDHILL_COL\tcell type\tcategory\tfct\n\
                    SANDHILL_COL\tnote\ttext\tchr\n\
@@ -596,6 +598,7 @@ mod tests {
         let rows = parse_rows(out);
         assert_eq!((rows.total, rows.rows, rows.width), (2638, 618, 7));
         assert_eq!(rows.code, "seu@meta.data");
+        assert!(!rows.matrix);
         assert_eq!(rows.columns[1].name, "cell type");
         assert_eq!(rows.columns[1].kind_detail, "fct");
         assert_eq!(rows.labels, vec!["AAAC-1", "AAAG-1"]);

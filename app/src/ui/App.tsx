@@ -34,6 +34,7 @@ import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspac
 import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane } from "./AgentsPane";
 import { ConnectionItem, connState, HostKernelStates } from "./Connection";
+import { DataExplorer, type TableTab, tableId, tableTab } from "./DataExplorer";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
 import { KernelBar } from "./KernelBar";
@@ -81,6 +82,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [missing, setMissing] = createSignal<string>();
   const [docs, setDocs] = createSignal<Doc[]>([]);
   const [active, setActive] = createSignal<Doc>();
+  /** Tables open in the Data Explorer, and the one in front of the documents, if any. */
+  const [tables, setTables] = createSignal<TableTab[]>([]);
+  const [activeTable, setActiveTable] = createSignal<TableTab>();
   const [treeKey, setTreeKey] = createSignal(0);
   const hostLabel = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
   /** The machine the status bar shows: the one picked in the left pane. */
@@ -231,8 +235,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   // Mount each document once, keep it alive while hidden so editors keep their state.
   createEffect(() => {
     const doc = active();
-    for (const [d, el] of hosts) el.hidden = d !== doc;
-    if (!doc) return;
+    const table = activeTable();
+    for (const [d, el] of hosts) el.hidden = d !== doc || !!table;
+    if (!doc || table) return;
     let el = hosts.get(doc);
     if (!el) {
       el = document.createElement("div");
@@ -352,6 +357,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
 
   async function open(path: string, quiet = false): Promise<Doc | undefined> {
     if (!quiet && !restored()) openedWhileRestoring = true;
+    if (!quiet) setActiveTable(undefined);
     const existing = docs().find((d) => d.path === path);
     if (existing) {
       setActive(existing);
@@ -493,6 +499,30 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     return true;
   }
 
+  /** Opens a session's table in the Data Explorer, or brings it to the front. */
+  function openTable(session: string, path: string[]) {
+    const info = ws.sessions().find((s) => s.id === session);
+    if (!info) return;
+    const id = tableId(session, path);
+    let table = tables().find((t) => t.id === id);
+    if (!table) {
+      table = tableTab(info, path);
+      setTables((list) => [...list, table!]);
+    }
+    setActiveTable(table);
+  }
+
+  /** Whether a table can be seen; a plain call, so reading it in a click doesn't make a memo. */
+  const tableShown = (table: TableTab) => activeTable() === table && !isMin("editor");
+
+  function closeTable(table: TableTab) {
+    const list = tables();
+    const rest = list.filter((t) => t !== table);
+    setTables(rest);
+    if (activeTable() !== table) return;
+    // The table to its right comes to the front, or else the document.
+    setActiveTable(rest[Math.min(list.indexOf(table), rest.length - 1)] ?? undefined);
+  }
   async function confirmClose(): Promise<boolean> {
     const dirty = docs().filter((d) => d.dirty());
     if (dirty.length) {
@@ -537,6 +567,11 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   }
 
   function command(name: string) {
+    const table = activeTable();
+    if (table) {
+      if (name === "close-tab") closeTable(table);
+      return;
+    }
     const doc = active();
     if (name === "save" && doc) void saveDoc(doc);
     if (name === "close-tab" && doc) void close(doc);
@@ -545,8 +580,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
 
   /** What ⌘K offers besides files. */
   const commands = (): Command[] => {
-    const doc = active();
+    const doc = activeTable() ? undefined : active();
     const list: Command[] = [];
+    if (activeTable()) list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
     if (doc) {
       list.push({ label: "Save", keys: "⌘S", run: () => command("save") });
       list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
@@ -755,10 +791,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                   <div
                     class="tab"
                     role="tab"
-                    aria-selected={active() === doc}
-                    classList={{ active: active() === doc }}
+                    aria-selected={active() === doc && !activeTable()}
+                    classList={{ active: active() === doc && !activeTable() }}
                     title={doc.path}
-                    onClick={() => setActive(doc)}
+                    onClick={() => {
+                      setActive(doc);
+                      setActiveTable(undefined);
+                    }}
                   >
                     <FileIcon name={doc.name} />
                     <span class="tab-name">{doc.name}</span>
@@ -776,11 +815,52 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                   </div>
                 )}
               </For>
+              <For each={tables()}>
+                {(table) => (
+                  <div
+                    class="tab table-tab"
+                    role="tab"
+                    aria-selected={activeTable() === table}
+                    classList={{ active: activeTable() === table }}
+                    title={`${table.code()} in the Data Explorer`}
+                    onClick={() => setActiveTable(table)}
+                  >
+                    <Icon name="table" small />
+                    <span class="tab-name">{table.code()}</span>
+                    <button
+                      class="tab-close"
+                      title="Close"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTable(table);
+                      }}
+                    >
+                      <Icon name="x" small />
+                    </button>
+                  </div>
+                )}
+              </For>
               <PaneButtons pane="editor" min={isMin("editor")} max={maximized() === "editor"} onMin={toggleMin} onMax={toggleMax} />
             </div>
-            <Show when={active()}>{(doc) => <KernelBar ws={ws} doc={doc()} usedBy={usedBy} onError={notify} />}</Show>
+            <Show when={!activeTable() && active()}>{(doc) => <KernelBar ws={ws} doc={doc()} usedBy={usedBy} onError={notify} />}</Show>
             <div class="doc-area" ref={docArea}>
-              <Show when={!active()}>
+              <div class="table-hosts">
+                <For each={tables()}>
+                  {(table) => (
+                    <div class="doc-host table-host" hidden={activeTable() !== table}>
+                      <DataExplorer
+                        ws={ws}
+                        tab={table}
+                        project={props.project}
+                        hostLabel={hostLabel}
+                        shortName={relative}
+                        shown={tableShown(table)}
+                      />
+                    </div>
+                  )}
+                </For>
+              </div>
+              <Show when={!active() && !activeTable()}>
                 <Show
                   when={!missing()}
                   fallback={
@@ -882,6 +962,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                 sessions={consoleSessions()}
                 usedBy={usedBy}
                 onSession={setForeground}
+                onView={(path) => foreground() && openTable(foreground()!, path)}
                 shown={!isMin("variables")}
                 refreshKey={variablesKey()}
               />
@@ -909,7 +990,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         </Show>
         <span class="spacer" />
         <AgentStatus store={terminals} onShow={showAgent} />
-        <span class="status-item">{active()?.cursor() ?? ""}</span>
+        <span class="status-item">{activeTable()?.count() ?? active()?.cursor() ?? ""}</span>
       </footer>
       <Show when={menu()}>
         <MainMenu
