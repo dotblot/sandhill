@@ -27,6 +27,9 @@ Draft 19 (2026-10-17) changed:
 - The status bar's connection item shows the machine's icon instead of a dot,
   follows the Local | server tab, and opens a connection pop-up.
 
+Draft 20 (2026-10-18) drops every third-party logo, so the product can be sold
+without asking anyone for permission; see "Icons and licences" below.
+
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
 at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
@@ -214,9 +217,8 @@ omp.
   editor file), then type in the message box. **Cancel** (next to the "New
   conversation" heading, or the x on its tab, or esc) goes back to the
   conversation you were in.
-- **omp's icon** is its pi-like mark: a top bar with a short left leg and a
-  longer right leg, filled with a pink to violet to light-blue gradient. Dark
-  mode uses a slightly brighter gradient so it reads on the dark glass.
+- **Provider icons** are letter chips, not company logos (see "Icons and
+  licences").
 
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
@@ -278,6 +280,41 @@ omp.
   of the pane.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
+## Icons and licences
+Every icon is drawn for Sandhill. No company's logo appears, because logos are
+trademarks and their owners must approve each use in a product that is sold.
+Product names in plain text ("Claude Code", "Codex", "Opus 5.5", "Python") are
+fine: they only say what Sandhill works with.
+- **Chips:** a 14 × 14 rounded square (radius 4) inside a 16px box, with one or
+  two bold letters in the system font.
+- **Language chips:**
+  - R: "R", white on blue `#2368b8`;
+  - Python: "Py", dark blue `#22466e` on yellow `#f2c53d` (not the Python
+    two-snake logo);
+  - Nextflow: "nf", white on green `#1fa784`.
+- **Agent chips:**
+  - Claude Code: "CC", white on brown `#9a5b41` (not Claude's spark);
+  - Codex: "Cx", white on graphite `#3d4552` (not OpenAI's knot);
+  - omp: "π", white on violet `#6b4fc8` (not omp's own mark).
+- **File icons:**
+  - `.qmd` shows a "Q" (not a mark like Quarto's).
+  - `CLAUDE.md` and `AGENTS.md` show a plain four-point sparkle on coral.
+- **The app icon** is Huan's own painting.
+- **Fonts:**
+  - The system fonts need no licence in the app, because the app does not ship
+    them.
+  - A font the app ships must carry its licence text in the app's third-party
+    notices.
+  - Maple Mono NF is under the SIL Open Font License. Its Nerd Font symbols come
+    from sets under other licences:
+    - Font Awesome and Codicons are CC BY 4.0, which needs a credit.
+    - Material Design Icons are Apache 2.0.
+    - Others are MIT.
+    - One set, Font Logos, has no licence.
+
 ## Open questions
+- The monospace font for a commercial release: Maple Mono NF (needs third-party
+  notices), plain Maple Mono (only its OFL text), or the system's SF Mono (nothing
+  to ship, but no ligatures and no Nerd Font symbols).
 - Where banked plan-usage resets come from.
 - Whether more panes should be movable by dragging.
