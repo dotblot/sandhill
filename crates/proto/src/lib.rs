@@ -184,6 +184,55 @@ pub enum Call {
     ListPackages {
         session: String,
     },
+    /// The Git state of the repository holding `path` (a project folder):
+    /// its branch, how far it is ahead of and behind its upstream, and the
+    /// changed files. Returns [`GitStatus`], with an empty `repo` when the
+    /// folder isn't in a repository.
+    GitStatus {
+        path: String,
+    },
+    /// History for the Git pane: the commits of every branch, tag and remote
+    /// branch, newest first, `limit` of them (200 unless given) after the
+    /// first `skip`. Returns [`GitLog`].
+    GitLog {
+        path: String,
+        #[serde(default)]
+        skip: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// A commit's whole message and the files it changed. Returns
+    /// [`GitCommitInfo`].
+    GitShow {
+        path: String,
+        sha: String,
+    },
+    /// One file's changes as a unified diff: in the working tree against the
+    /// index, or with `staged` the index against HEAD, or with `sha` that
+    /// commit against its first parent. `file` is relative to the
+    /// repository. Returns [`GitDiff`].
+    GitDiff {
+        path: String,
+        file: String,
+        #[serde(default)]
+        staged: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha: Option<String>,
+    },
+    /// Changes the repository: stages, commits, pulls, pushes, switches
+    /// branch. Runs `git` with the user's own configuration and
+    /// credentials, and never waits for a password. Returns [`GitDone`].
+    GitRun {
+        path: String,
+        action: GitAction,
+    },
+    /// Asks an agent CLI (Claude Code, or else Codex) for a commit message
+    /// for the staged changes. `agent` picks one. Returns [`GitMessage`].
+    GitWriteMessage {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
+    },
     Interrupt {
         session: String,
     },
@@ -1281,6 +1330,242 @@ pub struct Package {
     /// Python: what installed it, like `pip` or `conda`, when it says.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub installer: String,
+}
+
+/// A repository's state, as [`Call::GitStatus`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitStatus {
+    /// The repository's top folder; empty when the folder isn't in one.
+    pub repo: String,
+    /// The branch checked out; `None` when HEAD is detached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// HEAD's commit; `None` before the first commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    /// The branch's upstream, like `origin/main`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    #[serde(default)]
+    pub ahead: u32,
+    #[serde(default)]
+    pub behind: u32,
+    /// Changed, untracked and conflicted files, by path.
+    #[serde(default)]
+    pub files: Vec<GitFile>,
+    /// Whether there were more files than `files` holds.
+    #[serde(default)]
+    pub more: bool,
+    #[serde(default)]
+    pub stashes: u32,
+    /// `merging`, `rebasing`, `cherry-picking` or `reverting`, while one is
+    /// under way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Changes whenever a branch, tag or HEAD moves, so a client knows when
+    /// to read the log again.
+    #[serde(default)]
+    pub refs: String,
+    /// Local branches, by name.
+    #[serde(default)]
+    pub branches: Vec<String>,
+    /// Remote branches, like `origin/main`.
+    #[serde(default)]
+    pub remote_branches: Vec<String>,
+    #[serde(default)]
+    pub remotes: Vec<String>,
+    /// `user.name` and `user.email`, which a commit needs; empty when unset.
+    #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
+    pub user_email: String,
+}
+
+/// A file in [`GitStatus`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitFile {
+    /// Relative to the repository.
+    pub path: String,
+    /// What a renamed or copied file was called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// The staged change: `M`odified, `A`dded, `D`eleted, `R`enamed,
+    /// `C`opied or `T`ype changed; `None` when nothing is staged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged: Option<String>,
+    /// The change not staged: `M`, `D`, `T`, or `?` for an untracked file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unstaged: Option<String>,
+    /// Both sides changed it in a merge that stopped.
+    #[serde(default)]
+    pub conflict: bool,
+    /// Lines added and removed by the staged change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_lines: Option<GitLines>,
+    /// Lines added and removed by the change not staged (an untracked
+    /// file's lines, when it is text).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<GitLines>,
+    /// Bytes, for a file that is new to the repository, so a big data file
+    /// can be flagged before it is committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitLines {
+    pub added: u32,
+    pub removed: u32,
+    #[serde(default)]
+    pub binary: bool,
+}
+
+/// Commits, as [`Call::GitLog`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitLog {
+    pub commits: Vec<GitCommit>,
+    /// Whether older commits follow.
+    #[serde(default)]
+    pub more: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitCommit {
+    pub sha: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub email: String,
+    pub time_ms: i64,
+    pub subject: String,
+    /// Branches, tags and HEAD pointing at it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<GitRef>,
+    /// `Co-authored-by` trailers, like `Claude <noreply@anthropic.com>`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coauthors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitRef {
+    /// `head` (the branch checked out, or `HEAD` when detached), `branch`,
+    /// `remote` or `tag`.
+    pub kind: String,
+    pub name: String,
+}
+
+/// A commit's details, as [`Call::GitShow`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitCommitInfo {
+    pub sha: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub email: String,
+    pub time_ms: i64,
+    /// The whole message.
+    pub message: String,
+    /// What it changed against its first parent.
+    pub files: Vec<GitChange>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitChange {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// `M`, `A`, `D`, `R`, `C` or `T`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<GitLines>,
+}
+
+/// A file's diff, as [`Call::GitDiff`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitDiff {
+    pub file: String,
+    /// `git diff`'s unified diff, without its header lines.
+    pub text: String,
+    /// Whether it was cut short (at 2 MB).
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub binary: bool,
+}
+
+/// What [`Call::GitRun`] does.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum GitAction {
+    /// Stages files (relative to the repository); every change when empty.
+    Stage {
+        #[serde(default)]
+        files: Vec<String>,
+    },
+    /// Unstages files; every staged change when empty.
+    Unstage {
+        #[serde(default)]
+        files: Vec<String>,
+    },
+    /// Throws away files' changes not staged; deletes untracked ones.
+    Discard {
+        files: Vec<String>,
+    },
+    /// Commits what's staged; `amend` replaces the last commit.
+    Commit {
+        message: String,
+        #[serde(default)]
+        amend: bool,
+    },
+    Fetch,
+    /// Pulls the upstream, merging unless the user's configuration says to
+    /// rebase.
+    Pull,
+    /// Pushes, setting the upstream to the first remote when there is none.
+    Push,
+    /// Undoes the last commit, keeping its changes staged.
+    UndoCommit,
+    /// Switches to a branch; a remote branch (`origin/x`) gets a local
+    /// branch following it.
+    Switch {
+        branch: String,
+    },
+    /// Makes a branch at HEAD and switches to it.
+    CreateBranch {
+        name: String,
+    },
+    /// Stashes every change, untracked files included.
+    Stash {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    /// Brings back the last stash.
+    StashPop,
+    /// Stops a merge, rebase, cherry-pick or revert that stopped on conflicts.
+    Abort,
+    /// Makes the folder a repository.
+    Init,
+    /// Sets `user.name` and `user.email` for every repository of the user.
+    SetUser {
+        name: String,
+        email: String,
+    },
+}
+
+/// What [`Call::GitRun`] did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitDone {
+    /// What git said, like "Everything up-to-date".
+    #[serde(default)]
+    pub output: String,
+}
+
+/// A commit message, as [`Call::GitWriteMessage`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitMessage {
+    pub summary: String,
+    #[serde(default)]
+    pub body: String,
+    /// The agent that wrote it: `claude` or `codex`.
+    pub agent: String,
 }
 
 /// Content of a [`EVENT_RUN_FINISHED`] event.

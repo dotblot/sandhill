@@ -13,10 +13,11 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
-    FileStat, FileText, FileWritten, Focus, HelpPage, HelpSource, HelpTopics, HistoryPage,
-    KernelspecInfo, Outcome, Packages, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
-    SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows,
-    TableSort, TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
+    FileStat, FileText, FileWritten, Focus, GitAction, GitCommitInfo, GitDiff, GitDone, GitLog,
+    GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, KernelspecInfo, Outcome,
+    Packages, PingReply, ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo,
+    SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows, TableSort,
+    TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -427,6 +428,59 @@ impl Client {
     pub async fn list_packages(&self, session: &str) -> Result<Packages> {
         self.call(Call::ListPackages {
             session: session.into(),
+        })
+        .await
+    }
+
+    pub async fn git_status(&self, path: &str) -> Result<GitStatus> {
+        self.call(Call::GitStatus { path: path.into() }).await
+    }
+
+    pub async fn git_log(&self, path: &str, skip: u32, limit: Option<u32>) -> Result<GitLog> {
+        self.call(Call::GitLog {
+            path: path.into(),
+            skip,
+            limit,
+        })
+        .await
+    }
+
+    pub async fn git_show(&self, path: &str, sha: &str) -> Result<GitCommitInfo> {
+        self.call(Call::GitShow {
+            path: path.into(),
+            sha: sha.into(),
+        })
+        .await
+    }
+
+    pub async fn git_diff(
+        &self,
+        path: &str,
+        file: &str,
+        staged: bool,
+        sha: Option<&str>,
+    ) -> Result<GitDiff> {
+        self.call(Call::GitDiff {
+            path: path.into(),
+            file: file.into(),
+            staged,
+            sha: sha.map(Into::into),
+        })
+        .await
+    }
+
+    pub async fn git_run(&self, path: &str, action: GitAction) -> Result<GitDone> {
+        self.call(Call::GitRun {
+            path: path.into(),
+            action,
+        })
+        .await
+    }
+
+    pub async fn git_write_message(&self, path: &str, agent: Option<&str>) -> Result<GitMessage> {
+        self.call(Call::GitWriteMessage {
+            path: path.into(),
+            agent: agent.map(Into::into),
         })
         .await
     }

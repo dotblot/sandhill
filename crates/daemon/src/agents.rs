@@ -152,20 +152,27 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         }
     }
 
-    // An npm-installed CLI runs under `node` from the same folder, which may
-    // not be on the daemon's PATH (as on a server reached over ssh).
-    if let Some(dir) = program.parent() {
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        if !std::env::split_paths(&path).any(|p| p == dir) {
-            let joined = std::env::join_paths(
-                std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&path)),
-            )?;
-            launch
-                .env
-                .push(("PATH".into(), joined.to_string_lossy().into_owned()));
-        }
+    if let Some(path) = path_for(&program)? {
+        launch.env.push(("PATH".into(), path));
     }
     Ok(launch)
+}
+
+/// `PATH` with the CLI's folder first, when it isn't on it already: an
+/// npm-installed CLI runs under `node` from the same folder, which may not be
+/// on the daemon's `PATH` (as on a server reached over ssh).
+pub(crate) fn path_for(program: &Path) -> Result<Option<String>> {
+    let Some(dir) = program.parent() else {
+        return Ok(None);
+    };
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    if std::env::split_paths(&path).any(|p| p == dir) {
+        return Ok(None);
+    }
+    let joined = std::env::join_paths(
+        std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&path)),
+    )?;
+    Ok(Some(joined.to_string_lossy().into_owned()))
 }
 
 fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<String> {
@@ -391,7 +398,7 @@ async fn version(program: &Path) -> Option<String> {
 
 /// The CLI's `--help`, to know which flags it takes: an older version
 /// rejects a flag it doesn't know. Cached per executable and its mtime.
-async fn help_text(program: &Path) -> String {
+pub(crate) async fn help_text(program: &Path) -> String {
     /// Per executable: its mtime and its help.
     type Cache = HashMap<PathBuf, (Option<SystemTime>, String)>;
     static CACHE: Mutex<Option<Cache>> = Mutex::new(None);

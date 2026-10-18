@@ -45,6 +45,7 @@ const COLORS = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948"
 
 /** A table open in the editor: a data frame or matrix in a session, by its path in the Variables pane. */
 export interface TableTab {
+  kind: "table";
   id: string;
   session: string;
   language: string;
@@ -61,6 +62,7 @@ export function tableTab(session: SessionInfo, path: string[]): TableTab {
   const [code, setCode] = createSignal(path.join(normalizeLanguage(session.language) === "r" ? "$" : "."));
   const [count, setCount] = createSignal("");
   return {
+    kind: "table",
     id: tableId(session.id, path),
     session: session.id,
     language: normalizeLanguage(session.language),

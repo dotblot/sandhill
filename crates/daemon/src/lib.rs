@@ -8,6 +8,7 @@ pub mod agents;
 pub mod blobs;
 pub mod cells;
 pub mod files;
+pub mod git;
 pub mod help;
 pub mod journal;
 pub mod kernel;

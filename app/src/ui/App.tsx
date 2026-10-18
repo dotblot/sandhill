@@ -37,7 +37,9 @@ import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane } from "./AgentsPane";
 import { ConnectionItem, connState, HostKernelStates } from "./Connection";
 import { DataExplorer, type TableTab, tableId, tableTab } from "./DataExplorer";
+import { type DiffTab, DiffView, diffTab, diffTitle } from "./DiffView";
 import { ask, Dialogs, notify } from "./dialogs";
+import { type DiffRequest, GitPane } from "./GitPane";
 import { HelpPane } from "./HelpPane";
 import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
 import { KernelBar } from "./KernelBar";
@@ -67,7 +69,18 @@ const TOP_TABS = [
   ["variables", "Variables"],
   ["help", "Help"],
   ["packages", "Packages"],
+  ["git", "Git"],
 ] as const;
+type TopTab = (typeof TOP_TABS)[number][0];
+/** What the refresh button over each top tab says and does. */
+const TOP_REFRESH: Record<TopTab, string> = {
+  variables: "Read the variables again",
+  help: "Search the help again",
+  packages: "Read the packages again",
+  git: "Read the repository again",
+};
+/** Beside the documents in the editor: a table in the Data Explorer, or a diff. */
+type ExtraTab = TableTab | DiffTab;
 const AGENTS_KEY = "sandhill.agents";
 const AGENTS_WIDTH_KEY = "sandhill.agentsWidth";
 const AGENTS_WIDTH = 400;
@@ -92,9 +105,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [missing, setMissing] = createSignal<string>();
   const [docs, setDocs] = createSignal<Doc[]>([]);
   const [active, setActive] = createSignal<Doc>();
-  /** Tables open in the Data Explorer, and the one in front of the documents, if any. */
-  const [tables, setTables] = createSignal<TableTab[]>([]);
-  const [activeTable, setActiveTable] = createSignal<TableTab>();
+  /** Tables open in the Data Explorer and diffs, and the one in front of the documents, if any. */
+  const [extras, setExtras] = createSignal<ExtraTab[]>([]);
+  const [activeExtra, setActiveExtra] = createSignal<ExtraTab>();
   const [treeKey, setTreeKey] = createSignal(0);
   const hostLabel = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
   /** The machine the status bar shows: the one picked in the left pane. */
@@ -130,9 +143,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   /** Bumped by the Variables pane's refresh button. */
   const [variablesKey, setVariablesKey] = createSignal(0);
   /** The tab in front in the right pane's top group, and its refresh key. */
-  const [topTab, setTopTab] = createSignal<"variables" | "help" | "packages">("variables");
+  const [topTab, setTopTab] = createSignal<TopTab>("variables");
   const [helpKey, setHelpKey] = createSignal(0);
   const [packagesKey, setPackagesKey] = createSignal(0);
+  const [gitKey, setGitKey] = createSignal(0);
   /** A topic for the Help pane to show; `n` changes each time. */
   const [helpAsk, setHelpAsk] = createSignal<HelpRequest & { n: number }>();
   const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) === "shown");
@@ -183,7 +197,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   };
   const isMin = (pane: Pane) => minimized().includes(pane) && maximized() !== pane;
   /** Whether a tab of the right pane's top group shows. A function: an expression in a prop would be a memo read outside it. */
-  const topShown = (tab: "variables" | "help" | "packages") => !isMin("variables") && topTab() === tab;
+  const topShown = (tab: TopTab) => !isMin("variables") && topTab() === tab;
   const toggleMin = (pane: Pane) => {
     setMaximized((m) => (m === pane ? undefined : m));
     setMinimized((list) => (list.includes(pane) ? list.filter((p) => p !== pane) : [...list.filter((p) => p !== pane), pane]));
@@ -260,7 +274,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   // Mount each document once, keep it alive while hidden so editors keep their state.
   createEffect(() => {
     const doc = active();
-    const table = activeTable();
+    const table = activeExtra();
     for (const [d, el] of hosts) el.hidden = d !== doc || !!table;
     if (!doc || table) return;
     let el = hosts.get(doc);
@@ -391,7 +405,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
 
   async function open(path: string, quiet = false): Promise<Doc | undefined> {
     if (!quiet && !restored()) openedWhileRestoring = true;
-    if (!quiet) setActiveTable(undefined);
+    if (!quiet) setActiveExtra(undefined);
     const existing = docs().find((d) => d.path === path);
     if (existing) {
       setActive(existing);
@@ -538,24 +552,38 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     const info = ws.sessions().find((s) => s.id === session);
     if (!info) return;
     const id = tableId(session, path);
-    let table = tables().find((t) => t.id === id);
+    let table = extras().find((t) => t.id === id);
     if (!table) {
       table = tableTab(info, path);
-      setTables((list) => [...list, table!]);
+      setExtras((list) => [...list, table!]);
     }
-    setActiveTable(table);
+    setActiveExtra(table);
   }
 
-  /** Whether a table can be seen; a plain call, so reading it in a click doesn't make a memo. */
-  const tableShown = (table: TableTab) => activeTable() === table && !isMin("editor");
+  /** Opens a file's diff as a tab, or brings it to the front. */
+  function openDiff(request: DiffRequest) {
+    const tab = diffTab(request);
+    const open = extras().find((t) => t.id === tab.id);
+    if (!open) setExtras((list) => [...list, tab]);
+    setActiveExtra(open ?? tab);
+    if (isMin("editor")) toggleMin("editor");
+  }
 
-  function closeTable(table: TableTab) {
-    const list = tables();
-    const rest = list.filter((t) => t !== table);
-    setTables(rest);
-    if (activeTable() !== table) return;
-    // The table to its right comes to the front, or else the document.
-    setActiveTable(rest[Math.min(list.indexOf(table), rest.length - 1)] ?? undefined);
+  /** Whether a table or diff can be seen; a plain call, so reading it in a click doesn't make a memo. */
+  const extraShown = (tab: ExtraTab) => activeExtra() === tab && !isMin("editor");
+  /** What the status bar says about the table or diff in front. */
+  const extraStatus = () => {
+    const tab = activeExtra();
+    return tab?.kind === "table" ? tab.count() : tab ? "" : undefined;
+  };
+
+  function closeExtra(tab: ExtraTab) {
+    const list = extras();
+    const rest = list.filter((t) => t !== tab);
+    setExtras(rest);
+    if (activeExtra() !== tab) return;
+    // The tab to its right comes to the front, or else the document.
+    setActiveExtra(rest[Math.min(list.indexOf(tab), rest.length - 1)] ?? undefined);
   }
   async function confirmClose(): Promise<boolean> {
     const dirty = docs().filter((d) => d.dirty());
@@ -601,9 +629,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   }
 
   function command(name: string) {
-    const table = activeTable();
+    const table = activeExtra();
     if (table) {
-      if (name === "close-tab") closeTable(table);
+      if (name === "close-tab") closeExtra(table);
       return;
     }
     const doc = active();
@@ -614,9 +642,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
 
   /** What ⌘K offers besides files. */
   const commands = (): Command[] => {
-    const doc = activeTable() ? undefined : active();
+    const doc = activeExtra() ? undefined : active();
     const list: Command[] = [];
-    if (activeTable()) list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
+    if (activeExtra()) list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
     if (doc) {
       list.push({ label: "Save", keys: "⌘S", run: () => command("save") });
       list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
@@ -838,12 +866,12 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                   <div
                     class="tab"
                     role="tab"
-                    aria-selected={active() === doc && !activeTable()}
-                    classList={{ active: active() === doc && !activeTable() }}
+                    aria-selected={active() === doc && !activeExtra()}
+                    classList={{ active: active() === doc && !activeExtra() }}
                     title={doc.path}
                     onClick={() => {
                       setActive(doc);
-                      setActiveTable(undefined);
+                      setActiveExtra(undefined);
                     }}
                   >
                     <FileIcon name={doc.name} />
@@ -862,24 +890,24 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                   </div>
                 )}
               </For>
-              <For each={tables()}>
-                {(table) => (
+              <For each={extras()}>
+                {(tab) => (
                   <div
                     class="tab table-tab"
                     role="tab"
-                    aria-selected={activeTable() === table}
-                    classList={{ active: activeTable() === table }}
-                    title={`${table.code()} in the Data Explorer`}
-                    onClick={() => setActiveTable(table)}
+                    aria-selected={activeExtra() === tab}
+                    classList={{ active: activeExtra() === tab }}
+                    title={tab.kind === "table" ? `${tab.code()} in the Data Explorer` : `${tab.file}: ${tab.sha ? `changes in commit ${tab.sha.slice(0, 7)}` : tab.staged ? "staged changes" : "changes not staged"}`}
+                    onClick={() => setActiveExtra(tab)}
                   >
-                    <Icon name="table" small />
-                    <span class="tab-name">{table.code()}</span>
+                    <Icon name={tab.kind === "table" ? "table" : "branch"} small />
+                    <span class="tab-name">{tab.kind === "table" ? tab.code() : diffTitle(tab)}</span>
                     <button
                       class="tab-close"
                       title="Close"
                       onClick={(e) => {
                         e.stopPropagation();
-                        closeTable(table);
+                        closeExtra(tab);
                       }}
                     >
                       <Icon name="x" small />
@@ -889,25 +917,32 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               </For>
               <PaneButtons pane="editor" min={isMin("editor")} max={maximized() === "editor"} onMin={toggleMin} onMax={toggleMax} />
             </div>
-            <Show when={!activeTable() && active()}>{(doc) => <KernelBar ws={ws} doc={doc()} usedBy={usedBy} onError={notify} />}</Show>
+            <Show when={!activeExtra() && active()}>{(doc) => <KernelBar ws={ws} doc={doc()} usedBy={usedBy} onError={notify} />}</Show>
             <div class="doc-area" ref={docArea}>
               <div class="table-hosts">
-                <For each={tables()}>
-                  {(table) => (
-                    <div class="doc-host table-host" hidden={activeTable() !== table}>
-                      <DataExplorer
-                        ws={ws}
-                        tab={table}
-                        project={props.project}
-                        hostLabel={hostLabel}
-                        shortName={relative}
-                        shown={tableShown(table)}
-                      />
+                <For each={extras()}>
+                  {(tab) => (
+                    <div class="doc-host table-host" hidden={activeExtra() !== tab}>
+                      <Show
+                        when={tab.kind === "table" ? tab : undefined}
+                        fallback={<DiffView ws={ws} tab={tab as DiffTab} shown={extraShown(tab)} onOpen={(path) => void open(path)} onStaged={() => setGitKey((k) => k + 1)} />}
+                      >
+                        {(table) => (
+                          <DataExplorer
+                            ws={ws}
+                            tab={table()}
+                            project={props.project}
+                            hostLabel={hostLabel}
+                            shortName={relative}
+                            shown={extraShown(tab)}
+                          />
+                        )}
+                      </Show>
                     </div>
                   )}
                 </For>
               </div>
-              <Show when={!active() && !activeTable()}>
+              <Show when={!active() && !activeExtra()}>
                 <Show
                   when={!missing()}
                   fallback={
@@ -990,7 +1025,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
             <div
               class="pane variables-pane"
               ref={variablesPane}
-              classList={{ min: isMin("variables"), max: maximized() === "variables", fill: isMin("plots") && !isMin("variables") }}
+              classList={{ min: isMin("variables"), max: maximized() === "variables", fill: isMin("plots") && !isMin("variables"), git: topTab() === "git" }}
               style={variablesHeight() && !isMin("variables") && !isMin("plots") ? { "flex-basis": `${variablesHeight()}px` } : undefined}
             >
               <div class="tabs" role="tablist" data-tauri-drag-region="deep">
@@ -1013,8 +1048,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                 <span class="spacer" />
                 <button
                   class="tab-btn"
-                  title={topTab() === "variables" ? "Read the variables again" : topTab() === "help" ? "Search the help again" : "Read the packages again"}
-                  onClick={() => (topTab() === "variables" ? setVariablesKey : topTab() === "help" ? setHelpKey : setPackagesKey)((k) => k + 1)}
+                  title={TOP_REFRESH[topTab()]}
+                  onClick={() => ({ variables: setVariablesKey, help: setHelpKey, packages: setPackagesKey, git: setGitKey })[topTab()]((k) => k + 1)}
                 >
                   <Icon name="refresh" small />
                 </button>
@@ -1059,6 +1094,16 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                   refreshKey={packagesKey()}
                 />
               </div>
+              <div class="top-body" hidden={topTab() !== "git"}>
+                <GitPane
+                  ws={ws}
+                  project={props.project}
+                  shown={topShown("git")}
+                  refreshKey={gitKey()}
+                  onDiff={openDiff}
+                  onOpen={(path) => void open(path)}
+                />
+              </div>
             </div>
             <div class="split h" classList={{ hidden: !!maximized() }} title="Drag to resize" onPointerDown={resizeVariables} />
             <PlotsPane
@@ -1083,7 +1128,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         </Show>
         <span class="spacer" />
         <AgentStatus store={terminals} onShow={showAgent} />
-        <span class="status-item">{activeTable()?.count() ?? active()?.cursor() ?? ""}</span>
+        <span class="status-item">{extraStatus() ?? active()?.cursor() ?? ""}</span>
       </footer>
       <Show when={menu()}>
         <MainMenu
@@ -1135,7 +1180,7 @@ function Toolbar(props: {
         onClick={props.onAgents}
         dot={props.waiting}
       />
-      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages and Plots (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
+      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages, Git and Plots (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
       <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
       <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
     </div>
