@@ -114,7 +114,7 @@ async fn python_variables_are_listed_opened_and_deleted() {
     run(
         &mut client,
         &session,
-        "import numpy as np\nn = 3\nlabel = 'pbmc'\nconfig = {'res': 0.5, 'genes': ['CD3E', 'MS4A1']}\nxs = [1, 2, 3]\ndef qc(adata, min_genes=200): pass\nbig = np.zeros((1000, 100))",
+        "import os\nn = 3\nlabel = 'pbmc'\nconfig = {'res': 0.5, 'genes': ['CD3E', 'MS4A1']}\nxs = [1, 2, 3]\ndef qc(adata, min_genes=200): pass\nclass Cells: pass\ncells = Cells()",
         None,
         None,
     )
@@ -131,14 +131,10 @@ async fn python_variables_are_listed_opened_and_deleted() {
     );
     let config = find(&all, "config");
     assert!(config.children && config.kind == "data");
-    assert_eq!(find(&all, "big").size, Some(800_000));
+    assert_eq!(find(&all, "cells").class, "Cells");
     assert!(
-        find(&all, "big").summary.starts_with("1,000 × 100"),
-        "{all:#?}"
-    );
-    assert!(
-        !names(&all).contains(&"np"),
-        "modules are left out: {all:#?}"
+        !names(&all).contains(&"os") && !names(&all).contains(&"Cells"),
+        "modules and classes are left out: {all:#?}"
     );
     // The listing leaves nothing in the session's history.
     let history = client.history(&session, 0, None).await.unwrap();
@@ -163,6 +159,21 @@ async fn python_variables_are_listed_opened_and_deleted() {
             .is_err()
     );
 
+    let has_numpy = {
+        run(&mut client, &session, "try:\n    import numpy as np\n    big = np.zeros((1000, 100))\nexcept ImportError:\n    pass", None, None).await;
+        names(&list(&client, &session, &[]).await).contains(&"big")
+    };
+    if has_numpy {
+        let all = list(&client, &session, &[]).await;
+        assert_eq!(find(&all, "big").size, Some(800_000));
+        assert!(
+            find(&all, "big").summary.starts_with("1,000 × 100"),
+            "{all:#?}"
+        );
+    } else {
+        eprintln!("skipping the array part: numpy is not installed");
+    }
+
     let has_pandas = {
         run(&mut client, &session, "try:\n    import pandas as pd\n    obs = pd.DataFrame({'cluster': ['0', '1', '0'], 'n_genes': [812, 1043, 655]})\nexcept ImportError:\n    pass", None, None).await;
         names(&list(&client, &session, &[]).await).contains(&"obs")
@@ -184,7 +195,7 @@ async fn python_variables_are_listed_opened_and_deleted() {
     }
 
     let has_anndata = {
-        run(&mut client, &session, "try:\n    import anndata as ad\n    adata = ad.AnnData(np.ones((4, 3), dtype='float32'))\n    adata.obs['group'] = ['a', 'a', 'b', 'b']\n    adata.obsm['X_umap'] = np.zeros((4, 2))\nexcept ImportError:\n    pass", None, None).await;
+        run(&mut client, &session, "try:\n    import anndata as ad\n    import numpy as np\n    adata = ad.AnnData(np.ones((4, 3), dtype='float32'))\n    adata.obs['group'] = ['a', 'a', 'b', 'b']\n    adata.obsm['X_umap'] = np.zeros((4, 2))\nexcept ImportError:\n    pass", None, None).await;
         names(&list(&client, &session, &[]).await).contains(&"adata")
     };
     if has_anndata {
@@ -210,28 +221,35 @@ async fn python_variables_are_listed_opened_and_deleted() {
     run(
         &mut client,
         &session,
-        "import weakref\nbig_ref = weakref.ref(big)",
+        "import weakref\ncells_ref = weakref.ref(cells)",
         None,
         None,
     )
     .await;
-    run(&mut client, &session, "big", None, None).await;
+    run(&mut client, &session, "cells", None, None).await;
     client
         .delete_variables(
             &session,
-            &["big".into(), "xs".into(), "gone_already".into()],
+            &[
+                "cells".into(),
+                "big".into(),
+                "xs".into(),
+                "gone_already".into(),
+            ],
         )
         .await
         .unwrap();
     let all = list(&client, &session, &[]).await;
     assert!(
-        !names(&all).contains(&"big") && !names(&all).contains(&"xs"),
+        ["cells", "big", "xs"]
+            .iter()
+            .all(|name| !names(&all).contains(name)),
         "{all:#?}"
     );
     run(
         &mut client,
         &session,
-        "alive = big_ref() is not None",
+        "alive = cells_ref() is not None",
         None,
         None,
     )
