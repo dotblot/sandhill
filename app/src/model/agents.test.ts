@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { TerminalInfo } from "../backend/types";
-import { agentKind, currentMode, documentPath, effortLabel, effortName, modelLabel, planUsage, screenMode, timeLeft, tokens, withModels } from "./agents";
+import {
+  agentKind,
+  canResume,
+  currentMode,
+  documentPath,
+  effortLabel,
+  effortName,
+  liveOptions,
+  modelLabel,
+  planUsage,
+  screenMode,
+  timeLeft,
+  tokens,
+  withModels,
+} from "./agents";
 
 const terminal = (extra: Partial<TerminalInfo>): TerminalInfo => ({
   id: "a",
@@ -30,6 +44,19 @@ describe("agents", () => {
     expect(currentMode(terminal({ options: { permission: "full" }, agent: { mode: "someday" } })).label).toBe("YOLO");
     // Codex's bridge reports the mode it is in, as it was started with it.
     expect(currentMode(terminal({ kind: "codex", options: { permission: "plan" }, agent: { permission: "supervised" } })).label).toBe("Normal");
+  });
+
+  it("starts again with what the agent runs with now, on the conversation it reported", () => {
+    const changed = terminal({
+      options: { model: "opus", effort: "medium", permission: "supervised", documents: ["qc.ipynb"] },
+      agent: { mode: "plan", session_id: "s1", status: { model_id: "claude-opus-5-5[1m]", effort: "high" } },
+    });
+    expect(liveOptions(changed)).toEqual({ model: "claude-opus-5-5[1m]", effort: "high", permission: "plan", documents: ["qc.ipynb"] });
+    expect(liveOptions(terminal({ options: { model: "sonnet" } }))).toEqual({ model: "sonnet", effort: undefined, permission: "supervised" });
+    expect(canResume(changed)).toBe(true);
+    expect(canResume(terminal({ agent: { thread: "t1" } }))).toBe(false);
+    expect(canResume(terminal({ kind: "codex", agent: { thread: "t1" } }))).toBe(true);
+    expect(canResume(terminal({ kind: "shell", agent: { session_id: "s1" } }))).toBe(false);
   });
 
   it("offers the models a running Codex lists, with the efforts of the one it uses", () => {

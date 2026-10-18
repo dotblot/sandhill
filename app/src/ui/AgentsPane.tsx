@@ -6,10 +6,12 @@ import {
   AGENT_KINDS,
   type AgentKind,
   agentKind,
+  canResume,
   currentMode,
   documentPath,
   drivesChat,
   effortLevel,
+  liveOptions,
   type Mode,
   MODES,
   type ModelChoice,
@@ -81,6 +83,8 @@ export function AgentsPane(props: {
   const [sent, setSent] = createSignal<Set<string>>(new Set());
   /** Conversations stopped here: Claude Code reports no end to a turn it was stopped in. */
   const [stopped, setStopped] = createSignal<string[]>([]);
+  /** Conversations whose agent is being started again. */
+  const [restarting, setRestarting] = createSignal<string[]>([]);
   /** Modes switched to here, until the agent reports one. */
   const [modeChoice, setModeChoice] = createSignal<Record<string, Mode>>({});
   const [effortChoice, setEffortChoice] = createSignal<Record<string, string>>({});
@@ -114,6 +118,13 @@ export function AgentsPane(props: {
   const working = (t: TerminalInfo) =>
     t.running && (t.agent?.state === "busy" || t.agent?.state === "waiting") && !stopped().includes(t.id);
   const title = (t: TerminalInfo) => chatTitle(store.chat(t.id)) ?? `${t.title} · ${modelLabel(t)}`;
+  /** The conversation's entries since the agent last started. */
+  const sinceStart = (t: TerminalInfo) => {
+    const started = t.started_ms ?? t.created_ms;
+    return store.chat(t.id).filter((e) => (e.event.at_ms ?? started) >= started).length;
+  };
+  /** Ended, with a conversation the agent can go on with. */
+  const resumable = (t: TerminalInfo) => !t.running && canResume(t) && chatMode(t) && !restarting().includes(t.id);
   const chat = createMemo(() => {
     const t = current();
     return t && canChat(t) ? buildChat(store.chat(t.id), working(t)) : undefined;
@@ -190,10 +201,10 @@ export function AgentsPane(props: {
       { defer: true },
     ),
   );
-  // While a new conversation shows nothing yet, check now and then whether it is stuck.
+  // While a new or resumed conversation shows nothing yet, check now and then whether it is stuck.
   createEffect(() => {
     const t = current();
-    if (!t?.running || !chatMode(t) || store.chat(t.id).length) return;
+    if (!t?.running || !chatMode(t) || sinceStart(t)) return;
     const timer = setInterval(() => {
       setNow(Date.now());
       setScreen(views.get(t.id)?.screenText(24) ?? "");
@@ -282,6 +293,65 @@ export function AgentsPane(props: {
     }
     setSentAt(Date.now());
     return true;
+  }
+
+  /**
+   * Starts the agent again on its conversation, with `options`: after it
+   * ended, or to change what it can't while it runs. `prompt` goes on with it.
+   */
+  async function restart(t: TerminalInfo, options: AgentOptions, prompt?: string) {
+    const id = t.id;
+    setRestarting((ids) => [...ids, id]);
+    try {
+      await store.restart(id, options, views.get(id)?.size(), prompt);
+      const drop = <T,>(all: Record<string, T>) => {
+        const { [id]: _, ...rest } = all;
+        return rest;
+      };
+      setModeChoice(drop);
+      setEffortChoice(drop);
+      setModelChoice(drop);
+      setStopped((ids) => ids.filter((other) => other !== id));
+      setSentAt(Date.now());
+    } catch (err) {
+      notify(`Could not start ${agentName(t)} again: ${message(err)}`);
+    } finally {
+      setRestarting((ids) => ids.filter((other) => other !== id));
+    }
+  }
+
+  /** What an ended conversation goes on with: as it last ran, with what was picked here since. */
+  function resumeOptions(t: TerminalInfo): AgentOptions {
+    const live = liveOptions(t);
+    const model = modelChoice()[t.id];
+    return {
+      ...live,
+      model: model ? model.id : live.model,
+      effort: effortChoice()[t.id] ?? live.effort,
+      permission: modeChoice()[t.id]?.permission ?? live.permission,
+    };
+  }
+
+  /** Claude Code turns YOLO on only as it starts: it starts again on this conversation in YOLO mode. */
+  async function restartInYolo(t: TerminalInfo, yolo: Mode) {
+    const go = "Restart in YOLO";
+    const choice = await ask(
+      `Restart ${agentName(t)} in YOLO mode?`,
+      [go, "Cancel"],
+      `Claude Code turns YOLO on only as it starts, so it starts again and goes on with this conversation${working(t) ? ", stopping what it is doing now" : ""}. From then on, everything runs without asking.`,
+    );
+    if (choice === go) await restart(t, { ...liveOptions(t), permission: yolo.permission });
+  }
+
+  /** An outdated agent starts again on its conversation with the newest tools, if it can; else a new one starts. */
+  async function renew(t: TerminalInfo) {
+    if (!canResume(t)) return start(agentKind(t.kind)!, t.options ?? {});
+    if (working(t)) {
+      const go = "Restart";
+      const choice = await ask(`Restart ${agentName(t)} now?`, [go, "Cancel"], "It stops what it is doing now, then goes on with this conversation.");
+      if (choice !== go) return;
+    }
+    await restart(t, liveOptions(t));
   }
 
   function stop(t: TerminalInfo) {
@@ -522,7 +592,7 @@ export function AgentsPane(props: {
         </Show>
         <Show when={!picking() && !history() && current()?.running && current()?.outdated && !keptOld().includes(current()!.id) && current()}>
           {(t) => (
-            <Outdated terminal={t()} onAgain={(o) => void start(agentKind(o.kind)!, o.options ?? {})} onKeep={(o) => setKeptOld((ids) => [...ids, o.id])} />
+            <Outdated terminal={t()} resumable={canResume(t())} onAgain={(o) => void renew(o)} onKeep={(o) => setKeptOld((ids) => [...ids, o.id])} />
           )}
         </Show>
         <Show when={!picking() && !history() && !starting() && current() && !chatMode(current()!) && current()}>
@@ -560,8 +630,9 @@ export function AgentsPane(props: {
               local={props.ws.backend.host === LOCAL_HOST}
               onLogin={(t, method) => tell(t, { kind: "login", method })}
               onLink={(url) => props.ws.backend.openLink(url)}
-              starting={!!starting()}
-              entries={current() ? store.chat(current()!.id).length : 0}
+              starting={!!starting() || restarting().includes(current()?.id ?? "")}
+              resumed={!!current() && store.chat(current()!.id).length > sinceStart(current()!)}
+              entries={current() ? sinceStart(current()!) : 0}
               waitingCards={chat()?.waiting.length ?? 0}
               now={now()}
               trust={/Yes, I trust this folder/.test(screen())}
@@ -580,8 +651,16 @@ export function AgentsPane(props: {
           classList={{ behind: chatStarting() || (!starting() && !!current() && chatMode(current()!)) }}
           hidden={picking() || history() || (!current() && !starting())}
         />
-        <Show when={!picking() && !history() && current() && !current()!.running && current()}>
-          {(t) => <Ended terminal={t()} onClose={() => void end(t())} onAgain={(o) => void start(agentKind(o.kind)!, o.options ?? {})} />}
+        <Show when={!picking() && !history() && current() && !current()!.running && !restarting().includes(current()!.id) && current()}>
+          {(t) => (
+            <Ended
+              terminal={t()}
+              resumable={canResume(t())}
+              onClose={() => void end(t())}
+              onAgain={(o) => void start(agentKind(o.kind)!, o.options ?? {})}
+              onResume={(o) => void restart(o, resumeOptions(o))}
+            />
+          )}
         </Show>
       </div>
       <Show when={picking()}>
@@ -596,12 +675,15 @@ export function AgentsPane(props: {
           }}
         />
       </Show>
-      <Show when={!picking() && !history() && !starting() && current()?.running && current()}>
+      <Show when={!picking() && !history() && !starting() && current() && (current()!.running || resumable(current()!)) && current()}>
         {(t) => {
           const kind = () => withModels(agentKind(t().kind)!, t());
           const mode = () => modeChoice()[t().id] ?? currentMode(t());
           const waiting = () => t().agent?.state === "waiting";
+          /** Ended: what is picked here applies as the message starts it again. */
+          const ended = () => !t().running;
           const modelNote = () => {
+            if (ended()) return `Applies as ${agentName(t())} goes on with your next message.`;
             if (driven(t())) return working(t()) ? "Changes apply from your next message." : undefined;
             return waiting() ? `Changes here wait until you answer ${agentName(t())}.` : undefined;
           };
@@ -617,10 +699,10 @@ export function AgentsPane(props: {
               effortNote={t().kind === "claude" || driven(t()) ? undefined : "Codex changes effort in its own /model menu"}
               mode={mode()}
               modeNote={(m) => {
-                if (driven(t())) return undefined;
+                if (ended() || driven(t())) return undefined;
                 if (t().kind !== "claude") return m.id === mode().id ? undefined : "Codex changes this with /approvals in its terminal";
                 if (waiting()) return m.id === mode().id ? undefined : `Answer ${agentName(t())} first`;
-                if (m.id === "yolo" && mode().id !== "yolo") return "Start a new conversation in YOLO mode";
+                if (m.id === "yolo" && mode().id !== "yolo" && !canResume(t())) return "Start a new conversation in YOLO mode";
                 return undefined;
               }}
               file={t().options?.documents?.[0]}
@@ -629,10 +711,16 @@ export function AgentsPane(props: {
               modelNote={modelNote()}
               mention={activeFile()}
               ref={(el) => (input = el)}
-              onSend={(text) => send(t(), text)}
+              onSend={(text) => {
+                if (!ended()) return send(t(), text);
+                void restart(t(), resumeOptions(t()), text);
+                return true;
+              }}
               onStop={() => stop(t())}
               onModel={(m: ModelChoice) => {
-                if (driven(t())) {
+                if (ended()) {
+                  setModelChoice((all) => ({ ...all, [t().id]: m }));
+                } else if (driven(t())) {
                   setModelChoice((all) => ({ ...all, [t().id]: m }));
                   tell(t(), { kind: "set", model: m.id ?? null });
                 } else if (t().kind === "claude" && m.id) {
@@ -643,8 +731,12 @@ export function AgentsPane(props: {
                   command(t(), "/model");
                 }
               }}
-              onEffort={(level) => changeEffort(t(), level)}
-              onMode={(m) => void switchMode(t(), m)}
+              onEffort={(level) => (ended() ? setEffortChoice((all) => ({ ...all, [t().id]: level })) : changeEffort(t(), level))}
+              onMode={(m) => {
+                if (ended()) setModeChoice((all) => ({ ...all, [t().id]: m }));
+                else if (t().kind === "claude" && m.id === "yolo" && mode().id !== "yolo") void restartInYolo(t(), m);
+                else void switchMode(t(), m);
+              }}
               onOpenFile={() => t().options?.documents?.[0] && openPath(t().options!.documents![0])}
               onCompact={() => compact(t())}
             />
@@ -788,7 +880,9 @@ function ChatNotes(props: {
   onLogin: (t: TerminalInfo, method: "browser" | "code") => void;
   onLink: (url: string) => void;
   starting: boolean;
+  /** Entries since the agent last started; `resumed` when it went on with a conversation. */
   entries: number;
+  resumed: boolean;
   waitingCards: number;
   now: number;
   /** Claude Code asks whether to trust the project's folder, as it does the first time. */
@@ -801,7 +895,7 @@ function ChatNotes(props: {
     const t = props.terminal;
     if (!t?.running) return false;
     if (t.agent?.state === "waiting" && !props.waitingCards) return true;
-    return !props.entries && props.now - t.created_ms > START_GRACE_MS;
+    return !props.entries && props.now - (t.started_ms ?? t.created_ms) > START_GRACE_MS;
   };
   return (
     <Switch>
@@ -846,7 +940,9 @@ function ChatNotes(props: {
             <span>
               {props.entries
                 ? `${name()} is asking something in its terminal.`
-                : `${name()} hasn't started the conversation. It may be asking something in its terminal, such as whether to trust this folder.`}
+                : props.resumed
+                  ? `${name()} hasn't picked up the conversation yet. It may be asking something in its terminal.`
+                  : `${name()} hasn't started the conversation. It may be asking something in its terminal, such as whether to trust this folder.`}
             </span>
             <button onClick={() => props.onShowTerminal(t())}>
               <Icon name="command" small />
@@ -1068,7 +1164,14 @@ function kindName(kind: string): string {
   return kind === "claude" ? "Claude" : (agentKind(kind)?.name ?? kind);
 }
 
-function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t: TerminalInfo) => void }) {
+/** The agent's program ended: it can go on with the conversation, if it said which one it is, or start a new one. */
+function Ended(props: {
+  terminal: TerminalInfo;
+  resumable: boolean;
+  onClose: () => void;
+  onAgain: (t: TerminalInfo) => void;
+  onResume: (t: TerminalInfo) => void;
+}) {
   const how = () => {
     const exit = props.terminal.exit;
     if (exit?.signal) return `was stopped (signal ${exit.signal})`;
@@ -1076,12 +1179,16 @@ function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t
     return "ended";
   };
   return (
-    <div class="agent-ended">
+    <div class="agent-ended" role="status">
       <span>
-        {props.terminal.title} {how()}.
+        {props.terminal.title} {how()}.{props.resumable ? " Resume it, or send a message, to go on with this conversation." : ""}
       </span>
       <span class="spacer" />
-      <button onClick={() => props.onAgain(props.terminal)}>Start again</button>
+      <Show when={props.resumable} fallback={<button onClick={() => props.onAgain(props.terminal)}>Start again</button>}>
+        <button title="Start the agent again on this conversation" onClick={() => props.onResume(props.terminal)}>
+          Resume
+        </button>
+      </Show>
       <button onClick={props.onClose}>Remove</button>
     </div>
   );
@@ -1090,14 +1197,25 @@ function Ended(props: { terminal: TerminalInfo; onClose: () => void; onAgain: (t
 /**
  * A session started before Sandhill was updated. The agent keeps the tools
  * it started with, so it can't use what the update added (such as writing
- * cells into the document) until a new session starts.
+ * cells into the document) until it starts again: on this conversation if
+ * it can, else as a new one.
  */
-function Outdated(props: { terminal: TerminalInfo; onAgain: (t: TerminalInfo) => void; onKeep: (t: TerminalInfo) => void }) {
+function Outdated(props: {
+  terminal: TerminalInfo;
+  resumable: boolean;
+  onAgain: (t: TerminalInfo) => void;
+  onKeep: (t: TerminalInfo) => void;
+}) {
   return (
     <div class="agent-ended agent-outdated" role="status">
       <span>This conversation started before Sandhill was updated, so it doesn't have the newest tools.</span>
       <span class="spacer" />
-      <button onClick={() => props.onAgain(props.terminal)}>Start a new one</button>
+      <button
+        title={props.resumable ? "Start the agent again on this conversation, with the newest tools" : undefined}
+        onClick={() => props.onAgain(props.terminal)}
+      >
+        {props.resumable ? "Restart" : "Start a new one"}
+      </button>
       <button title="Keep using this conversation" onClick={() => props.onKeep(props.terminal)}>
         Keep
       </button>

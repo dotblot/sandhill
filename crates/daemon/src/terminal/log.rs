@@ -23,11 +23,12 @@ pub struct LogWriter {
 }
 
 impl LogWriter {
-    /// Starts an empty log in `dir`.
+    /// Starts the log in `dir`, or goes on with the one there (a restarted
+    /// program's output follows the old program's).
     pub fn create(dir: &Path) -> io::Result<LogWriter> {
         Ok(LogWriter {
             dir: dir.to_path_buf(),
-            end: 0,
+            end: bounds(dir).1,
             file: None,
         })
     }
@@ -141,6 +142,20 @@ mod tests {
         assert_eq!(start, from);
         assert_eq!(bytes.len() as u64, last - from);
         assert_eq!(bytes[0], (from % 300_000 % 256) as u8);
+    }
+
+    #[test]
+    fn a_new_writer_goes_on_where_the_last_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = LogWriter::create(dir.path()).unwrap();
+        log.append(b"first run\r\n").unwrap();
+        let mut log = LogWriter::create(dir.path()).unwrap();
+        assert_eq!(log.end(), 11);
+        log.append(b"second").unwrap();
+        assert_eq!(
+            read(dir.path(), 0, 17).unwrap(),
+            (0, b"first run\r\nsecond".to_vec())
+        );
     }
 
     #[test]

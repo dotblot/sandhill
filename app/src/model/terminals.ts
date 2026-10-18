@@ -118,6 +118,27 @@ export class TerminalStore {
     return info;
   }
 
+  /**
+   * Starts a terminal's program again where it left off, ending it first if
+   * it runs: an agent resumes its conversation, with `options` if given and
+   * `prompt` as its next message. Its output and conversation go on.
+   */
+  async restart(id: string, options?: AgentOptions, size?: { cols: number; rows: number }, prompt?: string): Promise<TerminalInfo> {
+    const info = await this.backend.call<TerminalInfo>("restart_terminal", {
+      terminal: id,
+      options,
+      cols: size?.cols,
+      rows: size?.rows,
+      prompt,
+    });
+    this.update(id, () => info);
+    // The old program's stream has ended: follow the new one from where it got to.
+    const follow = this.follows.get(id);
+    if (follow) follow.subscribed = false;
+    await this.subscribe(id);
+    return info;
+  }
+
   /** Sends output to `sink`, starting with what came before it attached. */
   attach(id: string, sink: TerminalSink): () => void {
     let follow = this.follows.get(id);
@@ -226,7 +247,9 @@ export class TerminalStore {
     if (event.chat) this.addChat(event.terminal, event.chat);
     // Each report is the agent's whole state.
     if (event.agent) this.update(event.terminal, (t) => ({ ...t, agent: event.agent }));
-    if (event.exit) this.update(event.terminal, (t) => ({ ...t, running: false, exit: event.exit }));
+    // Not the end of a program started again since.
+    const exit = event.exit;
+    if (exit) this.update(event.terminal, (t) => (exit.ended_ms < (t.started_ms ?? 0) ? t : { ...t, running: false, exit }));
   }
 
   private conversation(id: string): Conversation {

@@ -78,6 +78,9 @@ enum Command {
         /// The first message.
         #[arg(long, allow_hyphen_values = true)]
         prompt: Option<String>,
+        /// The thread to resume.
+        #[arg(long)]
+        thread: Option<String>,
         /// More arguments for `codex app-server`.
         #[arg(last = true)]
         args: Vec<String>,
@@ -143,6 +146,7 @@ async fn run(cli: Cli) -> Result<()> {
             project,
             options,
             prompt,
+            thread,
             args,
         } => {
             let options: sandhill_proto::AgentOptions =
@@ -156,6 +160,7 @@ async fn run(cli: Cli) -> Result<()> {
                     project,
                     options,
                     prompt,
+                    thread,
                     instructions,
                 })
                 .await?;

@@ -60,6 +60,26 @@ pub struct Context<'a> {
     pub cwd: &'a Path,
     /// The first message, given to the CLI as its prompt.
     pub prompt: Option<&'a str>,
+    /// The conversation to go on with, when the agent is started again:
+    /// what [`RESUME_KEYS`] names in its report.
+    pub resume: Option<&'a str>,
+}
+
+/// What an agent reports that finds its conversation again: Claude Code's
+/// session (from its hooks) and Codex's thread (from Sandhill's bridge).
+pub const RESUME_KEYS: [&str; 2] = ["session_id", "thread"];
+
+/// The conversation an agent of `kind` would resume, from its report.
+pub fn resume_id(kind: &str, report: Option<&serde_json::Value>) -> Option<String> {
+    let key = match kind {
+        CLAUDE => RESUME_KEYS[0],
+        CODEX => RESUME_KEYS[1],
+        _ => return None,
+    };
+    report?[key]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
 }
 
 /// The agents and whether this machine has their CLIs.
@@ -223,6 +243,11 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
     {
         args.extend(["--permission-mode".into(), mode.into()]);
     }
+    if let Some(session) = context.resume
+        && help.contains("--resume")
+    {
+        args.extend(["--resume".into(), session.into()]);
+    }
     push_prompt(&mut args, context);
     args
 }
@@ -253,6 +278,9 @@ fn codex_args(options: &AgentOptions, context: &Context<'_>, codex: &Path) -> Ve
     }
     if let Some(prompt) = context.prompt.filter(|p| !p.trim().is_empty()) {
         args.extend(["--prompt".into(), prompt.into()]);
+    }
+    if let Some(thread) = context.resume {
+        args.extend(["--thread".into(), thread.into()]);
     }
     args.extend([
         "--".into(),
@@ -438,6 +466,7 @@ mod tests {
             project: Some("/data/pbmc"),
             cwd: Path::new("/data/pbmc"),
             prompt: None,
+            resume: None,
         }
     }
 
@@ -505,6 +534,40 @@ mod tests {
         );
         // This CLI's help doesn't list --effort.
         assert!(!args.contains(&"--effort".to_string()));
+    }
+
+    #[test]
+    fn a_conversation_started_again_resumes() {
+        let context = Context {
+            prompt: Some("go on"),
+            resume: Some("5f3c-session"),
+            ..context()
+        };
+        let options = AgentOptions {
+            permission: Some("full".into()),
+            ..Default::default()
+        };
+        let args = claude_args(&options, &context, "--resume --permission-mode");
+        assert_eq!(
+            args[args.len() - 6..],
+            [
+                "--permission-mode",
+                "bypassPermissions",
+                "--resume",
+                "5f3c-session",
+                "--",
+                "go on"
+            ]
+        );
+        let args = codex_args(&options, &context, Path::new("codex"));
+        assert!(args.windows(2).any(|w| w == ["--thread", "5f3c-session"]));
+
+        let report = json!({"session_id": "s1", "thread": "t1", "state": "idle"});
+        assert_eq!(resume_id(CLAUDE, Some(&report)).as_deref(), Some("s1"));
+        assert_eq!(resume_id(CODEX, Some(&report)).as_deref(), Some("t1"));
+        assert_eq!(resume_id(CLAUDE, Some(&json!({"session_id": ""}))), None);
+        assert_eq!(resume_id(TERMINAL_SHELL, Some(&report)), None);
+        assert_eq!(resume_id(CLAUDE, None), None);
     }
 
     #[test]

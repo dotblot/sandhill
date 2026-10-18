@@ -55,6 +55,8 @@ pub struct Options {
     pub options: AgentOptions,
     /// The first message.
     pub prompt: Option<String>,
+    /// The thread to go on with, when the conversation is started again.
+    pub thread: Option<String>,
     /// What Codex is told about Sandhill.
     pub instructions: String,
 }
@@ -272,7 +274,8 @@ struct Bridge {
 
 impl Bridge {
     /// Starts Codex's conversation: says who Sandhill is, then starts a
-    /// thread in the folder, with Sandhill's instructions and the mode.
+    /// thread in the folder (or resumes the one it had), with Sandhill's
+    /// instructions and the mode.
     async fn start(self: &Arc<Self>, options: &Options) -> Result<()> {
         self.rpc
             .call(
@@ -301,12 +304,22 @@ impl Bridge {
             "approvalsReviewer": mode["approvalsReviewer"],
             "sandbox": sandbox,
             "developerInstructions": options.instructions,
-            "serviceName": "sandhill",
         });
         if let Some(model) = model {
             params["model"] = json!(model);
         }
-        let started = self.rpc.call("thread/start", params).await?;
+        let started = match &options.thread {
+            // The chat already shows the turns.
+            Some(thread) => {
+                params["threadId"] = json!(thread);
+                params["excludeTurns"] = json!(true);
+                self.rpc.call("thread/resume", params).await?
+            }
+            None => {
+                params["serviceName"] = json!("sandhill");
+                self.rpc.call("thread/start", params).await?
+            }
+        };
         let thread = started["thread"]["id"]
             .as_str()
             .context("Codex started no thread")?
@@ -334,7 +347,12 @@ impl Bridge {
         );
         self.report(json!({"thread": thread})).await;
         // The conversation has started, as Claude Code's SessionStart hook says.
-        self.chat(json!({"kind": "session", "source": "startup", "model": started["model"]}))
+        let source = if options.thread.is_some() {
+            "resume"
+        } else {
+            "startup"
+        };
+        self.chat(json!({"kind": "session", "source": source, "model": started["model"]}))
             .await;
         // What the app shows besides: the models, the account and its limits.
         tokio::spawn(self.clone().look_around());

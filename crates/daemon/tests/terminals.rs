@@ -349,6 +349,24 @@ async fn clients_run_a_shell_through_the_daemon() {
         Some(&*project.to_string_lossy())
     );
 
+    // Started again: a new shell in the same terminal and folder.
+    let again: TerminalInfo = client
+        .call(Call::RestartTerminal {
+            terminal: info.id.clone(),
+            options: None,
+            cols: Some(80),
+            rows: Some(24),
+            prompt: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (again.id.as_str(), again.cwd.as_str()),
+        (info.id.as_str(), info.cwd.as_str())
+    );
+    assert!(again.running && again.started_ms >= info.started_ms);
+    assert!(again.end >= output.len() as u64);
+
     client.close_terminal(&info.id).await.unwrap();
     assert!(client.list_terminals().await.unwrap().is_empty());
     drop(daemon.daemon);
@@ -392,6 +410,104 @@ async fn an_agent_reports_to_its_terminal() {
     assert!(agent.get("message").is_none(), "{agent}");
     // Run from the terminal itself, with nothing on stdin: the mode stays.
     assert_eq!(agent["mode"], "acceptEdits");
+    terminals.close(&info.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_terminal_starts_again_where_it_left_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
+    // Stands in for Claude Code: its Stop hook ends a turn of the
+    // conversation and says which session it is.
+    let stop = |turn: &str| {
+        format!(
+            "echo '{{\"hook_event_name\":\"Stop\",\"prompt_id\":\"{turn}\",\"session_id\":\"s1\",\"permission_mode\":\"plan\"}}' | '{}' terminal-event hook",
+            sandhilld().display()
+        )
+    };
+    let first = format!("{}; echo first; read wait", stop("p1"));
+    let info = terminals.start(sh(&first, dir.path())).await.unwrap();
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut output = Vec::new();
+    read_until(&mut events, &mut output, "first").await;
+    let before = terminals.info(&info.id).unwrap();
+    let agent = before.agent.clone().unwrap();
+    assert_eq!(agent["state"], "idle");
+    assert_eq!(agent["session_id"], "s1");
+
+    // Started again while it runs: the old program is ended first.
+    let second = format!("echo second; read go; {}; read wait", stop("p2"));
+    let mut launch = sh(&second, dir.path());
+    launch.options.permission = Some("full".into());
+    let again = terminals
+        .restart(&info.id, launch, &["session_id"])
+        .await
+        .unwrap();
+    assert!(
+        read_until(&mut events, &mut output, "\u{0}")
+            .await
+            .is_some()
+    );
+    assert!(again.running && again.exit.is_none());
+    assert_eq!(again.created_ms, before.created_ms);
+    assert!(again.started_ms >= before.started_ms);
+    assert_eq!(again.options.permission.as_deref(), Some("full"));
+    // Of the old report, only what finds the conversation again stays.
+    assert_eq!(
+        again.agent.as_ref().map(|a| a["session_id"].clone()),
+        Some("s1".into())
+    );
+    assert!(again.agent.as_ref().unwrap().get("mode").is_none());
+
+    // Its output goes on from the old program's, and so does the conversation.
+    let (out, mut events) = mpsc::unbounded_channel();
+    let stream = terminals
+        .open(&info.id, Some(before.end), Some(1))
+        .await
+        .unwrap();
+    assert_eq!(stream.from, before.end);
+    tokio::spawn(stream.forward(out));
+    let mut more = Vec::new();
+    read_until(&mut events, &mut more, "second").await;
+    terminals
+        .send(&info.id, ToHost::Input { data: "\n".into() })
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    let chat = loop {
+        let chat =
+            sandhill_daemon::terminal::chat::read(&dir.path().join("terminals").join(&info.id), 0);
+        if chat.len() == 2 || tokio::time::Instant::now() > deadline {
+            break chat;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let turns: Vec<_> = chat
+        .iter()
+        .map(|e| (e.seq, e.event["turn"].clone()))
+        .collect();
+    assert_eq!(turns, [(0, "p1".into()), (1, "p2".into())]);
+    let agent = terminals.info(&info.id).unwrap().agent.unwrap();
+    assert_eq!(agent["mode"], "plan");
+
+    // An ended program starts again the same way.
+    terminals.send(&info.id, ToHost::Hangup).await.unwrap();
+    assert!(read_until(&mut events, &mut more, "\u{0}").await.is_some());
+    let ended = terminals.info(&info.id).unwrap();
+    assert!(!ended.running && ended.exit.is_some());
+    let again = terminals
+        .restart(&info.id, sh("echo third; read wait", dir.path()), &[])
+        .await
+        .unwrap();
+    assert!(again.running && again.exit.is_none() && again.agent.is_none());
+    assert!(again.end >= ended.end);
     terminals.close(&info.id).await.unwrap();
 }
 

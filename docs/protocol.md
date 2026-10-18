@@ -44,6 +44,7 @@ Responses can arrive out of order; match them by `id`.
 | `stat_files` | `paths` | `[{path, mtime_ms?, size}]`; no `mtime_ms` when a file is missing |
 | `list_agents` | | `[{kind, name, path?, version?, install}]` |
 | `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?`, `prompt?` | `TerminalInfo` |
+| `restart_terminal` | `terminal`, `options?`, `cols?`, `rows?`, `prompt?` | `TerminalInfo` |
 | `list_terminals` | | `[TerminalInfo]`, oldest first |
 | `subscribe_terminal` | `terminal`, `from?`, `chat_from?` | `{terminal, from}`, then terminal messages |
 | `unsubscribe_terminal` | `terminal` | `null` |
@@ -128,8 +129,9 @@ or a coding agent (`claude` for Claude Code, `codex` for Codex), each running
 unmodified in its own pseudo-terminal on the daemon's machine. `list_agents`
 says which agent CLIs are installed, and how to install the others.
 
-`TerminalInfo` is `{id, kind, title, cwd, project?, created_ms, running,
-exit?: {code?, signal?, ended_ms}, end, options?, agent?, outdated?}`. `end`
+`TerminalInfo` is `{id, kind, title, cwd, project?, created_ms, started_ms,
+running, exit?: {code?, signal?, ended_ms}, end, options?, agent?,
+outdated?}`. `started_ms` is when its program last started. `end`
 is the number of output bytes so far. `options` is what the agent was started
 with: `{model?, effort?, permission?, documents?}`, where `permission` is
 `supervised`, `edits`, `auto`, `full` or `plan`. `outdated` is true for an agent that
@@ -138,6 +140,16 @@ build's MCP server, hooks and instructions until it is started again, so the
 app suggests a new session. Without `cwd`, a terminal starts in the `project`
 folder, else the home folder. An agent's `prompt` is its first message, which
 it answers as it starts.
+
+`restart_terminal` starts a terminal's program again in the same terminal,
+ending it first if it still runs (an exit with `ended_ms` before the new
+`started_ms` is the old program's). Its output and conversation go on where
+they were. An agent resumes its conversation: Claude Code the session its
+hooks last reported (`agent.session_id`), Codex its thread
+(`agent.thread`); of the old `agent` report, only those stay. `options`
+replace the ones it started with, so a Claude Code conversation can go on in
+a mode it can't switch to while running, such as `full`. `prompt` is a
+message to go on with.
 
 After `subscribe_terminal`, output arrives as
 
@@ -153,7 +165,7 @@ than asked when that output is no longer kept (the last 4 MiB are). Other
 terminal messages carry `agent` (what an agent reported, below) or `exit`.
 
 Agents report through hooks that run `sandhilld terminal-event`: `agent` is
-`{state: "busy" | "waiting" | "idle", message?, mode?, status?, ts_ms}`.
+`{state: "busy" | "waiting" | "idle", message?, mode?, session_id?, status?, ts_ms}`.
 `waiting` means it asks the user something (a permission prompt, a question).
 `mode` is Claude Code's permission mode as its hooks last reported it
 (`default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`...), so a mode
@@ -203,8 +215,8 @@ with `tell_terminal`; `command` is one of `{kind: "say", text}`,
 `{kind: "interrupt"}`, `{kind: "set", model?, effort?, permission?}` (from
 the next turn on; `model: null` is Codex's default), `{kind: "compact"}` and
 `{kind: "login", method: "browser" | "code"}`. Commands sent while the bridge
-isn't connected wait for it. Its `agent` reports also have `permission` (the
-mode it is in, named as in `options`), `models` (`[{id, label, efforts?,
+isn't connected wait for it. Its `agent` reports also have `thread` (Codex's
+thread id), `permission` (the mode it is in, named as in `options`), `models` (`[{id, label, efforts?,
 effort?, default?}]`), `account` (`{type, email?, plan?}`, or null when it
 isn't signed in), `auth_required` and `login` (`{url, code?}` while signing
 in, or `{error}`).

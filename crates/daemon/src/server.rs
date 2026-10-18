@@ -478,10 +478,35 @@ impl Daemon {
                     project: project.as_deref(),
                     cwd: &cwd,
                     prompt: prompt.as_deref(),
+                    resume: None,
                 };
                 let mut launch = crate::agents::launch(&kind, &options, &context).await?;
                 launch.size = cols.zip(rows);
                 serde_json::to_value(self.terminals.start(launch).await?)?
+            }
+            Call::RestartTerminal {
+                terminal,
+                options,
+                cols,
+                rows,
+                prompt,
+            } => {
+                let info = self.terminals.info(&terminal)?;
+                let resume = crate::agents::resume_id(&info.kind, info.agent.as_ref());
+                let cwd = PathBuf::from(&info.cwd);
+                let context = crate::agents::Context {
+                    executable: &self.options.executable,
+                    socket: &self.options.socket,
+                    project: info.project.as_deref(),
+                    cwd: &cwd,
+                    prompt: prompt.as_deref(),
+                    resume: resume.as_deref(),
+                };
+                let options = options.unwrap_or(info.options);
+                let mut launch = crate::agents::launch(&info.kind, &options, &context).await?;
+                launch.size = cols.zip(rows);
+                let keep = &crate::agents::RESUME_KEYS;
+                serde_json::to_value(self.terminals.restart(&terminal, launch, keep).await?)?
             }
             Call::ListTerminals => serde_json::to_value(self.terminals.list())?,
             Call::TerminalInput { terminal, data } => {
