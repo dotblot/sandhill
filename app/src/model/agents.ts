@@ -100,7 +100,7 @@ export interface Mode {
   detail: string;
   permission: string;
   claude: string;
-  icon: "hand" | "spark" | "bolt" | "plan" | "edits";
+  icon: "hand" | "spark" | "bolt" | "lock" | "eye" | "plan" | "edits";
   /** Offered in the mode picker. */
   offered: boolean;
 }
@@ -115,6 +115,17 @@ export const MODES: Mode[] = [
     permission: "full",
     claude: "bypassPermissions",
     icon: "bolt",
+    offered: true,
+  },
+  // Sandhill's own: Claude Code runs in its default mode, and Sandhill's hooks ask about or block each step.
+  { id: "restricted", label: "Restricted", detail: "Asks before every step.", permission: "restricted", claude: "default", icon: "lock", offered: true },
+  {
+    id: "ask",
+    label: "Ask",
+    detail: "Read-only. No edits and no code runs; suggestions stay in the chat.",
+    permission: "ask",
+    claude: "default",
+    icon: "eye",
     offered: true,
   },
   { id: "plan", label: "Plan", detail: "Writes a plan first, then asks before carrying it out.", permission: "plan", claude: "plan", icon: "plan", offered: true },
@@ -133,8 +144,14 @@ export function claudeMode(mode: string | undefined): Mode | undefined {
   return MODES.find((m) => m.claude === (mode === "manual" ? "default" : mode));
 }
 
-/** The mode the agent last reported (it can change in the terminal), else the one it started in. */
+/**
+ * Sandhill's own mode when one is on (Restricted, Ask), else the mode the
+ * agent last reported (it can change in the terminal), else the one it
+ * started in.
+ */
 export function currentMode(terminal: TerminalInfo): Mode {
+  const guard = terminal.agent?.guard;
+  if (guard) return startMode(guard);
   return claudeMode(terminal.agent?.mode) ?? startMode(terminal.agent?.permission ?? terminal.options?.permission);
 }
 

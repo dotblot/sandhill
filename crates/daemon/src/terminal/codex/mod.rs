@@ -34,7 +34,7 @@ use tokio::net::unix::OwnedWriteHalf;
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::oneshot;
 
-use super::{FromHost, Paths, ToHost};
+use super::{FromHost, Paths, ToHost, guard};
 use crate::journal::now_ms;
 
 /// Replies are sent to the chat in pieces at most this far apart.
@@ -469,7 +469,7 @@ impl Bridge {
     /// while one runs. `shown`: the message shows in the chat.
     async fn say(self: Arc<Self>, text: String, shown: bool) {
         let at_ms = now_ms();
-        let params = {
+        let (params, asking) = {
             let mut state = self.state.lock().unwrap();
             if state.turn.is_some() || state.waiting > 0 {
                 state.queued.push(text);
@@ -496,12 +496,16 @@ impl Bridge {
                     "settings": {"model": model, "reasoning_effort": state.effort, "developer_instructions": null},
                 });
             }
-            params
+            let asking = state.permission.as_deref() == Some(guard::ASK);
+            (params, asking)
         };
         let place = if shown { self.place().await } else { None };
         let mut input = vec![json!({"type": "text", "text": text, "text_elements": []})];
         if let Some((context, _)) = &place {
             input.push(json!({"type": "text", "text": context, "text_elements": []}));
+        }
+        if asking {
+            input.push(json!({"type": "text", "text": guard::ASK_NOTE, "text_elements": []}));
         }
         let mut params = params;
         params["input"] = json!(input);

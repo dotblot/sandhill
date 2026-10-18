@@ -508,6 +508,9 @@ impl Daemon {
                 let keep = &crate::agents::RESUME_KEYS;
                 serde_json::to_value(self.terminals.restart(&terminal, launch, keep).await?)?
             }
+            Call::RenameTerminal { terminal, name } => {
+                serde_json::to_value(self.terminals.rename(&terminal, name.as_deref())?)?
+            }
             Call::ListTerminals => serde_json::to_value(self.terminals.list())?,
             Call::TerminalInput { terminal, data } => {
                 self.terminals

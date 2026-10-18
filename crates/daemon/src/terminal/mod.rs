@@ -8,7 +8,8 @@
 //! host.json    the terminal host's pid and the program's pid
 //! sock         the host's socket, while the program runs
 //! out.<n>      the output, in 1 MiB segments (see `log`)
-//! agent.json   what the agent last reported through its hooks
+//! agent.json   what the agent last reported through its hooks, and
+//!              Sandhill's own mode for it (see `guard`)
 //! exit.json    how the program ended
 //! host.log     the host's own errors
 //! ```
@@ -20,6 +21,7 @@
 pub mod chat;
 pub mod codex;
 pub mod events;
+pub mod guard;
 pub mod host;
 pub mod log;
 pub mod pty;
@@ -202,6 +204,9 @@ struct Meta {
     /// The daemon build that started it. Agents get that build's tools.
     #[serde(default)]
     build: String,
+    /// The name the user gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 /// What to run in a new terminal.
@@ -270,8 +275,10 @@ impl Terminals {
             options: launch.options.clone(),
             command: command_of(&launch),
             build: crate::build_id().to_string(),
+            name: None,
         };
         std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
+        write_report(&paths, serde_json::Map::new(), &launch.options)?;
         if let Err(err) = self.spawn_host(&paths, &launch).await {
             // A host that failed leaves nothing behind; one still starting
             // keeps its folder.
@@ -322,15 +329,24 @@ impl Terminals {
             .into_iter()
             .filter(|(key, _)| keep.contains(&key.as_str()))
             .collect();
-        if kept.is_empty() {
-            let _ = std::fs::remove_file(paths.agent());
-        } else {
-            std::fs::write(paths.agent(), serde_json::to_vec(&kept)?)?;
-        }
+        write_report(&paths, kept, &launch.options)?;
         for file in [paths.exit(), paths.host()] {
             let _ = std::fs::remove_file(file);
         }
         self.spawn_host(&paths, &launch).await?;
+        self.info(id)
+    }
+
+    /// Names a terminal (a conversation, in the app's history), or takes
+    /// its name away with `None` or a blank name.
+    pub fn rename(&self, id: &str, name: Option<&str>) -> Result<TerminalInfo> {
+        let paths = self.paths(id)?;
+        let mut meta: Meta = serde_json::from_slice(&std::fs::read(paths.meta())?)?;
+        meta.name = name
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_string);
+        crate::files::write_atomic(&paths.meta(), &serde_json::to_vec_pretty(&meta)?)?;
         self.info(id)
     }
 
@@ -423,6 +439,7 @@ impl Terminals {
             options: meta.options,
             agent: read_json::<Value>(&paths.agent()),
             outdated,
+            name: meta.name,
         })
     }
 
@@ -724,6 +741,24 @@ async fn tell(dir: &Path, message: &ToHost) -> Result<()> {
     Ok(())
 }
 
+/// The report a program starts with: `kept` from the last one, and the
+/// guard of the mode it starts in. None at all when that is empty.
+fn write_report(
+    paths: &Paths,
+    mut kept: serde_json::Map<String, Value>,
+    options: &AgentOptions,
+) -> Result<()> {
+    if let Some(guard) = guard::of(options.permission.as_deref()) {
+        kept.insert("guard".into(), guard.into());
+    }
+    if kept.is_empty() {
+        let _ = std::fs::remove_file(paths.agent());
+    } else {
+        std::fs::write(paths.agent(), serde_json::to_vec(&kept)?)?;
+    }
+    Ok(())
+}
+
 /// The program and its arguments, for the record.
 fn command_of(launch: &Launch) -> Vec<String> {
     let mut command = vec![launch.program.to_string_lossy().into_owned()];
@@ -771,6 +806,7 @@ mod tests {
             options: AgentOptions::default(),
             command: Vec::new(),
             build: build.into(),
+            name: None,
         };
         let ours = crate::build_id();
         assert!(!ours.is_empty());

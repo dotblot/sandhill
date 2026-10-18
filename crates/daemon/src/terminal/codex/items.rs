@@ -463,6 +463,9 @@ pub fn response(method: &str, params: &Value, answer: &Value) -> Value {
 /// modes are Sandhill's (`AgentOptions::permission`): Normal
 /// (`supervised`) runs only what reads, Auto has Codex's reviewer decide
 /// risky steps, YOLO (`full`) runs everything, and Plan only reads.
+/// Restricted asks before anything Codex doesn't know to be harmless, and
+/// Ask only reads and never asks (Sandhill's tools refuse to change
+/// anything, see `guard`).
 pub fn mode_settings(permission: Option<&str>) -> Value {
     let read_only = json!({"type": "readOnly", "networkAccess": false});
     let workspace = json!({
@@ -476,6 +479,8 @@ pub fn mode_settings(permission: Option<&str>) -> Value {
         Some("edits") => ("on-request", workspace, "user"),
         Some("auto") => ("on-request", workspace, "auto_review"),
         Some("full") => ("never", json!({"type": "dangerFullAccess"}), "user"),
+        Some("restricted") => ("untrusted", read_only, "user"),
+        Some("ask") => ("never", read_only, "user"),
         _ => ("on-request", read_only, "user"),
     };
     json!({"approvalPolicy": approval, "sandboxPolicy": sandbox, "approvalsReviewer": reviewer})
@@ -711,6 +716,13 @@ mod tests {
             mode_settings(Some("plan"))["sandboxPolicy"]["type"],
             "readOnly"
         );
+        assert_eq!(
+            mode_settings(Some("restricted"))["approvalPolicy"],
+            "untrusted"
+        );
+        let ask = mode_settings(Some("ask"));
+        assert_eq!(ask["approvalPolicy"], "never");
+        assert_eq!(ask["sandboxPolicy"]["type"], "readOnly");
     }
 
     #[test]

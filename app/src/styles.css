@@ -588,11 +588,13 @@ button.link:hover { text-decoration: underline; }
 .modal-message { margin: 0 0 6px; font-weight: 600; }
 .modal-detail { margin: 0 0 12px; color: var(--muted); }
 .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.modal-input { width: 100%; height: 28px; margin-top: 4px; }
 .toasts { position: fixed; right: 16px; bottom: 30px; display: flex; flex-direction: column; gap: 8px; z-index: 51; max-width: min(440px, calc(100vw - 32px)); }
 .toast {
   padding: 8px 12px; font-size: var(--fs-chrome); line-height: 1.4; cursor: pointer; background: var(--bg);
   border: 1px solid var(--glass-edge); border-left: 3px solid var(--err); border-radius: var(--r); box-shadow: var(--pop-shadow);
 }
+.toast.info { border-left-color: var(--accent); }
 .cm-editor:not(.cm-focused) .cm-activeLine, .cm-editor:not(.cm-focused) .cm-activeLineGutter { background: transparent; }
 
 /* The Agents pane (draft 18): one conversation as a chat, after Posit

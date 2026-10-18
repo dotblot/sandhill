@@ -235,12 +235,27 @@ pub fn claude_decision(input: &Value, answer: &Value) -> Value {
         }
         decision
     } else {
-        let message = answer["message"]
-            .as_str()
-            .unwrap_or("The user said no in Sandhill. Ask them what to do instead.");
-        json!({"behavior": "deny", "message": message})
+        json!({"behavior": "deny", "message": denied(answer)})
     };
     json!({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
+}
+
+/// What Claude Code is told when the user says no.
+pub fn denied(answer: &Value) -> &str {
+    answer["message"]
+        .as_str()
+        .unwrap_or("The user said no in Sandhill. Ask them what to do instead.")
+}
+
+/// Claude Code's answer to its `PreToolUse` hook for a step Sandhill
+/// guards (see `guard`): `allow`, `deny` with `reason`, or `ask` to ask in
+/// its own terminal.
+pub fn claude_step_decision(decision: &str, reason: Option<&str>) -> Value {
+    let mut output = json!({"hookEventName": "PreToolUse", "permissionDecision": decision});
+    if let Some(reason) = reason {
+        output["permissionDecisionReason"] = json!(reason);
+    }
+    json!({ "hookSpecificOutput": output })
 }
 
 /// `value` with long strings shortened. Image data is kept, within reason.

@@ -44,6 +44,10 @@ describe("agents", () => {
     expect(currentMode(terminal({ options: { permission: "full" }, agent: { mode: "someday" } })).label).toBe("YOLO");
     // Codex's bridge reports the mode it is in, as it was started with it.
     expect(currentMode(terminal({ kind: "codex", options: { permission: "plan" }, agent: { permission: "supervised" } })).label).toBe("Normal");
+    // Sandhill's own modes, on top of Claude Code's default.
+    expect(currentMode(terminal({ options: { permission: "ask" } })).label).toBe("Ask");
+    expect(currentMode(terminal({ options: { permission: "supervised" }, agent: { mode: "default", guard: "restricted" } })).label).toBe("Restricted");
+    expect(currentMode(terminal({ options: { permission: "ask" }, agent: { mode: "default", guard: null } })).label).toBe("Normal");
   });
 
   it("starts again with what the agent runs with now, on the conversation it reported", () => {
@@ -53,6 +57,7 @@ describe("agents", () => {
     });
     expect(liveOptions(changed)).toEqual({ model: "claude-opus-5-5[1m]", effort: "high", permission: "plan", documents: ["qc.ipynb"] });
     expect(liveOptions(terminal({ options: { model: "sonnet" } }))).toEqual({ model: "sonnet", effort: undefined, permission: "supervised" });
+    expect(liveOptions(terminal({ agent: { mode: "default", guard: "ask" } })).permission).toBe("ask");
     expect(canResume(changed)).toBe(true);
     expect(canResume(terminal({ agent: { thread: "t1" } }))).toBe(false);
     expect(canResume(terminal({ kind: "codex", agent: { thread: "t1" } }))).toBe(true);
