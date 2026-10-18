@@ -53,14 +53,21 @@ pub struct Tools {
     /// The Sandhill terminal the agent runs in, whose session names the
     /// documents it is about.
     terminal: Option<String>,
+    /// That terminal's folder, whose report says whether Sandhill's Ask
+    /// mode is on (see `terminal::guard`).
+    terminal_dir: Option<PathBuf>,
 }
 
 /// Serves MCP on stdin and stdout until stdin closes.
 pub async fn serve(socket: PathBuf, project: Option<String>) -> Result<()> {
     // The agent passes on its environment, which names its terminal.
-    let terminal = std::env::var_os("SANDHILL_TERMINAL")
-        .and_then(|dir| Some(Path::new(&dir).file_name()?.to_string_lossy().into_owned()));
-    let tools = Arc::new(Tools::new(socket, project).with_terminal(terminal));
+    let dir = std::env::var_os("SANDHILL_TERMINAL").map(PathBuf::from);
+    let terminal = dir
+        .as_deref()
+        .and_then(|dir| Some(dir.file_name()?.to_string_lossy().into_owned()));
+    let mut tools = Tools::new(socket, project).with_terminal(terminal);
+    tools.terminal_dir = dir;
+    let tools = Arc::new(tools);
     let (out, mut out_rx) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -110,6 +117,7 @@ impl Tools {
             socket,
             project,
             terminal: None,
+            terminal_dir: None,
         }
     }
 
@@ -139,7 +147,13 @@ impl Tools {
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                match self.call(name, &args).await {
+                let result = if self.read_only_now() && !read_only_tools().iter().any(|t| t == name)
+                {
+                    Err(anyhow::anyhow!(crate::terminal::guard::BLOCKED))
+                } else {
+                    self.call(name, &args).await
+                };
+                match result {
                     Ok(content) => json!({"content": content, "isError": false}),
                     Err(err) => json!({
                         "content": [{"type": "text", "text": format!("{err:#}")}],
@@ -149,6 +163,15 @@ impl Tools {
             }
             _ => bail!("method not found: {method}"),
         })
+    }
+
+    /// Whether the user has the agent in Sandhill's read-only Ask mode.
+    fn read_only_now(&self) -> bool {
+        self.terminal_dir
+            .as_deref()
+            .and_then(crate::terminal::guard::current)
+            .as_deref()
+            == Some(crate::terminal::guard::ASK)
     }
 
     /// Runs one tool. Returns MCP content items.

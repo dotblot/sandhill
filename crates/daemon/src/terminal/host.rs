@@ -524,8 +524,16 @@ impl Shared {
         listeners.push(out);
     }
 
-    /// Passes a command from the user to the listening program.
+    /// Passes a command from the user to the listening program. A mode
+    /// switch also sets Sandhill's own guard, which Claude Code's hooks
+    /// read (Claude Code doesn't listen; its commands just wait here).
     fn command(&self, command: Value) {
+        if command["kind"] == "set"
+            && let Some(permission) = command.get("permission")
+        {
+            let guard = super::guard::of(permission.as_str());
+            self.report(json!({ "guard": guard }));
+        }
         let mut listeners = self.listeners.lock().unwrap();
         listeners.retain(|out| !out.is_closed());
         if listeners.is_empty() {

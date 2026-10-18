@@ -709,6 +709,16 @@ export function askView(ask: Ask, linked?: string, agent = "Claude"): AskView {
       return { title: `Open ${input.url ?? "a web page"}?`, view };
     case "web_search":
       return { title: "Search the web?", detail: input.query, view };
+    // Steps that only look, which ask in Restricted mode.
+    case "read":
+      return { title: `Read ${baseName(view.file) || "a file"}?`, file: view.file, view };
+    case "grep":
+    case "glob":
+    case "list_variables":
+    case "list_sessions":
+    case "get_focus":
+    case "get_outputs":
+      return { title: view.desc ? `${view.desc}?` : `Allow ${view.name}?`, file: view.file, view };
     default:
       return { title: `Allow ${view.name}?`, detail: view.desc || undefined, view };
   }

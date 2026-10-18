@@ -45,6 +45,7 @@ Responses can arrive out of order; match them by `id`.
 | `list_agents` | | `[{kind, name, path?, version?, install}]` |
 | `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?`, `prompt?` | `TerminalInfo` |
 | `restart_terminal` | `terminal`, `options?`, `cols?`, `rows?`, `prompt?` | `TerminalInfo` |
+| `rename_terminal` | `terminal`, `name?` | `TerminalInfo` |
 | `list_terminals` | | `[TerminalInfo]`, oldest first |
 | `subscribe_terminal` | `terminal`, `from?`, `chat_from?` | `{terminal, from}`, then terminal messages |
 | `unsubscribe_terminal` | `terminal` | `null` |
@@ -131,10 +132,12 @@ says which agent CLIs are installed, and how to install the others.
 
 `TerminalInfo` is `{id, kind, title, cwd, project?, created_ms, started_ms,
 running, exit?: {code?, signal?, ended_ms}, end, options?, agent?,
-outdated?}`. `started_ms` is when its program last started. `end`
+outdated?, name?}`. `started_ms` is when its program last started. `end`
 is the number of output bytes so far. `options` is what the agent was started
 with: `{model?, effort?, permission?, documents?}`, where `permission` is
-`supervised`, `edits`, `auto`, `full` or `plan`. `outdated` is true for an agent that
+`supervised`, `edits`, `auto`, `full`, `plan`, `restricted` or `ask`.
+`name` is what the user named it with `rename_terminal` (a blank `name`
+takes it away). `outdated` is true for an agent that
 another build of sandhilld started, such as before an update: it keeps that
 build's MCP server, hooks and instructions until it is started again, so the
 app suggests a new session. Without `cwd`, a terminal starts in the `project`
@@ -146,7 +149,8 @@ ending it first if it still runs (an exit with `ended_ms` before the new
 `started_ms` is the old program's). Its output and conversation go on where
 they were. An agent resumes its conversation: Claude Code the session its
 hooks last reported (`agent.session_id`), Codex its thread
-(`agent.thread`); of the old `agent` report, only those stay. `options`
+(`agent.thread`); of the old `agent` report, only those stay (and the
+guard, below, of the mode it starts in). `options`
 replace the ones it started with, so a Claude Code conversation can go on in
 a mode it can't switch to while running, such as `full`. `prompt` is a
 message to go on with.
@@ -200,6 +204,18 @@ for all of it), then each new entry, as terminal messages with `chat`:
 
 `answer_terminal` answers an `ask`: `answer` is `{behavior: "allow" |
 "deny", scope?: "once" | "chat" | "project", answers?: {question: answer}}`.
+
+The Restricted and Ask modes (`permission` `restricted` and `ask`) are
+Sandhill's own: `agent.guard` says which is on. It is set from the mode an
+agent starts in, and by `tell_terminal` with `{kind: "set", permission}`
+for any agent (Codex also takes the mode itself). For Claude Code, which
+runs in its default mode underneath, the hook before each step enforces it:
+in Restricted mode it asks the user about every step (an `ask` with `step`
+and `scopes: []`, so it is allowed once at a time), and in Ask mode it blocks
+steps that change something, with a `step_failed` entry saying so. Codex
+runs Restricted with its `untrusted` approval policy and Ask in a read-only
+sandbox that never asks. In Ask mode, each message tells the agent it is
+read-only, and Sandhill's MCP tools that change something refuse.
 
 Codex runs differently: `start_terminal` with kind `codex` runs Sandhill's
 bridge, `sandhilld codex-chat`, in the terminal, and the bridge runs

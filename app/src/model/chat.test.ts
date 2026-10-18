@@ -235,6 +235,12 @@ describe("stepView", () => {
     expect(askView({ id: "4", tool: "AskUserQuestion", input: { questions: [] } }, undefined, "Codex").title).toBe("Codex has a question");
   });
 
+  it("asks about steps that only look (Restricted mode) by what they look at", () => {
+    expect(askView({ id: "5", tool: "Read", input: { file_path: "/data/qc.R" } }).title).toBe("Read qc.R?");
+    expect(askView({ id: "6", tool: "Grep", input: { pattern: "umap", path: "/data" } }).title).toBe("Search for “umap” in data?");
+    expect(askView({ id: "7", tool: "mcp__sandhill__list_variables", input: { language: "r" } }).title).toBe("List the R session's variables?");
+  });
+
   it("finds images in a tool's result", () => {
     const view = stepView({ tool: "mcp__sandhill__run_code", input: { code: "plot(1)" }, output: [{ type: "text", text: "Ran in R session 1 · ok · 0.2 s" }, { type: "image", data: "AAA", mimeType: "image/png" }] });
     expect(view.images).toEqual(["data:image/png;base64,AAA"]);

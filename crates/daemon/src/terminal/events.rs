@@ -21,7 +21,9 @@
 //!   `notification` do, and adds the event to the conversation
 //!   ([`super::chat`]). A permission request waits for the user's answer
 //!   from the app; when the terminal goes away first, Claude Code asks in
-//!   its own terminal instead.
+//!   its own terminal instead. In Sandhill's Restricted and Ask modes
+//!   ([`super::guard`]), the hook before each step asks the user, or
+//!   blocks the step.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -30,6 +32,7 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 
 use super::chat;
+use super::guard::{self, Verdict};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -125,6 +128,9 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
             if let Some(context) = context {
                 println!("{context}");
             }
+            if guard::current(terminal).as_deref() == Some(guard::ASK) {
+                println!("{}", guard::ASK_NOTE);
+            }
             add_chat(terminal, chat::from_claude(&input, at_ms, place)).await;
             reported
         }
@@ -158,7 +164,17 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
             );
             reported
         }
-        "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => {
+        "PreToolUse" => {
+            let (reported, ()) = tokio::join!(
+                state("busy"),
+                add_chat(terminal, chat::from_claude(&input, at_ms, None))
+            );
+            if let Some(guard) = guard::current(terminal) {
+                guard_step(terminal, &input, &guard, at_ms).await;
+            }
+            reported
+        }
+        "PostToolUse" | "PostToolUseFailure" => {
             let (reported, ()) = tokio::join!(
                 state("busy"),
                 add_chat(terminal, chat::from_claude(&input, at_ms, None))
@@ -177,6 +193,49 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
         _ => {
             add_chat(terminal, chat::from_claude(&input, at_ms, None)).await;
             Ok(())
+        }
+    }
+}
+
+/// Sandhill's Restricted or Ask mode for a step Claude Code is about to
+/// take: asks the user first, or blocks it, or leaves it to Claude Code.
+async fn guard_step(terminal: &Path, input: &Value, guard: &str, at_ms: i64) {
+    let tool = input["tool_name"].as_str().unwrap_or("");
+    match guard::claude(guard, tool) {
+        Verdict::Pass => {}
+        Verdict::Block => {
+            let failed = json!({
+                "kind": "step_failed",
+                "turn": input["prompt_id"],
+                "id": input["tool_use_id"],
+                "tool": tool,
+                "error": guard::BLOCKED_STEP,
+                "at_ms": at_ms,
+            });
+            add_chat(terminal, Some(failed)).await;
+            let decision = chat::claude_step_decision("deny", Some(guard::BLOCKED));
+            println!("{decision}");
+        }
+        Verdict::Ask => {
+            let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+            let waiting =
+                json!({"state": "waiting", "message": format!("Claude asks to use {tool}")});
+            let _ = send(Some(terminal), with_mode(waiting, input)).await;
+            // On the step it is about, allowed once at a time: Restricted
+            // asks every time.
+            let mut ask = chat::claude_ask(input, &id, at_ms);
+            ask["step"] = input["tool_use_id"].clone();
+            ask["scopes"] = json!([]);
+            let decision = match super::ask(terminal, &id, ask).await {
+                Ok(Some(answer)) if answer["behavior"] == "allow" => {
+                    chat::claude_step_decision("allow", None)
+                }
+                Ok(Some(answer)) => chat::claude_step_decision("deny", Some(chat::denied(&answer))),
+                // The terminal went away: Claude Code asks in its own.
+                _ => chat::claude_step_decision("ask", None),
+            };
+            println!("{decision}");
+            let _ = send(Some(terminal), with_mode(json!({"state": "busy"}), input)).await;
         }
     }
 }

@@ -367,6 +367,28 @@ async fn clients_run_a_shell_through_the_daemon() {
     assert!(again.running && again.started_ms >= info.started_ms);
     assert!(again.end >= output.len() as u64);
 
+    // Named, as the user renames a conversation, and unnamed again.
+    let named: TerminalInfo = client
+        .call(Call::RenameTerminal {
+            terminal: info.id.clone(),
+            name: Some(" PBMC markers ".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(named.name.as_deref(), Some("PBMC markers"));
+    assert_eq!(
+        client.list_terminals().await.unwrap()[0].name.as_deref(),
+        Some("PBMC markers")
+    );
+    let unnamed: TerminalInfo = client
+        .call(Call::RenameTerminal {
+            terminal: info.id.clone(),
+            name: Some(" ".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(unnamed.name, None);
+
     client.close_terminal(&info.id).await.unwrap();
     assert!(client.list_terminals().await.unwrap().is_empty());
     drop(daemon.daemon);
@@ -677,5 +699,225 @@ async fn an_agents_conversation_is_kept_and_its_questions_answered() {
     let mut ended = Vec::new();
     chat_until(&mut events, &mut ended, &mut Vec::new(), "stop").await;
     assert_eq!(ended.len(), 10);
+    terminals.close(&info.id).await.unwrap();
+}
+
+/// Collects a terminal's conversation and output until `done` says so.
+async fn collect(
+    events: &mut mpsc::UnboundedReceiver<ServerMessage>,
+    entries: &mut Vec<sandhill_proto::ChatEntry>,
+    output: &mut Vec<u8>,
+    done: impl Fn(&[sandhill_proto::ChatEntry], &[u8]) -> bool,
+) {
+    let engine = base64::engine::general_purpose::STANDARD;
+    while !done(entries, output) {
+        let message = tokio::time::timeout(TIMEOUT, events.recv())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out; got {entries:?}\n{}",
+                    String::from_utf8_lossy(output)
+                )
+            })
+            .expect("stream ended");
+        let ServerMessage::Terminal { terminal } = message else {
+            continue;
+        };
+        if let Some(data) = terminal.data {
+            output.extend(engine.decode(data).unwrap());
+        }
+        if let Some(entry) = terminal.chat {
+            entries.push(entry);
+        }
+    }
+}
+
+#[tokio::test]
+async fn restricted_and_ask_modes_guard_claudes_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
+    // Stands in for Claude Code: runs its hooks with what it would give
+    // them, in Ask mode, then (once the user switches) in Restricted mode.
+    let hook = |event: &str, id: &str, tool: &str, input: serde_json::Value| {
+        let mut line = serde_json::json!({
+            "hook_event_name": event,
+            "prompt_id": "p1",
+            "session_id": "s1",
+            "permission_mode": "default",
+        });
+        if event == "PreToolUse" {
+            line["tool_use_id"] = id.into();
+            line["tool_name"] = tool.into();
+            line["tool_input"] = input;
+        } else {
+            line["prompt"] = "What next?".into();
+        }
+        format!("{line}\n")
+    };
+    let edit = serde_json::json!({"file_path": "/data/a.R", "old_string": "a", "new_string": "b"});
+    let read = serde_json::json!({"file_path": "/data/a.R"});
+    let asked = [
+        hook("PreToolUse", "t1", "Edit", edit),
+        hook("PreToolUse", "t2", "Read", read.clone()),
+        hook("UserPromptSubmit", "", "", serde_json::Value::Null),
+    ];
+    let restricted = [
+        hook("PreToolUse", "t3", "Read", read),
+        hook(
+            "PreToolUse",
+            "t4",
+            "Bash",
+            serde_json::json!({"command": "ls"}),
+        ),
+    ];
+    std::fs::write(dir.path().join("ask.jsonl"), asked.concat()).unwrap();
+    std::fs::write(dir.path().join("restricted.jsonl"), restricted.concat()).unwrap();
+    let script = format!(
+        "n=0; run() {{ while IFS= read -r line; do printf '%s' \"$line\" | '{exe}' --socket '{sock}' terminal-event hook > out.$n; n=$((n+1)); done < \"$1\"; }}; run ask.jsonl; echo asked; read go; run restricted.jsonl; echo done; read wait",
+        exe = sandhilld().display(),
+        sock = dir.path().join("no-daemon.sock").display(),
+    );
+    let mut launch = sh(&script, dir.path());
+    launch.options.permission = Some("ask".into());
+    let info = terminals.start(launch).await.unwrap();
+    // It starts in the mode it was started in.
+    assert_eq!(info.agent.unwrap()["guard"], "ask");
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut entries = Vec::new();
+    let mut output = Vec::new();
+    // The conversation's entries and the output arrive in either order.
+    collect(&mut events, &mut entries, &mut output, |e, out| {
+        String::from_utf8_lossy(out).contains("asked")
+            && e.iter().any(|e| e.event["kind"] == "prompt")
+            && e.iter().any(|e| e.event["kind"] == "step_failed")
+    })
+    .await;
+    let out = |n: usize| std::fs::read_to_string(dir.path().join(format!("out.{n}"))).unwrap();
+    // Ask mode blocks the edit, in the chat too, and lets the read go on.
+    let decision: serde_json::Value = serde_json::from_str(&out(0)).unwrap();
+    let decision = &decision["hookSpecificOutput"];
+    assert_eq!(decision["hookEventName"], "PreToolUse");
+    assert_eq!(decision["permissionDecision"], "deny");
+    assert!(
+        decision["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("Ask mode")
+    );
+    let failed = entries
+        .iter()
+        .find(|e| e.event["kind"] == "step_failed")
+        .unwrap();
+    assert_eq!(failed.event["id"], "t1");
+    assert!(failed.event["error"].as_str().unwrap().contains("Ask mode"));
+    assert_eq!(out(1), "");
+    // Each message tells Claude it is read-only.
+    assert!(out(2).contains("Ask mode"), "{}", out(2));
+
+    // The user switches to Restricted: every step asks first.
+    terminals
+        .send(
+            &info.id,
+            ToHost::Command {
+                command: serde_json::json!({"kind": "set", "permission": "restricted"}),
+            },
+        )
+        .await
+        .unwrap();
+    let guard = async || terminals.info(&info.id).unwrap().agent.unwrap()["guard"].clone();
+    tokio::time::timeout(TIMEOUT, async {
+        while guard().await != "restricted" {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    terminals
+        .send(&info.id, ToHost::Input { data: "\n".into() })
+        .await
+        .unwrap();
+    let asks = |entries: &[sandhill_proto::ChatEntry]| {
+        entries
+            .iter()
+            .filter(|e| e.event["kind"] == "ask")
+            .map(|e| e.event.clone())
+            .collect::<Vec<_>>()
+    };
+    collect(&mut events, &mut entries, &mut output, |e, _| {
+        asks(e).len() == 1
+    })
+    .await;
+    let ask = asks(&entries).remove(0);
+    assert_eq!(ask["tool"], "Read");
+    // On its step, and only once at a time.
+    assert_eq!(ask["step"], "t3");
+    assert_eq!(ask["scopes"], serde_json::json!([]));
+    assert_eq!(
+        terminals.info(&info.id).unwrap().agent.unwrap()["state"],
+        "waiting"
+    );
+    terminals
+        .answer(
+            &info.id,
+            ask["id"].as_str().unwrap(),
+            serde_json::json!({"behavior": "deny"}),
+        )
+        .await
+        .unwrap();
+    collect(&mut events, &mut entries, &mut output, |e, _| {
+        asks(e).len() == 2
+    })
+    .await;
+    let ask = asks(&entries).remove(1);
+    assert_eq!(ask["tool"], "Bash");
+    terminals
+        .answer(
+            &info.id,
+            ask["id"].as_str().unwrap(),
+            serde_json::json!({"behavior": "allow", "scope": "once"}),
+        )
+        .await
+        .unwrap();
+    collect(&mut events, &mut entries, &mut output, |_, out| {
+        String::from_utf8_lossy(out).contains("done")
+    })
+    .await;
+    let decision = |n: usize| -> serde_json::Value {
+        let output: serde_json::Value = serde_json::from_str(&out(n)).unwrap();
+        output["hookSpecificOutput"].clone()
+    };
+    assert_eq!(decision(3)["permissionDecision"], "deny");
+    assert!(
+        decision(3)["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .contains("said no")
+    );
+    assert_eq!(decision(4)["permissionDecision"], "allow");
+
+    // Back to Normal: the guard is gone.
+    terminals
+        .send(
+            &info.id,
+            ToHost::Command {
+                command: serde_json::json!({"kind": "set", "permission": "supervised"}),
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(TIMEOUT, async {
+        while !guard().await.is_null() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
     terminals.close(&info.id).await.unwrap();
 }

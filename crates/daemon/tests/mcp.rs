@@ -644,3 +644,66 @@ async fn an_open_window_makes_the_edit_and_runs_the_cell() {
     assert_eq!(std::fs::read_to_string(&doc).unwrap(), original);
     window.shutdown(&session).await.unwrap();
 }
+
+/// In Sandhill's Ask mode, the agent's terminal is read-only: Sandhill's
+/// tools that change something refuse, and those that look still work.
+#[tokio::test]
+async fn in_ask_mode_sandhills_tools_only_look() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let terminal = dir.path().join("terminal");
+    std::fs::create_dir_all(&terminal).unwrap();
+    std::fs::write(terminal.join("agent.json"), r#"{"guard": "ask"}"#).unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_sandhilld"))
+        .arg("--socket")
+        .arg(&daemon.socket)
+        .arg("mcp")
+        .arg("--project")
+        .arg(dir.path())
+        .env("SANDHILL_TERMINAL", &terminal)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut call = async |id: u64, name: &str, arguments: Value| -> Value {
+        let message = json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+                             "params": {"name": name, "arguments": arguments}});
+        stdin
+            .write_all(format!("{message}\n").as_bytes())
+            .await
+            .unwrap();
+        let line = tokio::time::timeout(TIMEOUT, lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        serde_json::from_str::<Value>(&line).unwrap()["result"].clone()
+    };
+    let refused = call(1, "run_code", json!({"code": "1 + 1"})).await;
+    assert_eq!(refused["isError"], true);
+    assert!(
+        refused["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Ask mode"),
+        "{refused}"
+    );
+    let added = call(2, "add_cell", json!({"code": "x <- 1"})).await;
+    assert_eq!(added["isError"], true);
+    let listed = call(3, "list_sessions", json!({})).await;
+    assert_eq!(listed["isError"], false);
+
+    // Switched out of Ask mode, the tool runs (and finds no session).
+    std::fs::write(terminal.join("agent.json"), r#"{"guard": null}"#).unwrap();
+    let ran = call(4, "run_code", json!({"code": "1 + 1"})).await;
+    assert!(
+        !ran["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Ask mode"),
+        "{ran}"
+    );
+}

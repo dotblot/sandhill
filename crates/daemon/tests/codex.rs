@@ -46,7 +46,17 @@ fn script() -> Vec<Value> {
                 "content": [{"type": "output_text", "text": "Here is the plan.\n<proposed_plan>\n1. Load\n2. Plot\n</proposed_plan>"}]}]),
         json!([{"type": "message", "role": "assistant", "id": "msg_4",
                 "content": [{"type": "output_text", "text": "Done as planned."}]}]),
-        // The fourth takes until it is stopped.
+        // The fourth, in Restricted mode, and the fifth, in Ask mode: each
+        // tries Sandhill's tool again.
+        json!([{"type": "function_call", "id": "fc_3", "call_id": "call_3", "namespace": "mcp__sandhill",
+                "name": "add_cell", "arguments": "{\"code\": \"print(1)\"}"}]),
+        json!([{"type": "message", "role": "assistant", "id": "msg_5",
+                "content": [{"type": "output_text", "text": "I won't, then."}]}]),
+        json!([{"type": "function_call", "id": "fc_4", "call_id": "call_4", "namespace": "mcp__sandhill",
+                "name": "add_cell", "arguments": "{\"code\": \"print(2)\"}"}]),
+        json!([{"type": "message", "role": "assistant", "id": "msg_6",
+                "content": [{"type": "output_text", "text": "Here is the code to add instead."}]}]),
+        // The sixth takes until it is stopped.
         json!("hang"),
     ]
 }
@@ -431,6 +441,69 @@ async fn codex_works_through_the_chat() {
     assert_eq!(agent["permission"], "supervised");
     let carried = requests.lock().unwrap()[5].to_string();
     assert!(carried.contains("Carry out the plan."), "{carried}");
+
+    // Restricted: Codex asks before using Sandhill's tool, and the user
+    // says no.
+    for command in [
+        json!({"kind": "set", "permission": "restricted"}),
+        json!({"kind": "say", "text": "Add another cell"}),
+    ] {
+        terminals
+            .send(&info.id, ToHost::Command { command })
+            .await
+            .unwrap();
+    }
+    let after = entries.len();
+    let ask = chat_until(&mut events, &mut entries, after, "ask").await;
+    assert_eq!(ask["tool"], "mcp__sandhill__add_cell");
+    let agent = terminals.info(&info.id).unwrap().agent.unwrap();
+    assert_eq!(agent["permission"], "restricted");
+    assert_eq!(agent["guard"], "restricted");
+    terminals
+        .answer(
+            &info.id,
+            ask["id"].as_str().unwrap(),
+            json!({"behavior": "deny"}),
+        )
+        .await
+        .unwrap();
+    chat_until(&mut events, &mut entries, after, "stop").await;
+
+    // Ask: read-only. The tool call fails without asking (Codex refuses it
+    // itself; Sandhill's tool would too), and Codex was told to suggest
+    // instead.
+    for command in [
+        json!({"kind": "set", "permission": "ask"}),
+        json!({"kind": "say", "text": "Add it anyway"}),
+    ] {
+        terminals
+            .send(&info.id, ToHost::Command { command })
+            .await
+            .unwrap();
+    }
+    let after = entries.len();
+    chat_until(&mut events, &mut entries, after, "stop").await;
+    assert_eq!(
+        kinds(&entries[after..]),
+        ["prompt", "step", "step_failed", "text", "stop"],
+        "{:#?}",
+        &entries[after..]
+    );
+    assert_eq!(entries[after + 2].event["tool"], "mcp__sandhill__add_cell");
+    let asked = requests.lock().unwrap()[8]["input"].to_string();
+    assert!(asked.contains("Sandhill is in Ask mode"), "{asked}");
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(project.join("qc.ipynb")).unwrap()).unwrap();
+    assert_eq!(written["cells"].as_array().unwrap().len(), 2);
+    terminals
+        .send(
+            &info.id,
+            ToHost::Command {
+                command: json!({"kind": "set", "permission": "supervised"}),
+            },
+        )
+        .await
+        .unwrap();
 
     // Stopping a turn.
     terminals

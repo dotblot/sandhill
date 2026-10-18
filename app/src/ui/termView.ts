@@ -138,10 +138,14 @@ export class TermView {
     this.term.focus();
   }
 
-  /** The last `rows` lines on screen, as text. */
+  /**
+   * The last `rows` lines on screen with text, as text: a program that has
+   * printed little (a new session) leaves the bottom of the screen empty.
+   */
   screenText(rows = 8): string {
     const buffer = this.term.buffer.active;
-    const end = buffer.baseY + this.term.rows;
+    let end = buffer.baseY + this.term.rows;
+    while (end > buffer.baseY && !buffer.getLine(end - 1)?.translateToString(true).trim()) end--;
     const lines: string[] = [];
     for (let i = Math.max(0, end - rows); i < end; i++) lines.push(buffer.getLine(i)?.translateToString(true) ?? "");
     return lines.join("\n");

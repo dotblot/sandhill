@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, Show, Switch } from "solid-js";
 import { LOCAL_HOST } from "../backend";
-import type { AgentInfo, AgentOptions, AgentReport, TerminalInfo } from "../backend/types";
+import type { AgentInfo, AgentOptions, AgentReport, FileStat, TerminalInfo } from "../backend/types";
 import type { Doc } from "../docs/doc";
 import {
   AGENT_KINDS,
@@ -21,11 +21,12 @@ import {
   withModels,
 } from "../model/agents";
 import { type Answer, type Ask, buildChat, chatTitle, lastActive } from "../model/chat";
+import { EXPORT_FORMATS, type ExportFormat, exportConversation, exportName } from "../model/export";
 import type { TerminalStore } from "../model/terminals";
 import type { Workspace } from "../model/workspace";
 import { AgentChat, when } from "./AgentChat";
 import { AgentComposer } from "./AgentComposer";
-import { ask, notify } from "./dialogs";
+import { ask, askText, notify } from "./dialogs";
 import { FileIcon, Icon, ProviderIcon } from "./icons";
 import { type Pane, PaneButtons } from "./PaneButtons";
 import { TermView } from "./termView";
@@ -117,7 +118,7 @@ export function AgentsPane(props: {
   const chatMode = (t: TerminalInfo) => canChat(t) && !termShown().includes(t.id);
   const working = (t: TerminalInfo) =>
     t.running && (t.agent?.state === "busy" || t.agent?.state === "waiting") && !stopped().includes(t.id);
-  const title = (t: TerminalInfo) => chatTitle(store.chat(t.id)) ?? `${t.title} · ${modelLabel(t)}`;
+  const title = (t: TerminalInfo) => t.name || chatTitle(store.chat(t.id)) || `${t.title} · ${modelLabel(t)}`;
   /** The conversation's entries since the agent last started. */
   const sinceStart = (t: TerminalInfo) => {
     const started = t.started_ms ?? t.created_ms;
@@ -173,7 +174,7 @@ export function AgentsPane(props: {
   // A mode or effort the agent reports replaces the one picked here.
   createEffect(
     on(
-      () => current()?.agent?.mode ?? current()?.agent?.permission,
+      () => [current()?.agent?.mode ?? current()?.agent?.permission, current()?.agent?.guard].join(),
       () => {
         const id = current()?.id;
         if (id) setModeChoice(({ [id]: _, ...rest }) => rest);
@@ -413,7 +414,11 @@ export function AgentsPane(props: {
     }, EFFORT_SETTLE_MS);
   }
 
-  /** Switches Codex's mode for its next turn, or Claude Code's as ⇧Tab does, until its terminal shows the mode. */
+  /**
+   * Switches Codex's mode for its next turn, or Claude Code's as ⇧Tab does,
+   * until its terminal shows the mode. Restricted and Ask are Sandhill's,
+   * on top of Claude Code's default mode: the daemon is told which is on.
+   */
   async function switchMode(t: TerminalInfo, mode: Mode) {
     if (driven(t)) {
       setModeChoice((all) => ({ ...all, [t.id]: mode }));
@@ -425,8 +430,9 @@ export function AgentsPane(props: {
     for (let i = 0; i <= MODE_TRIES; i++) {
       const shownMode = screenMode(view.screenText());
       if (!shownMode) break;
-      if (shownMode.id === mode.id) {
+      if (shownMode.claude === mode.claude) {
         setModeChoice((all) => ({ ...all, [t.id]: mode }));
+        tell(t, { kind: "set", permission: mode.permission });
         return;
       }
       if (i === MODE_TRIES) break;
@@ -436,6 +442,45 @@ export function AgentsPane(props: {
     const back = screenMode(view.screenText());
     if (back) setModeChoice((all) => ({ ...all, [t.id]: back }));
     notify(`Claude Code didn't switch to ${mode.label} mode here. Its terminal (gear menu) shows the modes it offers: ⇧Tab switches.`);
+  }
+
+  async function rename(t: TerminalInfo) {
+    setGear(false);
+    const name = await askText("Rename conversation", title(t), "Rename", "Leave it empty to name it after its first message again.");
+    if (name === undefined) return;
+    try {
+      await store.rename(t.id, name);
+    } catch (err) {
+      notify(`Could not rename the conversation: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** Saves the conversation as a file in the project, under a name the user can change. */
+  async function exportChat(t: TerminalInfo, format: ExportFormat) {
+    setGear(false);
+    const label = EXPORT_FORMATS.find((f) => f.format === format)?.label ?? format;
+    const name = (await askText(`Export as ${label}`, exportName(title(t), format), "Export", `Saved in the project's folder on ${props.hostLabel}.`))?.trim();
+    if (!name) return;
+    const path = documentPath(props.project, name);
+    try {
+      const [stat] = await props.ws.call<FileStat[]>("stat_files", { paths: [path] });
+      if (stat?.mtime_ms !== undefined) {
+        const choice = await ask(`Replace ${relative(path)}?`, ["Replace", "Cancel"], "A file with this name is already there.");
+        if (choice !== "Replace") return;
+      }
+      const text = exportConversation(format, store.chat(t.id), {
+        title: title(t),
+        agent: agentName(t),
+        kind: t.kind,
+        model: modelLabel(t),
+        documents: t.options?.documents ?? [],
+        at: new Date(),
+      });
+      await props.ws.call("write_file", { path, text });
+      notify(`Exported the conversation to ${relative(path)}.`, "info");
+    } catch (err) {
+      notify(`Could not export the conversation: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   async function insert(t: TerminalInfo, code: string, language?: string) {
@@ -551,6 +596,21 @@ export function AgentsPane(props: {
                 </button>
               </Show>
               <div class="mm-sep" />
+              <Show when={canChat(t())}>
+                <For each={EXPORT_FORMATS}>
+                  {(f) => (
+                    <button class="mm-i" onClick={() => void exportChat(t(), f.format)}>
+                      <Icon name="export" small />
+                      <span>Export as {f.label}</span>
+                    </button>
+                  )}
+                </For>
+              </Show>
+              <button class="mm-i" onClick={() => void rename(t())}>
+                <Icon name="edits" small />
+                <span>Rename</span>
+              </button>
+              <div class="mm-sep" />
               <button class="mm-i" onClick={() => void end(t())}>
                 <Icon name="trash" small />
                 <span>{t().running ? "End conversation" : "Remove from history"}</span>
@@ -569,6 +629,7 @@ export function AgentsPane(props: {
               props.onSelect(t.id);
             }}
             onEnd={(t) => void end(t)}
+            onRename={(t) => void rename(t)}
           />
         </Show>
         <Show when={picking()}>
@@ -1046,6 +1107,7 @@ function History(props: {
   title: (t: TerminalInfo) => string;
   onOpen: (t: TerminalInfo) => void;
   onEnd: (t: TerminalInfo) => void;
+  onRename: (t: TerminalInfo) => void;
 }) {
   const [search, setSearch] = createSignal("");
   const rows = createMemo(() => {
@@ -1125,6 +1187,9 @@ function History(props: {
                       </small>
                     </span>
                     <span class="hr-acts">
+                      <button title="Rename" onClick={() => props.onRename(row.t)}>
+                        <Icon name="edits" small />
+                      </button>
                       <button title={row.t.running ? "End conversation" : "Remove from history"} onClick={() => props.onEnd(row.t)}>
                         <Icon name="trash" small />
                       </button>

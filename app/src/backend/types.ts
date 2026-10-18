@@ -225,6 +225,8 @@ export interface AgentReport {
   thread?: string;
   /** Codex: the mode it is in, as `AgentOptions.permission` names it. */
   permission?: string;
+  /** Sandhill's own mode on top of the agent's, when one is on: `restricted` or `ask`. */
+  guard?: string | null;
   status?: AgentStatus;
   /** Codex: the models it offers. */
   models?: AgentModel[];
@@ -283,6 +285,8 @@ export interface TerminalInfo {
   agent?: AgentReport;
   /** An agent started before the daemon was updated: it has the old tools. */
   outdated?: boolean;
+  /** The name the user gave it. */
+  name?: string;
 }
 
 export interface TerminalSubscribed {

@@ -224,6 +224,13 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
     },
+    /// Names a terminal, as the user renames a conversation; a blank or
+    /// missing name takes the name away. Returns [`TerminalInfo`].
+    RenameTerminal {
+        terminal: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
     /// Every terminal, including those whose program has ended, oldest
     /// first. Returns `Vec<TerminalInfo>`.
     ListTerminals,
@@ -250,7 +257,10 @@ pub enum Call {
     /// Tells an agent whose chat Sandhill drives (Codex) what the user did
     /// in the chat: `{kind: "say", text}`, `{kind: "interrupt"}`, `{kind:
     /// "set", model?, effort?, permission?}`, `{kind: "compact"}` or
-    /// `{kind: "login", method: "browser" | "code"}`. Returns null.
+    /// `{kind: "login", method: "browser" | "code"}`. A `set` with
+    /// `permission` also sets Sandhill's own guard for the Restricted and
+    /// Ask modes, for any agent: Claude Code's hooks enforce it. Returns
+    /// null.
     TellTerminal {
         terminal: String,
         command: Value,
@@ -693,8 +703,8 @@ pub struct AgentOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
     /// `supervised` (ask before commands and edits), `edits` (accept edits),
-    /// `auto`, `full`, or `plan` (Claude Code: plans first and asks before
-    /// carrying the plan out).
+    /// `auto`, `full`, `plan` (plans first and asks before carrying the plan
+    /// out), `restricted` (asks before every step) or `ask` (read-only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<String>,
     /// Documents the session is about, named to the agent at start.
@@ -741,6 +751,9 @@ pub struct TerminalInfo {
     /// until it is started again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub outdated: bool,
+    /// The name the user gave it (see [`Call::RenameTerminal`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

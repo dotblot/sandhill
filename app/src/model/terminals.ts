@@ -118,6 +118,13 @@ export class TerminalStore {
     return info;
   }
 
+  /** Names a conversation (or takes its name away, with a blank name). */
+  async rename(id: string, name: string): Promise<TerminalInfo> {
+    const info = await this.backend.call<TerminalInfo>("rename_terminal", { terminal: id, name });
+    this.update(id, (t) => ({ ...t, name: info.name }));
+    return info;
+  }
+
   /**
    * Starts a terminal's program again where it left off, ending it first if
    * it runs: an agent resumes its conversation, with `options` if given and
