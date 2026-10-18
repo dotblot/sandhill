@@ -404,7 +404,7 @@ fn python_code(ask: &Ask) -> String {
 }
 
 /// A JSON string is also an R string literal and a Python one.
-fn literal(s: &str) -> String {
+pub(crate) fn literal(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
 }
 
@@ -560,7 +560,7 @@ fn cell(text: &str, kind: &str) -> Value {
 }
 
 /// Undoes the kernel's escaping of backslashes, tabs and line ends.
-fn unescape(text: &str) -> String {
+pub(crate) fn unescape(text: &str) -> String {
     if !text.contains('\\') {
         return text.to_string();
     }

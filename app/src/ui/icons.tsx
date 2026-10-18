@@ -236,6 +236,18 @@ const LINE_ICONS = {
     </>
   ),
   filter: () => <path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" />,
+  pkg: () => (
+    <>
+      <path d="M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11z" />
+      <path d="M2.5 5 8 7.5 13.5 5M8 7.5v6" />
+    </>
+  ),
+  source: () => (
+    <>
+      <path d="M3.5 2.5h5l3 3v8h-8z" />
+      <path d="M8.5 2.5v3h3" />
+    </>
+  ),
   plus: () => <path d="M8 3.5v9M3.5 8h9" />,
   refresh: () => (
     <>

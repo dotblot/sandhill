@@ -273,6 +273,80 @@ export interface TableSummary {
   columns: ColumnSummary[];
 }
 
+export interface HelpTopic {
+  /** The function or topic: `read.csv`, `pandas.read_csv`. */
+  topic: string;
+  /** R's package, or Python's top-level module. */
+  package: string;
+  title: string;
+}
+
+export interface HelpTopics {
+  session: string;
+  topics: HelpTopic[];
+  /** How many more matched than are listed. */
+  more: number;
+}
+
+export interface HelpMember {
+  name: string;
+  kind: string;
+  title: string;
+}
+
+export interface HelpPage {
+  session: string;
+  topic: string;
+  package: string;
+  title: string;
+  version: string;
+  /** R: the page's HTML body. */
+  html?: string;
+  /** Python: module, class, function, method, property or value. */
+  kind?: string;
+  /** Python: `(adata, target_sum=None)`. */
+  signature?: string;
+  /** Python: the docstring. */
+  text?: string;
+  members?: HelpMember[];
+  /** R: other packages with a page on the same topic. */
+  alternatives?: HelpTopic[];
+}
+
+export interface HelpSource {
+  session: string;
+  topic: string;
+  package: string;
+  text: string;
+  file?: string;
+  line?: number;
+}
+
+export interface Package {
+  name: string;
+  version: string;
+  title: string;
+  library: string;
+  /** R: attached with library(). Python: imported by the user's code. */
+  attached: boolean;
+  loaded: boolean;
+  /** R: part of R itself. */
+  base: boolean;
+  /** Python: the modules it provides. */
+  modules?: string[];
+  /** Python: what installed it, like pip or conda. */
+  installer?: string;
+}
+
+export interface Packages {
+  session: string;
+  packages: Package[];
+  libraries: string[];
+  cran: boolean;
+  bioconductor: boolean;
+  conda: boolean;
+}
+
 /** An nbformat 4 output object. */
 export interface Output {
   output_type: "stream" | "display_data" | "execute_result" | "error" | string;

@@ -11,6 +11,7 @@ import type { SessionRuns } from "../backend/types";
 import { CellOutput } from "../docs/cellOutput";
 import { baseExtensions, highlightedLines, languageFor } from "../editor/setup";
 import { InputHistory, isComplete } from "../model/consoleInput";
+import { consoleHelp, type HelpRequest } from "../model/help";
 import type { RunState } from "../model/runs";
 import type { Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
@@ -30,6 +31,8 @@ export interface ConsoleHost {
   /** A file as shown: its path in the project. */
   shortName(path: string): string;
   onError(message: string): void;
+  /** Shows help asked for at the prompt (`?lm`, `np.mean?`) in the Help pane. */
+  openHelp?(request: HelpRequest): void;
 }
 
 interface Entry {
@@ -274,6 +277,14 @@ export class SessionConsole {
 
   private enter(): boolean {
     const code = this.input;
+    // Help asked for at the prompt opens in the Help pane rather than running.
+    const help = this.host.openHelp && consoleHelp(code, this.language);
+    if (help) {
+      this.history.push(code);
+      this.setInput("");
+      this.host.openHelp?.(help);
+      return true;
+    }
     if (!isComplete(code, this.language)) return insertNewlineAndIndent(this.view);
     this.setInput("");
     void this.run(code);

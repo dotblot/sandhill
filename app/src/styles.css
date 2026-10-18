@@ -940,7 +940,7 @@ pre.diff { padding: 6px 0; }
 }
 .ap-ck { margin-left: auto; color: var(--accent); display: inline-flex; }
 
-/* The right pane (step 5): Variables over Plots, 3px apart; Data, Help, Packages and Git later. */
+/* The right pane (step 5): Variables, Help and Packages over Plots, 3px apart; Git later. */
 .right-col { flex: none; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .variables-pane { flex: 0 1 50%; min-height: 90px; }
 .variables-pane.fill { flex: 1 1 auto !important; }
@@ -988,6 +988,86 @@ pre.diff { padding: 6px 0; }
 .var-note.err { color: var(--err); white-space: pre-wrap; }
 .vbusy { padding: 4px 10px; color: var(--busy); }
 .vempty { margin: 0; padding: 10px; color: var(--faint); }
+
+/* The right pane's top group: Variables, Help and Packages as tabs. */
+.variables-pane > .top-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.variables-pane > .top-body[hidden] { display: none; }
+
+/* Help: a search over the session's help topics, the matches, then the page. */
+.helppane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.hsearch { height: 30px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 1px solid var(--line); }
+.hsearch label { height: 22px; display: flex; align-items: center; gap: 5px; min-width: 0; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); color: var(--faint); }
+.hsearch label:focus-within { border-color: var(--accent); }
+.hsearch .hs-q { flex: 1 1 0; }
+.hsearch .hs-p { flex: 0 1 112px; }
+.hsearch input { flex: 1; min-width: 0; padding: 0; border: 0; outline: none; background: none; color: var(--text); font: inherit; }
+.hsearch .hs-q input { font-family: var(--font-mono); }
+.hbody { flex: 1; min-height: 0; overflow: auto; padding-bottom: 8px; }
+.hres { padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.hr-n { display: block; padding: 4px 10px 2px; font-size: var(--fs-small); color: var(--faint); text-align: left; }
+button.hr-more { color: var(--accent); cursor: pointer; }
+button.hr-more:hover { text-decoration: underline; }
+.hr { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; align-items: center; width: 100%; padding: 2px 10px; text-align: left; border-radius: 0; }
+.hr:hover { background: var(--hover); }
+.hr.on { background: var(--sel); }
+.hr-f { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hr-p { font-size: var(--fs-small); color: var(--muted); white-space: nowrap; }
+.hl-l { font: 700 9px var(--font-ui); color: #2f6fbf; background: #2f6fbf1f; border-radius: 3px; text-align: center; padding: 1px 0; }
+.hl-l.py { color: #2f8a5c; background: #3a9b6b22; }
+.helpdoc { padding: 8px 12px 4px; line-height: 1.5; -webkit-user-select: text; user-select: text; }
+.helpdoc.loading { opacity: 0.6; }
+.hd-top { display: flex; align-items: flex-start; gap: 2px; }
+.hd-name { flex: 1; min-width: 0; }
+.hd-name h3 { margin: 0 0 1px; font: 600 14px var(--font-mono); overflow-wrap: anywhere; }
+.helpdoc .pkg { color: var(--faint); font-size: var(--fs-small); }
+.hd-src { margin-left: 4px; }
+.hd-src[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.hd-also { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-small); }
+/* A long path keeps its end in view. */
+.hd-file { padding-left: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.hd-file > span { direction: ltr; unicode-bidi: isolate; }
+.helpdoc a { color: var(--accent); text-decoration: none; cursor: pointer; }
+.helpdoc a:hover { text-decoration: underline; }
+.helpdoc code { font: 0.92em var(--font-mono); background: var(--chunk); padding: 0 3px; border-radius: 3px; }
+.helpdoc pre { margin: 4px 0 8px; padding: 6px 8px; border-radius: 6px; background: var(--chunk); font: 12px/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.helpdoc pre code { background: none; padding: 0; font-size: inherit; }
+.helpdoc h4, .rdoc h3 { margin: 12px 0 3px; font-size: 12.5px; font-weight: 600; }
+.rdoc h2 { margin: 8px 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.rdoc p, .pydoc p { margin: 0 0 6px; }
+.rdoc table { border-collapse: collapse; width: 100%; margin: 2px 0 6px; }
+.rdoc td { vertical-align: top; padding: 2px 8px 4px 0; }
+.rdoc td:first-child { white-space: nowrap; }
+.rdoc td p { margin: 0; }
+.rdoc ul, .rdoc ol { margin: 0 0 6px; padding-left: 20px; }
+.rdoc dl, .pydoc dl { margin: 0 0 6px; }
+.pydoc dt { font: 12px var(--font-mono); margin-top: 4px; overflow-wrap: anywhere; }
+.pydoc dd { margin: 0 0 2px 16px; color: var(--text); white-space: pre-line; }
+.hnote { margin: 4px 0 8px; padding: 5px 9px; border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--chunk); }
+.hnote b { font-weight: 600; }
+.hnote p { margin: 2px 0 0; }
+.hpara { white-space: pre-line; }
+.hsig { color: var(--text); }
+.hsrc { white-space: pre !important; overflow: auto; overflow-wrap: normal !important; }
+.hmembers { display: flex; flex-direction: column; margin-bottom: 4px; }
+.hmem { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 1px 4px; text-align: left; border-radius: 4px; }
+.hmem:hover { background: var(--hover); }
+.hmem .hr-f { color: var(--accent); }
+.hm-t { color: var(--muted); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Packages: what's installed, attached or imported first, with Install. */
+.var.pkgrow { grid-template-columns: 14px minmax(0, 120px) minmax(0, 1fr) auto 18px; cursor: pointer; }
+.pkgrow > .ico { color: var(--faint); }
+.pkgrow .prm { color: var(--faint); visibility: hidden; }
+.pkgrow:hover .prm { visibility: visible; }
+.pkgrow .prm:hover { color: var(--err); background: var(--err-soft); }
+.pinstall { flex: none; padding: 6px 6px 5px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.pi-row { display: flex; gap: 4px; align-items: center; }
+.pi-row .vfilter { font-family: var(--font-mono); }
+.pi-tool { height: 22px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: var(--text); font: inherit; font-size: var(--fs-small); padding: 0 4px; }
+.vbtn.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.vbtn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.06); }
+.pi-note { padding: 3px 2px 0; font-size: var(--fs-small); color: var(--faint); }
+.pi-note.err { color: var(--err); }
 
 /* Plots: the plot in front, where it came from, and thumbnails of the rest.
    Plots stay white in dark mode. */

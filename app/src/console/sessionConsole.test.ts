@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Backend } from "../backend";
 import type { DaemonEvent, SessionInfo, SessionRun } from "../backend/types";
+import type { HelpRequest } from "../model/help";
 import { Workspace } from "../model/workspace";
 import { SessionConsole } from "./sessionConsole";
 
@@ -76,18 +77,20 @@ const opened: { console: SessionConsole; host: HTMLElement }[] = [];
 async function openConsole(ws: Workspace) {
   await ws.refreshSessions();
   const files: string[] = [];
+  const helped: HelpRequest[] = [];
   const console = new SessionConsole(ws, "s1", "r", {
     openFile: (path) => files.push(path),
     shortName: (path) => path.replace("/home/huan/pbmc/", ""),
     onError: (message) => {
       throw new Error(message);
     },
+    openHelp: (request) => helped.push(request),
   });
   const host = document.body.appendChild(document.createElement("div"));
   host.append(console.element);
   await console.ready;
   opened.push({ console, host });
-  return { console, files };
+  return { console, files, helped };
 }
 
 const echoes = (console: SessionConsole) =>
@@ -159,6 +162,20 @@ describe("SessionConsole", () => {
     press("ArrowDown");
     press("ArrowDown");
     expect(console.input).toBe("");
+  });
+
+  it("opens help in the Help pane rather than running it", async () => {
+    const { ws, executed } = fakeWorkspace([]);
+    const { console, helped } = await openConsole(ws);
+    const content = console.element.querySelector(".cm-content") as HTMLElement;
+    console.setInput("?stats::filter");
+    content.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    expect(executed).toEqual([]);
+    expect(helped).toEqual([{ topic: "filter", package: "stats" }]);
+    expect(console.input).toBe("");
+    content.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }));
+    expect(console.input).toBe("?stats::filter");
   });
 
   it("stays cleared when it opens again", async () => {
