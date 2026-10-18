@@ -15,7 +15,8 @@ use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, HistoryPage, KernelspecInfo, Outcome, PingReply,
     ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, SessionPlots, SessionRuns,
-    Subscribed, SystemStats, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
+    Subscribed, SystemStats, TableFilter, TableRows, TableSort, TableSummary, TerminalEvent,
+    TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -323,6 +324,58 @@ impl Client {
         self.call(Call::DeleteVariables {
             session: session.into(),
             names: names.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn table_rows(
+        &self,
+        session: &str,
+        path: &[String],
+        offset: u64,
+        limit: Option<u32>,
+        sort: &[TableSort],
+        filters: &[TableFilter],
+    ) -> Result<TableRows> {
+        self.call(Call::TableRows {
+            session: session.into(),
+            path: path.to_vec(),
+            offset,
+            limit,
+            sort: sort.to_vec(),
+            filters: filters.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn table_summary(
+        &self,
+        session: &str,
+        path: &[String],
+        filters: &[TableFilter],
+    ) -> Result<TableSummary> {
+        self.call(Call::TableSummary {
+            session: session.into(),
+            path: path.to_vec(),
+            filters: filters.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn table_export(
+        &self,
+        session: &str,
+        path: &[String],
+        sort: &[TableSort],
+        filters: &[TableFilter],
+        file: &str,
+    ) -> Result<FileWritten> {
+        self.call(Call::TableExport {
+            session: session.into(),
+            path: path.to_vec(),
+            sort: sort.to_vec(),
+            filters: filters.to_vec(),
+            file: file.into(),
         })
         .await
     }

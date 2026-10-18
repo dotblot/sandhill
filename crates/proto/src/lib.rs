@@ -105,6 +105,47 @@ pub enum Call {
         session: String,
         names: Vec<String>,
     },
+    /// Rows of a table in a session, for the Data Explorer: a data frame, a
+    /// matrix, or a part of an object (a Seurat object's `meta.data`, an
+    /// AnnData's `obs`), at `path` as [`Call::ListVariables`] takes it.
+    /// Filtering and sorting run in the kernel, quietly. Returns
+    /// [`TableRows`].
+    TableRows {
+        session: String,
+        path: Vec<String>,
+        /// The first row to return, counting from 0 after filtering and
+        /// sorting.
+        #[serde(default)]
+        offset: u64,
+        /// How many rows, at most; 200 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<TableSort>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filters: Vec<TableFilter>,
+    },
+    /// Each column's summary over the rows that pass `filters`: missing
+    /// values, distinct values, a histogram or the commonest values.
+    /// Returns [`TableSummary`].
+    TableSummary {
+        session: String,
+        path: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filters: Vec<TableFilter>,
+    },
+    /// Writes the rows that pass `filters`, sorted, to a CSV file on the
+    /// session's machine. Returns [`FileWritten`].
+    TableExport {
+        session: String,
+        path: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<TableSort>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filters: Vec<TableFilter>,
+        /// The file to write.
+        file: String,
+    },
     Interrupt {
         session: String,
     },
@@ -970,8 +1011,111 @@ pub struct Variable {
     /// Whether it has parts to list (columns, items, slots).
     #[serde(default)]
     pub children: bool,
+    /// Whether it opens in the Data Explorer (a data frame or a matrix).
+    #[serde(default)]
+    pub table: bool,
     /// Dimensions, the first values, or the like: "2,638 × 7; columns: …".
     pub summary: String,
+}
+
+/// A sort key for [`Call::TableRows`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableSort {
+    /// The column's position, from 0.
+    pub column: u32,
+    #[serde(default)]
+    pub descending: bool,
+}
+
+/// A filter for [`Call::TableRows`]: rows pass when `column` meets it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableFilter {
+    /// The column's position, from 0.
+    pub column: u32,
+    /// `<`, `<=`, `>`, `>=`, `=` and `!=` (with one value), `between` (two),
+    /// `in` and `not in` (any number), `contains` (text, ignoring case),
+    /// `missing` and `present` (none).
+    pub op: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+}
+
+/// A table's column.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableColumn {
+    pub name: String,
+    /// `number`, `text`, `category`, `logical`, `date` or `other`.
+    pub kind: String,
+    /// The language's own type: `dbl`, `int`, `chr`, `fct` in R; `float64`,
+    /// `category`, `object` in Python.
+    #[serde(rename = "type")]
+    pub kind_detail: String,
+}
+
+/// Rows of a table, as [`Call::TableRows`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableRows {
+    pub session: String,
+    pub path: Vec<String>,
+    /// The table as code in the session's language, like `seu@meta.data`
+    /// or `adata.obs`.
+    pub code: String,
+    /// Its columns; the first 500 of a wider table.
+    pub columns: Vec<TableColumn>,
+    /// How many columns it has.
+    pub width: u64,
+    /// How many rows it has.
+    pub total: u64,
+    /// How many rows pass the filters.
+    pub rows: u64,
+    pub offset: u64,
+    /// Each returned row's label: its row name, or index label.
+    pub labels: Vec<String>,
+    /// Each returned row's cells: numbers in number columns, otherwise
+    /// text, and null where missing.
+    pub values: Vec<Vec<Value>>,
+}
+
+/// Each column's summary, as [`Call::TableSummary`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableSummary {
+    pub session: String,
+    pub path: Vec<String>,
+    /// How many rows pass the filters.
+    pub rows: u64,
+    pub columns: Vec<ColumnSummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ColumnSummary {
+    /// The column's position, from 0.
+    pub column: u32,
+    pub missing: u64,
+    /// How many different values there are, missing aside.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distinct: Option<u64>,
+    /// For numbers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mean: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median: Option<f64>,
+    /// Counts in equal bins from `min` to `max`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub histogram: Vec<u64>,
+    /// The commonest values and how many rows have each, commonest first;
+    /// left out when there are too many different values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top: Vec<ValueCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ValueCount {
+    pub value: String,
+    pub count: u64,
 }
 
 /// Content of a [`EVENT_RUN_FINISHED`] event.
