@@ -14,8 +14,8 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, HistoryPage, KernelspecInfo, Outcome, PingReply,
-    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, Subscribed, SystemStats,
-    TerminalEvent, TerminalInfo, TerminalSubscribed,
+    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, SessionRuns, Subscribed,
+    SystemStats, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -181,6 +181,7 @@ impl Client {
             code: code.into(),
             cell,
             quiet: false,
+            by: None,
         })
         .await
     }
@@ -193,6 +194,7 @@ impl Client {
             code: code.into(),
             cell: None,
             quiet: true,
+            by: None,
         })
         .await
     }
@@ -290,6 +292,30 @@ impl Client {
 
     pub async fn file_outputs(&self, file: &str) -> Result<FileOutputs> {
         self.call(Call::FileOutputs { file: file.into() }).await
+    }
+
+    pub async fn session_runs(&self, session: &str, limit: Option<u32>) -> Result<SessionRuns> {
+        self.call(Call::SessionRuns {
+            session: session.into(),
+            limit,
+        })
+        .await
+    }
+
+    pub async fn list_variables(&self, session: &str, path: &[String]) -> Result<Variables> {
+        self.call(Call::ListVariables {
+            session: session.into(),
+            path: path.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn delete_variables(&self, session: &str, names: &[String]) -> Result<()> {
+        self.call(Call::DeleteVariables {
+            session: session.into(),
+            names: names.to_vec(),
+        })
+        .await
     }
 
     pub async fn open_project(&self, path: &str) -> Result<ProjectInfo> {

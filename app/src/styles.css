@@ -475,19 +475,53 @@ pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; wor
 /* The Console pane: a script's runs, each its code and its output */
 .console { flex: 1; min-height: 0; display: flex; flex-direction: column; font-size: var(--fs-code); }
 .console-hint { margin: 0; padding: 10px 14px; color: var(--muted); font-family: var(--font-ui); }
-.console-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 12px 10px 14px; }
+.console-hint p { margin: 0 0 8px; }
+.console-hint .bar-button { border: 1px solid var(--line); margin-right: 6px; color: var(--text); }
+.console-hint .bar-button .lang { width: 14px; height: 14px; }
+/* One session's Console: what ran in it, then the prompt. */
+.session-console { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* Room on the right of each entry for its status ("[3] Done in 0.2s · just now"). */
+.console-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 12px 10px 14px; --status-room: clamp(96px, 28%, 200px); }
+.console-head { padding: 2px 0 4px; color: var(--faint); font-family: var(--font-ui); font-size: var(--fs-small); }
 .console-entry { position: relative; padding: 4px 0; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
-.console-entry:first-child { border-top: none; }
-.console-code { font-family: var(--font-mono); line-height: 1.3; padding: 0 200px 2px 14px; position: relative; white-space: pre-wrap; overflow-wrap: anywhere; }
-.console-code::before { content: ">"; position: absolute; left: 1px; top: 0; color: var(--accent); font-weight: 600; }
+.console-head + .console-entry { border-top: none; }
+.console-code { font-family: var(--font-mono); line-height: 1.3; padding: 0 var(--status-room) 2px 14px; position: relative; white-space: pre-wrap; overflow-wrap: anywhere; }
+.console-code::before { content: attr(data-prompt); position: absolute; left: 1px; top: 0; color: var(--accent); font-weight: 600; }
+.console-code[data-prompt=">>>"] { padding-left: 30px; }
 .console-more { color: var(--faint); font-family: var(--font-ui); font-size: var(--fs-chrome); }
+/* Where a run came from when not the prompt: an agent, or a document. */
+.console-from { display: flex; align-items: center; gap: 4px; padding: 0 var(--status-room) 2px 14px; color: var(--faint); font-family: var(--font-ui); font-size: var(--fs-small); }
+.console-by { padding: 0 5px; border-radius: var(--r); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.console-file { padding: 0 2px; border-radius: var(--r); color: var(--muted); }
+.console-file:hover { background: var(--hover); color: var(--text); text-decoration: underline; }
+.console-entry.from-cell .console-code { color: var(--muted); }
+/* A notebook cell's output stays under the cell. */
+.console-entry.from-cell .output-area { display: none; }
+.console-entry.from-cell .cell-caret { display: none; }
+.console-entry.from-cell .cell-status { pointer-events: none; }
+.console-prompt { position: relative; padding: 4px 0 0 14px; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.console-head + .console-prompt { border-top: none; }
+.console-prompt::before { content: attr(data-prompt); position: absolute; left: 1px; top: 4px; color: var(--accent); font: 600 var(--fs-code)/1.3 var(--font-mono); }
+.console-prompt[data-prompt=">>>"] { padding-left: 30px; }
+.console-prompt .cm-editor { background: transparent; }
+.console-prompt .cm-editor.cm-focused { outline: none; }
+.console-prompt .cm-content { padding: 0; font-family: var(--font-mono); line-height: 1.3; }
+.console-prompt .cm-line { padding: 0; }
+.console-prompt .cm-activeLine { background: transparent; }
+.session-console.ended .console-prompt { display: none; }
 .console .cell-output { border-left: none; padding: 0 0 0 14px; margin: 0; }
 .console .cell-output:not(.has-outputs) .output-area { display: none; }
-.console .cell-status { position: absolute; top: 4px; right: 0; max-width: 200px; min-height: 0; padding: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.console .cell-status { position: absolute; top: 4px; right: 0; max-width: var(--status-room); min-height: 0; padding: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .console .cell-output:not(.collapsed) .cell-status { margin-bottom: 0; }
 .console .cell-output[data-phase="running"] .cell-status, .console .cell-output[data-phase="queued"] .cell-status { color: var(--busy); }
 .console .cell-output[data-status="error"] .cell-status { color: var(--err); }
 .console .out-image { max-height: 360px; width: auto; max-width: 100%; }
+/* The Console's sessions in its tab strip; the one in front is pressed. */
+.console-sessions { display: inline-flex; gap: 3px; flex: none; }
+.console-sessions .pill { height: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.console-sessions .pill:hover { color: var(--text); }
+.console-sessions .pill[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.console-sessions .pill[data-state="running"] > .lang { animation: connpulse 0.8s ease-in-out infinite alternate; }
 
 /* Notebooks */
 .notebook { max-width: 1100px; padding: 10px 24px 40vh 6px; }
@@ -905,3 +939,53 @@ pre.diff { padding: 6px 0; }
   .eff-v.blurin, .eff-knob.flash svg { animation: none; }
 }
 .ap-ck { margin-left: auto; color: var(--accent); display: inline-flex; }
+
+/* The right pane (step 5): Variables now; Plots, Data, Help, Packages and Git later. */
+.right-pane { flex: none; min-width: 0; }
+.right-pane.min { align-self: flex-start; }
+.tab-btn { width: 22px; height: 22px; display: grid; place-items: center; flex: none; border-radius: var(--r); color: var(--faint); }
+.tab-btn:hover { color: var(--text); background: var(--ink-8); }
+.tab-btn .ico { width: 13px; height: 13px; }
+
+/* Variables: a toolbar, then the session's variables in groups. */
+.vars { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.vtool { height: 30px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
+.vtool.vsel { background: var(--accent-soft); padding-left: 8px; }
+.vfilter { flex: 1; min-width: 40px; height: 22px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); color: var(--text); font: inherit; }
+.vfilter:focus { outline: none; border-color: var(--accent); }
+.vmem { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; padding: 0 2px; }
+.vcount { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vbtn { height: 22px; padding: 0 8px; flex: none; display: inline-flex; align-items: center; gap: 4px; border-radius: var(--r); white-space: nowrap; }
+.vbtn:hover { background: var(--hover); }
+.vbtn .ico { width: 12px; height: 12px; }
+.vbtn.danger { background: var(--err); color: #fff; }
+.vbtn.danger:hover { background: var(--err); filter: brightness(1.08); }
+.vbtn:disabled { opacity: 0.5; filter: none; }
+.vfreed { flex: none; display: flex; align-items: center; gap: 5px; padding: 4px 8px; border-bottom: 1px solid var(--line); color: var(--ok); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vfreed .ico { width: 12px; height: 12px; flex: none; }
+.vlist { flex: 1; min-height: 0; overflow: auto; padding-bottom: 6px; }
+.vh { padding: 6px 10px 2px; color: var(--muted); font-weight: 600; }
+.var { display: grid; grid-template-columns: 14px 14px minmax(0, 84px) minmax(0, 1fr) auto; gap: 5px; align-items: center; min-height: 22px; padding: 1px 8px 1px 6px; }
+.var:hover { background: var(--hover); }
+.var.opens { cursor: pointer; }
+.var.picked { background: var(--accent-soft); }
+.vck { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); opacity: 0.45; }
+.var:hover .vck, .vck:checked { opacity: 1; }
+.var .tw { display: grid; place-items: center; color: var(--faint); }
+.var .tw .ico { width: 12px; height: 12px; }
+.var .nm { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.var .sm { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.var .sm em { font-style: normal; color: var(--faint); }
+.var .sz { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.var.child .nm { color: var(--muted); }
+.var-note { padding: 2px 8px; color: var(--faint); }
+.var-note.err { color: var(--err); white-space: pre-wrap; }
+.vbusy { padding: 4px 10px; color: var(--busy); }
+.vempty { margin: 0; padding: 10px; color: var(--faint); }
+
+/* Under the modes: where the agent's code goes. */
+.dest-h { margin: 6px 6px 2px; }
+.seg2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; margin: 0 4px 4px; background: var(--ink-6); border-radius: var(--r); }
+.seg2 button { height: 20px; border-radius: var(--r); color: var(--muted); }
+.seg2 button:hover { color: var(--text); }
+.seg2 button[aria-pressed="true"] { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }

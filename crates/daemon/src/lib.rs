@@ -24,6 +24,7 @@ pub mod session;
 pub mod sidecar;
 pub mod system;
 pub mod terminal;
+pub mod variables;
 pub mod version;
 pub mod windows;
 

@@ -187,7 +187,17 @@ export function liveOptions(terminal: TerminalInfo): AgentOptions {
     model: terminal.agent?.status?.model_id ?? options.model,
     effort: effortLevel(terminal),
     permission: currentMode(terminal).permission,
+    code: codeTo(terminal) === "console" ? "console" : undefined,
   };
+}
+
+export type CodeTo = "file" | "console";
+
+/** Where an agent's code goes: the linked file, or the Console, as last switched. */
+export function codeTo(terminal: TerminalInfo): CodeTo {
+  const reported = terminal.agent?.code;
+  const code = reported !== undefined ? reported : terminal.options?.code;
+  return code === "console" ? "console" : "file";
 }
 
 /** "Opus 5.5" once the agent says, else what the session was started with. */

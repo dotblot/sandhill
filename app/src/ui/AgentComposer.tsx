@@ -5,12 +5,16 @@
 
 import { createSignal, For, type JSX, onCleanup, Show } from "solid-js";
 import type { AgentStatus } from "../backend/types";
-import { type AgentKind, effortName, type Mode, MODES, type ModelChoice, tokens } from "../model/agents";
+import { type AgentKind, type CodeTo, effortName, type Mode, MODES, type ModelChoice, tokens } from "../model/agents";
 import { EffortControl } from "./EffortControl";
 import { FileIcon, Icon, ProviderIcon } from "./icons";
 
 const BOX_MIN = 38;
 const BOX_MAX = 420;
+const CODE_TO: [CodeTo, string, string][] = [
+  ["file", "In the file", "The agent adds its code to the linked file, below your active cell, and runs it there"],
+  ["console", "In the Console", "The agent runs its code in the Console, and the linked file stays as it is"],
+];
 
 export interface ComposerProps {
   kind: AgentKind;
@@ -39,6 +43,9 @@ export interface ComposerProps {
   onModel: (choice: ModelChoice) => void;
   onEffort: (level: string) => void;
   onMode: (mode: Mode) => void;
+  /** Where the agent's code goes, switched under the modes. */
+  codeTo?: CodeTo;
+  onCodeTo?: (to: CodeTo) => void;
   onOpenFile?: () => void;
   onCompact?: () => void;
   ref?: (el: HTMLTextAreaElement) => void;
@@ -197,6 +204,24 @@ export function AgentComposer(props: ComposerProps) {
               );
             }}
           </For>
+          <Show when={props.onCodeTo}>
+            <div class="ap-h dest-h">Agent code goes</div>
+            <div class="seg2" role="group" aria-label="Agent code goes">
+              <For each={CODE_TO}>
+                {([to, label, detail]) => (
+                  <button
+                    aria-pressed={(props.codeTo ?? "file") === to}
+                    title={detail}
+                    onClick={() => {
+                      if ((props.codeTo ?? "file") !== to) props.onCodeTo?.(to);
+                    }}
+                  >
+                    {label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
       </Show>
       <Show when={popover() === "model"}>

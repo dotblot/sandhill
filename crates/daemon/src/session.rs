@@ -20,7 +20,7 @@ use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::journal::{Journal, SessionRecord, now_ms};
+use crate::journal::{Journal, NewRun, SessionRecord, now_ms};
 use crate::kernel::{self, KernelConnection, KernelMsg};
 
 /// IOPub message types that are outputs and get journaled.
@@ -43,6 +43,7 @@ enum Command {
         code: String,
         cell: Option<CellRef>,
         quiet: bool,
+        by: Option<String>,
         reply: oneshot::Sender<Result<RunStarted>>,
     },
     Interrupt {
@@ -243,18 +244,21 @@ impl SessionHandle {
 
     /// Queues code. A `quiet` run stays out of the kernel's history and
     /// execution count, and an error in it doesn't cancel the runs queued
-    /// after it: it is a tool looking around, not the user's code.
+    /// after it: it is a tool looking around, not the user's code. `by`
+    /// names the agent that ran the code, if one did.
     pub async fn execute(
         &self,
         code: String,
         cell: Option<CellRef>,
         quiet: bool,
+        by: Option<String>,
     ) -> Result<RunStarted> {
         let (reply, rx) = oneshot::channel();
         self.send(Command::Execute {
             code,
             cell,
             quiet,
+            by,
             reply,
         })
         .await?;
@@ -351,9 +355,10 @@ impl Actor {
                 code,
                 cell,
                 quiet,
+                by,
                 reply,
             } => {
-                let _ = reply.send(self.execute(code, cell, quiet).await);
+                let _ = reply.send(self.execute(code, cell, quiet, by).await);
             }
             Command::Interrupt { reply } => {
                 let _ = reply.send(self.interrupt().await);
@@ -367,6 +372,7 @@ impl Actor {
         code: String,
         cell: Option<CellRef>,
         quiet: bool,
+        by: Option<String>,
     ) -> Result<RunStarted> {
         let request = ExecuteRequest {
             code: code.clone(),
@@ -379,8 +385,13 @@ impl Actor {
         let msg = JupyterMessage::new(request, None);
         let msg_id = msg.header.msg_id.clone();
         let run_id = uuid::Uuid::new_v4().simple().to_string();
+        let run = NewRun {
+            cell: cell.as_ref(),
+            quiet,
+            by: by.as_deref(),
+        };
         self.journal
-            .insert_run(&run_id, &self.record.id, &msg_id, &code, cell.as_ref())?;
+            .insert_run(&run_id, &self.record.id, &msg_id, &code, run)?;
         self.runs.insert(
             msg_id.clone(),
             RunState {
@@ -390,11 +401,14 @@ impl Actor {
                 recovered: false,
             },
         );
-        self.publish(
-            Some(&run_id),
-            EVENT_RUN_STARTED,
-            json!({ "code": code, "cell": cell }),
-        );
+        let mut started = json!({ "code": code, "cell": cell });
+        if quiet {
+            started["quiet"] = json!(true);
+        }
+        if let Some(by) = by {
+            started["by"] = json!(by);
+        }
+        self.publish(Some(&run_id), EVENT_RUN_STARTED, started);
         self.conn.shell.send(msg).await?;
         Ok(RunStarted {
             run: run_id,

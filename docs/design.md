@@ -134,9 +134,9 @@ version; their drop-down holds the kernel, environment, machine, the files
 using the session, its memory and the session switch, so session IDs appear
 only there. The Agents pane came with step 4 (section 5); its effort control
 is a track with a brain for a knob that turns into a star field at the top
-level, and plan usage shows as rings. The right pane (Variables, Help,
-Packages, Git, Plots) comes with step 5; until then its toolbar button shows
-but does nothing.
+level, and plan usage shows as rings. The right pane (⌥⌘B) came with step 5
+(section 5b), one pane per build: Variables first, then Plots, the Data
+Explorer, Help and Packages, and Git.
 
 ---
 
@@ -251,7 +251,7 @@ With an API key, the subscription restrictions above no longer apply, which open
   - *Approvals.* Codex's requests (a command, an edit, an MCP tool call, more access, a question) are cards; each names its step. The buttons are the ones Codex offers: once, for this chat (`acceptForSession`), or for this project (a command prefix rule Codex saves).
   - *Writing.* The app sends what the user does as commands (`tell_terminal`): a message (queued while a turn runs), stop, compact, and the model, effort and mode, which apply from the next turn. Modes map onto app-server's settings per turn: Normal asks before leaving a read-only sandbox, Auto writes in the project and lets Codex's reviewer decide, YOLO has no sandbox and never asks, Plan uses Codex's plan mode and then asks to carry the plan out (yes switches to Normal). The model menu lists the models Codex offers, with each one's effort levels.
   - *Signing in.* When Codex needs a ChatGPT login and has none, the chat offers app-server's sign-in: in the browser (on this Mac), or with a code on any device (on a server).
-- **Next:** omp over ACP as a chat view for open models, the context breakdown, and showing the agents' `run_code` runs in the Console.
+- **Next:** omp over ACP as a chat view for open models, and the context breakdown.
 
 ---
 
@@ -275,6 +275,12 @@ Positron is the target experience. The plan is to keep its features and drop its
 | **Run App** (Shiny, Streamlit, Dash…) | later | A job plus the Viewer pane. |
 | **Data Connections pane** (databases, warehouses) | skip | Rarely needed for bioinformatics. |
 | VS Code extension marketplace | **skip** | This is where most of Positron's memory goes. Build in what you need instead. |
+
+**Built: the shared Console and Variables (step 5, part 1, 2026-10-18).**
+- *One Console per session, not per file.* As in RStudio and Positron, the Console shows a session, whatever ran the code: its prompt, a script's ⌘↵, an agent (marked with its name), or a notebook or Quarto cell (echoed in two lines, with the output left under the cell). Pills in the Console's tab strip switch sessions; the session in front follows the document in front and the script whose line just ran. Every run is already journaled, so the Console is the session's journal (`session_runs`), not something the app keeps; Clear hides what came before on this Mac only.
+- *The prompt* is a small CodeMirror editor: Enter runs the code once it is complete (brackets and strings closed, no trailing operator in R, no open block in Python), otherwise it starts a new line; ⇧Enter always does; ↑/↓ walk the session's history, Ctrl-C interrupts and Ctrl-L clears.
+- *Variables* uses neither Ark's comm nor the debug protocol for now: the daemon runs a quiet, history-free snippet in the session (`list_variables`), which works the same for Ark, IRkernel and ipykernel. It knows data frames, factors, lists and dicts, Seurat and SummarizedExperiment objects, and AnnData (`X`, `obs`, `var`, `obsm`, `layers`, `uns`, `raw`) with the columns of `obs` and `var` a click away. The list is read again after each run in the session, never while it is busy. Ticked variables can be deleted (`delete_variables`), which also runs `gc()` / `gc.collect()` and, in Python, drops IPython's references to old outputs, so the memory really comes back; the pane says how much. The agents' `list_variables` tool reads the same list.
+- *Agent code in the Console.* Under the modes, "Agent code goes: In the file / In the Console" decides what the agent's `add_cell` does: add a cell to the linked file (the default), or run the code in the document's session, where it shows in the Console as the agent's. The choice can change while the agent runs.
 
 ### What code can be reused
 - **Ark** (R kernel, LSP and the variables, data-explorer, plots and help comms) and **Air** (R formatter) are **MIT**. Use them freely. Ark alone gives the R side of most of the MVP panes.
@@ -311,7 +317,7 @@ my-analysis/
 6. **Agents.** Claude Code and Codex start in the project root, so they read the project's own `CLAUDE.md`/`AGENTS.md` and reach the project's kernels through the MCP tools.
 7. **Output cache.** Inside a project, the §4 sidecar cache lives in `.sandhill/outputs/` instead of a `.file.qmd.out/` folder per document. Files opened outside any project keep the per-file sidecar.
 8. **Sessions shared between files (built 2026-10-11).** Files whose code runs in the same folder share one R and one Python session, as RStudio's scripts share one console: the first time a file runs code it joins the project's session for that language and folder, the one last used in the window, and only starts a kernel when there is none. A notebook that names its kernel joins only sessions of that kernel. "New …" in the kernel bar still gives one file a session of its own, and restarting a session moves every file using it to the new one. Sessions keep running when files and the app close (that is the point of the daemon), so the sidebar lists them with a stop button each, marks the ones no open file uses, and offers "Stop unused", which leaves alone sessions still running code (the daemon reports unfinished runs per session).
-9. **Scripts (built 2026-10-11).** `.R` and `.py` files open in an editor with a console under it. ⌘↵ runs the selection, or the statement at the cursor (a call over several lines, a pipe chain, a function or a Python block) and moves to the next; ⇧⌘↵ runs the whole file. Each run is journaled under the file, so the console's last 100 runs come back on reopen.
+9. **Scripts (built 2026-10-11).** `.R` and `.py` files open in an editor with a console under it. ⌘↵ runs the selection, or the statement at the cursor (a call over several lines, a pipe chain, a function or a Python block) and moves to the next; ⇧⌘↵ runs the whole file. Each run is journaled under the file and shows in the Console of its session, which since step 5 is shared by everything that runs code there (section 5b).
 
 **Left out on purpose.**
 - Saving the R workspace (`.RData`) on close. RStudio does it by default and most guides say to turn it off; our kernels keep running on the server anyway.

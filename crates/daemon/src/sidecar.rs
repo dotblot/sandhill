@@ -241,7 +241,16 @@ mod tests {
         };
         let msg_id = format!("m-{run_id}");
         s.journal
-            .insert_run(run_id, "s", &msg_id, code, Some(&cell))
+            .insert_run(
+                run_id,
+                "s",
+                &msg_id,
+                code,
+                crate::journal::NewRun {
+                    cell: Some(&cell),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         s.journal
             .append(

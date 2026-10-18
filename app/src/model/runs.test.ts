@@ -41,6 +41,8 @@ describe("RunStore", () => {
     store.apply(early);
     store.apply(late);
     expect(store.get("r3")!.outputs).toEqual([]);
+    // Until then nothing says it still runs, as for a quiet run no snapshot lists.
+    expect(store.pending("s1")).toEqual([]);
     // The snapshot already covers `early`.
     store.applySnapshot(
       {

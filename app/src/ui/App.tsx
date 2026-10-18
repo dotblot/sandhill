@@ -8,6 +8,7 @@ import {
   onCleanup,
   onMount,
   Show,
+  untrack,
 } from "solid-js";
 import { LOCAL_HOST, type Shell } from "../backend";
 import {
@@ -17,7 +18,9 @@ import {
   type FileText,
   type ProjectInfo,
   type ProjectState,
+  type SessionInfo,
 } from "../backend/types";
+import { isScript, SessionConsole } from "../console/sessionConsole";
 import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
@@ -27,24 +30,29 @@ import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
 import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
-import { pickKernel, type Workspace } from "../model/workspace";
+import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
 import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane } from "./AgentsPane";
 import { ConnectionItem, connState, HostKernelStates } from "./Connection";
 import { ask, Dialogs, notify } from "./dialogs";
 import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
-import { KernelBar, kernelState } from "./KernelBar";
+import { KernelBar } from "./KernelBar";
 import { hostName, LeftPane, type NewFile } from "./LeftPane";
 import { takeLegacyState } from "./legacy";
 import { type Command, Palette } from "./Palette";
 import { type Pane, PaneButtons } from "./PaneButtons";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
+import { VariablesPane } from "./VariablesPane";
 
 const SAVE_STATE_MS = 300;
 const LEFT_KEY = "sandhill.sidebar";
 const LEFT_WIDTH_KEY = "sandhill.leftWidth";
 const CONSOLE_KEY = "sandhill.console";
 const CONSOLE_HEIGHT_KEY = "sandhill.consoleHeight";
+const RIGHT_KEY = "sandhill.right";
+const RIGHT_WIDTH_KEY = "sandhill.rightWidth";
+const RIGHT_WIDTH = 320;
+const RIGHT_MIN = 240;
 const AGENTS_KEY = "sandhill.agents";
 const AGENTS_WIDTH_KEY = "sandhill.agentsWidth";
 const AGENTS_WIDTH = 400;
@@ -97,6 +105,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [consoleHeight, setConsoleHeight] = createSignal(Number(stored(CONSOLE_HEIGHT_KEY)) || 0);
   const [minimized, setMinimized] = createSignal<Pane[]>([]);
   const [maximized, setMaximized] = createSignal<Pane>();
+  const [rightOn, setRightOn] = createSignal(stored(RIGHT_KEY) === "shown");
+  const [rightWidth, setRightWidth] = createSignal(clampRight(Number(stored(RIGHT_WIDTH_KEY)) || RIGHT_WIDTH));
+  /** Bumped by the Variables pane's refresh button. */
+  const [variablesKey, setVariablesKey] = createSignal(0);
   const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) === "shown");
   const [agentsWidth, setAgentsWidth] = createSignal(clampAgents(Number(stored(AGENTS_WIDTH_KEY)) || AGENTS_WIDTH));
   /** The agent session in front in the Agents pane. */
@@ -112,6 +124,11 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     setConsoleOn(!consoleOn());
     store(CONSOLE_KEY, consoleOn() ? "shown" : "hidden");
     if (!consoleOn() && maximized() === "console") setMaximized(undefined);
+  };
+  const toggleRight = () => {
+    setRightOn(!rightOn());
+    store(RIGHT_KEY, rightOn() ? "shown" : "hidden");
+    if (!rightOn() && maximized() === "right") setMaximized(undefined);
   };
   const toggleAgents = () => {
     setAgentsOn(!agentsOn());
@@ -221,30 +238,110 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     queueMicrotask(() => doc.focus());
   });
 
-  // The Console shows the active script's runs, or the last script's while
-  // another kind of document is in front.
-  const [lastScript, setLastScript] = createSignal<ScriptDoc>();
+  // The Console shows one session at a time, the one in front, which the
+  // Variables pane shows too. It follows the document in front, and the
+  // script whose line just ran.
+  const consoleSessions = () =>
+    ws
+      .liveSessions()
+      .filter((s) => s.project === props.project)
+      .sort((a, b) => a.created_ms - b.created_ms);
+  const [foreground, setForeground] = createSignal<string>();
+  const foregroundInfo = () => consoleSessions().find((s) => s.id === foreground());
+  const consoles = new Map<string, SessionConsole>();
+  const consoleFor = (id: string): SessionConsole | undefined => {
+    let found = consoles.get(id);
+    const info = ws.sessions().find((s) => s.id === id);
+    if (!found && info) {
+      found = new SessionConsole(ws, id, normalizeLanguage(info.language), {
+        openFile: (path) => void open(path),
+        shortName: relative,
+        onError: (text) => notify(text),
+      });
+      consoles.set(id, found);
+    }
+    return found;
+  };
+  const docSession = (doc: Doc | undefined): string | undefined => {
+    for (const language of doc?.languages() ?? []) {
+      const id = doc!.kernels.session(language);
+      if (id) return id;
+    }
+    return undefined;
+  };
   createEffect(() => {
-    const doc = active();
-    if (doc instanceof ScriptDoc) setLastScript(doc);
+    const id = docSession(active());
+    if (id) setForeground(id);
   });
-  const consoleDoc = (): ScriptDoc | undefined => {
-    const doc = active();
-    if (doc instanceof ScriptDoc) return doc;
-    const last = lastScript();
-    return last && docs().includes(last) ? last : undefined;
+  // Something live stays in front.
+  createEffect(() => {
+    const live = consoleSessions();
+    const id = foreground();
+    if (id && live.some((s) => s.id === id)) return;
+    setForeground(docSession(untrack(active)) ?? live[live.length - 1]?.id);
+  });
+  // The Consoles of sessions that ended go.
+  createEffect(() => {
+    const live = new Set(consoleSessions().map((s) => s.id));
+    for (const [id, gone] of consoles) {
+      if (live.has(id)) continue;
+      gone.dispose();
+      consoles.delete(id);
+    }
+  });
+  // A script's line shows in the Console of its session.
+  const seenRuns = new Set<string>();
+  onCleanup(
+    ws.runs.watchAll((run) => {
+      if (seenRuns.has(run.id)) return;
+      seenRuns.add(run.id);
+      const file = run.cell?.file;
+      if (run.phase === "done" || !file || !isScript(file) || !docs().some((d) => d.path === file)) return;
+      setForeground(run.session);
+      setConsoleTab("console");
+    }),
+  );
+  onCleanup(() => {
+    for (const shown of consoles.values()) shown.dispose();
+  });
+  /** Starts R or Python for the Console, in the project's folder. */
+  const startConsole = async (language: string) => {
+    const spec = pickKernel(ws.kernelspecs(), language) ?? pickKernel(await ws.refreshKernelspecs(), language);
+    if (!spec) return notify(`No ${languageLabel(language)} kernel was found where sandhilld runs.`);
+    const info = await ws.startShared(spec.name, props.project);
+    setForeground(info.id);
   };
   const [consoleBody, setConsoleBody] = createSignal<HTMLElement>();
   const consoleHint = (
-    <p class="console-hint">Run a line of an R or Python script with ⌘↵ and it shows here.</p>
+    <div class="console-hint">
+      <p>No R or Python session yet. Run a line of a script with ⌘↵, or start one here:</p>
+      <p>
+        <button class="bar-button" onClick={() => void startConsole("r").catch((e) => notify(message(e)))}>
+          <LangIcon language="r" />R
+        </button>
+        <button class="bar-button" onClick={() => void startConsole("python").catch((e) => notify(message(e)))}>
+          <LangIcon language="python" />
+          Python
+        </button>
+      </p>
+    </div>
   ) as HTMLElement;
   createEffect(() => {
     const body = consoleBody();
     if (!body) return;
-    const doc = consoleDoc();
-    body.replaceChildren(doc ? doc.consoleElement : consoleHint);
-    doc?.consoleShown();
+    const id = foreground();
+    const shown = id ? untrack(() => consoleFor(id)) : undefined;
+    body.replaceChildren(shown ? shown.element : consoleHint);
+    shown?.shown();
   });
+  const foregroundConsole = () => {
+    const id = foreground();
+    return id ? consoles.get(id) : undefined;
+  };
+  /** A path as shown: inside the project, from its folder. */
+  function relative(path: string): string {
+    return path.startsWith(`${props.project}/`) ? path.slice(props.project.length + 1) : path;
+  }
 
   async function open(path: string, quiet = false): Promise<Doc | undefined> {
     if (!quiet && !restored()) openedWhileRestoring = true;
@@ -461,6 +558,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       { label: left() ? "Hide left pane" : "Show left pane", keys: "⌘B", run: toggleLeft },
       { label: consoleOn() ? "Hide console" : "Show console", keys: "⌘J", run: toggleConsole },
       { label: agentsOn() ? "Hide agents" : "Show agents", keys: "⌘I", run: toggleAgents },
+      { label: rightOn() ? "Hide right pane" : "Show right pane", keys: "⌥⌘B", run: toggleRight },
       {
         label: "Open terminal",
         run: () => {
@@ -481,6 +579,11 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === "Escape" && menu()) setMenu(false);
+      if (mod && e.altKey && !e.shiftKey && e.code === "KeyB") {
+        e.preventDefault();
+        toggleRight();
+        return;
+      }
       if (mod && !e.altKey && !e.shiftKey) {
         const key = e.key.toLowerCase();
         const action =
@@ -530,6 +633,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   };
   let column!: HTMLElement;
   let consolePane: HTMLDivElement | undefined;
+  /** Dragging the gap beside the right pane sets its width. */
+  const resizeRight = (down: PointerEvent) => {
+    const start = rightWidth();
+    drag(down, "col-resize", (e) => setRightWidth(clampRight(start - (e.clientX - down.clientX))), () =>
+      store(RIGHT_WIDTH_KEY, String(rightWidth())),
+    );
+  };
   /** Dragging the gap above the Console sets its height. */
   const resizeConsole = (down: PointerEvent) => {
     if (!consolePane) return;
@@ -557,6 +667,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         agents={agentsOn()}
         waiting={terminals.waiting().length > 0}
         onAgents={toggleAgents}
+        right={rightOn()}
+        onRight={toggleRight}
         onSearch={() => setPalette(true)}
         onMenu={() => setMenu(!menu())}
       />
@@ -689,13 +801,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                   role="tab"
                   aria-selected={consoleTab() === "console"}
                   classList={{ active: consoleTab() === "console" }}
-                  title={consoleDoc()?.path}
+                  title="The R and Python sessions of this project: what runs in them, and a prompt"
                   onClick={() => setConsoleTab("console")}
                 >
                   <span class="tab-name">Console</span>
-                  <Show when={consoleDoc() && consoleDoc() !== active()}>
-                    <span class="tab-detail">{consoleDoc()!.name}</span>
-                  </Show>
                 </div>
                 <div
                   class="tab"
@@ -708,15 +817,15 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                   <span class="tab-name">Terminal</span>
                 </div>
                 <span class="spacer" />
-                <Show when={consoleTab() === "console" && consoleDoc()}>
-                  {(doc) => <ConsoleSession ws={ws} doc={doc()} />}
-                </Show>
-                <Show when={consoleTab() === "console" && consoleDoc()}>
-                  {(doc) => (
-                    <button class="bar-button console-clear" title="Clear the console" onClick={() => doc().clearConsole()}>
-                      Clear
-                    </button>
-                  )}
+                <Show when={consoleTab() === "console"}>
+                  <ConsoleSessions
+                    ws={ws}
+                    sessions={consoleSessions()}
+                    foreground={foreground()}
+                    usedBy={usedBy}
+                    onPick={setForeground}
+                    onClear={() => foregroundConsole()?.clear()}
+                  />
                 </Show>
                 <PaneButtons pane="console" min={isMin("console")} max={maximized() === "console"} onMin={toggleMin} onMax={toggleMax} />
               </div>
@@ -730,6 +839,35 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
             </div>
           </Show>
         </section>
+        <Show when={rightOn()}>
+          <div class="split v" title="Drag to resize" onPointerDown={resizeRight} />
+          <aside
+            class="pane right-pane"
+            classList={{ min: isMin("right"), max: maximized() === "right" }}
+            style={{ width: `${rightWidth()}px` }}
+            aria-label="Right pane"
+          >
+            <div class="tabs" role="tablist" data-tauri-drag-region="deep">
+              <div class="tab active" role="tab" aria-selected="true">
+                <span class="tab-name">Variables</span>
+              </div>
+              <span class="spacer" />
+              <button class="tab-btn" title="Read the variables again" onClick={() => setVariablesKey((k) => k + 1)}>
+                <Icon name="refresh" small />
+              </button>
+              <PaneButtons pane="right" min={isMin("right")} max={maximized() === "right"} onMin={toggleMin} onMax={toggleMax} />
+            </div>
+            <VariablesPane
+              ws={ws}
+              session={foregroundInfo()}
+              sessions={consoleSessions()}
+              usedBy={usedBy}
+              onSession={setForeground}
+              shown={!isMin("right")}
+              refreshKey={variablesKey()}
+            />
+          </aside>
+        </Show>
       </div>
       <footer class="status-bar" data-link={statusHost().link().status}>
         <ConnectionItem ws={statusHost()} />
@@ -775,9 +913,11 @@ function Toolbar(props: {
   left: boolean;
   agents: boolean;
   waiting: boolean;
+  right: boolean;
   menu: boolean;
   onLeft: () => void;
   onAgents: () => void;
+  onRight: () => void;
   onSearch: () => void;
   onMenu: () => void;
 }) {
@@ -791,7 +931,7 @@ function Toolbar(props: {
         onClick={props.onAgents}
         dot={props.waiting}
       />
-      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages, Git and Plots come in a later build" />
+      <ToolButton icon="rightPane" title="Right pane: Variables (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
       <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
       <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
     </div>
@@ -878,27 +1018,57 @@ function MainMenu(props: {
 }
 
 /**
- * The session a script's console runs in, in the Console's tab strip: its
- * language icon and version, like the kernel pickers.
+ * The Console's sessions in its tab strip, one pill each: the one in front
+ * is pressed. Then stopping what runs in it, and clearing its Console.
  */
-function ConsoleSession(props: { ws: Workspace; doc: ScriptDoc }) {
-  const id = () => props.doc.kernels.session(props.doc.language);
-  const info = () => props.ws.sessions().find((s) => s.id === id());
-  const state = () => kernelState(props.ws, props.doc, props.doc.language);
-  const version = () => (info() ? languageVersion(info()!) : "");
+function ConsoleSessions(props: {
+  ws: Workspace;
+  sessions: SessionInfo[];
+  foreground?: string;
+  usedBy: (session: string) => string[];
+  onPick: (session: string) => void;
+  onClear: () => void;
+}) {
+  const busy = () => !!props.foreground && props.ws.isBusy(props.foreground);
+  const tip = (s: SessionInfo) => {
+    const users = props.usedBy(s.id);
+    const state = s.status === "starting" ? "starting" : props.ws.isBusy(s.id) ? "running" : "idle";
+    return [`${sessionLabel(s)} · ${state}`, s.cwd, users.length ? `Used by ${users.join(", ")}` : ""].filter(Boolean).join("\n");
+  };
   return (
-    <span
-      class="pill"
-      data-state={state()}
-      title={
-        info()
-          ? `${sessionLabel(info()!)} · ${state()}`
-          : `${languageLabel(props.doc.language)} · starts when you run code`
-      }
-    >
-      <LangIcon language={props.doc.language} />
-      {version() || (state() === "starting" ? "starting…" : languageLabel(props.doc.language))}
-    </span>
+    <>
+      <span class="console-sessions">
+        <For each={props.sessions}>
+          {(s) => (
+            <button
+              class="pill"
+              aria-pressed={props.foreground === s.id}
+              data-state={props.ws.isBusy(s.id) ? "running" : "idle"}
+              title={tip(s)}
+              onClick={() => props.onPick(s.id)}
+            >
+              <LangIcon language={normalizeLanguage(s.language)} />
+              {languageVersion(s) || languageLabel(s.language)}
+            </button>
+          )}
+        </For>
+      </span>
+      <Show when={busy()}>
+        <button
+          class="bar-button"
+          title="Stop what is running (Ctrl-C in the Console)"
+          onClick={() => void props.ws.call("interrupt", { session: props.foreground }).catch((e) => notify(message(e)))}
+        >
+          <Icon name="stop" small />
+          Stop
+        </button>
+      </Show>
+      <Show when={props.foreground}>
+        <button class="bar-button console-clear" title="Clear the Console (Ctrl-L)" onClick={() => props.onClear()}>
+          Clear
+        </button>
+      </Show>
+    </>
   );
 }
 
@@ -1017,6 +1187,10 @@ function drag(down: PointerEvent, cursor: string, move: (e: PointerEvent) => voi
 
 function clampAgents(width: number): number {
   return Math.round(Math.max(AGENTS_MIN, Math.min(width, Math.max(AGENTS_MIN, window.innerWidth * 0.6))));
+}
+
+function clampRight(width: number): number {
+  return Math.round(Math.max(RIGHT_MIN, Math.min(width, Math.max(RIGHT_MIN, window.innerWidth * 0.5))));
 }
 
 function clampLeft(width: number): number {

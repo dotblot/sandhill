@@ -103,7 +103,8 @@ export class Workspace {
    */
   isBusy(session: string): boolean {
     this.activity();
-    if (this.runs.pending(session).length > 0) return true;
+    // Quiet runs (a variable listing) don't make it busy.
+    if (this.runs.pending(session).some((r) => !r.quiet)) return true;
     if (this.subscribed.has(session)) return false;
     return (this.sessions().find((s) => s.id === session)?.pending_runs ?? 0) > 0;
   }

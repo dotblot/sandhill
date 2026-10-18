@@ -1,6 +1,6 @@
 import { Icon } from "./icons";
 
-export type Pane = "editor" | "console" | "agents";
+export type Pane = "editor" | "console" | "agents" | "right";
 
 /** Minimize and maximize, at the right end of a pane's tab strip. */
 export function PaneButtons(props: {

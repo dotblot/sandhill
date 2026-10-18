@@ -8,6 +8,7 @@ import {
   EVENT_RUN_FINISHED,
   EVENT_RUN_STARTED,
   type Output,
+  type SessionRun,
 } from "../backend/types";
 import { OutputBuilder } from "./outputs";
 
@@ -17,6 +18,10 @@ export interface RunState {
   id: string;
   session: string;
   cell?: CellRef;
+  /** A tool looking around (listing variables), kept out of the Console. */
+  quiet?: boolean;
+  /** The agent that ran it, like "Claude". */
+  by?: string;
   code: string;
   phase: RunPhase;
   /** Kernel status once done: ok, error, aborted, or unknown. */
@@ -52,8 +57,14 @@ export class RunStore {
   }
 
   /** Runs of a session that haven't finished. */
+  /**
+   * The session's runs that haven't finished. Runs seen only from their
+   * later events (one started before the subscription, such as a quiet one
+   * no snapshot lists) don't count: nothing says they are still going.
+   */
   pending(session: string): RunState[] {
     return [...this.entries.values()]
+      .filter((e) => e.complete)
       .map((e) => e.state)
       .filter((r) => r.session === session && r.phase !== "done");
   }
@@ -81,6 +92,8 @@ export class RunStore {
         return;
       }
       entry = this.create(event.run, event.session, event.content?.code ?? "", event.content?.cell ?? undefined, event.ts_ms, [], true);
+      if (event.content?.quiet) entry.state.quiet = true;
+      if (event.content?.by) entry.state.by = event.content.by;
       entry.lastSeq = event.seq;
       this.notify(entry);
       return;
@@ -92,29 +105,33 @@ export class RunStore {
     if (event.seq <= entry.lastSeq) return;
     entry.lastSeq = event.seq;
     if (this.applyToState(entry, event)) this.notify(entry);
+    // Nothing shows a quiet run once it is done (the Variables pane lists after every run).
+    if (entry.state.quiet && entry.state.phase === "done") this.entries.delete(event.run);
   }
 
   /** Brings in a run as of journal position `seq`, from `file_outputs`. */
   applySnapshot(cell: CellOutputs, file: string, seq: number) {
-    const existing = this.entries.get(cell.run);
+    this.snapshot({ ...cell, cell: { file, cell_id: cell.cell_id } }, cell.session, seq);
+  }
+
+  /** Brings in a run as of journal position `seq`, from `session_runs`. */
+  applySessionRun(run: SessionRun, session: string, seq: number) {
+    this.snapshot(run, session, seq);
+  }
+
+  private snapshot(run: SessionRun, session: string, seq: number) {
+    const existing = this.entries.get(run.run);
     if (existing?.complete) return;
-    const entry = this.create(
-      cell.run,
-      cell.session,
-      cell.code,
-      { file, cell_id: cell.cell_id },
-      cell.started_ms,
-      cell.outputs,
-      true,
-    );
+    const entry = this.create(run.run, session, run.code, run.cell, run.started_ms, run.outputs, true);
     const s = entry.state;
-    if (cell.finished_ms !== undefined) {
+    if (run.by) s.by = run.by;
+    if (run.finished_ms !== undefined) {
       s.phase = "done";
-      s.status = cell.status;
-      s.finishedMs = cell.finished_ms;
-      s.executionCount = cell.execution_count;
+      s.status = run.status;
+      s.finishedMs = run.finished_ms;
+      s.executionCount = run.execution_count;
     } else {
-      s.phase = cell.outputs.length ? "running" : "queued";
+      s.phase = run.outputs.length ? "running" : "queued";
     }
     entry.lastSeq = seq;
     for (const event of existing?.held ?? []) {
