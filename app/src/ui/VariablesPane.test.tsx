@@ -41,7 +41,7 @@ function fakeWorkspace() {
           return [SESSION] as T;
         case "list_variables":
           return (params.path as string[]).length
-            ? ({ session: "s1", path: params.path, variables: [{ name: "obs", kind: "data", class: "DataFrame", children: true, summary: "2,700 × 4" }], more: 0 } as T)
+            ? ({ session: "s1", path: params.path, variables: [{ name: "obs", kind: "data", class: "DataFrame", children: true, table: true, summary: "2,700 × 4" }], more: 0 } as T)
             : (LISTED as T);
         default:
           return null as T;
@@ -111,6 +111,29 @@ describe("VariablesPane", () => {
     await settle();
     expect(calls.find((c) => c.method === "delete_variables")?.params).toEqual({ session: "s1", names: ["adata"] });
     expect(root.querySelector(".vfreed")?.textContent).toBe("Removed adata · 412 MB freed");
+    dispose();
+  });
+
+  it("opens a data frame in the Data Explorer", async () => {
+    const { ws } = fakeWorkspace();
+    await ws.refreshSessions();
+    const viewed: string[][] = [];
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => <VariablesPane ws={ws} session={SESSION} sessions={[SESSION]} onSession={() => {}} onView={(path) => viewed.push(path)} shown />,
+      root,
+    );
+    await settle();
+    // An AnnData isn't a table; its obs is.
+    expect(root.querySelector(".vw")).toBeNull();
+    (root.querySelector(".var.opens") as HTMLElement).click();
+    await settle();
+    const view = root.querySelector(".var.child .vw") as HTMLButtonElement;
+    expect(view.title).toBe("Open in the Data Explorer");
+    view.click();
+    expect(viewed).toEqual([["adata", "obs"]]);
+    // The click doesn't also close the row.
+    expect(root.querySelector(".var.child")).not.toBeNull();
     dispose();
   });
 });

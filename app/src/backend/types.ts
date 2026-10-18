@@ -194,6 +194,8 @@ export interface Variable {
   size?: number;
   /** Whether it has parts to list: columns, items, slots. */
   children: boolean;
+  /** Whether it opens in the Data Explorer: a data frame or a matrix. */
+  table?: boolean;
   summary: string;
 }
 
@@ -203,6 +205,72 @@ export interface Variables {
   variables: Variable[];
   /** How many more parts there are than listed. */
   more: number;
+}
+
+/** A sort key for `table_rows`. */
+export interface TableSort {
+  /** The column's position, from 0. */
+  column: number;
+  descending?: boolean;
+}
+
+/** A filter for `table_rows`: rows pass when `column` meets it. */
+export interface TableFilter {
+  column: number;
+  /** <, <=, >, >=, =, != (one value), between (two), in and not in (any), contains, missing, present. */
+  op: string;
+  values?: string[];
+}
+
+export interface TableColumn {
+  name: string;
+  kind: "number" | "text" | "category" | "logical" | "date" | "other" | string;
+  /** The language's own type: dbl, fct, float64, category. */
+  type: string;
+}
+
+/** Rows of a table (`table_rows`). */
+export interface TableRows {
+  session: string;
+  path: string[];
+  /** The table as code, like `seu@meta.data` or `adata.obs`. */
+  code: string;
+  /** Whether it's a matrix (or, in Python, an array) rather than a data frame. */
+  matrix?: boolean;
+  /** Its columns; the first 500 of a wider table. */
+  columns: TableColumn[];
+  /** How many columns it has. */
+  width: number;
+  /** How many rows it has. */
+  total: number;
+  /** How many pass the filters. */
+  rows: number;
+  offset: number;
+  /** Each returned row's name or index label. */
+  labels: string[];
+  /** Cells by row: numbers in number columns, text, or null where missing. */
+  values: (number | string | null)[][];
+}
+
+export interface ColumnSummary {
+  column: number;
+  missing: number;
+  distinct?: number;
+  min?: number;
+  max?: number;
+  mean?: number;
+  median?: number;
+  /** Counts in equal bins from min to max. */
+  histogram?: number[];
+  /** The commonest values, commonest first (a factor's in level order). */
+  top?: { value: string; count: number }[];
+}
+
+export interface TableSummary {
+  session: string;
+  path: string[];
+  rows: number;
+  columns: ColumnSummary[];
 }
 
 /** An nbformat 4 output object. */

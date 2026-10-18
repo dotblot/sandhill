@@ -25,6 +25,8 @@ export function VariablesPane(props: {
   sessions: SessionInfo[];
   usedBy?: (session: string) => string[];
   onSession: (session: string) => void;
+  /** Opens a data frame or matrix, by its path, in the Data Explorer. */
+  onView?: (path: string[]) => void;
   /** False while the pane is hidden: nothing is read then. */
   shown: boolean;
   /** Reads the list again when this changes (the refresh button). */
@@ -185,6 +187,19 @@ export function VariablesPane(props: {
             {v.summary} <em>{v.class}</em>
           </span>
           <span class="sz">{v.size !== undefined ? formatBytes(v.size) : ""}</span>
+          <Show when={v.table && props.onView} fallback={<span />}>
+            <button
+              class="vw"
+              title="Open in the Data Explorer"
+              aria-label={`Open ${row.path.join(" ")} in the Data Explorer`}
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onView?.(row.path);
+              }}
+            >
+              <Icon name="table" small />
+            </button>
+          </Show>
         </div>
         <Show when={isOpen()}>
           <Show

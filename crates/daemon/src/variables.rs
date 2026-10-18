@@ -17,14 +17,69 @@ use crate::journal::Journal;
 use crate::session::SessionHandle;
 
 /// Each variable's line starts with this, then name, kind, class, size in
-/// bytes (-1 if unknown), 1 if it has parts, and a summary, separated by
-/// tabs.
+/// bytes (-1 if unknown), 1 if it has parts, 1 if it is a table, and a
+/// summary, separated by tabs.
 pub const MARK: &str = "SANDHILL_VAR";
 /// Then how many parts were left out.
 pub const MORE: &str = "SANDHILL_MORE";
 
 /// How long listing may take before the session is taken to be busy.
 pub const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Finds an object by its path in R: `.find(path)` returns the object and
+/// R code for it. `.kids(x)` gives an object's parts by name, `.is_table(x)`
+/// says whether the Data Explorer shows it.
+pub const R_WALK: &str = r#"  .kids <- function(x) {
+    .try <- function(e) tryCatch(e, error = function(err) NULL)
+    .some <- function(l) Filter(function(v) length(v) > 0, l)
+    if (inherits(x, "Seurat")) return(.some(list(meta.data = .try(x@meta.data),
+      assays = .try(x@assays), reductions = .try(x@reductions), active.ident = .try(x@active.ident))))
+    if (inherits(x, "SummarizedExperiment")) return(.some(list(
+      colData = .try(as.data.frame(SummarizedExperiment::colData(x))),
+      rowData = .try(as.data.frame(SummarizedExperiment::rowData(x))),
+      assays = .try(as.list(SummarizedExperiment::assays(x))),
+      reducedDims = .try(as.list(SingleCellExperiment::reducedDims(x))))))
+    if (is.data.frame(x) || inherits(x, "DataFrame")) return(.try(as.list(x)))
+    if (is.list(x)) {
+      y <- unclass(x)
+      n <- names(y)
+      if (is.null(n)) n <- rep("", length(y))
+      blank <- is.na(n) | n == ""
+      n[blank] <- paste0("[[", which(blank), "]]")
+      names(y) <- n
+      return(y)
+    }
+    NULL
+  }
+  .is_table <- function(x) {
+    is.data.frame(x) || inherits(x, "DataFrame") ||
+      (is.matrix(x) && (is.numeric(x) || is.character(x) || is.logical(x)))
+  }
+  .code_name <- function(k) if (identical(make.names(k), k)) k else paste0("`", gsub("`", "\\`", k), "`")
+  .code_part <- function(x, code, k) {
+    q <- encodeString(k, quote = '"')
+    if (inherits(x, "Seurat")) return(paste0(code, "@", k))
+    if (inherits(x, "SummarizedExperiment")) return(switch(k,
+      colData = paste0("as.data.frame(SummarizedExperiment::colData(", code, "))"),
+      rowData = paste0("as.data.frame(SummarizedExperiment::rowData(", code, "))"),
+      assays = paste0("SummarizedExperiment::assays(", code, ")"),
+      reducedDims = paste0("SingleCellExperiment::reducedDims(", code, ")")))
+    if (grepl("^\\[\\[[0-9]+\\]\\]$", k)) return(paste0(code, k))
+    if (identical(make.names(k), k)) paste0(code, "$", k) else paste0(code, "[[", q, "]]")
+  }
+  .find <- function(path) {
+    if (!exists(path[[1]], envir = globalenv(), inherits = FALSE)) stop("no variable named ", path[[1]])
+    x <- get(path[[1]], envir = globalenv())
+    code <- .code_name(path[[1]])
+    for (k in path[-1]) {
+      kk <- .kids(x)
+      if (!(k %in% names(kk))) stop("no part named ", k)
+      code <- .code_part(x, code, k)
+      x <- kk[[k]]
+    }
+    list(x = x, code = code)
+  }
+"#;
 
 const R: &str = r#"local({
   .path <- __PATH__
@@ -78,52 +133,78 @@ const R: &str = r#"local({
     if (is.data.frame(x) || inherits(x, "DataFrame")) return(ncol(x) > 0)
     is.list(x) && length(x) > 0
   }
-  .kids <- function(x) {
-    .try <- function(e) tryCatch(e, error = function(err) NULL)
-    .some <- function(l) Filter(function(v) length(v) > 0, l)
-    if (inherits(x, "Seurat")) return(.some(list(meta.data = .try(x@meta.data),
-      assays = .try(x@assays), reductions = .try(x@reductions), active.ident = .try(x@active.ident))))
-    if (inherits(x, "SummarizedExperiment")) return(.some(list(
-      colData = .try(as.data.frame(SummarizedExperiment::colData(x))),
-      rowData = .try(as.data.frame(SummarizedExperiment::rowData(x))),
-      assays = .try(as.list(SummarizedExperiment::assays(x))),
-      reducedDims = .try(as.list(SingleCellExperiment::reducedDims(x))))))
-    if (is.data.frame(x) || inherits(x, "DataFrame")) return(.try(as.list(x)))
-    if (is.list(x)) {
-      y <- unclass(x)
-      n <- names(y)
-      if (is.null(n)) n <- rep("", length(y))
-      blank <- is.na(n) | n == ""
-      n[blank] <- paste0("[[", which(blank), "]]")
-      names(y) <- n
-      return(y)
-    }
-    NULL
-  }
+__WALK__
   .emit <- function(name, x) {
     .size <- tryCatch(as.numeric(utils::object.size(x)), error = function(e) -1)
     .d <- tryCatch(.describe(x), error = function(e) "")
     .h <- isTRUE(tryCatch(.has(x), error = function(e) FALSE))
+    .tb <- isTRUE(tryCatch(.is_table(x), error = function(e) FALSE))
     cat("SANDHILL_VAR", .clean(name), .kind(x), .clean(class(x)[1]), format(.size, scientific = FALSE),
-      if (.h) 1 else 0, .clean(.d), sep = "\t")
+      if (.h) 1 else 0, if (.tb) 1 else 0, .clean(.d), sep = "\t")
     cat("\n")
   }
   if (!length(.path)) {
     for (.v in ls(envir = globalenv())) .emit(.v, get(.v, envir = globalenv()))
   } else {
-    if (!exists(.path[[1]], envir = globalenv(), inherits = FALSE)) stop("no variable named ", .path[[1]])
-    .x <- get(.path[[1]], envir = globalenv())
-    for (.k in .path[-1]) {
-      .kk <- .kids(.x)
-      if (!(.k %in% names(.kk))) stop("no part named ", .k)
-      .x <- .kk[[.k]]
-    }
+    .x <- .find(.path)$x
     .kk <- .kids(.x)
     for (.i in seq_len(min(length(.kk), 200))) .emit(names(.kk)[[.i]], .kk[[.i]])
     if (length(.kk) > 200) cat("SANDHILL_MORE", length(.kk) - 200, "\n", sep = "\t")
   }
   invisible(NULL)
 })
+"#;
+
+/// Finds an object by its path in Python, inside a function that has set
+/// `ns` to the user's namespace: `walk(path)` returns the object and Python
+/// code for it. `part(v, key)` gives one of an object's parts,
+/// `is_table(v)` says whether the Data Explorer shows it.
+pub const PYTHON_WALK: &str = r#"    maps = ("obsm", "varm", "obsp", "varp", "layers")
+
+    def keys(mapping):
+        # anndata 0.13 lists X in layers.keys() as None.
+        return [k for k in mapping.keys() if k is not None]
+
+    def part(v, key):
+        name = type(v).__name__
+        if name in ("AnnData", "Raw"):
+            x = getattr(v, key)
+            if key in maps:
+                return {k: x[k] for k in keys(x)}
+            return dict(x) if key == "uns" else x
+        if name == "DataFrame" and hasattr(v, "columns"):
+            return v.iloc[:, [str(c) for c in v.columns].index(key)]
+        if isinstance(v, dict):
+            return next(x for k, x in v.items() if str(k) == key)
+        if isinstance(v, (list, tuple)) and key.startswith("[") and key.endswith("]"):
+            return v[int(key[1:-1])]
+        raise KeyError(f"no part named {key}")
+
+    def code_part(v, code, key):
+        name = type(v).__name__
+        if name in ("AnnData", "Raw"):
+            return f"{code}.{key}"
+        if name == "DataFrame" and hasattr(v, "columns"):
+            column = next(c for c in v.columns if str(c) == key)
+            return f"{code}[{column!r}]"
+        if isinstance(v, dict):
+            return f"{code}[{next(k for k in v if str(k) == key)!r}]"
+        return f"{code}{key}"
+
+    def walk(path):
+        if path[0] not in ns:
+            raise NameError(f"no variable named {path[0]}")
+        v, code = ns[path[0]], path[0]
+        for key in path[1:]:
+            v, code = part(v, key), code_part(v, code, key)
+        return v, code
+
+    def is_table(v):
+        name = type(v).__name__
+        if name == "DataFrame" and hasattr(v, "iloc"):
+            return True
+        return name == "ndarray" and getattr(v, "ndim", 0) == 2
+
 "#;
 
 const PYTHON: &str = r#"def _sandhill_variables(path):
@@ -133,7 +214,6 @@ const PYTHON: &str = r#"def _sandhill_variables(path):
     hidden = set(getattr(ip, "user_ns_hidden", None) or ())
     functions = (types.FunctionType, types.BuiltinFunctionType, types.MethodType)
     scalars = (int, float, complex, bool, str, bytes, type(None))
-    maps = ("obsm", "varm", "obsp", "varp", "layers")
     by = "×"
     limit = 200
 
@@ -142,10 +222,6 @@ const PYTHON: &str = r#"def _sandhill_variables(path):
         if not items:
             return ""
         return f"; {label}: " + ", ".join(items[:8]) + (", …" if len(items) > 8 else "")
-
-    def keys(mapping):
-        # anndata 0.13 lists X in layers.keys() as None.
-        return [k for k in mapping.keys() if k is not None]
 
     def first(values, n):
         shown = ", ".join(repr(v) if isinstance(v, str) else str(v) for v in values)
@@ -204,21 +280,7 @@ const PYTHON: &str = r#"def _sandhill_variables(path):
             return len(v.columns) > 0
         return isinstance(v, (dict, list, tuple)) and len(v) > 0
 
-    def part(v, key):
-        name = type(v).__name__
-        if name in ("AnnData", "Raw"):
-            x = getattr(v, key)
-            if key in maps:
-                return {k: x[k] for k in keys(x)}
-            return dict(x) if key == "uns" else x
-        if name == "DataFrame" and hasattr(v, "columns"):
-            return v.iloc[:, [str(c) for c in v.columns].index(key)]
-        if isinstance(v, dict):
-            return next(x for k, x in v.items() if str(k) == key)
-        if isinstance(v, (list, tuple)) and key.startswith("[") and key.endswith("]"):
-            return v[int(key[1:-1])]
-        raise KeyError(f"no part named {key}")
-
+__WALK__
     def parts(v):
         """The first `limit` parts as (name, value), and how many there are."""
         name = type(v).__name__
@@ -253,8 +315,12 @@ const PYTHON: &str = r#"def _sandhill_variables(path):
             more = 1 if has_parts(value) else 0
         except Exception:
             more = 0
+        try:
+            table = 1 if is_table(value) else 0
+        except Exception:
+            table = 0
         clean = " ".join(str(key).split())
-        print("SANDHILL_VAR", clean, kind(value), type(value).__name__, nbytes, more, text, sep="\t")
+        print("SANDHILL_VAR", clean, kind(value), type(value).__name__, nbytes, more, table, text, sep="\t")
 
     if not path:
         for key, value in list(ns.items()):
@@ -264,11 +330,7 @@ const PYTHON: &str = r#"def _sandhill_variables(path):
                 continue
             emit(key, value)
         return
-    if path[0] not in ns:
-        raise NameError(f"no variable named {path[0]}")
-    v = ns[path[0]]
-    for key in path[1:]:
-        v = part(v, key)
+    v, _ = walk(path)
     listed, total = parts(v)
     for key, value in listed:
         emit(key, value)
@@ -317,8 +379,15 @@ del _sandhill_delete
 /// a session of `language`.
 pub fn list_code(language: &str, path: &[String]) -> Option<String> {
     match normalize(language).as_str() {
-        "r" => Some(R.replace("__PATH__", &r_strings(path))),
-        "python" => Some(PYTHON.replace("__PATH__", &python_strings(path))),
+        "r" => Some(
+            R.replace("__WALK__", R_WALK)
+                .replace("__PATH__", &r_strings(path)),
+        ),
+        "python" => Some(
+            PYTHON
+                .replace("__WALK__", PYTHON_WALK)
+                .replace("__PATH__", &python_strings(path)),
+        ),
         _ => None,
     }
 }
@@ -369,7 +438,7 @@ pub fn parse(stdout: &str) -> (Vec<Variable>, u64) {
                 more = n.trim().parse().unwrap_or(0);
                 return None;
             }
-            let mut fields = line.strip_prefix(MARK)?.strip_prefix('\t')?.splitn(6, '\t');
+            let mut fields = line.strip_prefix(MARK)?.strip_prefix('\t')?.splitn(7, '\t');
             let name = fields.next()?.to_string();
             let kind = fields.next()?.to_string();
             let class = fields.next()?.to_string();
@@ -381,6 +450,7 @@ pub fn parse(stdout: &str) -> (Vec<Variable>, u64) {
                 .filter(|s| *s >= 0.0)
                 .map(|s| s as u64);
             let children = fields.next()?.trim() == "1";
+            let table = fields.next()?.trim() == "1";
             let summary = fields.next().unwrap_or("").trim().to_string();
             Some(Variable {
                 name,
@@ -388,6 +458,7 @@ pub fn parse(stdout: &str) -> (Vec<Variable>, u64) {
                 class,
                 size,
                 children,
+                table,
                 summary,
             })
         })
@@ -461,7 +532,7 @@ mod tests {
 
     #[test]
     fn parses_the_listing_and_skips_the_rest() {
-        let out = "noise\nSANDHILL_VAR\tseu\tdata\tSeurat\t3.12e+08\t1\t2,638 cells × 13,714 features\nSANDHILL_VAR\tx\tvalue\tint\t28\t0\t3\nSANDHILL_MORE\t12\t\n";
+        let out = "noise\nSANDHILL_VAR\tseu\tdata\tSeurat\t3.12e+08\t1\t0\t2,638 cells × 13,714 features\nSANDHILL_VAR\tx\tvalue\tint\t28\t0\t0\t3\nSANDHILL_VAR\tobs\tdata\tDataFrame\t1200\t1\t1\t3 × 2\nSANDHILL_MORE\t12\t\n";
         let (variables, more) = parse(out);
         assert_eq!(
             variables,
@@ -472,6 +543,7 @@ mod tests {
                     class: "Seurat".into(),
                     size: Some(312_000_000),
                     children: true,
+                    table: false,
                     summary: "2,638 cells × 13,714 features".into()
                 },
                 Variable {
@@ -480,7 +552,17 @@ mod tests {
                     class: "int".into(),
                     size: Some(28),
                     children: false,
+                    table: false,
                     summary: "3".into()
+                },
+                Variable {
+                    name: "obs".into(),
+                    kind: "data".into(),
+                    class: "DataFrame".into(),
+                    size: Some(1200),
+                    children: true,
+                    table: true,
+                    summary: "3 × 2".into()
                 },
             ]
         );

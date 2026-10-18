@@ -10,8 +10,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
-    Blob, Call, CellEdited, Event, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply, Request,
-    ServerMessage, SessionStatus, Subscribed, Variables,
+    Blob, Call, CellEdited, Event, FileWritten, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply,
+    Request, ServerMessage, SessionStatus, Subscribed, TableRows, TableSummary, Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -24,7 +24,9 @@ use crate::journal::Journal;
 use crate::paths::StateDir;
 use crate::session::SessionHandle;
 use crate::windows::Windows;
-use crate::{cells, files, memory, notebook, outputs, projects, sidecar, variables, windows};
+use crate::{
+    cells, files, memory, notebook, outputs, projects, sidecar, tables, variables, windows,
+};
 
 const REPLAY_PAGE: u32 = 500;
 /// How much of its log `read_log` returns unless asked for another amount.
@@ -349,6 +351,102 @@ impl Daemon {
                     .await?;
                 }
                 Value::Null
+            }
+            Call::TableRows {
+                session,
+                path,
+                offset,
+                limit,
+                sort,
+                filters,
+            } => {
+                let ask = tables::Ask {
+                    mode: tables::Mode::Rows,
+                    path: &path,
+                    sort: &sort,
+                    filters: &filters,
+                    offset,
+                    limit: limit.unwrap_or(tables::ROWS).min(tables::MAX_ROWS),
+                    file: "",
+                };
+                let printed = self
+                    .quietly(&session, "read the table", |language| {
+                        tables::code(language, &ask)
+                    })
+                    .await?;
+                let rows = tables::parse_rows(&printed.stdout);
+                serde_json::to_value(TableRows {
+                    session,
+                    path,
+                    code: rows.code,
+                    matrix: rows.matrix,
+                    columns: rows.columns,
+                    width: rows.width,
+                    total: rows.total,
+                    rows: rows.rows,
+                    offset,
+                    labels: rows.labels,
+                    values: rows.values,
+                })?
+            }
+            Call::TableSummary {
+                session,
+                path,
+                filters,
+            } => {
+                let ask = tables::Ask {
+                    mode: tables::Mode::Summary,
+                    path: &path,
+                    sort: &[],
+                    filters: &filters,
+                    offset: 0,
+                    limit: 0,
+                    file: "",
+                };
+                let printed = self
+                    .quietly(&session, "summarize the table", |language| {
+                        tables::code(language, &ask)
+                    })
+                    .await?;
+                let summary = tables::parse_summary(&printed.stdout);
+                serde_json::to_value(TableSummary {
+                    session,
+                    path,
+                    rows: summary.rows,
+                    columns: summary.columns,
+                })?
+            }
+            Call::TableExport {
+                session,
+                path,
+                sort,
+                filters,
+                file,
+            } => {
+                let resolved = files::resolve(&file)?.to_string_lossy().into_owned();
+                let ask = tables::Ask {
+                    mode: tables::Mode::Export,
+                    path: &path,
+                    sort: &sort,
+                    filters: &filters,
+                    offset: 0,
+                    limit: 0,
+                    file: &resolved,
+                };
+                let printed = self
+                    .quietly(&session, "export the table", |language| {
+                        tables::code(language, &ask)
+                    })
+                    .await?;
+                if tables::parse_written(&printed.stdout).is_none() {
+                    bail!("could not export the table: nothing was written");
+                }
+                let meta = std::fs::metadata(&resolved)
+                    .with_context(|| format!("could not export the table to {file}"))?;
+                serde_json::to_value(FileWritten {
+                    path: file,
+                    mtime_ms: files::mtime_ms(&meta),
+                })?
             }
             Call::Interrupt { session } => {
                 self.live(&session)?.interrupt().await?;
