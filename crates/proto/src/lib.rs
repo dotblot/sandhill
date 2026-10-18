@@ -66,6 +66,35 @@ pub enum Call {
         /// `store_history: false`), for code a tool runs to look around.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         quiet: bool,
+        /// Who ran the code when it wasn't the user: an agent's name, like
+        /// "Claude". The Console marks the run as theirs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
+    },
+    /// The session's latest runs, oldest first, for its Console: code typed
+    /// there, scripts' lines, agents' runs and notebook cells. Quiet runs
+    /// are left out. Returns [`SessionRuns`].
+    SessionRuns {
+        session: String,
+        /// How many runs, at most; 100 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Lists a session's variables, or the parts of one: `path` is a
+    /// variable's name, then the names of its parts as they were listed
+    /// (a data frame's columns, an AnnData's `obs`). Runs a short piece of
+    /// code quietly, so it fails while the session is busy. Returns
+    /// [`Variables`].
+    ListVariables {
+        session: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        path: Vec<String>,
+    },
+    /// Deletes variables from a session and frees their memory: `rm()` and
+    /// `gc()` in R, `del` and `gc.collect()` in Python.
+    DeleteVariables {
+        session: String,
+        names: Vec<String>,
     },
     Interrupt {
         session: String,
@@ -710,6 +739,11 @@ pub struct AgentOptions {
     /// Documents the session is about, named to the agent at start.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub documents: Vec<String>,
+    /// Where the agent's code goes: `console` runs what `add_cell` is given
+    /// in the Console instead of adding it to the document. Unset is the
+    /// document. A `set` command (`{kind: "set", code}`) changes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 impl AgentOptions {
@@ -833,6 +867,67 @@ pub struct CellOutputs {
     pub execution_count: Option<u64>,
     /// nbformat 4 output objects. Large values are blob references.
     pub outputs: Vec<Value>,
+}
+
+/// A session's runs, for its Console.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionRuns {
+    pub session: String,
+    pub runs: Vec<SessionRun>,
+    /// The journal position these runs reflect. Subscribe with this as
+    /// `since_seq` to receive what happens next without gaps or repeats.
+    pub seq: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionRun {
+    pub run: String,
+    /// The document cell the code came from; `None` for code typed in the
+    /// Console or run by an agent's `run_code`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<CellRef>,
+    /// The agent that ran it, if one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    pub code: String,
+    pub started_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_count: Option<u64>,
+    /// nbformat 4 output objects. Large values are blob references.
+    pub outputs: Vec<Value>,
+}
+
+/// A session's variables, or the parts of one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Variables {
+    pub session: String,
+    pub path: Vec<String>,
+    pub variables: Vec<Variable>,
+    /// How many more parts there are than listed (a list shows its first
+    /// 200).
+    #[serde(default)]
+    pub more: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Variable {
+    pub name: String,
+    /// `data`, `value` (a single number, string or the like) or `function`.
+    pub kind: String,
+    /// The class or type, like `data.frame` or `AnnData`.
+    pub class: String,
+    /// In bytes, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Whether it has parts to list (columns, items, slots).
+    #[serde(default)]
+    pub children: bool,
+    /// Dimensions, the first values, or the like: "2,638 × 7; columns: …".
+    pub summary: String,
 }
 
 /// Content of a [`EVENT_RUN_FINISHED`] event.

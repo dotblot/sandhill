@@ -21,7 +21,10 @@ Responses can arrive out of order; match them by `id`.
 | `list_kernelspecs` | | `[{name, display_name, language, env?}]` |
 | `start_session` | `kernel`, `cwd?`, `project?` | `SessionInfo` once the kernel is ready |
 | `list_sessions` | | `[SessionInfo]`, including ended sessions |
-| `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?` | `{run, msg_id}` |
+| `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?`, `by?` | `{run, msg_id}` |
+| `session_runs` | `session`, `limit?` | `{session, runs, seq}`: the session's latest runs, for its Console |
+| `list_variables` | `session`, `path?` | `Variables` |
+| `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
 | `interrupt` | `session` | `null` |
 | `shutdown` | `session` | `null` |
 | `subscribe` | `session`, `since_seq?` | `{session, from_seq}`, then events |
@@ -94,7 +97,29 @@ new daemon reattaches to them.
 connection pop-up shows it, with `user` and how long ago `started_ms` was.
 
 A `quiet` execute stores no history and doesn't stop the queue on an error,
-for code the user didn't write (the agents' variable listing).
+for code the user didn't write (the variable listing). `by` names an agent
+that ran the code ("Claude", "Codex"), for the Console to mark it.
+
+`session_runs` returns a session's latest runs that weren't quiet, oldest
+first (100 unless `limit` says, at most 1000), with their outputs: what the
+app's Console shows for the session, whatever ran the code (the Console's
+prompt, a script line, a notebook cell, an agent). Each run is `{run, cell?,
+by?, code, started_ms, finished_ms?, status?, execution_count?, outputs}`,
+outputs as in `file_outputs`. `seq` is where to subscribe from.
+
+`list_variables` runs a quiet snippet in the session and returns `Variables`:
+`{session, path, variables: [{name, kind, class, size?, children, summary}],
+more}`. `kind` is `data`, `value` or `function`; `size` is in bytes when the
+language can tell; `children` says whether the variable has parts. With an
+empty `path` it lists the session's global variables; with a `path` (a
+variable's name, then the names of parts within it) it lists the parts: a data
+frame's columns, a list's items, an AnnData's `X`, `obs`, `var`, `obsm`,
+`layers` and `uns` and the columns inside `obs` and `var`, a Seurat object's
+assays and metadata. At most 200 come back; `more` counts the rest.
+`delete_variables` removes variables from the session's globals and collects
+memory (R: `rm()` and `gc()`; Python: `del`, IPython's output history, and
+`gc.collect()`). Both refuse while the session runs other code, and give up
+after 30 seconds.
 
 `list_kernelspecs` lists the kernels in Jupyter's standard folders and also
 those inside conda environments, pyenv versions and the environment of the
@@ -117,7 +142,8 @@ names the environment a kernel runs in.
   `display_data`, `update_display_data`, `execute_input`, `execute_result`,
   `error`, `clear_output`.
 - Daemon events use a `sandhill.` prefix:
-  - `sandhill.run_started` `{code, cell}`: always the first event of a run.
+  - `sandhill.run_started` `{code, cell, quiet?, by?}`: always the first
+    event of a run. `quiet` and `by` are as given to `execute`.
   - `sandhill.run_finished` `{status, execution_count?}`: `status` is the
     kernel's `ok`, `error` or `aborted`, or `unknown` if the run ended while
     no daemon was connected to hear the reply.
@@ -134,8 +160,9 @@ says which agent CLIs are installed, and how to install the others.
 running, exit?: {code?, signal?, ended_ms}, end, options?, agent?,
 outdated?, name?}`. `started_ms` is when its program last started. `end`
 is the number of output bytes so far. `options` is what the agent was started
-with: `{model?, effort?, permission?, documents?}`, where `permission` is
-`supervised`, `edits`, `auto`, `full`, `plan`, `restricted` or `ask`.
+with: `{model?, effort?, permission?, documents?, code?}`, where `permission` is
+`supervised`, `edits`, `auto`, `full`, `plan`, `restricted` or `ask`, and
+`code: "console"` sends the agent's code to the Console (below).
 `name` is what the user named it with `rename_terminal` (a blank `name`
 takes it away). `outdated` is true for an agent that
 another build of sandhilld started, such as before an update: it keeps that
@@ -280,6 +307,12 @@ The daemon asks a window with
 sent only to clients that called `set_focus`. The window working on
 `project` answers with `answer`: `{id, result: {cell_id, language}}` or
 `{id, error}`.
+
+An agent started with `code: "console"` (in `agent.code`, switched with
+`tell_terminal` `{kind: "set", code: "console" | null}`) doesn't add cells:
+its `add_cell` runs the code in the document's session instead, with `by`
+naming the agent, and leaves the document as it is. Its `run_code` always
+runs that way.
 
 ## Blobs
 

@@ -128,7 +128,12 @@ async fn agents_run_python_in_the_users_session() {
     let busy = tools.call("list_variables", &json!({})).await;
     assert!(busy.is_err());
 
+    // The Console shows the agent's runs as its own, not the listing.
     let client = daemon.client().await;
+    let session = client.list_sessions().await.unwrap()[0].id.clone();
+    let runs = client.session_runs(&session, None).await.unwrap().runs;
+    assert_eq!(runs.len(), 3, "{runs:#?}");
+    assert!(runs.iter().all(|r| r.by.as_deref() == Some("Agent")));
     for session in client.list_sessions().await.unwrap() {
         client.shutdown(&session.id).await.unwrap();
     }
@@ -706,4 +711,67 @@ async fn in_ask_mode_sandhills_tools_only_look() {
             .contains("Ask mode"),
         "{ran}"
     );
+}
+
+/// With the user's choice of "Agent code goes: In the Console", add_cell
+/// runs the code in the document's session, shown in the Console as the
+/// agent's, and leaves the document alone.
+#[tokio::test]
+async fn agent_code_goes_to_the_console_when_the_user_says_so() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let script = project.join("qc.py");
+    std::fs::write(&script, "x = 40\n").unwrap();
+    let terminal = dir.path().join("terminal");
+    std::fs::create_dir_all(&terminal).unwrap();
+    std::fs::write(
+        terminal.join("meta.json"),
+        r#"{"id": "t", "kind": "codex", "title": "Codex", "cwd": "/", "created_ms": 0}"#,
+    )
+    .unwrap();
+    std::fs::write(terminal.join("agent.json"), r#"{"code": "console"}"#).unwrap();
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    )
+    .in_terminal(Some(terminal.clone()));
+
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"code": "y = 6 * 7\nprint(y)", "file": "qc.py"}),
+    )
+    .await;
+    assert!(added.contains("Ran it in the Console"), "{added}");
+    assert!(added.contains("instead of adding it to qc.py"), "{added}");
+    assert!(added.contains("42"), "{added}");
+    assert_eq!(std::fs::read_to_string(&script).unwrap(), "x = 40\n");
+    let client = daemon.client().await;
+    let session = client.list_sessions().await.unwrap()[0].clone();
+    assert_eq!(
+        session.cwd,
+        project.to_string_lossy(),
+        "scripts run in the project folder"
+    );
+    let runs = client.session_runs(&session.id, None).await.unwrap().runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].by.as_deref(), Some("Codex"));
+    assert!(runs[0].cell.is_none());
+
+    // Back to "In the file": the code goes into the script.
+    std::fs::write(terminal.join("agent.json"), r#"{"code": null}"#).unwrap();
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"code": "z = 1", "file": "qc.py"}),
+    )
+    .await;
+    assert!(added.contains("Added"), "{added}");
+    assert!(std::fs::read_to_string(&script).unwrap().contains("z = 1"));
+    client.shutdown(&session.id).await.unwrap();
 }

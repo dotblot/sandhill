@@ -493,6 +493,7 @@ mod tests {
             effort: Some("high".into()),
             permission: Some("edits".into()),
             documents: vec!["analysis.qmd".into()],
+            ..Default::default()
         };
         let help = "--mcp-config --settings --append-system-prompt --permission-mode";
         let args = claude_args(&options, &context(), help);

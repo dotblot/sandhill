@@ -5,7 +5,7 @@
 //! (`app/src/model/outputs.ts`); `tests/fixtures/outputs.json` keeps the two
 //! in agreement.
 
-use sandhill_proto::{CellOutputs, FileOutputs};
+use sandhill_proto::{CellOutputs, FileOutputs, SessionRun, SessionRuns};
 use serde_json::{Map, Value, json};
 
 use crate::journal::{Journal, Result};
@@ -43,6 +43,32 @@ pub fn file_outputs(journal: &Journal, file: &str) -> Result<FileOutputs> {
     Ok(FileOutputs {
         file: file.to_string(),
         cells,
+        seq,
+    })
+}
+
+/// A session's latest `limit` runs with their outputs, for its Console, as
+/// of one journal position.
+pub fn session_runs(journal: &Journal, session: &str, limit: u32) -> Result<SessionRuns> {
+    let seq = journal.max_seq()?;
+    let mut runs = Vec::new();
+    for run in journal.console_runs(session, limit)? {
+        let outputs = run_outputs(journal, &run.run_id, seq)?;
+        runs.push(SessionRun {
+            run: run.run_id,
+            cell: run.cell,
+            by: run.by,
+            code: run.code,
+            started_ms: run.started_ms,
+            finished_ms: run.finished_ms,
+            status: run.status,
+            execution_count: run.execution_count,
+            outputs,
+        });
+    }
+    Ok(SessionRuns {
+        session: session.to_string(),
+        runs,
         seq,
     })
 }

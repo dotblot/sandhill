@@ -526,13 +526,19 @@ impl Shared {
 
     /// Passes a command from the user to the listening program. A mode
     /// switch also sets Sandhill's own guard, which Claude Code's hooks
-    /// read (Claude Code doesn't listen; its commands just wait here).
+    /// read, and where the agent's code goes, which the MCP server reads
+    /// (Claude Code doesn't listen; its commands just wait here).
     fn command(&self, command: Value) {
         if command["kind"] == "set"
             && let Some(permission) = command.get("permission")
         {
             let guard = super::guard::of(permission.as_str());
             self.report(json!({ "guard": guard }));
+        }
+        if command["kind"] == "set"
+            && let Some(code) = command.get("code")
+        {
+            self.report(json!({ "code": super::code_to(code.as_str()) }));
         }
         let mut listeners = self.listeners.lock().unwrap();
         listeners.retain(|out| !out.is_closed());

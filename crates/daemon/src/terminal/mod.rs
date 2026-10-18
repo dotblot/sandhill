@@ -751,6 +751,9 @@ fn write_report(
     if let Some(guard) = guard::of(options.permission.as_deref()) {
         kept.insert("guard".into(), guard.into());
     }
+    if let Some(code) = code_to(options.code.as_deref()) {
+        kept.insert("code".into(), code.into());
+    }
     if kept.is_empty() {
         let _ = std::fs::remove_file(paths.agent());
     } else {
@@ -775,6 +778,31 @@ fn host_alive(paths: &Paths) -> bool {
     host.get("host")
         .and_then(Value::as_u64)
         .is_some_and(|pid| crate::kernel::pid_alive(pid as u32))
+}
+
+/// Where agents' code goes, as the report keeps it: `console`, or `None`
+/// for the document.
+pub fn code_to(code: Option<&str>) -> Option<&'static str> {
+    (code == Some(CODE_TO_CONSOLE)).then_some(CODE_TO_CONSOLE)
+}
+
+pub const CODE_TO_CONSOLE: &str = "console";
+
+/// Whether the user has the agent in `dir` send its code to the Console.
+pub fn code_to_console(dir: &Path) -> bool {
+    read_json::<Value>(&Paths::new(dir).agent())
+        .is_some_and(|report| report["code"] == CODE_TO_CONSOLE)
+}
+
+/// The agent in the terminal in `dir`, as the Console names it: "Claude",
+/// "Codex".
+pub fn agent_name(dir: &Path) -> Option<&'static str> {
+    let meta: Meta = read_json(&Paths::new(dir).meta())?;
+    match meta.kind.as_str() {
+        crate::agents::CLAUDE => Some("Claude"),
+        crate::agents::CODEX => Some("Codex"),
+        _ => None,
+    }
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {

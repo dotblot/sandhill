@@ -69,8 +69,6 @@ async function openScript(ws: Workspace) {
   const doc = await ScriptDoc.open(ws, "/p/a.R");
   const host = document.body.appendChild(document.createElement("div"));
   doc.mount(host);
-  // The window shows the console in its own pane.
-  host.append(doc.consoleElement);
   return { doc, host };
 }
 
@@ -89,7 +87,6 @@ describe("ScriptDoc", () => {
       { code: "x <- c(1,\n  2)", cell_id: "console-0" },
       { code: "mean(x)", cell_id: "console-1" },
     ]);
-    expect(doc.consoleElement.querySelectorAll(".console-entry")).toHaveLength(2);
     expect(host.querySelector(".cm-editor")).toBeTruthy();
     await doc.runAll();
     expect(executed[2]).toEqual({ code: SCRIPT, cell_id: "console-2" });
@@ -97,7 +94,7 @@ describe("ScriptDoc", () => {
     host.remove();
   });
 
-  it("brings back the console from the journal, oldest first, and carries on after it", async () => {
+  it("finds its session in the journal and carries on after its last run", async () => {
     const run = (cell_id: string, code: string, started_ms: number): CellOutputs => ({
       cell_id,
       run: `old-${cell_id}`,
@@ -111,8 +108,6 @@ describe("ScriptDoc", () => {
     });
     const { ws, executed } = fakeWorkspace([run("console-7", "second", 20), run("console-6", "first", 10)]);
     const { doc, host } = await openScript(ws);
-    const echoes = [...doc.consoleElement.querySelectorAll(".console-code")].map((e) => e.textContent);
-    expect(echoes).toEqual(["first", "second"]);
     doc.runCurrent();
     await settle();
     expect(executed[0].cell_id).toBe("console-8");

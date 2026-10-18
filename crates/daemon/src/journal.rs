@@ -64,6 +64,11 @@ const MIGRATIONS: &[&str] = &[
      );",
     // 2: the language version the kernel reports, like 4.4.1.
     "ALTER TABLE sessions ADD COLUMN language_version TEXT;",
+    // 3: quiet runs (tools looking around) and the agent that ran a run,
+    // for the Console, which lists a session's runs.
+    "ALTER TABLE runs ADD COLUMN quiet INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE runs ADD COLUMN origin TEXT;
+     CREATE INDEX runs_by_session ON runs(session_id);",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -103,6 +108,29 @@ pub struct RunRecord {
     pub session_id: String,
     pub msg_id: String,
     pub finished: bool,
+}
+
+/// What starts a run's record.
+#[derive(Debug, Clone, Default)]
+pub struct NewRun<'a> {
+    pub cell: Option<&'a sandhill_proto::CellRef>,
+    /// A tool's run, kept out of the Console.
+    pub quiet: bool,
+    /// The agent that ran it.
+    pub by: Option<&'a str>,
+}
+
+/// One of a session's runs, for its Console.
+#[derive(Debug, Clone)]
+pub struct ConsoleRun {
+    pub run_id: String,
+    pub cell: Option<sandhill_proto::CellRef>,
+    pub by: Option<String>,
+    pub code: String,
+    pub started_ms: i64,
+    pub finished_ms: Option<i64>,
+    pub status: Option<String>,
+    pub execution_count: Option<u64>,
 }
 
 /// A run that came from a notebook cell.
@@ -292,22 +320,55 @@ impl Journal {
         session_id: &str,
         msg_id: &str,
         code: &str,
-        cell: Option<&sandhill_proto::CellRef>,
+        run: NewRun,
     ) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO runs (id, session_id, msg_id, code, cell_file, cell_id, started_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO runs (id, session_id, msg_id, code, cell_file, cell_id, started_ms,
+                               quiet, origin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 id,
                 session_id,
                 msg_id,
                 code,
-                cell.map(|c| c.file.as_str()),
-                cell.map(|c| c.cell_id.as_str()),
+                run.cell.map(|c| c.file.as_str()),
+                run.cell.map(|c| c.cell_id.as_str()),
                 now_ms(),
+                run.quiet,
+                run.by,
             ],
         )?;
         Ok(())
+    }
+
+    /// The session's latest `limit` runs that weren't quiet, oldest first.
+    pub fn console_runs(&self, session_id: &str, limit: u32) -> Result<Vec<ConsoleRun>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, cell_file, cell_id, origin, code, started_ms, finished_ms, status,
+                    execution_count
+             FROM runs WHERE session_id = ?1 AND quiet = 0
+             ORDER BY rowid DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![session_id, limit], |row| {
+            let file: Option<String> = row.get(1)?;
+            let cell_id: Option<String> = row.get(2)?;
+            Ok(ConsoleRun {
+                run_id: row.get(0)?,
+                cell: file
+                    .zip(cell_id)
+                    .map(|(file, cell_id)| sandhill_proto::CellRef { file, cell_id }),
+                by: row.get(3)?,
+                code: row.get(4)?,
+                started_ms: row.get(5)?,
+                finished_ms: row.get(6)?,
+                status: row.get(7)?,
+                execution_count: row.get::<_, Option<i64>>(8)?.map(|n| n as u64),
+            })
+        })?;
+        let mut runs = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        runs.reverse();
+        Ok(runs)
     }
 
     pub fn finish_run(&self, id: &str, status: &str, execution_count: Option<u64>) -> Result<()> {
@@ -338,10 +399,11 @@ impl Journal {
             .optional()?)
     }
 
-    /// How many of a session's runs have not finished (running or queued).
+    /// How many of a session's runs have not finished (running or queued),
+    /// leaving out quiet ones: a variable listing doesn't make it busy.
     pub fn unfinished_run_count(&self, session_id: &str) -> Result<u32> {
         Ok(self.conn.lock().unwrap().query_row(
-            "SELECT COUNT(*) FROM runs WHERE session_id = ?1 AND finished_ms IS NULL",
+            "SELECT COUNT(*) FROM runs WHERE session_id = ?1 AND finished_ms IS NULL AND quiet = 0",
             [session_id],
             |row| row.get(0),
         )?)
@@ -427,6 +489,14 @@ impl Journal {
     }
 
     /// `(msg_type, content)` of a run's events up to and including `max_seq`.
+    /// Removes a run and its events, as for a quiet run once its output is read.
+    pub fn forget_run(&self, run_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM events WHERE run_id = ?1", [run_id])?;
+        conn.execute("DELETE FROM runs WHERE id = ?1", [run_id])?;
+        Ok(())
+    }
+
     pub fn run_events(&self, run_id: &str, max_seq: i64) -> Result<Vec<(String, Value)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -640,13 +710,14 @@ mod tests {
             file: "/w/a.qmd".into(),
             cell_id: id.into(),
         };
-        j.insert_run("r1", "a", "m1", "1", Some(&cell("x")))
+        j.insert_run("r1", "a", "m1", "1", cell_run(&cell("x")))
             .unwrap();
-        j.insert_run("r2", "a", "m2", "2", Some(&cell("y")))
+        j.insert_run("r2", "a", "m2", "2", cell_run(&cell("y")))
             .unwrap();
-        j.insert_run("r3", "a", "m3", "3", Some(&cell("x")))
+        j.insert_run("r3", "a", "m3", "3", cell_run(&cell("x")))
             .unwrap();
-        j.insert_run("r4", "a", "m4", "4", None).unwrap();
+        j.insert_run("r4", "a", "m4", "4", NewRun::default())
+            .unwrap();
         j.finish_run("r3", "ok", Some(3)).unwrap();
         let runs = j.latest_cell_runs("/w/a.qmd").unwrap();
         let ids: Vec<_> = runs
@@ -668,13 +739,65 @@ mod tests {
         assert_eq!(events[0].1["text"], "early");
     }
 
+    fn cell_run(cell: &sandhill_proto::CellRef) -> NewRun<'_> {
+        NewRun {
+            cell: Some(cell),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_console_lists_a_sessions_runs_but_not_quiet_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = journal(dir.path());
+        j.insert_session(&session("a")).unwrap();
+        j.insert_session(&session("b")).unwrap();
+        let cell = sandhill_proto::CellRef {
+            file: "/w/a.R".into(),
+            cell_id: "console-0".into(),
+        };
+        j.insert_run("r1", "a", "m1", "x <- 1", cell_run(&cell))
+            .unwrap();
+        let quiet = NewRun {
+            quiet: true,
+            ..Default::default()
+        };
+        j.insert_run("r2", "a", "m2", "ls()", quiet).unwrap();
+        let by = NewRun {
+            by: Some("Claude"),
+            ..Default::default()
+        };
+        j.insert_run("r3", "a", "m3", "head(x)", by).unwrap();
+        j.insert_run("r4", "a", "m4", "y", NewRun::default())
+            .unwrap();
+        j.insert_run("r5", "b", "m5", "z", NewRun::default())
+            .unwrap();
+        j.finish_run("r1", "ok", Some(1)).unwrap();
+        let runs = j.console_runs("a", 10).unwrap();
+        let ids: Vec<_> = runs.iter().map(|r| r.run_id.as_str()).collect();
+        assert_eq!(ids, ["r1", "r3", "r4"]);
+        assert_eq!(runs[0].cell.as_ref(), Some(&cell));
+        assert_eq!(runs[0].execution_count, Some(1));
+        assert_eq!(runs[1].by.as_deref(), Some("Claude"));
+        let last: Vec<_> = j
+            .console_runs("a", 2)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run_id)
+            .collect();
+        assert_eq!(last, ["r3", "r4"]);
+        // r3 and r4 run; the quiet r2 doesn't count.
+        assert_eq!(j.unfinished_run_count("a").unwrap(), 2);
+    }
+
     #[test]
     fn journal_survives_reopen() {
         let dir = tempfile::tempdir().unwrap();
         {
             let j = journal(dir.path());
             j.insert_session(&session("a")).unwrap();
-            j.insert_run("r1", "a", "m1", "print(1)", None).unwrap();
+            j.insert_run("r1", "a", "m1", "print(1)", NewRun::default())
+                .unwrap();
             j.append("a", Some("r1"), "stream", json!({"text": "1"}))
                 .unwrap();
         }

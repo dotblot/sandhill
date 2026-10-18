@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::terminal::{Terminals, ToHost};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use sandhill_proto::{
     Blob, Call, CellEdited, Event, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply, Request,
-    ServerMessage, SessionStatus, Subscribed,
+    ServerMessage, SessionStatus, Subscribed, Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -22,12 +22,15 @@ use crate::journal::Journal;
 use crate::paths::StateDir;
 use crate::session::SessionHandle;
 use crate::windows::Windows;
-use crate::{cells, files, memory, notebook, outputs, projects, sidecar, windows};
+use crate::{cells, files, memory, notebook, outputs, projects, sidecar, variables, windows};
 
 const REPLAY_PAGE: u32 = 500;
 /// How much of its log `read_log` returns unless asked for another amount.
 const LOG_TAIL: u64 = 64 * 1024;
 const HISTORY_LIMIT: u32 = 5000;
+/// How many runs the Console gets back unless it asks for another number.
+const CONSOLE_RUNS: u32 = 100;
+const MAX_CONSOLE_RUNS: u32 = 1000;
 
 pub struct Daemon {
     state: StateDir,
@@ -302,7 +305,38 @@ impl Daemon {
                 code,
                 cell,
                 quiet,
-            } => serde_json::to_value(self.live(&session)?.execute(code, cell, quiet).await?)?,
+                by,
+            } => serde_json::to_value(self.live(&session)?.execute(code, cell, quiet, by).await?)?,
+            Call::SessionRuns { session, limit } => {
+                let journal = self.journal.clone();
+                let limit = limit.unwrap_or(CONSOLE_RUNS).min(MAX_CONSOLE_RUNS);
+                serde_json::to_value(
+                    blocking(move || Ok(outputs::session_runs(&journal, &session, limit)?)).await?,
+                )?
+            }
+            Call::ListVariables { session, path } => {
+                let printed = self
+                    .quietly(&session, "list the variables", |language| {
+                        variables::list_code(language, &path)
+                    })
+                    .await?;
+                let (list, more) = variables::parse(&printed.stdout);
+                serde_json::to_value(Variables {
+                    session,
+                    path,
+                    variables: list,
+                    more,
+                })?
+            }
+            Call::DeleteVariables { session, names } => {
+                if !names.is_empty() {
+                    self.quietly(&session, "delete variables", |language| {
+                        variables::delete_code(language, &names)
+                    })
+                    .await?;
+                }
+                Value::Null
+            }
             Call::Interrupt { session } => {
                 self.live(&session)?.interrupt().await?;
                 Value::Null
@@ -692,6 +726,30 @@ impl Daemon {
             .lock()
             .unwrap()
             .insert(handle.id.clone(), Arc::new(handle));
+    }
+
+    /// Runs a tool's code quietly in an idle session: the code `code` gives
+    /// for the session's language. `what` says what for, in errors.
+    async fn quietly(
+        &self,
+        session: &str,
+        what: &str,
+        code: impl FnOnce(&str) -> Option<String>,
+    ) -> Result<variables::Printed> {
+        let info = self.session_info(session)?;
+        let code = code(&info.language)
+            .with_context(|| format!("cannot {what} in a {} session", info.language))?;
+        if info.pending_runs > 0 {
+            bail!("the session is busy running code; try again once it is idle");
+        }
+        let handle = self.live(session)?;
+        let printed = variables::run_quietly(&handle, &self.journal, code, variables::TIMEOUT)
+            .await
+            .with_context(|| format!("could not {what}"))?;
+        if let Some(error) = &printed.error {
+            bail!("could not {what}: {error}");
+        }
+        Ok(printed)
     }
 
     fn live(&self, session: &str) -> Result<Arc<SessionHandle>> {

@@ -10,7 +10,6 @@
 
 mod documents;
 pub mod text;
-pub mod variables;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +32,6 @@ use text::Rendered;
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TIMEOUT: Duration = Duration::from_secs(3600);
-const VARIABLES_TIMEOUT: Duration = Duration::from_secs(30);
 /// Plots larger than this (base64) are mentioned but not sent.
 const MAX_IMAGE: usize = 2 << 20;
 
@@ -62,12 +60,7 @@ pub struct Tools {
 pub async fn serve(socket: PathBuf, project: Option<String>) -> Result<()> {
     // The agent passes on its environment, which names its terminal.
     let dir = std::env::var_os("SANDHILL_TERMINAL").map(PathBuf::from);
-    let terminal = dir
-        .as_deref()
-        .and_then(|dir| Some(dir.file_name()?.to_string_lossy().into_owned()));
-    let mut tools = Tools::new(socket, project).with_terminal(terminal);
-    tools.terminal_dir = dir;
-    let tools = Arc::new(tools);
+    let tools = Arc::new(Tools::new(socket, project).in_terminal(dir));
     let (out, mut out_rx) = mpsc::unbounded_channel::<Value>();
     let writer = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
@@ -124,6 +117,16 @@ impl Tools {
     /// The tools of an agent in Sandhill terminal `terminal`.
     pub fn with_terminal(mut self, terminal: Option<String>) -> Self {
         self.terminal = terminal;
+        self
+    }
+
+    /// The tools of an agent in the Sandhill terminal in folder `dir`
+    /// (`SANDHILL_TERMINAL`), whose report holds the user's choices for it.
+    pub fn in_terminal(mut self, dir: Option<PathBuf>) -> Self {
+        self.terminal = dir
+            .as_deref()
+            .and_then(|dir| Some(dir.file_name()?.to_string_lossy().into_owned()));
+        self.terminal_dir = dir;
         self
     }
 
@@ -304,36 +307,31 @@ impl Tools {
         session: Option<&str>,
         language: Option<&str>,
     ) -> Result<Vec<Value>> {
-        let mut client = self.client().await?;
+        let client = self.client().await?;
         let session = self
             .pick(&client, session, language)
             .await?
             .ok_or_else(|| anyhow!("no session is running for that; nothing to list"))?;
-        let code = variables::code_for(&session.language)
-            .with_context(|| format!("cannot list variables of a {} session", session.language))?;
         if session.pending_runs > 0 {
             bail!(
                 "session {} is busy running code; its variables can be listed once it is idle",
                 short_id(&session.id)
             );
         }
-        let outcome = run(&mut client, &session, code, true, None, VARIABLES_TIMEOUT).await?;
-        if !outcome.finished {
-            bail!("listing the variables took too long; the session may be busy");
-        }
-        let list = variables::parse(&outcome.stdout);
+        let listed = client.list_variables(&session.id, &[]).await?;
+        // Functions are the user's tools, not their data.
+        let list: Vec<_> = listed
+            .variables
+            .into_iter()
+            .filter(|v| v.kind != "function")
+            .collect();
         let head = format!("Variables in {}:", describe_session(&session));
         if list.is_empty() {
-            let note = outcome.rendered.finished_text();
-            return Ok(vec![text_item(&if note.trim().is_empty() {
-                format!("{head}\n(none)")
-            } else {
-                format!("{head}\n(none found; the session printed:)\n{note}")
-            })]);
+            return Ok(vec![text_item(&format!("{head}\n(none)"))]);
         }
         Ok(vec![text_item(&format!(
             "{head}\n{}",
-            variables::format(&list)
+            format_variables(&list)
         ))])
     }
 
@@ -354,13 +352,29 @@ impl Tools {
                 self.start_session(&client, language).await?
             }
         };
-        let outcome = run(&mut client, &session, code, false, None, timeout).await?;
+        let outcome = run(
+            &mut client,
+            &session,
+            code,
+            None,
+            self.agent_name(),
+            timeout,
+        )
+        .await?;
         Ok(report(
             &client,
             &format!("Ran in {}", describe_session(&session)),
             &outcome,
         )
         .await)
+    }
+
+    /// The agent these tools serve, as the Console marks its runs.
+    fn agent_name(&self) -> Option<&'static str> {
+        self.terminal_dir
+            .as_deref()
+            .and_then(crate::terminal::agent_name)
+            .or(Some("Agent"))
     }
 
     async fn start_session(&self, client: &Client, language: &str) -> Result<SessionInfo> {
@@ -487,24 +501,29 @@ struct Outcome {
     elapsed_ms: i64,
 }
 
-/// Runs code in a session and collects its output until it finishes or
-/// `timeout` passes. With `cell`, the run belongs to that document cell.
+/// Runs an agent's code in a session, marked as `by`'s, and collects its
+/// output until it finishes or `timeout` passes. With `cell`, the run
+/// belongs to that document cell.
 async fn run(
     client: &mut Client,
     session: &SessionInfo,
     code: &str,
-    quiet: bool,
     cell: Option<CellRef>,
+    by: Option<&str>,
     timeout: Duration,
 ) -> Result<Outcome> {
     client.subscribe(&session.id, None).await?;
     let started = Instant::now();
-    let run = if quiet {
-        client.execute_quietly(&session.id, code).await?
-    } else {
-        client.execute(&session.id, code, cell).await?
-    }
-    .run;
+    let started_run: sandhill_proto::RunStarted = client
+        .call(Call::Execute {
+            session: session.id.clone(),
+            code: code.into(),
+            cell,
+            quiet: false,
+            by: by.map(Into::into),
+        })
+        .await?;
+    let run = started_run.run;
     let mut outcome = Outcome::default();
     follow(
         client,
@@ -515,16 +534,6 @@ async fn run(
     .await?;
     let _ = client.unsubscribe(&session.id).await;
     outcome.elapsed_ms = started.elapsed().as_millis() as i64;
-    // The variables listing is for the tool, not for the agent to read.
-    if quiet {
-        outcome.rendered.text = outcome
-            .rendered
-            .text
-            .lines()
-            .filter(|l| !l.starts_with(variables::MARK))
-            .map(|l| format!("{l}\n"))
-            .collect();
-    }
     Ok(outcome)
 }
 
@@ -560,6 +569,27 @@ async fn follow(
             .rendered
             .add_message(&event.msg_type, &event.content);
     }
+}
+
+/// One line per variable, aligned, for an agent to read.
+fn format_variables(variables: &[sandhill_proto::Variable]) -> String {
+    let width =
+        |f: fn(&sandhill_proto::Variable) -> usize| variables.iter().map(f).max().unwrap_or(0);
+    let name_width = width(|v| v.name.chars().count());
+    let class_width = width(|v| v.class.chars().count());
+    variables
+        .iter()
+        .map(|v| {
+            let size = v.size.map(text::bytes).unwrap_or_default();
+            format!(
+                "{:name_width$}  {:class_width$}  {:>8}  {}",
+                v.name, v.class, size, v.summary
+            )
+            .trim_end()
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// How long a tool waits for code to finish.
@@ -630,7 +660,7 @@ fn tool_list() -> Value {
         {
             "name": "run_code",
             "title": "Run code in a session",
-            "description": "Run R or Python code in one of the user's live sessions in Sandhill and return what it printed, its value, errors and plots. The objects it creates stay in the user's session. Without `session`, the project's most recently used session for `language` runs it, and one is started if there is none. Code that runs longer than `timeout_seconds` keeps running in the session.",
+            "description": "Run R or Python code in one of the user's live sessions in Sandhill and return what it printed, its value, errors and plots. The user sees it in the session's Console, marked as yours. The objects it creates stay in the user's session. Without `session`, the project's most recently used session for `language` runs it, and one is started if there is none. Code that runs longer than `timeout_seconds` keeps running in the session.",
             "inputSchema": {"type": "object", "required": ["code"], "properties": {
                 "code": {"type": "string", "description": "The code to run."},
                 "language": {"type": "string", "enum": ["r", "python"]},
@@ -649,7 +679,7 @@ fn tool_list() -> Value {
         {
             "name": "add_cell",
             "title": "Add code to the user's document",
-            "description": "Write code into the user's document as a new code cell and run it there, so the user sees the code and its output together, as if they had written it. By default the cell goes into the document this conversation is about (else the one in front), right below the user's current cell (else after the last cell). Runs in the document's own R or Python session and returns the output, errors and plots. A Quarto/R Markdown chunk, a notebook cell, or for a script, code at its end. If the document is open in Sandhill, the edit happens in the editor, so the user can undo it.",
+            "description": "Write code into the user's document as a new code cell and run it there, so the user sees the code and its output together, as if they had written it. By default the cell goes into the document this conversation is about (else the one in front), right below the user's current cell (else after the last cell). Runs in the document's own R or Python session and returns the output, errors and plots. A Quarto/R Markdown chunk, a notebook cell, or for a script, code at its end. If the document is open in Sandhill, the edit happens in the editor, so the user can undo it. When the user has chosen to have your code go to the Console, the code runs in the Console in the document's session instead, and the document is left as it is.",
             "inputSchema": {"type": "object", "required": ["code"], "properties": {
                 "code": {"type": "string", "description": "The cell's code, without fences."},
                 "file": {"type": "string", "description": "The document, relative to the project folder or absolute."},

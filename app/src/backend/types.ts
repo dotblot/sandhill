@@ -143,6 +143,46 @@ export interface FileOutputs {
   seq: number;
 }
 
+/** One of a session's runs, for its Console (`session_runs`). */
+export interface SessionRun {
+  run: string;
+  /** The document cell it came from; none for code typed in the Console or an agent's run_code. */
+  cell?: CellRef;
+  /** The agent that ran it, like "Claude". */
+  by?: string;
+  code: string;
+  started_ms: number;
+  finished_ms?: number;
+  status?: string;
+  execution_count?: number;
+  outputs: Output[];
+}
+
+export interface SessionRuns {
+  session: string;
+  runs: SessionRun[];
+  seq: number;
+}
+
+/** A session's variable, or a part of one (`list_variables`). */
+export interface Variable {
+  name: string;
+  kind: "data" | "value" | "function" | string;
+  class: string;
+  size?: number;
+  /** Whether it has parts to list: columns, items, slots. */
+  children: boolean;
+  summary: string;
+}
+
+export interface Variables {
+  session: string;
+  path: string[];
+  variables: Variable[];
+  /** How many more parts there are than listed. */
+  more: number;
+}
+
 /** An nbformat 4 output object. */
 export interface Output {
   output_type: "stream" | "display_data" | "execute_result" | "error" | string;
@@ -211,6 +251,8 @@ export interface AgentOptions {
   /** "supervised", "edits", "auto" or "full". */
   permission?: string;
   documents?: string[];
+  /** "console": the agent's code runs in the Console instead of going into the linked file. */
+  code?: string;
 }
 
 /** What an agent reports through its hooks and status line, or (Codex) what Sandhill's bridge to it reports. */
@@ -227,6 +269,8 @@ export interface AgentReport {
   permission?: string;
   /** Sandhill's own mode on top of the agent's, when one is on: `restricted` or `ask`. */
   guard?: string | null;
+  /** Where the agent's code goes: "console", or null for the linked file. */
+  code?: string | null;
   status?: AgentStatus;
   /** Codex: the models it offers. */
   models?: AgentModel[];
