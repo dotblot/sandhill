@@ -30,6 +30,13 @@ Draft 19 (2026-10-17) changed:
 Draft 20 (2026-10-18) drops every third-party logo, so the product can be sold
 without asking anyone for permission; see "Icons and licences" below.
 
+Draft 21 (2026-10-19) changed:
+- A title bar row is back. The Local | server tabs move into it as browser-style
+  tabs, and the toolbar icons move to its right end.
+- The two side panes swap: Variables / Help / Packages / Git and Plots / Viewer
+  are on the left, and the files pane (file tree, Kernels, Resources) is on the
+  right.
+
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
 at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
@@ -43,20 +50,24 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 
 ## Window and panes
 - Panes are floating, rounded, translucent glass cards on a warm gradient
-  window background, in the style of macOS Liquid Glass. The left pane is not a card:
-  its content sits directly on the background.
+  window background, in the style of macOS Liquid Glass. The files pane is not a
+  card: its content sits directly on the background.
+- Top to bottom: the title bar (40px), the panes, the status bar (26px).
 - Pane order from left to right:
-  - left pane;
+  - the session pane, with two groups: Variables / Help / Packages / Git on top,
+    and Plots / Viewer below;
   - Agents, which only shows when toggled on;
   - the editor column, with the editor above and the Console below;
-  - the right pane, with two groups: Variables / Help / Packages / Git on top, and Plots / Viewer below.
-- Every pane reaches the top of the window. The gap is **3px**: between
-  panes, from the panes to the top and right window edges, and to the left edge
-  when the left pane is hidden. The panes sit directly on the status bar, with
-  no gap below them.
+  - the files pane: file tree, Kernels and Resources.
+- The gap is **3px**: between panes, from the panes to the title bar and to the
+  left window edge, and to the right edge when the files pane is hidden. The
+  files pane reaches the right edge, with its own 6px inside. The panes sit
+  directly on the status bar, with no gap below them.
 - Gaps between panes are drag handles: dragging one resizes the panes on
   either side, and an orange line shows on hover. Console, Variables and Plots can be
-  dragged by their tab strip to under the editor or into the right pane.
+  dragged by their tab strip to under the editor or into the session pane. With
+  the session pane hidden, dropping one at the left edge of the first pane opens
+  the session pane again.
 - Every pane has minimize and maximize buttons at the right end of its tab
   strip:
   - Minimized, only the tabs show and the contents are hidden.
@@ -66,21 +77,37 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - Active tab: the text colour mixed in at 11%, so it is darker in light mode
   and lighter in dark mode. Hover uses 6%.
 
-## Toolbar (no title bar row, no rail)
-- The toolbar floats over the top of the left pane, after the traffic lights. All the icons sit in one row with
-  no gap between groups:
-  - toggle left pane;
+## Title bar (40px)
+- The title bar is transparent, on the window background, and dragging its empty
+  space moves the window. From left to right:
+  - the traffic lights;
+  - one tab per machine;
+  - + (Connect to server, ⇧⌘O), which opens the Start screen;
+  - empty space;
+  - the toolbar icons.
+- **Machine tabs** follow the style of browser tabs in a macOS title bar:
+  - Each tab is 30px high with 12px corners, and at most 280px wide.
+  - Each tab shows the machine's icon in a 20px rounded tile, the machine's name
+    (500 weight) and the project's path in the faint colour, cut short with "…".
+  - The picked tab is a raised pill: the pane background colour, a hairline edge
+    and a soft shadow. The others are flat, with 6% shading on hover and a thin
+    divider between two flat tabs.
+  - The icon shows the connection state, like the status bar's connection item:
+    plain when connected, orange when reconnecting, red with a slash when
+    disconnected.
+  - Clicking a tab switches the files pane and the status bar to that machine.
+- **Toolbar icons**, at the right end of the title bar, all in one row with no gap
+  between groups:
+  - toggle the left (session) pane, ⌥⌘B;
   - Agents, a chat icon with an orange dot when an agent waits for you;
-  - toggle right pane;
+  - toggle the right (files) pane, ⌘B;
   - search, which opens a ⌘K palette for files, symbols, commands and "search in files";
   - menu, with Connect to server, Open project, New project, Recent projects, Show console and Settings.
-- When the left pane is hidden, the first pane's tabs start just after the
-  toolbar icons.
+    It opens under its button and stays inside the window.
 - There is no settings gear elsewhere: Settings lives in the menu.
 
-## Left pane (260px, minimum 236px)
-- A segmented **Local | server** tab pair at the top. Each tab shows that machine's
-  content.
+## Files pane (right; 260px, minimum 236px)
+- It shows the machine picked in the title bar's tabs.
 - Project name row, with + (new file) and refresh at the right, then the file tree.
   Files use flat coloured icons in a muted palette.
 - The file tree:
@@ -110,12 +137,13 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   shows an icon, the label and a bar of the same length for every item, with no
   percent. Items are 22px high with 8px side padding, so the content sits centred
   in the hover shading. Clicking an item opens a details popover with the percent.
-- One left edge for the left pane and the status bar: every row's hover shading
-  starts 6px from the window's left edge, and its first icon or dot starts at 14px
-  (file tree, section headers' chevrons, kernel rows, resources, the status bar's
-  connection icon). The
-  Local | server tabs start at 6px and the project name at 14px. Files inside a
-  folder line up under the folder's icon.
+- Inside the pane, every row's hover shading starts 6px from the pane's left edge
+  and ends 6px from the window's right edge. Its first icon or chevron starts
+  14px from the pane's edge (file tree, section headers, kernel rows, resources),
+  and so does the project name. Files inside a folder line up under the folder's
+  icon.
+- Pop-ups from this pane (resource details, kernel details) open to the left of
+  the row.
 
 ## Editor
 - The document bar has one kernel picker per language. It shows only the language
@@ -220,7 +248,7 @@ omp.
 - **Provider icons** are letter chips, not company logos (see "Icons and
   licences").
 
-## Right pane
+## Session pane (left)
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
   and `gc()` in that session.
 - The session pickers in Variables and Packages are the same as the editor's kernel
@@ -233,15 +261,16 @@ omp.
 
 ## Status bar (26px)
 - Left: the connection, then the kernel state ("R idle", "Python running") and
-  jobs of the machine picked in the left pane's Local | server tabs.
+  jobs of the machine picked in the title bar's tabs. The connection icon starts
+  14px from the window's left edge.
 - The connection item is the machine's icon and name: a cloud and "gpu01", or a
-  screen and "Local". The icon is the same one as on the Local | server tabs, and
+  screen and "Local". The icon is the same one as on the title bar's tabs, and
   it shows the state. There is no status dot:
   - connected: the plain icon;
   - reconnecting: the icon in orange, pulsing (steady orange with reduced motion);
   - disconnected: the icon in red with a slash through it, and the name in red.
     The kernel state and jobs are hidden until it reconnects.
-  The Local | server tab's icon shows the same state.
+  The machine's tab in the title bar shows the same state.
 - Its tooltip reads "gpu01 · sandhilld 0.3.0 · connected".
 - Clicking it opens a pop-up above it, at 11px like the other pop-ups:
   - A server shows: name and state, then address, how it connects (ssh and the
