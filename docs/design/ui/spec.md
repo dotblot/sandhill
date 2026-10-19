@@ -43,6 +43,11 @@ Draft 23 (2026-10-19) changed:
 - The Agents tab shows the linked file (language icon and name) in place of the
   title the agent wrote. The file no longer shows in the message box.
 - No text is smaller than 10px, the smallest size macOS uses.
+
+Draft 24 (2026-10-19): conversations belong to the project, and context follows
+you. A project has as many conversations as you start. The file a conversation
+works in follows the editor's active tab unless you pin one, and @ in the
+message box adds files, chunks, variables or plots.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -212,10 +217,22 @@ it is `agents-v2-plan.md` in the project's design folder. Claude Code and Codex
 both use it, still signed in with your own plans, and so do open models through
 omp.
 
-- **Header** (the pane's tab strip): the conversation's provider chip, then the
-  linked file's language icon (14px) and name. Clicking the file opens it; code
-  the agent writes goes into it. The tab shows no title written by the agent.
-  Then + (new conversation), a clock (history) and a gear (conversation
+- **Conversations belong to the project** on its machine. Start as many as you
+  like; each has its own context, so unrelated tasks don't fill one context
+  window, and two agents can work at once.
+- **Header** (the pane's tab strip):
+  - The conversation's provider chip, then its **focus file**: the language icon
+    (14px), the name and a small ⌄. The tab shows no title written by the agent.
+  - The agent sees the focus file, and the code it writes goes into it, below
+    your active cell.
+  - By default the focus file **follows the editor's active tab**.
+  - While the agent is working, it keeps the file it started in.
+  - Clicking it opens a menu: Open the file, then "The agent works in": **Follow
+    the editor** (with the current file in grey), or **Pin to** one of the open
+    files.
+  - A pinned file shows a small orange pin after its name, and stays when you
+    switch editor tabs.
+- Then + (new conversation), a clock (history) and a gear (conversation
   settings), then minimize and maximize. The clock shows an orange dot when
   another conversation is waiting for you.
 - **Your messages** are grey rounded bubbles on the right. Under each, in 11px
@@ -253,10 +270,10 @@ omp.
   turn's tokens, in 11px grey. No cost is shown, because plan sign-ins aren't
   billed per message.
 - **Message box**: rounded, with a paperclip on the left (files and images can
-  also be pasted or dragged in), "Ask Claude…" / "Ask Codex…" as the
-  placeholder, and a round orange send button that becomes a stop button while
+  also be pasted or dragged in), "Ask Claude… (@ to add files, chunks, variables
+  or plots)" as the placeholder, and a round orange send button that becomes a stop button while
   the agent works. The grip on its top edge resizes it. Its bottom row:
-  - left: web search (globe), session context on or off (eye; off shows a
+  - left: @ (mention), web search (globe), session context on or off (eye; off shows a
     crossed-out eye) and the mode (hand). Any mode other than Normal shows its
     icon and name in orange.
   - right: the context ring and tokens used (opens the context breakdown above
@@ -266,6 +283,14 @@ omp.
     The knob's centre stops 15px from each end, so the knob stays inside the
     pop-up. The bar is inset 4px at each end, and its filled part ends exactly
     under the knob's centre.
+- **@ mentions**:
+  - Typing @, or clicking the @ button, opens a menu above the message box with
+    the project's files, the open document's chunks, variables and plots, grouped
+    under those headings and filtered as you type.
+  - Enter or Tab picks the first match, and Esc closes the menu.
+  - Each pick becomes a chip at the top of the message box (icon, name, ×), and
+    goes with the message as extra context.
+  - Unsent text and chips stay when the pane redraws.
 - **Mode picker** (the hand): Normal (safe steps run, risky ones ask), Auto (a
   second model reviews risky steps), YOLO (everything runs except steps marked
   dangerous; for Claude this restarts it on the same conversation), Restricted
@@ -279,12 +304,13 @@ omp.
 - **History** (the clock) replaces the chat with a list of conversations
   grouped as Needs you, Running, Today, Yesterday and Earlier, with a search box
   at the top. Each row shows the provider icon (with a dot when waiting or busy),
-  the title, and the linked file, model and time in 11px. Rename and delete
-  appear on hover. Opening a conversation also brings its linked file to the
+  the title, and the file it last worked in, model and time in 11px. Rename and
+  delete appear on hover. Opening a conversation also brings that file to the
   front of the editor.
 - **New conversation** (+): pick Claude Code, Codex or omp (each button shows
-  only the provider icon and name), see which file it links to (the active
-  editor file), then type in the message box. **Cancel** (next to the "New
+  only the provider icon and name), then type in the message box. There is no
+  file to choose: the note says it works in the file in front of you (named) and
+  sees your live sessions, and that @ adds more. **Cancel** (next to the "New
   conversation" heading, or the x on its tab, or esc) goes back to the
   conversation you were in.
 - **Provider icons** are letter chips, not company logos (see "Icons and
