@@ -66,6 +66,172 @@ pub enum Call {
         /// `store_history: false`), for code a tool runs to look around.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         quiet: bool,
+        /// Who ran the code when it wasn't the user: an agent's name, like
+        /// "Claude". The Console marks the run as theirs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
+    },
+    /// The session's latest runs, oldest first, for its Console: code typed
+    /// there, scripts' lines, agents' runs and notebook cells. Quiet runs
+    /// are left out. Returns [`SessionRuns`].
+    SessionRuns {
+        session: String,
+        /// How many runs, at most; 100 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// The session's latest plots, oldest first, for the Plots pane: every
+    /// image a run in it showed (a PNG, JPEG or SVG), whatever ran the code.
+    /// Quiet runs are left out. Returns [`SessionPlots`].
+    SessionPlots {
+        session: String,
+        /// How many plots, at most; 100 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Lists a session's variables, or the parts of one: `path` is a
+    /// variable's name, then the names of its parts as they were listed
+    /// (a data frame's columns, an AnnData's `obs`). Runs a short piece of
+    /// code quietly, so it fails while the session is busy. Returns
+    /// [`Variables`].
+    ListVariables {
+        session: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        path: Vec<String>,
+    },
+    /// Deletes variables from a session and frees their memory: `rm()` and
+    /// `gc()` in R, `del` and `gc.collect()` in Python.
+    DeleteVariables {
+        session: String,
+        names: Vec<String>,
+    },
+    /// Rows of a table in a session, for the Data Explorer: a data frame, a
+    /// matrix, or a part of an object (a Seurat object's `meta.data`, an
+    /// AnnData's `obs`), at `path` as [`Call::ListVariables`] takes it.
+    /// Filtering and sorting run in the kernel, quietly. Returns
+    /// [`TableRows`].
+    TableRows {
+        session: String,
+        path: Vec<String>,
+        /// The first row to return, counting from 0 after filtering and
+        /// sorting.
+        #[serde(default)]
+        offset: u64,
+        /// How many rows, at most; 200 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<TableSort>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filters: Vec<TableFilter>,
+    },
+    /// Each column's summary over the rows that pass `filters`: missing
+    /// values, distinct values, a histogram or the commonest values.
+    /// Returns [`TableSummary`].
+    TableSummary {
+        session: String,
+        path: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filters: Vec<TableFilter>,
+    },
+    /// Writes the rows that pass `filters`, sorted, to a CSV file on the
+    /// session's machine. Returns [`FileWritten`].
+    TableExport {
+        session: String,
+        path: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sort: Vec<TableSort>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        filters: Vec<TableFilter>,
+        /// The file to write.
+        file: String,
+    },
+    /// Searches a session's help topics: in R, every installed package's;
+    /// in Python, the public functions, classes and modules of the modules
+    /// already imported. `package` narrows it to one package (or those its
+    /// name starts); with no `query`, it lists that package's topics. Runs
+    /// quietly. Returns [`HelpTopics`].
+    HelpTopics {
+        session: String,
+        #[serde(default)]
+        query: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        package: Option<String>,
+        /// How many topics, at most; 50 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// A help page: in R, the topic's page in `package` (or the first
+    /// attached or loaded package that has one); in Python, the object a
+    /// dotted name like `scanpy.pp.normalize_total` or `sc.pp.neighbors`
+    /// names. Returns [`HelpPage`].
+    HelpPage {
+        session: String,
+        topic: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        package: Option<String>,
+    },
+    /// A function's source: R's deparsed, Python's from its file. Returns
+    /// [`HelpSource`].
+    HelpSource {
+        session: String,
+        topic: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        package: Option<String>,
+    },
+    /// The packages installed for a session's language: R's libraries, or
+    /// the Python environment's. Returns [`Packages`].
+    ListPackages {
+        session: String,
+    },
+    /// The Git state of the repository holding `path` (a project folder):
+    /// its branch, how far it is ahead of and behind its upstream, and the
+    /// changed files. Returns [`GitStatus`], with an empty `repo` when the
+    /// folder isn't in a repository.
+    GitStatus {
+        path: String,
+    },
+    /// History for the Git pane: the commits of every branch, tag and remote
+    /// branch, newest first, `limit` of them (200 unless given) after the
+    /// first `skip`. Returns [`GitLog`].
+    GitLog {
+        path: String,
+        #[serde(default)]
+        skip: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// A commit's whole message and the files it changed. Returns
+    /// [`GitCommitInfo`].
+    GitShow {
+        path: String,
+        sha: String,
+    },
+    /// One file's changes as a unified diff: in the working tree against the
+    /// index, or with `staged` the index against HEAD, or with `sha` that
+    /// commit against its first parent. `file` is relative to the
+    /// repository. Returns [`GitDiff`].
+    GitDiff {
+        path: String,
+        file: String,
+        #[serde(default)]
+        staged: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha: Option<String>,
+    },
+    /// Changes the repository: stages, commits, pulls, pushes, switches
+    /// branch. Runs `git` with the user's own configuration and
+    /// credentials, and never waits for a password. Returns [`GitDone`].
+    GitRun {
+        path: String,
+        action: GitAction,
+    },
+    /// Asks an agent CLI (Claude Code, or else Codex) for a commit message
+    /// for the staged changes. `agent` picks one. Returns [`GitMessage`].
+    GitWriteMessage {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent: Option<String>,
     },
     Interrupt {
         session: String,
@@ -122,14 +288,18 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_mtime_ms: Option<i64>,
     },
-    /// Replaces a text file atomically. With `expected_mtime_ms`, fails with
-    /// an error starting with [`CONFLICT_ERROR`] if the file changed on disk
-    /// since it was read. Returns [`FileWritten`].
+    /// Replaces a text file atomically, making its folder if need be. With
+    /// `expected_mtime_ms`, fails with an error starting with
+    /// [`CONFLICT_ERROR`] if the file changed on disk since it was read. With
+    /// `base64`, `text` holds the file's bytes in base64 (a saved plot).
+    /// Returns [`FileWritten`].
     WriteFile {
         path: String,
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_mtime_ms: Option<i64>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        base64: bool,
     },
     /// Returns `Vec<DirEntry>`, directories first, then by name.
     ListDir {
@@ -710,6 +880,11 @@ pub struct AgentOptions {
     /// Documents the session is about, named to the agent at start.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub documents: Vec<String>,
+    /// Where the agent's code goes: `console` runs what `add_cell` is given
+    /// in the Console instead of adding it to the document. Unset is the
+    /// document. A `set` command (`{kind: "set", code}`) changes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 impl AgentOptions {
@@ -833,6 +1008,564 @@ pub struct CellOutputs {
     pub execution_count: Option<u64>,
     /// nbformat 4 output objects. Large values are blob references.
     pub outputs: Vec<Value>,
+}
+
+/// A session's runs, for its Console.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionRuns {
+    pub session: String,
+    pub runs: Vec<SessionRun>,
+    /// The journal position these runs reflect. Subscribe with this as
+    /// `since_seq` to receive what happens next without gaps or repeats.
+    pub seq: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionRun {
+    pub run: String,
+    /// The document cell the code came from; `None` for code typed in the
+    /// Console or run by an agent's `run_code`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<CellRef>,
+    /// The agent that ran it, if one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    pub code: String,
+    pub started_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_count: Option<u64>,
+    /// nbformat 4 output objects. Large values are blob references.
+    pub outputs: Vec<Value>,
+}
+
+/// A session's plots, for the Plots pane.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionPlots {
+    pub session: String,
+    pub plots: Vec<Plot>,
+    /// The journal position these plots reflect.
+    pub seq: i64,
+}
+
+/// An image a run showed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Plot {
+    pub run: String,
+    /// Where the image is in the journal.
+    pub seq: i64,
+    pub ts_ms: i64,
+    /// The document cell the run came from; `None` for the Console or an agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<CellRef>,
+    /// The agent that ran it, if one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// The run's code.
+    pub code: String,
+    /// The output's MIME bundle: images as blob references (SVG inline when
+    /// small), and its text.
+    pub data: Value,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+/// A session's variables, or the parts of one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Variables {
+    pub session: String,
+    pub path: Vec<String>,
+    pub variables: Vec<Variable>,
+    /// How many more parts there are than listed (a list shows its first
+    /// 200).
+    #[serde(default)]
+    pub more: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Variable {
+    pub name: String,
+    /// `data`, `value` (a single number, string or the like) or `function`.
+    pub kind: String,
+    /// The class or type, like `data.frame` or `AnnData`.
+    pub class: String,
+    /// In bytes, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Whether it has parts to list (columns, items, slots).
+    #[serde(default)]
+    pub children: bool,
+    /// Whether it opens in the Data Explorer (a data frame or a matrix).
+    #[serde(default)]
+    pub table: bool,
+    /// Dimensions, the first values, or the like: "2,638 × 7; columns: …".
+    pub summary: String,
+}
+
+/// A sort key for [`Call::TableRows`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableSort {
+    /// The column's position, from 0.
+    pub column: u32,
+    #[serde(default)]
+    pub descending: bool,
+}
+
+/// A filter for [`Call::TableRows`]: rows pass when `column` meets it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableFilter {
+    /// The column's position, from 0.
+    pub column: u32,
+    /// `<`, `<=`, `>`, `>=`, `=` and `!=` (with one value), `between` (two),
+    /// `in` and `not in` (any number), `contains` (text, ignoring case),
+    /// `missing` and `present` (none).
+    pub op: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+}
+
+/// A table's column.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableColumn {
+    pub name: String,
+    /// `number`, `text`, `category`, `logical`, `date` or `other`.
+    pub kind: String,
+    /// The language's own type: `dbl`, `int`, `chr`, `fct` in R; `float64`,
+    /// `category`, `object` in Python.
+    #[serde(rename = "type")]
+    pub kind_detail: String,
+}
+
+/// Rows of a table, as [`Call::TableRows`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableRows {
+    pub session: String,
+    pub path: Vec<String>,
+    /// The table as code in the session's language, like `seu@meta.data`
+    /// or `adata.obs`.
+    pub code: String,
+    /// Whether it's a matrix (or, in Python, an array) rather than a data
+    /// frame.
+    #[serde(default)]
+    pub matrix: bool,
+    /// Its columns; the first 500 of a wider table.
+    pub columns: Vec<TableColumn>,
+    /// How many columns it has.
+    pub width: u64,
+    /// How many rows it has.
+    pub total: u64,
+    /// How many rows pass the filters.
+    pub rows: u64,
+    pub offset: u64,
+    /// Each returned row's label: its row name, or index label.
+    pub labels: Vec<String>,
+    /// Each returned row's cells: numbers in number columns, otherwise
+    /// text, and null where missing.
+    pub values: Vec<Vec<Value>>,
+}
+
+/// Each column's summary, as [`Call::TableSummary`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TableSummary {
+    pub session: String,
+    pub path: Vec<String>,
+    /// How many rows pass the filters.
+    pub rows: u64,
+    pub columns: Vec<ColumnSummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ColumnSummary {
+    /// The column's position, from 0.
+    pub column: u32,
+    pub missing: u64,
+    /// How many different values there are, missing aside.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distinct: Option<u64>,
+    /// For numbers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mean: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median: Option<f64>,
+    /// Counts in equal bins from `min` to `max`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub histogram: Vec<u64>,
+    /// The commonest values and how many rows have each, commonest first;
+    /// left out when there are too many different values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top: Vec<ValueCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ValueCount {
+    pub value: String,
+    pub count: u64,
+}
+
+/// Help topics, as [`Call::HelpTopics`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HelpTopics {
+    pub session: String,
+    pub topics: Vec<HelpTopic>,
+    /// How many more matched than are listed.
+    #[serde(default)]
+    pub more: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct HelpTopic {
+    /// The function or topic: `read.csv`, `pandas.read_csv`.
+    pub topic: String,
+    /// R's package, or Python's top-level module.
+    pub package: String,
+    /// Its one-line title, if it has one.
+    #[serde(default)]
+    pub title: String,
+}
+
+/// A help page, as [`Call::HelpPage`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HelpPage {
+    pub session: String,
+    pub topic: String,
+    pub package: String,
+    pub title: String,
+    /// The package's version (Python's, for built-ins).
+    pub version: String,
+    /// R: the page as HTML, without its `<head>`. Links to other topics go
+    /// to `../../{package}/help/{topic}`, examples to `../Example/{topic}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+    /// Python: `module`, `class`, `function`, `method`, `property` or
+    /// `value`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Python: how it is called, like `(adata, target_sum=None)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Python: its docstring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Python: a module's or class's public names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<HelpMember>,
+    /// R: other packages with a page on the same topic.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<HelpTopic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HelpMember {
+    pub name: String,
+    /// As [`HelpPage::kind`].
+    pub kind: String,
+    #[serde(default)]
+    pub title: String,
+}
+
+/// A function's source, as [`Call::HelpSource`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HelpSource {
+    pub session: String,
+    pub topic: String,
+    pub package: String,
+    pub text: String,
+    /// Python: the file it is in, on the session's machine, and the line
+    /// it starts on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+}
+
+/// Installed packages, as [`Call::ListPackages`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Packages {
+    pub session: String,
+    /// By name.
+    pub packages: Vec<Package>,
+    /// Where they are installed: R's library folders (`.libPaths()`), or
+    /// the Python environment.
+    pub libraries: Vec<String>,
+    /// R: whether a CRAN mirror is set in `options("repos")`.
+    #[serde(default)]
+    pub cran: bool,
+    /// R: whether BiocManager is installed.
+    #[serde(default)]
+    pub bioconductor: bool,
+    /// Python: whether the environment is a conda one.
+    #[serde(default)]
+    pub conda: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Package {
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub title: String,
+    /// The library folder or environment it is installed in.
+    #[serde(default)]
+    pub library: String,
+    /// R: attached with `library()`. Python: imported by the user's code.
+    #[serde(default)]
+    pub attached: bool,
+    /// R: its namespace is loaded. Python: one of its modules is imported.
+    #[serde(default)]
+    pub loaded: bool,
+    /// R: part of R itself, so it can't be removed or updated on its own.
+    #[serde(default)]
+    pub base: bool,
+    /// Python: the modules it provides, which can differ from its name
+    /// (`scikit-learn` provides `sklearn`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<String>,
+    /// Python: what installed it, like `pip` or `conda`, when it says.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub installer: String,
+}
+
+/// A repository's state, as [`Call::GitStatus`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitStatus {
+    /// The repository's top folder; empty when the folder isn't in one.
+    pub repo: String,
+    /// The branch checked out; `None` when HEAD is detached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// HEAD's commit; `None` before the first commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    /// The branch's upstream, like `origin/main`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    #[serde(default)]
+    pub ahead: u32,
+    #[serde(default)]
+    pub behind: u32,
+    /// Changed, untracked and conflicted files, by path.
+    #[serde(default)]
+    pub files: Vec<GitFile>,
+    /// Whether there were more files than `files` holds.
+    #[serde(default)]
+    pub more: bool,
+    #[serde(default)]
+    pub stashes: u32,
+    /// `merging`, `rebasing`, `cherry-picking` or `reverting`, while one is
+    /// under way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Changes whenever a branch, tag or HEAD moves, so a client knows when
+    /// to read the log again.
+    #[serde(default)]
+    pub refs: String,
+    /// Local branches, by name.
+    #[serde(default)]
+    pub branches: Vec<String>,
+    /// Remote branches, like `origin/main`.
+    #[serde(default)]
+    pub remote_branches: Vec<String>,
+    #[serde(default)]
+    pub remotes: Vec<String>,
+    /// `user.name` and `user.email`, which a commit needs; empty when unset.
+    #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
+    pub user_email: String,
+}
+
+/// A file in [`GitStatus`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitFile {
+    /// Relative to the repository.
+    pub path: String,
+    /// What a renamed or copied file was called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// The staged change: `M`odified, `A`dded, `D`eleted, `R`enamed,
+    /// `C`opied or `T`ype changed; `None` when nothing is staged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged: Option<String>,
+    /// The change not staged: `M`, `D`, `T`, or `?` for an untracked file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unstaged: Option<String>,
+    /// Both sides changed it in a merge that stopped.
+    #[serde(default)]
+    pub conflict: bool,
+    /// Lines added and removed by the staged change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_lines: Option<GitLines>,
+    /// Lines added and removed by the change not staged (an untracked
+    /// file's lines, when it is text).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<GitLines>,
+    /// Bytes, for a file that is new to the repository, so a big data file
+    /// can be flagged before it is committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitLines {
+    pub added: u32,
+    pub removed: u32,
+    #[serde(default)]
+    pub binary: bool,
+}
+
+/// Commits, as [`Call::GitLog`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitLog {
+    pub commits: Vec<GitCommit>,
+    /// Whether older commits follow.
+    #[serde(default)]
+    pub more: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitCommit {
+    pub sha: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub email: String,
+    pub time_ms: i64,
+    pub subject: String,
+    /// Branches, tags and HEAD pointing at it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<GitRef>,
+    /// `Co-authored-by` trailers, like `Claude <noreply@anthropic.com>`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coauthors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitRef {
+    /// `head` (the branch checked out, or `HEAD` when detached), `branch`,
+    /// `remote` or `tag`.
+    pub kind: String,
+    pub name: String,
+}
+
+/// A commit's details, as [`Call::GitShow`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitCommitInfo {
+    pub sha: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub email: String,
+    pub time_ms: i64,
+    /// The whole message.
+    pub message: String,
+    /// What it changed against its first parent.
+    pub files: Vec<GitChange>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitChange {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// `M`, `A`, `D`, `R`, `C` or `T`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<GitLines>,
+}
+
+/// A file's diff, as [`Call::GitDiff`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitDiff {
+    pub file: String,
+    /// `git diff`'s unified diff, without its header lines.
+    pub text: String,
+    /// Whether it was cut short (at 2 MB).
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub binary: bool,
+}
+
+/// What [`Call::GitRun`] does.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum GitAction {
+    /// Stages files (relative to the repository); every change when empty.
+    Stage {
+        #[serde(default)]
+        files: Vec<String>,
+    },
+    /// Unstages files; every staged change when empty.
+    Unstage {
+        #[serde(default)]
+        files: Vec<String>,
+    },
+    /// Throws away files' changes not staged; deletes untracked ones.
+    Discard {
+        files: Vec<String>,
+    },
+    /// Commits what's staged; `amend` replaces the last commit.
+    Commit {
+        message: String,
+        #[serde(default)]
+        amend: bool,
+    },
+    Fetch,
+    /// Pulls the upstream, merging unless the user's configuration says to
+    /// rebase.
+    Pull,
+    /// Pushes, setting the upstream to the first remote when there is none.
+    Push,
+    /// Undoes the last commit, keeping its changes staged.
+    UndoCommit,
+    /// Switches to a branch; a remote branch (`origin/x`) gets a local
+    /// branch following it.
+    Switch {
+        branch: String,
+    },
+    /// Makes a branch at HEAD and switches to it.
+    CreateBranch {
+        name: String,
+    },
+    /// Stashes every change, untracked files included.
+    Stash {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    /// Brings back the last stash.
+    StashPop,
+    /// Stops a merge, rebase, cherry-pick or revert that stopped on conflicts.
+    Abort,
+    /// Makes the folder a repository.
+    Init,
+    /// Sets `user.name` and `user.email` for every repository of the user.
+    SetUser {
+        name: String,
+        email: String,
+    },
+}
+
+/// What [`Call::GitRun`] did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitDone {
+    /// What git said, like "Everything up-to-date".
+    #[serde(default)]
+    pub output: String,
+}
+
+/// A commit message, as [`Call::GitWriteMessage`] asked.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitMessage {
+    pub summary: String,
+    #[serde(default)]
+    pub body: String,
+    /// The agent that wrote it: `claude` or `codex`.
+    pub agent: String,
 }
 
 /// Content of a [`EVENT_RUN_FINISHED`] event.

@@ -7,6 +7,8 @@ import {
   type AgentKind,
   agentKind,
   canResume,
+  type CodeTo,
+  codeTo,
   currentMode,
   documentPath,
   drivesChat,
@@ -91,6 +93,8 @@ export function AgentsPane(props: {
   const [effortChoice, setEffortChoice] = createSignal<Record<string, string>>({});
   /** Models picked here, until the agent reports one: Claude Code reports it with its next status line. */
   const [modelChoice, setModelChoice] = createSignal<Record<string, ModelChoice>>({});
+  /** Where code goes, picked here for an ended conversation: it applies as it starts again. */
+  const [codeChoice, setCodeChoice] = createSignal<Record<string, CodeTo>>({});
   const [sentAt, setSentAt] = createSignal(0);
   const [now, setNow] = createSignal(Date.now());
   /** The current terminal's last lines, while its conversation hasn't started. */
@@ -312,6 +316,7 @@ export function AgentsPane(props: {
       setModeChoice(drop);
       setEffortChoice(drop);
       setModelChoice(drop);
+      setCodeChoice(drop);
       setStopped((ids) => ids.filter((other) => other !== id));
       setSentAt(Date.now());
     } catch (err) {
@@ -330,6 +335,7 @@ export function AgentsPane(props: {
       model: model ? model.id : live.model,
       effort: effortChoice()[t.id] ?? live.effort,
       permission: modeChoice()[t.id]?.permission ?? live.permission,
+      code: (codeChoice()[t.id] ?? codeTo(t)) === "console" ? "console" : undefined,
     };
   }
 
@@ -798,6 +804,11 @@ export function AgentsPane(props: {
                 else if (t().kind === "claude" && m.id === "yolo" && mode().id !== "yolo") void restartInYolo(t(), m);
                 else void switchMode(t(), m);
               }}
+              codeTo={codeChoice()[t().id] ?? codeTo(t())}
+              onCodeTo={(to) => {
+                if (ended()) setCodeChoice((all) => ({ ...all, [t().id]: to }));
+                else tell(t(), { kind: "set", code: to === "console" ? "console" : null });
+              }}
               onOpenFile={() => t().options?.documents?.[0] && openPath(t().options!.documents![0])}
               onCompact={() => compact(t())}
             />
@@ -818,12 +829,15 @@ interface NewChoice {
   setEffort: (level: string) => void;
   mode: () => Mode;
   setMode: (mode: Mode) => void;
+  code: () => CodeTo;
+  setCode: (to: CodeTo) => void;
 }
 
 const [newKind, setNewKind] = createSignal("claude");
 const [newModel, setNewModel] = createSignal<Record<string, ModelChoice>>({});
 const [newEffort, setNewEffort] = createSignal<Record<string, string>>({});
 const [newMode, setNewMode] = createSignal<Mode>(MODES[0]);
+const [newCode, setNewCode] = createSignal<CodeTo>("file");
 const newChoice: NewChoice = {
   kind: () => agentKind(newKind()) ?? AGENT_KINDS[0],
   setKind: setNewKind,
@@ -833,6 +847,8 @@ const newChoice: NewChoice = {
   setEffort: (level) => setNewEffort((all) => ({ ...all, [newKind()]: level })),
   mode: () => newMode(),
   setMode: setNewMode,
+  code: () => newCode(),
+  setCode: setNewCode,
 };
 
 /** New conversation: which agent, and the file it is linked to. The message box under it starts it. */
@@ -882,7 +898,8 @@ function NewConversation(props: {
             <button class="flink" onClick={() => props.onOpen(props.file!)}>
               {props.file}
             </button>
-            . Where you are in it goes with every message, and code goes into it below your active cell.
+            . Where you are in it goes with every message, and{" "}
+            {props.choice.code() === "console" ? "code runs in the Console." : "code goes into it below your active cell."}
           </Show>
         </p>
         <p class="nc-sign">
@@ -919,6 +936,7 @@ function NewComposer(props: {
             effort: c.effort(),
             permission: c.mode().permission,
             documents: props.file ? [props.file] : undefined,
+            code: c.code() === "console" ? "console" : undefined,
           },
           text,
         )
@@ -926,6 +944,8 @@ function NewComposer(props: {
       onModel={c.setModel}
       onEffort={c.setEffort}
       onMode={c.setMode}
+      codeTo={c.code()}
+      onCodeTo={c.setCode}
       onOpenFile={props.onOpenFile}
     />
   );

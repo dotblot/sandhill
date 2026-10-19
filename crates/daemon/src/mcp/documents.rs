@@ -96,6 +96,13 @@ impl Tools {
     }
 
     pub(super) async fn add_cell(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
+        if self
+            .terminal_dir
+            .as_deref()
+            .is_some_and(crate::terminal::code_to_console)
+        {
+            return self.add_to_console(edit).await;
+        }
         let mut client = self.client().await?;
         let focus = self.focus(&client).await;
         let file = self.target(&client, edit.file, focus.as_ref()).await?;
@@ -136,6 +143,88 @@ impl Tools {
             self.shown(&edited.file)
         );
         self.finish(&mut client, &edited, edit, head, since).await
+    }
+
+    /// `add_cell` when the user has the agent's code go to the Console:
+    /// the code runs in the document's session, where the Console shows it
+    /// as the agent's, and the document is left as it is.
+    async fn add_to_console(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
+        let mut client = self.client().await?;
+        let focus = self.focus(&client).await;
+        let file = self.target(&client, edit.file, focus.as_ref()).await.ok();
+        let language = match edit.language {
+            Some(language) => normalize_language(language),
+            None => self
+                .language_of(&client, file.as_deref(), focus.as_ref())
+                .await
+                .context("say which language with `language` (r or python)")?,
+        };
+        let session = match &file {
+            Some(file) => {
+                let document = CellEdited {
+                    file: file.clone(),
+                    cell_id: String::new(),
+                    language: language.clone(),
+                    in_window: false,
+                    kernel: None,
+                };
+                self.session_for(&client, &document).await?
+            }
+            None => match self.pick(&client, None, Some(&language)).await? {
+                Some(session) => session,
+                None => self.start_session(&client, &language).await?,
+            },
+        };
+        let instead = file
+            .as_deref()
+            .map(|f| format!(" instead of adding it to {}", self.shown(f)))
+            .unwrap_or_default();
+        if !edit.run {
+            return Ok(vec![text_item(&format!(
+                "The user has your code going to the Console{instead}, so nothing was added and nothing ran. Use run_code to run it there."
+            ))]);
+        }
+        let by = self.agent_name();
+        let outcome = run(&mut client, &session, edit.code, None, by, edit.timeout).await?;
+        let head = format!(
+            "Ran it in the Console, in {}{instead}: the user has your code going to the Console",
+            describe_session(&session)
+        );
+        Ok(report(&client, &head, &outcome).await)
+    }
+
+    /// The language code for `file` is in: a script's own, else that of the
+    /// cell the user is in, else that of the cell that ran last.
+    async fn language_of(
+        &self,
+        client: &Client,
+        file: Option<&str>,
+        focus: Option<&Focus>,
+    ) -> Option<String> {
+        let file = file?;
+        if let Some(cells::Kind::Script(own)) = cells::kind(Path::new(file)) {
+            return Some(own.into());
+        }
+        let here = focus
+            .filter(|f| f.file.as_deref() == Some(file))
+            .and_then(|f| f.cell.clone());
+        if let Some(cell) = here {
+            let path = file.to_string();
+            let code = tokio::task::spawn_blocking(move || cells::cell_code(&path, &cell))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten();
+            if let Some((language, _)) = code {
+                return Some(normalize_language(&language));
+            }
+        }
+        let outputs = client.file_outputs(file).await.ok()?;
+        outputs
+            .cells
+            .iter()
+            .max_by_key(|c| c.started_ms)
+            .map(|c| normalize_language(&c.language))
     }
 
     pub(super) async fn edit_cell(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
@@ -185,7 +274,8 @@ impl Tools {
                 file: edited.file.clone(),
                 cell_id,
             };
-            let outcome = run(client, &session, edit.code, false, Some(cell), edit.timeout).await?;
+            let by = self.agent_name();
+            let outcome = run(client, &session, edit.code, Some(cell), by, edit.timeout).await?;
             let head = format!("{head}, and ran it in {}", describe_session(&session));
             return Ok(report(client, &head, &outcome).await);
         }

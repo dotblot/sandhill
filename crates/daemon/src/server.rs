@@ -6,10 +6,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::terminal::{Terminals, ToHost};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
-    Blob, Call, CellEdited, Event, HistoryPage, Outcome, PROTOCOL_VERSION, PingReply, Request,
-    ServerMessage, SessionStatus, Subscribed,
+    Blob, Call, CellEdited, Event, FileWritten, HelpPage, HelpSource, HelpTopics, HistoryPage,
+    Outcome, PROTOCOL_VERSION, Packages, PingReply, Request, ServerMessage, SessionStatus,
+    Subscribed, TableRows, TableSummary, Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -22,12 +25,21 @@ use crate::journal::Journal;
 use crate::paths::StateDir;
 use crate::session::SessionHandle;
 use crate::windows::Windows;
-use crate::{cells, files, memory, notebook, outputs, projects, sidecar, windows};
+use crate::{
+    cells, files, help, memory, notebook, outputs, packages, projects, sidecar, tables, variables,
+    windows,
+};
 
 const REPLAY_PAGE: u32 = 500;
 /// How much of its log `read_log` returns unless asked for another amount.
 const LOG_TAIL: u64 = 64 * 1024;
 const HISTORY_LIMIT: u32 = 5000;
+/// How many runs the Console gets back unless it asks for another number.
+const CONSOLE_RUNS: u32 = 100;
+const MAX_CONSOLE_RUNS: u32 = 1000;
+/// How many plots the Plots pane gets back unless it asks for another number.
+const PLOTS: u32 = 100;
+const MAX_PLOTS: u32 = 500;
 
 pub struct Daemon {
     state: StateDir,
@@ -302,7 +314,263 @@ impl Daemon {
                 code,
                 cell,
                 quiet,
-            } => serde_json::to_value(self.live(&session)?.execute(code, cell, quiet).await?)?,
+                by,
+            } => serde_json::to_value(self.live(&session)?.execute(code, cell, quiet, by).await?)?,
+            Call::SessionPlots { session, limit } => {
+                let journal = self.journal.clone();
+                let limit = limit.unwrap_or(PLOTS).min(MAX_PLOTS);
+                serde_json::to_value(
+                    blocking(move || Ok(outputs::session_plots(&journal, &session, limit)?))
+                        .await?,
+                )?
+            }
+            Call::SessionRuns { session, limit } => {
+                let journal = self.journal.clone();
+                let limit = limit.unwrap_or(CONSOLE_RUNS).min(MAX_CONSOLE_RUNS);
+                serde_json::to_value(
+                    blocking(move || Ok(outputs::session_runs(&journal, &session, limit)?)).await?,
+                )?
+            }
+            Call::ListVariables { session, path } => {
+                let printed = self
+                    .quietly(&session, "list the variables", |language| {
+                        variables::list_code(language, &path)
+                    })
+                    .await?;
+                let (list, more) = variables::parse(&printed.stdout);
+                serde_json::to_value(Variables {
+                    session,
+                    path,
+                    variables: list,
+                    more,
+                })?
+            }
+            Call::DeleteVariables { session, names } => {
+                if !names.is_empty() {
+                    self.quietly(&session, "delete variables", |language| {
+                        variables::delete_code(language, &names)
+                    })
+                    .await?;
+                }
+                Value::Null
+            }
+            Call::TableRows {
+                session,
+                path,
+                offset,
+                limit,
+                sort,
+                filters,
+            } => {
+                let ask = tables::Ask {
+                    mode: tables::Mode::Rows,
+                    path: &path,
+                    sort: &sort,
+                    filters: &filters,
+                    offset,
+                    limit: limit.unwrap_or(tables::ROWS).min(tables::MAX_ROWS),
+                    file: "",
+                };
+                let printed = self
+                    .quietly(&session, "read the table", |language| {
+                        tables::code(language, &ask)
+                    })
+                    .await?;
+                let rows = tables::parse_rows(&printed.stdout);
+                serde_json::to_value(TableRows {
+                    session,
+                    path,
+                    code: rows.code,
+                    matrix: rows.matrix,
+                    columns: rows.columns,
+                    width: rows.width,
+                    total: rows.total,
+                    rows: rows.rows,
+                    offset,
+                    labels: rows.labels,
+                    values: rows.values,
+                })?
+            }
+            Call::TableSummary {
+                session,
+                path,
+                filters,
+            } => {
+                let ask = tables::Ask {
+                    mode: tables::Mode::Summary,
+                    path: &path,
+                    sort: &[],
+                    filters: &filters,
+                    offset: 0,
+                    limit: 0,
+                    file: "",
+                };
+                let printed = self
+                    .quietly(&session, "summarize the table", |language| {
+                        tables::code(language, &ask)
+                    })
+                    .await?;
+                let summary = tables::parse_summary(&printed.stdout);
+                serde_json::to_value(TableSummary {
+                    session,
+                    path,
+                    rows: summary.rows,
+                    columns: summary.columns,
+                })?
+            }
+            Call::HelpTopics {
+                session,
+                query,
+                package,
+                limit,
+            } => {
+                let ask = help::Ask {
+                    mode: help::Mode::Topics,
+                    query: query.trim(),
+                    package: package.as_deref().unwrap_or("").trim(),
+                    topic: "",
+                    limit: limit.unwrap_or(help::TOPICS).min(help::MAX_TOPICS),
+                };
+                let printed = self
+                    .quietly(&session, "search the help", |language| {
+                        help::code(language, &ask)
+                    })
+                    .await?;
+                let found = help::parse_topics(&printed.stdout);
+                serde_json::to_value(HelpTopics {
+                    session,
+                    more: found.matched.saturating_sub(found.topics.len() as u64),
+                    topics: found.topics,
+                })?
+            }
+            Call::HelpPage {
+                session,
+                topic,
+                package,
+            } => {
+                let ask = help::Ask {
+                    mode: help::Mode::Page,
+                    query: "",
+                    package: package.as_deref().unwrap_or("").trim(),
+                    topic: topic.trim(),
+                    limit: 0,
+                };
+                let printed = self
+                    .quietly(&session, "read the help", |language| {
+                        help::code(language, &ask)
+                    })
+                    .await?;
+                let page = help::parse_page(&printed.stdout)
+                    .with_context(|| format!("no help for {topic}"))?;
+                serde_json::to_value(HelpPage {
+                    session,
+                    topic: page.topic,
+                    package: page.package,
+                    title: page.title,
+                    version: page.version,
+                    html: page.html,
+                    kind: page.kind,
+                    signature: page.signature,
+                    text: page.text,
+                    members: page.members,
+                    alternatives: page.alternatives,
+                })?
+            }
+            Call::HelpSource {
+                session,
+                topic,
+                package,
+            } => {
+                let ask = help::Ask {
+                    mode: help::Mode::Source,
+                    query: "",
+                    package: package.as_deref().unwrap_or("").trim(),
+                    topic: topic.trim(),
+                    limit: 0,
+                };
+                let printed = self
+                    .quietly(&session, "read the source", |language| {
+                        help::code(language, &ask)
+                    })
+                    .await?;
+                let source = help::parse_source(&printed.stdout)
+                    .with_context(|| format!("no source for {topic}"))?;
+                serde_json::to_value(HelpSource {
+                    session,
+                    topic: source.topic,
+                    package: source.package,
+                    text: source.text,
+                    file: source.file,
+                    line: source.line,
+                })?
+            }
+            Call::ListPackages { session } => {
+                let printed = self
+                    .quietly(&session, "list the packages", packages::code)
+                    .await?;
+                let listed = packages::parse(&printed.stdout);
+                serde_json::to_value(Packages {
+                    session,
+                    packages: listed.packages,
+                    libraries: listed.libraries,
+                    cran: listed.cran,
+                    bioconductor: listed.bioconductor,
+                    conda: listed.conda,
+                })?
+            }
+            Call::GitStatus { path } => serde_json::to_value(crate::git::status(&path).await?)?,
+            Call::GitLog { path, skip, limit } => {
+                serde_json::to_value(crate::git::log(&path, skip, limit).await?)?
+            }
+            Call::GitShow { path, sha } => {
+                serde_json::to_value(crate::git::show(&path, &sha).await?)?
+            }
+            Call::GitDiff {
+                path,
+                file,
+                staged,
+                sha,
+            } => {
+                serde_json::to_value(crate::git::diff(&path, &file, staged, sha.as_deref()).await?)?
+            }
+            Call::GitRun { path, action } => {
+                serde_json::to_value(crate::git::run_action(&path, action).await?)?
+            }
+            Call::GitWriteMessage { path, agent } => {
+                serde_json::to_value(crate::git::write_message(&path, agent.as_deref()).await?)?
+            }
+            Call::TableExport {
+                session,
+                path,
+                sort,
+                filters,
+                file,
+            } => {
+                let resolved = files::resolve(&file)?.to_string_lossy().into_owned();
+                let ask = tables::Ask {
+                    mode: tables::Mode::Export,
+                    path: &path,
+                    sort: &sort,
+                    filters: &filters,
+                    offset: 0,
+                    limit: 0,
+                    file: &resolved,
+                };
+                let printed = self
+                    .quietly(&session, "export the table", |language| {
+                        tables::code(language, &ask)
+                    })
+                    .await?;
+                if tables::parse_written(&printed.stdout).is_none() {
+                    bail!("could not export the table: nothing was written");
+                }
+                let meta = std::fs::metadata(&resolved)
+                    .with_context(|| format!("could not export the table to {file}"))?;
+                serde_json::to_value(FileWritten {
+                    path: file,
+                    mtime_ms: files::mtime_ms(&meta),
+                })?
+            }
             Call::Interrupt { session } => {
                 self.live(&session)?.interrupt().await?;
                 Value::Null
@@ -371,9 +639,19 @@ impl Daemon {
                 path,
                 text,
                 expected_mtime_ms,
-            } => serde_json::to_value(
-                blocking(move || files::write_text(&path, &text, expected_mtime_ms)).await?,
-            )?,
+                base64,
+            } => {
+                let bytes = if base64 {
+                    BASE64
+                        .decode(text.trim())
+                        .context("the file's bytes are not valid base64")?
+                } else {
+                    text.into_bytes()
+                };
+                serde_json::to_value(
+                    blocking(move || files::write_bytes(&path, &bytes, expected_mtime_ms)).await?,
+                )?
+            }
             Call::ListDir { path } => {
                 serde_json::to_value(blocking(move || files::list_dir(&path)).await?)?
             }
@@ -692,6 +970,30 @@ impl Daemon {
             .lock()
             .unwrap()
             .insert(handle.id.clone(), Arc::new(handle));
+    }
+
+    /// Runs a tool's code quietly in an idle session: the code `code` gives
+    /// for the session's language. `what` says what for, in errors.
+    async fn quietly(
+        &self,
+        session: &str,
+        what: &str,
+        code: impl FnOnce(&str) -> Option<String>,
+    ) -> Result<variables::Printed> {
+        let info = self.session_info(session)?;
+        let code = code(&info.language)
+            .with_context(|| format!("cannot {what} in a {} session", info.language))?;
+        if info.pending_runs > 0 {
+            bail!("the session is busy running code; try again once it is idle");
+        }
+        let handle = self.live(session)?;
+        let printed = variables::run_quietly(&handle, &self.journal, code, variables::TIMEOUT)
+            .await
+            .with_context(|| format!("could not {what}"))?;
+        if let Some(error) = &printed.error {
+            bail!("could not {what}: {error}");
+        }
+        Ok(printed)
     }
 
     fn live(&self, session: &str) -> Result<Arc<SessionHandle>> {

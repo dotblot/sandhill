@@ -218,7 +218,8 @@ function duration(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-function ago(ms: number): string {
+/** How long ago, in words: "just now", "5 min ago", "3 h ago". */
+export function ago(ms: number): string {
   const m = Math.floor(ms / 60000);
   if (m < 1) return "just now";
   if (m < 60) return `${m} min ago`;

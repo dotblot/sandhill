@@ -5,7 +5,7 @@
 //! (`app/src/model/outputs.ts`); `tests/fixtures/outputs.json` keeps the two
 //! in agreement.
 
-use sandhill_proto::{CellOutputs, FileOutputs};
+use sandhill_proto::{CellOutputs, FileOutputs, Plot, SessionPlots, SessionRun, SessionRuns};
 use serde_json::{Map, Value, json};
 
 use crate::journal::{Journal, Result};
@@ -45,6 +45,69 @@ pub fn file_outputs(journal: &Journal, file: &str) -> Result<FileOutputs> {
         cells,
         seq,
     })
+}
+
+/// A session's latest `limit` runs with their outputs, for its Console, as
+/// of one journal position.
+pub fn session_runs(journal: &Journal, session: &str, limit: u32) -> Result<SessionRuns> {
+    let seq = journal.max_seq()?;
+    let mut runs = Vec::new();
+    for run in journal.console_runs(session, limit)? {
+        let outputs = run_outputs(journal, &run.run_id, seq)?;
+        runs.push(SessionRun {
+            run: run.run_id,
+            cell: run.cell,
+            by: run.by,
+            code: run.code,
+            started_ms: run.started_ms,
+            finished_ms: run.finished_ms,
+            status: run.status,
+            execution_count: run.execution_count,
+            outputs,
+        });
+    }
+    Ok(SessionRuns {
+        session: session.to_string(),
+        runs,
+        seq,
+    })
+}
+
+/// A session's latest plots, for the Plots pane: the images its runs showed.
+pub fn session_plots(journal: &Journal, session: &str, limit: u32) -> Result<SessionPlots> {
+    let seq = journal.max_seq()?;
+    let plots = journal
+        .session_plots(session, limit)?
+        .into_iter()
+        .filter(|p| {
+            p.content["data"]
+                .as_object()
+                .is_some_and(|data| data.keys().any(|mime| is_plot_mime(mime)))
+        })
+        .map(|p| Plot {
+            run: p.run_id,
+            seq: p.seq,
+            ts_ms: p.ts_ms,
+            cell: p.cell,
+            by: p.by,
+            code: p.code,
+            data: p.content["data"].clone(),
+            metadata: p.content.get("metadata").cloned().unwrap_or(Value::Null),
+        })
+        .collect();
+    Ok(SessionPlots {
+        session: session.to_string(),
+        plots,
+        seq,
+    })
+}
+
+/// The image types the Plots pane shows.
+pub fn is_plot_mime(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/gif" | "image/svg+xml"
+    )
 }
 
 #[derive(Debug, Default)]

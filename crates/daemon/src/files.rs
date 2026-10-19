@@ -53,9 +53,16 @@ pub fn read_text(path: &str) -> Result<FileText> {
 /// Writes through a temporary file and a rename, so readers never see a
 /// half-written notebook and a crash leaves the old version intact.
 pub fn write_text(path: &str, text: &str, expected_mtime_ms: Option<i64>) -> Result<FileWritten> {
-    write_with(path, expected_mtime_ms, |file| {
-        Ok(file.write_all(text.as_bytes())?)
-    })
+    write_bytes(path, text.as_bytes(), expected_mtime_ms)
+}
+
+/// Like [`write_text`], for any bytes (a saved plot).
+pub fn write_bytes(
+    path: &str,
+    bytes: &[u8],
+    expected_mtime_ms: Option<i64>,
+) -> Result<FileWritten> {
+    write_with(path, expected_mtime_ms, |file| Ok(file.write_all(bytes)?))
 }
 
 /// Like [`write_text`], with the contents written by `write`.
@@ -73,6 +80,12 @@ pub fn write_with(
             "{CONFLICT_ERROR} {} changed on disk since it was opened",
             resolved.display()
         );
+    }
+    if existing.is_none()
+        && let Some(dir) = resolved.parent()
+    {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("cannot make the folder {}", dir.display()))?;
     }
     write_atomic_with(&resolved, write)?;
     let meta = std::fs::metadata(&resolved)?;
@@ -190,6 +203,14 @@ mod tests {
         let read = read_text(&path).unwrap();
         assert_eq!(read.text, "# hi\n");
         assert_eq!(read.mtime_ms, written.mtime_ms);
+    }
+
+    #[test]
+    fn a_new_file_gets_its_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_in(dir.path(), "figures/umap.png");
+        write_bytes(&path, &[0x89, b'P', b'N', b'G'], None).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), [0x89, b'P', b'N', b'G']);
     }
 
     #[test]

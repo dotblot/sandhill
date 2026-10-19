@@ -143,6 +143,315 @@ export interface FileOutputs {
   seq: number;
 }
 
+/** One of a session's runs, for its Console (`session_runs`). */
+export interface SessionRun {
+  run: string;
+  /** The document cell it came from; none for code typed in the Console or an agent's run_code. */
+  cell?: CellRef;
+  /** The agent that ran it, like "Claude". */
+  by?: string;
+  code: string;
+  started_ms: number;
+  finished_ms?: number;
+  status?: string;
+  execution_count?: number;
+  outputs: Output[];
+}
+
+export interface SessionRuns {
+  session: string;
+  runs: SessionRun[];
+  seq: number;
+}
+
+/** An image a run showed, for the Plots pane (`session_plots`). */
+export interface Plot {
+  run: string;
+  /** Where it is in the journal. */
+  seq: number;
+  ts_ms: number;
+  /** The document cell the run came from; none for the Console or an agent's run_code. */
+  cell?: CellRef;
+  /** The agent that ran it, like "Claude". */
+  by?: string;
+  code: string;
+  /** The output's MIME bundle: images as blob references, small SVGs inline. */
+  data: Record<string, unknown>;
+  metadata?: Record<string, any> | null;
+}
+
+export interface SessionPlots {
+  session: string;
+  plots: Plot[];
+  seq: number;
+}
+
+/** A session's variable, or a part of one (`list_variables`). */
+export interface Variable {
+  name: string;
+  kind: "data" | "value" | "function" | string;
+  class: string;
+  size?: number;
+  /** Whether it has parts to list: columns, items, slots. */
+  children: boolean;
+  /** Whether it opens in the Data Explorer: a data frame or a matrix. */
+  table?: boolean;
+  summary: string;
+}
+
+export interface Variables {
+  session: string;
+  path: string[];
+  variables: Variable[];
+  /** How many more parts there are than listed. */
+  more: number;
+}
+
+/** A sort key for `table_rows`. */
+export interface TableSort {
+  /** The column's position, from 0. */
+  column: number;
+  descending?: boolean;
+}
+
+/** A filter for `table_rows`: rows pass when `column` meets it. */
+export interface TableFilter {
+  column: number;
+  /** <, <=, >, >=, =, != (one value), between (two), in and not in (any), contains, missing, present. */
+  op: string;
+  values?: string[];
+}
+
+export interface TableColumn {
+  name: string;
+  kind: "number" | "text" | "category" | "logical" | "date" | "other" | string;
+  /** The language's own type: dbl, fct, float64, category. */
+  type: string;
+}
+
+/** Rows of a table (`table_rows`). */
+export interface TableRows {
+  session: string;
+  path: string[];
+  /** The table as code, like `seu@meta.data` or `adata.obs`. */
+  code: string;
+  /** Whether it's a matrix (or, in Python, an array) rather than a data frame. */
+  matrix?: boolean;
+  /** Its columns; the first 500 of a wider table. */
+  columns: TableColumn[];
+  /** How many columns it has. */
+  width: number;
+  /** How many rows it has. */
+  total: number;
+  /** How many pass the filters. */
+  rows: number;
+  offset: number;
+  /** Each returned row's name or index label. */
+  labels: string[];
+  /** Cells by row: numbers in number columns, text, or null where missing. */
+  values: (number | string | null)[][];
+}
+
+export interface ColumnSummary {
+  column: number;
+  missing: number;
+  distinct?: number;
+  min?: number;
+  max?: number;
+  mean?: number;
+  median?: number;
+  /** Counts in equal bins from min to max. */
+  histogram?: number[];
+  /** The commonest values, commonest first (a factor's in level order). */
+  top?: { value: string; count: number }[];
+}
+
+export interface TableSummary {
+  session: string;
+  path: string[];
+  rows: number;
+  columns: ColumnSummary[];
+}
+
+export interface HelpTopic {
+  /** The function or topic: `read.csv`, `pandas.read_csv`. */
+  topic: string;
+  /** R's package, or Python's top-level module. */
+  package: string;
+  title: string;
+}
+
+export interface HelpTopics {
+  session: string;
+  topics: HelpTopic[];
+  /** How many more matched than are listed. */
+  more: number;
+}
+
+export interface HelpMember {
+  name: string;
+  kind: string;
+  title: string;
+}
+
+export interface HelpPage {
+  session: string;
+  topic: string;
+  package: string;
+  title: string;
+  version: string;
+  /** R: the page's HTML body. */
+  html?: string;
+  /** Python: module, class, function, method, property or value. */
+  kind?: string;
+  /** Python: `(adata, target_sum=None)`. */
+  signature?: string;
+  /** Python: the docstring. */
+  text?: string;
+  members?: HelpMember[];
+  /** R: other packages with a page on the same topic. */
+  alternatives?: HelpTopic[];
+}
+
+export interface HelpSource {
+  session: string;
+  topic: string;
+  package: string;
+  text: string;
+  file?: string;
+  line?: number;
+}
+
+export interface Package {
+  name: string;
+  version: string;
+  title: string;
+  library: string;
+  /** R: attached with library(). Python: imported by the user's code. */
+  attached: boolean;
+  loaded: boolean;
+  /** R: part of R itself. */
+  base: boolean;
+  /** Python: the modules it provides. */
+  modules?: string[];
+  /** Python: what installed it, like pip or conda. */
+  installer?: string;
+}
+
+export interface Packages {
+  session: string;
+  packages: Package[];
+  libraries: string[];
+  cran: boolean;
+  bioconductor: boolean;
+  conda: boolean;
+}
+
+/** A repository's state, from `git_status`; `repo` is empty outside one. */
+export interface GitStatus {
+  repo: string;
+  /** The branch checked out; absent when HEAD is detached. */
+  branch?: string;
+  /** HEAD's commit; absent before the first commit. */
+  head?: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  files: GitFile[];
+  more: boolean;
+  stashes: number;
+  /** "merging", "rebasing", "cherry-picking" or "reverting". */
+  state?: string;
+  /** Changes whenever a branch, tag or HEAD moves. */
+  refs: string;
+  branches: string[];
+  remote_branches: string[];
+  remotes: string[];
+  user_name: string;
+  user_email: string;
+}
+
+export interface GitLines {
+  added: number;
+  removed: number;
+  binary?: boolean;
+}
+
+export interface GitFile {
+  /** Relative to the repository; a folder ends with "/". */
+  path: string;
+  from?: string;
+  /** M, A, D, R, C or T; absent when nothing is staged. */
+  staged?: string;
+  /** M, D, T, ? (untracked) or U (conflict). */
+  unstaged?: string;
+  conflict?: boolean;
+  staged_lines?: GitLines;
+  lines?: GitLines;
+  size?: number;
+}
+
+export interface GitRef {
+  kind: "head" | "branch" | "remote" | "tag";
+  name: string;
+}
+
+export interface GitCommit {
+  sha: string;
+  parents: string[];
+  author: string;
+  email: string;
+  time_ms: number;
+  subject: string;
+  refs?: GitRef[];
+  coauthors?: string[];
+}
+
+export interface GitLog {
+  commits: GitCommit[];
+  more: boolean;
+}
+
+export interface GitChange {
+  path: string;
+  from?: string;
+  status: string;
+  lines?: GitLines;
+}
+
+export interface GitCommitInfo {
+  sha: string;
+  parents: string[];
+  author: string;
+  email: string;
+  time_ms: number;
+  message: string;
+  files: GitChange[];
+}
+
+export interface GitDiff {
+  file: string;
+  text: string;
+  truncated: boolean;
+  binary: boolean;
+}
+
+export type GitAction =
+  | { op: "stage" | "unstage"; files: string[] }
+  | { op: "discard"; files: string[] }
+  | { op: "commit"; message: string; amend: boolean }
+  | { op: "fetch" | "pull" | "push" | "undo_commit" | "stash_pop" | "abort" | "init" }
+  | { op: "switch"; branch: string }
+  | { op: "create_branch"; name: string }
+  | { op: "stash"; message?: string }
+  | { op: "set_user"; name: string; email: string };
+
+export interface GitMessage {
+  summary: string;
+  body: string;
+  agent: string;
+}
+
 /** An nbformat 4 output object. */
 export interface Output {
   output_type: "stream" | "display_data" | "execute_result" | "error" | string;
@@ -211,6 +520,8 @@ export interface AgentOptions {
   /** "supervised", "edits", "auto" or "full". */
   permission?: string;
   documents?: string[];
+  /** "console": the agent's code runs in the Console instead of going into the linked file. */
+  code?: string;
 }
 
 /** What an agent reports through its hooks and status line, or (Codex) what Sandhill's bridge to it reports. */
@@ -227,6 +538,8 @@ export interface AgentReport {
   permission?: string;
   /** Sandhill's own mode on top of the agent's, when one is on: `restricted` or `ask`. */
   guard?: string | null;
+  /** Where the agent's code goes: "console", or null for the linked file. */
+  code?: string | null;
   status?: AgentStatus;
   /** Codex: the models it offers. */
   models?: AgentModel[];

@@ -213,6 +213,102 @@ export function SessionMenu(props: {
   );
 }
 
+/**
+ * A session picker, as in Variables: the language icon and version, like
+ * the editor's kernel pickers, with the same details in its drop-down and
+ * the project's sessions to pick from.
+ */
+export function SessionPicker(props: {
+  ws: Workspace;
+  session?: SessionInfo;
+  sessions: SessionInfo[];
+  usedBy?: (session: string) => string[];
+  onPick: (session: string) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  const state = (): KernelState => (props.session ? (props.ws.isBusy(props.session.id) ? "busy" : "idle") : "none");
+  let button!: HTMLButtonElement;
+  return (
+    <div class="kernel session-pick" data-state={state()}>
+      <Show when={props.session} fallback={<span class="kernel-none">No R or Python session</span>}>
+        {(s) => (
+          <>
+            <LangIcon language={s().language} />
+            <button
+              ref={button}
+              class="kernel-pick"
+              aria-haspopup="menu"
+              aria-expanded={open()}
+              title={`${sessionLabel(s())} · ${STATE_TEXT[state()]}. Click for details`}
+              onClick={() => setOpen(!open())}
+            >
+              <span>{languageVersion(s()) || languageLabel(s().language)}</span>
+              <Icon name="chevron" small />
+            </button>
+          </>
+        )}
+      </Show>
+      <Show when={open() && props.session}>
+        {(s) => (
+          <SessionPickMenu
+            ws={props.ws}
+            session={s()}
+            sessions={props.sessions}
+            usedBy={props.usedBy}
+            anchor={button}
+            onPick={(id) => {
+              setOpen(false);
+              props.onPick(id);
+            }}
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </Show>
+    </div>
+  );
+}
+
+function SessionPickMenu(props: {
+  ws: Workspace;
+  session: SessionInfo;
+  sessions: SessionInfo[];
+  usedBy?: (session: string) => string[];
+  anchor: HTMLElement;
+  onPick: (session: string) => void;
+  onClose: () => void;
+}) {
+  const ws = props.ws;
+  const state = (): KernelState => (ws.isBusy(props.session.id) ? "busy" : "idle");
+  const memory = sessionMemory(ws, () => props.session.id);
+  const rows = () => sessionRows(ws, props.session, props.usedBy?.(props.session.id) ?? [], memory());
+  const box = props.anchor.getBoundingClientRect();
+  let menu!: HTMLDivElement;
+  closeOnOutside(() => menu, props.anchor, props.onClose);
+  return (
+    <div
+      ref={menu}
+      class="kpop"
+      role="menu"
+      style={{ left: `${Math.max(8, Math.min(box.left - 4, window.innerWidth - 278))}px`, top: `${box.bottom + 4}px` }}
+    >
+      <KernelHead language={props.session.language} name={sessionLabel(props.session)} state={state()} rows={rows()} />
+      <div class="mm-sep" />
+      <div class="mm-h">Sessions</div>
+      <For each={props.sessions}>
+        {(s) => (
+          <button class="mm-i" role="menuitem" onClick={() => props.onPick(s.id)}>
+            {s.id === props.session.id ? <Icon name="check" small /> : <span class="ico sm" />}
+            <span>
+              {sessionLabel(s)} · {s.id.slice(0, 8)}
+            </span>
+            <kbd>{ws.isBusy(s.id) ? "busy" : ""}</kbd>
+          </button>
+        )}
+      </For>
+    </div>
+  );
+}
+
 /** A kernel pop-up's top: the language, name and state, then the details. */
 function KernelHead(props: { language: string; name: string; state: KernelState; rows: [string, string][] }) {
   return (

@@ -13,9 +13,11 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
-    FileStat, FileText, FileWritten, Focus, HistoryPage, KernelspecInfo, Outcome, PingReply,
-    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, Subscribed, SystemStats,
-    TerminalEvent, TerminalInfo, TerminalSubscribed,
+    FileStat, FileText, FileWritten, Focus, GitAction, GitCommitInfo, GitDiff, GitDone, GitLog,
+    GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, KernelspecInfo, Outcome,
+    Packages, PingReply, ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo,
+    SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows, TableSort,
+    TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -181,6 +183,7 @@ impl Client {
             code: code.into(),
             cell,
             quiet: false,
+            by: None,
         })
         .await
     }
@@ -193,6 +196,7 @@ impl Client {
             code: code.into(),
             cell: None,
             quiet: true,
+            by: None,
         })
         .await
     }
@@ -262,6 +266,7 @@ impl Client {
             path: path.into(),
             text: text.into(),
             expected_mtime_ms,
+            base64: false,
         })
         .await
     }
@@ -290,6 +295,194 @@ impl Client {
 
     pub async fn file_outputs(&self, file: &str) -> Result<FileOutputs> {
         self.call(Call::FileOutputs { file: file.into() }).await
+    }
+
+    pub async fn session_runs(&self, session: &str, limit: Option<u32>) -> Result<SessionRuns> {
+        self.call(Call::SessionRuns {
+            session: session.into(),
+            limit,
+        })
+        .await
+    }
+
+    pub async fn session_plots(&self, session: &str, limit: Option<u32>) -> Result<SessionPlots> {
+        self.call(Call::SessionPlots {
+            session: session.into(),
+            limit,
+        })
+        .await
+    }
+
+    pub async fn list_variables(&self, session: &str, path: &[String]) -> Result<Variables> {
+        self.call(Call::ListVariables {
+            session: session.into(),
+            path: path.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn delete_variables(&self, session: &str, names: &[String]) -> Result<()> {
+        self.call(Call::DeleteVariables {
+            session: session.into(),
+            names: names.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn table_rows(
+        &self,
+        session: &str,
+        path: &[String],
+        offset: u64,
+        limit: Option<u32>,
+        sort: &[TableSort],
+        filters: &[TableFilter],
+    ) -> Result<TableRows> {
+        self.call(Call::TableRows {
+            session: session.into(),
+            path: path.to_vec(),
+            offset,
+            limit,
+            sort: sort.to_vec(),
+            filters: filters.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn table_summary(
+        &self,
+        session: &str,
+        path: &[String],
+        filters: &[TableFilter],
+    ) -> Result<TableSummary> {
+        self.call(Call::TableSummary {
+            session: session.into(),
+            path: path.to_vec(),
+            filters: filters.to_vec(),
+        })
+        .await
+    }
+
+    pub async fn table_export(
+        &self,
+        session: &str,
+        path: &[String],
+        sort: &[TableSort],
+        filters: &[TableFilter],
+        file: &str,
+    ) -> Result<FileWritten> {
+        self.call(Call::TableExport {
+            session: session.into(),
+            path: path.to_vec(),
+            sort: sort.to_vec(),
+            filters: filters.to_vec(),
+            file: file.into(),
+        })
+        .await
+    }
+
+    pub async fn help_topics(
+        &self,
+        session: &str,
+        query: &str,
+        package: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<HelpTopics> {
+        self.call(Call::HelpTopics {
+            session: session.into(),
+            query: query.into(),
+            package: package.map(Into::into),
+            limit,
+        })
+        .await
+    }
+
+    pub async fn help_page(
+        &self,
+        session: &str,
+        topic: &str,
+        package: Option<&str>,
+    ) -> Result<HelpPage> {
+        self.call(Call::HelpPage {
+            session: session.into(),
+            topic: topic.into(),
+            package: package.map(Into::into),
+        })
+        .await
+    }
+
+    pub async fn help_source(
+        &self,
+        session: &str,
+        topic: &str,
+        package: Option<&str>,
+    ) -> Result<HelpSource> {
+        self.call(Call::HelpSource {
+            session: session.into(),
+            topic: topic.into(),
+            package: package.map(Into::into),
+        })
+        .await
+    }
+
+    pub async fn list_packages(&self, session: &str) -> Result<Packages> {
+        self.call(Call::ListPackages {
+            session: session.into(),
+        })
+        .await
+    }
+
+    pub async fn git_status(&self, path: &str) -> Result<GitStatus> {
+        self.call(Call::GitStatus { path: path.into() }).await
+    }
+
+    pub async fn git_log(&self, path: &str, skip: u32, limit: Option<u32>) -> Result<GitLog> {
+        self.call(Call::GitLog {
+            path: path.into(),
+            skip,
+            limit,
+        })
+        .await
+    }
+
+    pub async fn git_show(&self, path: &str, sha: &str) -> Result<GitCommitInfo> {
+        self.call(Call::GitShow {
+            path: path.into(),
+            sha: sha.into(),
+        })
+        .await
+    }
+
+    pub async fn git_diff(
+        &self,
+        path: &str,
+        file: &str,
+        staged: bool,
+        sha: Option<&str>,
+    ) -> Result<GitDiff> {
+        self.call(Call::GitDiff {
+            path: path.into(),
+            file: file.into(),
+            staged,
+            sha: sha.map(Into::into),
+        })
+        .await
+    }
+
+    pub async fn git_run(&self, path: &str, action: GitAction) -> Result<GitDone> {
+        self.call(Call::GitRun {
+            path: path.into(),
+            action,
+        })
+        .await
+    }
+
+    pub async fn git_write_message(&self, path: &str, agent: Option<&str>) -> Result<GitMessage> {
+        self.call(Call::GitWriteMessage {
+            path: path.into(),
+            agent: agent.map(Into::into),
+        })
+        .await
     }
 
     pub async fn open_project(&self, path: &str) -> Result<ProjectInfo> {

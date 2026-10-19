@@ -21,7 +21,24 @@ Responses can arrive out of order; match them by `id`.
 | `list_kernelspecs` | | `[{name, display_name, language, env?}]` |
 | `start_session` | `kernel`, `cwd?`, `project?` | `SessionInfo` once the kernel is ready |
 | `list_sessions` | | `[SessionInfo]`, including ended sessions |
-| `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?` | `{run, msg_id}` |
+| `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?`, `by?` | `{run, msg_id}` |
+| `session_runs` | `session`, `limit?` | `{session, runs, seq}`: the session's latest runs, for its Console |
+| `session_plots` | `session`, `limit?` | `{session, plots, seq}`: the images the session's runs showed, for the Plots pane |
+| `list_variables` | `session`, `path?` | `Variables` |
+| `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
+| `table_rows` | `session`, `path`, `offset?`, `limit?`, `sort?`, `filters?` | `TableRows`: a page of a data frame or matrix, for the Data Explorer |
+| `table_summary` | `session`, `path`, `filters?` | `TableSummary`: each column's counts, range and commonest values |
+| `table_export` | `session`, `path`, `sort?`, `filters?`, `file` | `{path, mtime_ms}` once the CSV is written |
+| `help_topics` | `session`, `query?`, `package?`, `limit?` | `HelpTopics`: the help topics that match, for the Help pane |
+| `help_page` | `session`, `topic`, `package?` | `HelpPage`: R's page as HTML, or Python's signature, docstring and members |
+| `help_source` | `session`, `topic`, `package?` | `{session, topic, package, text, file?, line?}`: a function's source |
+| `list_packages` | `session` | `Packages`: what's installed for the session's language |
+| `git_status` | `path` | `GitStatus`: the branch, the changed files and the refs of the repository `path` is in |
+| `git_log` | `path`, `skip?`, `limit?` | `{commits, more}`: a page of every branch's commits, newest first |
+| `git_show` | `path`, `sha` | `GitCommitInfo`: a commit's whole message and the files it changed |
+| `git_diff` | `path`, `file`, `staged?`, `sha?` | `{file, text, truncated, binary}`: a file's unified diff |
+| `git_run` | `path`, `action` | `{output}` once git has done it: stage, commit, push and the rest |
+| `git_write_message` | `path`, `agent?` | `{summary, body, agent}`: a commit message an agent wrote for the staged changes |
 | `interrupt` | `session` | `null` |
 | `shutdown` | `session` | `null` |
 | `subscribe` | `session`, `since_seq?` | `{session, from_seq}`, then events |
@@ -31,7 +48,7 @@ Responses can arrive out of order; match them by `id`.
 | `read_file` | `path` | `{path, text, mtime_ms}` |
 | `read_notebook` | `path` | `{path, text, mtime_ms}`, plots and large values as blob references |
 | `write_notebook` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}`; blob references in outputs are written out as their values |
-| `write_file` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}` |
+| `write_file` | `path`, `text`, `expected_mtime_ms?`, `base64?` | `{path, mtime_ms}` |
 | `list_dir` | `path` | `[{name, kind, size, mtime_ms}]`, directories first |
 | `file_outputs` | `file` | `{file, cells, seq}` |
 | `open_project` | `path` | `ProjectInfo` with its saved `state` |
@@ -94,7 +111,168 @@ new daemon reattaches to them.
 connection pop-up shows it, with `user` and how long ago `started_ms` was.
 
 A `quiet` execute stores no history and doesn't stop the queue on an error,
-for code the user didn't write (the agents' variable listing).
+for code the user didn't write (the variable listing). `by` names an agent
+that ran the code ("Claude", "Codex"), for the Console to mark it.
+
+`session_runs` returns a session's latest runs that weren't quiet, oldest
+first (100 unless `limit` says, at most 1000), with their outputs: what the
+app's Console shows for the session, whatever ran the code (the Console's
+prompt, a script line, a notebook cell, an agent). Each run is `{run, cell?,
+by?, code, started_ms, finished_ms?, status?, execution_count?, outputs}`,
+outputs as in `file_outputs`. `seq` is where to subscribe from.
+
+`session_plots` returns the images a session's runs showed, oldest first (the
+latest 100 unless `limit` says, at most 500), leaving out quiet runs: every
+`display_data` and `execute_result` with a PNG, JPEG, GIF or SVG, whatever ran
+the code. Each is `{run, seq, ts_ms, cell?, by?, code, data, metadata}`:
+`data` is the output's MIME bundle, with images as blob references (an SVG
+under 64 KB stays inline), and `ts_ms` is when the kernel sent it. `seq` is
+where to subscribe from.
+
+`list_variables` runs a quiet snippet in the session and returns `Variables`:
+`{session, path, variables: [{name, kind, class, size?, children, table,
+summary}], more}`. `kind` is `data`, `value` or `function`; `size` is in bytes
+when the language can tell; `children` says whether the variable has parts;
+`table` whether it opens in the Data Explorer (a data frame or a matrix). With an
+empty `path` it lists the session's global variables; with a `path` (a
+variable's name, then the names of parts within it) it lists the parts: a data
+frame's columns, a list's items, an AnnData's `X`, `obs`, `var`, `obsm`,
+`layers` and `uns` and the columns inside `obs` and `var`, a Seurat object's
+assays and metadata. At most 200 come back; `more` counts the rest.
+`delete_variables` removes variables from the session's globals and collects
+memory (R: `rm()` and `gc()`; Python: `del`, IPython's output history, and
+`gc.collect()`). Both refuse while the session runs other code, and give up
+after 30 seconds.
+
+The `table_*` calls read a data frame or matrix by the same `path` as
+`list_variables` (`["seu", "meta.data"]`, `["adata", "obs"]`), in a quiet
+snippet that filters and sorts in the session, so only the rows asked for
+leave it. They refuse while the session runs other code, as listing does.
+Columns are named by position from 0. `sort` is `[{column, descending?}]`,
+first key first, with missing values last. `filters` is `[{column, op,
+values}]`, all of which a row must pass: `<`, `<=`, `>`, `>=`, `=` and `!=`
+take one value, `between` two, `in` and `not in` any number, `contains` one
+(ignoring case), and `missing` and `present` none. Values are text, read as
+numbers for a number column; a row whose value is missing passes no filter
+but `missing`.
+
+`table_rows` returns `{session, path, code, matrix, columns, width, total,
+rows, offset, labels, values}`: `code` is the table as code in the session's
+language (`seu@meta.data`, `adata.obs`); `matrix` says it is a matrix (or a
+NumPy array) rather than a data frame; `columns` is `[{name, kind, type}]` for
+the first 500 columns of the `width`, `kind` being `number`, `text`,
+`category`, `logical`, `date` or `other` and `type` the language's own
+(`dbl`, `fct`, `float64`); `total` counts the table's rows and `rows` those
+that pass the filters. Then from `offset`, `limit` rows (200 unless asked, at
+most 2000): each row's name or index label in `labels`, and its cells in
+`values`, numbers in number columns, text otherwise, `null` where missing.
+
+`table_summary` returns `{session, path, rows, columns}` for the rows that
+pass the filters, a summary per column: `{column, missing, distinct?, min?,
+max?, mean?, median?, histogram, top}`, with a 20-bin `histogram` from `min` to
+`max` for numbers, and for other columns of at most 1000 distinct values the
+10 commonest as `top: [{value, count}]` (a factor's in level order when it has
+at most 10).
+
+`table_export` writes the rows that pass the filters, sorted, to a CSV `file`
+(made with its folders if need be; R's `write.csv`, pandas' `to_csv`), with
+the row names or index first when the table has them, and returns the file's `{path, mtime_ms}`.
+
+`help_topics`, `help_page`, `help_source` and `list_packages` also run quiet
+snippets, so they fail while the session runs other code.
+
+`help_topics` returns `{session, topics, more}`, each topic `{topic, package,
+title}`, at most `limit` of them (50 unless asked, at most 500), and how many
+more matched. In R the topics are every installed package's help aliases (read
+from each package's `Meta/Rd.rds` once, then kept in the session in
+`options("sandhill.help")` until a library folder changes), leaving out
+internal ones and S4 methods' aliases; the title is searched too. In Python
+they are the public functions, classes and modules of the modules already
+imported, each by its shortest public name (`pandas.read_csv`), with `package`
+its top-level module. An exact name comes first, then names that start with
+the query, then names (and in R titles) that contain it; packages the user
+attached or imported come first among equals. `package` keeps one package, or
+those its name starts with when none has that exact name; without `query` it
+lists that package's topics.
+
+`help_page` returns `{session, topic, package, title, version, ...}`. For R,
+`html` is the page from `tools::Rd2HTML` without its `<head>`, its links to
+other topics as `../../{package}/help/{topic}` and to its examples as
+`../Example/{topic}`; without `package`, the first attached, then loaded, then
+installed package with the topic is used, and `alternatives` lists the others
+as topics. For Python, `topic` is a dotted name, which may start with the
+user's own name for a module (`sc.pp.neighbors`, shown as
+`scanpy.pp.neighbors`); a module named that way is imported if need be, as
+`pydoc` does. The page has `kind` (`module`, `class`, `function`, `method`,
+`property` or `value`), `signature` from `inspect.signature`, `text` (the
+docstring) and `members`, a module's or class's public names as `{name, kind,
+title}`.
+
+`help_source` gives a function's source: R's deparsed, Python's from its file
+(`inspect.getsource`) with the `file` and the `line` it starts on.
+
+`list_packages` returns `{session, packages, libraries, cran, bioconductor,
+conda}`. Packages, by name, are `{name, version, title, library, attached,
+loaded, base, modules?, installer?}`: in R, from `installed.packages()` with
+`attached` meaning `library()`'d and `base` R's own; in Python, the
+environment's distributions, `attached` meaning the user's code imported one
+of its `modules`, and `installer` what installed it (`pip`, `conda`).
+`libraries` are R's `.libPaths()` or the Python environment's prefix; `cran`
+says R has a CRAN mirror set, `bioconductor` that BiocManager is installed, and
+`conda` that the Python environment is a conda one. Installing and removing
+aren't calls: the app runs the code in the Console, where its output shows.
+
+The `git_*` calls run the `git` program on the daemon's machine (a command
+line git, which on macOS is the Xcode one only when its tools are installed),
+in the root of the repository that `path` is in. Git never asks for a password
+there: a remote that needs one fails with git's message, so ssh keys or a
+credential helper must already work in a terminal. Reads time out after a
+minute, changes after five.
+
+`git_status` returns `{repo, branch?, head?, upstream?, ahead, behind, files,
+more, stashes, state?, refs, branches, remote_branches, remotes, user_name,
+user_email}`; `repo` is empty when `path` isn't in a repository. `branch` is
+missing on a detached HEAD and `head` before the first commit. Files are
+`{path, from?, staged?, unstaged?, conflict, staged_lines?, lines?, size?}`:
+`staged` and `unstaged` are git's letters (`M`, `A`, `D`, `R`, `C`, `T`, and
+`?` for a new file), `from` a renamed file's old path, `staged_lines` and
+`lines` `{added, removed, binary}`, and `size` a new file's bytes. A new folder
+is one entry ending in `/`. At most 2000 files are listed; `more` counts the
+rest. `state` is `rebasing`, `merging`, `cherry-picking` or `reverting` while
+git is stopped in one. `refs` changes whenever a branch, tag or HEAD moves, so
+a client reads the log again only then. `user_name` and `user_email` are what
+a commit would be signed with.
+
+`git_log` lists the commits of every branch, remote branch and tag, and HEAD,
+in date order: `limit` of them (200 unless asked, at most 2000) after the
+first `skip`. A commit is `{sha, parents, author, email, time_ms, subject,
+refs, coauthors?}`, each ref `{kind, name}` with `kind` `head` (the branch
+checked out, or `HEAD` when detached), `branch`, `remote` or `tag`, and
+`coauthors` from `Co-authored-by:` lines. `git_show` gives one commit's
+`message` and its `files` as `{path, from?, status, lines?}`.
+
+`git_diff` with `sha` is what that commit changed in `file`; without it, the
+file's staged changes when `staged`, else the ones not staged (all of a new
+file). The text is git's unified diff from the first `@@`, cut at 2 MB.
+
+`git_run`'s `action` has an `op`: `stage`, `unstage` and `discard` take
+`files` (discarding a new file deletes it); `commit` takes `message` and
+`amend`; `fetch` fetches every remote; `pull` merges unless `pull.rebase` or
+`pull.ff` says otherwise; `push` sets the branch's upstream the first time,
+on `origin` or the only remote; `undo_commit` moves the branch back one commit
+and keeps its changes staged; `switch` takes a `branch` (a remote one makes or
+checks out the local branch that tracks it); `create_branch` takes a `name`
+and switches to it; `stash` (with an optional `message`, new files included)
+and `stash_pop`; `abort` stops a merge, rebase, cherry-pick or revert; `init`
+makes `path` a repository; and `set_user` sets the global `user.name` and
+`user.email`. A failure's message is git's own.
+
+`git_write_message` asks Claude Code (`claude -p` with the small model and no
+tools) or else Codex (`codex exec` in a read-only sandbox), or the `agent`
+named, for a message for the staged changes. It is given the recent commit
+subjects and the staged diff, at most 4000 bytes of each file and 40,000 in
+all, and returns the summary line, the rest as `body`, and which agent wrote
+it. It runs the agent as its CLI, signed in as the user is in a terminal.
 
 `list_kernelspecs` lists the kernels in Jupyter's standard folders and also
 those inside conda environments, pyenv versions and the environment of the
@@ -117,7 +295,8 @@ names the environment a kernel runs in.
   `display_data`, `update_display_data`, `execute_input`, `execute_result`,
   `error`, `clear_output`.
 - Daemon events use a `sandhill.` prefix:
-  - `sandhill.run_started` `{code, cell}`: always the first event of a run.
+  - `sandhill.run_started` `{code, cell, quiet?, by?}`: always the first
+    event of a run. `quiet` and `by` are as given to `execute`.
   - `sandhill.run_finished` `{status, execution_count?}`: `status` is the
     kernel's `ok`, `error` or `aborted`, or `unknown` if the run ended while
     no daemon was connected to hear the reply.
@@ -134,8 +313,9 @@ says which agent CLIs are installed, and how to install the others.
 running, exit?: {code?, signal?, ended_ms}, end, options?, agent?,
 outdated?, name?}`. `started_ms` is when its program last started. `end`
 is the number of output bytes so far. `options` is what the agent was started
-with: `{model?, effort?, permission?, documents?}`, where `permission` is
-`supervised`, `edits`, `auto`, `full`, `plan`, `restricted` or `ask`.
+with: `{model?, effort?, permission?, documents?, code?}`, where `permission` is
+`supervised`, `edits`, `auto`, `full`, `plan`, `restricted` or `ask`, and
+`code: "console"` sends the agent's code to the Console (below).
 `name` is what the user named it with `rename_terminal` (a blank `name`
 takes it away). `outdated` is true for an agent that
 another build of sandhilld started, such as before an update: it keeps that
@@ -281,6 +461,12 @@ sent only to clients that called `set_focus`. The window working on
 `project` answers with `answer`: `{id, result: {cell_id, language}}` or
 `{id, error}`.
 
+An agent started with `code: "console"` (in `agent.code`, switched with
+`tell_terminal` `{kind: "set", code: "console" | null}`) doesn't add cells:
+its `add_cell` runs the code in the document's session instead, with `by`
+naming the agent, and leaves the document as it is. Its `run_code` always
+runs that way.
+
 ## Blobs
 
 Binary MIME values (images other than SVG, PDF) and any value over 64 KiB are
@@ -293,9 +479,10 @@ The data is the original JSON string (base64 for images).
 Paths are absolute on the daemon's machine (a leading `~` is expanded), so
 the app edits files the same way locally and on a server.
 
-- `write_file` replaces the file atomically. Pass the `mtime_ms` you read to
-  refuse the write, with an error starting `conflict:`, if the file changed
-  on disk in the meantime.
+- `write_file` replaces the file atomically, making its folder if need be.
+  Pass the `mtime_ms` you read to refuse the write, with an error starting
+  `conflict:`, if the file changed on disk in the meantime. With
+  `base64: true`, `text` is the file's bytes in base64, for a saved plot.
 - To tie a run to a notebook cell, pass `cell: {file, cell_id}` to `execute`.
   For `.ipynb` the cell id is the notebook's own cell `id`. For `.qmd` and
   `.Rmd` it is the chunk label, or `chunk-<n>` (1-based position) for an
