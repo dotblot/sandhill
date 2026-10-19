@@ -38,6 +38,11 @@ Draft 21 (2026-10-19) changed:
 Draft 22 (2026-10-19) changed:
 - The title bar is 26px, as tall as the status bar.
 - The title bar's tabs sit 6px below the window's top edge.
+
+Draft 23 (2026-10-19) changed:
+- The Agents tab shows the linked file (language icon and name) in place of the
+  title the agent wrote. The file no longer shows in the message box.
+- No text is smaller than 10px, the smallest size macOS uses.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -207,8 +212,10 @@ it is `agents-v2-plan.md` in the project's design folder. Claude Code and Codex
 both use it, still signed in with your own plans, and so do open models through
 omp.
 
-- **Header** (the pane's tab strip): the conversation's provider icon and title,
-  then + (new conversation), a clock (history) and a gear (conversation
+- **Header** (the pane's tab strip): the conversation's provider chip, then the
+  linked file's language icon (14px) and name. Clicking the file opens it; code
+  the agent writes goes into it. The tab shows no title written by the agent.
+  Then + (new conversation), a clock (history) and a gear (conversation
   settings), then minimize and maximize. The clock shows an orange dot when
   another conversation is waiting for you.
 - **Your messages** are grey rounded bubbles on the right. Under each, in 11px
@@ -252,8 +259,7 @@ omp.
   - left: web search (globe), session context on or off (eye; off shows a
     crossed-out eye) and the mode (hand). Any mode other than Normal shows its
     icon and name in orange.
-  - right: the linked file with its language icon (opens the file; code goes into
-    it), the context ring and tokens used (opens the context breakdown above
+  - right: the context ring and tokens used (opens the context breakdown above
     the pointer), and the model with its effort, "Opus (High) ⌄" (opens the
     model list and the effort knob from draft 17). The effort bar is 16px
     tall and the brain knob 30px, so the knob stands out above and below the bar.
@@ -322,6 +328,7 @@ omp.
   and red from 80%. The usage popup that opens on click keeps its bars.
 
 ## Type and colour
+- Nothing is smaller than **10px**, the smallest size macOS itself uses.
 - 13px for all UI text, in the macOS system font; 13px is the standard text size in
   macOS apps.
 - Maple Mono NF (the Nerd Font build of Maple Mono, version 7.8) at 13px for all
