@@ -37,6 +37,7 @@ Draft 21 (2026-10-19) changed:
 
 Draft 22 (2026-10-19) changed:
 - The title bar is 26px, as tall as the status bar.
+- The title bar's tabs sit 6px below the window's top edge.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -89,7 +90,9 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - empty space;
   - the toolbar icons.
 - **Machine tabs** follow the style of browser tabs in a macOS title bar:
-  - Each tab is 22px high with 12px corners, and at most 280px wide.
+  - Each tab is 20px high with 12px corners, and at most 280px wide. The tabs
+    sit 6px below the window's top edge and 3px above the panes; the traffic
+    lights and toolbar icons are centred on the same line.
   - Each tab shows the machine's icon (12px) in a 16px rounded tile, the
     machine's name (500 weight) and the project's path in the faint colour, cut
     short with "…".

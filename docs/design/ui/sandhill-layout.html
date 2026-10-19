@@ -1394,17 +1394,17 @@ h2.notes-h { font-size: 13px; margin: 6px 0 0; color: var(--page-muted); font-we
 /* ---------- draft 22: a 26px title bar with machine tabs; every pane follows the picked machine ---------- */
 .win { grid-template-rows: 26px minmax(0, 1fr) 26px !important; }
 .start { grid-row: 2 / 4; }
-.titlebar { position: relative; top: auto; left: auto; height: 26px; display: flex; align-items: center; gap: 2px; padding: 0 6px 0 12px; pointer-events: auto; z-index: 8; }
+.titlebar { position: relative; top: auto; left: auto; height: 26px; box-sizing: border-box; display: flex; align-items: center; gap: 2px; padding: 6px 6px 0 12px; pointer-events: auto; z-index: 8; }
 .titlebar .lights { margin-right: 12px; flex: none; }
 .tb-drag { flex: 1; align-self: stretch; }
 .tb-left { gap: 0; }
-.titlebar .tbi { height: 22px; }
+.titlebar .tbi { height: 20px; }
 .titlebar .tbi .ico { width: 16px; height: 16px; }
 .mtabs { display: flex; align-items: center; min-width: 0; }
-.mtab { position: relative; display: flex; align-items: center; gap: 6px; height: 22px; max-width: 280px; min-width: 0; padding: 0 10px 0 3px; border-radius: var(--r); color: var(--muted); }
+.mtab { position: relative; display: flex; align-items: center; gap: 6px; height: 20px; max-width: 280px; min-width: 0; padding: 0 10px 0 2px; border-radius: var(--r); color: var(--muted); }
 .mtab:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
 .mtab[aria-selected="true"] { background: var(--bg); color: var(--text); box-shadow: 0 0 0 .5px var(--glass-edge), 0 1px 2px rgba(0,0,0,.12); }
-.mtab + .mtab::before { content: ""; position: absolute; left: -1px; top: 5px; bottom: 5px; width: 1px; background: color-mix(in srgb, var(--text) 16%, transparent); }
+.mtab + .mtab::before { content: ""; position: absolute; left: -1px; top: 4px; bottom: 4px; width: 1px; background: color-mix(in srgb, var(--text) 16%, transparent); }
 .mtab[aria-selected="true"]::before, .mtab[aria-selected="true"] + .mtab::before { display: none; }
 .mt-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; border-radius: 5px; background: color-mix(in srgb, var(--text) 8%, transparent); }
 .mt-ic .conn-ico, .mt-ic .conn-ico .ico { width: 12px; height: 12px; }
