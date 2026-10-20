@@ -48,6 +48,12 @@ Draft 24 (2026-10-19): conversations belong to the project, and context follows
 you. A project has as many conversations as you start. The file a conversation
 works in follows the editor's active tab unless you pin one, and @ in the
 message box adds files, chunks, variables or plots.
+
+Draft 25 (2026-10-20) changed:
+- Clicking the project name at the top of the left pane picks another project on
+  the same machine. The name has a folder icon in front.
+- The machine tabs always take you back from the Start screen.
+- The Start screen's projects open on their machine.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -100,6 +106,8 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - empty space;
   - the toolbar icons.
 - **Machine tabs** follow the style of browser tabs in a macOS title bar:
+  - On the Start screen no tab is picked. Clicking one goes back to that
+    machine's open project.
   - Each tab is 20px high with 12px corners, and at most 280px wide. The tabs
     sit 6px below the window's top edge and 3px above the panes; the traffic
     lights and toolbar icons are centred on the same line.
@@ -140,6 +148,15 @@ and remote work are never shown together.
   - ⌘K palette;
   - status bar items: connection, kernel state, jobs, the "agent is waiting"
     notice and cursor position.
+- **Each project on a machine is kept apart the same way**: see "Project name"
+  under Left pane.
+- **A project with nothing open yet** says so in each pane:
+  - the editor: "No files open in …";
+  - the Console: "No R or Python session in …", with Start R and Start Python
+    buttons;
+  - Variables, Packages, Git and Plots: what will show there;
+  - Agents: no conversations.
+  - Its file tree, the Terminal and the ⌘K palette (its files) work as usual.
 - **Switching remembers where you were.** Each machine keeps its open tab,
   Console session, plot, conversation and Help search, so switching back returns
   to the same place.
@@ -154,6 +171,15 @@ and remote work are never shown together.
 
 ## Left pane (260px, minimum 236px)
 - It shows the machine picked in the title bar's tabs.
+- **Project name** at the top: a folder icon (15px), the name (semibold) and a
+  small ⌄, as one button with 6% shading on hover.
+  - Clicking it opens "Projects on gpu01" (or "on this Mac"): each project with
+    its folder icon, name and path, a check on the open one, and when the others
+    were last used.
+  - Then Open project… (⌘O) and New project… (⇧⌘N), which go to the Start
+    screen.
+  - Picking a project switches the whole window to it, like switching machine.
+    The title bar's tab then shows that project's path.
 - Project name row, with + (new file) and refresh at the right, then the file tree.
   Files use flat coloured icons in a muted palette.
 - The file tree:
