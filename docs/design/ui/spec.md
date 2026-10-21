@@ -60,6 +60,14 @@ Draft 26 (2026-10-21) changed:
   bars), as in Safari on macOS 26. The traffic lights stay as they are.
 - The file tree uses one column for chevrons and one for icons, grey glyph icons,
   and plain indent guides, as in VS Code.
+
+Draft 27 (2026-10-21) changed:
+- File and folder icons are coloured glyphs, the same in every pane.
+- Every pane's tabs sit in a capsule, like the title bar's.
+- Variables has an Import button for datasets.
+- The left pane has a sort button: by name, size or date modified.
+- A new edit capsule in the title bar: undo, redo, cut, copy, paste, save and
+  save all.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -100,8 +108,15 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - Maximized, the pane fills the window, opaque, until restored.
 - **One corner radius, 12px**, for every rounded thing in the window: panes,
   tabs, kernel rows, inputs, buttons and popovers.
-- Active tab: the text colour mixed in at 11%, so it is darker in light mode
-  and lighter in dark mode. Hover uses 6%.
+- **Pane tabs sit in capsules**, like the title bar's: the editor's file tabs, the
+  Console's tabs and its R / Python switch, Variables / Help / Packages / Git,
+  Plots / Viewer, and the Agents tab.
+  - The capsule is 22px high and fully rounded, and as wide as its tabs.
+  - Each tab is an 18px pill.
+  - The active tab is a raised pill: the pane background colour (white at 13% in
+    dark mode), a hairline edge and a soft shadow. Hover uses 6%.
+  - Close buttons and counts stay inside the tab.
+  - Minimize, maximize and the pane's own buttons stay outside the capsule.
 
 ## Title bar (26px, as tall as the status bar)
 - The title bar is transparent, on the window background, and dragging its empty
@@ -109,6 +124,14 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - the traffic lights, plain, outside any capsule;
   - the **tabs capsule**, which fills the width: one tab per machine, then a thin
     divider and + (Connect to server, ⇧⌘O), which opens the Start screen;
+  - the **edit capsule**:
+    - undo (⌘Z) and redo (⇧⌘Z);
+    - cut (⌘X), copy (⌘C) and paste (⌘V);
+    - save (⌘S) and save all open documents (⌥⌘S), each group divided.
+    - Buttons that can't act are dimmed: redo until you undo, save when the
+      active document has no unsaved changes, save all when nothing is unsaved.
+    - Saving clears a tab's unsaved dot.
+    - The tooltips name what they save.
   - the **toolbar capsule**: the toolbar icons.
 - **Capsules** are 20px high and fully rounded (the one exception to the 12px
   corner rule), and start 6px below the window's top edge.
@@ -193,7 +216,15 @@ and remote work are never shown together.
     screen.
   - Picking a project switches the whole window to it, like switching machine.
     The title bar's tab then shows that project's path.
-- Project name row, with + (new file) and refresh at the right, then the file tree.
+- Project name row. At the right:
+  - + (new file in the project's top folder);
+  - **sort**: up and down arrows, which open "Sort files by" Name (A to Z),
+    Size (largest first) or Date modified (newest first), with a check on the
+    current one. Folders always come first, and a folder's size is the sum of
+    its files.
+  - refresh.
+  Then the file tree. Each row's tooltip gives its name, size and when it was
+  modified.
 - The file tree, in the style of VS Code:
   - Every row has a 14px **chevron column**, then a 16px **icon column**, then
     the name. Files leave the chevron column empty, so a file's icon lines up
@@ -205,8 +236,21 @@ and remote work are never shown together.
     There are no elbows.
   - Clicking a folder opens or closes it, and its chevron turns to point down
     when open.
-  - **Icons are grey glyphs** in the muted colour (faint for dimmed files), all
-    drawn for Sandhill. Other panes keep the coloured file icons.
+  - **Icons are coloured glyphs**, all drawn for Sandhill, and **the same in every
+    pane**: the file tree, editor tabs, Git, the @ menu, History and the Start
+    screen. Colours come from the muted palette:
+    - R, README and Python: blue;
+    - Quarto: slate;
+    - notebooks and .gitignore: rust;
+    - tables and shell scripts: sage;
+    - data files: teal;
+    - lock files and LICENSE: mustard;
+    - YAML, images and CLAUDE.md: coral;
+    - Markdown: mauve;
+    - other files: sand.
+    Dimmed files show their icon at 55% opacity.
+    - Folders are filled: data teal, results mustard, figures coral, tests
+      mauve, .sandhill sand, and other folders sage.
     - Folders are filled. Some have a cut-out emblem: data (a cylinder), results
       (bars), figures (a line chart), tests (a flask), .sandhill (a ring).
     - R files show "R", Quarto files "Q", R Markdown "Rm", Python "Py", and
@@ -375,6 +419,14 @@ omp.
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`
   and `gc()` in that session.
+- **Import**, next to the session picker in Variables, as in RStudio:
+  - The menu, at 11px, is headed "Import a dataset into R 4.4.1". Each line shows
+    the R function it uses:
+    - From text (base) and From text (readr);
+    - From Excel;
+    - From SPSS, From SAS and From Stata;
+    - From R data (.rds, .RData) and From 10x Genomics.
+  - Each opens a preview with the code it will run. That dialog is not drawn yet.
 - The session pickers in Variables and Packages are the same as the editor's kernel
   pickers: language icon and version, with the same drop-down.
 - Help searches by package.
