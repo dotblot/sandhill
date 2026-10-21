@@ -20,7 +20,7 @@ Assistant; see "Agents pane" below.
 Draft 19 (2026-10-17) changed:
 - Kernel rows in the left pane show no name, only the language icon and version;
   clicking a row opens its details.
-- The file tree has guide lines, and folders open and close.
+- The file tree has guide lines, and folders open and close (restyled in draft 26).
 - The Kernels and Resources sections in the left pane can be collapsed.
 - The effort knob is 50% bigger (30px); the bar keeps its height and is a little
   shorter.
@@ -54,6 +54,12 @@ Draft 25 (2026-10-20) changed:
   the same machine. The name has a folder icon in front.
 - The machine tabs always take you back from the Start screen.
 - The Start screen's projects open on their machine.
+
+Draft 26 (2026-10-21) changed:
+- The title bar's tabs and toolbar icons sit in capsules (fully rounded glass
+  bars), as in Safari on macOS 26. The traffic lights stay as they are.
+- The file tree uses one column for chevrons and one for icons, grey glyph icons,
+  and plain indent guides, as in VS Code.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -100,32 +106,39 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 ## Title bar (26px, as tall as the status bar)
 - The title bar is transparent, on the window background, and dragging its empty
   space moves the window. From left to right:
-  - the traffic lights;
-  - one tab per machine;
-  - + (Connect to server, ⇧⌘O), which opens the Start screen;
-  - empty space;
-  - the toolbar icons.
+  - the traffic lights, plain, outside any capsule;
+  - the **tabs capsule**, which fills the width: one tab per machine, then a thin
+    divider and + (Connect to server, ⇧⌘O), which opens the Start screen;
+  - the **toolbar capsule**: the toolbar icons.
+- **Capsules** are 20px high and fully rounded (the one exception to the 12px
+  corner rule), and start 6px below the window's top edge.
+  - Light mode: a light grey tint (the text colour at 6% over the pane background
+    at 40%) with a hairline edge and a soft
+    shadow, over a blurred backdrop.
+  - Dark mode: white at 6% with a white hairline at 10%.
+  - Inside, a 1px divider (12px high) separates groups.
 - **Machine tabs** follow the style of browser tabs in a macOS title bar:
   - On the Start screen no tab is picked. Clicking one goes back to that
     machine's open project.
-  - Each tab is 20px high with 12px corners, and at most 280px wide. The tabs
-    sit 6px below the window's top edge and 3px above the panes; the traffic
-    lights and toolbar icons are centred on the same line.
-  - Each tab shows the machine's icon (12px) in a 16px rounded tile, the
-    machine's name (500 weight) and the project's path in the faint colour, cut
-    short with "…".
+  - Tabs share the capsule's width equally and centre their content. Each is a
+    16px-high pill, 2px inside the capsule. The capsules sit 3px above the
+    panes, and the traffic lights are centred on the same line.
+  - Each tab shows the machine's icon (13px), the machine's name (500 weight)
+    and the project's path in the faint colour, cut short with "…".
   - An orange dot after the path means an agent on that machine is waiting for
     you, so you see it from the other machine's tab.
-  - The picked tab is a raised pill: the pane background colour, a hairline edge
-    and a soft shadow. The others are flat, with 6% shading on hover and a thin
-    divider between two flat tabs.
+  - The picked tab is a raised pill inside the capsule: the pane background colour
+    in light mode (white at 13% in dark mode), a hairline edge and a soft shadow.
+    The others are flat, with 6% shading on hover and a thin divider between two
+    flat tabs.
   - The icon shows the connection state, like the status bar's connection item:
     plain when connected, orange when reconnecting, red with a slash when
     disconnected.
   - Clicking a tab switches the whole window to that machine (see "One machine
     at a time").
-- **Toolbar icons**, at the right end of the title bar, all in one row with no gap
-  between groups:
+- **Toolbar icons**, in the capsule at the right end of the title bar. Each is a
+  26 × 16px round button with a 15px icon. A divider separates the pane toggles
+  from search and the menu:
   - toggle the left pane (files, Kernels, Resources), ⌘B;
   - Agents, a chat icon with an orange dot when an agent on this machine waits
     for you;
@@ -181,13 +194,30 @@ and remote work are never shown together.
   - Picking a project switches the whole window to it, like switching machine.
     The title bar's tab then shows that project's path.
 - Project name row, with + (new file) and refresh at the right, then the file tree.
-  Files use flat coloured icons in a muted palette.
-- The file tree:
-  - Each level is indented 15px.
-  - A 1px guide line (the text colour at 24%) runs down from a folder's chevron,
-    with a 6px elbow to each child. The line stops at the last child.
+- The file tree, in the style of VS Code:
+  - Every row has a 14px **chevron column**, then a 16px **icon column**, then
+    the name. Files leave the chevron column empty, so a file's icon lines up
+    with the folder icons at the same level.
+  - Each level is indented 16px, so a folder's children have their icons one
+    step right of the folder's icon.
+  - **Indent guides**: a 1px vertical line (the text colour at 24%) runs through
+    the centre of each open folder's chevron column, beside all its children.
+    There are no elbows.
   - Clicking a folder opens or closes it, and its chevron turns to point down
     when open.
+  - **Icons are grey glyphs** in the muted colour (faint for dimmed files), all
+    drawn for Sandhill. Other panes keep the coloured file icons.
+    - Folders are filled. Some have a cut-out emblem: data (a cylinder), results
+      (bars), figures (a line chart), tests (a flask), .sandhill (a ring).
+    - R files show "R", Quarto files "Q", R Markdown "Rm", Python "Py", and
+      notebooks an orbit.
+    - Tables show a grid, and data files (.rds, .h5ad, .h5, .gz, .mtx, .bed) a
+      cylinder.
+    - Lock and config files show braces, and images and PDFs a picture.
+    - Shell scripts show a prompt, and .bib files a book.
+    - README shows an info circle, CLAUDE.md and AGENTS.md a sparkle, LICENSE a
+      badge, and .gitignore a branch.
+    - Anything else shows a page.
 - Under the tree are two sections, **Kernels** and **Resources**:
   - Each has a header row: a chevron and the name, 22px high, in the muted colour
     and semibold.
@@ -211,9 +241,9 @@ and remote work are never shown together.
   in the hover shading. Clicking an item opens a details popover with the percent.
 - One left edge for the left pane and the status bar: every row's hover shading
   starts 6px from the window's left edge, and its first icon or chevron starts at
-  14px (file tree, section headers, kernel rows, resources, the status bar's
-  connection icon). The project name starts at 14px. Files inside a folder line
-  up under the folder's icon.
+  14px (the file tree's chevron column, section headers, kernel rows, resources,
+  the status bar's connection icon). The project name's folder icon starts at
+  14px. Top-level file and folder icons start at 32px.
 - Pop-ups from this pane (resource details, kernel details) open to the right of
   the row.
 
