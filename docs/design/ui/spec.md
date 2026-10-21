@@ -68,6 +68,10 @@ Draft 27 (2026-10-21) changed:
 - The left pane has a sort button: by name, size or date modified.
 - A new edit capsule in the title bar: undo, redo, cut, copy, paste, save and
   save all.
+
+Draft 28 (2026-10-21): new files and folders can be made in any folder: from the
++ (in the selected folder), from buttons on a folder's row, or by right-clicking.
+The Data Explorer's column stats panel can be hidden, to show more of the table.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -217,7 +221,12 @@ and remote work are never shown together.
   - Picking a project switches the whole window to it, like switching machine.
     The title bar's tab then shows that project's path.
 - Project name row. At the right:
-  - + (new file in the project's top folder);
+  - + opens "New in …", naming the folder it will use:
+    - New file… (⌘N) and New folder… (⌥⌘N);
+    - New Quarto document…, New R script… and New notebook…, each with its icon.
+    - It works in the selected folder, or the selected file's folder, or the
+      project's top folder when nothing is selected. A grey line under the menu
+      says to select a folder first.
   - **sort**: up and down arrows, which open "Sort files by" Name (A to Z),
     Size (largest first) or Date modified (newest first), with a check on the
     current one. Folders always come first, and a folder's size is the sum of
@@ -225,6 +234,37 @@ and remote work are never shown together.
   - refresh.
   Then the file tree. Each row's tooltip gives its name, size and when it was
   modified.
+- **Selecting**: clicking a row selects it (the text colour at 9%). Clicking a
+  folder also opens or closes it; clicking a file also opens it in the editor.
+- **Folder hover buttons**: hovering over a folder shows two 20 × 18px buttons
+  at the right of its row, New file and New folder, in place of its size. They
+  create inside that folder.
+- **Right-click menu**:
+  - On a folder: "New in …" with New file, New folder, New Quarto document,
+    New R script and New notebook; then Rename…, Duplicate, Reveal in Finder (on
+    a server, Download to this Mac…), Copy path, and Move to Trash (on a server,
+    Delete…).
+  - On a file: Open, then the same actions without the New items.
+  - On the tree's empty space: the New items for the project's top folder.
+- **The name field**:
+  - The folder opens, and an empty row appears at the top of its children, at
+    their indent, with the cursor in a field: a 1px accent border and a soft
+    accent ring.
+  - The icon updates as you type, so ".R" shows the R icon.
+  - Templates start with "untitled.qmd", "untitled.R" or "untitled.ipynb", with
+    the name before the extension selected.
+  - Enter creates the item, Esc cancels, and clicking away creates it if you
+    typed a name.
+  - A path such as `raw/samples.csv` makes the folders too.
+  - A clash or a bad character shows a red line under the field ("“x” already
+    exists in data") and keeps the field open.
+  - Rename uses the same field in place.
+- **New files open in the editor** from a template:
+  - Quarto: a title block named after the file and an empty R chunk;
+  - R script: a comment with its name;
+  - notebook: one empty cell, R on this Mac and Python on gpu01;
+  - Markdown: a heading;
+  - anything else: an empty file.
 - The file tree, in the style of VS Code:
   - Every row has a 14px **chevron column**, then a 16px **icon column**, then
     the name. Files leave the chevron column empty, so a file's icon lines up
@@ -301,6 +341,10 @@ and remote work are never shown together.
   the session list (the current session's ID, New session, and another installed
   version to switch to). Session IDs appear only there.
 - Run all shows no keyboard shortcut; ⌥⌘R is in its tooltip.
+- The Data Explorer's left panel (the column list with mini charts, and the
+  selected column's stats) can be hidden with **Hide column stats** at the left
+  of its document bar. The table then takes the full width, and the button reads
+  **Show column stats**.
 - The Data Explorer uses the UI font, with tabular digits, and shows column names
   exactly as written (no capitals).
 
