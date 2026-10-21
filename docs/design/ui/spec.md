@@ -72,6 +72,9 @@ Draft 27 (2026-10-21) changed:
 Draft 28 (2026-10-21): new files and folders can be made in any folder: from the
 + (in the selected folder), from buttons on a folder's row, or by right-clicking.
 The Data Explorer's column stats panel can be hidden, to show more of the table.
+
+Draft 29 (2026-10-21): the title bar is 20% taller (31px), and the machine tabs
+capsule is only as wide as its tabs.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -92,7 +95,7 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - Panes are floating, rounded, translucent glass cards on a warm gradient
   window background, in the style of macOS Liquid Glass. The left pane is not a
   card: its content sits directly on the background.
-- Top to bottom: the title bar (26px), the panes, the status bar (26px).
+- Top to bottom: the title bar (31px), the panes, the status bar (26px).
 - Pane order from left to right:
   - left pane: file tree, Kernels and Resources;
   - Agents, which only shows when toggled on;
@@ -122,12 +125,13 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - Close buttons and counts stay inside the tab.
   - Minimize, maximize and the pane's own buttons stay outside the capsule.
 
-## Title bar (26px, as tall as the status bar)
+## Title bar (31px)
 - The title bar is transparent, on the window background, and dragging its empty
   space moves the window. From left to right:
   - the traffic lights, plain, outside any capsule;
-  - the **tabs capsule**, which fills the width: one tab per machine, then a thin
-    divider and + (Connect to server, ⇧⌘O), which opens the Start screen;
+  - the **tabs capsule**, only as wide as its tabs: one tab per machine, then a
+    thin divider and + (Connect to server, ⇧⌘O), which opens the Start screen;
+  - empty space, which drags the window;
   - the **edit capsule**:
     - undo (⌘Z) and redo (⇧⌘Z);
     - cut (⌘X), copy (⌘C) and paste (⌘V);
@@ -137,18 +141,18 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
     - Saving clears a tab's unsaved dot.
     - The tooltips name what they save.
   - the **toolbar capsule**: the toolbar icons.
-- **Capsules** are 20px high and fully rounded (the one exception to the 12px
+- **Capsules** are 25px high and fully rounded (the one exception to the 12px
   corner rule), and start 6px below the window's top edge.
   - Light mode: a light grey tint (the text colour at 6% over the pane background
     at 40%) with a hairline edge and a soft
     shadow, over a blurred backdrop.
   - Dark mode: white at 6% with a white hairline at 10%.
-  - Inside, a 1px divider (12px high) separates groups.
+  - Inside, a 1px divider (14px high) separates groups.
 - **Machine tabs** follow the style of browser tabs in a macOS title bar:
   - On the Start screen no tab is picked. Clicking one goes back to that
     machine's open project.
-  - Tabs share the capsule's width equally and centre their content. Each is a
-    16px-high pill, 2px inside the capsule. The capsules sit 3px above the
+  - Each tab is as wide as its content (at most 300px, with 12px padding) and is
+    a 21px-high pill, 2px inside the capsule. The capsules sit 3px above the
     panes, and the traffic lights are centred on the same line.
   - Each tab shows the machine's icon (13px), the machine's name (500 weight)
     and the project's path in the faint colour, cut short with "…".
@@ -164,7 +168,7 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - Clicking a tab switches the whole window to that machine (see "One machine
     at a time").
 - **Toolbar icons**, in the capsule at the right end of the title bar. Each is a
-  26 × 16px round button with a 15px icon. A divider separates the pane toggles
+  28 × 21px round button with a 16px icon (the edit capsule's buttons too). A divider separates the pane toggles
   from search and the menu:
   - toggle the left pane (files, Kernels, Resources), ⌘B;
   - Agents, a chat icon with an orange dot when an agent on this machine waits
