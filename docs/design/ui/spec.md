@@ -75,6 +75,15 @@ The Data Explorer's column stats panel can be hidden, to show more of the table.
 
 Draft 29 (2026-10-21): the title bar is 20% taller (31px), and the machine tabs
 capsule is only as wide as its tabs.
+
+Draft 30 (2026-10-22) changed:
+- Title bar: the toolbar capsule follows the traffic lights, the machine tabs are
+  centred in the window, and the edit capsule sits at the right.
+- The Agents tab shows the provider chip and a title the agent writes; double-click
+  it (or gear → Rename) to rename. The focus file moves back to the message box.
+- @ no longer leaves a stray "@" in the message box.
+- New conversation has no agent buttons: the model button lists every agent.
+- Antigravity (Google) is a fourth agent.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -129,9 +138,11 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - The title bar is transparent, on the window background, and dragging its empty
   space moves the window. From left to right:
   - the traffic lights, plain, outside any capsule;
-  - the **tabs capsule**, only as wide as its tabs: one tab per machine, then a
-    thin divider and + (Connect to server, ⇧⌘O), which opens the Start screen;
-  - empty space, which drags the window;
+  - the **toolbar capsule** (see Toolbar icons below);
+  - empty space, which drags the window, with the **tabs capsule** centred in the
+    window: one tab per machine, then a thin divider and + (Connect to server,
+    ⇧⌘O), which opens the Start screen. It is only as wide as its tabs, at most
+    620px;
   - the **edit capsule**:
     - undo (⌘Z) and redo (⇧⌘Z);
     - cut (⌘X), copy (⌘C) and paste (⌘V);
@@ -140,7 +151,6 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
       active document has no unsaved changes, save all when nothing is unsaved.
     - Saving clears a tab's unsaved dot.
     - The tooltips name what they save.
-  - the **toolbar capsule**: the toolbar icons.
 - **Capsules** are 25px high and fully rounded (the one exception to the 12px
   corner rule), and start 6px below the window's top edge.
   - Light mode: a light grey tint (the text colour at 6% over the pane background
@@ -167,7 +177,7 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
     disconnected.
   - Clicking a tab switches the whole window to that machine (see "One machine
     at a time").
-- **Toolbar icons**, in the capsule at the right end of the title bar. Each is a
+- **Toolbar icons**, in the capsule just after the traffic lights. Each is a
   28 × 21px round button with a 16px icon (the edit capsule's buttons too). A divider separates the pane toggles
   from search and the menu:
   - toggle the left pane (files, Kernels, Resources), ⌘B;
@@ -369,13 +379,19 @@ omp.
   like; each has its own context, so unrelated tasks don't fill one context
   window, and two agents can work at once.
 - **Header** (the pane's tab strip):
-  - The conversation's provider chip, then its **focus file**: the language icon
-    (14px), the name and a small ⌄. The tab shows no title written by the agent.
+  - The conversation's provider chip and its **title**. The agent writes the
+    title from your first message: a few words, without file names, filler such
+    as "Please" or a trailing "in" or "of". Before that it reads "New
+    conversation".
+  - Double-click the title, or gear → Rename, to rename it in place: Enter keeps
+    it, Esc cancels. A title you set is never replaced.
+  - The **focus file** sits in the message box's bottom row, before the context
+    ring: the language icon (14px), the name and a small ⌄.
   - The agent sees the focus file, and the code it writes goes into it, below
     your active cell.
   - By default the focus file **follows the editor's active tab**.
   - While the agent is working, it keeps the file it started in.
-  - Clicking it opens a menu: Open the file, then "The agent works in": **Follow
+  - Clicking the focus file opens a menu above it: Open the file, then "The agent works in": **Follow
     the editor** (with the current file in grey), or **Pin to** one of the open
     files.
   - A pinned file shows a small orange pin after its name, and stays when you
@@ -432,10 +448,14 @@ omp.
     pop-up. The bar is inset 4px at each end, and its filled part ends exactly
     under the knob's centre.
 - **@ mentions**:
-  - Typing @, or clicking the @ button, opens a menu above the message box with
-    the project's files, the open document's chunks, variables and plots, grouped
-    under those headings and filtered as you type.
-  - Enter or Tab picks the first match, and Esc closes the menu.
+  - Typing @ opens a menu above the message box with the project's files, the
+    open document's chunks, variables and plots, grouped under those headings and
+    filtered by what you type after the @.
+  - The @ button opens the same menu without typing anything into the message.
+    The menu then has its own search field at the top.
+  - Enter or Tab picks the first match. Esc or a click elsewhere closes the menu.
+  - Either way, the "@" and the letters typed after it are removed, so no stray
+    "@" is left in your message.
   - Each pick becomes a chip at the top of the message box (icon, name, ×), and
     goes with the message as extra context.
   - Unsent text and chips stay when the pane redraws.
@@ -455,10 +475,24 @@ omp.
   the title, and the file it last worked in, model and time in 11px. Rename and
   delete appear on hover. Opening a conversation also brings that file to the
   front of the editor.
-- **New conversation** (+): pick Claude Code, Codex or omp (each button shows
-  only the provider icon and name), then type in the message box. There is no
-  file to choose: the note says it works in the file in front of you (named) and
-  sees your live sessions, and that @ adds more. **Cancel** (next to the "New
+- **New conversation** (+): there are no agent buttons. The note says it works
+  in the file in front of you (named) and sees your live sessions, that @ adds
+  more, and that the agent, model and effort come from the model button.
+  - In a new conversation the model button's menu lists **every agent**, each
+    with its sign-in: Claude Code, Codex, Antigravity and omp, then the effort
+    knob. Picking another agent's model switches the agent and keeps the effort
+    if that agent has the same level, else its recommended one.
+  - Once a conversation has started, its menu lists only that agent's models,
+    because the agent's own conversation can't move to another agent.
+- **Antigravity** (Google's agent):
+  - It runs as the Antigravity CLI on the server and shows as a chat, through its
+    ACP server.
+  - It uses your Google AI plan.
+  - Its chip is "Ag" on blue-teal `#2b6f8f`, with no Google logo.
+  - Models: Gemini 3.5 Flash and Gemini 3 Pro in the mockup. The real list comes
+    from the CLI.
+  - Effort: Low, Medium (recommended) and High.
+  - Context: 1M tokens. **Cancel** (next to the "New
   conversation" heading, or the x on its tab, or esc) goes back to the
   conversation you were in.
 - **Provider icons** are letter chips, not company logos (see "Icons and
@@ -566,6 +600,9 @@ fine: they only say what Sandhill works with.
     - One set, Font Logos, has no licence.
 
 ## Open questions
+- Antigravity: confirm the ACP server and model names against Google's current
+  docs, and whether its plan usage can be shown in the status bar like Claude's
+  and Codex's.
 - The monospace font for a commercial release: Maple Mono NF (needs third-party
   notices), plain Maple Mono (only its OFL text), or the system's SF Mono (nothing
   to ship, but no ligatures and no Nerd Font symbols).
