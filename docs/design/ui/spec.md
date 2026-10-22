@@ -84,6 +84,10 @@ Draft 30 (2026-10-22) changed:
 - @ no longer leaves a stray "@" in the message box.
 - New conversation has no agent buttons: the model button lists every agent.
 - Antigravity (Google) is a fourth agent.
+
+Draft 31 (2026-10-22): the model menu is organised by provider tabs, with
+favourites, ⌥ shortcuts and stars; Claude Fable 5.1 is added. `icon-sheet.png`
+shows every icon with what it is for.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -478,12 +482,27 @@ omp.
 - **New conversation** (+): there are no agent buttons. The note says it works
   in the file in front of you (named) and sees your live sessions, that @ adds
   more, and that the agent, model and effort come from the model button.
-  - In a new conversation the model button's menu lists **every agent**, each
-    with its sign-in: Claude Code, Codex, Antigravity and omp, then the effort
-    knob. Picking another agent's model switches the agent and keeps the effort
-    if that agent has the same level, else its recommended one.
-  - Once a conversation has started, its menu lists only that agent's models,
-    because the agent's own conversation can't move to another agent.
+- **The model menu** (the model button in the message box), from top to bottom:
+  - **A tab row**: a star (favourites), then one tab per agent showing its chip
+    (Claude Code, Codex, Antigravity, omp). Each tab is 32 × 30px, and the open
+    tab has a 2px underline in the text colour. It opens on the conversation's
+    agent.
+  - A grey line naming the agent and its sign-in ("Claude Code · your Claude
+    plan").
+  - **The models**, one 30px row each: the name, its shortcut in a key cap (⌥1,
+    ⌥2… within the tab), and a star at the right. A filled orange star marks a
+    favourite, and clicking the star adds or removes it. The current model's row
+    is shaded and bold.
+  - The favourites tab lists starred models from every agent, each with its
+    chip. With none starred, it says "Star a model to keep it here".
+  - Then the effort knob, as before.
+  - In a new conversation every tab works. Picking another agent's model
+    switches the agent, and keeps the effort if that agent has the same level,
+    else uses its recommended one.
+  - Once a conversation has started, the other agents' tabs and rows are dimmed
+    ("start a new conversation to use it"), because the agent's own conversation
+    can't move to another agent.
+  - Claude Code's models: Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5.
 - **Antigravity** (Google's agent):
   - It runs as the Antigravity CLI on the server and shows as a chat, through its
     ACP server.
@@ -568,6 +587,8 @@ omp.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
 ## Icons and licences
+- **`icon-sheet.png`** shows every icon in the mockup with its id and what it is
+  for: line icons, agent and language chips, and file and folder icons.
 Every icon is drawn for Sandhill. No company's logo appears, because logos are
 trademarks and their owners must approve each use in a product that is sold.
 Product names in plain text ("Claude Code", "Codex", "Opus 5.5", "Python") are
