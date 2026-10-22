@@ -88,6 +88,12 @@ Draft 30 (2026-10-22) changed:
 Draft 31 (2026-10-22): the model menu is organised by provider tabs, with
 favourites, ⌥ shortcuts and stars; Claude Fable 5.1 is added. `icon-sheet.png`
 shows every icon with what it is for.
+
+Draft 32 (2026-10-22) changed:
+- No paperclip: Attach from this Mac… is the last item in the @ menu.
+- The model menu is the same size on every tab.
+- The tab bars of the editor, Console, Variables, Plots and Agents panes are
+  liquid glass: content scrolls under them, blurred.
 - The side panes are back: files on the left, Variables / Plots on the right.
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
@@ -128,6 +134,17 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - Maximized, the pane fills the window, opaque, until restored.
 - **One corner radius, 12px**, for every rounded thing in the window: panes,
   tabs, kernel rows, inputs, buttons and popovers.
+- **Glass tab bars**: every pane except the left pane has its tab bar (and the
+  editor its document bar) floating over the top of its content, like Safari's
+  tab bar.
+  - The bars are the pane colour at 62% (58% in dark mode), over a 22px blur
+    with saturation raised to 1.7, with a hairline at the bottom edge.
+  - The content starts just below the bars, and scrolls up under them, where it
+    shows blurred.
+  - A minimized pane keeps its tab bar in place.
+  - Each pane's own frosted glass is drawn on a layer behind its content. If
+    the pane itself were the frosted element, the bars inside it could not blur
+    the content.
 - **Pane tabs sit in capsules**, like the title bar's: the editor's file tabs, the
   Console's tabs and its R / Python switch, Variables / Help / Packages / Git,
   Plots / Viewer, and the Agents tab.
@@ -437,9 +454,9 @@ omp.
 - **Turn footer**, after each finished reply: a copy button, the time and the
   turn's tokens, in 11px grey. No cost is shown, because plan sign-ins aren't
   billed per message.
-- **Message box**: rounded, with a paperclip on the left (files and images can
-  also be pasted or dragged in), "Ask Claude… (@ to add files, chunks, variables
-  or plots)" as the placeholder, and a round orange send button that becomes a stop button while
+- **Message box**: rounded, with no paperclip (attaching is in the @ menu).
+  "Ask Claude… (@ to add files, chunks, variables or plots)" is the
+  placeholder, and a round orange send button that becomes a stop button while
   the agent works. The grip on its top edge resizes it. Its bottom row:
   - left: @ (mention), web search (globe), session context on or off (eye; off shows a
     crossed-out eye) and the mode (hand). Any mode other than Normal shows its
@@ -460,6 +477,10 @@ omp.
   - Enter or Tab picks the first match. Esc or a click elsewhere closes the menu.
   - Either way, the "@" and the letters typed after it are removed, so no stray
     "@" is left in your message.
+  - The menu's last item, after a divider, is **Attach from this Mac…** (files,
+    images, PDFs). It opens the Mac's file picker, and the file becomes a chip
+    like the others. Files and images can also be pasted or dragged into the
+    message box.
   - Each pick becomes a chip at the top of the message box (icon, name, ×), and
     goes with the message as extra context.
   - Unsent text and chips stay when the pane redraws.
@@ -495,6 +516,8 @@ omp.
     is shaded and bold.
   - The favourites tab lists starred models from every agent, each with its
     chip. With none starred, it says "Star a model to keep it here".
+  - The model list is the same height on every tab (four 30px rows). A longer
+    list scrolls inside it, so the menu never changes size.
   - Then the effort knob, as before.
   - In a new conversation every tab works. Picking another agent's model
     switches the agent, and keeps the effort if that agent has the same level,
