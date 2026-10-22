@@ -98,6 +98,19 @@ Draft 32 (2026-10-22) changed:
 - Every pane and the status bar show only the machine picked in the title bar,
   so local and remote work never mix; see "One machine at a time" below.
 
+Draft 33 (2026-10-22): the V32.2 icon set and a crane mark draft.
+- Every icon is now a file in `icons/`, with a registry that maps the old (V31)
+  ids to new ones. The line icons are unchanged; interrupt, power and warning are
+  new.
+- New bioinformatics file icons: one page outline, a symbol per type and a
+  colour per family (FASTA, FASTQ, BAM, VCF, GFF, BED, h5ad, mtx, Parquet,
+  Snakemake, WDL, CWL and more). Folders gain project, notebooks, scripts and
+  cache.
+- omp has its own π mark; Shell has a language chip.
+- `brand/` has a vector Sandhill crane (V1.1 draft): light, dark, transparent,
+  one-colour, menu-bar template, small marks for 16–64px, and macOS app icon
+  drafts. The app still uses Huan's painting.
+
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
 at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
@@ -311,23 +324,29 @@ and remote work are never shown together.
     There are no elbows.
   - Clicking a folder opens or closes it, and its chevron turns to point down
     when open.
-  - **Icons are coloured glyphs**, all drawn for Sandhill, and **the same in every
-    pane**: the file tree, editor tabs, Git, the @ menu, History and the Start
-    screen. Colours come from the muted palette:
-    - R, README and Python: blue;
-    - Quarto: slate;
-    - notebooks and .gitignore: rust;
-    - tables and shell scripts: sage;
-    - data files: teal;
-    - lock files and LICENSE: mustard;
-    - YAML, images and CLAUDE.md: coral;
-    - Markdown: mauve;
-    - other files: sand.
+  - **Icons come from the V32.2 set** in [`icons/`](icons/README.md), all drawn
+    for Sandhill, and are **the same in every pane**: the file tree, editor tabs,
+    Git, the @ menu, History and the Start screen.
+    - A file icon is a page outline (10 × 13 in the 16px box, folded corner,
+      1.1 stroke, filled with its colour at 13%) with a symbol inside (1.25
+      stroke). The colour says the family and the symbol says the type:
+      code (R, Python, shell) blue `#3a72b8`; documents (Quarto, R Markdown,
+      Markdown, README, CLAUDE.md) indigo `#6c6fb6`; notebooks orange `#c4672a`;
+      sequences (FASTA, FASTQ) teal `#1b9184`; alignments, variants,
+      annotation and intervals (BAM, VCF, GFF, BED) red `#c44f3f`; scientific
+      data (RDS, h5ad, HDF5, mtx) violet `#8a5fb0`; tables (CSV, TSV, Parquet)
+      green `#4e8f4c`; workflows (Nextflow, Snakemake, WDL, CWL) amber
+      `#b07d14`; configuration and lock files taupe `#857a64`; images pink
+      `#b4547d`; anything else grey `#8d877d`. Each colour has at least 3:1
+      contrast on both the light and dark panes, so nothing is inverted for dark.
+    - Compressed files keep the icon of what is inside (`reads.fastq.gz` is a
+      FASTQ); `icons/MAPPING.md` lists every extension.
     Dimmed files show their icon at 55% opacity.
-    - Folders are filled: data teal, results mustard, figures coral, tests
-      mauve, .sandhill sand, and other folders sage.
-    - Folders are filled. Some have a cut-out emblem: data (a cylinder), results
-      (bars), figures (a line chart), tests (a flask), .sandhill (a ring).
+    - Folders are filled, some with a cut-out emblem (drawn in the pane's
+      background colour): project blue (star), data teal (cylinder), results
+      amber (bars), figures red (line chart), tests violet (flask), notebooks
+      orange (cells), scripts green (prompt), cache grey (clock), .sandhill
+      taupe (ring), and other folders a plain light grey.
     - R files show "R", Quarto files "Q", R Markdown "Rm", Python "Py", and
       notebooks an orbit.
     - Tables show a grid, and data files (.rds, .h5ad, .h5, .gz, .mtx, .bed) a
@@ -610,26 +629,39 @@ omp.
 - Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
 
 ## Icons and licences
-- **`icon-sheet.png`** shows every icon in the mockup with its id and what it is
-  for: line icons, agent and language chips, and file and folder icons.
+- **`icon-sheet.png`** is `icons/preview.html` on the light and dark panes:
+  every V32.2 icon with its id, and the rest, hover, selected and disabled states.
 Every icon is drawn for Sandhill. No company's logo appears, because logos are
 trademarks and their owners must approve each use in a product that is sold.
 Product names in plain text ("Claude Code", "Codex", "Opus 5.5", "Python") are
 fine: they only say what Sandhill works with.
-- **Chips:** a 14 × 14 rounded square (radius 4) inside a 16px box, with one or
-  two bold letters in the system font.
+- **Chips:** a 14 × 14 rounded square (radius 4) inside a 16px box, with a
+  white mark drawn as strokes (1.55), so they don't depend on a font.
 - **Language chips:**
   - R: "R", white on blue `#2368b8`;
   - Python: "Py", dark blue `#22466e` on yellow `#f2c53d` (not the Python
     two-snake logo);
-  - Nextflow: "nf", white on green `#1fa784`.
-- **Agent chips:**
+  - Nextflow: "nf", white on green `#1fa784`;
+  - Shell: a `>_` prompt, white on graphite `#33363d`.
+- **Agent chips** (no vendor mark until its owner allows one; the registry has a
+  slot for it, so swapping one in needs no code change):
   - Claude Code: "CC", white on brown `#9a5b41` (not Claude's spark);
   - Codex: "Cx", white on graphite `#3d4552` (not OpenAI's knot);
-  - omp: "π", white on violet `#6b4fc8` (not omp's own mark).
+  - Antigravity: "Ag", white on blue `#2b6f8f` (not Google's mark);
+  - omp (Oh My Pi): a π with a terminal cursor, white on violet `#6b4fc8`. It is
+    Sandhill's own mark for the integration, not Oh My Pi's logo.
+- **The V32.2 set** lives in [`icons/`](icons/README.md): one SVG per icon,
+  `registry.json` (ids, files, colours, the V31 ids each replaces and the rules
+  that pick a file's icon), `MAPPING.md` and `preview.html`. `icons/build.py`
+  writes all of it and the icon block in the mockup; change icons there.
+- **The crane mark V1.1** is a draft in [`brand/`](brand/README.md). It is not in
+  the app yet.
 - **File icons:**
   - `.qmd` shows a "Q" (not a mark like Quarto's).
-  - `CLAUDE.md` and `AGENTS.md` show a plain four-point sparkle on coral.
+  - `CLAUDE.md` and `AGENTS.md` show a plain four-point sparkle in the documents
+    colour.
+  - No file icon uses a format's or tool's own logo (Jupyter, Quarto, Nextflow,
+    Snakemake, Python): each shows a symbol for what the file holds.
 - **The app icon** is Huan's own painting.
 - **Fonts:**
   - The system fonts need no licence in the app, because the app does not ship
@@ -644,6 +676,10 @@ fine: they only say what Sandhill works with.
     - One set, Font Logos, has no licence.
 
 ## Open questions
+- The crane mark: approve the V1.1 vector draft (or send the original logo's
+  vector, if one exists), before it replaces the painting as the app icon.
+- Official marks for Claude Code, Codex and Antigravity: only with each owner's
+  written permission for a product that is sold.
 - Antigravity: confirm the ACP server and model names against Google's current
   docs, and whether its plan usage can be shown in the status bar like Claude's
   and Codex's.
