@@ -1,0 +1,1320 @@
+{
+ "version": "32.2",
+ "grid": 16,
+ "stroke": 1.4,
+ "source": "docs/design/ui/icons/build.py",
+ "icons": {
+  "sidebar.left": {
+   "file": "system/sidebar.left.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Show or hide the files pane",
+   "v31": [
+    "i-sbl"
+   ]
+  },
+  "sidebar.right": {
+   "file": "system/sidebar.right.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Show or hide the agent pane",
+   "v31": [
+    "i-sbr"
+   ]
+  },
+  "pane.left": {
+   "file": "system/pane.left.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Left pane (layout menu)",
+   "v31": [
+    "i-sidebar"
+   ]
+  },
+  "pane.bottom": {
+   "file": "system/pane.bottom.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Bottom pane (layout menu)",
+   "v31": [
+    "i-panel"
+   ]
+  },
+  "pane.right": {
+   "file": "system/pane.right.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Right pane (layout menu)",
+   "v31": [
+    "i-right"
+   ]
+  },
+  "chat": {
+   "file": "system/chat.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Conversations",
+   "v31": [
+    "i-chat"
+   ]
+  },
+  "search": {
+   "file": "system/search.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Search",
+   "v31": [
+    "i-search"
+   ]
+  },
+  "menu": {
+   "file": "system/menu.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Menu",
+   "v31": [
+    "i-menu"
+   ]
+  },
+  "more": {
+   "file": "system/more.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "More",
+   "v31": [
+    "i-more"
+   ]
+  },
+  "add": {
+   "file": "system/add.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Add",
+   "v31": [
+    "i-plus"
+   ]
+  },
+  "device.mac": {
+   "file": "system/device.mac.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "This Mac",
+   "v31": [
+    "i-monitor"
+   ]
+  },
+  "device.laptop": {
+   "file": "system/device.laptop.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Laptop",
+   "v31": [
+    "i-laptop"
+   ]
+  },
+  "device.server": {
+   "file": "system/device.server.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Server",
+   "v31": [
+    "i-server"
+   ]
+  },
+  "device.cloud": {
+   "file": "system/device.cloud.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Remote machine",
+   "v31": [
+    "i-cloud"
+   ]
+  },
+  "folder": {
+   "file": "system/folder.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Project folder",
+   "v31": [
+    "i-folder"
+   ]
+  },
+  "settings": {
+   "file": "system/settings.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Settings",
+   "v31": [
+    "i-gear"
+   ]
+  },
+  "window.minimize": {
+   "file": "system/window.minimize.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Minimise pane",
+   "v31": [
+    "i-minw"
+   ]
+  },
+  "window.maximize": {
+   "file": "system/window.maximize.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Maximise pane",
+   "v31": [
+    "i-maxw"
+   ]
+  },
+  "window.restore": {
+   "file": "system/window.restore.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Restore pane",
+   "v31": [
+    "i-restw"
+   ]
+  },
+  "edit.undo": {
+   "file": "system/edit.undo.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Undo",
+   "v31": [
+    "i-undo"
+   ]
+  },
+  "edit.redo": {
+   "file": "system/edit.redo.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Redo",
+   "v31": [
+    "i-redo"
+   ]
+  },
+  "edit.cut": {
+   "file": "system/edit.cut.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Cut",
+   "v31": [
+    "i-cut"
+   ]
+  },
+  "edit.copy": {
+   "file": "system/edit.copy.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Copy",
+   "v31": [
+    "i-copy"
+   ]
+  },
+  "edit.paste": {
+   "file": "system/edit.paste.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Paste",
+   "v31": [
+    "i-paste"
+   ]
+  },
+  "edit.rename": {
+   "file": "system/edit.rename.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Rename",
+   "v31": [
+    "i-pencil"
+   ]
+  },
+  "edit.compose": {
+   "file": "system/edit.compose.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "New conversation",
+   "v31": [
+    "i-editsq"
+   ]
+  },
+  "doc.save": {
+   "file": "system/doc.save.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Save",
+   "v31": [
+    "i-savedoc"
+   ]
+  },
+  "doc.save-all": {
+   "file": "system/doc.save-all.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Save all",
+   "v31": [
+    "i-saveall"
+   ]
+  },
+  "doc.download": {
+   "file": "system/doc.download.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Download / save a copy",
+   "v31": [
+    "i-save"
+   ]
+  },
+  "file.new": {
+   "file": "system/file.new.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "New file",
+   "v31": [
+    "i-filenew"
+   ]
+  },
+  "folder.new": {
+   "file": "system/folder.new.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "New folder",
+   "v31": [
+    "i-foldernew"
+   ]
+  },
+  "files": {
+   "file": "system/files.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Files",
+   "v31": [
+    "i-files"
+   ]
+  },
+  "refresh": {
+   "file": "system/refresh.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Refresh / restart",
+   "v31": [
+    "i-restart"
+   ]
+  },
+  "filter": {
+   "file": "system/filter.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Filter",
+   "v31": [
+    "i-filter"
+   ]
+  },
+  "sort": {
+   "file": "system/sort.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Sort",
+   "v31": [
+    "i-sort"
+   ]
+  },
+  "table": {
+   "file": "system/table.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Table / data viewer",
+   "v31": [
+    "i-table"
+   ]
+  },
+  "outline": {
+   "file": "system/outline.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Outline",
+   "v31": [
+    "i-outline"
+   ]
+  },
+  "share": {
+   "file": "system/share.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Share / export",
+   "v31": [
+    "i-share"
+   ]
+  },
+  "upload": {
+   "file": "system/upload.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Import / upload",
+   "v31": [
+    "i-upload"
+   ]
+  },
+  "delete": {
+   "file": "system/delete.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Delete",
+   "v31": [
+    "i-trash"
+   ]
+  },
+  "package": {
+   "file": "system/package.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Packages",
+   "v31": [
+    "i-pkg"
+   ]
+  },
+  "link": {
+   "file": "system/link.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Link",
+   "v31": [
+    "i-lockk"
+   ]
+  },
+  "lock": {
+   "file": "system/lock.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Locked",
+   "v31": [
+    "i-lock"
+   ]
+  },
+  "star": {
+   "file": "system/star.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Favourite",
+   "v31": [
+    "i-star"
+   ]
+  },
+  "star.filled": {
+   "file": "system/star.filled.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Favourite (on)",
+   "v31": [
+    "i-starf"
+   ]
+  },
+  "pin": {
+   "file": "system/pin.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Pin",
+   "v31": [
+    "i-pin"
+   ]
+  },
+  "globe": {
+   "file": "system/globe.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Web",
+   "v31": [
+    "i-globe"
+   ]
+  },
+  "run": {
+   "file": "system/run.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Run",
+   "v31": [
+    "i-play"
+   ]
+  },
+  "run.above": {
+   "file": "system/run.above.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Run all above",
+   "v31": [
+    "i-above"
+   ]
+  },
+  "stop": {
+   "file": "system/stop.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Stop",
+   "v31": [
+    "i-stop"
+   ]
+  },
+  "interrupt": {
+   "file": "system/interrupt.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Interrupt",
+   "v31": []
+  },
+  "power": {
+   "file": "system/power.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Start or shut down",
+   "v31": []
+  },
+  "terminal": {
+   "file": "system/terminal.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Terminal",
+   "v31": [
+    "i-term"
+   ]
+  },
+  "sessions": {
+   "file": "system/sessions.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Sessions",
+   "v31": [
+    "i-sessions"
+   ]
+  },
+  "cpu": {
+   "file": "system/cpu.svg",
+   "kind": "system",
+   "group": "resources",
+   "label": "CPU",
+   "v31": [
+    "i-chip"
+   ]
+  },
+  "memory": {
+   "file": "system/memory.svg",
+   "kind": "system",
+   "group": "resources",
+   "label": "Memory",
+   "v31": [
+    "i-mem"
+   ]
+  },
+  "gpu": {
+   "file": "system/gpu.svg",
+   "kind": "system",
+   "group": "resources",
+   "label": "GPU",
+   "v31": [
+    "i-gpu"
+   ]
+  },
+  "disk": {
+   "file": "system/disk.svg",
+   "kind": "system",
+   "group": "resources",
+   "label": "Disk",
+   "v31": [
+    "i-disk"
+   ]
+  },
+  "previous": {
+   "file": "system/previous.svg",
+   "kind": "system",
+   "group": "plots",
+   "label": "Previous",
+   "v31": [
+    "i-left"
+   ]
+  },
+  "next": {
+   "file": "system/next.svg",
+   "kind": "system",
+   "group": "plots",
+   "label": "Next",
+   "v31": [
+    "i-rt"
+   ]
+  },
+  "zoom": {
+   "file": "system/zoom.svg",
+   "kind": "system",
+   "group": "plots",
+   "label": "Zoom",
+   "v31": [
+    "i-zoom"
+   ]
+  },
+  "help": {
+   "file": "system/help.svg",
+   "kind": "system",
+   "group": "plots",
+   "label": "Help",
+   "v31": [
+    "i-help"
+   ]
+  },
+  "git": {
+   "file": "system/git.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Git",
+   "v31": [
+    "i-git"
+   ]
+  },
+  "git.branch": {
+   "file": "system/git.branch.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Branch",
+   "v31": [
+    "i-branch"
+   ]
+  },
+  "git.stash": {
+   "file": "system/git.stash.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Stash",
+   "v31": [
+    "i-stash"
+   ]
+  },
+  "git.pull": {
+   "file": "system/git.pull.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Pull",
+   "v31": [
+    "i-pull"
+   ]
+  },
+  "git.push": {
+   "file": "system/git.push.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Push",
+   "v31": [
+    "i-push"
+   ]
+  },
+  "git.tag": {
+   "file": "system/git.tag.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Tag",
+   "v31": [
+    "i-tag"
+   ]
+  },
+  "check": {
+   "file": "system/check.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Commit / done",
+   "v31": [
+    "i-check"
+   ]
+  },
+  "sparkle": {
+   "file": "system/sparkle.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Write with the agent",
+   "v31": [
+    "i-sparkle"
+   ]
+  },
+  "sparkle.ai": {
+   "file": "system/sparkle.ai.svg",
+   "kind": "system",
+   "group": "git",
+   "label": "Agent suggestion",
+   "v31": [
+    "i-spark4"
+   ]
+  },
+  "agent": {
+   "file": "system/agent.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Agent (generic)",
+   "v31": [
+    "i-agent"
+   ]
+  },
+  "history": {
+   "file": "system/history.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "History",
+   "v31": [
+    "i-clock"
+   ]
+  },
+  "context.show": {
+   "file": "system/context.show.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Share what I'm looking at",
+   "v31": [
+    "i-eye"
+   ]
+  },
+  "context.hide": {
+   "file": "system/context.hide.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Don't share what I'm looking at",
+   "v31": [
+    "i-eyeoff"
+   ]
+  },
+  "attach": {
+   "file": "system/attach.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Attach (kept for the @ menu row)",
+   "v31": [
+    "i-clip"
+   ]
+  },
+  "send": {
+   "file": "system/send.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Send",
+   "v31": [
+    "i-send"
+   ]
+  },
+  "ask": {
+   "file": "system/ask.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Ask before acting",
+   "v31": [
+    "i-hand"
+   ]
+  },
+  "plan": {
+   "file": "system/plan.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Plan",
+   "v31": [
+    "i-plan"
+   ]
+  },
+  "auto": {
+   "file": "system/auto.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Act without asking",
+   "v31": [
+    "i-bolt"
+   ]
+  },
+  "think": {
+   "file": "system/think.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Thinking effort",
+   "v31": [
+    "i-brain"
+   ]
+  },
+  "compact": {
+   "file": "system/compact.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Compact the conversation",
+   "v31": [
+    "i-compact"
+   ]
+  },
+  "skill": {
+   "file": "system/skill.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Skills",
+   "v31": [
+    "i-wand"
+   ]
+  },
+  "permissions": {
+   "file": "system/permissions.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Permissions",
+   "v31": [
+    "i-shield"
+   ]
+  },
+  "step.done": {
+   "file": "system/step.done.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Step done",
+   "v31": [
+    "i-ccheck"
+   ]
+  },
+  "step.failed": {
+   "file": "system/step.failed.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Step failed",
+   "v31": [
+    "i-cx"
+   ]
+  },
+  "warning": {
+   "file": "system/warning.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Needs attention",
+   "v31": []
+  },
+  "close": {
+   "file": "system/close.svg",
+   "kind": "system",
+   "group": "agent",
+   "label": "Close",
+   "v31": [
+    "i-x"
+   ]
+  },
+  "chevron.down": {
+   "file": "system/chevron.down.svg",
+   "kind": "system",
+   "group": "arrows",
+   "label": "Expand",
+   "v31": [
+    "i-chev"
+   ]
+  },
+  "chevron.right": {
+   "file": "system/chevron.right.svg",
+   "kind": "system",
+   "group": "arrows",
+   "label": "Collapse / go in",
+   "v31": [
+    "i-chevr"
+   ]
+  },
+  "arrow.up": {
+   "file": "system/arrow.up.svg",
+   "kind": "system",
+   "group": "arrows",
+   "label": "Up",
+   "v31": [
+    "i-up"
+   ]
+  },
+  "file.r": {
+   "file": "bio/r.svg",
+   "kind": "file",
+   "family": "code",
+   "color": "#3a72b8",
+   "label": "R script"
+  },
+  "file.python": {
+   "file": "bio/python.svg",
+   "kind": "file",
+   "family": "code",
+   "color": "#3a72b8",
+   "label": "Python script"
+  },
+  "file.shell": {
+   "file": "bio/shell.svg",
+   "kind": "file",
+   "family": "code",
+   "color": "#3a72b8",
+   "label": "Shell script"
+  },
+  "file.quarto": {
+   "file": "bio/quarto.svg",
+   "kind": "file",
+   "family": "docs",
+   "color": "#6c6fb6",
+   "label": "Quarto document"
+  },
+  "file.rmarkdown": {
+   "file": "bio/rmarkdown.svg",
+   "kind": "file",
+   "family": "docs",
+   "color": "#6c6fb6",
+   "label": "R Markdown"
+  },
+  "file.markdown": {
+   "file": "bio/markdown.svg",
+   "kind": "file",
+   "family": "docs",
+   "color": "#6c6fb6",
+   "label": "Markdown"
+  },
+  "file.readme": {
+   "file": "bio/readme.svg",
+   "kind": "file",
+   "family": "docs",
+   "color": "#6c6fb6",
+   "label": "Read me"
+  },
+  "file.agent-notes": {
+   "file": "bio/agent-notes.svg",
+   "kind": "file",
+   "family": "docs",
+   "color": "#6c6fb6",
+   "label": "Agent instructions (CLAUDE.md, AGENTS.md)"
+  },
+  "file.notebook": {
+   "file": "bio/notebook.svg",
+   "kind": "file",
+   "family": "notebook",
+   "color": "#c4672a",
+   "label": "Jupyter notebook"
+  },
+  "file.fasta": {
+   "file": "bio/fasta.svg",
+   "kind": "file",
+   "family": "sequence",
+   "color": "#1b9184",
+   "label": "FASTA sequences"
+  },
+  "file.fastq": {
+   "file": "bio/fastq.svg",
+   "kind": "file",
+   "family": "sequence",
+   "color": "#1b9184",
+   "label": "FASTQ reads with qualities"
+  },
+  "file.alignment": {
+   "file": "bio/alignment.svg",
+   "kind": "file",
+   "family": "genomic",
+   "color": "#c44f3f",
+   "label": "Aligned reads (BAM, SAM, CRAM)"
+  },
+  "file.variants": {
+   "file": "bio/variants.svg",
+   "kind": "file",
+   "family": "genomic",
+   "color": "#c44f3f",
+   "label": "Variants (VCF, BCF)"
+  },
+  "file.annotation": {
+   "file": "bio/annotation.svg",
+   "kind": "file",
+   "family": "genomic",
+   "color": "#c44f3f",
+   "label": "Gene annotation (GFF, GTF)"
+  },
+  "file.intervals": {
+   "file": "bio/intervals.svg",
+   "kind": "file",
+   "family": "genomic",
+   "color": "#c44f3f",
+   "label": "Genomic intervals (BED)"
+  },
+  "file.r-object": {
+   "file": "bio/r-object.svg",
+   "kind": "file",
+   "family": "data",
+   "color": "#8a5fb0",
+   "label": "R object (RDS, RData)"
+  },
+  "file.anndata": {
+   "file": "bio/anndata.svg",
+   "kind": "file",
+   "family": "data",
+   "color": "#8a5fb0",
+   "label": "AnnData (h5ad)"
+  },
+  "file.hdf5": {
+   "file": "bio/hdf5.svg",
+   "kind": "file",
+   "family": "data",
+   "color": "#8a5fb0",
+   "label": "HDF5 (h5, h5Seurat)"
+  },
+  "file.sparse-matrix": {
+   "file": "bio/sparse-matrix.svg",
+   "kind": "file",
+   "family": "data",
+   "color": "#8a5fb0",
+   "label": "Sparse matrix (mtx)"
+  },
+  "file.table": {
+   "file": "bio/table.svg",
+   "kind": "file",
+   "family": "table",
+   "color": "#4e8f4c",
+   "label": "Table (CSV, TSV)"
+  },
+  "file.parquet": {
+   "file": "bio/parquet.svg",
+   "kind": "file",
+   "family": "table",
+   "color": "#4e8f4c",
+   "label": "Parquet (column store)"
+  },
+  "file.nextflow": {
+   "file": "bio/nextflow.svg",
+   "kind": "file",
+   "family": "workflow",
+   "color": "#b07d14",
+   "label": "Nextflow"
+  },
+  "file.snakemake": {
+   "file": "bio/snakemake.svg",
+   "kind": "file",
+   "family": "workflow",
+   "color": "#b07d14",
+   "label": "Snakemake"
+  },
+  "file.wdl": {
+   "file": "bio/wdl.svg",
+   "kind": "file",
+   "family": "workflow",
+   "color": "#b07d14",
+   "label": "WDL"
+  },
+  "file.cwl": {
+   "file": "bio/cwl.svg",
+   "kind": "file",
+   "family": "workflow",
+   "color": "#b07d14",
+   "label": "CWL"
+  },
+  "file.yaml": {
+   "file": "bio/yaml.svg",
+   "kind": "file",
+   "family": "config",
+   "color": "#857a64",
+   "label": "YAML"
+  },
+  "file.json": {
+   "file": "bio/json.svg",
+   "kind": "file",
+   "family": "config",
+   "color": "#857a64",
+   "label": "JSON"
+  },
+  "file.toml": {
+   "file": "bio/toml.svg",
+   "kind": "file",
+   "family": "config",
+   "color": "#857a64",
+   "label": "TOML / config"
+  },
+  "file.lock": {
+   "file": "bio/lock.svg",
+   "kind": "file",
+   "family": "config",
+   "color": "#857a64",
+   "label": "Lock file"
+  },
+  "file.license": {
+   "file": "bio/license.svg",
+   "kind": "file",
+   "family": "config",
+   "color": "#857a64",
+   "label": "Licence"
+  },
+  "file.git": {
+   "file": "bio/git.svg",
+   "kind": "file",
+   "family": "config",
+   "color": "#857a64",
+   "label": "Git settings (.gitignore)"
+  },
+  "file.archive": {
+   "file": "bio/archive.svg",
+   "kind": "file",
+   "family": "config",
+   "color": "#857a64",
+   "label": "Archive (zip, tar)"
+  },
+  "file.image": {
+   "file": "bio/image.svg",
+   "kind": "file",
+   "family": "media",
+   "color": "#b4547d",
+   "label": "Image or PDF"
+  },
+  "file.bibliography": {
+   "file": "bio/bibliography.svg",
+   "kind": "file",
+   "family": "other",
+   "color": "#8d877d",
+   "label": "Bibliography (bib)"
+  },
+  "file.file": {
+   "file": "bio/file.svg",
+   "kind": "file",
+   "family": "other",
+   "color": "#8d877d",
+   "label": "Other file"
+  },
+  "folder.project": {
+   "file": "folders/project.svg",
+   "kind": "folder",
+   "color": "#3a72b8",
+   "label": "Project root"
+  },
+  "folder.data": {
+   "file": "folders/data.svg",
+   "kind": "folder",
+   "color": "#1b9184",
+   "label": "data"
+  },
+  "folder.results": {
+   "file": "folders/results.svg",
+   "kind": "folder",
+   "color": "#b07d14",
+   "label": "results"
+  },
+  "folder.figures": {
+   "file": "folders/figures.svg",
+   "kind": "folder",
+   "color": "#c44f3f",
+   "label": "figures, plots"
+  },
+  "folder.tests": {
+   "file": "folders/tests.svg",
+   "kind": "folder",
+   "color": "#8a5fb0",
+   "label": "tests"
+  },
+  "folder.sandhill": {
+   "file": "folders/sandhill.svg",
+   "kind": "folder",
+   "color": "#857a64",
+   "label": ".sandhill (Sandhill settings)"
+  },
+  "folder.notebooks": {
+   "file": "folders/notebooks.svg",
+   "kind": "folder",
+   "color": "#c4672a",
+   "label": "notebooks"
+  },
+  "folder.scripts": {
+   "file": "folders/scripts.svg",
+   "kind": "folder",
+   "color": "#4e8f4c",
+   "label": "scripts, R, src"
+  },
+  "folder.cache": {
+   "file": "folders/cache.svg",
+   "kind": "folder",
+   "color": "#8d877d",
+   "label": "cache, tmp, work"
+  },
+  "folder.other": {
+   "file": "folders/other.svg",
+   "kind": "folder",
+   "color": "#a09a90",
+   "label": "Any other folder"
+  },
+  "agent.claude": {
+   "file": "agents/claude.svg",
+   "kind": "agent",
+   "label": "Claude Code",
+   "color": "#fff",
+   "note": "lookalike of Claude's spark; swap for the official file",
+   "brand": null,
+   "v31": [
+    "i-claude"
+   ]
+  },
+  "agent.codex": {
+   "file": "agents/codex.svg",
+   "kind": "agent",
+   "label": "Codex",
+   "color": "#fff",
+   "note": "lookalike of OpenAI's knot; swap for the official file",
+   "brand": null,
+   "v31": [
+    "i-openai"
+   ]
+  },
+  "agent.antigravity": {
+   "file": "agents/antigravity.svg",
+   "kind": "agent",
+   "label": "Antigravity",
+   "color": "#fff",
+   "note": "lookalike in Google's colours; swap for the official file",
+   "brand": null,
+   "v31": [
+    "i-agy"
+   ]
+  },
+  "agent.omp": {
+   "file": "agents/omp.svg",
+   "kind": "agent",
+   "label": "Oh My Pi (omp)",
+   "color": "#6b4fc8",
+   "note": "Sandhill's own \u03c0> mark for the omp integration; not the Oh My Pi logo",
+   "brand": null,
+   "v31": [
+    "i-omp"
+   ]
+  },
+  "agent.generic": {
+   "file": "agents/generic.svg",
+   "kind": "agent",
+   "label": "Other agent",
+   "color": "#6b645e",
+   "note": "generic agent",
+   "brand": null
+  },
+  "lang.r": {
+   "file": "lang/r.svg",
+   "kind": "language",
+   "label": "R",
+   "color": "#2368b8"
+  },
+  "lang.python": {
+   "file": "lang/python.svg",
+   "kind": "language",
+   "label": "Python",
+   "color": "#fff"
+  },
+  "lang.nextflow": {
+   "file": "lang/nextflow.svg",
+   "kind": "language",
+   "label": "Nextflow",
+   "color": "#fff"
+  },
+  "lang.shell": {
+   "file": "lang/shell.svg",
+   "kind": "language",
+   "label": "Shell",
+   "color": "#33363d"
+  }
+ },
+ "resolve": {
+  "compressed": [
+   "gz",
+   "bgz",
+   "bz2",
+   "xz",
+   "zst"
+  ],
+  "names": {
+   "snakefile": "snakemake",
+   "claude.md": "agent-notes",
+   "agents.md": "agent-notes",
+   ".gitignore": "git",
+   ".gitattributes": "git",
+   "license": "license",
+   "license.md": "license",
+   "license.txt": "license",
+   "copying": "license",
+   "nextflow.config": "nextflow",
+   "renv.lock": "lock",
+   "uv.lock": "lock",
+   "cargo.lock": "lock"
+  },
+  "prefixes": {
+   "readme": "readme"
+  },
+  "extensions": {
+   "r": "r",
+   "py": "python",
+   "sh": "shell",
+   "bash": "shell",
+   "zsh": "shell",
+   "qmd": "quarto",
+   "rmd": "rmarkdown",
+   "md": "markdown",
+   "ipynb": "notebook",
+   "fasta": "fasta",
+   "fa": "fasta",
+   "fna": "fasta",
+   "faa": "fasta",
+   "fastq": "fastq",
+   "fq": "fastq",
+   "bam": "alignment",
+   "sam": "alignment",
+   "cram": "alignment",
+   "vcf": "variants",
+   "bcf": "variants",
+   "gff": "annotation",
+   "gff3": "annotation",
+   "gtf": "annotation",
+   "bed": "intervals",
+   "bedgraph": "intervals",
+   "narrowpeak": "intervals",
+   "rds": "r-object",
+   "rdata": "r-object",
+   "rda": "r-object",
+   "h5ad": "anndata",
+   "h5": "hdf5",
+   "hdf5": "hdf5",
+   "h5seurat": "hdf5",
+   "loom": "hdf5",
+   "mtx": "sparse-matrix",
+   "csv": "table",
+   "tsv": "table",
+   "txt": "file",
+   "parquet": "parquet",
+   "nf": "nextflow",
+   "smk": "snakemake",
+   "wdl": "wdl",
+   "cwl": "cwl",
+   "yaml": "yaml",
+   "yml": "yaml",
+   "json": "json",
+   "toml": "toml",
+   "cfg": "toml",
+   "ini": "toml",
+   "config": "toml",
+   "lock": "lock",
+   "zip": "archive",
+   "tar": "archive",
+   "tgz": "archive",
+   "png": "image",
+   "jpg": "image",
+   "jpeg": "image",
+   "svg": "image",
+   "pdf": "image",
+   "tif": "image",
+   "tiff": "image",
+   "bib": "bibliography"
+  },
+  "fallback": "file",
+  "folders": {
+   "data": "data",
+   "raw": "data",
+   "input": "data",
+   "results": "results",
+   "output": "results",
+   "out": "results",
+   "figures": "figures",
+   "figs": "figures",
+   "plots": "figures",
+   "tests": "tests",
+   "test": "tests",
+   ".sandhill": "sandhill",
+   "notebooks": "notebooks",
+   "analysis": "notebooks",
+   "scripts": "scripts",
+   "r": "scripts",
+   "src": "scripts",
+   "bin": "scripts",
+   "cache": "cache",
+   ".cache": "cache",
+   "tmp": "cache",
+   "work": "cache",
+   ".github": "other"
+  },
+  "folderFallback": "other"
+ }
+}

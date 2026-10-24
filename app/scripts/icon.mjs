@@ -1,14 +1,12 @@
-// Makes the app icon files in src-tauri/icons from source.png, Huan's
-// painting:
+// Makes the app icon files in src-tauri/icons from the Sandhill crane:
 //
 //   npm run icon
 //
-// The painting is square and fills its canvas, so it is drawn as a Mac icon:
-// clipped to a rounded square in Apple's icon grid (824 of 1024 px,
-// centered), with a soft shadow, so it sits at the same size as other apps
-// in the Dock. At 16 and 32 px the whole scene blurs, so those sizes show a
-// closer crop on the cranes' heads and necks, without the shadow.
-// `tauri icon` renders the SVGs; the small sizes then replace the ones in
+// source.svg is the app icon (an 824 px rounded tile on Apple's 1024 px
+// grid, with the crane) and source-small.svg the version drawn for 16 and
+// 32 px. Both are written by docs/design/ui/brand/build.py; change them
+// there. This adds the soft shadow macOS icons have to the large sizes, and
+// `tauri icon` renders them; the small sizes then replace the ones in
 // icon.icns.
 
 import { execFileSync } from "node:child_process";
@@ -20,29 +18,20 @@ import { fileURLToPath } from "node:url";
 const app = join(dirname(fileURLToPath(import.meta.url)), "..");
 const icons = join(app, "src-tauri", "icons");
 
-// In the painting's own pixels.
-const SMALL_CROP = "250 80 750 750";
-
-const png = readFileSync(join(icons, "source.png"));
-if (png.toString("latin1", 1, 4) !== "PNG") throw new Error("source.png is not a PNG");
-const [width, height] = [png.readUInt32BE(16), png.readUInt32BE(20)];
-if (width !== height) throw new Error("source.png is not square");
-const href = `data:image/png;base64,${png.toString("base64")}`;
-
-// Apple's grid: the rounded square is 824 px of 1024, corner radius 185.
-const square = `<rect x="100" y="100" width="824" height="824" rx="185"/>`;
-const svg = (body) =>
-  `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">` +
-  `<defs><clipPath id="square">${square}</clipPath>` +
-  `<filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity=".3"/></filter></defs>` +
-  body +
-  `</svg>`;
-const painting = (viewBox) =>
-  `<svg x="100" y="100" width="824" height="824" viewBox="${viewBox}" preserveAspectRatio="xMidYMid slice">` +
-  `<image width="${width}" height="${height}" xlink:href="${href}"/></svg>`;
-
-const full = svg(`<g filter="url(#shadow)"><g clip-path="url(#square)">${painting(`0 0 ${width} ${height}`)}</g></g>`);
-const small = svg(`<g clip-path="url(#square)">${painting(SMALL_CROP)}</g>`);
+const source = (name) => {
+  const svg = readFileSync(join(icons, name), "utf8");
+  if (!svg.includes('viewBox="0 0 1024 1024"')) throw new Error(`${name} is not a 1024 px icon`);
+  return svg;
+};
+// The tile drawn again, as a shadow under itself.
+const withShadow = (svg) =>
+  svg.replace(
+    /<rect x="100" y="100"/,
+    '<filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity=".3"/></filter>' +
+      '<rect x="100" y="100" width="824" height="824" rx="185" filter="url(#shadow)"/><rect x="100" y="100"',
+  );
+const full = withShadow(source("source.svg"));
+const small = source("source-small.svg");
 
 const work = mkdtempSync(join(tmpdir(), "sandhill-icon-"));
 try {

@@ -34,6 +34,10 @@ before making architectural changes; it records the decisions and why.
   in `tests/fixtures/outputs.json`, which both test suites read. Finding
   Quarto chunks and their ids does too (`crates/daemon/src/qmd.rs`,
   `app/src/model/qmd.ts`, `tests/fixtures/chunks.json`).
+- Icons are drawn once, in `docs/design/ui/icons/build.py`, which writes the
+  SVGs and registry, the mockup's icon block and `app/src/ui/icons32.ts`. The
+  crane and the app icon sources come from `docs/design/ui/brand/build.py`;
+  then `npm run icon` in `app/`.
 - Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` and
   `cargo test --workspace` before committing, and `npm test` and
   `npm run build` in `app/` when the UI changed.
