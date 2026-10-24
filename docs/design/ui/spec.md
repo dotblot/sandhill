@@ -109,7 +109,10 @@ Draft 33 (2026-10-22): the V32.2 icon set and a crane mark draft.
 - omp has its own π mark; Shell has a language chip.
 - `brand/` has a vector Sandhill crane (V1.1 draft): light, dark, transparent,
   one-colour, menu-bar template, small marks for 16–64px, and macOS app icon
-  drafts. The app still uses Huan's painting.
+  drafts.
+
+Draft 34 (2026-10-24): Huan approved the crane mark, and the app now uses it as
+its icon and draws the V32.2 file, folder, language and agent icons.
 
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
@@ -654,15 +657,15 @@ fine: they only say what Sandhill works with.
   `registry.json` (ids, files, colours, the V31 ids each replaces and the rules
   that pick a file's icon), `MAPPING.md` and `preview.html`. `icons/build.py`
   writes all of it and the icon block in the mockup; change icons there.
-- **The crane mark V1.1** is a draft in [`brand/`](brand/README.md). It is not in
-  the app yet.
+- **The crane mark V1.1** is in [`brand/`](brand/README.md), approved on
+  2026-10-24. It is the app icon.
 - **File icons:**
   - `.qmd` shows a "Q" (not a mark like Quarto's).
   - `CLAUDE.md` and `AGENTS.md` show a plain four-point sparkle in the documents
     colour.
   - No file icon uses a format's or tool's own logo (Jupyter, Quarto, Nextflow,
     Snakemake, Python): each shows a symbol for what the file holds.
-- **The app icon** is Huan's own painting.
+- **The app icon** is the Sandhill crane (until draft 33 it was Huan's painting).
 - **Fonts:**
   - The system fonts need no licence in the app, because the app does not ship
     them.
@@ -676,8 +679,6 @@ fine: they only say what Sandhill works with.
     - One set, Font Logos, has no licence.
 
 ## Open questions
-- The crane mark: approve the V1.1 vector draft (or send the original logo's
-  vector, if one exists), before it replaces the painting as the app icon.
 - Official marks for Claude Code, Codex and Antigravity: only with each owner's
   written permission for a product that is sold.
 - Antigravity: confirm the ACP server and model names against Google's current
