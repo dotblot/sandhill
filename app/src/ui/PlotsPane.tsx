@@ -19,6 +19,7 @@ import {
   plotSource,
   plotSrc,
 } from "../model/plots";
+import { fromNotebook } from "../model/runs";
 import type { Workspace } from "../model/workspace";
 import { ask, askText, notify } from "./dialogs";
 import { Icon } from "./icons";
@@ -33,15 +34,18 @@ type Size = { width: number; height: number };
 
 /**
  * The Plots pane: every plot the project's R and Python sessions drew, from
- * the Console, scripts, notebooks and agents, newest last. A new plot comes
- * to the front as it is drawn; the arrows and thumbnails go back through the
- * rest. The magnifier opens a plot large, to copy it or save it as a file.
+ * the Console, scripts and agents, and from notebooks when the user asks for
+ * them, newest last. A new plot comes to the front as it is drawn; the arrows
+ * and thumbnails go back through the rest. The magnifier opens a plot large,
+ * to copy it or save it as a file.
  */
 export function PlotsPane(props: {
   ws: Workspace;
   project: string;
   /** The project's live sessions; their plots show. */
   sessions: SessionInfo[];
+  /** Whether notebook and Quarto cells' plots show too; they are under their cells either way. */
+  notebooks: boolean;
   shortName: (path: string) => string;
   /** The machine files are saved on, like "gpu01". */
   hostLabel: string;
@@ -66,9 +70,13 @@ export function PlotsPane(props: {
     [],
     { equals: (a, b) => a.length === b.length && a.every((id, i) => id === b[i]) },
   );
+  const wanted = (p: PlotItem) => props.notebooks || !fromNotebook(p.cell);
   const shown = createMemo(() => {
     const live = new Set(ids());
-    return afterClear(plots().filter((p) => live.has(p.session)), cleared());
+    return afterClear(
+      plots().filter((p) => live.has(p.session) && wanted(p)),
+      cleared(),
+    );
   });
   const index = () => {
     const list = shown();
@@ -95,7 +103,7 @@ export function PlotsPane(props: {
     setPlots(next);
     if (!jump) return;
     const known = new Set(before.map((p) => p.key));
-    if (items.some((p) => !known.has(p.key))) setPicked(undefined);
+    if (items.some((p) => !known.has(p.key) && wanted(p))) setPicked(undefined);
   };
 
   /** Reads a session's latest plots from the daemon's journal, and follows the session. */
@@ -241,7 +249,13 @@ export function PlotsPane(props: {
       <div class="plots" tabIndex={0} onKeyDown={onKey}>
         <Show
           when={item()}
-          fallback={<p class="vempty">Plots that R and Python draw show here: from the Console, scripts, notebooks and agents.</p>}
+          fallback={
+            <p class="vempty">
+              {props.notebooks
+                ? "Plots that R and Python draw show here: from the Console, scripts, notebooks and agents."
+                : "Plots that R and Python draw show here: from the Console, scripts and agents. Notebooks' plots stay under their cells."}
+            </p>
+          }
         >
           {(p) => (
             <>

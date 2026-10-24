@@ -20,8 +20,9 @@ import {
   type ProjectInfo,
   type ProjectState,
   type SessionInfo,
+  type SessionRuns,
 } from "../backend/types";
-import { isScript, SessionConsole } from "../console/sessionConsole";
+import { SessionConsole } from "../console/sessionConsole";
 import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
@@ -30,6 +31,7 @@ import { type HelpRequest, nameAt } from "../model/help";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
+import { fromNotebook, isScript } from "../model/runs";
 import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
@@ -57,6 +59,11 @@ const LEFT_KEY = "sandhill.sidebar";
 const LEFT_WIDTH_KEY = "sandhill.leftWidth";
 const CONSOLE_KEY = "sandhill.console";
 const CONSOLE_HEIGHT_KEY = "sandhill.consoleHeight";
+/** Whether notebook and Quarto cells' runs show in the Console, and their plots in Plots: "on", or not. */
+const NOTEBOOK_CONSOLE_KEY = "sandhill.notebookConsole";
+const NOTEBOOK_PLOTS_KEY = "sandhill.notebookPlots";
+/** Runs read to see whether a session that was running already was used from the Console. */
+const USED_RUNS = 50;
 const RIGHT_KEY = "sandhill.right";
 const RIGHT_WIDTH_KEY = "sandhill.rightWidth";
 const RIGHT_WIDTH = 320;
@@ -132,6 +139,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [left, setLeft] = createSignal(stored(LEFT_KEY) !== "hidden");
   const [leftWidth, setLeftWidth] = createSignal(clampLeft(Number(stored(LEFT_WIDTH_KEY)) || LEFT_WIDTH));
   const [consoleOn, setConsoleOn] = createSignal(stored(CONSOLE_KEY) !== "hidden");
+  // Notebooks keep their output under their cells; the user may also want it in the Console and Plots.
+  const [notebookConsole, setNotebookConsole] = createSignal(stored(NOTEBOOK_CONSOLE_KEY) === "on");
+  const [notebookPlots, setNotebookPlots] = createSignal(stored(NOTEBOOK_PLOTS_KEY) === "on");
   /** The Console's height in px; 0 until dragged, for a share of the column. */
   const [consoleHeight, setConsoleHeight] = createSignal(Number(stored(CONSOLE_HEIGHT_KEY)) || 0);
   const [minimized, setMinimized] = createSignal<Pane[]>([]);
@@ -164,6 +174,14 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     setConsoleOn(!consoleOn());
     store(CONSOLE_KEY, consoleOn() ? "shown" : "hidden");
     if (!consoleOn() && maximized() === "console") setMaximized(undefined);
+  };
+  const toggleNotebookConsole = () => {
+    setNotebookConsole(!notebookConsole());
+    store(NOTEBOOK_CONSOLE_KEY, notebookConsole() ? "on" : "off");
+  };
+  const toggleNotebookPlots = () => {
+    setNotebookPlots(!notebookPlots());
+    store(NOTEBOOK_PLOTS_KEY, notebookPlots() ? "on" : "off");
   };
   const toggleRight = () => {
     setRightOn(!rightOn());
@@ -289,9 +307,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     queueMicrotask(() => doc.focus());
   });
 
-  // The Console shows one session at a time, the one in front, which the
-  // Variables pane shows too. It follows the document in front, and the
-  // script whose line just ran.
+  // The session in front, which Variables, Help and Packages show, follows the
+  // document in front and the script whose line just ran. The Console shows
+  // it too, unless only notebooks have used it and their runs stay out of the
+  // Console; then it keeps the session it showed.
   const consoleSessions = () =>
     ws
       .liveSessions()
@@ -299,6 +318,30 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       .sort((a, b) => a.created_ms - b.created_ms);
   const [foreground, setForeground] = createSignal<string>();
   const foregroundInfo = () => consoleSessions().find((s) => s.id === foreground());
+  /** Sessions used from the Console, a script or an agent's run_code, not only notebooks. */
+  const [consoleUsed, setConsoleUsed] = createSignal<ReadonlySet<string>>(new Set());
+  const markUsed = (id: string) => {
+    if (!untrack(consoleUsed).has(id)) setConsoleUsed((used) => new Set(used).add(id));
+  };
+  /** The sessions the Console offers. */
+  const consoleList = () => {
+    const all = consoleSessions();
+    if (notebookConsole()) return all;
+    const used = consoleUsed();
+    const scripts = new Set(docs().flatMap((d) => (d.kind === "script" ? d.kernels.sessions() : [])));
+    return all.filter((s) => used.has(s.id) || scripts.has(s.id));
+  };
+  const [consolePick, setConsolePick] = createSignal<string>();
+  createEffect(() => {
+    const id = foreground();
+    if (id && consoleList().some((s) => s.id === id)) setConsolePick(id);
+  });
+  /** The session the Console shows. */
+  const consoleSession = () => {
+    const list = consoleList();
+    const id = consolePick();
+    return id && list.some((s) => s.id === id) ? id : list[list.length - 1]?.id;
+  };
   const consoles = new Map<string, SessionConsole>();
   const consoleFor = (id: string): SessionConsole | undefined => {
     let found = consoles.get(id);
@@ -310,10 +353,15 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         onError: (text) => notify(text),
         openHelp,
       });
+      found.setCells(untrack(notebookConsole));
       consoles.set(id, found);
     }
     return found;
   };
+  createEffect(() => {
+    const cells = notebookConsole();
+    for (const shown of consoles.values()) shown.setCells(cells);
+  });
   const docSession = (doc: Doc | undefined): string | undefined => {
     for (const language of doc?.languages() ?? []) {
       const id = doc!.kernels.session(language);
@@ -347,26 +395,59 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     ws.runs.watchAll((run) => {
       if (seenRuns.has(run.id)) return;
       seenRuns.add(run.id);
+      if (!run.quiet && !fromNotebook(run.cell)) markUsed(run.session);
       const file = run.cell?.file;
       if (run.phase === "done" || !file || !isScript(file) || !docs().some((d) => d.path === file)) return;
       setForeground(run.session);
       setConsoleTab("console");
     }),
   );
+  // Sessions that were running before this window opened: used from the Console if their last runs say so.
+  const checkedUsed = new Set<string>();
+  createEffect(() => {
+    if (notebookConsole()) return;
+    for (const s of consoleSessions()) {
+      if (checkedUsed.has(s.id) || untrack(consoleUsed).has(s.id)) continue;
+      checkedUsed.add(s.id);
+      ws.call<SessionRuns>("session_runs", { session: s.id, limit: USED_RUNS })
+        .then((read) => read.runs.some((r) => !fromNotebook(r.cell)) && markUsed(s.id))
+        .catch(() => checkedUsed.delete(s.id));
+    }
+  });
   onCleanup(() => {
     for (const shown of consoles.values()) shown.dispose();
   });
-  /** Starts R or Python for the Console, in the project's folder. */
+  /** Sessions only notebooks use while their runs stay out of the Console. */
+  const notebookOnly = () => {
+    const offered = new Set(consoleList().map((s) => s.id));
+    return consoleSessions().filter((s) => !offered.has(s.id));
+  };
+  /**
+   * R or Python for the Console: the session notebooks already run in that
+   * language, if their runs stay out of it, or a new one in the project's folder.
+   */
   const startConsole = async (language: string) => {
+    const running = notebookOnly().find((s) => normalizeLanguage(s.language) === language);
+    if (running) {
+      markUsed(running.id);
+      setForeground(running.id);
+      setConsolePick(running.id);
+      return;
+    }
     const spec = pickKernel(ws.kernelspecs(), language) ?? pickKernel(await ws.refreshKernelspecs(), language);
     if (!spec) return notify(`No ${languageLabel(language)} kernel was found where sandhilld runs.`);
     const info = await ws.startShared(spec.name, props.project);
+    markUsed(info.id);
     setForeground(info.id);
   };
   const [consoleBody, setConsoleBody] = createSignal<HTMLElement>();
   const consoleHint = (
     <div class="console-hint">
-      <p>No R or Python session yet. Run a line of a script with ⌘↵, or start one here:</p>
+      <p>
+        {notebookOnly().length
+          ? "Notebooks' runs stay under their cells, not here. Run a line of a script with ⌘↵, or use R or Python here:"
+          : "No R or Python session yet. Run a line of a script with ⌘↵, or start one here:"}
+      </p>
       <p>
         <button class="bar-button" onClick={() => void startConsole("r").catch((e) => notify(message(e)))}>
           <LangIcon language="r" />R
@@ -381,13 +462,13 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   createEffect(() => {
     const body = consoleBody();
     if (!body) return;
-    const id = foreground();
+    const id = consoleSession();
     const shown = id ? untrack(() => consoleFor(id)) : undefined;
     body.replaceChildren(shown ? shown.element : consoleHint);
     shown?.shown();
   });
   const foregroundConsole = () => {
-    const id = foreground();
+    const id = consoleSession();
     return id ? consoles.get(id) : undefined;
   };
   /** Runs code in a session's Console, where its output shows: examples, installing packages. */
@@ -395,6 +476,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     if (!consoleOn()) toggleConsole();
     setMinimized((list) => list.filter((p) => p !== "console"));
     setConsoleTab("console");
+    markUsed(session);
     setForeground(session);
     void consoleFor(session)?.run(code);
   };
@@ -662,6 +744,11 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       { label: "New Python script", run: () => void createFile("py") },
       { label: left() ? "Hide left pane" : "Show left pane", keys: "⌘B", run: toggleLeft },
       { label: consoleOn() ? "Hide console" : "Show console", keys: "⌘J", run: toggleConsole },
+      {
+        label: notebookConsole() ? "Keep notebook runs out of the Console" : "Show notebook runs in the Console",
+        run: toggleNotebookConsole,
+      },
+      { label: notebookPlots() ? "Keep notebook plots out of Plots" : "Show notebook plots in Plots", run: toggleNotebookPlots },
       { label: agentsOn() ? "Hide agents" : "Show agents", keys: "⌘I", run: toggleAgents },
       { label: rightOn() ? "Hide right pane" : "Show right pane", keys: "⌥⌘B", run: toggleRight },
       {
@@ -1000,8 +1087,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                 <Show when={consoleTab() === "console"}>
                   <ConsoleSessions
                     ws={ws}
-                    sessions={consoleSessions()}
-                    foreground={foreground()}
+                    sessions={consoleList()}
+                    foreground={consoleSession()}
                     usedBy={usedBy}
                     onPick={setForeground}
                     onClear={() => foregroundConsole()?.clear()}
@@ -1110,6 +1197,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
               ws={ws}
               project={props.project}
               sessions={consoleSessions()}
+              notebooks={notebookPlots()}
               shortName={relative}
               hostLabel={hostLabel}
               classList={{ min: isMin("plots"), max: maximized() === "plots" }}
@@ -1137,6 +1225,10 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
           project={props.project}
           consoleOn={consoleOn()}
           onConsole={toggleConsole}
+          notebookConsole={notebookConsole()}
+          onNotebookConsole={toggleNotebookConsole}
+          notebookPlots={notebookPlots()}
+          onNotebookPlots={toggleNotebookPlots}
           onClose={() => setMenu(false)}
         />
       </Show>
@@ -1213,13 +1305,17 @@ function ToolButton(props: {
   );
 }
 
-/** The ☰ menu: other projects and servers, and showing the console. */
+/** The ☰ menu: other projects and servers, showing the console, and where notebooks' output goes. */
 function MainMenu(props: {
   ws: Workspace;
   shell: Shell;
   project: string;
   consoleOn: boolean;
   onConsole: () => void;
+  notebookConsole: boolean;
+  onNotebookConsole: () => void;
+  notebookPlots: boolean;
+  onNotebookPlots: () => void;
   onClose: () => void;
 }) {
   const [recent] = createResource(() =>
@@ -1262,6 +1358,10 @@ function MainMenu(props: {
       </Show>
       <div class="mm-sep" />
       {item(props.consoleOn ? "check" : undefined, "Show console", "⌘J", props.onConsole)}
+      <div class="mm-sep" />
+      <div class="mm-h">Notebooks and Quarto</div>
+      {item(props.notebookConsole ? "check" : undefined, "Show their runs in the Console", "", props.onNotebookConsole)}
+      {item(props.notebookPlots ? "check" : undefined, "Show their plots in Plots", "", props.onNotebookPlots)}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Backend } from "../backend";
@@ -75,18 +76,19 @@ function fakeWorkspace() {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const short = (path: string) => path.slice(PROJECT.length + 1);
 
-function mount(ws: Workspace) {
+function mount(ws: Workspace, notebooks = true) {
   const root = document.body.appendChild(document.createElement("div"));
+  const [withNotebooks, setNotebooks] = createSignal(notebooks);
   const dispose = render(
     () => (
       <>
-        <PlotsPane ws={ws} project={PROJECT} sessions={[SESSION]} shortName={short} hostLabel="This Mac" buttons={null} />
+        <PlotsPane ws={ws} project={PROJECT} sessions={[SESSION]} notebooks={withNotebooks()} shortName={short} hostLabel="This Mac" buttons={null} />
         <Dialogs />
       </>
     ),
     root,
   );
-  return { root, dispose };
+  return { root, dispose, setNotebooks };
 }
 
 const button = (root: ParentNode, title: string) =>
@@ -133,6 +135,41 @@ describe("PlotsPane", () => {
     const reads = calls.filter((c) => c.method === "session_plots");
     expect(reads.length).toBe(before + 1);
     expect(reads[reads.length - 1].params).toEqual({ session: "s1", limit: 1 });
+    dispose();
+  });
+
+  it("leaves notebooks' plots out unless asked", async () => {
+    const { ws, emit } = fakeWorkspace();
+    const { root, dispose, setNotebooks } = mount(ws, false);
+    await settle();
+    const count = () => root.querySelector(".plot-when")?.textContent?.split(" · ")[0];
+    expect(count()).toBe("1 of 1");
+    expect(root.querySelector(".plot-from")?.textContent).toBe("Console");
+    // A notebook cell drawing doesn't show, or move the pane.
+    emit({
+      seq: 10,
+      session: "s1",
+      run: "r3",
+      msg_type: "sandhill.run_started",
+      ts_ms: 3000,
+      content: { code: "sc.pl.pca(adata)", cell: { file: `${PROJECT}/qc.ipynb`, cell_id: "c1" } },
+    });
+    emit({ seq: 11, session: "s1", run: "r3", msg_type: "display_data", ts_ms: 3100, content: { data: { "image/png": blob("c") }, metadata: {} } });
+    expect(count()).toBe("1 of 1");
+    // A script's plot does.
+    emit({
+      seq: 12,
+      session: "s1",
+      run: "r4",
+      msg_type: "sandhill.run_started",
+      ts_ms: 3200,
+      content: { code: "plot(y)", cell: { file: `${PROJECT}/qc.R`, cell_id: "line" } },
+    });
+    emit({ seq: 13, session: "s1", run: "r4", msg_type: "display_data", ts_ms: 3300, content: { data: { "image/png": blob("d") }, metadata: {} } });
+    expect(count()).toBe("2 of 2");
+    expect(root.querySelector(".plot-from")?.textContent).toBe("qc.R");
+    setNotebooks(true);
+    expect(count()).toBe("4 of 4");
     dispose();
   });
 
