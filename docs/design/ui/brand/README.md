@@ -1,9 +1,9 @@
-# Sandhill crane mark V1.1 (draft)
+# Sandhill crane mark V1.1
 
 A Wisconsin sandhill crane flying right: two raised wings, a sage inner
 feather, a long neck and pointed beak, a red crown and two trailing legs.
 [`brand-sheet.png`](brand-sheet.png) shows every version, and
-[`before-after.png`](before-after.png) compares it with the app's current icon
+[`before-after.png`](before-after.png) compares it with the app's previous icon (the painting)
 and the V1.1 concept board.
 
 **Status: approved by Huan on 2026-10-24, and the app's icon.** The
