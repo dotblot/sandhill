@@ -12,7 +12,7 @@ import { CellOutput } from "../docs/cellOutput";
 import { baseExtensions, highlightedLines, languageFor } from "../editor/setup";
 import { InputHistory, isComplete } from "../model/consoleInput";
 import { consoleHelp, type HelpRequest } from "../model/help";
-import type { RunState } from "../model/runs";
+import { fromNotebook, isScript, type RunState } from "../model/runs";
 import type { Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
 
@@ -40,11 +40,7 @@ interface Entry {
   startedMs: number;
   root: HTMLElement;
   output: CellOutput;
-}
-
-/** Scripts' runs show their output in the Console; notebooks keep theirs under the cell. */
-export function isScript(path: string): boolean {
-  return /\.(r|py)$/i.test(path);
+  fromCell: boolean;
 }
 
 export class SessionConsole {
@@ -58,6 +54,9 @@ export class SessionConsole {
   /** Whether the list keeps scrolling to the newest output. */
   private follow = true;
   private clearedAt: number;
+  /** Whether notebook and Quarto cells' runs show here, and the ones left out. */
+  private cells = true;
+  private skipped = new Set<string>();
   private unwatch: () => void;
   private ended = false;
   readonly ready: Promise<void>;
@@ -128,6 +127,31 @@ export class SessionConsole {
 
   focus() {
     if (!this.ended) this.view.focus();
+  }
+
+  /**
+   * Shows notebook and Quarto cells' runs here too, or leaves them out (their
+   * output is under the cell either way).
+   */
+  setCells(show: boolean) {
+    if (show === this.cells) return;
+    this.cells = show;
+    if (show) {
+      const runs = [...this.skipped];
+      this.skipped.clear();
+      for (const id of runs) {
+        const state = this.ws.runs.get(id);
+        if (state) this.onRun(state);
+      }
+      return;
+    }
+    for (const entry of this.entries) {
+      if (!entry.fromCell) continue;
+      entry.output.dispose();
+      entry.root.remove();
+      this.skipped.add(entry.run);
+    }
+    this.entries = this.entries.filter((e) => !e.fromCell);
   }
 
   /** Called when the Console pane shows this console. */
@@ -212,12 +236,16 @@ export class SessionConsole {
 
   private onRun(run: RunState) {
     if (run.session !== this.session || run.quiet || run.startedMs <= this.clearedAt) return;
+    if (!this.cells && fromNotebook(run.cell)) {
+      this.skipped.add(run.id);
+      return;
+    }
     if (this.entries.some((e) => e.run === run.id)) return;
     this.addEntry(run);
   }
 
   private addEntry(run: RunState) {
-    const fromCell = !!run.cell && !isScript(run.cell.file);
+    const fromCell = fromNotebook(run.cell);
     const root = el("div", "console-entry");
     root.classList.toggle("from-agent", !!run.by);
     root.classList.toggle("from-cell", fromCell);
@@ -244,7 +272,7 @@ export class SessionConsole {
     };
     const output = new CellOutput(ctx, () => this.keepFollowing());
     root.append(echo, output.element);
-    const entry: Entry = { run: run.id, startedMs: run.startedMs, root, output };
+    const entry: Entry = { run: run.id, startedMs: run.startedMs, root, output, fromCell };
     // In the order they started, which is how the kernel runs them.
     let at = this.entries.length;
     while (at > 0 && this.entries[at - 1].startedMs > run.startedMs) at--;

@@ -105,6 +105,28 @@ afterEach(() => {
 });
 
 describe("SessionConsole", () => {
+  it("leaves notebook and Quarto cells' runs out when asked, and brings them back", async () => {
+    const { ws, emit } = fakeWorkspace([
+      done("a", "x <- 1", 10),
+      done("d", "plot(x)", 20, { cell: { file: "/home/huan/pbmc/analysis.qmd", cell_id: "umap" } }),
+      done("b", "head(x)", 30, { cell: { file: "/home/huan/pbmc/qc.R", cell_id: "console-0" } }),
+    ]);
+    const { console } = await openConsole(ws);
+    console.setCells(false);
+    expect(echoes(console)).toEqual(["x <- 1", "head(x)"]);
+    emit({
+      seq: 6,
+      session: "s1",
+      run: "e",
+      msg_type: "sandhill.run_started",
+      ts_ms: 40,
+      content: { code: "sc.pl.umap(adata)", cell: { file: "/home/huan/pbmc/atlas.ipynb", cell_id: "c1" } },
+    });
+    expect(echoes(console)).toEqual(["x <- 1", "head(x)"]);
+    console.setCells(true);
+    expect(echoes(console)).toEqual(["x <- 1", "plot(x)", "head(x)", "sc.pl.umap(adata)"]);
+  });
+
   it("shows every run of its session and where it came from", async () => {
     const { ws } = fakeWorkspace([
       done("a", "x <- 1", 10),

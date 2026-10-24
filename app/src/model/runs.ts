@@ -14,6 +14,16 @@ import { OutputBuilder } from "./outputs";
 
 export type RunPhase = "queued" | "running" | "done";
 
+/** Scripts' runs show their output in the Console; notebooks keep theirs under the cell. */
+export function isScript(path: string): boolean {
+  return /\.(r|py)$/i.test(path);
+}
+
+/** Whether code ran from a notebook's or Quarto document's cell. */
+export function fromNotebook(cell: CellRef | undefined): boolean {
+  return !!cell && !isScript(cell.file);
+}
+
 export interface RunState {
   id: string;
   session: string;
