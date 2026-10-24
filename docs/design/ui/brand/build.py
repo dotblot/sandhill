@@ -79,16 +79,22 @@ FILES = {
     "small/sandhill-mark-24.svg": mark(NAVY, SAGE, RED, small=True, size=24),
     "small/sandhill-mark-16.svg": mark(NAVY, SAGE, RED, small=True, show_feather=False, size=16),
     "small/sandhill-mark-16-dark.svg": mark(CREAM, SAGE, RED, small=True, show_feather=False, size=16),
-    # app icon (drafts; not wired into the app)
+    # app icon (the dark one is the app's)
     "app-icon/app-icon-dark.svg": app_icon(True),
     "app-icon/app-icon-dark-small.svg": app_icon(True, small=True),
     "app-icon/app-icon-light.svg": app_icon(False),
     "app-icon/app-icon-light-small.svg": app_icon(False, small=True),
 }
 
+# the app's icon sources; app/scripts/icon.mjs (npm run icon) makes the bundle icons from them
+APP_ICONS = HERE.parents[3] / "app" / "src-tauri" / "icons"
+APP_FILES = {"source.svg": FILES["app-icon/app-icon-dark.svg"], "source-small.svg": FILES["app-icon/app-icon-dark-small.svg"]}
+
 if __name__ == "__main__":
     for rel, text in FILES.items():
         p = HERE / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
-    print(len(FILES), "SVGs written")
+    for name, text in APP_FILES.items():
+        (APP_ICONS / name).write_text(text)
+    print(len(FILES), "SVGs written, and", len(APP_FILES), "app icon sources")
