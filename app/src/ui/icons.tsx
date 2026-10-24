@@ -398,7 +398,7 @@ const LANG_KEY: Record<string, string> = {
   zsh: "shell",
 };
 
-/** A kernel's language: Sandhill's chips for R, Python, Nextflow and shells, or the language's first letters. */
+/** A kernel's language: the chips for R, Python, Nextflow and shells, or the language's first letters. */
 export function LangIcon(props: { language: string }) {
   const chip = () => LANG_CHIPS[LANG_KEY[props.language.toLowerCase()] ?? ""];
   return (
@@ -428,9 +428,10 @@ export function LangIcon(props: { language: string }) {
 
 const AGENT_CHIPS: Readonly<Record<string, { name: string; body: string }>> = ICONS32.agents;
 /**
- * Official marks, by agent kind, as SVG bodies for a 16 x 16 viewBox. Empty
- * until each owner's terms for a sold product are on file; until then every
- * agent shows Sandhill's own chip. Callers never change.
+ * Official marks, by agent kind, as SVG bodies for a 16 x 16 viewBox. The
+ * chips for Claude Code, Codex and Antigravity are redrawn lookalikes, used
+ * for now; each official file goes here once it is in the repository, and
+ * callers never change.
  */
 const BRAND_MARKS: Readonly<Record<string, string>> = {};
 

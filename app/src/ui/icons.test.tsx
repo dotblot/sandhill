@@ -77,7 +77,7 @@ describe("V32.2 icons", () => {
     expect(a).toBe(b);
   });
 
-  it("uses Sandhill's chips for languages and agents", () => {
+  it("draws the chips for languages and agents", () => {
     expect(mount(() => <LangIcon language="python3" />).querySelector("svg.lang")!.innerHTML).toBe(svgHtml(ICONS32.lang.python));
     expect(mount(() => <LangIcon language="bash" />).querySelector("svg.lang")!.innerHTML).toBe(svgHtml(ICONS32.lang.shell));
     expect(mount(() => <LangIcon language="julia" />).textContent).toBe("ju");

@@ -114,6 +114,10 @@ Draft 33 (2026-10-22): the V32.2 icon set and a crane mark draft.
 Draft 34 (2026-10-24): Huan approved the crane mark, and the app now uses it as
 its icon and draws the V32.2 file, folder, language and agent icons.
 
+Draft 35 (2026-10-24): the agent and language chips follow Huan's V32.2
+picture: Claude, Codex, Antigravity, Python and Nextflow marks on white tiles,
+and π> for omp. They stand in until the official files are added.
+
 The clickable mockup is [sandhill-layout.html](sandhill-layout.html), also
 published at https://claude.ai/artifact/GVLbkapTsw8FP55ie3RESs (draft 16 stays
 at https://claude.ai/artifact/DSC3kDKpeh3XhX8ogsiVA9). It has light and dark
@@ -634,25 +638,28 @@ omp.
 ## Icons and licences
 - **`icon-sheet.png`** is `icons/preview.html` on the light and dark panes:
   every V32.2 icon with its id, and the rest, hover, selected and disabled states.
-Every icon is drawn for Sandhill. No company's logo appears, because logos are
-trademarks and their owners must approve each use in a product that is sold.
+Every icon is drawn for Sandhill. Since draft 35 the agent and language chips
+imitate the products' own logos, at Huan's request; logos are trademarks, and
+their owners' terms apply to a product that is sold.
 Product names in plain text ("Claude Code", "Codex", "Opus 5.5", "Python") are
 fine: they only say what Sandhill works with.
 - **Chips:** a 14 × 14 rounded square (radius 4) inside a 16px box, with a
   white mark drawn as strokes (1.55), so they don't depend on a font.
-- **Language chips:**
+- **Language chips** (draft 35, from Huan's V32.2 picture):
   - R: "R", white on blue `#2368b8`;
-  - Python: "Py", dark blue `#22466e` on yellow `#f2c53d` (not the Python
-    two-snake logo);
-  - Nextflow: "nf", white on green `#1fa784`;
+  - Python: the two-snake logo (blue `#3a76ad`, yellow `#f2c53d`) on a white
+    tile;
+  - Nextflow: a green "N" (`#13a37f`) on a white tile;
   - Shell: a `>_` prompt, white on graphite `#33363d`.
-- **Agent chips** (no vendor mark until its owner allows one; the registry has a
-  slot for it, so swapping one in needs no code change):
-  - Claude Code: "CC", white on brown `#9a5b41` (not Claude's spark);
-  - Codex: "Cx", white on graphite `#3d4552` (not OpenAI's knot);
-  - Antigravity: "Ag", white on blue `#2b6f8f` (not Google's mark);
-  - omp (Oh My Pi): a π with a terminal cursor, white on violet `#6b4fc8`. It is
-    Sandhill's own mark for the integration, not Oh My Pi's logo.
+- **Agent chips** (draft 35, from the same picture, "for now"):
+  - Claude Code: an orange spark (`#d97757`) on white;
+  - Codex: a black six-link knot on white;
+  - Antigravity: an "A" in blue, red, yellow and green on white;
+  - omp (Oh My Pi): "π>", white on violet `#6b4fc8`, Sandhill's own mark for
+    the integration, not Oh My Pi's logo.
+  White tiles have a 0.6 hairline edge (black at 10%). The Claude, Codex,
+  Antigravity, Python and Nextflow chips are redrawn lookalikes of trademarks,
+  to be replaced by each owner's official file (see `icons/README.md`).
 - **The V32.2 set** lives in [`icons/`](icons/README.md): one SVG per icon,
   `registry.json` (ids, files, colours, the V31 ids each replaces and the rules
   that pick a file's icon), `MAPPING.md` and `preview.html`. `icons/build.py`

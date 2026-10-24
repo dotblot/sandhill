@@ -232,19 +232,41 @@ FOLDER_NAMES = {"data": "data", "raw": "data", "input": "data", "results": "resu
 
 # ---------------------------------------------------------------- chips
 def chip(bg, body, title):
-    return f'<rect x="1" y="1" width="14" height="14" rx="4" fill="{bg}"/>{body}'
+    edge = ' stroke="#000" stroke-opacity=".1" stroke-width=".6"' if bg == "#fff" else ' stroke="none"'
+    return f'<rect x="1" y="1" width="14" height="14" rx="4" fill="{bg}"{edge}/>{body}'
 W = 'fill="none" stroke="#fff" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"'
-AGENTS = {  # Sandhill's own marks. Swap in a vendor's mark here once its terms allow it; callers use the id only.
-    "agent.claude": ("Claude Code", "#9a5b41", f'<path d="M7.2 5.6a2.6 2.6 0 1 0 0 4.8" {W}/><path d="M11.4 5.6a2.6 2.6 0 1 0 0 4.8" {W}/>', "monogram CC; official mark pending"),
-    "agent.codex": ("Codex", "#3d4552", f'<path d="M7.4 5.6a2.6 2.6 0 1 0 0 4.8M9.4 5.4l2.6 5.2M12 5.4l-2.6 5.2" {W}/>', "monogram Cx; official mark pending"),
-    "agent.antigravity": ("Antigravity", "#2b6f8f", f'<path d="M4 10.6 6.2 5.4l2.2 5.2M4.8 8.8h2.8M12.4 6.2a2.3 2.3 0 1 0 .2 3.4V8.4h-1.3" {W}/>', "monogram Ag; official mark pending"),
-    "agent.omp": ("Oh My Pi (omp)", "#6b4fc8", f'<path d="M3.2 5.6c.6-.6 1.3-.8 2.1-.8h4.9M5.5 5v6.2M8.5 5v4.9c0 .8.4 1.3 1.1 1.3" {W}/><path d="M11.4 11.2h1.7" {W} stroke-width="1.5"/>', "Sandhill's own π mark for the omp integration; not the Oh My Pi logo"),
+
+def _spark():
+    import math
+    rays = []
+    for i in range(12):
+        t = math.radians(i * 30 + 8)
+        r1, r2 = 1.1, (4.6 if i % 2 else 3.9)
+        rays.append(f"M{8 + r1 * math.cos(t):.2f} {8 + r1 * math.sin(t):.2f}L{8 + r2 * math.cos(t):.2f} {8 + r2 * math.sin(t):.2f}")
+    return f'<path d="{"".join(rays)}" fill="none" stroke="#d97757" stroke-width="1.35" stroke-linecap="round"/>'
+
+def _knot():
+    links = "".join(f'<rect x="7.7" y="2.4" width="2.4" height="5.2" rx="1.2" transform="rotate({k * 60} 8 8)"/>' for k in range(6))
+    return f'<g fill="none" stroke="#111" stroke-width=".95">{links}</g>'
+
+# The chips in Huan's V32.2 picture (2026-10-24: "use the icons/logos in the picture for now"). The Claude,
+# OpenAI, Google-coloured Antigravity, Python and Nextflow marks are redrawn lookalikes, standing in until
+# each owner's official file is added (the app's BRAND_MARKS); they are not the official artwork.
+AGENTS = {
+    "agent.claude": ("Claude Code", "#fff", _spark(), "lookalike of Claude's spark; swap for the official file"),
+    "agent.codex": ("Codex", "#fff", _knot(), "lookalike of OpenAI's knot; swap for the official file"),
+    "agent.antigravity": ("Antigravity", "#fff", '<g fill="none" stroke-width="2.5" stroke-linecap="round"><path d="M4.3 11.9 6.15 8" stroke="#4285f4"/><path d="M6.15 8 8 4.1" stroke="#ea4335"/><path d="M8 4.1 9.85 8" stroke="#fbbc04"/><path d="M9.85 8l1.85 3.9" stroke="#34a853"/></g>', "lookalike in Google's colours; swap for the official file"),
+    "agent.omp": ("Oh My Pi (omp)", "#6b4fc8", f'<path d="M2.6 6c.5-.5 1.1-.7 1.8-.7h4.2M4.6 5.4v5.6M7.2 5.4v4.4c0 .7.3 1.2 1 1.2M10.2 6l2.4 2.2-2.4 2.2" {W} stroke-width="1.45"/>', "Sandhill's own π> mark for the omp integration; not the Oh My Pi logo"),
     "agent.generic": ("Other agent", "#6b645e", f'<path d="M8 3.6v1.6M8 10.8v1.6M3.6 8h1.6M10.8 8h1.6M5 5l1.1 1.1M9.9 9.9 11 11M5 11l1.1-1.1M9.9 6.1 11 5" {W} stroke-width="1.3"/><circle cx="8" cy="8" r="1.3" fill="#fff"/>', "generic agent"),
 }
-LANGS = {  # letter chips; the R, Python and Nextflow logos are not used (see LICENSES.md)
+PY = ('<g transform="translate(8 8) scale(.74) translate(-8 -8)" stroke="none">'
+      '<path d="M8 1.2c-3 0-3 1.3-3 2.2v1.4h3.1v.5H3.5C2.2 5.3 1.2 6.4 1.2 8.1s1 2.9 2.3 2.9h1.2V9.2c0-1.4 1.2-2.6 2.6-2.6h3.1c1.1 0 2-.9 2-2V3.4c0-1-.9-2.2-4.4-2.2z" fill="#3a76ad"/>'
+      '<path d="M8 14.8c3 0 3-1.3 3-2.2v-1.4H7.9v-.5h4.6c1.3 0 2.3-1.1 2.3-2.8s-1-2.9-2.3-2.9h-1.2v1.8c0 1.4-1.2 2.6-2.6 2.6H5.6c-1.1 0-2 .9-2 2v1.2c0 1 .9 2.2 4.4 2.2z" fill="#f2c53d"/>'
+      '<circle cx="6.2" cy="2.9" r=".6" fill="#fff"/><circle cx="9.8" cy="13.1" r=".6" fill="#fff"/></g>')
+LANGS = {
     "lang.r": ("R", "#2368b8", f'<path d="M5.8 12V4.6h2.7a2 2 0 0 1 0 4H5.8M8.6 8.6l2.2 3.4" {W} stroke-width="1.7"/>'),
-    "lang.python": ("Python", "#f2c53d", '<path d="M3.6 11.6V4.8h2a1.8 1.8 0 0 1 0 3.6h-2M8.4 6.6l1.7 3.6M12.3 6.6l-2.9 6" fill="none" stroke="#22466e" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"/>'),
-    "lang.nextflow": ("Nextflow", "#1fa784", f'<path d="M3.8 11.4V7.6M3.8 8.6c0-.9.7-1.3 1.4-1.3s1.4.4 1.4 1.3v2.8M9.6 11.4V6.2c0-.9.5-1.4 1.3-1.4h.8M8.5 7.6h2.6" {W}/>'),
+    "lang.python": ("Python", "#fff", PY),
+    "lang.nextflow": ("Nextflow", "#fff", '<path d="M4.6 11.6V5.4c0-.7.8-.9 1.2-.3l4.4 5.8c.4.6 1.2.4 1.2-.3V4.4" fill="none" stroke="#13a37f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
     "lang.shell": ("Shell", "#33363d", f'<path d="M4.4 5.4l2.6 2.6-2.6 2.6M8.4 11h3.4" {W}/>'),
 }
 

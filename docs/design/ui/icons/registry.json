@@ -1126,8 +1126,8 @@
    "file": "agents/claude.svg",
    "kind": "agent",
    "label": "Claude Code",
-   "color": "#9a5b41",
-   "note": "monogram CC; official mark pending",
+   "color": "#fff",
+   "note": "lookalike of Claude's spark; swap for the official file",
    "brand": null,
    "v31": [
     "i-claude"
@@ -1137,8 +1137,8 @@
    "file": "agents/codex.svg",
    "kind": "agent",
    "label": "Codex",
-   "color": "#3d4552",
-   "note": "monogram Cx; official mark pending",
+   "color": "#fff",
+   "note": "lookalike of OpenAI's knot; swap for the official file",
    "brand": null,
    "v31": [
     "i-openai"
@@ -1148,8 +1148,8 @@
    "file": "agents/antigravity.svg",
    "kind": "agent",
    "label": "Antigravity",
-   "color": "#2b6f8f",
-   "note": "monogram Ag; official mark pending",
+   "color": "#fff",
+   "note": "lookalike in Google's colours; swap for the official file",
    "brand": null,
    "v31": [
     "i-agy"
@@ -1160,7 +1160,7 @@
    "kind": "agent",
    "label": "Oh My Pi (omp)",
    "color": "#6b4fc8",
-   "note": "Sandhill's own \u03c0 mark for the omp integration; not the Oh My Pi logo",
+   "note": "Sandhill's own \u03c0> mark for the omp integration; not the Oh My Pi logo",
    "brand": null,
    "v31": [
     "i-omp"
@@ -1184,13 +1184,13 @@
    "file": "lang/python.svg",
    "kind": "language",
    "label": "Python",
-   "color": "#f2c53d"
+   "color": "#fff"
   },
   "lang.nextflow": {
    "file": "lang/nextflow.svg",
    "kind": "language",
    "label": "Nextflow",
-   "color": "#1fa784"
+   "color": "#fff"
   },
   "lang.shell": {
    "file": "lang/shell.svg",

@@ -52,14 +52,24 @@ edited there and then the script is run.
   id.
 
 ## Licences
-Every file here is drawn for Sandhill and belongs to the project. Nothing is
-copied from an icon library, a font or an AI image.
+The line, file and folder icons are drawn for Sandhill and belong to the
+project. On 2026-10-24 Huan chose the agent and language chips from the V32.2
+picture "for now": they are redrawn here as vectors (nothing is cut out of the
+picture), and several imitate other companies' logos.
 
 | Item | Source | Licence / status |
 |---|---|---|
 | Line icons (`system/`) | Drawn for Sandhill, drafts 1–33, in the style of SF Symbols and Lucide | Sandhill's own. No Apple SF Symbols and no Lucide files are included |
 | File and folder icons | Drawn for Sandhill | Sandhill's own |
-| Claude Code, Codex, Antigravity chips | Sandhill monograms "CC", "Cx", "Ag" | Sandhill's own. The official marks are trademarks of Anthropic, OpenAI and Google; they need written permission for a product that is sold |
-| omp chip (π and cursor) | Drawn for Sandhill | Sandhill's own. It is not Oh My Pi's logo and must not be called one |
-| R, Python, Nextflow, Shell chips | Sandhill letter chips | Sandhill's own. The R logo is CC BY-SA 4.0 (credit, and changes must be shared alike); the Python logo is a PSF trademark under its trademark policy; the Nextflow logo is Seqera's. None of them is used |
+| Claude Code chip | Orange spark on white, a lookalike of Claude's mark | Anthropic's trademark. Interim: replace with the official file from Anthropic's brand page, under its terms |
+| Codex chip | Black knot on white, a lookalike of OpenAI's mark | OpenAI's trademark. Interim, as above |
+| Antigravity chip | An "A" in Google's four colours | Google's trademark and colours. Interim, as above |
+| omp chip (π>) | Drawn for Sandhill | Sandhill's own. Not Oh My Pi's logo and must not be called one |
+| Python chip | The two-snake logo, redrawn | PSF trademark; its trademark policy covers referring to Python, ask the PSF for use in a product's UI |
+| Nextflow chip | A green "N", after the Nextflow mark | Seqera's trademark. Interim |
+| R and Shell chips | Sandhill letter and prompt chips | Sandhill's own (the official R logo, CC BY-SA 4.0, is not used) |
 | Product names in text | — | Fine to use to say what Sandhill works with |
+
+To use an official file: add it under `agents/` (or `lang/`), point the
+registry entry at it, and in the app add its SVG body to `BRAND_MARKS` in
+`app/src/ui/icons.tsx`.
