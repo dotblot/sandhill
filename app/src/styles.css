@@ -138,7 +138,7 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 /* Icons */
 .ico { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .ico.sm { width: 13px; height: 13px; }
-.fi { width: 16px; height: 16px; flex: none; display: block; }
+.fi { width: 16px; height: 16px; flex: none; display: block; --tv-cut: var(--panel); }
 .lang { width: 16px; height: 16px; flex: none; display: block; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; flex: none; }
 .dot.idle { background: var(--ok); }
@@ -648,8 +648,7 @@ button.link:hover { text-decoration: underline; }
 .chat-title .ico.prov { width: 14px; height: 14px; }
 .chat-title .ax { width: 16px; height: 16px; display: grid; place-items: center; margin-left: 2px; border-radius: var(--r); color: var(--faint); }
 .chat-title .ax:hover { color: var(--text); background: var(--hover); }
-.ico.prov { width: 15px; height: 15px; stroke-width: 1.2; }
-.ico.prov.claude { color: #d97757; stroke-linecap: round; }
+.ico.prov { width: 15px; height: 15px; stroke: none; }
 .agent-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .term-host { flex: 1; min-height: 0; position: relative; background: var(--term); }
 /* Behind the chat: laid out, so it keeps its size, but not shown. */
