@@ -304,7 +304,11 @@ mod tests {
         };
         windows.set("window-1", WindowPlaces::default());
         windows.set("window-2", one.clone());
-        assert_eq!(read(), std::slice::from_ref(&one), "an empty window isn't remembered");
+        assert_eq!(
+            read(),
+            std::slice::from_ref(&one),
+            "an empty window isn't remembered"
+        );
         assert_eq!(title(&one), "b — gpu01");
 
         windows.closed("window-1");
