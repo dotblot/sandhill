@@ -19,6 +19,7 @@
 //! the program has ended, the daemon reads the folder instead.
 
 pub mod chat;
+pub mod choices;
 pub mod codex;
 pub mod events;
 pub mod guard;
@@ -753,6 +754,18 @@ fn write_report(
     }
     if let Some(code) = code_to(options.code.as_deref()) {
         kept.insert("code".into(), code.into());
+    }
+    if let Some(pin) = &options.pin {
+        kept.insert("pin".into(), pin.clone().into());
+    }
+    if let Some(web) = options.web {
+        kept.insert("web".into(), web.into());
+    }
+    if let Some(context) = options.context {
+        kept.insert("context".into(), context.into());
+    }
+    if !options.refs.is_empty() {
+        kept.insert("refs".into(), options.refs.clone().into());
     }
     if kept.is_empty() {
         let _ = std::fs::remove_file(paths.agent());

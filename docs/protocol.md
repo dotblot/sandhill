@@ -55,6 +55,7 @@ Responses can arrive out of order; match them by `id`.
 | `copy_path` | `from`, `to` | `{path, mtime_ms}` of `to`, a folder copied with everything in it |
 | `delete_path` | `path`, `trash?` | `{path, trashed_to?}` |
 | `read_bytes` | `path`, `offset?`, `limit?` | `{path, offset, data, size, mtime_ms}`: up to 4 MiB of the file, `data` in base64 |
+| `list_files` | `path`, `limit?` | `[path]`: the files under the folder, relative to it, nearest first; hidden files and package folders (`node_modules`, `renv`, …) left out; at most 5000 unless `limit` |
 | `file_outputs` | `file` | `{file, cells, seq}` |
 | `open_project` | `path` | `ProjectInfo` with its saved `state` |
 | `list_recent_projects` | | `[ProjectInfo]`, most recent first, `state` null |
@@ -318,9 +319,10 @@ says which agent CLIs are installed, and how to install the others.
 running, exit?: {code?, signal?, ended_ms}, end, options?, agent?,
 outdated?, name?}`. `started_ms` is when its program last started. `end`
 is the number of output bytes so far. `options` is what the agent was started
-with: `{model?, effort?, permission?, documents?, code?}`, where `permission` is
-`supervised`, `edits`, `auto`, `full`, `plan`, `restricted` or `ask`, and
-`code: "console"` sends the agent's code to the Console (below).
+with: `{model?, effort?, permission?, documents?, code?, pin?, web?, context?,
+refs?}`, where `permission` is `supervised`, `edits`, `auto`, `full`, `plan`,
+`restricted` or `ask`, `code: "console"` sends the agent's code to the
+Console (below), and the rest are the message box's choices (below).
 `name` is what the user named it with `rename_terminal` (a blank `name`
 takes it away). `outdated` is true for an agent that
 another build of sandhilld started, such as before an update: it keeps that
@@ -471,6 +473,26 @@ An agent started with `code: "console"` (in `agent.code`, switched with
 its `add_cell` runs the code in the document's session instead, with `by`
 naming the agent, and leaves the document as it is. Its `run_code` always
 runs that way.
+
+The message box's choices are kept in `agent` too, from the options an
+agent starts with and `tell_terminal` `{kind: "set", pin?, web?, context?,
+refs?}` for either agent:
+
+- `pin` (a file, or null) is the document the conversation works in.
+  Unpinned, each message works in the document in front of the user, and
+  records it as `agent.document`, so a working agent keeps the file it
+  started in. `add_cell` writes into `agent.document`, else `pin`, else the
+  first of `documents`.
+- `web: false` turns web search off: each message says so, and for Claude
+  Code the hook before each step blocks `WebSearch` and `WebFetch` (a
+  `step_failed` entry). Codex is told only.
+- `context: false` keeps where the user is out of their messages.
+- `refs` is what the user added to their next message with the @ menu:
+  `[{kind: "file" | "chunk" | "variable" | "plot" | "attach", name, path?,
+  cell?, session?, language?}]`. The message takes them (`agent.refs`
+  becomes null), the agent is told of each, and the chat's `prompt` entry
+  lists their names in `place.refs`. Codex's `say` command can carry `refs`
+  itself.
 
 ## Blobs
 

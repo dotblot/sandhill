@@ -675,6 +675,10 @@ impl Daemon {
             Call::DeletePath { path, trash } => {
                 serde_json::to_value(blocking(move || fileops::delete_path(&path, trash)).await?)?
             }
+            Call::ListFiles { path, limit } => {
+                let limit = limit.map_or(fileops::LIST_FILES, |l| l as usize);
+                serde_json::to_value(blocking(move || fileops::list_files(&path, limit)).await?)?
+            }
             Call::ReadBytes {
                 path,
                 offset,

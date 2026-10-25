@@ -154,6 +154,10 @@ export class NotebookDoc extends Doc {
     for (const view of this.views.values()) if (view.output?.info) view.output.setVisible(visible);
   }
 
+  override codeCells() {
+    return this.nb.cells.flatMap((cell, i) => (cell.cell_type === "code" ? [{ id: cell.id, name: `cell ${i + 1}` }] : []));
+  }
+
   async runAll() {
     for (const cell of this.nb.cells) {
       if (cell.cell_type === "code") await this.runCell(cell.id);

@@ -499,11 +499,19 @@ impl Bridge {
             let asking = state.permission.as_deref() == Some(guard::ASK);
             (params, asking)
         };
-        let place = if shown { self.place().await } else { None };
+        let prompt = if shown {
+            self.prompt().await
+        } else {
+            Default::default()
+        };
         let mut input = vec![json!({"type": "text", "text": text, "text_elements": []})];
-        if let Some((context, _)) = &place {
+        if let Some(context) = &prompt.context {
             input.push(json!({"type": "text", "text": context, "text_elements": []}));
         }
+        if prompt.report.as_object().is_some_and(|r| !r.is_empty()) {
+            self.report(prompt.report.clone()).await;
+        }
+        let place = prompt.place;
         if asking {
             input.push(json!({"type": "text", "text": guard::ASK_NOTE, "text_elements": []}));
         }
@@ -530,7 +538,7 @@ impl Bridge {
                         "kind": "prompt",
                         "turn": turn,
                         "text": text,
-                        "place": place.map(|(_, place)| place),
+                        "place": place,
                         "at_ms": at_ms,
                     }))
                     .await;
@@ -557,19 +565,12 @@ impl Bridge {
         }
     }
 
-    /// Where the user is, as Claude Code's prompt hook gives it: the text
-    /// for the agent, and the place for the chat.
-    async fn place(&self) -> Option<(String, Value)> {
-        let id = self
-            .dir
-            .file_name()
-            .map(|id| id.to_string_lossy().into_owned());
-        let tools =
-            crate::mcp::Tools::new(self.daemon.clone(), self.project.clone()).with_terminal(id);
-        tokio::time::timeout(PLACE_TIMEOUT, tools.prompt_place())
-            .await
-            .ok()
-            .flatten()
+    /// What goes with the user's message, as Claude Code's prompt hook
+    /// gives it: the text for the agent, and the place for the chat.
+    async fn prompt(&self) -> crate::mcp::Prompt {
+        let tools = crate::mcp::Tools::new(self.daemon.clone(), self.project.clone())
+            .in_terminal(Some(self.dir.clone()));
+        tools.prompt(PLACE_TIMEOUT).await
     }
 
     async fn interrupt(&self) {

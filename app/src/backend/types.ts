@@ -538,6 +538,27 @@ export interface AgentOptions {
   documents?: string[];
   /** "console": the agent's code runs in the Console instead of going into the linked file. */
   code?: string;
+  /** The file the conversation is pinned to; unset, it follows the editor. */
+  pin?: string;
+  /** false: web search is off. */
+  web?: boolean;
+  /** false: where the user is in the editor stays out of their messages. */
+  context?: boolean;
+  /** What the user added to the first message with @. */
+  refs?: MessageRef[];
+}
+
+/** Something added to a message with @: a file, a chunk, a variable, a plot or a file from the Mac. */
+export interface MessageRef {
+  kind: "file" | "chunk" | "variable" | "plot" | "attach";
+  /** How the chip shows it: "analysis.qmd › markers". */
+  name: string;
+  /** A file as the agent should use it: relative to the project when inside it. */
+  path?: string;
+  /** A chunk's label or a notebook cell's id. */
+  cell?: string;
+  session?: string;
+  language?: string;
 }
 
 /** What an agent reports through its hooks and status line, or (Codex) what Sandhill's bridge to it reports. */
@@ -556,6 +577,14 @@ export interface AgentReport {
   guard?: string | null;
   /** Where the agent's code goes: "console", or null for the linked file. */
   code?: string | null;
+  /** The message box's choices (see `AgentOptions`): null when unpinned. */
+  pin?: string | null;
+  web?: boolean;
+  context?: boolean;
+  /** What the next message takes, until it does. */
+  refs?: MessageRef[] | null;
+  /** The file the last message works in: the pinned one, else the one in front then. */
+  document?: string;
   status?: AgentStatus;
   /** Codex: the models it offers. */
   models?: AgentModel[];

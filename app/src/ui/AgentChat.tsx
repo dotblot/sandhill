@@ -168,12 +168,19 @@ function UserMessage(props: { text: string; place?: Place; onOpen: (path: string
       <div class="ubub">{props.text}</div>
       <Show when={props.place}>
         {(place) => (
-          <div class="uctx" title="Where you were, sent with this message">
+          <div class="uctx" title="Sent with this message">
             <Icon name="eye" />
-            <button class="flink" onClick={() => props.onOpen(place().file)}>
-              {baseName(place().file)}
-            </button>
-            <Show when={place().cell ?? (place().line ? `line ${place().line}` : undefined)}>{(where) => <span>› {where()}</span>}</Show>
+            <Show when={place().file}>
+              {(file) => (
+                <>
+                  <button class="flink" onClick={() => props.onOpen(file())}>
+                    {baseName(file())}
+                  </button>
+                  <Show when={place().cell ?? (place().line ? `line ${place().line}` : undefined)}>{(where) => <span>› {where()}</span>}</Show>
+                </>
+              )}
+            </Show>
+            <For each={place().refs ?? []}>{(name) => <span class="uref">@{name}</span>}</For>
           </div>
         )}
       </Show>

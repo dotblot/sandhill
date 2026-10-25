@@ -114,7 +114,10 @@ impl Windows {
         let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
             .title(title(&places))
             .inner_size(1280.0, 860.0)
-            .min_inner_size(720.0, 480.0);
+            .min_inner_size(720.0, 480.0)
+            // Files dragged in from Finder reach the page as HTML drops (the
+            // Agents pane's message box takes them), not as Tauri events.
+            .disable_drag_drop_handler();
         title_bar(builder).build()?;
         self.set(&label, places);
         Ok(())

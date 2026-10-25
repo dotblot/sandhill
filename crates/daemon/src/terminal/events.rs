@@ -7,8 +7,8 @@
 //!   JSON on stdin carries the permission mode, which is reported as
 //!   `mode`, so a mode changed with ⇧Tab shows in the app.
 //! - `prompt [project]`: Claude Code's prompt hook. Reports `busy` as
-//!   `state busy` does, and prints where the user is in the project, which
-//!   Claude Code adds to the prompt.
+//!   `state busy` does, and prints what goes with the message (where the
+//!   user is, what they added to it), which Claude Code adds to the prompt.
 //! - `notification`: Claude Code's Notification hook (JSON on stdin).
 //!   Asking for permission or input means waiting for the user; the
 //!   reminder it sends after a while idle doesn't.
@@ -23,7 +23,8 @@
 //!   from the app; when the terminal goes away first, Claude Code asks in
 //!   its own terminal instead. In Sandhill's Restricted and Ask modes
 //!   ([`super::guard`]), the hook before each step asks the user, or
-//!   blocks the step.
+//!   blocks the step; with web search off ([`super::choices`]), it blocks
+//!   Claude's web tools.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -31,8 +32,8 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
-use super::chat;
 use super::guard::{self, Verdict};
+use super::{chat, choices};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -65,16 +66,14 @@ pub async fn run(args: &[String], socket: &Path) -> Result<()> {
                 terminal.as_deref(),
                 with_mode(json!({"state": "busy"}), &input),
             );
-            let id = terminal
-                .as_deref()
-                .and_then(Path::file_name)
-                .map(|id| id.to_string_lossy().into_owned());
             let tools = crate::mcp::Tools::new(socket.to_path_buf(), args.get(1).cloned())
-                .with_terminal(id);
-            let context = tokio::time::timeout(CONTEXT_TIMEOUT, tools.prompt_context());
-            let (reported, context) = tokio::join!(report, context);
-            if let Ok(Some(context)) = context {
+                .in_terminal(terminal.clone());
+            let (reported, prompt) = tokio::join!(report, tools.prompt(CONTEXT_TIMEOUT));
+            if let Some(context) = &prompt.context {
                 println!("{context}");
+            }
+            if prompt.report.as_object().is_some_and(|r| !r.is_empty()) {
+                let _ = send(terminal.as_deref(), prompt.report).await;
             }
             reported
         }
@@ -118,20 +117,19 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
     let state = |state: &str| send(Some(terminal), with_mode(json!({"state": state}), &input));
     match input["hook_event_name"].as_str().unwrap_or("") {
         "UserPromptSubmit" => {
-            let id = terminal
-                .file_name()
-                .map(|id| id.to_string_lossy().into_owned());
-            let tools = crate::mcp::Tools::new(socket.to_path_buf(), project).with_terminal(id);
-            let place = tokio::time::timeout(CONTEXT_TIMEOUT, tools.prompt_place());
-            let (reported, place) = tokio::join!(state("busy"), place);
-            let (context, place) = place.ok().flatten().unzip();
-            if let Some(context) = context {
+            let tools = crate::mcp::Tools::new(socket.to_path_buf(), project)
+                .in_terminal(Some(terminal.to_path_buf()));
+            let (reported, prompt) = tokio::join!(state("busy"), tools.prompt(CONTEXT_TIMEOUT));
+            if let Some(context) = &prompt.context {
                 println!("{context}");
             }
             if guard::current(terminal).as_deref() == Some(guard::ASK) {
                 println!("{}", guard::ASK_NOTE);
             }
-            add_chat(terminal, chat::from_claude(&input, at_ms, place)).await;
+            if prompt.report.as_object().is_some_and(|r| !r.is_empty()) {
+                let _ = send(Some(terminal), prompt.report).await;
+            }
+            add_chat(terminal, chat::from_claude(&input, at_ms, prompt.place)).await;
             reported
         }
         "PermissionRequest" => {
@@ -169,7 +167,17 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
                 state("busy"),
                 add_chat(terminal, chat::from_claude(&input, at_ms, None))
             );
-            if let Some(guard) = guard::current(terminal) {
+            let tool = input["tool_name"].as_str().unwrap_or("");
+            if choices::blocks(&choices::read(terminal), tool) {
+                block_step(
+                    terminal,
+                    &input,
+                    choices::WEB_BLOCKED,
+                    choices::WEB_BLOCKED,
+                    at_ms,
+                )
+                .await;
+            } else if let Some(guard) = guard::current(terminal) {
                 guard_step(terminal, &input, &guard, at_ms).await;
             }
             reported
@@ -197,6 +205,21 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
     }
 }
 
+/// Stops a step of Claude Code's: the chat crosses it out with `shown`,
+/// and Claude is told `why`.
+async fn block_step(terminal: &Path, input: &Value, shown: &str, why: &str, at_ms: i64) {
+    let failed = json!({
+        "kind": "step_failed",
+        "turn": input["prompt_id"],
+        "id": input["tool_use_id"],
+        "tool": input["tool_name"],
+        "error": shown,
+        "at_ms": at_ms,
+    });
+    add_chat(terminal, Some(failed)).await;
+    println!("{}", chat::claude_step_decision("deny", Some(why)));
+}
+
 /// Sandhill's Restricted or Ask mode for a step Claude Code is about to
 /// take: asks the user first, or blocks it, or leaves it to Claude Code.
 async fn guard_step(terminal: &Path, input: &Value, guard: &str, at_ms: i64) {
@@ -204,17 +227,7 @@ async fn guard_step(terminal: &Path, input: &Value, guard: &str, at_ms: i64) {
     match guard::claude(guard, tool) {
         Verdict::Pass => {}
         Verdict::Block => {
-            let failed = json!({
-                "kind": "step_failed",
-                "turn": input["prompt_id"],
-                "id": input["tool_use_id"],
-                "tool": tool,
-                "error": guard::BLOCKED_STEP,
-                "at_ms": at_ms,
-            });
-            add_chat(terminal, Some(failed)).await;
-            let decision = chat::claude_step_decision("deny", Some(guard::BLOCKED));
-            println!("{decision}");
+            block_step(terminal, input, guard::BLOCKED_STEP, guard::BLOCKED, at_ms).await;
         }
         Verdict::Ask => {
             let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();

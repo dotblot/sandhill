@@ -540,6 +540,17 @@ impl Shared {
         {
             self.report(json!({ "code": super::code_to(code.as_str()) }));
         }
+        // The message box's choices, which the next message reads: the
+        // pinned file, web search and session context, and (with a set or
+        // with the message itself) what was added to the message.
+        let choices: serde_json::Map<String, Value> = super::choices::KEYS
+            .iter()
+            .filter(|key| command["kind"] == "set" || **key == "refs")
+            .filter_map(|key| Some((key.to_string(), command.get(*key)?.clone())))
+            .collect();
+        if !choices.is_empty() {
+            self.report(Value::Object(choices));
+        }
         let mut listeners = self.listeners.lock().unwrap();
         listeners.retain(|out| !out.is_closed());
         if listeners.is_empty() {

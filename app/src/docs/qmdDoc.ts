@@ -86,6 +86,10 @@ export class QmdDoc extends Doc {
     return this.view?.state.field(this.layoutField).chunks ?? parseChunks(this.initialText);
   }
 
+  override codeCells() {
+    return this.chunks().map((c) => ({ id: c.cellId, name: c.label ?? `chunk ${c.index + 1}` }));
+  }
+
   mount(parent: HTMLElement) {
     this.host = parent;
     const runKeys = Prec.highest(
