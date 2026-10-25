@@ -20,6 +20,7 @@ use sandhill_proto::{
 use tokio::io::AsyncWriteExt;
 
 use crate::files;
+use crate::patch::{self, Way};
 
 /// Files a status lists, at most.
 const MAX_FILES: usize = 2000;
@@ -693,13 +694,35 @@ pub async fn diff(path: &str, file: &str, staged: bool, sha: Option<&str>) -> Re
                 if !matches!(output.code, Some(0 | 1)) {
                     bail!("{}", output.error());
                 }
-                output.stdout
-            } else {
-                text
+                return Ok(diff_body(file, &output.stdout));
             }
+            text
         }
     };
-    Ok(diff_body(file, &output))
+    let mut diff = diff_body(file, &output);
+    diff.lines =
+        sha.is_none() && !diff.text.is_empty() && !diff.truncated && changes_lines(&output);
+    Ok(diff)
+}
+
+/// Whether a diff only changes lines of a file that stays: not a new,
+/// deleted, renamed or conflicted one, whose lines `git apply` can't take
+/// a few at a time.
+fn changes_lines(text: &str) -> bool {
+    let header = text.find("\n@@").map_or(text, |i| &text[..i]);
+    !header.starts_with("diff --cc")
+        && !header.starts_with("diff --combined")
+        && !header.lines().any(|line| {
+            [
+                "new file mode",
+                "deleted file mode",
+                "rename from",
+                "copy from",
+                "Binary files",
+            ]
+            .iter()
+            .any(|what| line.starts_with(what))
+        })
 }
 
 /// The diff from its first hunk, cut at [`MAX_DIFF`].
@@ -729,8 +752,32 @@ fn diff_body(file: &str, text: &str) -> GitDiff {
         file: file.into(),
         text: body.to_string(),
         truncated,
-        binary: false,
+        ..GitDiff::default()
     }
+}
+
+/// Applies the changes of `file` on the `lines` of `diff` (and no others),
+/// `how` saying where to, as `git add -p` would.
+async fn apply_lines(
+    dir: &Path,
+    file: &str,
+    diff: &str,
+    lines: &[usize],
+    way: Way,
+    how: &[&str],
+) -> Result<String> {
+    check_files(&[file.to_string()])?;
+    let patch = patch::partial(file, diff, &lines.iter().copied().collect(), way)?;
+    let mut args = vec!["apply", "--whitespace=nowarn"];
+    args.extend(how);
+    args.push("-");
+    change(dir, &args, Some(&patch)).await.map_err(|err| {
+        if err.to_string().contains("patch does not apply") {
+            anyhow!("{file} changed since its diff was read; look at the diff again")
+        } else {
+            err
+        }
+    })
 }
 
 /// A file name for git, never taken as an option.
@@ -832,6 +879,23 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
                 said.push_str(&change(dir, &args, None).await?);
             }
             said
+        }
+        GitAction::StageLines { file, diff, lines } => {
+            apply_lines(dir, &file, &diff, &lines, Way::Forward, &["--cached"]).await?
+        }
+        GitAction::UnstageLines { file, diff, lines } => {
+            apply_lines(
+                dir,
+                &file,
+                &diff,
+                &lines,
+                Way::Reverse,
+                &["--cached", "--reverse"],
+            )
+            .await?
+        }
+        GitAction::DiscardLines { file, diff, lines } => {
+            apply_lines(dir, &file, &diff, &lines, Way::Reverse, &["--reverse"]).await?
         }
         GitAction::Commit { message, amend } => {
             if message.trim().is_empty() {

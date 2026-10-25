@@ -497,11 +497,15 @@ export interface GitDiff {
   text: string;
   truncated: boolean;
   binary: boolean;
+  /** Whether its lines can be staged, unstaged or thrown away one by one. */
+  lines?: boolean;
 }
 
 export type GitAction =
   | { op: "stage" | "unstage"; files: string[] }
   | { op: "discard"; files: string[] }
+  /** `lines` are places among the lines of `diff`, the text git_diff gave. */
+  | { op: "stage_lines" | "unstage_lines" | "discard_lines"; file: string; diff: string; lines: number[] }
   | { op: "commit"; message: string; amend: boolean }
   | { op: "fetch" | "pull" | "push" | "undo_commit" | "stash_pop" | "abort" | "init" }
   | { op: "switch"; branch: string }

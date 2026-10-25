@@ -1667,6 +1667,10 @@ pub struct GitDiff {
     pub truncated: bool,
     #[serde(default)]
     pub binary: bool,
+    /// Whether its lines can be staged, unstaged or thrown away one by one:
+    /// a changed file git already tracks, with all of its diff here.
+    #[serde(default)]
+    pub lines: bool,
 }
 
 /// What [`Call::GitRun`] does.
@@ -1686,6 +1690,26 @@ pub enum GitAction {
     /// Throws away files' changes not staged; deletes untracked ones.
     Discard {
         files: Vec<String>,
+    },
+    /// Stages some lines of a file's changes: `lines` are places among the
+    /// lines of `diff`, the text [`GitDiff`] gave (counting from 0). Git
+    /// refuses it when the file is no longer as that diff showed it.
+    StageLines {
+        file: String,
+        diff: String,
+        lines: Vec<usize>,
+    },
+    /// Unstages some lines of a file's staged diff, as for `StageLines`.
+    UnstageLines {
+        file: String,
+        diff: String,
+        lines: Vec<usize>,
+    },
+    /// Throws away some lines of a file's changes not staged.
+    DiscardLines {
+        file: String,
+        diff: String,
+        lines: Vec<usize>,
     },
     /// Commits what's staged; `amend` replaces the last commit.
     Commit {

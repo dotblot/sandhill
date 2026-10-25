@@ -293,9 +293,16 @@ checked out, or `HEAD` when detached), `branch`, `remote` or `tag`, and
 `git_diff` with `sha` is what that commit changed in `file`; without it, the
 file's staged changes when `staged`, else the ones not staged (all of a new
 file). The text is git's unified diff from the first `@@`, cut at 2 MB.
+`lines` says whether its lines can be staged, unstaged or thrown away a few at
+a time: a changed file git already tracks, not a new, deleted, renamed or
+conflicted one, with all of its diff there.
 
 `git_run`'s `action` has an `op`: `stage`, `unstage` and `discard` take
-`files` (discarding a new file deletes it); `commit` takes `message` and
+`files` (discarding a new file deletes it); `stage_lines`, `unstage_lines`
+and `discard_lines` take a `file`, the `diff` text `git_diff` gave for it, and
+`lines`, places among that text's lines (from 0), and change only those lines
+(`git apply` of a patch made from them, which git refuses if the file no
+longer is as that diff showed it); `commit` takes `message` and
 `amend`; `fetch` fetches every remote; `pull` merges unless `pull.rebase` or
 `pull.ff` says otherwise; `push` sets the branch's upstream the first time,
 on `origin` or the only remote; `undo_commit` moves the branch back one commit

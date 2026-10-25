@@ -150,12 +150,12 @@ describe("diffLines", () => {
   it("numbers the lines of each hunk", () => {
     const lines = diffLines("@@ -1,3 +1,3 @@ library(Seurat)\n x <- 1\n-y <- 2\n+y <- 3\n z <- 4\n\\ No newline at end of file\n");
     expect(lines).toEqual([
-      { kind: "hunk", text: "@@ -1,3 +1,3 @@ library(Seurat)" },
-      { kind: "ctx", text: "x <- 1", old: 1, new: 1 },
-      { kind: "del", text: "y <- 2", old: 2 },
-      { kind: "add", text: "y <- 3", new: 2 },
-      { kind: "ctx", text: "z <- 4", old: 3, new: 3 },
-      { kind: "note", text: "No newline at end of file" },
+      { kind: "hunk", text: "@@ -1,3 +1,3 @@ library(Seurat)", at: 0 },
+      { kind: "ctx", text: "x <- 1", at: 1, old: 1, new: 1 },
+      { kind: "del", text: "y <- 2", at: 2, old: 2 },
+      { kind: "add", text: "y <- 3", at: 3, new: 2 },
+      { kind: "ctx", text: "z <- 4", at: 4, old: 3, new: 3 },
+      { kind: "note", text: "No newline at end of file", at: 5 },
     ]);
   });
 
