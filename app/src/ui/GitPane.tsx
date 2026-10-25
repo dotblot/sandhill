@@ -96,7 +96,7 @@ export function GitPane(props: {
   const [summary, setSummary] = createSignal("");
   const [body, setBody] = createSignal("");
   const [amend, setAmend] = createSignal(false);
-  const [menu, setMenu] = createSignal<{ kind: "branches" | "stash" | "more" | "commit"; anchor: HTMLElement }>();
+  const [menu, setMenu] = createSignal<{ kind: "branches" | "merge" | "stash" | "more" | "commit"; anchor: HTMLElement }>();
   const [userName, setUserName] = createSignal("");
   const [userEmail, setUserEmail] = createSignal("");
   const [now, setNow] = createSignal(Date.now());
@@ -105,6 +105,8 @@ export function GitPane(props: {
   let inFlight = 0;
   /** The refs the log was read for. */
   let logRefs: string | undefined;
+  /** The merge message put in the commit boxes. */
+  let mergeFilled: string | undefined;
   async function readStatus() {
     const mine = ++latest;
     inFlight++;
@@ -113,6 +115,7 @@ export function GitPane(props: {
       if (mine !== latest) return;
       // Polling mostly reads the same again; only a change redraws.
       if (JSON.stringify(next) !== JSON.stringify(status())) setStatus(next);
+      fillMergeMessage(next.merge_message);
       setError(undefined);
       setNow(Date.now());
       if (next.repo && next.refs !== logRefs) void readLog(next.refs);
@@ -122,6 +125,20 @@ export function GitPane(props: {
     } finally {
       inFlight--;
     }
+  }
+
+  /** A merge's commit starts with git's message; it goes again with the merge. */
+  function fillMergeMessage(text?: string) {
+    if (text === mergeFilled) return;
+    const split = splitMessage(text ?? mergeFilled ?? "");
+    if (text && !summary().trim() && !body().trim()) {
+      setSummary(split.summary);
+      setBody(split.body);
+    } else if (!text && summary() === split.summary && body() === split.body) {
+      setSummary("");
+      setBody("");
+    }
+    mergeFilled = text;
   }
 
   let logGeneration = 0;
@@ -173,6 +190,8 @@ export function GitPane(props: {
   const staged = () => (status() ? stagedFiles(status()!) : []);
   const unstaged = () => (status() ? unstagedFiles(status()!) : []);
   const needsUser = () => !!status()?.repo && (!status()!.user_name || !status()!.user_email);
+  /** A commit needs something staged, unless it amends or ends a merge. */
+  const canCommit = () => amend() || staged().length > 0 || status()?.state === "merging";
 
   /** Runs a git action; reads the status again after, whatever happened. */
   async function act(action: GitAction, failed: string, done?: (output: string) => string | undefined): Promise<boolean> {
@@ -253,7 +272,7 @@ export function GitPane(props: {
       await stage(unstaged(), true);
       if (!staged().length) return;
     }
-    if (!amend() && !staged().length) return;
+    if (!canCommit()) return;
     const ok = await act({ op: "commit", message: text, amend: amend() }, amend() ? "Could not change the last commit" : "Could not commit");
     if (!ok) return;
     setSummary("");
@@ -307,6 +326,21 @@ export function GitPane(props: {
         : "Its changes stay staged, so you can commit them again.",
     );
     if (answer === "Undo") await act({ op: "undo_commit" }, "Could not undo the commit");
+  }
+
+  /** Merges `branch` into the one checked out, after asking. */
+  async function merge(branch: string) {
+    setMenu(undefined);
+    const into = status()?.branch ?? "HEAD";
+    const answer = await ask(
+      `Merge ${branch} into ${into}?`,
+      ["Merge", "Cancel"],
+      `Its commits join ${into}. Where both changed the same lines, the files are marked ! to settle: edit them, or keep Mine or take Theirs, then commit.`,
+    );
+    if (answer !== "Merge") return;
+    await act({ op: "merge", branch }, `Could not merge ${branch}`, (output) =>
+      /CONFLICT/.test(output) ? undefined : /up to date/i.test(output) ? `${into} already has everything in ${branch}` : `Merged ${branch} into ${into}`,
+    );
   }
 
   async function newBranch() {
@@ -557,7 +591,9 @@ export function GitPane(props: {
               <div class="gstate">
                 <span>
                   {status()!.state === "merging" ? "Merging" : status()!.state === "rebasing" ? "Rebasing" : status()!.state === "cherry-picking" ? "Cherry-picking" : "Reverting"}
-                  : fix the conflicts, stage them, then commit.
+                  {status()!.state === "merging"
+                    ? ": fix each ! file in the editor and stage it, or pick Mine or Theirs; then commit."
+                    : ": fix the conflicts, stage them, then commit."}
                 </span>
                 <button class="vbtn" disabled={!!busy()} onClick={() => act({ op: "abort" }, "Could not stop it")}>
                   Stop
@@ -587,6 +623,11 @@ export function GitPane(props: {
                   onAll={() => stage(unstaged(), true)}
                   onToggle={(f) => stage([f])}
                   onDiscard={(f) => discard([f])}
+                  onResolve={
+                    status()!.state === "merging"
+                      ? (f, side) => act({ op: "resolve", file: f.path, side }, `Could not settle ${f.path}`)
+                      : undefined
+                  }
                   onDiff={(f) => props.onDiff({ repo: repo(), file: f.path, staged: false })}
                   onOpen={(f) => props.onOpen(`${repo()}/${f.path}`)}
                 />
@@ -662,8 +703,8 @@ export function GitPane(props: {
               <span class="spacer" />
               <span class="gcommit">
                 <button
-                  disabled={!summary().trim() || (!amend() && !staged().length) || !!busy() || needsUser()}
-                  title={!staged().length && !amend() ? "Stage changes to commit" : undefined}
+                  disabled={!summary().trim() || !canCommit() || !!busy() || needsUser()}
+                  title={!canCommit() ? "Stage changes to commit" : undefined}
                   onClick={() => void commit()}
                 >
                   <Show when={busy() === "commit"}>
@@ -704,6 +745,22 @@ export function GitPane(props: {
               </Show>
               <div class="mm-sep" />
               <MenuItem icon="plus" label="New branch…" run={newBranch} />
+              <MenuItem
+                icon="branch"
+                label={`Merge into ${status()?.branch ?? "HEAD"}…`}
+                disabled={!status()?.branch || !mergeable(status()).length || !!status()?.state}
+                run={() => {
+                  // After this menu closes on the click.
+                  const anchor = open().anchor;
+                  setTimeout(() => setMenu({ kind: "merge", anchor }));
+                }}
+              />
+            </Show>
+            <Show when={open().kind === "merge"}>
+              <div class="mm-h">Merge into {status()?.branch}</div>
+              <For each={mergeable(status())}>
+                {(branch) => <MenuItem icon={branch.includes("/") && status()?.remote_branches.includes(branch) ? "globe" : "branch"} label={branch} run={() => merge(branch)} />}
+              </For>
             </Show>
             <Show when={open().kind === "stash"}>
               <MenuItem icon="stash" label="Stash changes…" disabled={!status()?.files.length} run={stash} />
@@ -730,7 +787,7 @@ export function GitPane(props: {
               <MenuItem
                 icon="push"
                 label={amend() ? "Amend and push" : "Commit and push"}
-                disabled={!summary().trim() || (!amend() && !staged().length)}
+                disabled={!summary().trim() || !canCommit()}
                 run={() => commit("push")}
               />
               <MenuItem
@@ -767,6 +824,12 @@ function tooBig(bytes: number): string {
     : "GitHub warns about files over 50 MB.";
 }
 
+/** Branches that can be merged into the one checked out: the other local ones, then the remote ones. */
+function mergeable(status?: GitStatus): string[] {
+  if (!status) return [];
+  return [...status.branches.filter((b) => b !== status.branch), ...status.remote_branches];
+}
+
 /** Remote branches with no local branch of the same name. */
 function remoteOnly(status?: GitStatus): string[] {
   if (!status) return [];
@@ -799,6 +862,8 @@ function FileGroup(props: {
   onAll: () => void;
   onToggle: (file: GitFile) => void;
   onDiscard?: (file: GitFile) => void;
+  /** Settles a conflicted file with one side's version of it. */
+  onResolve?: (file: GitFile, side: "ours" | "theirs") => void;
   onDiff: (file: GitFile) => void;
   onOpen: (file: GitFile) => void;
 }) {
@@ -820,7 +885,7 @@ function FileGroup(props: {
           const lines = props.staged ? file.staged_lines : file.lines;
           const big = (file.size ?? 0) >= BIG_FILE && (!props.staged || file.staged === "A");
           return (
-            <div class="gfile" title={`${file.path}\n${mark.title}`} onClick={() => props.onDiff(file)}>
+            <div class="gfile" classList={{ conflict: !!props.onResolve && file.conflict }} title={`${file.path}\n${mark.title}`} onClick={() => props.onDiff(file)}>
               <span class={`gst ${mark.kind}`}>{mark.letter}</span>
               <FileIcon name={where.name.replace(/\/$/, "")} dir={file.path.endsWith("/")} />
               <span class="gname">{where.name}</span>
@@ -844,6 +909,30 @@ function FileGroup(props: {
                     }}
                   >
                     <Icon name="open" small />
+                  </button>
+                </Show>
+                <Show when={props.onResolve && file.conflict}>
+                  <button
+                    class="gside"
+                    title="Keep this branch's version of the whole file"
+                    disabled={props.busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      props.onResolve!(file, "ours");
+                    }}
+                  >
+                    Mine
+                  </button>
+                  <button
+                    class="gside"
+                    title="Take the merged branch's version of the whole file"
+                    disabled={props.busy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      props.onResolve!(file, "theirs");
+                    }}
+                  >
+                    Theirs
                   </button>
                 </Show>
                 <Show when={props.onDiscard && !file.conflict}>

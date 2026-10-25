@@ -459,21 +459,66 @@ async fn a_repository_is_made_changed_committed_and_pushed() {
     git(&project, &["checkout", "-q", "main"]);
     std::fs::write(project.join("qc.R"), "x <- 1\ny <- 30\n").unwrap();
     git(&project, &["commit", "-q", "-am", "Change y on main"]);
-    let merged = std::process::Command::new("git")
-        .args(["merge", "-q", "exp/harmony"])
-        .current_dir(&project)
-        .output()
-        .unwrap();
-    assert!(!merged.status.success());
+    let merge = |branch: &str| GitAction::Merge {
+        branch: branch.into(),
+    };
+    for wrong in ["main", "nope", "--abort"] {
+        assert!(client.git_run(path, merge(wrong)).await.is_err(), "{wrong}");
+    }
+    let done = client.git_run(path, merge("exp/harmony")).await.unwrap();
+    assert!(done.output.contains("CONFLICT"), "{done:?}");
     let status = client.git_status(path).await.unwrap();
     assert_eq!(status.state.as_deref(), Some("merging"));
+    assert!(
+        status
+            .merge_message
+            .as_deref()
+            .unwrap()
+            .starts_with("Merge branch 'exp/harmony'"),
+        "{:?}",
+        status.merge_message
+    );
     let conflicted: Vec<_> = status.files.iter().filter(|f| f.conflict).collect();
     assert_eq!(conflicted.len(), 1);
     assert_eq!(conflicted[0].path, "qc.R");
     client.git_run(path, GitAction::Abort).await.unwrap();
     let status = client.git_status(path).await.unwrap();
     assert_eq!(status.state, None);
+    assert_eq!(status.merge_message, None);
     assert!(status.files.is_empty());
+
+    // Merged again and settled by taking the branch's side, then committed
+    // with git's message: a commit with both parents.
+    client.git_run(path, merge("exp/harmony")).await.unwrap();
+    client
+        .git_run(
+            path,
+            GitAction::Resolve {
+                file: "qc.R".into(),
+                side: sandhill_proto::GitSide::Theirs,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(project.join("qc.R")).unwrap(),
+        "x <- 1\ny <- 20\n"
+    );
+    let status = client.git_status(path).await.unwrap();
+    assert_eq!(
+        files(&status),
+        [("harmony.R", Some("A"), None), ("qc.R", Some("M"), None)]
+    );
+    let message = status.merge_message.unwrap();
+    client.git_run(path, commit(&message)).await.unwrap();
+    let status = client.git_status(path).await.unwrap();
+    assert_eq!(status.state, None);
+    let log = client.git_log(path, 0, None).await.unwrap();
+    assert_eq!(log.commits[0].subject, "Merge branch 'exp/harmony'");
+    assert_eq!(log.commits[0].parents.len(), 2);
+    // A branch with nothing new merges as nothing.
+    let done = client.git_run(path, merge("exp/harmony")).await.unwrap();
+    assert!(done.output.contains("up to date"), "{done:?}");
 
     // Write it, with a stand-in for Claude Code that answers from a script.
     let bin = dir.path().join("bin");
@@ -509,7 +554,7 @@ async fn a_repository_is_made_changed_committed_and_pushed() {
     assert_eq!(message.body, "So the analysis reruns the same.");
     let input = std::fs::read_to_string(bin.join("input.txt")).unwrap();
     assert!(
-        input.contains("Recent commit subjects:\nChange y on main\nAdd a README"),
+        input.contains("Recent commit subjects:\nMerge branch 'exp/harmony'\n"),
         "{input}"
     );
     assert!(input.contains("+Seurat 5.1"), "{input}");

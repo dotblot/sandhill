@@ -220,6 +220,43 @@ describe("GitPane", () => {
     dispose();
   });
 
+  it("merges a branch after asking, and settles a conflict by taking a side", async () => {
+    const { ws, runs } = fakeWorkspace();
+    const { root, dispose } = mount(ws);
+    await settle();
+    (root.querySelector('button[title="Branches"]') as HTMLButtonElement).click();
+    await settle();
+    const item = (label: string) => [...document.querySelectorAll(".gmenu .mm-i")].find((b) => b.textContent === label) as HTMLButtonElement;
+    item("Merge into main…").click();
+    await settle();
+    expect(texts(document.body, ".gmenu .mm-h")).toEqual(["Merge into main"]);
+    expect(texts(document.body, ".gmenu .mm-i")).toEqual(["exp/harmony", "origin/main"]);
+    vi.mocked(ask).mockResolvedValueOnce("Merge");
+    item("exp/harmony").click();
+    await settle();
+    expect(vi.mocked(ask).mock.calls[0][0]).toBe("Merge exp/harmony into main?");
+    expect(runs()).toEqual([{ op: "merge", branch: "exp/harmony" }]);
+    dispose();
+
+    const merging = fakeWorkspace({
+      ...STATUS,
+      state: "merging",
+      merge_message: "Merge branch 'exp/harmony'",
+      files: [{ path: "R/qc.R", unstaged: "M", conflict: true }],
+    });
+    const second = mount(merging.ws);
+    await settle();
+    expect(second.root.querySelector(".gstate")?.textContent).toContain("or pick Mine or Theirs");
+    const summary = second.root.querySelector('input[aria-label="Commit summary"]') as HTMLInputElement;
+    expect(summary.value).toBe("Merge branch 'exp/harmony'");
+    (second.root.querySelector('.gfile.conflict button[title^="Take"]') as HTMLButtonElement).click();
+    await settle();
+    expect(merging.runs()).toEqual([{ op: "resolve", file: "R/qc.R", side: "theirs" }]);
+    // Ending a merge commits even with nothing new staged.
+    expect((second.root.querySelector(".gcommit button") as HTMLButtonElement).disabled).toBe(false);
+    second.dispose();
+  });
+
   it("offers to start a repository, and asks for a name and email to commit", async () => {
     const { ws, runs } = fakeWorkspace({ ...STATUS, repo: "" });
     const { root, dispose } = mount(ws);

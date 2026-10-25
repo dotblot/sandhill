@@ -15,7 +15,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use sandhill_proto::{
     GitAction, GitChange, GitCommit, GitCommitInfo, GitDiff, GitDone, GitFile, GitLines, GitLog,
-    GitMessage, GitRef, GitStatus,
+    GitMessage, GitRef, GitSide, GitStatus,
 };
 use tokio::io::AsyncWriteExt;
 
@@ -319,6 +319,15 @@ pub async fn status(path: &str) -> Result<GitStatus> {
         status.stashes = stashes.stdout.lines().count() as u32;
     }
     status.state = state(&repo.git_dir).map(str::to_string);
+    if status.state.as_deref() == Some("merging") {
+        status.merge_message = std::fs::read_to_string(repo.git_dir.join("MERGE_MSG"))
+            .ok()
+            .map(|text| {
+                let kept: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
+                kept.join("\n").trim().to_string()
+            })
+            .filter(|message| !message.is_empty());
+    }
     Ok(status)
 }
 
@@ -995,6 +1004,38 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
             change(dir, &args, None).await?
         }
         GitAction::StashPop => change(dir, &["stash", "pop", "-q"], None).await?,
+        GitAction::Merge { branch } => {
+            check_branch(&branch)?;
+            let status = status(path).await?;
+            if status.branch.as_deref() == Some(branch.as_str()) {
+                bail!("{branch} is the branch checked out");
+            }
+            if !status.branches.contains(&branch) && !status.remote_branches.contains(&branch) {
+                bail!("there is no branch {branch}");
+            }
+            let output = run(dir, &["merge", "--no-edit", &branch], None, WRITE_TIMEOUT).await?;
+            // Stopping on conflicts leaves git merging, which the pane shows.
+            if !output.ok() && state(&repo.git_dir) != Some("merging") {
+                bail!("{}", output.error());
+            }
+            output.stdout.trim().to_string()
+        }
+        GitAction::Resolve { file, side } => {
+            check_files(std::slice::from_ref(&file))?;
+            let flag = match side {
+                GitSide::Ours => "--ours",
+                GitSide::Theirs => "--theirs",
+            };
+            let taken = run(dir, &["checkout", flag, "--", &file], None, WRITE_TIMEOUT).await?;
+            if taken.ok() {
+                change(dir, &["add", "--", &file], None).await?
+            } else if taken.stderr.contains("does not have") {
+                // That side deleted the file.
+                change(dir, &["rm", "-q", "--", &file], None).await?
+            } else {
+                bail!("{}", taken.error());
+            }
+        }
         GitAction::Abort => {
             let command = match state(&repo.git_dir) {
                 Some("rebasing") => "rebase",

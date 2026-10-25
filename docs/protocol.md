@@ -269,8 +269,8 @@ credential helper must already work in a terminal. Reads time out after a
 minute, changes after five.
 
 `git_status` returns `{repo, branch?, head?, upstream?, ahead, behind, files,
-more, stashes, state?, refs, branches, remote_branches, remotes, user_name,
-user_email}`; `repo` is empty when `path` isn't in a repository. `branch` is
+more, stashes, state?, merge_message?, refs, branches, remote_branches,
+remotes, user_name, user_email}`; `repo` is empty when `path` isn't in a repository. `branch` is
 missing on a detached HEAD and `head` before the first commit. Files are
 `{path, from?, staged?, unstaged?, conflict, staged_lines?, lines?, size?}`:
 `staged` and `unstaged` are git's letters (`M`, `A`, `D`, `R`, `C`, `T`, and
@@ -278,7 +278,8 @@ missing on a detached HEAD and `head` before the first commit. Files are
 `lines` `{added, removed, binary}`, and `size` a new file's bytes. A new folder
 is one entry ending in `/`. At most 2000 files are listed; `more` counts the
 rest. `state` is `rebasing`, `merging`, `cherry-picking` or `reverting` while
-git is stopped in one. `refs` changes whenever a branch, tag or HEAD moves, so
+git is stopped in one, and while merging `merge_message` is the message git
+has ready for the merge's commit (`MERGE_MSG` without its comments). `refs` changes whenever a branch, tag or HEAD moves, so
 a client reads the log again only then. `user_name` and `user_email` are what
 a commit would be signed with.
 
@@ -308,7 +309,12 @@ longer is as that diff showed it); `commit` takes `message` and
 on `origin` or the only remote; `undo_commit` moves the branch back one commit
 and keeps its changes staged; `switch` takes a `branch` (a remote one makes or
 checks out the local branch that tracks it); `create_branch` takes a `name`
-and switches to it; `stash` (with an optional `message`, new files included)
+and switches to it; `merge` takes a `branch`, local or remote, and merges it
+into the one checked out (`merge --no-edit`; stopping on conflicts isn't a
+failure: `state` becomes `merging` and the files show as conflicts);
+`resolve` takes a conflicted `file` and a `side`, `ours` or `theirs`, and
+stages that side's version of all of it (deleting the file when that side
+did); `stash` (with an optional `message`, new files included)
 and `stash_pop`; `abort` stops a merge, rebase, cherry-pick or revert; `init`
 makes `path` a repository; and `set_user` sets the global `user.name` and
 `user.email`. A failure's message is git's own.
