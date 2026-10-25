@@ -11,6 +11,7 @@ import {
   type CodeTo,
   effortName,
   favourites,
+  hasMode,
   type Mode,
   MODES,
   type ModelChoice,
@@ -602,7 +603,7 @@ export function AgentComposer(props: ComposerProps) {
       <Show when={popover() === "mode"}>
         <div class="apop mode">
           <div class="ap-h">Mode</div>
-          <For each={MODES.filter((m) => m.offered || m.id === props.mode.id)}>
+          <For each={MODES.filter((m) => (m.offered && hasMode(props.kind, m)) || m.id === props.mode.id)}>
             {(mode) => {
               const note = () => props.modeNote?.(mode);
               return (
@@ -619,7 +620,7 @@ export function AgentComposer(props: ComposerProps) {
                   <Icon name={mode.icon} />
                   <span>
                     <b>{mode.label}</b>
-                    <small>{note() ?? mode.detail}</small>
+                    <small>{note() ?? props.kind.modeDetails?.[mode.id] ?? mode.detail}</small>
                   </span>
                   <Show when={mode.id === props.mode.id}>
                     <span class="ap-ck">

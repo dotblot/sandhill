@@ -150,7 +150,7 @@ export function ToolbarCapsule(props: {
       <CapButton icon="sidebar.left" title="Left pane: files, kernels and resources ⌘B" pressed={props.left} onClick={props.onLeft} />
       <CapButton
         icon="chat"
-        title={props.waiting ? "Agents ⌘I: an agent is waiting for you" : "Agents: Claude Code and Codex ⌘I"}
+        title={props.waiting ? "Agents ⌘I: an agent is waiting for you" : "Agents: Claude Code, Codex and Antigravity ⌘I"}
         pressed={props.agents}
         onClick={props.onAgents}
         dot={props.waiting}

@@ -363,7 +363,8 @@ names the environment a kernel runs in.
 ## Terminals and agents
 
 The daemon keeps terminals: a shell (`kind` `shell`, the user's login shell)
-or a coding agent (`claude` for Claude Code, `codex` for Codex), each running
+or a coding agent (`claude` for Claude Code, `codex` for Codex,
+`antigravity` for Antigravity's `agy`), each running
 unmodified in its own pseudo-terminal on the daemon's machine. `list_agents`
 says which agent CLIs are installed, and how to install the others.
 
@@ -476,8 +477,17 @@ effort?, default?}]`), `account` (`{type, email?, plan?}`, or null when it
 isn't signed in), `auth_required` and `login` (`{url, code?}` while signing
 in, or `{error}`).
 
+Antigravity runs the same way, with its own bridge, `sandhilld agy-chat`,
+which runs `agy` in its headless mode once per message and goes on with
+agy's conversation. It takes `say`, `interrupt` and `set` (permission
+`supervised`, `full` or `plan`), and reports `thread` (agy's conversation
+id), `permission` and `models` as Codex's bridge does. Its steps take the
+shapes above for commands (`Bash`), new files (`Write`) and Sandhill's tools;
+agy's other tools keep agy's names and parameters.
+
 Each agent gets Sandhill's MCP server, `sandhilld mcp --project <folder>`,
-which it starts itself. Its tools reach the user's live sessions through this
+which it starts itself (Antigravity's from its settings, as `sandhilld mcp`
+with the project in `SANDHILL_PROJECT` and the socket in `SANDHILL_SOCKET`). Its tools reach the user's live sessions through this
 same protocol: `list_sessions`, `list_variables`, `run_code` and
 `get_outputs`; and the user's documents (below): `get_focus`, `add_cell` and
 `edit_cell`. Claude Code's prompt hook (`terminal-event prompt`) adds where

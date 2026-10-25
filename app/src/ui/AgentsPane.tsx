@@ -19,6 +19,7 @@ import {
   type Mode,
   MODES,
   type ModelChoice,
+  modeFor,
   modelLabel,
   SUBMIT_DELAY_MS,
   screenMode,
@@ -54,12 +55,13 @@ const TRUST_KEY_MS = 500;
 /**
  * The Agents pane (draft 18): one conversation at a time as a chat, with a
  * history of the project's conversations and a new-conversation view. Claude
- * Code and Codex run unmodified in terminals the daemon keeps, and the
- * terminal is a click away. Claude Code's chat is built from what its hooks
- * report, and it takes messages as typed keys. Codex runs as its app-server
- * under a bridge in the daemon, which writes the chat and takes messages,
- * models and modes as commands. Sessions started before chats existed show
- * their terminal.
+ * Code, Codex and Antigravity run unmodified in terminals the daemon keeps,
+ * and the terminal is a click away. Claude Code's chat is built from what
+ * its hooks report, and it takes messages as typed keys. Codex runs as its
+ * app-server, and Antigravity's agy headless for each message, under a
+ * bridge in the daemon, which writes the chat and takes messages, models
+ * and modes as commands. Sessions started before chats existed show their
+ * terminal.
  */
 export function AgentsPane(props: {
   ws: Workspace;
@@ -126,7 +128,7 @@ export function AgentsPane(props: {
   /** Conversations show as a chat; those started before chats existed keep their terminal. */
   const canChat = (t: TerminalInfo) =>
     (t.kind === "claude" || drivesChat(t.kind)) && (store.chat(t.id).length > 0 || (!t.outdated && t.running));
-  /** Conversations whose chat Sandhill drives (Codex): what the user does goes to it as commands. */
+  /** Conversations whose chat Sandhill drives (Codex, Antigravity): what the user does goes to it as commands. */
   const driven = (t: TerminalInfo) => drivesChat(t.kind) && canChat(t);
   /** A new conversation that shows as a chat while it starts. */
   const chatStarting = () => {
@@ -789,7 +791,7 @@ export function AgentsPane(props: {
             </div>
             <b>No conversations</b>
             <p>
-              Chat with Claude Code or Codex about this project. They run on {props.hostLabel} with your own plan, can run code
+              Chat with Claude Code, Codex or Antigravity about this project. They run on {props.hostLabel} with your own plan, can run code
               in your live R and Python sessions, and add cells to your files.
             </p>
             <button class="primary" onClick={openNew}>
@@ -1127,7 +1129,7 @@ function NewComposer(props: {
       model={c.model().label}
       isModel={(kind, m) => kind === c.kind().kind && m.id === c.model().id}
       effort={c.effort()}
-      mode={c.mode()}
+      mode={modeFor(c.kind(), c.mode())}
       focus={focus()}
       pinned={!!c.pin()}
       front={props.front}
@@ -1148,7 +1150,7 @@ function NewComposer(props: {
           {
             model: c.model().id,
             effort: c.effort(),
-            permission: c.mode().permission,
+            permission: modeFor(c.kind(), c.mode()).permission,
             documents: focus() ? [focus()!] : undefined,
             code: c.code() === "console" ? "console" : undefined,
             pin: c.pin(),
@@ -1506,7 +1508,7 @@ function tabTitle(terminal: TerminalInfo): string {
   return parts.join(" · ");
 }
 
-/** "Claude", "Codex". */
+/** "Claude", "Codex", "Antigravity". */
 function agentName(terminal: TerminalInfo | undefined): string {
   if (!terminal) return "Claude";
   return agentKind(terminal.kind) ? kindName(terminal.kind) : terminal.title;

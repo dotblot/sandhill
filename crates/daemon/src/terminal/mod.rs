@@ -18,6 +18,7 @@
 //! `sock` with one JSON message per line ([`ToHost`], [`FromHost`]). Once
 //! the program has ended, the daemon reads the folder instead.
 
+pub mod antigravity;
 pub mod chat;
 pub mod choices;
 pub mod codex;
@@ -808,12 +809,13 @@ pub fn code_to_console(dir: &Path) -> bool {
 }
 
 /// The agent in the terminal in `dir`, as the Console names it: "Claude",
-/// "Codex".
+/// "Codex", "Antigravity".
 pub fn agent_name(dir: &Path) -> Option<&'static str> {
     let meta: Meta = read_json(&Paths::new(dir).meta())?;
     match meta.kind.as_str() {
         crate::agents::CLAUDE => Some("Claude"),
         crate::agents::CODEX => Some("Codex"),
+        crate::agents::ANTIGRAVITY => Some("Antigravity"),
         _ => None,
     }
 }

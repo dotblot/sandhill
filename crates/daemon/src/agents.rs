@@ -1,5 +1,6 @@
-//! The coding agents Sandhill runs: Claude Code and Codex as their own,
-//! unmodified CLIs, each in a terminal the daemon keeps (see `terminal`).
+//! The coding agents Sandhill runs: Claude Code, Codex and Antigravity as
+//! their own, unmodified CLIs, each in a terminal the daemon keeps (see
+//! `terminal`).
 //! Sandhill only configures them the way a user could, with command-line
 //! flags:
 //!
@@ -9,7 +10,10 @@
 //!   (busy, waiting for the user, model, context use) to its terminal
 //!   through `sandhilld terminal-event`;
 //! - for Codex, nothing: Sandhill drives its conversation through `codex
-//!   app-server` (see `terminal::codex`), and tells it the same things.
+//!   app-server` (see `terminal::codex`), and tells it the same things;
+//! - for Antigravity, nothing either: Sandhill runs `agy` headless for each
+//!   message (see `terminal::antigravity`), which adds Sandhill's MCP server
+//!   to agy's settings, the only place agy reads them from.
 //!
 //! Sandhill never reads their logins: each signs in through its own
 //! `/login` or sign-in (or an API key the user set up for it).
@@ -27,6 +31,7 @@ use crate::terminal::Launch;
 
 pub const CLAUDE: &str = "claude";
 pub const CODEX: &str = "codex";
+pub const ANTIGRAVITY: &str = "antigravity";
 
 struct Agent {
     kind: &'static str,
@@ -35,7 +40,7 @@ struct Agent {
     install: &'static str,
 }
 
-const AGENTS: [Agent; 2] = [
+const AGENTS: [Agent; 3] = [
     Agent {
         kind: CLAUDE,
         name: "Claude Code",
@@ -47,6 +52,12 @@ const AGENTS: [Agent; 2] = [
         name: "Codex",
         program: "codex",
         install: "npm install -g @openai/codex",
+    },
+    Agent {
+        kind: ANTIGRAVITY,
+        name: "Antigravity",
+        program: "agy",
+        install: "curl -fsSL https://antigravity.google/install.sh | bash",
     },
 ];
 
@@ -66,14 +77,15 @@ pub struct Context<'a> {
 }
 
 /// What an agent reports that finds its conversation again: Claude Code's
-/// session (from its hooks) and Codex's thread (from Sandhill's bridge).
+/// session (from its hooks), and Codex's thread or Antigravity's
+/// conversation (from Sandhill's bridges).
 pub const RESUME_KEYS: [&str; 2] = ["session_id", "thread"];
 
 /// The conversation an agent of `kind` would resume, from its report.
 pub fn resume_id(kind: &str, report: Option<&serde_json::Value>) -> Option<String> {
     let key = match kind {
         CLAUDE => RESUME_KEYS[0],
-        CODEX => RESUME_KEYS[1],
+        CODEX | ANTIGRAVITY => RESUME_KEYS[1],
         _ => return None,
     };
     report?[key]
@@ -137,6 +149,19 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         CLAUDE => {
             launch.args = claude_args(options, context, &help);
             launch.program = program.clone();
+        }
+        ANTIGRAVITY => {
+            // The Antigravity app installs an `agy` that only opens it.
+            if !help.contains("--output-format") {
+                bail!(
+                    "this `agy` has no headless mode (it may be the Antigravity app's launcher); install Antigravity's CLI with `{}`",
+                    agent.install
+                );
+            }
+            // Sandhill runs agy for each message (see
+            // `terminal::antigravity`).
+            launch.args = agy_args(options, context, &program);
+            launch.program = context.executable.to_path_buf();
         }
         _ => {
             if !help.contains("app-server") {
@@ -301,6 +326,29 @@ fn codex_args(options: &AgentOptions, context: &Context<'_>, codex: &Path) -> Ve
     args
 }
 
+/// `sandhilld agy-chat`'s arguments: the conversation's settings.
+fn agy_args(options: &AgentOptions, context: &Context<'_>, agy: &Path) -> Vec<String> {
+    let mut args = vec![
+        "--socket".to_string(),
+        context.socket.to_string_lossy().into_owned(),
+        "agy-chat".into(),
+        "--agy".into(),
+        agy.to_string_lossy().into_owned(),
+        "--options".into(),
+        serde_json::to_string(options).unwrap_or_else(|_| "{}".into()),
+    ];
+    if let Some(project) = context.project {
+        args.extend(["--project".into(), project.into()]);
+    }
+    if let Some(prompt) = context.prompt.filter(|p| !p.trim().is_empty()) {
+        args.extend(["--prompt".into(), prompt.into()]);
+    }
+    if let Some(conversation) = context.resume {
+        args.extend(["--conversation".into(), conversation.into()]);
+    }
+    args
+}
+
 /// The first message, after `--` so one starting with a dash isn't taken for a flag.
 fn push_prompt(args: &mut Vec<String>, context: &Context<'_>) {
     if let Some(prompt) = context.prompt.filter(|p| !p.trim().is_empty()) {
@@ -392,9 +440,9 @@ fn is_executable(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
-async fn version(program: &Path) -> Option<String> {
+pub(crate) async fn version(program: &Path) -> Option<String> {
     let output = run(program, "--version").await?;
-    // "2.1.296 (Claude Code)", "codex-cli 0.162.1"
+    // "2.1.296 (Claude Code)", "codex-cli 0.162.1", "agy version 2.0.0"
     output
         .split_whitespace()
         .find(|word| word.chars().next().is_some_and(|c| c.is_ascii_digit()))

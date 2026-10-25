@@ -43,9 +43,10 @@ enum Command {
         start: bool,
     },
     /// Serve Sandhill's tools to a coding agent over MCP on stdin/stdout.
-    /// Claude Code and Codex start this themselves.
+    /// Claude Code, Codex and Antigravity start this themselves.
     Mcp {
-        /// The project folder whose sessions the tools work with.
+        /// The project folder whose sessions the tools work with (default:
+        /// $SANDHILL_PROJECT).
         #[arg(long)]
         project: Option<String>,
     },
@@ -84,6 +85,25 @@ enum Command {
         /// More arguments for `codex app-server`.
         #[arg(last = true)]
         args: Vec<String>,
+    },
+    /// Run Antigravity's conversation for Sandhill's chat, with `agy`'s
+    /// headless mode (an Antigravity conversation's terminal runs this).
+    #[command(hide = true)]
+    AgyChat {
+        /// The `agy` CLI.
+        #[arg(long)]
+        agy: PathBuf,
+        #[arg(long)]
+        project: Option<String>,
+        /// Model, effort, mode and documents, as JSON.
+        #[arg(long, default_value = "{}")]
+        options: String,
+        /// The first message.
+        #[arg(long, allow_hyphen_values = true)]
+        prompt: Option<String>,
+        /// The conversation to go on with.
+        #[arg(long)]
+        conversation: Option<String>,
     },
     /// Report an agent's state to the terminal it runs in, from its hooks:
     /// `state busy|idle|waiting`, `prompt`, `notification` and `status`
@@ -124,7 +144,20 @@ async fn run(cli: Cli) -> Result<()> {
             serve(state, socket, started_by).await
         }
         Command::Attach { start } => attach(&cli, state, socket, start).await,
-        Command::Mcp { ref project } => sandhill_daemon::mcp::serve(socket, project.clone()).await,
+        Command::Mcp { ref project } => {
+            // Antigravity starts the server as its settings say, the same
+            // for every conversation: what differs comes from the
+            // environment Sandhill gives agy.
+            let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+            let socket = match (&cli.socket, env("SANDHILL_SOCKET")) {
+                (None, Some(socket)) => PathBuf::from(socket),
+                _ => socket,
+            };
+            let project = project
+                .clone()
+                .or_else(|| env("SANDHILL_PROJECT").map(|p| p.to_string_lossy().into_owned()));
+            sandhill_daemon::mcp::serve(socket, project).await
+        }
         Command::TerminalHost {
             dir,
             cwd,
@@ -164,6 +197,31 @@ async fn run(cli: Cli) -> Result<()> {
                     instructions,
                 })
                 .await?;
+            std::process::exit(code)
+        }
+        Command::AgyChat {
+            agy,
+            project,
+            options,
+            prompt,
+            conversation,
+        } => {
+            let options: sandhill_proto::AgentOptions =
+                serde_json::from_str(&options).context("--options is not valid")?;
+            let instructions = sandhill_daemon::agents::instructions(&options);
+            let code = sandhill_daemon::terminal::antigravity::run(
+                sandhill_daemon::terminal::antigravity::Options {
+                    agy,
+                    executable: std::env::current_exe()?,
+                    daemon: socket,
+                    project,
+                    options,
+                    prompt,
+                    conversation,
+                    instructions,
+                },
+            )
+            .await?;
             std::process::exit(code)
         }
         Command::TerminalEvent { args } => {

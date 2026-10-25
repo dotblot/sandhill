@@ -5,11 +5,14 @@ import {
   canResume,
   currentMode,
   documentPath,
+  drivesChat,
   effortLabel,
   effortName,
   favourites,
   focusFile,
   liveOptions,
+  MODES,
+  modeFor,
   modelLabel,
   planUsage,
   saveFavourites,
@@ -71,7 +74,21 @@ describe("agents", () => {
     expect(canResume(changed)).toBe(true);
     expect(canResume(terminal({ agent: { thread: "t1" } }))).toBe(false);
     expect(canResume(terminal({ kind: "codex", agent: { thread: "t1" } }))).toBe(true);
+    expect(canResume(terminal({ kind: "antigravity", agent: { thread: "c1" } }))).toBe(true);
     expect(canResume(terminal({ kind: "shell", agent: { session_id: "s1" } }))).toBe(false);
+  });
+
+  it("drives Antigravity's chat, in the modes headless agy has", () => {
+    const agy = agentKind("antigravity")!;
+    expect(drivesChat("antigravity")).toBe(true);
+    expect(agy.efforts).toEqual(["low", "medium", "high"]);
+    const mode = (id: string) => MODES.find((m) => m.id === id)!;
+    expect(modeFor(agy, mode("yolo")).id).toBe("yolo");
+    expect(modeFor(agy, mode("plan")).id).toBe("plan");
+    // It can't ask, so modes that ask or review start as Normal.
+    expect(modeFor(agy, mode("restricted")).id).toBe("normal");
+    expect(modeFor(agy, mode("auto")).id).toBe("normal");
+    expect(modeFor(agentKind("claude")!, mode("restricted")).id).toBe("restricted");
   });
 
   it("offers the models a running Codex lists, with the efforts of the one it uses", () => {
