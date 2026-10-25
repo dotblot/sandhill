@@ -286,10 +286,14 @@ and remote work are never shown together.
   - Env files, comma-separated.
   - Cancel and Save. Save writes `.sandhill/project.toml`; running sessions
     keep their kernel until restarted, and a toast says so.
-  - The first time a project opens with a choice to make (an environment its
-    files point to, or two kernels of a language), it opens by itself, titled
-    "Which R and Python should <project> use?", with what runs now picked and
-    Not now instead of Cancel. Either button settles it for that project.
+  - A language with only one kernel says why: "Only environments with
+    ipykernel are listed (for a conda env: `conda install -n <env>
+    ipykernel`)." or "Only R installations with a kernel (Ark, or IRkernel)
+    are listed."
+  - The first time a project without a `.sandhill/project.toml` opens, it
+    opens by itself, titled "Which R and Python should <project> use?", with
+    what runs now picked and Not now instead of Cancel. Either button settles
+    it for that project.
 
   - Picking a project switches the whole window to it, like switching machine.
     The title bar's tab then shows that project's path.
@@ -306,7 +310,8 @@ and remote work are never shown together.
     its files.
   - refresh.
   Then the file tree. Each row's tooltip gives its name, size and when it was
-  modified.
+  modified. Names that start with a dot show (`.env`, `.sandhill`), except
+  `.git`, `.DS_Store`, `.ipynb_checkpoints` and `.Rproj.user`.
 - **Selecting**: clicking a row selects it (the text colour at 9%). Clicking a
   folder also opens or closes it; clicking a file also opens it in the editor.
 - **Folder hover buttons**: hovering over a folder shows two 20 × 18px buttons

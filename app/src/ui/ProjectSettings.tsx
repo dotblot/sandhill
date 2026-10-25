@@ -1,9 +1,8 @@
 // Project settings: the R and Python each language runs in, where notebooks
 // and Quarto documents run, and the env files kernels start with. The
 // daemon saves them in .sandhill/project.toml, so collaborators get them
-// too. The first time a project opens with a choice to make (an
-// environment its files point to, or more than one kernel of a language),
-// this asks once; the ☰ menu brings it back.
+// too. The first time a project opens without saved settings, this asks
+// once; the ☰ menu brings it back.
 
 import { createSignal, For, onMount, Show } from "solid-js";
 import type { DocumentsRunIn, FoundEnvironment, KernelspecInfo, ProjectSettings, ProjectSetup } from "../backend/types";
@@ -15,12 +14,16 @@ const LANGUAGES = [
   { id: "python", label: "Python" },
 ] as const;
 
-/** Whether a project has something to ask about: what its files point to, or a choice of kernels. */
+/** Whether to ask on opening: the project has no saved settings, and some kernel is installed to pick. */
 export function worthAsking(setup: ProjectSetup, specs: KernelspecInfo[]): boolean {
-  if (setup.saved) return false;
-  if (setup.found.length) return true;
-  return LANGUAGES.some(({ id }) => specs.filter((k) => normalizeLanguage(k.language) === id).length > 1);
+  return !setup.saved && specs.length > 0;
 }
+
+/** Why a language's list has no other kernel to pick. */
+export const ONLY_KERNEL: Record<string, string> = {
+  r: "Only R installations with a kernel (Ark, or IRkernel) are listed.",
+  python: "Only environments with ipykernel are listed (for a conda env: `conda install -n <env> ipykernel`).",
+};
 
 /** "Found renv.lock (renv)." or "Found environment.yml (conda env omicverse).", then what to do when it has no kernel. */
 export function foundNote(found: FoundEnvironment): string {
@@ -44,6 +47,8 @@ export function ProjectSettingsDialog(props: {
   name: string;
   /** Asked unprompted, on opening the project: the way out is "Not now". */
   first?: boolean;
+  /** After .sandhill/project.toml is written, before the dialog closes. */
+  onSaved?: () => void;
   onClose: () => void;
 }) {
   const ws = props.ws;
@@ -78,6 +83,7 @@ export function ProjectSettingsDialog(props: {
     setSaving(true);
     try {
       await ws.saveSettings(settings);
+      props.onSaved?.();
       const running = ws.projectSessions().length;
       notify(
         running
@@ -136,6 +142,9 @@ export function ProjectSettingsDialog(props: {
                         </p>
                       )}
                     </For>
+                    <Show when={specsFor(id).length < 2}>
+                      <p class="ps-note">{ONLY_KERNEL[id]}</p>
+                    </Show>
                     <Show when={id === "r" && notes().some((f) => f.file === "renv.lock")}>
                       <p class="ps-note">R starts in the project's folder, so renv loads the project's library.</p>
                     </Show>
@@ -171,7 +180,7 @@ export function ProjectSettingsDialog(props: {
           </div>
         </div>
         <div class="modal-buttons">
-          <button onClick={props.onClose}>{props.first ? "Not now" : "Cancel"}</button>
+          <button onClick={() => props.onClose()}>{props.first ? "Not now" : "Cancel"}</button>
           <button class="primary" disabled={saving()} onClick={() => void save()}>
             Save
           </button>

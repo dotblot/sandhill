@@ -76,6 +76,13 @@ describe("FileTree", () => {
     expect(t.row("a").getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("shows dotfiles like .env and .sandhill, but not git's folder", async () => {
+    const t = setup({ "/p": [dir(".git"), dir(".sandhill"), file(".env"), file(".DS_Store"), file("a.R")] });
+    dispose = t.dispose;
+    await settle();
+    expect(t.names()).toEqual([".sandhill", ".env", "a.R"]);
+  });
+
   it("sorts by size with folders first, asking the daemon for folder sizes", async () => {
     const t = setup({ "/p": [dir("small", 1), dir("big", 900), file("a.csv", 5), file("b.csv", 50)] });
     dispose = t.dispose;

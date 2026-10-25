@@ -287,7 +287,7 @@ export function App(props: {
     if (front && !openedWhileRestoring) setActiveExtra(front);
   }
 
-  // The first time the project opens with a choice of R or Python to make, ask it once.
+  // The first time the project opens without saved settings, ask once which R and Python it uses.
   createEffect(() => {
     const setup = ws.setup();
     if (!restored() || !setup || setupAsked() || untrack(settingsDialog)) return;
@@ -1383,7 +1383,16 @@ export function App(props: {
         />
       </Show>
       <Show when={settingsDialog() && ws.setup()}>
-        {(setup) => <ProjectSettingsDialog ws={ws} setup={setup()} name={name} first={settingsDialog() === "first"} onClose={closeSettings} />}
+        {(setup) => (
+          <ProjectSettingsDialog
+            ws={ws}
+            setup={setup()}
+            name={name}
+            first={settingsDialog() === "first"}
+            onSaved={() => setTreeKey((k) => k + 1)}
+            onClose={closeSettings}
+          />
+        )}
       </Show>
       <Show when={palette()}>
         <Palette

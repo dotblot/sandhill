@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../backend";
 import type { KernelspecInfo, ProjectSettings, ProjectSetup } from "../backend/types";
 import { Workspace } from "../model/workspace";
-import { ProjectSettingsDialog, worthAsking } from "./ProjectSettings";
+import { ONLY_KERNEL, ProjectSettingsDialog, worthAsking } from "./ProjectSettings";
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
+const notesOf = (root: Element) => [...root.querySelectorAll(".ps-note")].map((n) => n.textContent);
 
 const SPECS: KernelspecInfo[] = [
   { name: "ark", display_name: "R (Ark)", language: "R" },
@@ -32,12 +33,12 @@ const FOUND: ProjectSetup = {
   python: "conda-env-omicverse-py",
 };
 
-async function workspace(setup: ProjectSetup) {
+async function workspace(setup: ProjectSetup, specs = SPECS) {
   const saved: ProjectSettings[] = [];
   const backend = {
     host: "local",
     async call(method: string, params: Record<string, unknown> = {}) {
-      if (method === "list_project_kernelspecs") return SPECS;
+      if (method === "list_project_kernelspecs") return specs;
       if (method === "get_project_settings") return setup;
       if (method === "list_sessions") return [];
       if (method === "save_project_settings") {
@@ -56,37 +57,50 @@ async function workspace(setup: ProjectSetup) {
   return { ws, saved };
 }
 
-function show(ws: Workspace, setup: ProjectSetup, first: boolean, onClose = vi.fn()) {
+function show(ws: Workspace, setup: ProjectSetup, first: boolean, onClose = vi.fn(), onSaved = vi.fn()) {
   const root = document.body.appendChild(document.createElement("div"));
-  render(() => <ProjectSettingsDialog ws={ws} setup={setup} name="pbmc" first={first} onClose={onClose} />, root);
+  render(() => <ProjectSettingsDialog ws={ws} setup={setup} name="pbmc" first={first} onSaved={onSaved} onClose={onClose} />, root);
   const select = (id: string) => root.querySelector<HTMLSelectElement>(`#ps-${id}`)!;
   const options = (id: string) => [...select(id).options].map((o) => o.textContent);
   const button = (text: string) => [...root.querySelectorAll<HTMLButtonElement>(".modal-buttons button")].find((b) => b.textContent?.trim() === text)!;
-  return { root, select, options, button, onClose };
+  return { root, select, options, button, onClose, onSaved };
 }
 
 describe("ProjectSettingsDialog", () => {
   afterEach(() => document.body.replaceChildren());
 
-  it("asks only when there is something to choose", () => {
+  it("asks every project without saved settings, once a kernel is installed", () => {
     const plain: ProjectSetup = { settings: FOUND.settings, saved: false, found: [] };
     expect(worthAsking(FOUND, SPECS)).toBe(true);
-    // Two R kernels are a choice even when the folder points nowhere.
-    expect(worthAsking(plain, SPECS)).toBe(true);
-    expect(worthAsking(plain, [SPECS[0], SPECS[2]])).toBe(false);
+    // A folder that points nowhere, with one kernel of each language, as on a
+    // server whose only Python with ipykernel is omicverse.
+    expect(worthAsking(plain, [SPECS[0], SPECS[3]])).toBe(true);
+    expect(worthAsking(plain, [])).toBe(false);
     expect(worthAsking({ ...FOUND, saved: true }, SPECS)).toBe(false);
+  });
+
+  it("says why a language has only one kernel to pick", async () => {
+    const plain: ProjectSetup = { settings: FOUND.settings, saved: false, found: [], r: "ark", python: "conda-env-omicverse-py" };
+    const { ws } = await workspace(plain, [SPECS[0], SPECS[3]]);
+    const { root, select, options } = show(ws, plain, true);
+    expect(root.querySelector(".modal-message")!.textContent).toBe("Which R and Python should pbmc use?");
+    expect(options("python")).toEqual(["Automatic: Python (omicverse)", "Python (omicverse)"]);
+    expect(select("python").value).toBe("conda-env-omicverse-py");
+    const notes = notesOf(root);
+    expect(notes).toContain("Only environments with ipykernel are listed (for a conda env: `conda install -n <env> ipykernel`).");
+    expect(notes).toContain("Only R installations with a kernel (Ark, or IRkernel) are listed.");
   });
 
   it("offers what the folder points to and saves the choice", async () => {
     const { ws, saved } = await workspace(FOUND);
-    const { root, select, options, button, onClose } = show(ws, FOUND, true);
+    const { root, select, options, button, onClose, onSaved } = show(ws, FOUND, true);
     expect(root.querySelector(".modal-message")!.textContent).toBe("Which R and Python should pbmc use?");
     expect(options("r")).toEqual(["Automatic: R (Ark), from renv.lock", "R (Ark)", "R"]);
     expect(options("python")).toEqual(["Automatic: Python (omicverse), from environment.yml", "Python 3", "Python (omicverse)"]);
     // Not saved yet: what runs now is picked, so saving keeps it.
     expect(select("r").value).toBe("ark");
     expect(select("python").value).toBe("conda-env-omicverse-py");
-    const notes = [...root.querySelectorAll(".ps-note")].map((n) => n.textContent);
+    const notes = notesOf(root);
     expect(notes).toContain("Found renv.lock (renv).");
     expect(notes).toContain(
       "Found environment.yml (conda env omicverse). It has no R kernel: `conda install -n omicverse r-irkernel`.",
@@ -103,6 +117,8 @@ describe("ProjectSettingsDialog", () => {
     button("Save").click();
     await settle();
     expect(saved).toEqual([{ r: "ark", python: "python3", documents: "project", env_files: [".env", "secrets.env"] }]);
+    // The file tree shows .sandhill/ then.
+    expect(onSaved).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
     expect(ws.setup()?.saved).toBe(true);
     expect(ws.documentFolder("/home/huan/pbmc/reports")).toBe("/home/huan/pbmc");
@@ -126,5 +142,6 @@ describe("ProjectSettingsDialog", () => {
     button("Cancel").click();
     expect(onClose).toHaveBeenCalled();
     expect(saved).toEqual([]);
+    expect(notesOf(root)).not.toContain(ONLY_KERNEL.python);
   });
 });
