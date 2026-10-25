@@ -18,6 +18,8 @@
   --cap-bg: color-mix(in srgb, var(--text) 6%, color-mix(in srgb, var(--bg) 40%, transparent));
   --cap-edge: rgba(60, 40, 20, 0.16);
   --cap-on: var(--bg);
+  /* Glass tab bars over the top of the panes (draft 32) */
+  --strip-glass: color-mix(in srgb, var(--bg) 62%, transparent);
 
   --bg: #ffffff;
   --chrome: #eeebe7;
@@ -117,6 +119,7 @@
     --cap-bg: rgba(255, 255, 255, 0.06);
     --cap-edge: rgba(255, 255, 255, 0.1);
     --cap-on: rgba(255, 255, 255, 0.13);
+    --strip-glass: color-mix(in srgb, var(--bg) 58%, transparent);
   }
 }
 
@@ -328,17 +331,27 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .console-pane { flex: 0 1 38%; min-height: 90px; }
 .console-pane.fill { flex: 1 1 auto !important; }
 /* Minimized, only the tabs show; maximized, the pane fills the window, opaque. */
-.pane.min { flex: 0 0 auto !important; min-height: 0; }
+.pane.min { flex: 0 0 auto !important; min-height: 0; padding-top: 0; }
 .pane.min > :not(.tabs) { display: none !important; }
 .pane.hidden { display: none; }
 .pane.max { position: absolute; inset: 3px 3px 0 3px; z-index: 20; background: var(--bg); }
 
-/* Tab strips: the same in every pane */
-.tabs { height: 28px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-user-select: none; user-select: none; }
-.tabs::-webkit-scrollbar { display: none; }
+/* Tab strips: the same in every pane. Each is liquid glass floating over the
+   top of its pane: the content starts under it and scrolls up beneath it,
+   blurred. The panes have no blur of their own (see .pane), so the bars can
+   blur what is in them. A minimized pane keeps its bar in place. */
+.pane { position: relative; padding-top: 29px; }
+.tabs { position: absolute; top: 0; left: 0; right: 0; z-index: 6; height: 29px; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 0.5px solid var(--glass-edge); background: var(--strip-glass); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7); overflow: hidden; -webkit-user-select: none; user-select: none; }
+.pane.min > .tabs { position: relative; }
+/* The tabs sit in a capsule, like the title bar's: the picked tab is a raised pill. */
+.tabcap { height: 22px; gap: 1px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
+.tabcap::-webkit-scrollbar { display: none; }
 .tab { height: 22px; flex: none; display: flex; align-items: center; gap: 5px; padding: 0 8px 0 9px; border-radius: var(--r); color: var(--muted); white-space: nowrap; cursor: default; }
 .tab:hover { background: var(--ink-6); color: var(--text); }
 .tab.active { background: var(--ink-11); color: var(--text); }
+.tabcap .tab { height: 18px; border-radius: 999px; }
+.tabcap .tab.active { background: var(--cap-on); color: var(--text); box-shadow: 0 0 0 0.5px var(--cap-edge), 0 1px 2px rgba(0, 0, 0, 0.1); }
+.tabcap .tab-close { border-radius: 999px; }
 .tab-detail { color: var(--faint); }
 .tab-close { width: 16px; height: 16px; display: grid; place-items: center; border-radius: var(--r); color: var(--faint); }
 .tab-close .ico { width: 12px; height: 12px; stroke-width: 1.6; }
@@ -348,15 +361,18 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .tab-close.dirty:not(:hover)::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 /* Minimize and maximize, at the right end of every tab strip */
 .pwin { display: inline-flex; gap: 1px; margin-left: auto; padding-left: 4px; flex: none; }
-.tabs .pwin { position: sticky; right: 0; }
+.tabs .pwin { margin-left: 0; }
 .pwin button { width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--r); color: var(--faint); }
 .pwin button:hover { color: var(--text); background: var(--ink-8); }
 .pwin .ico { width: 13px; height: 13px; }
 .pill { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 3px; flex: none; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); white-space: nowrap; }
 .pill > .lang { width: 14px; height: 14px; flex: none; }
 
-/* The bar under the editor's tabs: a pill per language, then actions */
+/* The bar under the editor's tabs: a pill per language, then actions. Glass too, under the tabs. */
 .kernel-bar { height: 30px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
+.editor-pane, .console-pane { padding-top: 0; }
+.editor-pane > .tabs { border-bottom: 0; }
+.editor-pane > .kernel-bar { position: absolute; top: 29px; left: 0; right: 0; z-index: 6; height: 30px; border-bottom: 0.5px solid var(--glass-edge); background: var(--strip-glass); -webkit-backdrop-filter: blur(22px) saturate(1.7); backdrop-filter: blur(22px) saturate(1.7); }
 /* A kernel picker: the language icon and version; the drop-down has the rest. */
 .kernel { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 2px 0 3px; border: 1px solid var(--line); border-radius: var(--r); flex: none; }
 .kernel > .lang { width: 14px; height: 14px; flex: none; }
@@ -388,10 +404,11 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .doc-area { flex: 1; min-height: 0; position: relative; overflow: hidden; font-size: var(--fs-code); }
 /* Code ligatures are on (Maple Mono's default): <- shows as an arrow and |>
    as a triangle, while the file keeps what was typed. */
-.doc-host { position: absolute; inset: 0; overflow: auto; }
+.doc-host { position: absolute; inset: 0; overflow: auto; padding-top: 59px; }
+.doc-host.table-host { padding-top: 29px; }
 .doc-host > .cm-editor { min-height: 100%; }
 .doc-host > .cm-editor .cm-scroller { padding: 6px 0 40vh; }
-.empty-state { padding: 60px 24px; text-align: center; color: var(--muted); }
+.empty-state { padding: 89px 24px 60px; text-align: center; color: var(--muted); }
 .empty-state p:first-child { color: var(--text); }
 
 /* Status bar */
@@ -510,14 +527,14 @@ pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; wor
 
 /* The Console pane: a script's runs, each its code and its output */
 .console { flex: 1; min-height: 0; display: flex; flex-direction: column; font-size: var(--fs-code); }
-.console-hint { margin: 0; padding: 10px 14px; color: var(--muted); font-family: var(--font-ui); }
+.console-hint { margin: 0; padding: 39px 14px 10px; color: var(--muted); font-family: var(--font-ui); }
 .console-hint p { margin: 0 0 8px; }
 .console-hint .bar-button { border: 1px solid var(--line); margin-right: 6px; color: var(--text); }
 .console-hint .bar-button .lang { width: 14px; height: 14px; }
 /* One session's Console: what ran in it, then the prompt. */
 .session-console { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* Room on the right of each entry for its status ("[3] Done in 0.2s · just now"). */
-.console-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 12px 10px 14px; --status-room: clamp(96px, 28%, 200px); }
+.console-list { flex: 1; min-height: 0; overflow: auto; padding: 33px 12px 10px 14px; --status-room: clamp(96px, 28%, 200px); }
 .console-head { padding: 2px 0 4px; color: var(--faint); font-family: var(--font-ui); font-size: var(--fs-small); }
 .console-entry { position: relative; padding: 4px 0; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
 .console-head + .console-entry { border-top: none; }
@@ -553,10 +570,10 @@ pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; wor
 .console .cell-output[data-status="error"] .cell-status { color: var(--err); }
 .console .out-image { max-height: 360px; width: auto; max-width: 100%; }
 /* The Console's sessions in its tab strip; the one in front is pressed. */
-.console-sessions { display: inline-flex; gap: 3px; flex: none; }
-.console-sessions .pill { height: 20px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.console-sessions .pill:hover { color: var(--text); }
-.console-sessions .pill[aria-pressed="true"] { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.console-sessions { display: inline-flex; flex: none; }
+.console-sessions .pill { height: 18px; border: 0; border-radius: 999px; background: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.console-sessions .pill:hover { background: var(--ink-6); color: var(--text); }
+.console-sessions .pill[aria-pressed="true"] { background: var(--cap-on); color: var(--text); box-shadow: 0 0 0 0.5px var(--cap-edge), 0 1px 2px rgba(0, 0, 0, 0.1); }
 .console-sessions .pill[data-state="running"] > .lang { animation: connpulse 0.8s ease-in-out infinite alternate; }
 
 /* Notebooks */
@@ -899,7 +916,7 @@ pre.diff { padding: 6px 0; }
 .nc-agents .ico.prov { width: 16px; height: 16px; }
 
 /* The Console's Terminal tab */
-.shell-terminal { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.shell-terminal { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 29px; }
 .shell-terminal .term-view { inset: 4px 2px 2px 12px; }
 
 /* Agents in the status bar */
@@ -1044,7 +1061,7 @@ button.hr-more:hover { text-decoration: underline; }
 .hr.on { background: var(--sel); }
 .hr-f { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hr-p { font-size: var(--fs-small); color: var(--muted); white-space: nowrap; }
-.hl-l { font: 700 9px var(--font-ui); color: #2f6fbf; background: #2f6fbf1f; border-radius: 3px; text-align: center; padding: 1px 0; }
+.hl-l { font: 700 10px var(--font-ui); color: #2f6fbf; background: #2f6fbf1f; border-radius: 3px; text-align: center; padding: 1px 0; }
 .hl-l.py { color: #2f8a5c; background: #3a9b6b22; }
 .helpdoc { padding: 8px 12px 4px; line-height: 1.5; -webkit-user-select: text; user-select: text; }
 .helpdoc.loading { opacity: 0.6; }

@@ -516,7 +516,8 @@ export function AgentsPane(props: {
       style={{ width: `${props.width}px` }}
       aria-label="Agents"
     >
-      <div class="tabs agent-head" role="tablist" data-tauri-drag-region="deep">
+      <div class="tabs agent-head" role="tablist">
+        <div class="cap tabcap">
         <div class="tab active chat-title" role="tab" aria-selected="true">
           <Switch fallback={<span class="atl">Agents</span>}>
             <Match when={history()}>
@@ -543,6 +544,7 @@ export function AgentsPane(props: {
               )}
             </Match>
           </Switch>
+        </div>
         </div>
         <span class="spacer" />
         <button class="pane-button" title="New conversation" onClick={openNew}>
