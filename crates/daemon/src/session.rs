@@ -677,7 +677,7 @@ async fn wait_until_ready(
                 KernelMsg::Shell(m) if is_ours => {
                     reply = Some(match &m.content {
                         JupyterMessageContent::KernelInfoReply(info) => {
-                            Some(info.language_info.version.clone())
+                            Some(version_number(&info.language_info.version))
                         }
                         _ => None,
                     })
@@ -689,6 +689,23 @@ async fn wait_until_ready(
                 return Ok(version);
             }
         }
+    }
+}
+
+/// The number in a kernel's language version: Ark gives R's whole version
+/// string, "R version 4.6.1 (2026-06-24)", where IRkernel gives "4.6.1".
+fn version_number(said: &str) -> String {
+    let start = said.find(|c: char| c.is_ascii_digit());
+    let number = start.map(|start| {
+        let rest = &said[start..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        rest[..end].trim_end_matches('.')
+    });
+    match number {
+        Some(number) if number.contains('.') => number.to_string(),
+        _ => said.trim().to_string(),
     }
 }
 
@@ -706,4 +723,17 @@ fn end_session(journal: &Journal, session_id: &str, reason: &str) -> Option<Even
         )
         .map_err(|err| tracing::error!("cannot journal end of {session_id}: {err}"))
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_number;
+
+    #[test]
+    fn a_kernel_version_is_its_number() {
+        assert_eq!(version_number("R version 4.6.1 (2026-06-24)"), "4.6.1");
+        assert_eq!(version_number("4.4.1"), "4.4.1");
+        assert_eq!(version_number("3.11.9"), "3.11.9");
+        assert_eq!(version_number(" nightly "), "nightly");
+    }
 }

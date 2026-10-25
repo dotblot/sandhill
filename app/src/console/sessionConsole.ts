@@ -12,6 +12,7 @@ import { CellOutput } from "../docs/cellOutput";
 import { baseExtensions, highlightedLines, languageFor } from "../editor/setup";
 import { InputHistory, isComplete } from "../model/consoleInput";
 import { consoleHelp, type HelpRequest } from "../model/help";
+import { sessionLabel } from "../model/machine";
 import { fromNotebook, isScript, type RunState } from "../model/runs";
 import type { Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
@@ -226,7 +227,7 @@ export class SessionConsole {
     const home = this.ws.host()?.home;
     const cwd = info?.cwd && home && info.cwd.startsWith(home) ? `~${info.cwd.slice(home.length)}` : info?.cwd;
     const parts = [
-      info?.language_version ? `${this.python ? "Python" : "R"} ${info.language_version}` : this.python ? "Python" : "R",
+      info ? sessionLabel(info) : this.python ? "Python" : "R",
       spec?.display_name ?? info?.kernel,
       cwd,
       this.ended ? "session ended" : undefined,

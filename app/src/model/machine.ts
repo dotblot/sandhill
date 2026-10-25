@@ -80,9 +80,13 @@ export function sessionLabel(session: Pick<SessionInfo, "language" | "language_v
   return version ? `${name} ${version}` : name;
 }
 
-/** "4.4.1", "3.12", or empty when the kernel didn't say. */
+/**
+ * "4.4.1", "3.12", or empty when the kernel didn't say. Only the number: Ark
+ * says "R version 4.6.1 (2026-06-24)", as `R.version.string` does.
+ */
 export function languageVersion(session: Pick<SessionInfo, "language" | "language_version">): string {
-  const version = session.language_version ?? "";
+  const said = session.language_version ?? "";
+  const version = /\d+(?:\.\d+)+/.exec(said)?.[0] ?? said;
   return version && languageLabel(session.language) === "Python" ? version.split(".").slice(0, 2).join(".") : version;
 }
 

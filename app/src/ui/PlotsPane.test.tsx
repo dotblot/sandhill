@@ -82,16 +82,17 @@ const short = (path: string) => path.slice(PROJECT.length + 1);
 function mount(ws: Workspace, notebooks = true) {
   const root = document.body.appendChild(document.createElement("div"));
   const [withNotebooks, setNotebooks] = createSignal(notebooks);
+  const drawn: number[] = [];
   const dispose = render(
     () => (
       <>
-        <PlotsPane ws={ws} project={PROJECT} sessions={[SESSION]} notebooks={withNotebooks()} shortName={short} hostLabel="This Mac" buttons={null} />
+        <PlotsPane ws={ws} project={PROJECT} sessions={[SESSION]} notebooks={withNotebooks()} shortName={short} hostLabel="This Mac" buttons={null} onNew={() => drawn.push(1)} />
         <Dialogs />
       </>
     ),
     root,
   );
-  return { root, dispose, setNotebooks };
+  return { root, dispose, setNotebooks, drawn };
 }
 
 const button = (root: ParentNode, title: string) =>
@@ -143,9 +144,11 @@ describe("PlotsPane", () => {
 
   it("leaves notebooks' plots out unless asked", async () => {
     const { ws, emit } = fakeWorkspace();
-    const { root, dispose, setNotebooks } = mount(ws, false);
+    const { root, dispose, setNotebooks, drawn } = mount(ws, false);
     await settle();
     const count = () => root.querySelector(".plot-when")?.textContent?.split(" · ")[0];
+    // Plots read from the journal aren't new.
+    expect(drawn.length).toBe(0);
     expect(count()).toBe("1 of 1");
     expect(root.querySelector(".plot-from")?.textContent).toBe("Console");
     // A notebook cell drawing doesn't show, or move the pane.
@@ -159,7 +162,8 @@ describe("PlotsPane", () => {
     });
     emit({ seq: 11, session: "s1", run: "r3", msg_type: "display_data", ts_ms: 3100, content: { data: { "image/png": blob("c") }, metadata: {} } });
     expect(count()).toBe("1 of 1");
-    // A script's plot does.
+    expect(drawn.length).toBe(0);
+    // A script's plot does, and opens the pane.
     emit({
       seq: 12,
       session: "s1",
@@ -170,6 +174,7 @@ describe("PlotsPane", () => {
     });
     emit({ seq: 13, session: "s1", run: "r4", msg_type: "display_data", ts_ms: 3300, content: { data: { "image/png": blob("d") }, metadata: {} } });
     expect(count()).toBe("2 of 2");
+    expect(drawn.length).toBe(1);
     expect(root.querySelector(".plot-from")?.textContent).toBe("qc.R");
     setNotebooks(true);
     expect(count()).toBe("4 of 4");
