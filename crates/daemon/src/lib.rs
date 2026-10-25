@@ -31,6 +31,7 @@ pub mod tables;
 pub mod terminal;
 pub mod variables;
 pub mod version;
+pub mod view;
 pub mod windows;
 
 pub use paths::StateDir;

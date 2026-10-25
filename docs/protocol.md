@@ -307,6 +307,12 @@ names the environment a kernel runs in.
     kernel's `ok`, `error` or `aborted`, or `unknown` if the run ended while
     no daemon was connected to hear the reply.
   - `sandhill.session_ended` `{reason}`.
+  - `sandhill.view` `{title}`: the run called `View(x)` (R) or `%view x`
+    (Python), and `title` is what it was given, as typed (`seu@meta.data`).
+    Ark's `View()` opens a `positron.dataExplorer` comm, which the daemon
+    reads and closes; IRkernel and IPython sessions get a `View` and a
+    `%view` when they start, which send a display_data of type
+    `application/vnd.sandhill.view+json`. Neither is journaled as output.
 
 ## Terminals and agents
 

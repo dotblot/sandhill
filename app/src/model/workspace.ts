@@ -10,6 +10,7 @@ import {
   type CellRef,
   type DaemonEvent,
   EVENT_SESSION_ENDED,
+  EVENT_VIEW,
   type FileOutputs,
   type KernelspecInfo,
   type PingReply,
@@ -44,6 +45,7 @@ export class Workspace {
   private lastUsed = new Map<string, string>();
   /** Sessions being started for documents to share, by kernel and folder. */
   private sharedStarts = new Map<string, Promise<SessionInfo>>();
+  private viewers = new Set<(session: string, title: string) => void>();
 
   constructor(
     readonly backend: Backend,
@@ -211,9 +213,19 @@ export class Workspace {
     }
   }
 
+  /** Calls `listener` when code in a session this window follows asks to view a table. */
+  onView(listener: (session: string, title: string) => void): () => void {
+    this.viewers.add(listener);
+    return () => this.viewers.delete(listener);
+  }
+
   private onEvent(event: DaemonEvent) {
     const seen = this.subscribed.get(event.session);
     if (seen === undefined || event.seq > seen) this.subscribed.set(event.session, event.seq);
+    if (event.msg_type === EVENT_VIEW) {
+      for (const listener of this.viewers) listener(event.session, String(event.content?.title ?? ""));
+      return;
+    }
     this.runs.apply(event);
     if (event.msg_type === EVENT_SESSION_ENDED) {
       this.runs.endSession(event.session);
