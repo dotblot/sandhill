@@ -694,6 +694,26 @@ button.link:hover { text-decoration: underline; }
 .modal-detail { margin: 0 0 12px; color: var(--muted); }
 .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 .modal-input { width: 100%; height: 28px; margin-top: 4px; }
+/* Variables' Import dialog: pick a file, name the variable, see the code. */
+.imppop { width: 300px; }
+.imppop .mm-i kbd { font-family: var(--font-mono); color: var(--faint); }
+.modal.importdlg { width: min(520px, calc(100vw - 32px)); }
+.imp-browser { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); margin-top: 8px; }
+.imp-path { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px; border-bottom: 1px solid var(--line); min-width: 0; }
+.imp-path span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-family: var(--font-mono); color: var(--muted); }
+.imp-path button { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r); flex: none; }
+.imp-path button:hover:not(:disabled) { background: var(--ink-7); }
+.imp-list { list-style: none; margin: 0; padding: 4px; height: 180px; overflow: auto; }
+.imp-list li.muted { padding: 4px 8px; color: var(--faint); }
+.imp-list button { display: flex; align-items: center; gap: 6px; width: 100%; height: 24px; padding: 0 8px; border-radius: var(--r); text-align: left; white-space: nowrap; }
+.imp-list button:hover { background: var(--ink-7); }
+.imp-list button.on { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.imp-name { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.imp-name input { flex: 1; height: 26px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); color: var(--text); font: 12px var(--font-mono); }
+.imp-name input:focus { outline: none; border-color: var(--accent); }
+.imp-name input[aria-invalid="true"] { border-color: var(--err); }
+.importdlg .tnew-err { margin: 4px 0 0 44px; padding: 0; }
+.imp-code { margin: 10px 0 0; padding: 8px 10px; min-height: 34px; border-radius: var(--r); background: var(--ink-6); font: 12px/1.45 var(--font-mono); white-space: pre-wrap; word-break: break-all; }
 .toasts { position: fixed; right: 16px; bottom: 30px; display: flex; flex-direction: column; gap: 8px; z-index: 51; max-width: min(440px, calc(100vw - 32px)); }
 .toast {
   padding: 8px 12px; font-size: var(--fs-chrome); line-height: 1.4; cursor: pointer; background: var(--bg);
@@ -1336,6 +1356,9 @@ button.hr-more:hover { text-decoration: underline; }
 .de-kern[data-state="busy"] .de-what { color: var(--busy); }
 .de-kern[data-state="off"] .de-what { color: var(--faint); }
 .de-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
+.de.noside .de-body { grid-template-columns: minmax(0, 1fr); }
+.de.noside .de-side { display: none; }
+.de-sidetoggle { margin-right: 4px; }
 .de-side { border-right: 1px solid var(--line); overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; min-height: 0; }
 .de-col { display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 6px; text-align: left; flex: none; }
 .de-col:hover { background: var(--hover); }

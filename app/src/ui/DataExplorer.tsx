@@ -435,11 +435,30 @@ export function DataExplorer(props: {
     changeFilters(list.map((f, i) => (i === at ? { ...f, values: [...values, value] } : f)));
   };
 
+  const [sideShown, setSideShown] = createSignal(readSide());
+  const showSide = (shown: boolean) => {
+    setSideShown(shown);
+    try {
+      localStorage.setItem(SIDE_KEY, shown ? "shown" : "hidden");
+    } catch {
+      // Only a convenience; the next table shows the column stats again.
+    }
+  };
+
   const stateText = () => (ended() ? "session ended" : busy() ? "running code…" : "live");
 
   return (
-    <div class="de" classList={{ busy: busy() }}>
+    <div class="de" classList={{ busy: busy(), noside: !sideShown() }}>
       <div class="kernel-bar de-top">
+        <button
+          class="bar-button de-sidetoggle"
+          aria-pressed={sideShown()}
+          title={`${sideShown() ? "Hide" : "Show"} the column list and its stats, so the table gets the whole width`}
+          onClick={() => showSide(!sideShown())}
+        >
+          <Icon name="sidebar.left" small />
+          {sideShown() ? "Hide column stats" : "Show column stats"}
+        </button>
         <span class="kernel de-kern" data-state={ended() ? "off" : busy() ? "busy" : "idle"} title={`${name()} ${session() ? languageVersion(session()!) : ""} · ${stateText()}`}>
           <LangIcon language={tab.language} />
           <span class="de-what">
@@ -917,4 +936,15 @@ function store(key: string, value: string) {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+const SIDE_KEY = "sandhill.deColumnStats";
+
+/** Whether the column list and stats are shown, as last chosen on this Mac. */
+function readSide(): boolean {
+  try {
+    return localStorage.getItem(SIDE_KEY) !== "hidden";
+  } catch {
+    return true;
+  }
 }

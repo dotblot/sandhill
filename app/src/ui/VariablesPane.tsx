@@ -5,6 +5,7 @@ import { groupVariables, pathKey, removedText, sizeOf } from "../model/variables
 import type { Workspace } from "../model/workspace";
 import { notify } from "./dialogs";
 import { Icon } from "./icons";
+import { ImportButton } from "./ImportDialog";
 import { SessionPicker } from "./KernelBar";
 
 /** How long after a run finishes the list is read again, so a burst of runs reads it once. */
@@ -31,6 +32,8 @@ export function VariablesPane(props: {
   shown: boolean;
   /** Reads the list again when this changes (the refresh button). */
   refreshKey?: number;
+  /** Where Import starts looking for files: the project's folder. */
+  folder?: string;
 }) {
   const ws = props.ws;
   const [listed, setListed] = createSignal<Variables>();
@@ -243,6 +246,7 @@ export function VariablesPane(props: {
         fallback={
           <div class="vtool">
             <SessionPicker ws={ws} session={props.session} sessions={props.sessions} usedBy={props.usedBy} onPick={props.onSession} />
+            <ImportButton ws={ws} session={props.session} folder={props.folder ?? props.session?.cwd ?? "/"} />
             <input
               class="vfilter"
               placeholder="Filter"

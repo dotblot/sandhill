@@ -151,6 +151,15 @@ the documents open from it first, and refuses while one has unsaved changes.
 The tree sorts by name, size (folders by the sum of their files) or date
 modified, folders first; the order is remembered on the Mac.
 
+**Import and column stats (built 2026-10-25).** Variables has an Import menu,
+as in RStudio: for R, text (base and readr), Excel, SPSS, SAS, Stata, R data
+and 10x Genomics; for Python, pandas, Parquet, AnnData and 10x. Each opens a
+dialog that browses the daemon's machine for files it reads, names the
+variable after the file and shows the code before running it in the session,
+so the run shows in the Console (`app/src/model/imports.ts`). The Data
+Explorer's column list and stats hide with **Hide column stats**, remembered
+on the Mac.
+
 Panes sit 3px below the title bar, 3px apart and 3px from the window's edges;
 the gaps are drag handles. The editor and Console are translucent cards on a
 warm gradient, each with minimize and maximize buttons; the left pane sits

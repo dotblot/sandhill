@@ -1221,6 +1221,7 @@ export function App(props: {
                   onView={(path) => foreground() && openTable(foreground()!, path)}
                   shown={topShown("variables")}
                   refreshKey={variablesKey()}
+                  folder={props.project}
                 />
               </div>
               <div class="top-body" hidden={topTab() !== "help"}>
