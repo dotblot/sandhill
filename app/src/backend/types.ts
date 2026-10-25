@@ -425,6 +425,8 @@ export interface GitStatus {
   stashes: number;
   /** "merging", "rebasing", "cherry-picking" or "reverting". */
   state?: string;
+  /** While merging, git's message for the merge's commit. */
+  merge_message?: string;
   /** Changes whenever a branch, tag or HEAD moves. */
   refs: string;
   branches: string[];
@@ -508,7 +510,9 @@ export type GitAction =
   | { op: "stage_lines" | "unstage_lines" | "discard_lines"; file: string; diff: string; lines: number[] }
   | { op: "commit"; message: string; amend: boolean }
   | { op: "fetch" | "pull" | "push" | "undo_commit" | "stash_pop" | "abort" | "init" }
-  | { op: "switch"; branch: string }
+  | { op: "switch" | "merge"; branch: string }
+  /** Settles a conflicted file with one side's version of all of it. */
+  | { op: "resolve"; file: string; side: "ours" | "theirs" }
   | { op: "create_branch"; name: string }
   | { op: "stash"; message?: string }
   | { op: "set_user"; name: string; email: string };

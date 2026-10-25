@@ -1540,6 +1540,10 @@ pub struct GitStatus {
     /// under way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
+    /// While merging, the message git has ready for the merge's commit,
+    /// without its comments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_message: Option<String>,
     /// Changes whenever a branch, tag or HEAD moves, so a client knows when
     /// to read the log again.
     #[serde(default)]
@@ -1741,6 +1745,18 @@ pub enum GitAction {
     },
     /// Brings back the last stash.
     StashPop,
+    /// Merges a branch, local or remote, into the one checked out. When the
+    /// two changed the same lines, git stops with those files conflicted, to
+    /// settle and commit (or `Abort`); that isn't a failure.
+    Merge {
+        branch: String,
+    },
+    /// Settles a conflicted file by taking one side's version of all of it,
+    /// and stages it.
+    Resolve {
+        file: String,
+        side: GitSide,
+    },
     /// Stops a merge, rebase, cherry-pick or revert that stopped on conflicts.
     Abort,
     /// Makes the folder a repository.
@@ -1750,6 +1766,16 @@ pub enum GitAction {
         name: String,
         email: String,
     },
+}
+
+/// A side of a conflict, for [`GitAction::Resolve`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitSide {
+    /// The branch checked out.
+    Ours,
+    /// The branch being merged in.
+    Theirs,
 }
 
 /// What [`Call::GitRun`] did.
