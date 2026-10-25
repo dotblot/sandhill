@@ -22,6 +22,8 @@ export function LeftPane(props: {
   nav: Nav;
   project: string;
   name: string;
+  /** Opens Project settings. */
+  onSettings: () => void;
   /** Why the project can't be opened, if it can't. */
   missing?: string;
   activePath?: string;
@@ -41,7 +43,7 @@ export function LeftPane(props: {
   return (
     <aside class="left-pane" style={{ width: `${props.width}px` }}>
       <div class="pane-head proj-head">
-        <ProjectButton ws={ws} nav={props.nav} project={props.project} name={props.name} />
+        <ProjectButton ws={ws} nav={props.nav} project={props.project} name={props.name} onSettings={props.onSettings} />
         <span class="spacer" />
         <NewMenu tree={props.tree} />
         <SortMenu tree={props.tree} />
@@ -80,7 +82,7 @@ export function LeftPane(props: {
  * projects, and picking one switches the window to it, like picking a
  * machine. Opening or making another goes to the Start screen.
  */
-function ProjectButton(props: { ws: Workspace; nav: Nav; project: string; name: string }) {
+function ProjectButton(props: { ws: Workspace; nav: Nav; project: string; name: string; onSettings: () => void }) {
   const [open, setOpen] = createSignal(false);
   const [recent, { refetch }] = createResource(open, () =>
     props.ws.call<ProjectInfo[]>("list_recent_projects").catch(() => [] as ProjectInfo[]),
@@ -156,6 +158,11 @@ function ProjectButton(props: { ws: Workspace; nav: Nav; project: string; name: 
             )}
           </For>
           <div class="mm-sep" />
+          <button class="mm-i" role="menuitem" onClick={() => go(props.onSettings)}>
+            <Icon name="gear" small />
+            <span>Project settings…</span>
+            <kbd />
+          </button>
           <button class="mm-i" role="menuitem" onClick={() => go(props.nav.showStart)}>
             <Icon name="folder" small />
             <span>Open project…</span>

@@ -274,7 +274,7 @@ async fn antigravity_works_through_the_chat() {
         eprintln!("skipping: python3 is not installed");
         return;
     }
-    if sandhill_daemon::kernel::find_kernelspec("python3")
+    if sandhill_daemon::kernel::find_kernelspec("python3", None)
         .await
         .is_err()
     {

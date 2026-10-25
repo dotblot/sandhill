@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Backend } from "../backend";
-import type { KernelspecInfo, SessionInfo } from "../backend/types";
+import type { KernelspecInfo, ProjectSetup, SessionInfo } from "../backend/types";
 import { type KernelWanted, Workspace } from "../model/workspace";
 import { DocKernels } from "./kernels";
 
@@ -11,14 +11,15 @@ const SPECS: KernelspecInfo[] = [
 ];
 
 /** A daemon that starts sessions instantly and counts them. */
-function fakeDaemon(sessions: SessionInfo[] = []) {
+function fakeDaemon(sessions: SessionInfo[] = [], setup?: ProjectSetup) {
   let next = 0;
   const started: string[] = [];
   const backend: Backend = {
     host: "local",
     async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
       if (method === "list_sessions") return sessions.map((s) => ({ ...s })) as T;
-      if (method === "list_kernelspecs") return SPECS as T;
+      if (method === "list_kernelspecs" || method === "list_project_kernelspecs") return SPECS as T;
+      if (method === "get_project_settings") return (setup ?? null) as T;
       if (method === "start_session") {
         const spec = SPECS.find((k) => k.name === params.kernel)!;
         const info: SessionInfo = {
@@ -55,15 +56,21 @@ function fakeDaemon(sessions: SessionInfo[] = []) {
   return { backend, sessions, started };
 }
 
-async function workspace(sessions?: SessionInfo[]) {
-  const daemon = fakeDaemon(sessions);
+async function workspace(sessions?: SessionInfo[], setup?: ProjectSetup) {
+  const daemon = fakeDaemon(sessions, setup);
   const ws = new Workspace(daemon.backend, "/p");
   await ws.refreshKernelspecs();
   await ws.refreshSessions();
+  await ws.refreshSetup();
   return { ws, ...daemon };
 }
 
-const doc = (ws: Workspace, dir = "/p", wanted?: KernelWanted) => new DocKernels(ws, dir, () => wanted);
+/** A project whose settings say `settings`, and whose kernels are as given. */
+function projectSetup(settings: Partial<ProjectSetup["settings"]>, kernels: { r?: string; python?: string } = {}): ProjectSetup {
+  return { settings: { documents: "document", env_files: [".env"], ...settings }, saved: true, found: [], ...kernels };
+}
+
+const doc = (ws: Workspace, dir = "/p", wanted?: KernelWanted) => new DocKernels(ws, () => dir, () => wanted);
 
 function running(id: string, kernel: string, extra: Partial<SessionInfo> = {}): SessionInfo {
   const language = SPECS.find((k) => k.name === kernel)!.language;
@@ -129,6 +136,33 @@ describe("DocKernels", () => {
     // A file that names no kernel joins whichever ran last.
     await ws.execute(id, "1");
     expect(await doc(ws).ensure("python")).toBe(id);
+  });
+
+  it("runs the project's kernel, over the one a notebook names", async () => {
+    const setup = projectSetup({ python: "conda-env-omicverse-py" }, { python: "conda-env-omicverse-py" });
+    const { ws } = await workspace([running("base", "python3")], setup);
+    const notebook = doc(ws, "/p", { name: "python3", display_name: "Python 3 (ipykernel)" });
+    const id = await notebook.ensure("python");
+    expect(id).not.toBe("base");
+    expect(ws.sessions().find((s) => s.id === id)?.kernel).toBe("conda-env-omicverse-py");
+    // R isn't set: the usual kernel.
+    const r = await notebook.ensure("r");
+    expect(ws.sessions().find((s) => s.id === r)?.kernel).toBe("ark");
+  });
+
+  it("runs documents in the project's folder when the project says so", async () => {
+    const { ws } = await workspace([], projectSetup({ documents: "project" }));
+    expect(ws.documentFolder("/p/analysis")).toBe("/p");
+    const id = await new DocKernels(ws, () => ws.documentFolder("/p/analysis")).ensure("python");
+    expect(ws.sessions().find((s) => s.id === id)?.cwd).toBe("/p");
+    const other = await workspace([], projectSetup({ documents: "document" }));
+    expect(other.ws.documentFolder("/p/analysis")).toBe("/p/analysis");
+  });
+
+  it("says so when the project's kernel isn't installed here", async () => {
+    const { ws, started } = await workspace([], projectSetup({ python: "conda-env-gone-py" }, { python: "conda-env-gone-py" }));
+    await expect(doc(ws).ensure("python")).rejects.toThrow(/conda-env-gone-py \(set in \.sandhill\/project\.toml\)/);
+    expect(started).toEqual([]);
   });
 
   it("starts a separate session when asked for a new one", async () => {

@@ -25,6 +25,7 @@ import {
 } from "../backend/types";
 import { SessionConsole } from "../console/sessionConsole";
 import { type Doc, docKind } from "../docs/doc";
+import { missingKernel } from "../docs/kernels";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
 import { ScriptDoc } from "../docs/scriptDoc";
@@ -38,7 +39,7 @@ import { viewPath } from "../model/table";
 import { fromNotebook, isScript } from "../model/runs";
 import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
-import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
+import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane } from "./AgentsPane";
 import { ConnectionItem, connState } from "./Connection";
@@ -56,6 +57,7 @@ import { type Command, Palette } from "./Palette";
 import { type Pane, PaneButtons } from "./PaneButtons";
 import { PackagesPane } from "./PackagesPane";
 import { PlotsPane } from "./PlotsPane";
+import { ProjectSettingsDialog, worthAsking } from "./ProjectSettings";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
 import { type EditButtons, EditCapsule, TitleBar, ToolbarCapsule } from "./TitleBar";
 import { VariablesPane } from "./VariablesPane";
@@ -143,6 +145,10 @@ export function App(props: {
   const hosts = new Map<Doc, HTMLElement>();
   let docArea!: HTMLDivElement;
   const [restored, setRestored] = createSignal(false);
+  /** Project settings were offered once already, so they aren't offered unasked again. */
+  const [setupAsked, setSetupAsked] = createSignal(false);
+  /** The Project settings dialog, asked unprompted ("first") or from a menu. */
+  const [settingsDialog, setSettingsDialog] = createSignal<"first" | "menu">();
   /** Shown outputs of documents that are not open, as the project state keeps them. */
   let shownOutputs: Record<string, string[]> = {};
 
@@ -257,6 +263,7 @@ export function App(props: {
       }
       setMissing(undefined);
       const state = project.state ?? takeLegacyState(props.project);
+      setSetupAsked(!!state.setupAsked);
       shownOutputs = state.outputs ?? {};
       for (const path of state.tabs ?? []) await open(path, true);
       const last = docs().find((d) => d.path === state.active);
@@ -279,6 +286,22 @@ export function App(props: {
     const front = extras().find((t) => t.id === state.activeExtra);
     if (front && !openedWhileRestoring) setActiveExtra(front);
   }
+
+  // The first time the project opens with a choice of R or Python to make, ask it once.
+  createEffect(() => {
+    const setup = ws.setup();
+    if (!restored() || !setup || setupAsked() || untrack(settingsDialog)) return;
+    if (worthAsking(setup, ws.kernelspecs())) setSettingsDialog("first");
+  });
+  const showSettings = () => {
+    ws.refreshSetup()
+      .then(() => setSettingsDialog("menu"))
+      .catch((err) => notify(`Could not read the project's settings: ${message(err)}`));
+  };
+  const closeSettings = () => {
+    setSettingsDialog(undefined);
+    setSetupAsked(true);
+  };
 
   // Agents and shells the daemon keeps for this project, followed from each connection.
   const terminals = new TerminalStore(ws.backend, props.project);
@@ -307,7 +330,14 @@ export function App(props: {
           ? { kind: "table", session: tab.session, language: tab.language, path: tab.path }
           : { kind: "diff", repo: tab.repo, file: tab.file, staged: tab.staged, sha: tab.sha },
     );
-    return { tabs: docs().map((d) => d.path), active: active()?.path, outputs, extras: saved, activeExtra: activeExtra()?.id };
+    return {
+      tabs: docs().map((d) => d.path),
+      active: active()?.path,
+      outputs,
+      extras: saved,
+      activeExtra: activeExtra()?.id,
+      setupAsked: setupAsked() || undefined,
+    };
   };
   const saveState = () => {
     clearTimeout(saveTimer);
@@ -476,8 +506,8 @@ export function App(props: {
       setConsolePick(running.id);
       return;
     }
-    const spec = pickKernel(ws.kernelspecs(), language) ?? pickKernel(await ws.refreshKernelspecs(), language);
-    if (!spec) return notify(`No ${languageLabel(language)} kernel was found where sandhilld runs.`);
+    const spec = ws.pick(language) ?? ws.pick(language, undefined, await ws.refreshKernelspecs());
+    if (!spec) return notify(missingKernel(ws, language));
     const info = await ws.startShared(spec.name, props.project);
     markUsed(info.id);
     setForeground(info.id);
@@ -766,9 +796,9 @@ export function App(props: {
   /** A new notebook is in the language the project's kernels run, or Python. */
   function notebookText(): string {
     const live = ws.liveSessions().filter((s) => s.project === props.project);
-    const language = live.at(-1)?.language ?? (pickKernel(ws.kernelspecs(), "python") ? "python" : "r");
+    const language = live.at(-1)?.language ?? (ws.pick("python") ? "python" : "r");
     const joining = ws.sessionToJoin(language, root())?.kernel;
-    const kernel = ws.kernelspecs().find((k) => k.name === joining) ?? pickKernel(ws.kernelspecs(), language);
+    const kernel = ws.kernelspecs().find((k) => k.name === joining) ?? ws.pick(language);
     return serializeNotebook(newNotebook(kernel));
   }
   /** Starts naming a new file or folder in the tree, showing the left pane if need be. */
@@ -1005,6 +1035,7 @@ export function App(props: {
             ws={ws}
             project={props.project}
             name={name}
+            onSettings={showSettings}
             missing={missing()}
             activePath={active()?.path}
             refreshKey={treeKey()}
@@ -1347,8 +1378,12 @@ export function App(props: {
           onNotebookConsole={toggleNotebookConsole}
           notebookPlots={notebookPlots()}
           onNotebookPlots={toggleNotebookPlots}
+          onSettings={showSettings}
           onClose={() => setMenu(false)}
         />
+      </Show>
+      <Show when={settingsDialog() && ws.setup()}>
+        {(setup) => <ProjectSettingsDialog ws={ws} setup={setup()} name={name} first={settingsDialog() === "first"} onClose={closeSettings} />}
       </Show>
       <Show when={palette()}>
         <Palette
@@ -1376,6 +1411,7 @@ function MainMenu(props: {
   onNotebookConsole: () => void;
   notebookPlots: boolean;
   onNotebookPlots: () => void;
+  onSettings: () => void;
   onClose: () => void;
 }) {
   const [recent] = createResource(() =>
@@ -1417,6 +1453,8 @@ function MainMenu(props: {
         <div class="mm-h">Recent on {hostName(props.ws.backend.host)}</div>
         <For each={recent()}>{(p) => item("folder", p.name, "", () => props.nav.openProject(props.ws.backend.host, p.path))}</For>
       </Show>
+      <div class="mm-sep" />
+      {item("gear", "Project settings…", "", props.onSettings)}
       <div class="mm-sep" />
       {item(props.consoleOn ? "check" : undefined, "Show console", "⌘J", props.onConsole)}
       <div class="mm-sep" />

@@ -1,7 +1,7 @@
 //! The daemon: owns every session and serves clients over a byte stream.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 use crate::blobs::BlobStore;
 use crate::journal::Journal;
 use crate::paths::StateDir;
-use crate::session::SessionHandle;
+use crate::session::{self, SessionHandle};
 use crate::windows::Windows;
 use crate::{
     cells, fileops, files, help, memory, notebook, outputs, packages, projects, redraw, sidecar,
@@ -273,7 +273,13 @@ impl Daemon {
                 started_ms: self.started_ms,
                 started_by: self.options.started_by.clone(),
             })?,
-            Call::ListKernelspecs => serde_json::to_value(crate::kernel::list_kernelspecs().await)?,
+            Call::ListKernelspecs => {
+                serde_json::to_value(crate::kernel::list_kernelspecs(None).await)?
+            }
+            Call::ListProjectKernelspecs { path } => {
+                let root = PathBuf::from(projects::normalize(&path)?);
+                serde_json::to_value(crate::kernel::list_kernelspecs(Some(root)).await)?
+            }
             Call::StartSession {
                 kernel,
                 cwd,
@@ -288,12 +294,19 @@ impl Daemon {
                 if !cwd.is_dir() {
                     anyhow::bail!("{} is not a directory", cwd.display());
                 }
+                let project = project.map(|p| projects::normalize(&p)).transpose()?;
+                let env = match project.clone() {
+                    Some(root) => {
+                        blocking(move || Ok(projects::kernel_env(Path::new(&root)))).await?
+                    }
+                    None => Vec::new(),
+                };
                 let handle = SessionHandle::start(
                     self.journal.clone(),
                     &self.state.kernels_dir(),
                     &kernel,
                     &cwd,
-                    project.map(|p| projects::normalize(&p)).transpose()?,
+                    session::Start { project, env },
                 )
                 .await?;
                 let id = handle.id.clone();
@@ -752,6 +765,23 @@ impl Daemon {
                 })
                 .await?;
                 Value::Null
+            }
+            Call::GetProjectSettings { path } => {
+                let root = PathBuf::from(projects::normalize(&path)?);
+                serde_json::to_value(blocking(move || Ok(projects::setup(&root))).await?)?
+            }
+            Call::SaveProjectSettings { path, settings } => {
+                let root = PathBuf::from(projects::normalize(&path)?);
+                if !root.is_dir() {
+                    anyhow::bail!("{} is not a folder", root.display());
+                }
+                serde_json::to_value(
+                    blocking(move || {
+                        projects::settings::write(&root, &settings)?;
+                        Ok(projects::setup(&root))
+                    })
+                    .await?,
+                )?
             }
             Call::ForgetProject { path } => {
                 let journal = self.journal.clone();

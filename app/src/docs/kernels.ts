@@ -19,7 +19,8 @@ export class DocKernels {
 
   constructor(
     private ws: Workspace,
-    private cwd: string,
+    /** Where its sessions run, which a project setting can change. */
+    private cwd: () => string,
     /** Kernel the document asks for, e.g. a notebook's kernelspec. */
     private preferred: (language: string) => KernelWanted | undefined = () => undefined,
   ) {
@@ -51,7 +52,7 @@ export class DocKernels {
     if (existing) return Promise.resolve(existing);
     const pending = this.starting.get(lang);
     if (pending) return pending;
-    const join = this.ws.sessionToJoin(lang, this.cwd, this.namedKernel(lang));
+    const join = this.ws.sessionToJoin(lang, this.cwd(), this.namedKernel(lang));
     if (join) {
       this.assign(lang, join.id);
       return Promise.resolve(join.id);
@@ -96,24 +97,33 @@ export class DocKernels {
   /** Starts a kernel; `shared` ones are for other documents to join too. */
   private async start(language: string, kernel?: string, shared = false): Promise<string> {
     const find = (specs: KernelspecInfo[]) =>
-      kernel ? specs.find((k) => k.name === kernel) : pickKernel(specs, language, this.preferred(language));
+      kernel ? specs.find((k) => k.name === kernel) : this.ws.pick(language, this.preferred(language), specs);
     // The user may have installed a kernel since the app connected.
     const spec = find(this.ws.kernelspecs()) ?? find(await this.ws.refreshKernelspecs());
-    if (!spec) throw new Error(missingKernel(language));
-    const info = shared ? await this.ws.startShared(spec.name, this.cwd) : await this.ws.startSession(spec.name, this.cwd);
+    if (!spec) throw new Error(missingKernel(this.ws, language));
+    const cwd = this.cwd();
+    const info = shared ? await this.ws.startShared(spec.name, cwd) : await this.ws.startSession(spec.name, cwd);
     this.assign(language, info.id);
     return info.id;
   }
 
-  /** The kernel the document names for `language`, if it names one. */
+  /** The kernel the project or else the document names for `language`, if one does. */
   private namedKernel(language: string): string | undefined {
+    const project = this.ws.projectKernel(language);
+    if (project) return project;
     const wanted = this.preferred(language);
     if (!wanted?.name && !wanted?.display_name) return undefined;
     return pickKernel(this.ws.kernelspecs(), language, wanted)?.name;
   }
 }
 
-function missingKernel(language: string): string {
+/** Why no kernel for `language` can start, and what to do. */
+export function missingKernel(ws: Workspace, language: string): string {
+  const named = ws.projectKernel(language);
+  if (named) {
+    const name = language === "r" ? "R" : language === "python" ? "Python" : language;
+    return `This project runs ${name} in the kernel ${named} (set in .sandhill/project.toml), which isn't installed here. Pick another in Project settings, in the ☰ menu.`;
+  }
   if (language === "python") {
     return "No Python kernel was found. Install ipykernel in the environment you use (for conda: conda install -n <env> ipykernel) and run again.";
   }

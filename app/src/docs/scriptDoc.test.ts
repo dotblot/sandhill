@@ -24,6 +24,7 @@ function fakeWorkspace(journal: CellOutputs[] = []) {
         case "file_outputs":
           return { file: "/p/a.R", cells: journal, seq: 0 } as T;
         case "list_kernelspecs":
+        case "list_project_kernelspecs":
           return [{ name: "ark", display_name: "R (Ark)", language: "R" }] as T;
         case "list_sessions":
           return sessions as T;

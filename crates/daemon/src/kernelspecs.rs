@@ -11,7 +11,10 @@
 //!   activates), whose kernels keep their usual names such as `python3`;
 //! - every conda and mamba environment, named the way nb_conda_kernels does
 //!   (`conda-env-<env>-py`, `conda-env-<env>-r`);
-//! - pyenv versions (`pyenv-<version>-py`).
+//! - pyenv versions (`pyenv-<version>-py`);
+//! - for a project, the environments inside its folder, where uv, venv,
+//!   pixi and `conda create -p` put them (`project-venv-py` for `.venv`,
+//!   `project-pixi-default-py` for pixi's), listed first.
 //!
 //! An environment with ipykernel installed but no `kernel.json` for it (pip
 //! and conda don't always write one) still gets the `python3` kernel Jupyter
@@ -57,6 +60,8 @@ pub struct Search {
     pub version_dirs: Vec<PathBuf>,
     /// Ark as the app installs it, if it is there.
     pub ark: Option<PathBuf>,
+    /// The project folder whose own environments to look in.
+    pub project: Option<PathBuf>,
 }
 
 impl Search {
@@ -131,8 +136,71 @@ impl Search {
             conda_roots,
             version_dirs: pyenv.map(|p| p.join("versions")).into_iter().collect(),
             ark: in_home(sandhill_proto::ARK_PATH).filter(|p| p.is_file()),
+            project: None,
         }
     }
+
+    /// Also looks in the environments inside `project`'s folder.
+    pub fn in_project(self, project: Option<&Path>) -> Search {
+        Search {
+            project: project.map(Path::to_path_buf),
+            ..self
+        }
+    }
+}
+
+/// An environment inside a project's folder.
+#[derive(Debug, Clone)]
+pub struct ProjectEnv {
+    /// Its folder, like `<project>/.venv`.
+    pub prefix: PathBuf,
+    /// Where it is, relative to the project: `.venv`, `.pixi/envs/default`.
+    pub folder: String,
+    /// What its kernels' names start with, like `project-venv`.
+    pub names: String,
+    /// What it is called in kernels' names as shown: `.venv`, `pixi default`.
+    pub label: String,
+    /// Made by conda or pixi (else by venv or uv).
+    pub conda: bool,
+}
+
+/// The environments inside a project's folder: `.venv`, `venv`, `env` and
+/// `.conda` (uv, venv and `conda create -p`), then pixi's.
+pub fn project_envs(project: &Path) -> Vec<ProjectEnv> {
+    let mut envs = Vec::new();
+    for folder in [".venv", "venv", "env", ".conda"] {
+        let prefix = project.join(folder);
+        let conda = prefix.join("conda-meta").is_dir();
+        if conda || prefix.join("pyvenv.cfg").is_file() {
+            envs.push(ProjectEnv {
+                names: format!("project-{}", folder.trim_start_matches('.')),
+                label: folder.to_string(),
+                folder: folder.to_string(),
+                prefix,
+                conda,
+            });
+        }
+    }
+    for prefix in subfolders(&project.join(".pixi/envs")) {
+        if prefix.join("conda-meta").is_dir() {
+            let name = file_name(&prefix);
+            envs.push(ProjectEnv {
+                names: sanitize(&format!("project-pixi-{name}")),
+                label: format!("pixi {name}"),
+                folder: format!(".pixi/envs/{name}"),
+                prefix,
+                conda: true,
+            });
+        }
+    }
+    envs
+}
+
+/// Whether a conda environment by this name is installed.
+pub fn conda_env_exists(search: &Search, name: &str) -> bool {
+    conda_envs(search)
+        .iter()
+        .any(|prefix| conda_name(prefix) == name)
 }
 
 /// A kernel found on this machine.
@@ -304,7 +372,23 @@ fn sources(search: &Search) -> Vec<Source> {
         env: None,
         names: None,
     };
-    let mut sources: Vec<Source> = search.jupyter_path.iter().map(|d| plain(d)).collect();
+    // The project's own environments come first: they are what its files
+    // mean, whatever else is installed.
+    let mut sources: Vec<Source> = search
+        .project
+        .iter()
+        .flat_map(|root| project_envs(root))
+        .map(|env| Source {
+            data_dir: env.prefix.join("share/jupyter"),
+            names: Some(env.names),
+            env: Some(Env {
+                prefix: env.prefix,
+                name: env.label,
+                kind: if env.conda { Kind::Conda } else { Kind::Venv },
+            }),
+        })
+        .collect();
+    sources.extend(search.jupyter_path.iter().map(|d| plain(d)));
     sources.extend(search.user_dir.as_deref().map(plain));
     // Jupyter also reads the folder of the environment it runs from; the
     // closest thing here is the environment the user's shell activates.
@@ -1113,5 +1197,64 @@ mod tests {
             found[1].dir.kernelspec.argv[0],
             v.join("bin/python").to_str().unwrap()
         );
+    }
+
+    #[test]
+    fn a_projects_own_environments_come_first_under_project_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("atlas");
+        let venv = project.join(".venv");
+        python(&venv);
+        std::fs::write(venv.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
+        // pip installs ipykernel without a kernel.json in the environment.
+        let site = venv.join("lib/python3.12/site-packages");
+        std::fs::create_dir_all(&site).unwrap();
+        std::fs::write(site.join("ipykernel_launcher.py"), "").unwrap();
+        let pixi = project.join(".pixi/envs/default");
+        conda_env(&pixi);
+        kernel(
+            &pixi.join("share/jupyter"),
+            "ir",
+            json!({"argv": ["R", "--slave", "-e", "IRkernel::main()", "--args", "{connection_file}"], "display_name": "R", "language": "R"}),
+        );
+        std::fs::write(pixi.join("bin/R"), "").unwrap();
+        let user = tmp.path().join("jupyter");
+        kernel(&user, "python3", ipykernel("/usr/bin/python3"));
+        let search = Search {
+            user_dir: Some(user),
+            project: Some(project.clone()),
+            ..Search::default()
+        };
+
+        let found = discover(&search);
+        assert_eq!(
+            names(&found),
+            [
+                ("project-venv-py", false),
+                ("project-pixi-default-r", false),
+                ("project-pixi-default-py", false),
+                ("python3", false),
+            ]
+        );
+        assert_eq!(found[0].dir.kernelspec.display_name, "Python (.venv)");
+        assert_eq!(found[0].env.as_deref(), Some(".venv"));
+        assert_eq!(
+            found[0].dir.kernelspec.argv[0],
+            venv.join("bin/python3").to_str().unwrap()
+        );
+        assert_eq!(found[1].dir.kernelspec.display_name, "R (pixi default)");
+        assert_eq!(
+            found[1].dir.kernelspec.argv[0],
+            pixi.join("bin/R").to_str().unwrap()
+        );
+        let vars = found[1].dir.kernelspec.env.as_ref().unwrap();
+        assert_eq!(vars["CONDA_PREFIX"], pixi.to_str().unwrap());
+
+        // Without the project, they aren't there.
+        let elsewhere = discover(&Search {
+            project: None,
+            ..search
+        });
+        assert_eq!(names(&elsewhere), [("python3", false)]);
     }
 }
