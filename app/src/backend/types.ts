@@ -212,6 +212,12 @@ export interface SessionPlots {
   seq: number;
 }
 
+/** Whether a plot's session can draw it again (`redraw_plot`), and why not. */
+export interface PlotRedraw {
+  can: boolean;
+  reason?: string | null;
+}
+
 /** A session's variable, or a part of one (`list_variables`). */
 export interface Variable {
   name: string;

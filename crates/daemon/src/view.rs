@@ -15,8 +15,9 @@ pub const MIME: &str = "application/vnd.sandhill.view+json";
 const ARK_COMM: &str = "positron.dataExplorer";
 
 /// A `View` for IRkernel (Ark keeps its own), in an environment of its own
-/// on the search path, so the user's variables stay as they are.
-const R: &str = r#"tryCatch(local({
+/// on the search path, so the user's variables stay as they are. Run when a
+/// session starts (see `startup`).
+pub const R: &str = r#"tryCatch(local({
   if (is.null(getOption("jupyter.base_display_func")) || !requireNamespace("IRdisplay", quietly = TRUE)) return(invisible())
   tools <- attach(NULL, name = "tools:sandhill", warn.conflicts = FALSE)
   assign("View", function(x, title) {
@@ -29,7 +30,7 @@ const R: &str = r#"tryCatch(local({
 "#;
 
 /// `%view df`, as in Positron.
-const PYTHON: &str = r#"def _sandhill_view():
+pub const PYTHON: &str = r#"def _sandhill_view():
     try:
         from IPython import get_ipython
         from IPython.display import publish_display_data
@@ -49,15 +50,6 @@ const PYTHON: &str = r#"def _sandhill_view():
 _sandhill_view()
 del _sandhill_view
 "#;
-
-/// The code a new session runs, quietly, before anything else.
-pub fn prelude(language: &str) -> Option<&'static str> {
-    match crate::cells::normalize_language(language).as_str() {
-        "r" => Some(R),
-        "python" => Some(PYTHON),
-        _ => None,
-    }
-}
 
 /// What an IOPub message asks the app to view, if it is a `View()`: the
 /// expression, and the comm to close for Ark's.
@@ -110,8 +102,5 @@ mod tests {
         );
         let plot = json!({"data": {"image/png": "..."}, "metadata": {}});
         assert_eq!(request("display_data", &plot), None);
-        assert!(
-            prelude("R").is_some() && prelude("python3").is_some() && prelude("julia").is_none()
-        );
     }
 }

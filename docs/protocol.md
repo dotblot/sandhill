@@ -24,6 +24,7 @@ Responses can arrive out of order; match them by `id`.
 | `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?`, `by?` | `{run, msg_id}` |
 | `session_runs` | `session`, `limit?` | `{session, runs, seq}`: the session's latest runs, for its Console |
 | `session_plots` | `session`, `limit?` | `{session, plots, seq}`: the images the session's runs showed, for the Plots pane |
+| `redraw_plot` | `session`, `run`, `image?`, `index?`, `file?`, `format?`, `width?`, `height?`, `dpi?` | `{can, reason?}`: whether the session can draw the plot again, or draws it into `file` |
 | `list_variables` | `session`, `path?` | `Variables` |
 | `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
 | `table_rows` | `session`, `path`, `offset?`, `limit?`, `sort?`, `filters?` | `TableRows`: a page of a data frame or matrix, for the Data Explorer |
@@ -134,6 +135,20 @@ the code. Each is `{run, seq, ts_ms, cell?, by?, code, data, metadata}`:
 `data` is the output's MIME bundle, with images as blob references (an SVG
 under 64 KB stays inline), and `ts_ms` is when the kernel sent it. `seq` is
 where to subscribe from.
+
+`redraw_plot` draws one of a run's plots again, in the session that drew it,
+at another size. The plot is the image holding the blob `image`, else the
+`index`-th image the run showed. Ark keeps a recording of each plot it shows
+(named by the output's `transient.display_id`), and a Python session keeps its
+last 10 matplotlib figures: code run when the session starts tags each
+figure's image with `sandhill_plot` in the output's metadata. IRkernel's
+plots, plain images and ended sessions can't be drawn again; `{can: false,
+reason}` says why, as in "only Ark keeps R plots to draw them again". Without
+`file`, the call only asks. With it, the session draws the plot into `file`
+(a path, or `~/...`; its folder is made) as `format` (`png`, `svg` or `pdf`),
+`width` × `height` inches (0.5 to 100) at `dpi` (36 to 2400, for PNG), out of
+sight, so nothing shows in the Console or the Plots pane. It fails while the
+session is busy.
 
 `list_variables` runs a quiet snippet in the session and returns `Variables`:
 `{session, path, variables: [{name, kind, class, size?, children, table,

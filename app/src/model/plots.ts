@@ -30,9 +30,12 @@ export interface PlotItem {
   height?: number;
 }
 
-export type PlotFormat = "png" | "svg" | "jpeg" | "gif";
+export type PlotFormat = "png" | "svg" | "pdf" | "jpeg" | "gif";
 
-export const EXTENSIONS: Record<PlotFormat, string> = { png: "png", svg: "svg", jpeg: "jpg", gif: "gif" };
+export const EXTENSIONS: Record<PlotFormat, string> = { png: "png", svg: "svg", pdf: "pdf", jpeg: "jpg", gif: "gif" };
+
+/** What a plot its session can draw again is saved as, at any size. */
+export const REDRAW_FORMATS: PlotFormat[] = ["png", "svg", "pdf"];
 
 /** Sizes to save an SVG plot at, in pixels at 300 dpi. */
 export const PLOT_SIZES = [
@@ -180,6 +183,16 @@ export function plotFormats(item: PlotItem): PlotFormat[] {
     default:
       return ["png"];
   }
+}
+
+/**
+ * Which plot this is to the daemon, to draw it again (`redraw_plot`): the
+ * blob of one of its images, and else its place among its run's plots.
+ */
+export function redrawTarget(item: PlotItem, all: PlotItem[]): { image?: string; index: number } {
+  const blob = Object.values(item.images).find(isBlobRef);
+  const index = all.filter((p) => p.run === item.run).findIndex((p) => p.key === item.key);
+  return { image: blob?.sandhill_blob, index: Math.max(0, index) };
 }
 
 /** Keeps a typed width or height in range; NaN gives `fallback`. */

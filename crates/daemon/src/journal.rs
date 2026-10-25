@@ -549,6 +549,18 @@ impl Journal {
         Ok(())
     }
 
+    /// The session a run ran in, if the journal has the run.
+    pub fn run_session(&self, run_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT session_id FROM runs WHERE id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     pub fn run_events(&self, run_id: &str, max_seq: i64) -> Result<Vec<(String, Value)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

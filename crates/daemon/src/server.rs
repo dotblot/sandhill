@@ -11,8 +11,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
     Blob, Call, CellEdited, Event, FileWritten, HelpPage, HelpSource, HelpTopics, HistoryPage,
-    Outcome, PROTOCOL_VERSION, Packages, PingReply, Request, ServerMessage, SessionStatus,
-    Subscribed, TableRows, TableSummary, Variables,
+    Outcome, PROTOCOL_VERSION, Packages, PingReply, PlotRedraw, Request, ServerMessage,
+    SessionStatus, Subscribed, TableRows, TableSummary, Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -26,8 +26,8 @@ use crate::paths::StateDir;
 use crate::session::SessionHandle;
 use crate::windows::Windows;
 use crate::{
-    cells, fileops, files, help, memory, notebook, outputs, packages, projects, sidecar, tables,
-    variables, windows,
+    cells, fileops, files, help, memory, notebook, outputs, packages, projects, redraw, sidecar,
+    tables, variables, windows,
 };
 
 const REPLAY_PAGE: u32 = 500;
@@ -539,6 +539,29 @@ impl Daemon {
             Call::GitWriteMessage { path, agent } => {
                 serde_json::to_value(crate::git::write_message(&path, agent.as_deref()).await?)?
             }
+            Call::RedrawPlot {
+                session,
+                run,
+                image,
+                index,
+                file,
+                format,
+                width,
+                height,
+                dpi,
+            } => {
+                let save = file.as_deref().map(|file| redraw::Save {
+                    file,
+                    format: &format,
+                    width,
+                    height,
+                    dpi,
+                });
+                serde_json::to_value(
+                    self.redraw_plot(&session, &run, image.as_deref(), index, save)
+                        .await?,
+                )?
+            }
             Call::TableExport {
                 session,
                 path,
@@ -1025,6 +1048,71 @@ impl Daemon {
             bail!("could not {what}: {error}");
         }
         Ok(printed)
+    }
+
+    /// Draws a plot again into `save`'s file, or says whether it can.
+    async fn redraw_plot(
+        &self,
+        session: &str,
+        run: &str,
+        image: Option<&str>,
+        index: u32,
+        save: Option<redraw::Save<'_>>,
+    ) -> Result<PlotRedraw> {
+        let cannot = |reason: &str| PlotRedraw {
+            can: false,
+            reason: Some(reason.to_string()),
+        };
+        let info = self.session_info(session)?;
+        if self.live(session).is_err() {
+            return Ok(cannot("its session has ended"));
+        }
+        if self.journal.run_session(run)?.as_deref() != Some(session) {
+            return Ok(cannot("it isn't from this session"));
+        }
+        let events = self.journal.run_events(run, i64::MAX)?;
+        let plot = match redraw::find(&events, &info.language, image, index as usize) {
+            Ok(plot) => plot,
+            Err(reason) => return Ok(cannot(&reason)),
+        };
+        let Some(save) = save else {
+            return Ok(PlotRedraw {
+                can: true,
+                reason: None,
+            });
+        };
+        if !redraw::FORMATS.contains(&save.format) {
+            bail!("a plot can't be saved as {}", save.format);
+        }
+        let sizes = 0.5..=100.0;
+        if !sizes.contains(&save.width)
+            || !sizes.contains(&save.height)
+            || !(36..=2400).contains(&save.dpi)
+        {
+            bail!("a plot can't be saved at that size");
+        }
+        let resolved = files::resolve(save.file)?;
+        if let Some(dir) = resolved.parent() {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("could not make the folder for {}", save.file))?;
+        }
+        let file = resolved.to_string_lossy();
+        let save = redraw::Save {
+            file: &file,
+            ..save
+        };
+        let printed = self
+            .quietly(session, "draw the plot again", |_| {
+                Some(redraw::code(&plot, &save))
+            })
+            .await?;
+        if !redraw::saved(&printed.stdout) {
+            bail!("could not draw the plot again: nothing was written");
+        }
+        Ok(PlotRedraw {
+            can: true,
+            reason: None,
+        })
     }
 
     fn live(&self, session: &str) -> Result<Arc<SessionHandle>> {

@@ -92,6 +92,31 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
+    /// Draws a plot again, in the kernel that drew it, and saves it to
+    /// `file` at `width` × `height` inches (and `dpi`, for a PNG): the image
+    /// of `run` holding the blob `image`, else its `index`-th image. Ark
+    /// keeps a recording of each plot and Python sessions keep their
+    /// matplotlib figures, so those can; IRkernel's plots can't. Without
+    /// `file`, only says whether it can. `format` is `png`, `svg` or `pdf`.
+    /// Returns [`PlotRedraw`].
+    RedrawPlot {
+        session: String,
+        run: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image: Option<String>,
+        #[serde(default)]
+        index: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<String>,
+        #[serde(default)]
+        format: String,
+        #[serde(default)]
+        width: f64,
+        #[serde(default)]
+        height: f64,
+        #[serde(default)]
+        dpi: u32,
+    },
     /// Lists a session's variables, or the parts of one: `path` is a
     /// variable's name, then the names of its parts as they were listed
     /// (a data frame's columns, an AnnData's `obs`). Runs a short piece of
@@ -1146,6 +1171,14 @@ pub struct SessionPlots {
     pub plots: Vec<Plot>,
     /// The journal position these plots reflect.
     pub seq: i64,
+}
+
+/// Whether a plot can be drawn again, and why not.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PlotRedraw {
+    pub can: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// An image a run showed.

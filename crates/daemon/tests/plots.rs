@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
-use sandhill_proto::{BLOB_KEY, Call, CellRef, EVENT_RUN_FINISHED, FileWritten, RunStarted};
+use sandhill_proto::{
+    BLOB_KEY, Call, CellRef, EVENT_RUN_FINISHED, FileWritten, PlotRedraw, RunStarted,
+};
 use tokio::net::UnixListener;
 
 const TIMEOUT: Duration = Duration::from_secs(90);
@@ -191,4 +193,179 @@ async fn r_plots_show_up() {
     );
     assert_eq!(plots[0].code, "plot(x, x^2)");
     client.shutdown(&session).await.unwrap();
+}
+
+/// Asks the daemon to draw a session's plot again: whether it can, with no
+/// `file`; else into `file`, `width` × `height` inches at `dpi`.
+async fn redraw(
+    client: &mut Client,
+    session: &str,
+    plot: &sandhill_proto::Plot,
+    file: Option<&Path>,
+    format: &str,
+    (width, height, dpi): (f64, f64, u32),
+) -> sandhill_proto::client::Result<PlotRedraw> {
+    let image = plot.data.as_object().and_then(|data| {
+        data.values()
+            .find_map(|v| v[BLOB_KEY].as_str().map(str::to_string))
+    });
+    client
+        .call(Call::RedrawPlot {
+            session: session.into(),
+            run: plot.run.clone(),
+            image,
+            index: 0,
+            file: file.map(|f| f.to_string_lossy().into_owned()),
+            format: format.into(),
+            width,
+            height,
+            dpi,
+        })
+        .await
+}
+
+/// A PNG's width and height, from its header.
+fn png_size(path: &Path) -> (u32, u32) {
+    let bytes = std::fs::read(path).unwrap();
+    assert!(
+        bytes.starts_with(b"\x89PNG"),
+        "{} is not a PNG",
+        path.display()
+    );
+    let at = |i: usize| u32::from_be_bytes(bytes[i..i + 4].try_into().unwrap());
+    (at(16), at(20))
+}
+
+#[tokio::test]
+async fn plots_are_drawn_again_at_a_new_size() {
+    let mut kernels = Vec::new();
+    for kernel in ["python3", "ark", "ir"] {
+        if have_kernel(kernel).await {
+            kernels.push(kernel);
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    for kernel in kernels {
+        let session = client.start_session(kernel, None).await.unwrap().id;
+        let (plot, other) = if kernel == "python3" {
+            (
+                "import matplotlib.pyplot as plt\nplt.plot([1, 3, 2])\nplt.show()".to_string(),
+                format!(
+                    "import base64\nfrom IPython.display import Image, display\ndisplay(Image(base64.b64decode('{PNG}')))"
+                ),
+            )
+        } else {
+            ("plot(1:10)".to_string(), String::new())
+        };
+        run(&mut client, &session, &plot, None, None, false).await;
+        let plots = client.session_plots(&session, None).await.unwrap().plots;
+        if kernel == "python3" && plots.is_empty() {
+            eprintln!("skipping Python: matplotlib is not installed");
+            client.shutdown(&session).await.unwrap();
+            continue;
+        }
+        assert_eq!(plots.len(), 1, "{kernel}: {plots:#?}");
+        let asked = redraw(&mut client, &session, &plots[0], None, "png", (0.0, 0.0, 0))
+            .await
+            .unwrap();
+        if kernel == "ir" {
+            assert_eq!(
+                asked,
+                PlotRedraw {
+                    can: false,
+                    reason: Some("only Ark keeps R plots to draw them again".into())
+                }
+            );
+            client.shutdown(&session).await.unwrap();
+            continue;
+        }
+        assert!(asked.can, "{kernel}: {asked:?}");
+
+        let png = dir.path().join(format!("{kernel}/figures/plot.png"));
+        let saved = redraw(
+            &mut client,
+            &session,
+            &plots[0],
+            Some(&png),
+            "png",
+            (6.0, 4.0, 100),
+        )
+        .await
+        .unwrap();
+        assert!(saved.can, "{kernel}: {saved:?}");
+        assert_eq!(png_size(&png), (600, 400), "{kernel}");
+        // Again, bigger: the plot's own size was put back in between.
+        redraw(
+            &mut client,
+            &session,
+            &plots[0],
+            Some(&png),
+            "png",
+            (3.0, 2.0, 300),
+        )
+        .await
+        .unwrap();
+        assert_eq!(png_size(&png), (900, 600), "{kernel}");
+        let svg = dir.path().join(format!("{kernel}/plot.svg"));
+        redraw(
+            &mut client,
+            &session,
+            &plots[0],
+            Some(&svg),
+            "svg",
+            (6.0, 4.0, 100),
+        )
+        .await
+        .unwrap();
+        assert!(
+            std::fs::read_to_string(&svg).unwrap().contains("<svg"),
+            "{kernel}"
+        );
+        let pdf = dir.path().join(format!("{kernel}/plot.pdf"));
+        redraw(
+            &mut client,
+            &session,
+            &plots[0],
+            Some(&pdf),
+            "pdf",
+            (6.0, 4.0, 100),
+        )
+        .await
+        .unwrap();
+        assert!(
+            std::fs::read(&pdf).unwrap().starts_with(b"%PDF"),
+            "{kernel}"
+        );
+        // The drawing ran out of sight: the session shows no new plots.
+        let after = client.session_plots(&session, None).await.unwrap().plots;
+        assert_eq!(after.len(), 1, "{kernel}: {after:#?}");
+
+        if kernel == "python3" {
+            // A plain image is no figure.
+            run(&mut client, &session, &other, None, None, false).await;
+            let plots = client.session_plots(&session, None).await.unwrap().plots;
+            let asked = redraw(&mut client, &session, &plots[1], None, "png", (0.0, 0.0, 0))
+                .await
+                .unwrap();
+            assert_eq!(
+                asked.reason.as_deref(),
+                Some("only matplotlib figures can be drawn again in Python")
+            );
+            // Out of range sizes are refused.
+            let err = redraw(
+                &mut client,
+                &session,
+                &plots[0],
+                Some(&png),
+                "png",
+                (600.0, 4.0, 100),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains("at that size"), "{err}");
+        }
+        client.shutdown(&session).await.unwrap();
+    }
 }
