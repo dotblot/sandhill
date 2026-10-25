@@ -1,7 +1,8 @@
-/* Sandhill's look, from the UI mockup (draft 17, docs/design/ui/): glass
-   panes 3px apart on a warm wall, the left pane directly on the wall under a
-   toolbar, one 12px corner radius, 13px text (the macOS standard size) and
-   13px code in Maple Mono NF, with 11px kernel and resource rows. */
+/* Sandhill's look, from the UI mockup (drafts 17 to 35, docs/design/ui/):
+   glass panes 3px apart on a warm wall under a 31px title bar of capsules,
+   the left pane directly on the wall, one 12px corner radius, 13px text (the
+   macOS standard size) and 13px code in Maple Mono NF, with 11px kernel and
+   resource rows. */
 
 :root {
   --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
@@ -11,9 +12,12 @@
   --fs-small: 11px;
   /* One corner radius for every rounded thing in the window */
   --r: 12px;
-  /* Where the toolbar starts and ends; on a Mac the window buttons come first. */
-  --tb-left: 12px;
-  --tb-right: calc(var(--tb-left) + 5 * 28px + 4 * 2px);
+  /* Where the title bar's first capsule starts; on a Mac the window buttons come first. */
+  --tb-left: 6px;
+  /* Title bar capsules: a grey tint with a hairline edge; the picked tab in them is raised. */
+  --cap-bg: color-mix(in srgb, var(--text) 6%, color-mix(in srgb, var(--bg) 40%, transparent));
+  --cap-edge: rgba(60, 40, 20, 0.16);
+  --cap-on: var(--bg);
 
   --bg: #ffffff;
   --chrome: #eeebe7;
@@ -110,6 +114,9 @@
     --glass-edge: rgba(0, 0, 0, 0.55);
     --pane-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 30px -12px rgba(0, 0, 0, 0.7);
     --pop-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.7);
+    --cap-bg: rgba(255, 255, 255, 0.06);
+    --cap-edge: rgba(255, 255, 255, 0.1);
+    --cap-on: rgba(255, 255, 255, 0.13);
   }
 }
 
@@ -164,33 +171,64 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .menu, .main-menu, .res-pop, .pal-card, .kpop, .apop { font-size: var(--fs-small); }
 :is(.menu, .main-menu, .res-pop, .kpop, .apop) .ico { width: 13px; height: 13px; }
 
-/* The project window: panes reach the top, 3px from every edge and from each
-   other; the status bar runs along the bottom. */
-.window { height: 100%; display: grid; grid-template-rows: minmax(0, 1fr) 26px; grid-template-columns: minmax(0, 1fr); position: relative; }
+/* A window holds a project per machine tab; the ones not shown stay laid out, unseen. */
+.workbench { height: 100%; position: relative; }
+.place { position: absolute; inset: 0; }
+.place.away { visibility: hidden; pointer-events: none; }
+
+/* A project: the title bar, the panes 3px from every edge and from each
+   other, and the status bar along the bottom. */
+.window { height: 100%; display: grid; grid-template-rows: 31px minmax(0, 1fr) 26px; grid-template-columns: minmax(0, 1fr); position: relative; }
 .window-body { display: flex; min-height: 0; padding: 3px 3px 0 0; position: relative; }
 .window.left-hidden .window-body { padding-left: 3px; }
 
-/* The toolbar floats over the top of the left pane, after the window buttons. */
-.toolbar { position: absolute; top: 0; left: 0; height: 34px; z-index: 8; display: flex; align-items: center; gap: 2px; padding-left: var(--tb-left); -webkit-user-select: none; user-select: none; }
-.tbi { width: 28px; height: 26px; display: grid; place-items: center; border-radius: var(--r); color: var(--muted); position: relative; }
-.tbi .ico { width: 17px; height: 17px; }
+/* The title bar: the toolbar capsule after the window buttons, the machine
+   tabs centred in the window, the edit capsule at the right. Capsules are
+   25px, fully rounded, 6px below the top edge. No backdrop blur: over the
+   smooth wall it would change nothing you can see. */
+.titlebar { position: relative; z-index: 8; height: 31px; display: flex; align-items: center; gap: 6px; padding: 6px 6px 0 var(--tb-left); -webkit-user-select: none; user-select: none; min-width: 0; }
+.cap { display: flex; align-items: center; flex: none; height: 25px; padding: 0 2px; border-radius: 999px; background: var(--cap-bg); box-shadow: inset 0 0 0 0.5px var(--cap-edge), 0 1px 3px rgba(0, 0, 0, 0.07); }
+.capdiv { width: 1px; height: 14px; margin: 0 3px; flex: none; background: color-mix(in srgb, var(--text) 16%, transparent); }
+.tbi { width: 28px; height: 21px; display: grid; place-items: center; border-radius: 999px; color: var(--muted); position: relative; }
+.tbi .ico { width: 16px; height: 16px; }
 .tbi:hover { background: var(--ink-7); color: var(--text); }
 .tbi[aria-pressed="true"], .tbi[aria-expanded="true"] { color: var(--text); }
 .tbi[aria-expanded="true"] { background: var(--ink-7); }
-/* Panes that come in a later build */
-.tbi[aria-disabled="true"] { color: var(--faint); cursor: default; }
-.tbi[aria-disabled="true"]:hover { background: none; color: var(--faint); }
-.tbi .dot { position: absolute; right: 3px; top: 3px; width: 6px; height: 6px; background: var(--accent); }
+.tbi:disabled { opacity: 0.32; cursor: default; }
+.tbi:disabled:hover { background: none; color: var(--muted); }
+.tbi .dot { position: absolute; right: 4px; top: 2px; width: 6px; height: 6px; background: var(--accent); }
+.editcap { margin-left: auto; }
+.captabs { position: absolute; left: 50%; top: 6px; transform: translateX(-50%); max-width: min(620px, calc(100% - 2 * 240px)); min-width: 0; }
+.mtabs { display: flex; align-items: center; min-width: 0; height: 100%; }
+.mtab { position: relative; flex: 0 1 auto; display: flex; align-items: center; gap: 6px; height: 21px; max-width: 300px; min-width: 0; padding: 0 12px; border-radius: 999px; color: var(--muted); white-space: nowrap; }
+.mtab:hover { background: var(--ink-6); }
+.mtab[aria-selected="true"] { background: var(--cap-on); color: var(--text); box-shadow: 0 0 0 0.5px var(--cap-edge), 0 1px 2px rgba(0, 0, 0, 0.1); }
+.mtab + .mtab::before { content: ""; position: absolute; left: -1px; top: 5px; bottom: 5px; width: 1px; background: color-mix(in srgb, var(--text) 16%, transparent); }
+.mtab[aria-selected="true"]::before, .mtab[aria-selected="true"] + .mtab::before, .mtab:hover::before, .mtab:hover + .mtab::before { display: none; }
+.mt-ic { width: 14px; height: 14px; flex: none; display: grid; place-items: center; }
+.mt-ic .conn-ico, .mt-ic .conn-ico .ico { width: 14px; height: 14px; }
+.mt-n { font-weight: 500; }
+.mt-p { color: var(--faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mtab > .dot { width: 6px; height: 6px; margin-left: -2px; box-shadow: none; }
 
 /* The left pane sits on the window background, not on a card. */
-.left-pane { flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding-top: 32px; position: relative; }
-.left-top { position: absolute; top: -3px; left: 0; right: 0; height: 35px; }
-.host-tabs { display: grid; gap: 3px; padding: 3px; margin: 2px 6px 6px; flex: none; background: var(--ink-6); border-radius: var(--r); position: relative; }
-.host-tabs button { height: 26px; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 8px; border-radius: var(--r); color: var(--muted); white-space: nowrap; }
-.host-tabs button > span { overflow: hidden; text-overflow: ellipsis; }
-.host-tabs button:hover { color: var(--text); }
-.host-tabs button[aria-selected="true"] { background: var(--ink-11); color: var(--text); }
-.host-tabs .add-host { color: var(--faint); gap: 5px; }
+.left-pane { flex: none; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+/* The project's name: a folder icon, the name and ⌄, as one button. */
+.proj-head .projbtn { display: inline-flex; align-items: center; gap: 6px; height: 24px; margin-left: -6px; padding: 0 6px; border-radius: var(--r); font-weight: 600; min-width: 0; }
+.proj-head .projbtn:hover, .proj-head .projbtn[aria-expanded="true"] { background: var(--ink-7); }
+.proj-head .projbtn > .ico:first-child { width: 15px; height: 15px; color: var(--muted); }
+.proj-head .projbtn > .ico:last-child { width: 11px; height: 11px; color: var(--faint); }
+.proj-head .projbtn span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.projpop { width: 280px; }
+.projpop .mm-i.pj { height: auto; padding-top: 4px; padding-bottom: 4px; }
+.projpop .mm-i.pj > span { display: flex; flex-direction: column; min-width: 0; }
+.projpop .mm-i.pj b { font-weight: 500; }
+.projpop .mm-i.pj small { font-size: inherit; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.projpop .mm-i.pj.on { background: var(--ink-7); }
+.projpop .mm-i.pj.on:hover { background: var(--accent); }
+.projpop .mm-i.pj:hover small { color: inherit; }
+.projpop .mm-i kbd .ico { color: var(--accent); }
+.projpop .mm-i:hover kbd .ico { color: inherit; }
 .pane-head { height: 30px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 8px 0 14px; font-weight: 600; white-space: nowrap; min-width: 0; }
 .pane-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .pane-button { width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--r); color: var(--muted); font-weight: 400; }
@@ -298,8 +336,6 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 /* Tab strips: the same in every pane */
 .tabs { height: 28px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-user-select: none; user-select: none; }
 .tabs::-webkit-scrollbar { display: none; }
-/* With no left pane under the toolbar, or a maximized pane, the first tab starts after the toolbar. */
-.window.left-hidden .editor-pane > .tabs, .window.left-hidden .console-pane.max > .tabs, .pane.max > .tabs { padding-left: calc(var(--tb-right) + 4px); }
 .tab { height: 22px; flex: none; display: flex; align-items: center; gap: 5px; padding: 0 8px 0 9px; border-radius: var(--r); color: var(--muted); white-space: nowrap; cursor: default; }
 .tab:hover { background: var(--ink-6); color: var(--text); }
 .tab.active { background: var(--ink-11); color: var(--text); }
@@ -384,7 +420,7 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .log-text { margin: 0; max-height: 55vh; overflow: auto; padding: 8px 10px; border-radius: 8px; background: var(--ink-6); font: var(--fs-small)/1.45 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
 
 /* The ☰ menu */
-.main-menu { position: absolute; top: 32px; left: calc(var(--tb-right) - 28px); z-index: 40; width: 250px; padding: 5px; display: flex; flex-direction: column; }
+.main-menu { position: fixed; z-index: 40; width: 250px; padding: 5px; display: flex; flex-direction: column; }
 .mm-i { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; height: 28px; padding: 0 8px; border-radius: var(--r); text-align: left; }
 .mm-i > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mm-i:hover { background: var(--accent); color: var(--accent-text); }
@@ -553,11 +589,9 @@ pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; wor
 .nb-insert button { height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: var(--muted); font: var(--fs-chrome) var(--font-ui); }
 .nb-insert button:hover { color: var(--text); border-color: var(--faint); }
 
-/* Start window */
-.start-window { height: 100%; position: relative; }
-/* The top of the window drags it, as a title bar would. */
-.drag-strip { position: absolute; top: 0; left: 0; right: 0; height: 32px; z-index: 1; }
-.start { height: 100%; display: flex; overflow: auto; padding: 32px 16px 0; font-size: var(--fs-chrome); line-height: 1.4; }
+/* The Start screen, under the window's title bar */
+.start-window { height: 100%; display: grid; grid-template-rows: 31px minmax(0, 1fr); position: relative; }
+.start { min-height: 0; display: flex; overflow: auto; padding: 0 16px; font-size: var(--fs-chrome); line-height: 1.4; }
 .start-in { margin: auto; width: min(760px, 100%); display: flex; flex-direction: column; gap: 22px; padding: 12px 0 40px; }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand img { width: 78px; height: 78px; margin: -7px; flex: none; }
@@ -635,9 +669,6 @@ button.link:hover { text-decoration: underline; }
    Assistant, with the agent's terminal behind it. */
 .agents-pane { flex: none; min-width: 0; }
 .agents-pane.min { align-self: flex-start; }
-.window.left-hidden .agents-pane > .tabs { padding-left: calc(var(--tb-right) + 4px); }
-.window.left-hidden.agents-shown .editor-pane > .tabs { padding-left: 4px; }
-.window.left-hidden.agents-shown .pane.max > .tabs { padding-left: calc(var(--tb-right) + 4px); }
 .agent-head .pane-button { flex: none; position: relative; }
 .agent-head .pane-button.on { background: var(--ink-11); color: var(--text); }
 .agent-head .pane-button:disabled { opacity: 0.4; cursor: default; background: none; }

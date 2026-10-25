@@ -25,6 +25,7 @@ import {
   lineNumbers,
 } from "@codemirror/view";
 import { highlightCode, tagHighlighter, tags as t } from "@lezer/highlight";
+import { editTracking } from "./editing";
 
 const rLanguage = StreamLanguage.define(r);
 const pythonLanguage = python().language;
@@ -142,5 +143,6 @@ export function baseExtensions(opts: { lineNumbers?: boolean; wrap?: boolean } =
     theme,
     opts.wrap ? EditorView.lineWrapping : [],
     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, indentWithTab]),
+    editTracking,
   ];
 }

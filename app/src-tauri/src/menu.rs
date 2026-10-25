@@ -12,10 +12,12 @@ pub const COMMAND: &str = "menu://command";
 
 /// Ids the UI handles (`app/src/ui/App.tsx`).
 const SAVE: &str = "save";
+const SAVE_ALL: &str = "save-all";
 const CLOSE_TAB: &str = "close-tab";
 const RUN_ALL: &str = "run-all";
-const QUIT: &str = "quit";
 const OPEN_PROJECT: &str = "open-project";
+const CONNECT: &str = "connect";
+const QUIT: &str = "quit";
 const CLOSE_WINDOW: &str = "close-window";
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -50,8 +52,16 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 true,
                 Some("CmdOrCtrl+O"),
             )?,
+            &MenuItem::with_id(
+                app,
+                CONNECT,
+                "Connect to Server…",
+                true,
+                Some("CmdOrCtrl+Shift+O"),
+            )?,
             &separator()?,
             &MenuItem::with_id(app, SAVE, "Save", true, Some("CmdOrCtrl+S"))?,
+            &MenuItem::with_id(app, SAVE_ALL, "Save All", true, Some("CmdOrCtrl+Alt+S"))?,
             &separator()?,
             // Not the predefined Close Window, which would take Cmd+W.
             &MenuItem::with_id(app, CLOSE_TAB, "Close Tab", true, Some("CmdOrCtrl+W"))?,
@@ -108,17 +118,18 @@ pub fn handle<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     match event.id().as_ref() {
         // Each window confirms unsaved changes; the app exits with the last.
         QUIT => windows.quit(app),
-        OPEN_PROJECT => {
-            if let Err(err) = windows.open_start(app) {
-                tracing::warn!("cannot open the start window: {err}");
-            }
-        }
         CLOSE_WINDOW => {
             if let Some(window) = focused(app) {
                 let _ = window.close();
             }
         }
-        id @ (SAVE | CLOSE_TAB | RUN_ALL) => {
+        // The window shows its Start screen; with no window, a new one does.
+        id @ (OPEN_PROJECT | CONNECT) if focused(app).is_none() => {
+            if let Err(err) = windows.open_window(app, Default::default()) {
+                tracing::warn!("cannot open a window for {id}: {err}");
+            }
+        }
+        id @ (SAVE | SAVE_ALL | CLOSE_TAB | RUN_ALL | OPEN_PROJECT | CONNECT) => {
             if let Some(window) = focused(app) {
                 let target = EventTarget::webview_window(window.label());
                 let _ = app.emit_to(target, COMMAND, id);

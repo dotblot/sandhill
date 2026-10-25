@@ -11,7 +11,7 @@ import {
   untrack,
 } from "solid-js";
 import { EditorView } from "@codemirror/view";
-import { LOCAL_HOST, type Shell } from "../backend";
+import { LOCAL_HOST, type Nav, type Shell } from "../backend";
 import {
   CONFLICT_ERROR,
   type DirEntry,
@@ -27,6 +27,7 @@ import { type Doc, docKind } from "../docs/doc";
 import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
 import { ScriptDoc } from "../docs/scriptDoc";
+import { canEdit, type EditAction, lastEditor, runEdit } from "../editor/editing";
 import { type HelpRequest, nameAt } from "../model/help";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
@@ -37,10 +38,10 @@ import { TerminalStore } from "../model/terminals";
 import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
 import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane } from "./AgentsPane";
-import { ConnectionItem, connState, HostKernelStates } from "./Connection";
+import { ConnectionItem, connState } from "./Connection";
 import { DataExplorer, type TableTab, tableId, tableTab } from "./DataExplorer";
 import { type DiffTab, DiffView, diffTab, diffTitle } from "./DiffView";
-import { ask, Dialogs, notify } from "./dialogs";
+import { ask, notify } from "./dialogs";
 import { type DiffRequest, GitPane } from "./GitPane";
 import { HelpPane } from "./HelpPane";
 import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
@@ -52,7 +53,9 @@ import { type Pane, PaneButtons } from "./PaneButtons";
 import { PackagesPane } from "./PackagesPane";
 import { PlotsPane } from "./PlotsPane";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
+import { type EditButtons, EditCapsule, TitleBar, ToolbarCapsule } from "./TitleBar";
 import { VariablesPane } from "./VariablesPane";
+import type { PlaceApi } from "./Workbench";
 
 const SAVE_STATE_MS = 300;
 const LEFT_KEY = "sandhill.sidebar";
@@ -98,15 +101,30 @@ const LEFT_WIDTH = 260;
 const LEFT_MIN = 236;
 const CONSOLE_MIN = 90;
 const EDITOR_MIN = 120;
+/** The ☰ menu's width, as styles.css has it. */
+const MENU_WIDTH = 250;
 
 
 /**
- * A project window: the toolbar over the left pane (files, kernels and the
- * machine's resources), the editor with the Console under it, and the
- * status bar. Panes float on the window background, 3px apart.
+ * A project, as its machine's tab shows it: the title bar, the left pane
+ * (files, kernels and the machine's resources), Agents, the editor with the
+ * Console under it, the right pane and the status bar. Panes float on the
+ * window background, 3px apart.
  */
-export function App(props: { ws: Workspace; shell: Shell; project: string }) {
+export function App(props: {
+  ws: Workspace;
+  shell: Shell;
+  nav: Nav;
+  project: string;
+  /** Whether the window shows this project now; a hidden one ignores the keyboard. */
+  current?: boolean;
+  /** The title bar's machine tabs, which the Workbench draws. */
+  machineTabs?: () => JSX.Element;
+  /** Hands the Workbench what it needs from this project. */
+  report?: (api: PlaceApi) => void;
+}) {
   const ws = props.ws;
+  const current = () => props.current !== false;
   const root = () => props.project;
   const name = props.project.slice(props.project.lastIndexOf("/") + 1) || props.project;
   const [missing, setMissing] = createSignal<string>();
@@ -117,17 +135,6 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   const [activeExtra, setActiveExtra] = createSignal<ExtraTab>();
   const [treeKey, setTreeKey] = createSignal(0);
   const hostLabel = ws.backend.host === LOCAL_HOST ? "This Mac" : ws.backend.host;
-  /** The machine the status bar shows: the one picked in the left pane. */
-  const [statusHost, setStatusHost] = createSignal(ws);
-  // Another machine's sessions aren't followed live, so ask for them now and then.
-  createEffect(() => {
-    const other = statusHost();
-    if (other === ws) return;
-    const timer = setInterval(() => {
-      if (other.link().status === "connected") other.refreshSessions().catch(() => {});
-    }, 5000);
-    onCleanup(() => clearInterval(timer));
-  });
   const opening = new Map<string, Promise<Doc | undefined>>();
   const hosts = new Map<Doc, HTMLElement>();
   let docArea!: HTMLDivElement;
@@ -215,7 +222,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
   };
   const isMin = (pane: Pane) => minimized().includes(pane) && maximized() !== pane;
   /** Whether a tab of the right pane's top group shows. A function: an expression in a prop would be a memo read outside it. */
-  const topShown = (tab: TopTab) => !isMin("variables") && topTab() === tab;
+  const topShown = (tab: TopTab) => current() && !isMin("variables") && topTab() === tab;
   const toggleMin = (pane: Pane) => {
     setMaximized((m) => (m === pane ? undefined : m));
     setMinimized((list) => (list.includes(pane) ? list.filter((p) => p !== pane) : [...list.filter((p) => p !== pane), pane]));
@@ -710,13 +717,19 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     }
   }
 
+  async function saveAll() {
+    for (const doc of docs().filter((d) => d.dirty())) if (!(await saveDoc(doc))) return;
+  }
+
   function command(name: string) {
     const table = activeExtra();
     if (table) {
       if (name === "close-tab") closeExtra(table);
+      if (name === "save-all") void saveAll();
       return;
     }
     const doc = active();
+    if (name === "save-all") return void saveAll();
     if (name === "save" && doc) void saveDoc(doc);
     if (name === "close-tab" && doc) void close(doc);
     if (name === "run-all" && doc) doc.runAll().catch((e) => notify(message(e)));
@@ -729,6 +742,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     if (activeExtra()) list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
     if (doc) {
       list.push({ label: "Save", keys: "⌘S", run: () => command("save") });
+      list.push({ label: "Save all", keys: "⌥⌘S", run: () => command("save-all") });
       list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
       list.push({ label: doc.kind === "script" ? "Run file" : "Run all", keys: "⌥⌘R", run: () => command("run-all") });
       for (const language of doc.languages()) {
@@ -759,16 +773,16 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         },
       },
       { label: "Refresh files", run: () => setTreeKey((k) => k + 1) },
-      { label: "Open project…", keys: "⌘O", run: () => void props.shell.showStart() },
-      { label: "Connect to server…", run: () => void props.shell.showStart() },
+      { label: "Open project…", keys: "⌘O", run: props.nav.showStart },
+      { label: "Connect to server…", keys: "⇧⌘O", run: props.nav.showStart },
     );
     return list;
   };
 
+  props.report?.({ confirmClose, waiting: () => terminals.waiting().length > 0, command });
   onMount(() => {
-    ws.backend.onMenu?.(command);
-    ws.backend.onCloseRequested?.(confirmClose);
     const onKey = (e: KeyboardEvent) => {
+      if (!current()) return;
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === "Escape" && menu()) setMenu(false);
       // F1 shows help for the name under the cursor, in the language of the session in front.
@@ -808,8 +822,9 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
         }
       }
       // In the Mac app the menu bar owns these shortcuts.
-      if (!mod || ws.backend.onMenu) return;
-      if (e.key === "s") command("save");
+      if (!mod || props.shell.onMenu) return;
+      if (e.altKey && e.code === "KeyS") command("save-all");
+      else if (e.key === "s") command("save");
       else if (e.key === "w") command("close-tab");
       else if (e.altKey && (e.key === "r" || e.code === "KeyR")) command("run-all");
       else return;
@@ -874,25 +889,57 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
     return sessions.some((s) => ws.isBusy(s)) ? "busy" : "idle";
   };
 
+  // The title bar's edit buttons act on the editor last in focus, and save the documents.
+  let windowEl!: HTMLDivElement;
+  let menuButton: HTMLButtonElement | undefined;
+  const editButtons = (): EditButtons => {
+    const view = current() ? lastEditor(windowEl) : undefined;
+    const can = canEdit(view);
+    const act = (action: EditAction) =>
+      view && can[action]
+        ? () =>
+            void runEdit(view, action).catch(() =>
+              notify(action === "paste" ? "Sandhill can't read the clipboard here; press ⌘V to paste." : `Could not ${action}.`),
+            )
+        : undefined;
+    const doc = activeExtra() ? undefined : active();
+    const unsaved = docs().filter((d) => d.dirty());
+    return {
+      undo: act("undo"),
+      redo: act("redo"),
+      cut: act("cut"),
+      copy: act("copy"),
+      paste: act("paste"),
+      save: doc?.dirty() ? () => command("save") : undefined,
+      saveAll: unsaved.length ? () => command("save-all") : undefined,
+      saveName: doc?.name,
+      unsaved: unsaved.map((d) => d.name),
+    };
+  };
+
   return (
-    <div class="window" classList={{ "left-hidden": !left(), "agents-shown": agentsOn() }}>
-      <Toolbar
-        left={left()}
-        menu={menu()}
-        onLeft={toggleLeft}
-        agents={agentsOn()}
-        waiting={terminals.waiting().length > 0}
-        onAgents={toggleAgents}
-        right={rightOn()}
-        onRight={toggleRight}
-        onSearch={() => setPalette(true)}
-        onMenu={() => setMenu(!menu())}
-      />
+    <div class="window" ref={windowEl} classList={{ "left-hidden": !left(), "agents-shown": agentsOn() }}>
+      <TitleBar>
+        <ToolbarCapsule
+          left={left()}
+          onLeft={toggleLeft}
+          agents={agentsOn()}
+          waiting={terminals.waiting().length > 0}
+          onAgents={toggleAgents}
+          right={rightOn()}
+          onRight={toggleRight}
+          onSearch={() => setPalette(true)}
+          menu={menu()}
+          onMenu={() => setMenu(!menu())}
+          menuRef={(el) => (menuButton = el)}
+        />
+        {props.machineTabs?.()}
+        <EditCapsule buttons={editButtons()} />
+      </TitleBar>
       <div class="window-body">
         <Show when={left()}>
           <LeftPane
             ws={ws}
-            shell={props.shell}
             project={props.project}
             name={name}
             missing={missing()}
@@ -904,7 +951,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
             onCreate={(kind) => void createFile(kind)}
             usedBy={usedBy}
             marker={marker}
-            onHost={setStatusHost}
+            nav={props.nav}
           />
           <div class="split v" title="Drag to resize" onPointerDown={resizeLeft} />
         </Show>
@@ -1036,7 +1083,7 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
                     <div class="empty-state">
                       <p>Cannot open this project: {missing()}</p>
                       <p>
-                        <button onClick={() => void props.shell.showStart()}>Show projects</button>
+                        <button onClick={props.nav.showStart}>Show projects</button>
                       </p>
                     </div>
                   }
@@ -1206,13 +1253,11 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
           </aside>
         </Show>
       </div>
-      <footer class="status-bar" data-link={statusHost().link().status}>
-        <ConnectionItem ws={statusHost()} />
+      <footer class="status-bar" data-link={ws.link().status}>
+        <ConnectionItem ws={ws} />
         {/* Kernel states, hidden while the machine is disconnected. */}
-        <Show when={connState(statusHost()) !== "off"}>
-          <Show when={statusHost() === ws} fallback={<HostKernelStates ws={statusHost()} />}>
-            <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
-          </Show>
+        <Show when={connState(ws) !== "off"}>
+          <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
         </Show>
         <span class="spacer" />
         <AgentStatus store={terminals} onShow={showAgent} />
@@ -1221,7 +1266,8 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
       <Show when={menu()}>
         <MainMenu
           ws={ws}
-          shell={props.shell}
+          nav={props.nav}
+          anchor={menuButton}
           project={props.project}
           consoleOn={consoleOn()}
           onConsole={toggleConsole}
@@ -1241,74 +1287,16 @@ export function App(props: { ws: Workspace; shell: Shell; project: string }) {
           onClose={() => setPalette(false)}
         />
       </Show>
-      <Dialogs />
     </div>
-  );
-}
-
-/**
- * The toolbar over the top of the left pane, after the window buttons: the
- * left pane, Agents, the right pane, ⌘K search and the menu.
- */
-function Toolbar(props: {
-  left: boolean;
-  agents: boolean;
-  waiting: boolean;
-  right: boolean;
-  menu: boolean;
-  onLeft: () => void;
-  onAgents: () => void;
-  onRight: () => void;
-  onSearch: () => void;
-  onMenu: () => void;
-}) {
-  return (
-    <div class="toolbar" data-tauri-drag-region="deep">
-      <ToolButton icon="leftPane" title="Left pane (⌘B)" pressed={props.left} onClick={props.onLeft} />
-      <ToolButton
-        icon="chat"
-        title={props.waiting ? "Agents (⌘I): an agent is waiting for you" : "Agents: Claude Code and Codex (⌘I)"}
-        pressed={props.agents}
-        onClick={props.onAgents}
-        dot={props.waiting}
-      />
-      <ToolButton icon="rightPane" title="Right pane: Variables, Help, Packages, Git and Plots (⌥⌘B)" pressed={props.right} onClick={props.onRight} />
-      <ToolButton icon="search" title="Go to a file or run a command (⌘K)" onClick={props.onSearch} />
-      <ToolButton icon="menu" title="Menu" pressed={props.menu} onClick={props.onMenu} menu />
-    </div>
-  );
-}
-
-function ToolButton(props: {
-  icon: IconName;
-  title: string;
-  pressed?: boolean;
-  onClick?: () => void;
-  menu?: boolean;
-  dot?: boolean;
-}) {
-  return (
-    <button
-      class="tbi"
-      classList={{ "main-menu-button": props.menu }}
-      title={props.title}
-      aria-pressed={props.onClick && !props.menu ? props.pressed : undefined}
-      aria-expanded={props.menu ? props.pressed : undefined}
-      aria-disabled={props.onClick ? undefined : "true"}
-      onClick={() => props.onClick?.()}
-    >
-      <Icon name={props.icon} />
-      <Show when={props.dot}>
-        <span class="dot" />
-      </Show>
-    </button>
   );
 }
 
 /** The ☰ menu: other projects and servers, showing the console, and where notebooks' output goes. */
 function MainMenu(props: {
   ws: Workspace;
-  shell: Shell;
+  nav: Nav;
+  /** The menu button, which the menu opens under. */
+  anchor?: HTMLElement;
   project: string;
   consoleOn: boolean;
   onConsole: () => void;
@@ -1327,7 +1315,7 @@ function MainMenu(props: {
   let menu!: HTMLDivElement;
   const outside = (e: MouseEvent) => {
     const target = e.target as Element;
-    if (!menu.contains(target) && !target.closest(".main-menu-button")) props.onClose();
+    if (!menu.contains(target) && !props.anchor?.contains(target)) props.onClose();
   };
   document.addEventListener("mousedown", outside);
   onCleanup(() => document.removeEventListener("mousedown", outside));
@@ -1345,16 +1333,17 @@ function MainMenu(props: {
       <kbd>{keys}</kbd>
     </button>
   );
+  // Under its button, inside the window.
+  const at = props.anchor?.getBoundingClientRect();
+  const left = at ? Math.max(6, Math.min(at.left, window.innerWidth - MENU_WIDTH - 6)) : 6;
   return (
-    <div class="main-menu" role="menu" ref={menu}>
-      {item("cloud", "Connect to server…", "", () => void props.shell.showStart())}
-      {item("folder", "Open project…", "⌘O", () => void props.shell.showStart())}
+    <div class="main-menu" role="menu" ref={menu} style={{ left: `${left}px`, top: `${at ? at.bottom + 5 : 32}px` }}>
+      {item("cloud", "Connect to server…", "⇧⌘O", props.nav.showStart)}
+      {item("folder", "Open project…", "⌘O", props.nav.showStart)}
       <Show when={recent()?.length}>
         <div class="mm-sep" />
         <div class="mm-h">Recent on {hostName(props.ws.backend.host)}</div>
-        <For each={recent()}>
-          {(p) => item("folder", p.name, "", () => void props.shell.openProject(props.ws.backend.host, p.path))}
-        </For>
+        <For each={recent()}>{(p) => item("folder", p.name, "", () => props.nav.openProject(props.ws.backend.host, p.path))}</For>
       </Show>
       <div class="mm-sep" />
       {item(props.consoleOn ? "check" : undefined, "Show console", "⌘J", props.onConsole)}

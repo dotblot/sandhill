@@ -1,36 +1,81 @@
-//! Windows: a start screen, and one window per open project.
+//! Windows. Each has a tab per machine, with one project open on each, or
+//! shows the Start screen (`app/src/ui/Workbench.tsx` draws them).
 //!
-//! The projects that are open when the app quits open again at the next
-//! launch. Closing the last project window brings back the start screen;
-//! closing the start screen on its own quits.
+//! What the windows have open when the app quits opens again at the next
+//! launch. Closing the last window that had projects brings back an empty
+//! one with the Start screen; closing that one quits.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-pub const START: &str = "start";
-
-/// What a window shows, which the UI asks for when it loads.
+/// A project on a machine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum WindowContext {
-    Start,
-    Project { host: String, path: String },
+pub struct Place {
+    pub host: String,
+    pub path: String,
+}
+
+/// What a window has open, which the UI asks for when it loads and reports
+/// as it changes.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WindowPlaces {
+    /// One tab per machine, in order.
+    pub tabs: Vec<Place>,
+    /// The machine shown, or none for the Start screen.
+    pub current: Option<String>,
+}
+
+/// The file the open windows are remembered in.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Saved {
+    Windows {
+        windows: Vec<WindowPlaces>,
+    },
+    /// Before machine tabs (2026-10-25): one project per window.
+    Projects(Vec<(String, String)>),
+}
+
+impl Saved {
+    fn windows(self) -> Vec<WindowPlaces> {
+        match self {
+            Saved::Windows { windows } => windows,
+            // One window now holds them: a tab per machine, with the project
+            // listed last on each, as the window opened last.
+            Saved::Projects(projects) => {
+                let mut window = WindowPlaces::default();
+                for (host, path) in projects {
+                    window.tabs.retain(|t| t.host != host);
+                    window.tabs.push(Place {
+                        host: host.clone(),
+                        path,
+                    });
+                    window.current = Some(host);
+                }
+                if window.tabs.is_empty() {
+                    vec![]
+                } else {
+                    vec![window]
+                }
+            }
+        }
+    }
 }
 
 pub struct Windows {
-    /// Window label -> what it shows, in the order the windows opened.
-    open: Mutex<Vec<(String, WindowContext)>>,
-    /// Remembers the open projects for the next launch.
+    /// Window label -> what it has open, in the order the windows opened.
+    open: Mutex<Vec<(String, WindowPlaces)>>,
+    /// Remembers the open windows for the next launch.
     saved: PathBuf,
     /// Set by Quit, so windows closing on the way out stay remembered.
     quitting: AtomicBool,
-    last_closed_project: AtomicBool,
+    /// Whether the window that closed last had projects open.
+    last_closed_had_tabs: AtomicBool,
+    next_label: AtomicUsize,
 }
 
 impl Windows {
@@ -39,74 +84,59 @@ impl Windows {
             open: Mutex::default(),
             saved,
             quitting: AtomicBool::new(false),
-            last_closed_project: AtomicBool::new(false),
+            last_closed_had_tabs: AtomicBool::new(false),
+            next_label: AtomicUsize::new(1),
         }
     }
 
-    /// Opens the projects that were open at the last quit, or the start screen.
+    /// Opens the windows that were open at the last quit, or an empty one.
     pub fn restore<R: Runtime>(&self, app: &AppHandle<R>) -> tauri::Result<()> {
-        let projects: Vec<(String, String)> = std::fs::read_to_string(&self.saved)
+        let windows = std::fs::read_to_string(&self.saved)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            .and_then(|text| serde_json::from_str::<Saved>(&text).ok())
+            .map(Saved::windows)
             .unwrap_or_default();
-        if projects.is_empty() {
-            return self.open_start(app);
+        if windows.is_empty() {
+            return self.open_window(app, WindowPlaces::default());
         }
-        for (host, path) in projects {
-            self.open_project(app, &host, &path)?;
+        for places in windows {
+            self.open_window(app, places)?;
         }
         Ok(())
     }
 
-    pub fn open_start<R: Runtime>(&self, app: &AppHandle<R>) -> tauri::Result<()> {
-        if let Some(window) = app.get_webview_window(START) {
-            return focus(&window);
-        }
-        let builder = WebviewWindowBuilder::new(app, START, WebviewUrl::App("index.html".into()))
-            .title("Sandhill")
-            .inner_size(820.0, 600.0)
-            .min_inner_size(560.0, 420.0);
-        title_bar(builder).build()?;
-        self.add(START, WindowContext::Start);
-        Ok(())
-    }
-
-    pub fn open_project<R: Runtime>(
+    pub fn open_window<R: Runtime>(
         &self,
         app: &AppHandle<R>,
-        host: &str,
-        path: &str,
+        places: WindowPlaces,
     ) -> tauri::Result<()> {
-        let label = project_label(host, path);
-        if let Some(window) = app.get_webview_window(&label) {
-            return focus(&window);
-        }
-        let name = path.rsplit('/').find(|s| !s.is_empty()).unwrap_or(path);
-        let title = if host == sandhill_link::LOCAL {
-            name.to_string()
-        } else {
-            format!("{name} — {host}")
-        };
+        let label = format!("window-{}", self.next_label.fetch_add(1, Ordering::SeqCst));
         let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-            .title(title)
+            .title(title(&places))
             .inner_size(1280.0, 860.0)
             .min_inner_size(720.0, 480.0);
         title_bar(builder).build()?;
-        self.add(
-            &label,
-            WindowContext::Project {
-                host: host.to_string(),
-                path: path.to_string(),
-            },
-        );
+        self.set(&label, places);
         Ok(())
     }
 
-    pub fn context(&self, label: &str) -> Option<WindowContext> {
+    pub fn places(&self, label: &str) -> Option<WindowPlaces> {
         let open = self.open.lock().unwrap();
         open.iter()
             .find(|(l, _)| l == label)
-            .map(|(_, c)| c.clone())
+            .map(|(_, p)| p.clone())
+    }
+
+    /// Records what a window has open, and remembers it for the next launch.
+    fn set(&self, label: &str, places: WindowPlaces) {
+        {
+            let mut open = self.open.lock().unwrap();
+            match open.iter_mut().find(|(l, _)| l == label) {
+                Some((_, old)) => *old = places,
+                None => open.push((label.to_string(), places)),
+            }
+        }
+        self.save();
     }
 
     /// Called when a window is gone.
@@ -116,10 +146,9 @@ impl Windows {
             let index = open.iter().position(|(l, _)| l == label);
             index.map(|i| open.remove(i).1)
         };
-        let was_project = matches!(removed, Some(WindowContext::Project { .. }));
-        self.last_closed_project
-            .store(was_project, Ordering::SeqCst);
-        if was_project && !self.quitting.load(Ordering::SeqCst) {
+        let had_tabs = removed.is_some_and(|p| !p.tabs.is_empty());
+        self.last_closed_had_tabs.store(had_tabs, Ordering::SeqCst);
+        if !self.quitting.load(Ordering::SeqCst) {
             self.save();
         }
     }
@@ -141,31 +170,21 @@ impl Windows {
     }
 
     /// Whether to keep running when the last window has closed: closing the
-    /// last project shows the start screen instead of quitting.
+    /// last window with projects shows the Start screen instead of quitting.
     pub fn keep_running(&self) -> bool {
-        !self.quitting.load(Ordering::SeqCst) && self.last_closed_project.load(Ordering::SeqCst)
-    }
-
-    fn add(&self, label: &str, context: WindowContext) {
-        let is_project = matches!(context, WindowContext::Project { .. });
-        self.open.lock().unwrap().push((label.to_string(), context));
-        if is_project {
-            self.save();
-        }
+        !self.quitting.load(Ordering::SeqCst) && self.last_closed_had_tabs.load(Ordering::SeqCst)
     }
 
     fn save(&self) {
-        let projects: Vec<(String, String)> = self
+        let windows: Vec<WindowPlaces> = self
             .open
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|(_, c)| match c {
-                WindowContext::Project { host, path } => Some((host.clone(), path.clone())),
-                WindowContext::Start => None,
-            })
+            .filter(|(_, p)| !p.tabs.is_empty())
+            .map(|(_, p)| p.clone())
             .collect();
-        let result = serde_json::to_vec_pretty(&projects)
+        let result = serde_json::to_vec_pretty(&Saved::Windows { windows })
             .map_err(std::io::Error::other)
             .and_then(|bytes| {
                 if let Some(dir) = self.saved.parent() {
@@ -174,15 +193,34 @@ impl Windows {
                 std::fs::write(&self.saved, bytes)
             });
         if let Err(err) = result {
-            tracing::warn!("cannot remember open projects: {err}");
+            tracing::warn!("cannot remember the open projects: {err}");
         }
+    }
+}
+
+/// The window's name in the Window menu and Mission Control: the project
+/// shown and its machine.
+fn title(places: &WindowPlaces) -> String {
+    let shown = places
+        .tabs
+        .iter()
+        .find(|t| Some(&t.host) == places.current.as_ref());
+    let Some(Place { host, path }) = shown else {
+        return "Sandhill".to_string();
+    };
+    let name = path.rsplit('/').find(|s| !s.is_empty()).unwrap_or(path);
+    if host == sandhill_link::LOCAL {
+        name.to_string()
+    } else {
+        format!("{name} — {host}")
     }
 }
 
 /// On macOS the page draws the title bar, under the window buttons, so the
 /// panes can float on one background from the top of the window down.
-/// The buttons sit in the page's 34px toolbar row: the red one 12px from the
-/// left edge and centred on the row, as in the design (docs/design/ui/).
+/// The buttons sit in the page's 31px title bar: the red one 12px from the
+/// left edge, centred on the capsules beside them, as in the design
+/// (docs/design/ui/).
 #[cfg(target_os = "macos")]
 fn title_bar<'a, R: Runtime, M: Manager<R>>(
     builder: WebviewWindowBuilder<'a, R, M>,
@@ -198,11 +236,12 @@ fn title_bar<'a, R: Runtime, M: Manager<R>>(
 
 /// Where macOS puts the close button, in points. Measured on a Mac (the Mac
 /// check prints it): x 11 puts the red light at 12-24pt, and the lights'
-/// centre lands 2pt below y, so y 15 centres them on the toolbar's 17pt line.
+/// centre lands 2pt below y, so y 16.5 centres them on the capsules, which
+/// are 25pt high from 6pt down: an 18.5pt line.
 #[cfg(target_os = "macos")]
 const TRAFFIC_LIGHTS_X: f64 = 11.0;
 #[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS_Y: f64 = 15.0;
+const TRAFFIC_LIGHTS_Y: f64 = 16.5;
 
 #[cfg(not(target_os = "macos"))]
 fn title_bar<'a, R: Runtime, M: Manager<R>>(
@@ -211,49 +250,25 @@ fn title_bar<'a, R: Runtime, M: Manager<R>>(
     builder
 }
 
-fn focus<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
-    window.unminimize()?;
-    window.show()?;
-    window.set_focus()
-}
-
-/// Window labels allow only `a-zA-Z0-9-/:_`, so projects get a hash.
-fn project_label(host: &str, path: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    (host, path).hash(&mut hasher);
-    format!("project-{:016x}", hasher.finish())
-}
-
-/// What the calling window shows.
+/// What the calling window has open.
 #[tauri::command]
 pub fn window_context<R: Runtime>(
     window: WebviewWindow<R>,
     windows: State<'_, std::sync::Arc<Windows>>,
-) -> WindowContext {
-    windows
-        .context(window.label())
-        .unwrap_or(WindowContext::Start)
+) -> WindowPlaces {
+    windows.places(window.label()).unwrap_or_default()
 }
 
-/// Opens a project in its own window, or brings its window to the front.
+/// Remembers what the calling window has open, and names the window after it.
 #[tauri::command]
-pub fn open_project_window<R: Runtime>(
-    app: AppHandle<R>,
+pub fn set_window_places<R: Runtime>(
+    window: WebviewWindow<R>,
     windows: State<'_, std::sync::Arc<Windows>>,
-    host: String,
-    path: String,
-) -> Result<(), String> {
-    windows
-        .open_project(&app, &host, &path)
-        .map_err(|err| err.to_string())
-}
-
-#[tauri::command]
-pub fn show_start_window<R: Runtime>(
-    app: AppHandle<R>,
-    windows: State<'_, std::sync::Arc<Windows>>,
-) -> Result<(), String> {
-    windows.open_start(&app).map_err(|err| err.to_string())
+    places: WindowPlaces,
+    title: String,
+) {
+    let _ = window.set_title(&title);
+    windows.set(window.label(), places);
 }
 
 /// A window kept itself open (unsaved changes), so Quit stops.
@@ -266,42 +281,66 @@ pub fn cancel_quit(windows: State<'_, std::sync::Arc<Windows>>) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn project_labels_are_valid_and_distinct() {
-        let a = project_label("local", "/w/a");
-        assert!(
-            a.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"-/:_".contains(&b))
-        );
-        assert_ne!(a, project_label("local", "/w/b"));
-        assert_ne!(a, project_label("ssh:server", "/w/a"));
+    fn place(host: &str, path: &str) -> Place {
+        Place {
+            host: host.into(),
+            path: path.into(),
+        }
     }
 
     #[test]
-    fn open_projects_are_remembered_except_while_quitting() {
+    fn open_windows_are_remembered_except_while_quitting() {
         let dir = tempfile::tempdir().unwrap();
         let saved = dir.path().join("open-projects.json");
         let windows = Windows::new(saved.clone());
-        let read = || -> Vec<(String, String)> {
-            serde_json::from_str(&std::fs::read_to_string(&saved).unwrap()).unwrap()
+        let read = || -> Vec<WindowPlaces> {
+            serde_json::from_str::<Saved>(&std::fs::read_to_string(&saved).unwrap())
+                .unwrap()
+                .windows()
         };
-        let project = |path: &str| WindowContext::Project {
-            host: "local".into(),
-            path: path.into(),
+        let one = WindowPlaces {
+            tabs: vec![place("local", "/w/a"), place("gpu01", "/w/b")],
+            current: Some("gpu01".into()),
         };
-        windows.add("start", WindowContext::Start);
-        windows.add("p1", project("/w/a"));
-        windows.add("p2", project("/w/b"));
-        assert_eq!(read().len(), 2);
+        windows.set("window-1", WindowPlaces::default());
+        windows.set("window-2", one.clone());
+        assert_eq!(read(), std::slice::from_ref(&one), "an empty window isn't remembered");
+        assert_eq!(title(&one), "b — gpu01");
 
-        windows.closed("p1");
-        assert_eq!(read(), [("local".to_string(), "/w/b".to_string())]);
-        assert!(windows.keep_running());
-
+        windows.closed("window-1");
+        assert!(!windows.keep_running(), "the Start screen closed: quit");
         windows.quitting.store(true, Ordering::SeqCst);
-        windows.closed("p2");
-        assert_eq!(read().len(), 1, "quitting keeps the list for next time");
+        windows.closed("window-2");
+        assert_eq!(read(), [one], "quitting keeps the list for next time");
         assert!(!windows.keep_running());
+    }
+
+    #[test]
+    fn closing_the_last_project_window_shows_the_start_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let windows = Windows::new(dir.path().join("open-projects.json"));
+        windows.set(
+            "window-1",
+            WindowPlaces {
+                tabs: vec![place("local", "/w/a")],
+                current: Some("local".into()),
+            },
+        );
+        windows.closed("window-1");
+        assert!(windows.keep_running());
+    }
+
+    #[test]
+    fn projects_from_before_machine_tabs_open_in_one_window() {
+        let old = r#"[["local", "/w/a"], ["gpu01", "/w/b"], ["local", "/w/c"]]"#;
+        let windows = serde_json::from_str::<Saved>(old).unwrap().windows();
+        assert_eq!(
+            windows,
+            [WindowPlaces {
+                tabs: vec![place("gpu01", "/w/b"), place("local", "/w/c")],
+                current: Some("local".into()),
+            }]
+        );
     }
 }
 

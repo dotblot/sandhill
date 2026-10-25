@@ -1,13 +1,14 @@
-// The left pane: a tab per machine, then the project's files, the kernels
-// running there and how busy the machine is. It sits directly on the window
-// background, under the toolbar.
+// The left pane: the project's name, which switches to another project on
+// the same machine, then its files, the kernels running there and how busy
+// the machine is. It sits directly on the window background, under the
+// title bar, and shows only the machine picked there.
 
-import { createEffect, createResource, createSignal, For, type JSX, on, onCleanup, Show } from "solid-js";
-import { LOCAL_HOST, type Shell } from "../backend";
+import { createResource, createSignal, For, type JSX, onCleanup, Show } from "solid-js";
+import { LOCAL_HOST, type Nav } from "../backend";
 import type { ProjectInfo, SessionInfo, SystemStats } from "../backend/types";
 import { formatBytes, languageLabel, languageVersion, percentOf, sessionLabel, watchMachine } from "../model/machine";
-import { Workspace } from "../model/workspace";
-import { ConnIcon } from "./Connection";
+import { shortPath } from "../model/places";
+import type { Workspace } from "../model/workspace";
 import { notify } from "./dialogs";
 import { FileTree } from "./FileTree";
 import { FileIcon, Icon, type IconName, LangIcon } from "./icons";
@@ -18,7 +19,7 @@ export type NewFile = "qmd" | "ipynb" | "R" | "py";
 
 export function LeftPane(props: {
   ws: Workspace;
-  shell: Shell;
+  nav: Nav;
   project: string;
   name: string;
   /** Why the project can't be opened, if it can't. */
@@ -33,80 +34,14 @@ export function LeftPane(props: {
   usedBy: (session: string) => string[];
   /** State of the session an open file runs in, for a dot in the tree. */
   marker: (path: string) => "idle" | "busy" | undefined;
-  /** The picked machine's workspace, once it has one, for the status bar. */
-  onHost?: (ws: Workspace) => void;
 }) {
-  const own = props.ws.backend.host;
-  const [servers] = createResource(() => props.shell.listServers().catch(() => [] as string[]));
-  const hosts = () => {
-    const list = [LOCAL_HOST, ...(servers() ?? [])];
-    return list.includes(own) ? list : [...list, own];
-  };
-  const [selected, setSelected] = createSignal(own);
-  // One connection per other machine, made when its tab is first chosen.
-  const others = new Map<string, Promise<Workspace>>();
-  const [made, setMade] = createSignal<Record<string, Workspace>>({});
-  const workspaceFor = (host: string) => {
-    let ws = others.get(host);
-    if (!ws) {
-      ws = props.shell.connect(host).then((backend) => {
-        const ws = new Workspace(backend);
-        setMade((all) => ({ ...all, [host]: ws }));
-        return ws;
-      });
-      others.set(host, ws);
-    }
-    return ws;
-  };
-  // The status bar follows the picked tab, and the window's own machine once the pane closes.
-  createEffect(
-    on(selected, (host) => {
-      if (host === own) return props.onHost?.(props.ws);
-      void workspaceFor(host).then((ws) => selected() === host && props.onHost?.(ws));
-    }),
-  );
-  onCleanup(() => props.onHost?.(props.ws));
-
-  return (
-    <aside class="left-pane" style={{ width: `${props.width}px` }}>
-      <div class="left-top" data-tauri-drag-region="deep" />
-      <div class="host-tabs" role="tablist" style={{ "grid-template-columns": `repeat(${Math.max(2, hosts().length)}, minmax(0, 1fr))` }}>
-        <For each={hosts()}>
-          {(host) => (
-            <button
-              role="tab"
-              aria-selected={selected() === host}
-              title={host === LOCAL_HOST ? "This Mac" : host}
-              onClick={() => setSelected(host)}
-            >
-              <ConnIcon host={host} ws={host === own ? props.ws : made()[host]} />
-              <span>{host === LOCAL_HOST ? "Local" : host}</span>
-            </button>
-          )}
-        </For>
-        <Show when={hosts().length < 2}>
-          <button class="add-host" title="Connect to a server from the start window" onClick={() => void props.shell.showStart()}>
-            <Icon name="plus" small />
-            <span>Server</span>
-          </button>
-        </Show>
-      </div>
-      <Show when={selected() === own} fallback={<OtherHost host={selected()} shell={props.shell} workspace={workspaceFor} />}>
-        <ProjectFiles {...props} />
-      </Show>
-    </aside>
-  );
-}
-
-/** The window's own machine: the project's files, kernels and resources. */
-function ProjectFiles(props: Parameters<typeof LeftPane>[0]) {
   const ws = props.ws;
   const stats = watchMachine(ws, props.project);
   const connected = () => ws.link().status === "connected";
   return (
-    <>
-      <div class="pane-head" title={props.project}>
-        <span class="pane-title">{props.name}</span>
+    <aside class="left-pane" style={{ width: `${props.width}px` }}>
+      <div class="pane-head proj-head">
+        <ProjectButton ws={ws} nav={props.nav} project={props.project} name={props.name} />
         <span class="spacer" />
         <NewFileMenu onCreate={props.onCreate} />
         <button class="pane-button" title="Refresh" onClick={() => props.onRefresh()}>
@@ -135,64 +70,103 @@ function ProjectFiles(props: Parameters<typeof LeftPane>[0]) {
         usedBy={(s) => props.usedBy(s.id)}
       />
       <Resources stats={stats()} host={ws.backend.host} sessions={ws.liveSessions()} />
-    </>
+    </aside>
   );
 }
 
-/** Another machine: its projects, kernels and resources. */
-function OtherHost(props: { host: string; shell: Shell; workspace: (host: string) => Promise<Workspace> }) {
-  const [ws] = createResource(() => props.host, props.workspace);
-  return (
-    <Show when={ws()} keyed fallback={<p class="pane-note grow">Connecting to {props.host}…</p>}>
-      {(w) => <OtherHostContent ws={w} host={props.host} shell={props.shell} />}
-    </Show>
+/**
+ * The project's name, with a folder icon and ⌄: it lists the machine's
+ * projects, and picking one switches the window to it, like picking a
+ * machine. Opening or making another goes to the Start screen.
+ */
+function ProjectButton(props: { ws: Workspace; nav: Nav; project: string; name: string }) {
+  const [open, setOpen] = createSignal(false);
+  const [recent, { refetch }] = createResource(open, () =>
+    props.ws.call<ProjectInfo[]>("list_recent_projects").catch(() => [] as ProjectInfo[]),
   );
-}
-
-function OtherHostContent(props: { ws: Workspace; host: string; shell: Shell }) {
-  const ws = props.ws;
-  const connected = () => ws.link().status === "connected";
-  const [recent] = createResource(
-    () => connected() || undefined,
-    () => ws.call<ProjectInfo[]>("list_recent_projects"),
-  );
-  const stats = watchMachine(ws);
-  const kernels = (path: string) => ws.liveSessions().filter((s) => s.project === path).length;
+  let button!: HTMLButtonElement;
+  let pop: HTMLDivElement | undefined;
+  const close = (e: MouseEvent) => {
+    if (!pop?.contains(e.target as Node) && !button.contains(e.target as Node)) setOpen(false);
+  };
+  const escape = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+  document.addEventListener("mousedown", close);
+  document.addEventListener("keydown", escape);
+  onCleanup(() => {
+    document.removeEventListener("mousedown", close);
+    document.removeEventListener("keydown", escape);
+  });
+  const home = () => props.ws.host()?.home;
+  /** The open project first, then the others most recent first. */
+  const projects = () => {
+    const list = (recent() ?? []).filter((p) => p.exists || p.path === props.project);
+    const here = list.find((p) => p.path === props.project) ?? { path: props.project, name: props.name, opened_ms: Date.now(), exists: true, state: null };
+    return [here, ...list.filter((p) => p.path !== props.project)];
+  };
+  const kernels = (path: string) => props.ws.liveSessions().filter((s) => s.project === path).length;
+  const when = (p: ProjectInfo) => {
+    const n = kernels(p.path);
+    if (n) return n === 1 ? "1 kernel" : `${n} kernels`;
+    const date = new Date(p.opened_ms);
+    return date.toDateString() === new Date().toDateString()
+      ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : date.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+  const go = (run: () => void) => {
+    setOpen(false);
+    run();
+  };
+  const at = () => button.getBoundingClientRect();
   return (
     <>
-      <div class="pane-head">
-        <span class="pane-title">Projects on {hostName(props.host)}</span>
-      </div>
-      <Show when={connected()} fallback={<p class="pane-note grow">{linkText(ws)}</p>}>
-        <div class="tree" role="list">
-          <For
-            each={recent()?.filter((p) => p.exists)}
-            fallback={<p class="pane-note">{recent.loading ? "Loading…" : "No projects here yet. Open one from the start window."}</p>}
-          >
-            {(project) => (
-              <div
-                class="tree-item openable"
-                role="button"
-                title={`Open ${project.path} in its own window`}
-                onClick={() => void props.shell.openProject(props.host, project.path)}
+      <button
+        class="projbtn"
+        ref={button}
+        title={`${shortPath(props.project, home())} · Click to switch project on ${hostName(props.ws.backend.host)}`}
+        aria-expanded={open()}
+        onClick={() => {
+          if (!open()) void refetch();
+          setOpen(!open());
+        }}
+      >
+        <Icon name="folder" />
+        <span>{props.name}</span>
+        <Icon name="chevron" />
+      </button>
+      <Show when={open()}>
+        <div class="kpop projpop" role="menu" aria-label="Projects" ref={pop} style={{ left: `${at().left}px`, top: `${at().bottom + 4}px` }}>
+          <div class="mm-h">Projects on {hostName(props.ws.backend.host)}</div>
+          <For each={projects()}>
+            {(p) => (
+              <button
+                class="mm-i pj"
+                classList={{ on: p.path === props.project }}
+                role="menuitem"
+                title={p.path}
+                onClick={() => go(() => p.path !== props.project && props.nav.openProject(props.ws.backend.host, p.path))}
               >
-                <FileIcon name={project.name} dir />
-                <span class="tree-name">{project.name}</span>
-                <Show when={kernels(project.path)}>
-                  {(n) => (
-                    <span class="tree-meta">
-                      <span class="dot idle" />
-                      {n()}
-                    </span>
-                  )}
-                </Show>
-              </div>
+                <Icon name="folder" small />
+                <span>
+                  <b>{p.name}</b>
+                  <small>{shortPath(p.path, home())}</small>
+                </span>
+                <kbd>{p.path === props.project ? <Icon name="check" small /> : when(p)}</kbd>
+              </button>
             )}
           </For>
+          <div class="mm-sep" />
+          <button class="mm-i" role="menuitem" onClick={() => go(props.nav.showStart)}>
+            <Icon name="folder" small />
+            <span>Open project…</span>
+            <kbd>⌘O</kbd>
+          </button>
+          <button class="mm-i" role="menuitem" onClick={() => go(props.nav.showStart)}>
+            <Icon name="plus" small />
+            <span>New project…</span>
+            <kbd>⇧⌘N</kbd>
+          </button>
         </div>
       </Show>
-      <KernelRows ws={ws} sessions={ws.liveSessions()} stats={stats()} describe={(s) => baseName(s.project ?? s.cwd)} />
-      <Resources stats={stats()} host={props.host} sessions={ws.liveSessions()} />
     </>
   );
 }
@@ -576,10 +550,6 @@ function NewFileMenu(props: { onCreate: (kind: NewFile) => void }) {
 
 export function hostName(host: string): string {
   return host === LOCAL_HOST ? "this Mac" : host;
-}
-
-function baseName(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1) || path;
 }
 
 function message(err: unknown): string {

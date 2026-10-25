@@ -74,7 +74,7 @@ The `sandhill-link` crate (`crates/link`) is how the app reaches a daemon, on th
 - **R with no setup (Ark).** The app also carries Linux builds of Ark, Posit's R kernel (MIT), downloaded from its GitHub releases when the app is built. The check reports whether R is on the login `PATH` and the SHA-256 of `~/.local/share/sandhill/bin/ark`; when the server has R and not this Ark, the app copies Ark there the same way, after sandhilld. The daemon offers that file as the `ark` kernel ("R (Ark)") whenever R is on `PATH`, without registering it with Jupyter, and a kernel the user registered as `ark` wins. Ark stays off `PATH` because KDE has a program called `ark` too. Ark links to glibc, so unlike sandhilld it needs a glibc Linux, which any Linux with R from the usual packages is. If copying Ark fails, the connection goes ahead and R needs a kernel installed on the server, such as IRkernel.
 - **Nothing to set up on the server.** No root, no open ports, no systemd unit: `attach --start` starts the daemon as the user and it keeps running after ssh disconnects. The systemd unit in `packaging/` stays optional, for starting the daemon at boot.
 - **Reconnecting.** When the connection drops, the app retries with backoff and the UI resubscribes from the last event it saw, so output printed while disconnected appears once it is back.
-- **The start window** lists servers next to "This Mac"; "+ Server…" adds one, and the list is kept in the app's `servers.json`. A project window on a server is titled "project — server".
+- **The start screen** lists servers next to "This Mac"; "Connect to Server…" adds one, and the list is kept in the app's `servers.json`. A window showing a project on a server is titled "project — server".
 
 Not yet: password prompts, forwarding ports for the Viewer pane, Mac servers (the app would need to ship its own Mac build as one), and a server that can't reach `~/.local/bin` (a read-only home).
 
@@ -104,18 +104,36 @@ The app follows the UI mockup, the agreed final layout, kept in
 `docs/design/ui/`: `spec.md` describes it, `sandhill-layout.html` is the
 clickable mockup (light and dark) and the PNGs are screenshots of it. Where
 the spec and the mockup differ, the mockup wins. The app follows draft 17
-(2026-10-12); the top of `spec.md` lists what it changed from draft 16.
+(2026-10-12) and, since 2026-10-25, the title bar and machine tabs of drafts
+20 to 35; the top of `spec.md` lists what each draft changed.
 
-There is no title bar row. On macOS the windows use an overlay title bar, with
-the window buttons placed in the page's 34px toolbar row (`title_bar()` in
-`app/src-tauri/src/windows.rs`); the toolbar (left pane, Agents, right pane,
-⌘K, menu) floats over the top of the left pane. Panes reach the top of the
-window and sit 3px apart and 3px from its edges; the gaps are drag handles.
-The editor and Console are translucent cards on a warm gradient, each with
-minimize and maximize buttons; the left pane sits directly on the background,
-with a Local / server tab pair, the project's files, its kernel rows (language,
-version, files using it, memory, and shutting down with an inline
-confirmation) and the machine's CPU, memory, GPU and disk (`system_stats`).
+**Title bar and one machine at a time (built 2026-10-25).** A 31px title bar
+row holds three capsules, fully rounded bars: after the window buttons, the
+toolbar (left pane, Agents, right pane | ⌘K, menu); centred in the window, a
+tab per machine with its project's path, an orange dot when an agent there
+waits for you, and + to connect to another; at the right, the edit capsule
+(undo, redo | cut, copy, paste | save, save all ⌥⌘S), whose buttons act on
+the editor last in focus and dim when they can't. On macOS the windows use an
+overlay title bar with the window buttons centred on the capsules
+(`title_bar()` in `app/src-tauri/src/windows.rs`). Everything under the title
+bar belongs to the machine picked there, so local and remote work never mix:
+`app/src/ui/Workbench.tsx` keeps one project view per machine tab (and per
+project switched to with the project name at the top of the left pane) alive
+while hidden, so switching back returns to the same tabs, Console session,
+plot and conversation. The Start screen opens in the window, under the same
+title bar, and a project opened there goes into its machine's tab.
+Right-clicking a tab closes it. The app remembers each window's tabs for the
+next launch (`open-projects.json`); a list from before machine tabs opens as
+one window. Since a window can use several machines, the app sends each
+daemon message with its host's name (`{ host, body }`).
+
+Panes sit 3px below the title bar, 3px apart and 3px from the window's edges;
+the gaps are drag handles. The editor and Console are translucent cards on a
+warm gradient, each with minimize and maximize buttons; the left pane sits
+directly on the background, with the project's name (a button that lists the
+machine's projects), its files, its kernel rows (language, version, files
+using it, memory, and shutting down with an inline confirmation) and the
+machine's CPU, memory, GPU and disk (`system_stats`).
 One corner radius, 12px, for every rounded thing. All text is 13px, the macOS
 standard size, except the kernel rows, resource rows and Git pane at 11px and
 the context bar at 9px. Chrome is in the system font. Code, outputs,
@@ -342,7 +360,7 @@ my-analysis/
 - Any folder can be opened as a project. `.sandhill/` is created only when you first change a project setting, so opening a colleague's repo leaves no trace.
 
 **What it does.**
-1. **Open and switch.** "Open Project…" picks a folder on a host. A start screen lists recent projects per host (server and Mac separately). Each project opens in its own window, so two projects can be open side by side.
+1. **Open and switch.** "Open Project…" picks a folder on a host. A start screen lists recent projects per host (server and Mac separately). A window has a tab per machine, each showing one project; the project name at the top of the left pane switches the tab to another project on that machine (section 3, "The look").
 2. **Restore.** Reopening a project brings back its tabs, file tree and layout, and reattaches to that project's kernels that are still running. The daemon tags each kernel session with its project, so sessions can be listed per project.
 3. **Interpreter per project.** On first open the daemon looks for `renv.lock`, `environment.yml`, `pixi.toml`, `pyproject.toml`/`uv.lock` and `.venv/`, and proposes the matching R and Python. You confirm once and the choice is saved in `project.toml`. This is the "remembers a choice per project" line in the §5b table.
 4. **Working directory.** The console and plain `.R`/`.py` scripts run in the project root, as in RStudio. Chunks in `.qmd`/`.Rmd`/`.ipynb` run in the document's own folder, because that is where `quarto render` runs them, so relative paths behave the same interactively and when rendering (RStudio's default for R Markdown too). `project.toml` can switch documents to the project root.
@@ -361,7 +379,7 @@ my-analysis/
 
 **Built so far (October 2026).** Open and switch, restore and project-tagged sessions:
 - The daemon calls `open_project`, `list_recent_projects`, `save_project_state` and `forget_project` (see [protocol.md](protocol.md)). A project's tabs live in the daemon's journal, keyed by its folder, and `start_session` takes the project so sessions can be listed per project.
-- The app opens a start window listing the host's recent projects, with a folder browser that asks the daemon for folders, so it will work the same for a server. Each project gets its own window, and the projects open at Quit open again at the next launch. Closing the last project window shows the start window again.
+- The app opens a start screen listing the host's recent projects, with a folder browser that asks the daemon for folders, so it will work the same for a server. Projects open in their machine's tab of the window (until 2026-10-25, each in its own window), and the tabs open at Quit open again at the next launch. Closing the last window with projects shows the start screen again.
 - A project window reopens its tabs, and each document picks up the sessions that last ran its cells. Its kernel picker offers that project's sessions (and ones started outside any project), not other projects'.
 - The folder and tabs the app remembered before projects come back once, as a project, the first time it is opened.
 
