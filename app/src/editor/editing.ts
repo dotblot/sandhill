@@ -14,6 +14,16 @@ export const editTracking = EditorView.updateListener.of((update) => {
   if (update.focusChanged || (update.view === last && (update.docChanged || update.selectionSet))) setTick((n) => n + 1);
 });
 
+/**
+ * Keeps the cursor clear of the glass bars over the top of the editor pane:
+ * the document scrolls under them, so the space they cover counts as hidden.
+ */
+export const underBars = EditorView.scrollMargins.of((view) => {
+  const host = view.dom.closest<HTMLElement>(".doc-host");
+  const top = host ? Number.parseFloat(getComputedStyle(host).paddingTop) : 0;
+  return top ? { top } : null;
+});
+
 /** The editor last in focus, if it is still inside `root`. Reactive. */
 export function lastEditor(root: HTMLElement | undefined): EditorView | undefined {
   tick();

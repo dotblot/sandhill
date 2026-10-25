@@ -127,6 +127,14 @@ next launch (`open-projects.json`); a list from before machine tabs opens as
 one window. Since a window can use several machines, the app sends each
 daemon message with its host's name (`{ host, body }`).
 
+**Pane tabs (built 2026-10-25).** Every pane's tabs sit in a capsule like
+the title bar's, the picked tab a raised pill, and the tab bars (and the
+editor's kernel bar) are liquid glass floating over the top of their pane:
+the content starts under them and scrolls up beneath them, blurred. Only the
+bars blur; the panes still don't. The editor keeps the cursor clear of the
+bars (`underBars` in `app/src/editor/editing.ts`). Only the title bar drags
+the window. No text is smaller than 10px, the smallest size macOS uses.
+
 Panes sit 3px below the title bar, 3px apart and 3px from the window's edges;
 the gaps are drag handles. The editor and Console are translucent cards on a
 warm gradient, each with minimize and maximize buttons; the left pane sits
@@ -135,8 +143,8 @@ machine's projects), its files, its kernel rows (language, version, files
 using it, memory, and shutting down with an inline confirmation) and the
 machine's CPU, memory, GPU and disk (`system_stats`).
 One corner radius, 12px, for every rounded thing. All text is 13px, the macOS
-standard size, except the kernel rows, resource rows and Git pane at 11px and
-the context bar at 9px. Chrome is in the system font. Code, outputs,
+standard size, except the kernel rows, resource rows, Git pane and pop-ups at
+11px, and nothing is below 10px. Chrome is in the system font. Code, outputs,
 Variables, the console and the agent terminals are in Maple Mono NF, the Nerd
 Font build of Maple Mono, bundled with the app (OFL) so every Mac shows the
 same font and shell prompts can show their icons; the Data Explorer uses the

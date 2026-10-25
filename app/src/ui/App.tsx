@@ -994,7 +994,8 @@ export function App(props: {
             class="pane editor-pane"
             classList={{ min: isMin("editor"), max: maximized() === "editor", hidden: maximized() === "console" }}
           >
-            <div class="tabs" role="tablist" data-tauri-drag-region="deep">
+            <div class="tabs" role="tablist">
+              <div class="cap tabcap" hidden={!docs().length && !extras().length}>
               <For each={docs()}>
                 {(doc) => (
                   <div
@@ -1049,6 +1050,8 @@ export function App(props: {
                   </div>
                 )}
               </For>
+              </div>
+              <span class="spacer" />
               <PaneButtons pane="editor" min={isMin("editor")} max={maximized() === "editor"} onMin={toggleMin} onMax={toggleMax} />
             </div>
             <Show when={!activeExtra() && active()}>{(doc) => <KernelBar ws={ws} doc={doc()} usedBy={usedBy} onError={notify} />}</Show>
@@ -1109,7 +1112,8 @@ export function App(props: {
               }}
               style={consoleHeight() && !isMin("console") && !isMin("editor") ? { "flex-basis": `${consoleHeight()}px` } : undefined}
             >
-              <div class="tabs" role="tablist" data-tauri-drag-region="deep">
+              <div class="tabs" role="tablist">
+                <div class="cap tabcap">
                 <div
                   class="tab"
                   role="tab"
@@ -1129,6 +1133,7 @@ export function App(props: {
                   onClick={() => setConsoleTab("terminal")}
                 >
                   <span class="tab-name">Terminal</span>
+                </div>
                 </div>
                 <span class="spacer" />
                 <Show when={consoleTab() === "console"}>
@@ -1162,7 +1167,8 @@ export function App(props: {
               classList={{ min: isMin("variables"), max: maximized() === "variables", fill: isMin("plots") && !isMin("variables"), git: topTab() === "git" }}
               style={variablesHeight() && !isMin("variables") && !isMin("plots") ? { "flex-basis": `${variablesHeight()}px` } : undefined}
             >
-              <div class="tabs" role="tablist" data-tauri-drag-region="deep">
+              <div class="tabs" role="tablist">
+                <div class="cap tabcap">
                 <For each={TOP_TABS}>
                   {([tab, label]) => (
                     <div
@@ -1179,6 +1185,7 @@ export function App(props: {
                     </div>
                   )}
                 </For>
+                </div>
                 <span class="spacer" />
                 <button
                   class="tab-btn"
@@ -1375,7 +1382,7 @@ function ConsoleSessions(props: {
   };
   return (
     <>
-      <span class="console-sessions">
+      <span class="console-sessions cap tabcap" hidden={!props.sessions.length}>
         <For each={props.sessions}>
           {(s) => (
             <button

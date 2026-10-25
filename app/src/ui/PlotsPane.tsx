@@ -221,9 +221,11 @@ export function PlotsPane(props: {
 
   return (
     <div class="pane plots-pane" classList={props.classList} style={props.style}>
-      <div class="tabs" role="tablist" data-tauri-drag-region="deep">
-        <div class="tab active" role="tab" aria-selected="true">
-          <span class="tab-name">Plots</span>
+      <div class="tabs" role="tablist">
+        <div class="cap tabcap">
+          <div class="tab active" role="tab" aria-selected="true">
+            <span class="tab-name">Plots</span>
+          </div>
         </div>
         <span class="spacer" />
         <button class="tab-btn" title="Previous plot (←)" disabled={index() <= 0} onClick={() => step(-1)}>
