@@ -16,6 +16,8 @@ describe("machine", () => {
     expect(sessionLabel({ language: "python", language_version: "3.12.4" })).toBe("Python 3.12");
     expect(sessionLabel({ language: "python" })).toBe("Python");
     expect(sessionLabel({ language: "julia", language_version: "1.10.2" })).toBe("Julia 1.10.2");
+    // Ark gives R's version string; only its number shows.
+    expect(sessionLabel({ language: "r", language_version: "R version 4.6.1 (2026-06-24)" })).toBe("R 4.6.1");
   });
 
   it("gives a kernel's short name", () => {

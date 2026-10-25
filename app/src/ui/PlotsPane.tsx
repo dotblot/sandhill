@@ -55,6 +55,8 @@ export function PlotsPane(props: {
   style?: JSX.CSSProperties;
   /** The minimize and maximize buttons. */
   buttons: JSX.Element;
+  /** A plot that shows here was just drawn. */
+  onNew?: () => void;
 }) {
   const ws = props.ws;
   const [plots, setPlots] = createSignal<PlotItem[]>([]);
@@ -105,7 +107,9 @@ export function PlotsPane(props: {
     setPlots(next);
     if (!jump) return;
     const known = new Set(before.map((p) => p.key));
-    if (items.some((p) => !known.has(p.key) && wanted(p))) setPicked(undefined);
+    if (!items.some((p) => !known.has(p.key) && wanted(p))) return;
+    setPicked(undefined);
+    props.onNew?.();
   };
 
   /** Reads a session's latest plots from the daemon's journal, and follows the session. */

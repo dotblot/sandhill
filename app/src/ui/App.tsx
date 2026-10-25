@@ -155,7 +155,9 @@ export function App(props: {
   const [notebookPlots, setNotebookPlots] = createSignal(stored(NOTEBOOK_PLOTS_KEY) === "on");
   /** The Console's height in px; 0 until dragged, for a share of the column. */
   const [consoleHeight, setConsoleHeight] = createSignal(Number(stored(CONSOLE_HEIGHT_KEY)) || 0);
-  const [minimized, setMinimized] = createSignal<Pane[]>([]);
+  // The Console and Plots start minimized. The Console opens when a script's
+  // line runs in it, and Plots when code outside notebooks draws a plot.
+  const [minimized, setMinimized] = createSignal<Pane[]>(["console", "plots"]);
   const [maximized, setMaximized] = createSignal<Pane>();
   const [rightOn, setRightOn] = createSignal(stored(RIGHT_KEY) === "shown");
   const [rightWidth, setRightWidth] = createSignal(clampRight(Number(stored(RIGHT_WIDTH_KEY)) || RIGHT_WIDTH));
@@ -342,7 +344,8 @@ export function App(props: {
   // The session in front, which Variables, Help and Packages show, follows the
   // document in front and the script whose line just ran. The Console shows
   // it too, unless only notebooks have used it and their runs stay out of the
-  // Console; then it keeps the session it showed.
+  // Console; then it keeps the session it showed. Its pills offer every live
+  // session all the same, and picking one shows it.
   const consoleSessions = () =>
     ws
       .liveSessions()
@@ -355,7 +358,7 @@ export function App(props: {
   const markUsed = (id: string) => {
     if (!untrack(consoleUsed).has(id)) setConsoleUsed((used) => new Set(used).add(id));
   };
-  /** The sessions the Console offers. */
+  /** The sessions the Console follows to without being asked. */
   const consoleList = () => {
     const all = consoleSessions();
     if (notebookConsole()) return all;
@@ -432,6 +435,7 @@ export function App(props: {
       if (run.phase === "done" || !file || !isScript(file) || !docs().some((d) => d.path === file)) return;
       setForeground(run.session);
       setConsoleTab("console");
+      setMinimized((list) => list.filter((p) => p !== "console"));
     }),
   );
   // Sessions that were running before this window opened: used from the Console if their last runs say so.
@@ -449,6 +453,12 @@ export function App(props: {
   onCleanup(() => {
     for (const shown of consoles.values()) shown.dispose();
   });
+  /** Shows a session in the Console, notebooks' own included. */
+  const pickConsole = (id: string) => {
+    markUsed(id);
+    setForeground(id);
+    setConsolePick(id);
+  };
   /** Sessions only notebooks use while their runs stay out of the Console. */
   const notebookOnly = () => {
     const offered = new Set(consoleList().map((s) => s.id));
@@ -1192,10 +1202,10 @@ export function App(props: {
                 <Show when={consoleTab() === "console"}>
                   <ConsoleSessions
                     ws={ws}
-                    sessions={consoleList()}
+                    sessions={consoleSessions()}
                     foreground={consoleSession()}
                     usedBy={usedBy}
-                    onPick={setForeground}
+                    onPick={pickConsole}
                     onClear={() => foregroundConsole()?.clear()}
                   />
                 </Show>
@@ -1310,6 +1320,7 @@ export function App(props: {
               hostLabel={hostLabel}
               classList={{ min: isMin("plots"), max: maximized() === "plots" }}
               buttons={<PaneButtons pane="plots" min={isMin("plots")} max={maximized() === "plots"} onMin={toggleMin} onMax={toggleMax} />}
+              onNew={() => setMinimized((list) => list.filter((p) => p !== "plots"))}
             />
           </aside>
         </Show>

@@ -268,6 +268,28 @@ async fn interrupt_stops_a_long_running_cell() {
 
 /// The app tells busy sessions from idle ones by this count, even for
 /// sessions it never subscribed to.
+/// Ark says "R version 4.6.1 (2026-06-24)"; a session gives only the number,
+/// as IRkernel and ipykernel do.
+#[tokio::test]
+async fn r_sessions_give_their_version_as_a_number() {
+    for kernel in ["ark", "ir"] {
+        if !have_kernel(kernel).await {
+            eprintln!("skipping {kernel}: not installed");
+            continue;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let daemon = TestDaemon::start(dir.path()).await;
+        let client = daemon.client().await;
+        let info = client.start_session(kernel, None).await.unwrap();
+        let version = info.language_version.clone().expect("no language version");
+        assert!(
+            version.split('.').count() == 3
+                && version.split('.').all(|part| part.parse::<u32>().is_ok()),
+            "{kernel}: {version}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn sessions_report_their_language_version_and_memory() {
     if !have_kernel("python3").await {
