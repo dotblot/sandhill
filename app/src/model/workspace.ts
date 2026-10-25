@@ -14,6 +14,8 @@ import {
   type FileOutputs,
   type KernelspecInfo,
   type PingReply,
+  type ProjectSettings,
+  type ProjectSetup,
   type RunStarted,
   type SessionInfo,
 } from "../backend/types";
@@ -31,6 +33,8 @@ export class Workspace {
   readonly activity: () => number;
   /** Restarted sessions, old id -> new id, so every document using one follows it. */
   readonly replacements: () => Record<string, string>;
+  /** The project's settings and what its folder points to, once read. */
+  readonly setup: () => ProjectSetup | undefined;
 
   private setLink: Setter<LinkState>;
   private setHost: Setter<PingReply | undefined>;
@@ -39,6 +43,7 @@ export class Workspace {
   private setSessions: Setter<SessionInfo[]>;
   private setActivity: Setter<number>;
   private setReplacements: Setter<Record<string, string>>;
+  private setSetup: Setter<ProjectSetup | undefined>;
   /** Session id -> highest event seq received, for resubscribing after a reconnect. */
   private subscribed = new Map<string, number>();
   /** The session each language last ran code in, from this window. */
@@ -59,6 +64,7 @@ export class Workspace {
     [this.sessions, this.setSessions] = createSignal<SessionInfo[]>([]);
     [this.activity, this.setActivity] = createSignal(0);
     [this.replacements, this.setReplacements] = createSignal<Record<string, string>>({});
+    [this.setup, this.setSetup] = createSignal<ProjectSetup>();
 
     backend.onEvent((event) => this.onEvent(event));
     backend.onLink((state) => {
@@ -82,9 +88,54 @@ export class Workspace {
 
   /** Asks the daemon for its kernels again, say after the user installed one. */
   async refreshKernelspecs(): Promise<KernelspecInfo[]> {
-    const specs = await this.call<KernelspecInfo[]>("list_kernelspecs");
+    const specs = await this.listKernelspecs();
     this.setKernelspecs(specs);
     return specs;
+  }
+
+  /** The kernels, in a project window with those of the environments in its folder (a .venv). */
+  private listKernelspecs(): Promise<KernelspecInfo[]> {
+    const all = () => this.call<KernelspecInfo[]>("list_kernelspecs");
+    // A daemon from before project settings doesn't know the call.
+    return this.project ? this.call<KernelspecInfo[]>("list_project_kernelspecs", { path: this.project }).catch(all) : all();
+  }
+
+  /** Reads the project's settings again, and what its folder points to. */
+  async refreshSetup(): Promise<ProjectSetup | undefined> {
+    if (!this.project) return undefined;
+    const setup = await this.call<ProjectSetup>("get_project_settings", { path: this.project });
+    this.setSetup(setup);
+    return setup;
+  }
+
+  /** Writes the project's settings to .sandhill/project.toml. */
+  async saveSettings(settings: ProjectSettings): Promise<ProjectSetup> {
+    const setup = await this.call<ProjectSetup>("save_project_settings", { path: this.project, settings });
+    this.setSetup(setup);
+    return setup;
+  }
+
+  /** The kernel the project runs `language` in, saved or found in its folder, if there is one. */
+  projectKernel(language: string): string | undefined {
+    const lang = normalizeLanguage(language);
+    const setup = this.setup();
+    return lang === "r" ? setup?.r : lang === "python" ? setup?.python : undefined;
+  }
+
+  /**
+   * The kernel to start for `language`: the project's, else the one the
+   * document asks for, else the usual one. None when the project's kernel
+   * isn't among `specs`.
+   */
+  pick(language: string, wanted?: KernelWanted, specs = this.kernelspecs()): KernelspecInfo | undefined {
+    const name = this.projectKernel(language);
+    if (name) return specs.find((k) => k.name === name);
+    return pickKernel(specs, language, wanted);
+  }
+
+  /** Where a notebook or Quarto document in `dir` runs its code. */
+  documentFolder(dir: string): string {
+    return this.project && this.setup()?.settings.documents === "project" ? this.project : dir;
   }
 
   liveSessions(language?: string): SessionInfo[] {
@@ -237,7 +288,8 @@ export class Workspace {
     try {
       const [host, specs] = await Promise.all([
         this.call<PingReply>("ping"),
-        this.call<KernelspecInfo[]>("list_kernelspecs"),
+        this.listKernelspecs(),
+        this.refreshSetup().catch((err) => console.warn("could not read the project's settings", err)),
       ]);
       this.setHost(host);
       this.setKernelspecs(specs);

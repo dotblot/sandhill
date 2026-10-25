@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    BLOB_KEY, Call, CellRef, EVENT_RUN_FINISHED, FileOutputs, KernelspecInfo, RunFinished,
-    SessionInfo, SessionStatus,
+    BLOB_KEY, Call, CellRef, EVENT_RUN_FINISHED, FileOutputs, KernelspecInfo, ProjectSetup,
+    RunFinished, SessionInfo, SessionStatus,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -383,8 +383,17 @@ impl Tools {
         self.start_kernel(client, language, None, cwd).await
     }
 
-    /// Starts `kernel` if it is installed, else the usual kernel for
-    /// `language`, in `cwd`.
+    /// The project's settings and the kernel each language runs in, if
+    /// these tools serve a project.
+    async fn project_setup(&self, client: &Client) -> Result<Option<ProjectSetup>> {
+        let Some(path) = self.project.clone() else {
+            return Ok(None);
+        };
+        Ok(Some(client.call(Call::GetProjectSettings { path }).await?))
+    }
+
+    /// Starts the kernel the project runs `language` in, else `kernel` if
+    /// it is installed, else the usual kernel for `language`, in `cwd`.
     async fn start_kernel(
         &self,
         client: &Client,
@@ -393,7 +402,29 @@ impl Tools {
         cwd: Option<String>,
     ) -> Result<SessionInfo> {
         let language = normalize_language(language);
-        let specs: Vec<KernelspecInfo> = client.list_kernelspecs().await?;
+        let specs: Vec<KernelspecInfo> = match &self.project {
+            Some(path) => {
+                client
+                    .call(Call::ListProjectKernelspecs { path: path.clone() })
+                    .await?
+            }
+            None => client.list_kernelspecs().await?,
+        };
+        let chosen = self.project_setup(client).await?.and_then(|setup| {
+            if language == "r" {
+                setup.r
+            } else {
+                setup.python
+            }
+        });
+        if let Some(name) = &chosen
+            && !specs.iter().any(|s| &s.name == name)
+        {
+            bail!(
+                "this project runs {language} in the kernel {name:?} (set in .sandhill/project.toml), which isn't installed on this machine"
+            );
+        }
+        let kernel = chosen.as_deref().or(kernel);
         let preferred: &[&str] = if language == "r" {
             &["ark", "ir"]
         } else {

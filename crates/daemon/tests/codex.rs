@@ -245,7 +245,7 @@ async fn codex_works_through_the_chat() {
         eprintln!("skipping: codex is not installed");
         return;
     }
-    if sandhill_daemon::kernel::find_kernelspec("python3")
+    if sandhill_daemon::kernel::find_kernelspec("python3", None)
         .await
         .is_err()
     {

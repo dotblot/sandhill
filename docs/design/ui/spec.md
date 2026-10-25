@@ -271,8 +271,26 @@ and remote work are never shown together.
   - Clicking it opens "Projects on gpu01" (or "on this Mac"): each project with
     its folder icon, name and path, a check on the open one, and when the others
     were last used.
-  - Then Open project… (⌘O) and New project… (⇧⌘N), which go to the Start
-    screen.
+  - Then Project settings…, and Open project… (⌘O) and New project… (⇧⌘N),
+    which go to the Start screen.
+- **Project settings** (2026-10-25), from that menu or the ☰ menu, is a dialog
+  of four rows, a label on the left and an 11px select or field with 11px
+  notes under it:
+  - R and Python: "Automatic: <the kernel it means>, from <file>" (follow what
+    the project's files point to), then every installed kernel of the
+    language. The notes say what was found ("Found environment.yml (conda env
+    omicverse).") and how to get a kernel for one without ("It has no R
+    kernel: `conda install -n omicverse r-irkernel`.").
+  - Notebooks: run in their own folder, as quarto render does, or in the
+    project's folder.
+  - Env files, comma-separated.
+  - Cancel and Save. Save writes `.sandhill/project.toml`; running sessions
+    keep their kernel until restarted, and a toast says so.
+  - The first time a project opens with a choice to make (an environment its
+    files point to, or two kernels of a language), it opens by itself, titled
+    "Which R and Python should <project> use?", with what runs now picked and
+    Not now instead of Cancel. Either button settles it for that project.
+
   - Picking a project switches the whole window to it, like switching machine.
     The title bar's tab then shows that project's path.
 - Project name row. At the right:

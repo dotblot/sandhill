@@ -108,7 +108,7 @@ export abstract class Doc {
     readonly path: string,
     preferredKernel: (language: string) => KernelWanted | undefined = () => undefined,
     shownOutputs: string[] = [],
-    /** Where its kernels run; the document's own folder unless given. */
+    /** Where its kernels run; unless given, the document's own folder or, if the project says so, the project's. */
     kernelFolder?: string,
   ) {
     const slash = path.lastIndexOf("/");
@@ -117,7 +117,7 @@ export abstract class Doc {
     const [dirty, setDirty] = createSignal(false);
     this.dirty = dirty;
     this.setDirty = setDirty;
-    this.kernels = new DocKernels(ws, kernelFolder ?? this.dir, preferredKernel);
+    this.kernels = new DocKernels(ws, () => kernelFolder ?? ws.documentFolder(this.dir), preferredKernel);
     [this.shownOutputs, this.setShownOutputs] = createSignal(shownOutputs);
     [this.cursor, this.setCursor] = createSignal("");
     [this.moved, this.setMoved] = createSignal(0);

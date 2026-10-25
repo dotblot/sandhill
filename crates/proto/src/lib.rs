@@ -413,6 +413,24 @@ pub enum Call {
     ForgetProject {
         path: String,
     },
+    /// A project's shared settings, from `.sandhill/project.toml`, and the
+    /// environments its files point to. Returns [`ProjectSetup`].
+    GetProjectSettings {
+        path: String,
+    },
+    /// Writes a project's settings to `.sandhill/project.toml`, making
+    /// `.sandhill/` (with a `.gitignore` for its `outputs/`) the first time.
+    /// Returns [`ProjectSetup`].
+    SaveProjectSettings {
+        path: String,
+        settings: ProjectSettings,
+    },
+    /// The kernels `list_kernelspecs` returns, and those of the
+    /// environments inside a project's folder (`.venv`, pixi's).
+    /// Returns `Vec<KernelspecInfo>`.
+    ListProjectKernelspecs {
+        path: String,
+    },
     /// What the machine is doing: CPU, memory, GPUs, the disk `path` is on
     /// (the home folder without it), and the memory each running kernel
     /// holds. Returns [`SystemStats`].
@@ -789,6 +807,91 @@ pub struct SessionInfo {
     /// The language's version as the kernel reports it, like "4.4.1" for R.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_version: Option<String>,
+}
+
+/// Where a project's notebooks and Quarto documents run their code.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentsRunIn {
+    /// The document's own folder, where `quarto render` runs it.
+    #[default]
+    Document,
+    /// The project's folder, like the Console and scripts.
+    Project,
+}
+
+/// A project's shared settings, kept in `.sandhill/project.toml`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectSettings {
+    /// The kernel R runs in, by name. Without one, the kernel of the
+    /// environment the project's files point to, else the usual one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r: Option<String>,
+    /// The kernel Python runs in, as for `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python: Option<String>,
+    #[serde(default)]
+    pub documents: DocumentsRunIn,
+    /// Files of `NAME=value` lines, relative to the project's folder, whose
+    /// variables its kernels start with. Missing files are skipped.
+    #[serde(default = "default_env_files")]
+    pub env_files: Vec<String>,
+}
+
+fn default_env_files() -> Vec<String> {
+    vec![".env".into()]
+}
+
+impl Default for ProjectSettings {
+    fn default() -> Self {
+        ProjectSettings {
+            r: None,
+            python: None,
+            documents: DocumentsRunIn::default(),
+            env_files: default_env_files(),
+        }
+    }
+}
+
+/// A project's settings and what its folder suggests.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectSetup {
+    pub settings: ProjectSettings,
+    /// Whether `.sandhill/project.toml` exists.
+    pub saved: bool,
+    /// Why `project.toml` couldn't be read, if it couldn't; `settings` are
+    /// then the defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+    /// The environments the project's files point to, best first for each
+    /// language.
+    pub found: Vec<FoundEnvironment>,
+    /// The kernel R runs in: the one in `settings`, else the first found
+    /// that is installed. Without one, the usual kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r: Option<String>,
+    /// The kernel Python runs in, as for `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python: Option<String>,
+}
+
+/// An environment a project's files point to, such as the conda
+/// environment its `environment.yml` names.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FoundEnvironment {
+    /// `r` or `python`.
+    pub language: String,
+    /// The file or folder that says so: `renv.lock`, `environment.yml`,
+    /// `.venv`.
+    pub file: String,
+    /// The environment, as shown: "renv", "conda env omicverse", ".venv".
+    pub label: String,
+    /// The installed kernel that runs in it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<String>,
+    /// What to do to get a kernel for it, when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 /// A folder opened as a project on the daemon's machine.

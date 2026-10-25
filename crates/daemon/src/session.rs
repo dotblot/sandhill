@@ -2,7 +2,7 @@
 //! every output, and tracks when each run finishes.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,6 +55,17 @@ enum Command {
     },
 }
 
+/// What a new session belongs to and starts with, besides its kernel and
+/// folder.
+#[derive(Debug, Default)]
+pub struct Start {
+    /// The project's folder. R starts there so its `.Rprofile` and
+    /// `.Renviron` apply, and kernels of the environments inside it count.
+    pub project: Option<String>,
+    /// Variables from the project's env files.
+    pub env: Vec<(String, String)>,
+}
+
 /// Handle held by the daemon. Dropping it does not stop the kernel.
 pub struct SessionHandle {
     pub id: String,
@@ -70,10 +81,22 @@ impl SessionHandle {
         kernels_dir: &Path,
         kernel: &str,
         cwd: &Path,
-        project: Option<String>,
+        start: Start,
     ) -> Result<SessionHandle> {
-        let spec = kernel::find_kernelspec(kernel).await?;
+        let root = start
+            .project
+            .as_deref()
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir());
+        let spec = kernel::find_kernelspec(kernel, root.as_deref()).await?;
         let language = spec.kernelspec.language.clone();
+        // R reads `.Rprofile` and `.Renviron` in the folder it starts in,
+        // which is how renv loads a project's library: start it in the
+        // project's folder, then move to `cwd`.
+        let start_in = match &root {
+            Some(root) if crate::cells::normalize_language(&language) == "r" => root,
+            _ => cwd,
+        };
         let interrupt_mode = spec
             .kernelspec
             .interrupt_mode
@@ -81,7 +104,7 @@ impl SessionHandle {
             .unwrap_or_else(|| "signal".to_string());
         let id = uuid::Uuid::new_v4().simple().to_string();
         let client_session = uuid::Uuid::new_v4().to_string();
-        let launched = kernel::launch(spec, cwd, kernels_dir, &id).await?;
+        let launched = kernel::launch(spec, start_in, &start.env, kernels_dir, &id).await?;
 
         let record = SessionRecord {
             id: id.clone(),
@@ -95,7 +118,7 @@ impl SessionHandle {
             status: SessionStatus::Starting,
             created_ms: now_ms(),
             ended_ms: None,
-            project,
+            project: start.project,
             language_version: None,
         };
         journal.insert_session(&record)?;
@@ -120,7 +143,8 @@ impl SessionHandle {
             };
             let version = wait_until_ready(&mut conn, &mut rx).await?;
             let mut prelude = None;
-            if let Some(code) = startup::code(&record.language) {
+            let chdir = (start_in != cwd).then_some(cwd);
+            if let Some(code) = startup::code(&record.language, chdir) {
                 let msg = quietly(&code);
                 prelude = Some(msg.header.msg_id.clone());
                 conn.shell.send(msg).await?;

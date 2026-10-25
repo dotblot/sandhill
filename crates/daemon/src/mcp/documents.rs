@@ -8,7 +8,7 @@
 use std::cmp::Reverse;
 
 use sandhill_proto::client::ClientError;
-use sandhill_proto::{CellEdited, CellOutputs, Focus};
+use sandhill_proto::{CellEdited, CellOutputs, DocumentsRunIn, Focus};
 
 use super::*;
 use crate::cells;
@@ -503,24 +503,34 @@ impl Tools {
             }
         }
         let path = Path::new(&edited.file);
+        let setup = self.project_setup(client).await?;
+        let in_root = setup
+            .as_ref()
+            .is_some_and(|s| s.settings.documents == DocumentsRunIn::Project);
         let folder = match (cells::kind(path), &self.project) {
-            // Scripts run in the project's folder, as in RStudio.
+            // Scripts run in the project's folder, as in RStudio, and so do
+            // documents when the project says so.
             (Some(cells::Kind::Script(_)), Some(project)) => project.clone(),
+            (_, Some(project)) if in_root => project.clone(),
             _ => path
                 .parent()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default(),
         };
+        // The kernel the project runs the language in wins over the one
+        // the document names.
+        let chosen = setup.and_then(|s| if language == "r" { s.r } else { s.python });
+        let kernel = chosen.as_deref().or(edited.kernel.as_deref());
         let mut shared: Vec<&SessionInfo> = running
             .iter()
             .filter(|s| self.in_project(s) && s.cwd == folder)
-            .filter(|s| edited.kernel.as_deref().is_none_or(|k| s.kernel == k))
+            .filter(|s| kernel.is_none_or(|k| s.kernel == k))
             .collect();
         shared.sort_by_key(|s| Reverse(s.last_seq));
         if let Some(session) = shared.first() {
             return Ok((*session).clone());
         }
-        self.start_kernel(client, &language, edited.kernel.as_deref(), Some(folder))
+        self.start_kernel(client, &language, kernel, Some(folder))
             .await
     }
 }

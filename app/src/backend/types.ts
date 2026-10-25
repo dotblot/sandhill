@@ -99,6 +99,48 @@ export interface ProjectState {
   /** Tables and diffs open beside the documents, in tab order, and the id of the one in front. */
   extras?: SavedExtra[];
   activeExtra?: string;
+  /** Project settings were offered once (saved or not), so they aren't again. */
+  setupAsked?: boolean;
+}
+
+/** Where a project's notebooks and Quarto documents run: their own folder, or the project's. */
+export type DocumentsRunIn = "document" | "project";
+
+/** A project's shared settings, kept in `.sandhill/project.toml`. */
+export interface ProjectSettings {
+  /** The kernel R runs in, by name; without one, what the project's files point to. */
+  r?: string;
+  python?: string;
+  documents: DocumentsRunIn;
+  /** Files of NAME=value lines, relative to the project, whose variables its kernels start with. */
+  env_files: string[];
+}
+
+/** An environment a project's files point to, such as the conda env its environment.yml names. */
+export interface FoundEnvironment {
+  language: string;
+  /** What says so: renv.lock, environment.yml, .venv. */
+  file: string;
+  /** "renv", "conda env omicverse", ".venv". */
+  label: string;
+  /** The installed kernel that runs in it. */
+  kernel?: string;
+  /** What to do to get a kernel for it, when there is none. */
+  hint?: string;
+}
+
+/** A project's settings and what its folder suggests. */
+export interface ProjectSetup {
+  settings: ProjectSettings;
+  /** Whether .sandhill/project.toml exists. */
+  saved: boolean;
+  /** Why project.toml couldn't be read. */
+  problem?: string;
+  /** Best first for each language. */
+  found: FoundEnvironment[];
+  /** The kernel R runs in: the saved one, else the first found that is installed. */
+  r?: string;
+  python?: string;
 }
 
 /** A Data Explorer or diff tab, as kept for next time. */

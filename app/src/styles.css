@@ -1514,3 +1514,14 @@ button.sz.upd:hover:not(:disabled) { background: var(--accent-soft); }
 .df-choices input { margin: 0; accent-color: var(--accent); }
 .df-err { padding-left: 70px; color: var(--err); }
 .df-acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
+/* Project settings: a label column, then a select or field with notes under it. */
+.modal.projdlg { width: min(560px, calc(100vw - 32px)); }
+.ps-grid { display: grid; grid-template-columns: max-content 1fr; gap: 10px 12px; align-items: start; }
+.ps-label { padding-top: 4px; color: var(--muted); }
+.ps-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ps-field select, .ps-field input { width: 100%; height: 26px; padding: 0 6px; font-size: var(--fs-small); }
+.ps-field input { font-family: var(--font-mono); }
+.ps-field input:focus, .ps-field select:focus { outline: none; border-color: var(--accent); }
+.ps-note { margin: 0; color: var(--faint); font-size: var(--fs-small); line-height: 1.35; overflow-wrap: anywhere; }
+.ps-note.warn { color: var(--muted); }
+.ps-problem { margin: -4px 0 10px; color: var(--err); font-size: var(--fs-small); overflow-wrap: anywhere; }

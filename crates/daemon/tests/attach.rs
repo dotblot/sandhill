@@ -153,7 +153,7 @@ async fn a_daemon_says_how_it_runs_shows_its_log_and_stops_when_asked() {
     assert!(log.text.contains("sandhilld listening on"), "{log:?}");
 
     // A kernel keeps running while the daemon restarts.
-    let kernel = sandhill_daemon::kernel::find_kernelspec("python3")
+    let kernel = sandhill_daemon::kernel::find_kernelspec("python3", None)
         .await
         .is_ok();
     let session = if kernel {

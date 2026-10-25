@@ -18,17 +18,24 @@ use tokio::task::JoinHandle;
 
 use crate::kernelspecs::{self, Search};
 
-pub async fn list_kernelspecs() -> Vec<KernelspecInfo> {
-    tokio::task::spawn_blocking(|| kernelspecs::list(&Search::from_env()))
-        .await
-        .unwrap_or_default()
+/// The installed kernels, and with `project`, those of the environments
+/// inside its folder.
+pub async fn list_kernelspecs(project: Option<PathBuf>) -> Vec<KernelspecInfo> {
+    tokio::task::spawn_blocking(move || {
+        kernelspecs::list(&Search::from_env().in_project(project.as_deref()))
+    })
+    .await
+    .unwrap_or_default()
 }
 
-pub async fn find_kernelspec(name: &str) -> Result<KernelspecDir> {
+pub async fn find_kernelspec(name: &str, project: Option<&Path>) -> Result<KernelspecDir> {
     let wanted = name.to_string();
-    tokio::task::spawn_blocking(move || kernelspecs::find(&Search::from_env(), &wanted))
-        .await?
-        .with_context(|| format!("no Jupyter kernel named {name:?} is installed"))
+    let project = project.map(Path::to_path_buf);
+    tokio::task::spawn_blocking(move || {
+        kernelspecs::find(&Search::from_env().in_project(project.as_deref()), &wanted)
+    })
+    .await?
+    .with_context(|| format!("no Jupyter kernel named {name:?} is installed"))
 }
 
 /// A freshly started kernel process.
@@ -41,12 +48,22 @@ pub struct Launched {
 
 /// Starts a kernel in its own process group, so it keeps running if the
 /// daemon exits or restarts. Its stdout/stderr go to `<session>.log`.
+/// `env` (a project's env files) adds to the kernel's environment, but
+/// doesn't change what the kernelspec sets, such as the `PATH` that
+/// activates its environment.
 pub async fn launch(
-    spec: KernelspecDir,
+    mut spec: KernelspecDir,
     cwd: &Path,
+    env: &[(String, String)],
     kernels_dir: &Path,
     session_id: &str,
 ) -> Result<Launched> {
+    if !env.is_empty() {
+        let vars = spec.kernelspec.env.get_or_insert_with(Default::default);
+        for (key, value) in env {
+            vars.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
     let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let (ports, listeners) = jupyter_zmq_client::peek_ports_with_listeners(ip, 5).await?;
     let connection_info = ConnectionInfo {

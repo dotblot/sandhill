@@ -25,7 +25,7 @@ import {
   parseNotebook,
   serializeNotebook,
 } from "../model/ipynb";
-import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
+import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { CellOutput, type OutputInfo } from "./cellOutput";
 import { type AgentCell, Doc, type Place, selectionOf } from "./doc";
 import { followOutput } from "./follow";
@@ -491,7 +491,7 @@ export class NotebookDoc extends Doc {
     if (this.nb.metadata.kernelspec) return;
     const kernel = this.ws.sessions().find((s) => s.id === session)?.kernel;
     const specs = this.ws.kernelspecs();
-    const spec = specs.find((k) => k.name === kernel) ?? pickKernel(specs, this.language());
+    const spec = specs.find((k) => k.name === kernel) ?? this.ws.pick(this.language());
     if (!spec) return;
     this.nb.metadata.kernelspec = { name: spec.name, display_name: spec.display_name, language: spec.language };
     this.setLanguage(normalizeLanguage(spec.language));

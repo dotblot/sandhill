@@ -55,7 +55,9 @@ impl TestDaemon {
 }
 
 async fn have_kernel(name: &str) -> bool {
-    let found = sandhill_daemon::kernel::find_kernelspec(name).await.is_ok();
+    let found = sandhill_daemon::kernel::find_kernelspec(name, None)
+        .await
+        .is_ok();
     if !found {
         eprintln!("skipping: Jupyter kernel {name:?} is not installed");
     }

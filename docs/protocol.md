@@ -63,6 +63,9 @@ Responses can arrive out of order; match them by `id`.
 | `list_recent_projects` | | `[ProjectInfo]`, most recent first, `state` null |
 | `save_project_state` | `path`, `state` | `null` |
 | `forget_project` | `path` | `null` |
+| `get_project_settings` | `path` | `ProjectSetup`: the project's settings and the environments its files point to |
+| `save_project_settings` | `path`, `settings` | `ProjectSetup` once `.sandhill/project.toml` is written |
+| `list_project_kernelspecs` | `path` | `[{name, display_name, language, env?}]`: `list_kernelspecs` and the kernels of the environments inside the project's folder |
 | `system_stats` | `path?` | `SystemStats` for the daemon's machine |
 | `read_log` | `bytes?` | `{path, text, size}`: whole lines from the end of the daemon's log, 64 KiB unless `bytes` says |
 | `stop_daemon` | | `null`, then the daemon stops; kernels and terminals keep running for the next one |
@@ -108,6 +111,30 @@ the folder, so opening a colleague's repository leaves no trace in it. `forget_p
 removes a project from the recent list and touches no files. A session
 started with `project` lists it in its `SessionInfo`, also after a daemon
 restart.
+
+A project's shared settings live in `.sandhill/project.toml`, which can be
+committed. `ProjectSettings` is `{r?, python?, documents, env_files}`: the
+kernel each language runs in (none: detect it), where notebook and Quarto
+chunks run (`document`, their own folder, or `project`), and the env files,
+relative to the project, whose `NAME=value` lines its kernels start with
+(`[".env"]` unless set). `save_project_settings` makes `.sandhill/` the first
+time, with a `.gitignore` for `outputs/`, and keeps the rest of an existing
+file, comments included. `ProjectSetup` is `{settings, saved, problem?,
+found, r?, python?}`: `saved` says whether the file exists, `problem` why it
+couldn't be read, `found` lists the environments the folder's files point
+to, best first for each language, as `{language, file, label, kernel?,
+hint?}` (`renv.lock`, the environments inside the folder such as `.venv` and
+pixi's, `pixi.toml` or `uv.lock` before they are installed, and the conda
+environment `environment.yml` names; `hint` says how to get a kernel for one
+that has none), and `r` and `python` are the kernels the project runs: the
+saved one, else the first found that is installed.
+
+`start_session` with `project` starts the kernel with the variables of the
+project's env files (they don't replace what the kernelspec sets, such as
+the `PATH` of its environment). An R kernel starts in the project's folder,
+so its `.Rprofile` and `.Renviron` apply (this is how renv loads a project's
+library), and then moves to `cwd`. Kernels of the environments inside the
+project's folder are found by name, as `list_project_kernelspecs` lists them.
 
 `build` identifies the daemon's executable (a short sha256). `sandhilld attach
 --start` stops a running daemon whose `build` differs from its own (an older
@@ -331,7 +358,10 @@ those inside conda environments, pyenv versions and the environment of the
 first Python on `PATH`, which need no `ipykernel install`. Kernels found in a
 conda environment are named `conda-env-<env>-py` (or `-r`), as
 nb_conda_kernels names them, and run with the environment activated. `env`
-names the environment a kernel runs in.
+names the environment a kernel runs in. `list_project_kernelspecs` lists
+the environments inside a project's folder first: `.venv`, `venv`, `env` and
+`.conda` as `project-venv-py` and so on, and pixi's as
+`project-pixi-<env>-py` (or `-r`).
 
 ## Events
 
