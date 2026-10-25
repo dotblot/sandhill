@@ -19,7 +19,7 @@ export interface PlaceApi {
   confirmClose(): Promise<boolean>;
   /** Whether an agent in the project waits for you. */
   waiting(): boolean;
-  /** A menu bar command: "save", "save-all", "close-tab" or "run-all". */
+  /** A menu bar command: "save", "save-all", "close-tab", "run-all", "new-file" or "new-folder". */
   command(name: string): void;
 }
 
@@ -108,7 +108,7 @@ export function Workbench(props: { shell: Shell; initial: WindowPlaces }) {
 
   onMount(() => {
     props.shell.onMenu?.((command) => {
-      if (command === "open-project" || command === "connect") return nav.showStart();
+      if (command === "open-project" || command === "new-project" || command === "connect") return nav.showStart();
       const key = shownKey();
       if (key) apis()[key]?.command(command);
     });

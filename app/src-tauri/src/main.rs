@@ -1,6 +1,7 @@
 //! Sandhill's Mac app: windows for the TypeScript UI in `app/src`, plus the
 //! connections to sandhilld that the UI talks through.
 
+mod finder;
 mod link;
 mod memory;
 mod menu;
@@ -37,6 +38,8 @@ fn main() -> anyhow::Result<()> {
             windows::set_window_places,
             windows::cancel_quit,
             windows::open_link,
+            finder::reveal_path,
+            finder::download_file,
             servers::list_servers,
             servers::add_server,
             servers::remove_server,

@@ -53,6 +53,10 @@ export interface Backend {
   blobUrl(hash: string, mime: string, near?: string): string;
   /** Opens a web link in the browser. */
   openLink(url: string): void;
+  /** Shows a file in Finder (in the app; the UI offers it for this Mac's files). */
+  reveal?(path: string): Promise<void>;
+  /** Copies a file of the daemon's machine to this Mac (to Downloads), and says where it went. */
+  download?(path: string): Promise<string>;
 }
 
 /** The app around the windows: what this window had open, and its menu bar. */

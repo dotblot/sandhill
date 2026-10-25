@@ -48,8 +48,13 @@ Responses can arrive out of order; match them by `id`.
 | `read_file` | `path` | `{path, text, mtime_ms}` |
 | `read_notebook` | `path` | `{path, text, mtime_ms}`, plots and large values as blob references |
 | `write_notebook` | `path`, `text`, `expected_mtime_ms?` | `{path, mtime_ms}`; blob references in outputs are written out as their values |
-| `write_file` | `path`, `text`, `expected_mtime_ms?`, `base64?` | `{path, mtime_ms}` |
-| `list_dir` | `path` | `[{name, kind, size, mtime_ms}]`, directories first |
+| `write_file` | `path`, `text`, `expected_mtime_ms?`, `base64?`, `create?` | `{path, mtime_ms}` |
+| `list_dir` | `path`, `sizes?` | `[{name, kind, size, mtime_ms}]`, directories first |
+| `make_dir` | `path` | `{path, mtime_ms}` once the folder and any above it exist |
+| `move_path` | `from`, `to` | `{path, mtime_ms}` of `to`: a rename or move |
+| `copy_path` | `from`, `to` | `{path, mtime_ms}` of `to`, a folder copied with everything in it |
+| `delete_path` | `path`, `trash?` | `{path, trashed_to?}` |
+| `read_bytes` | `path`, `offset?`, `limit?` | `{path, offset, data, size, mtime_ms}`: up to 4 MiB of the file, `data` in base64 |
 | `file_outputs` | `file` | `{file, cells, seq}` |
 | `open_project` | `path` | `ProjectInfo` with its saved `state` |
 | `list_recent_projects` | | `[ProjectInfo]`, most recent first, `state` null |
@@ -483,6 +488,21 @@ the app edits files the same way locally and on a server.
   Pass the `mtime_ms` you read to refuse the write, with an error starting
   `conflict:`, if the file changed on disk in the meantime. With
   `base64: true`, `text` is the file's bytes in base64, for a saved plot.
+- With `create: true`, `write_file` makes a new file and fails, with an
+  error starting `exists:`, if anything is already at `path`. `make_dir`,
+  `move_path` and `copy_path` fail the same way rather than replace
+  anything, and make the folders `path` or `to` need. `move_path` may change
+  only the case of a name. Links are copied as links.
+- `delete_path` removes a file, or a folder and everything in it. With
+  `trash: true` it moves it to the machine's Trash instead: `~/.Trash` on
+  macOS, the freedesktop.org trash (`$XDG_DATA_HOME/Trash`, with an `info/`
+  file saying where it came from) on Linux, so Finder or the file manager
+  can put it back. Names already in the Trash get a number: `notes 2.md`.
+- `list_dir` with `sizes: true` gives each folder the sum of its files'
+  sizes, for sorting by size. It looks at 200,000 entries at most, so very
+  large folders show a partial size.
+- `read_bytes` reads a file in parts for downloading it to the Mac; ask
+  again from `offset + ` the bytes returned until `size` is reached.
 - To tie a run to a notebook cell, pass `cell: {file, cell_id}` to `execute`.
   For `.ipynb` the cell id is the notebook's own cell `id`. For `.qmd` and
   `.Rmd` it is the chunk label, or `chunk-<n>` (1-based position) for an

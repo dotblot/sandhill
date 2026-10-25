@@ -135,6 +135,11 @@ impl Links {
         self.hosts.lock().unwrap().get(host).cloned()
     }
 
+    /// The connection to `host`'s daemon, while there is one.
+    pub fn client(&self, host: &str) -> Option<Arc<Client>> {
+        self.link(host).and_then(|link| link.client())
+    }
+
     fn windows_using(&self, host: &str) -> Vec<String> {
         self.windows
             .lock()

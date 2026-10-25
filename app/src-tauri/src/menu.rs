@@ -16,6 +16,9 @@ const SAVE_ALL: &str = "save-all";
 const CLOSE_TAB: &str = "close-tab";
 const RUN_ALL: &str = "run-all";
 const OPEN_PROJECT: &str = "open-project";
+const NEW_PROJECT: &str = "new-project";
+const NEW_FILE: &str = "new-file";
+const NEW_FOLDER: &str = "new-folder";
 const CONNECT: &str = "connect";
 const QUIT: &str = "quit";
 const CLOSE_WINDOW: &str = "close-window";
@@ -45,6 +48,22 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "File",
         true,
         &[
+            &MenuItem::with_id(app, NEW_FILE, "New File…", true, Some("CmdOrCtrl+N"))?,
+            &MenuItem::with_id(
+                app,
+                NEW_FOLDER,
+                "New Folder…",
+                true,
+                Some("CmdOrCtrl+Alt+N"),
+            )?,
+            &MenuItem::with_id(
+                app,
+                NEW_PROJECT,
+                "New Project…",
+                true,
+                Some("CmdOrCtrl+Shift+N"),
+            )?,
+            &separator()?,
             &MenuItem::with_id(
                 app,
                 OPEN_PROJECT,
@@ -124,12 +143,13 @@ pub fn handle<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
             }
         }
         // The window shows its Start screen; with no window, a new one does.
-        id @ (OPEN_PROJECT | CONNECT) if focused(app).is_none() => {
+        id @ (OPEN_PROJECT | NEW_PROJECT | CONNECT) if focused(app).is_none() => {
             if let Err(err) = windows.open_window(app, Default::default()) {
                 tracing::warn!("cannot open a window for {id}: {err}");
             }
         }
-        id @ (SAVE | SAVE_ALL | CLOSE_TAB | RUN_ALL | OPEN_PROJECT | CONNECT) => {
+        id @ (SAVE | SAVE_ALL | CLOSE_TAB | RUN_ALL | OPEN_PROJECT | NEW_PROJECT | CONNECT
+        | NEW_FILE | NEW_FOLDER) => {
             if let Some(window) = focused(app) {
                 let target = EventTarget::webview_window(window.label());
                 let _ = app.emit_to(target, COMMAND, id);

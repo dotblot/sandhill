@@ -29,6 +29,7 @@ import { QmdDoc } from "../docs/qmdDoc";
 import { ScriptDoc } from "../docs/scriptDoc";
 import { canEdit, type EditAction, lastEditor, runEdit } from "../editor/editing";
 import { type HelpRequest, nameAt } from "../model/help";
+import { type NewKind, template, within } from "../model/files";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
@@ -46,7 +47,8 @@ import { type DiffRequest, GitPane } from "./GitPane";
 import { HelpPane } from "./HelpPane";
 import { FileIcon, Icon, type IconName, LangIcon, ProviderIcon } from "./icons";
 import { KernelBar } from "./KernelBar";
-import { hostName, LeftPane, type NewFile } from "./LeftPane";
+import { hostName, LeftPane } from "./LeftPane";
+import { createTree, type TreeActions } from "./FileTree";
 import { takeLegacyState } from "./legacy";
 import { type Command, Palette } from "./Palette";
 import { type Pane, PaneButtons } from "./PaneButtons";
@@ -692,29 +694,39 @@ export function App(props: {
     return true;
   }
 
-  async function createFile(kind: NewFile) {
-    const dir = root();
-    try {
-      const names = new Set((await ws.call<DirEntry[]>("list_dir", { path: dir })).map((e) => e.name));
-      let n = 1;
-      const name = () => `Untitled${n > 1 ? `-${n}` : ""}.${kind}`;
-      while (names.has(name())) n++;
-      // A new notebook names the kernel of the Python session it will join.
-      const joining = ws.sessionToJoin("python", dir)?.kernel;
-      const python = ws.kernelspecs().find((k) => k.name === joining) ?? pickKernel(ws.kernelspecs(), "python");
-      const text =
-        kind === "ipynb"
-          ? serializeNotebook(newNotebook(python))
-          : kind === "qmd"
-            ? "---\ntitle: \"Untitled\"\n---\n\n```{python}\nprint(\"hello\")\n```\n"
-            : "";
-      const path = `${dir}/${name()}`;
-      await ws.call<FileText>("write_file", { path, text });
-      setTreeKey((k) => k + 1);
-      await open(path);
-    } catch (err) {
-      notify(`Could not create a file in ${dir}: ${message(err)}`);
-    }
+  // The file tree, kept while the left pane is hidden.
+  const tree = createTree(root);
+  const treeActions: TreeActions = {
+    openable: (path) => !!docKind(path),
+    open: (path) => void open(path),
+    newText: (name) => (docKind(name) === "ipynb" ? notebookText() : template(name)),
+    async release(path) {
+      const inside = docs().filter((d) => within(d.path, path));
+      const dirty = inside.filter((d) => d.dirty());
+      if (dirty.length) return `Save ${dirty.map((d) => d.name).join(", ")} first`;
+      const wasActive = active();
+      for (const doc of inside) await close(doc);
+      // The active document comes back last, so it is active again.
+      return inside.sort((a, b) => Number(a === wasActive) - Number(b === wasActive)).map((d) => d.path);
+    },
+    reopen(paths) {
+      void (async () => {
+        for (const path of paths) await open(path);
+      })();
+    },
+  };
+  /** A new notebook is in the language the project's kernels run, or Python. */
+  function notebookText(): string {
+    const live = ws.liveSessions().filter((s) => s.project === props.project);
+    const language = live.at(-1)?.language ?? (pickKernel(ws.kernelspecs(), "python") ? "python" : "r");
+    const joining = ws.sessionToJoin(language, root())?.kernel;
+    const kernel = ws.kernelspecs().find((k) => k.name === joining) ?? pickKernel(ws.kernelspecs(), language);
+    return serializeNotebook(newNotebook(kernel));
+  }
+  /** Starts naming a new file or folder in the tree, showing the left pane if need be. */
+  function startNew(kind: NewKind) {
+    if (!left()) toggleLeft();
+    tree.startNew(kind);
   }
 
   async function saveAll() {
@@ -722,6 +734,8 @@ export function App(props: {
   }
 
   function command(name: string) {
+    if (name === "new-file") return startNew("file");
+    if (name === "new-folder") return startNew("folder");
     const table = activeExtra();
     if (table) {
       if (name === "close-tab") closeExtra(table);
@@ -752,10 +766,11 @@ export function App(props: {
       }
     }
     list.push(
-      { label: "New Quarto document", run: () => void createFile("qmd") },
-      { label: "New Jupyter notebook", run: () => void createFile("ipynb") },
-      { label: "New R script", run: () => void createFile("R") },
-      { label: "New Python script", run: () => void createFile("py") },
+      { label: "New file…", keys: "⌘N", run: () => startNew("file") },
+      { label: "New folder…", keys: "⌥⌘N", run: () => startNew("folder") },
+      { label: "New Quarto document…", run: () => startNew("qmd") },
+      { label: "New R script…", run: () => startNew("R") },
+      { label: "New notebook…", run: () => startNew("ipynb") },
       { label: left() ? "Hide left pane" : "Show left pane", keys: "⌘B", run: toggleLeft },
       { label: consoleOn() ? "Hide console" : "Show console", keys: "⌘J", run: toggleConsole },
       {
@@ -946,9 +961,9 @@ export function App(props: {
             activePath={active()?.path}
             refreshKey={treeKey()}
             width={leftWidth()}
-            onOpen={(p) => void open(p)}
+            tree={tree}
+            actions={treeActions}
             onRefresh={() => setTreeKey((k) => k + 1)}
-            onCreate={(kind) => void createFile(kind)}
             usedBy={usedBy}
             marker={marker}
             nav={props.nav}

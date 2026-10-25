@@ -26,8 +26,8 @@ use crate::paths::StateDir;
 use crate::session::SessionHandle;
 use crate::windows::Windows;
 use crate::{
-    cells, files, help, memory, notebook, outputs, packages, projects, sidecar, tables, variables,
-    windows,
+    cells, fileops, files, help, memory, notebook, outputs, packages, projects, sidecar, tables,
+    variables, windows,
 };
 
 const REPLAY_PAGE: u32 = 500;
@@ -640,6 +640,7 @@ impl Daemon {
                 text,
                 expected_mtime_ms,
                 base64,
+                create,
             } => {
                 let bytes = if base64 {
                     BASE64
@@ -649,12 +650,38 @@ impl Daemon {
                     text.into_bytes()
                 };
                 serde_json::to_value(
-                    blocking(move || files::write_bytes(&path, &bytes, expected_mtime_ms)).await?,
+                    blocking(move || {
+                        if create {
+                            fileops::create_file(&path, &bytes)
+                        } else {
+                            files::write_bytes(&path, &bytes, expected_mtime_ms)
+                        }
+                    })
+                    .await?,
                 )?
             }
-            Call::ListDir { path } => {
-                serde_json::to_value(blocking(move || files::list_dir(&path)).await?)?
+            Call::ListDir { path, sizes } => {
+                serde_json::to_value(blocking(move || files::list_dir(&path, sizes)).await?)?
             }
+            Call::MakeDir { path } => {
+                serde_json::to_value(blocking(move || fileops::make_dir(&path)).await?)?
+            }
+            Call::MovePath { from, to } => {
+                serde_json::to_value(blocking(move || fileops::move_path(&from, &to)).await?)?
+            }
+            Call::CopyPath { from, to } => {
+                serde_json::to_value(blocking(move || fileops::copy_path(&from, &to)).await?)?
+            }
+            Call::DeletePath { path, trash } => {
+                serde_json::to_value(blocking(move || fileops::delete_path(&path, trash)).await?)?
+            }
+            Call::ReadBytes {
+                path,
+                offset,
+                limit,
+            } => serde_json::to_value(
+                blocking(move || fileops::read_bytes(&path, offset, limit)).await?,
+            )?,
             Call::FileOutputs { file } => {
                 let journal = self.journal.clone();
                 serde_json::to_value(

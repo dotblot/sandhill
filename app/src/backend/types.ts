@@ -117,6 +117,22 @@ export interface FileWritten {
   mtime_ms: number;
 }
 
+export interface Deleted {
+  path: string;
+  /** Where the Trash keeps it, when it was moved there. */
+  trashed_to?: string;
+}
+
+export interface FileBytes {
+  path: string;
+  offset: number;
+  /** The bytes, in base64. */
+  data: string;
+  /** The whole file's size. */
+  size: number;
+  mtime_ms: number;
+}
+
 export interface DirEntry {
   name: string;
   kind: "file" | "dir" | "other";
