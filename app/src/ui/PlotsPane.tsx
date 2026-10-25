@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, type JSX, on, onCleanup, Show, untrack } from "solid-js";
 import { Portal } from "solid-js/web";
-import type { FileStat, SessionInfo, SessionPlots } from "../backend/types";
+import type { FileStat, PlotRedraw, SessionInfo, SessionPlots } from "../backend/types";
 import { ago } from "../docs/cellOutput";
 import { documentPath } from "../model/agents";
 import {
@@ -18,6 +18,8 @@ import {
   plotName,
   plotSource,
   plotSrc,
+  REDRAW_FORMATS,
+  redrawTarget,
 } from "../model/plots";
 import { fromNotebook } from "../model/runs";
 import type { Workspace } from "../model/workspace";
@@ -306,6 +308,7 @@ export function PlotsPane(props: {
             ws={ws}
             item={p()}
             name={plotName(p(), shown())}
+            target={redrawTarget(p(), shown())}
             source={source(p())}
             position={`${index() + 1} of ${shown().length} · ${when(p())}`}
             project={props.project}
@@ -329,6 +332,8 @@ function PlotZoom(props: {
   item: PlotItem;
   /** A file name for it, without the extension. */
   name: string;
+  /** Which plot it is to its session, to draw it again. */
+  target: { image?: string; index: number };
   source: string;
   position: string;
   project: string;
@@ -341,7 +346,10 @@ function PlotZoom(props: {
   src: (mime: string) => string;
 }) {
   const folderKey = `sandhill.plotsFolder:${props.project}`;
-  const formats = () => plotFormats(props.item);
+  /** Whether its session can draw it again, at any size; asked when it opens. */
+  const [redraw, setRedraw] = createSignal<PlotRedraw>();
+  const redrawn = () => redraw()?.can === true;
+  const formats = () => (redrawn() ? REDRAW_FORMATS : plotFormats(props.item));
   const svg = () => props.item.mime === "image/svg+xml";
   const [format, setFormat] = createSignal<PlotFormat>(formats()[0]);
   const [natural, setNatural] = createSignal<Size>();
@@ -363,17 +371,40 @@ function PlotZoom(props: {
       { defer: true },
     ),
   );
+  createEffect(
+    on(
+      () => props.item.key,
+      () => {
+        setRedraw(undefined);
+        const item = props.item;
+        const { image, index } = props.target;
+        props.ws
+          .call<PlotRedraw | null>("redraw_plot", { session: item.session, run: item.run, image, index })
+          .then((answer) => {
+            if (props.item.key !== item.key || !answer) return;
+            setRedraw(answer);
+            if (!formats().includes(format())) setFormat(formats()[0]);
+            const drawn = natural();
+            if (answer.can && drawn && !svg()) setSize(startSize(drawn));
+          })
+          .catch(() => {});
+      },
+    ),
+  );
 
+  /** A plot drawn at any size starts at 4 inches wide at 300 dpi, in its own shape. */
+  const startSize = (drawn: Size): Size => ({ width: 1200, height: Math.round((1200 * drawn.height) / drawn.width) });
   const loaded = (img: HTMLImageElement) => {
     const drawn = naturalSize(img) ?? { width: props.item.width ?? 800, height: props.item.height ?? 600 };
     setNatural(drawn);
-    // An SVG starts at 4 inches wide at 300 dpi, in its own shape.
-    setSize(svg() ? { width: 1200, height: Math.round((1200 * drawn.height) / drawn.width) } : drawn);
+    setSize(svg() || redrawn() ? startSize(drawn) : drawn);
   };
-  /** Whether the size can be picked: an SVG plot saved as PNG. */
-  const sized = () => svg() && format() === "png";
-  /** The size of what is copied or saved. */
+  /** Whether the size can be picked: a plot its session draws again, or an SVG plot saved as PNG. */
+  const sized = () => redrawn() || (svg() && format() === "png");
+  /** The size of what is saved. */
   const output = () => (sized() ? size() : (natural() ?? size()));
+  /** The size of what is copied: a plot drawn again is copied as shown. */
+  const copied = () => (svg() && format() === "png" ? size() : (natural() ?? size()));
 
   const setSide = (side: "width" | "height", typed: string) => {
     const now = size();
@@ -394,8 +425,8 @@ function PlotZoom(props: {
   async function copy() {
     setWorking(true);
     try {
-      await copyPng(plotPng(props.ws, props.item, output()));
-      setNote({ text: `Copied a PNG, ${sizeText(output())}.` });
+      await copyPng(plotPng(props.ws, props.item, copied()));
+      setNote({ text: `Copied a PNG, ${sizeText(copied())}.` });
     } catch (err) {
       notify(`Could not copy the plot: ${message(err)}`);
     } finally {
@@ -420,11 +451,28 @@ function PlotZoom(props: {
         const choice = await ask(`Replace ${shown}?`, ["Replace", "Cancel"], "A file with this name is already there.");
         if (choice !== "Replace") return;
       }
-      const file = await plotFile(props.ws, props.item, as, output());
-      await props.ws.call("write_file", { path, text: file.text, base64: file.base64 });
+      if (redrawn()) {
+        const { image, index } = props.target;
+        const { width, height } = output();
+        await props.ws.call<PlotRedraw>("redraw_plot", {
+          session: props.item.session,
+          run: props.item.run,
+          image,
+          index,
+          file: path,
+          format: as,
+          width: width / DPI,
+          height: height / DPI,
+          dpi: DPI,
+        });
+      } else {
+        const file = await plotFile(props.ws, props.item, as, output());
+        await props.ws.call("write_file", { path, text: file.text, base64: file.base64 });
+      }
       const slash = typed.lastIndexOf("/");
       if (!typed.startsWith("/")) store(folderKey, slash > 0 ? typed.slice(0, slash) : "");
-      setNote({ text: "Saved ", path: shown, after: as === "svg" ? "." : `, ${sizeText(output())}.` });
+      const after = as === "png" || !redrawn() ? `, ${sizeText(output())}.` : `, ${inches(output())} in.`;
+      setNote({ text: "Saved ", path: shown, after: as === "svg" && !redrawn() ? "." : after });
     } catch (err) {
       notify(`Could not save the plot: ${message(err)}`);
     } finally {
@@ -458,9 +506,11 @@ function PlotZoom(props: {
         </>
       );
     }
+    if (redrawn()) return "Drawn again by its session at this size, so lines and text stay sharp.";
     if (sized()) return "Drawn from the plot's SVG at this size, so lines and text stay sharp.";
     if (svg()) return "Saved as the SVG the kernel drew; it scales to any size.";
-    return "Saved as the kernel drew it. To save it larger, draw it again larger in R or Python.";
+    const why = redraw()?.reason;
+    return `Saved as the kernel drew it${why ? `, since ${why}` : ""}. To save it larger, draw it again larger in R or Python.`;
   };
 
   return (
@@ -529,7 +579,7 @@ function PlotZoom(props: {
                 <span>H</span>
               </label>
               <span class="pz-unit">
-                px · {inches(size())} in at {DPI} dpi
+                px · {inches(size())} in{format() === "png" ? ` at ${DPI} dpi` : ""}
               </span>
               <span class="pz-presets">
                 <For each={PLOT_SIZES}>
@@ -565,7 +615,7 @@ function PlotZoom(props: {
                 </For>
               </span>
             </Show>
-            <button class="pz-btn" disabled={working() || !natural()} title="Copy as PNG" onClick={() => void copy()}>
+            <button class="pz-btn" disabled={working() || !natural()} title={redrawn() ? "Copy as PNG, as shown" : "Copy as PNG"} onClick={() => void copy()}>
               <Icon name="copy" small />
               Copy
             </button>

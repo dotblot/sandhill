@@ -35,7 +35,7 @@ const JOURNAL: Plot[] = [
   },
 ];
 
-function fakeWorkspace() {
+function fakeWorkspace(redraws = false) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   let emit: (event: DaemonEvent) => void = () => {};
   const backend: Backend = {
@@ -54,6 +54,9 @@ function fakeWorkspace() {
           return { hash: params.hash, data: "iVBORw0KGgo=" } as T;
         case "write_file":
           return { path: params.path, mtime_ms: 1 } as T;
+        case "redraw_plot":
+          // The PNG plot's session can draw it again.
+          return (redraws && params.run === "r1" ? { can: true } : { can: false, reason: "only Ark keeps R plots to draw them again" }) as T;
         default:
           return null as T;
       }
@@ -241,9 +244,69 @@ describe("PlotsPane", () => {
     expect(calls.find((c) => c.method === "get_blob")?.params).toEqual({ hash: HASH("a"), near: undefined });
     expect(calls.find((c) => c.method === "write_file")?.params).toEqual({ path: `${PROJECT}/results/plot.png`, text: "iVBORw0KGgo=", base64: true });
     expect(dialog.querySelector(".pz-note")?.textContent).toBe("Saved results/plot.png, 800 × 600 px.");
+    expect(calls.find((c) => c.method === "redraw_plot")?.params).toEqual({ session: "s1", run: "r1", image: HASH("a"), index: 0 });
     // Escape closes the dialog.
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(document.querySelector(".pzoom")).toBeNull();
+    dispose();
+  });
+
+  it("saves a plot its session draws again at the size picked, as PDF too", async () => {
+    const { ws, calls } = fakeWorkspace(true);
+    const { root, dispose } = mount(ws);
+    await settle();
+    button(root, "Previous plot").click();
+    button(root, "Zoom").click();
+    const dialog = document.querySelector(".pzoom") as HTMLElement;
+    dialog.querySelector(".pz-plot img")!.dispatchEvent(new Event("load"));
+    await settle();
+    expect([...dialog.querySelectorAll(".pz-seg button")].map((b) => b.textContent)).toEqual(["PNG", "SVG", "PDF"]);
+    // It starts 4 inches wide, in the shape it was drawn (800 × 600).
+    expect((dialog.querySelector("[aria-label='Width in pixels']") as HTMLInputElement).value).toBe("1200");
+    expect((dialog.querySelector("[aria-label='Height in pixels']") as HTMLInputElement).value).toBe("900");
+    expect(dialog.querySelector(".pz-note")?.textContent).toMatch(/^Drawn again by its session/);
+    ([...dialog.querySelectorAll(".pz-seg button")][2] as HTMLButtonElement).click();
+    const width = dialog.querySelector("[aria-label='Width in pixels']") as HTMLInputElement;
+    width.value = "1800";
+    width.dispatchEvent(new Event("change"));
+    expect(dialog.querySelector(".pz-unit")?.textContent).toBe("px · 6 × 4.5 in");
+    (dialog.querySelector(".pz-btn.pri") as HTMLButtonElement).click();
+    await settle();
+    expect((document.querySelector(".modal-input") as HTMLInputElement).value).toBe("figures/plot.pdf");
+    (document.querySelector("form.modal") as HTMLFormElement).requestSubmit();
+    await settle();
+    await settle();
+    await settle();
+    const drawn = calls.filter((c) => c.method === "redraw_plot");
+    expect(drawn[drawn.length - 1].params).toEqual({
+      session: "s1",
+      run: "r1",
+      image: HASH("a"),
+      index: 0,
+      file: `${PROJECT}/figures/plot.pdf`,
+      format: "pdf",
+      width: 6,
+      height: 4.5,
+      dpi: 300,
+    });
+    expect(calls.find((c) => c.method === "write_file")).toBeUndefined();
+    expect(dialog.querySelector(".pz-note")?.textContent).toBe("Saved figures/plot.pdf, 6 × 4.5 in.");
+    dispose();
+  });
+
+  it("says why a plot can't be drawn again", async () => {
+    const { ws } = fakeWorkspace();
+    const { root, dispose } = mount(ws);
+    await settle();
+    button(root, "Previous plot").click();
+    button(root, "Zoom").click();
+    const dialog = document.querySelector(".pzoom") as HTMLElement;
+    dialog.querySelector(".pz-plot img")!.dispatchEvent(new Event("load"));
+    await settle();
+    expect(dialog.querySelector(".pz-seg")).toBeNull();
+    expect(dialog.querySelector(".pz-note")?.textContent).toBe(
+      "Saved as the kernel drew it, since only Ark keeps R plots to draw them again. To save it larger, draw it again larger in R or Python.",
+    );
     dispose();
   });
 });

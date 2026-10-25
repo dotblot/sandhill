@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 
 use crate::journal::{Journal, NewRun, SessionRecord, now_ms};
 use crate::kernel::{self, KernelConnection, KernelMsg};
-use crate::view;
+use crate::{startup, view};
 
 /// IOPub message types that are outputs and get journaled.
 const JOURNALED: &[&str] = &[
@@ -120,8 +120,8 @@ impl SessionHandle {
             };
             let version = wait_until_ready(&mut conn, &mut rx).await?;
             let mut prelude = None;
-            if let Some(code) = view::prelude(&record.language) {
-                let msg = quietly(code);
+            if let Some(code) = startup::code(&record.language) {
+                let msg = quietly(&code);
                 prelude = Some(msg.header.msg_id.clone());
                 conn.shell.send(msg).await?;
             }
@@ -310,7 +310,7 @@ struct Begin {
     /// tells when they are done.
     runs: HashMap<String, RunState>,
     probe_id: Option<String>,
-    /// The code run at start (see `view::prelude`).
+    /// The code run at start (see `startup`).
     prelude: Option<String>,
 }
 
@@ -335,7 +335,7 @@ struct Actor {
     /// Keyed by the `msg_id` of the execute request.
     runs: HashMap<String, RunState>,
     probe_id: Option<String>,
-    /// The `msg_id` of the code run at start (see `view::prelude`), whose
+    /// The `msg_id` of the code run at start (see `startup`), whose
     /// messages stay out of the journal: IRkernel echoes even silent code.
     prelude: Option<String>,
     /// The request the kernel is busy with, for messages that name none:

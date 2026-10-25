@@ -13,6 +13,7 @@ import {
   plotName,
   plotSource,
   plotSrc,
+  redrawTarget,
 } from "./plots";
 import type { RunState } from "./runs";
 
@@ -120,6 +121,13 @@ describe("plots", () => {
     const two = [item("r6:a", 6), item("r6:b", 6)];
     expect(two.map((p) => plotName(p, two))).toEqual(["plot-1", "plot-2"]);
     expect(plotName(item("r7:a", 7, { cell: { file: "/p/my plot (v2).qmd", cell_id: "chunk-1" } }), [])).toBe("my-plot-v2");
+  });
+
+  it("names a plot to its session by its image's blob, else its place in its run", () => {
+    const svg = { images: { "image/svg+xml": "<svg/>" }, mime: "image/svg+xml" };
+    const run = [item("r6:a", 6, svg), item("r6:b", 6, svg), item("r7:a", 7)];
+    expect(redrawTarget(run[1], run)).toEqual({ image: undefined, index: 1 });
+    expect(redrawTarget(run[2], run)).toEqual({ image: HASH, index: 0 });
   });
 
   it("makes URLs for blobs and inline images", () => {
