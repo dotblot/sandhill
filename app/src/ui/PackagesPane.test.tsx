@@ -48,6 +48,17 @@ function fakeWorkspace() {
           return [SESSION] as T;
         case "list_packages":
           return LISTED as T;
+        case "package_updates":
+          return {
+            session: "s1",
+            repos: ["https://bioconductor.org/packages/3.19/bioc", "https://bioconductor.org/packages/3.19/books", "https://cloud.r-project.org"],
+            unreached: ["https://bioconductor.org/packages/3.19/books"],
+            updates: [
+              { name: "DESeq2", installed: "1.44.0", available: "1.44.1", library: "/home/huan/R", bioconductor: true },
+              // Updated since: it drops out.
+              { name: "ggplot2", installed: "3.4.0", available: "3.5.1", library: "/home/huan/R", bioconductor: false },
+            ],
+          } as T;
         default:
           return null as T;
       }
@@ -65,7 +76,7 @@ function fakeWorkspace() {
   };
   const ws = new Workspace(backend, "/home/huan/pbmc");
   const listings = () => calls.filter((c) => c.method === "list_packages").length;
-  return { ws, listings, emit: (event: DaemonEvent) => emit(event) };
+  return { ws, calls, listings, emit: (event: DaemonEvent) => emit(event) };
 }
 
 const settle = async () => {
@@ -137,6 +148,32 @@ describe("PackagesPane", () => {
     (root.querySelectorAll(".pkgrow .prm")[2] as HTMLButtonElement).click();
     await settle();
     expect(ran[1]).toBe('remove.packages("Matrix")');
+    dispose();
+  });
+
+  it("checks R's repositories for updates, and updates in the Console", async () => {
+    const { ws, calls } = fakeWorkspace();
+    await ws.refreshSessions();
+    const { root, dispose, ran } = mount(ws);
+    await settle();
+    const check = root.querySelector('button[aria-label="Check for updates"]') as HTMLButtonElement;
+    expect(check.title).toBe("Check CRAN and Bioconductor for updates");
+    expect(root.querySelector(".pupdates")).toBeNull();
+    check.click();
+    expect(root.querySelector(".pupdates span")?.textContent).toBe("Checking CRAN and Bioconductor for updates…");
+    await settle();
+    expect(calls.filter((c) => c.method === "package_updates").map((c) => c.params)).toEqual([{ session: "s1" }]);
+    expect(root.querySelector(".pupdates span")?.textContent).toBe("1 update: DESeq2. Couldn't reach https://bioconductor.org/packages/3.19/books.");
+    const row = [...root.querySelectorAll(".pkgrow")].find((r) => r.querySelector(".nm")?.textContent === "DESeq2")!;
+    const button = row.querySelector("button.sz.upd") as HTMLButtonElement;
+    expect(button.textContent).toBe("update 1.44.1");
+    button.click();
+    expect(ran).toEqual(['BiocManager::install("DESeq2", update = FALSE, ask = FALSE)']);
+    ([...root.querySelectorAll(".pupdates button")].find((b) => b.textContent === "Update all") as HTMLButtonElement).click();
+    expect(ran[1]).toBe('BiocManager::install("DESeq2", update = FALSE, ask = FALSE)');
+    (root.querySelector('.pupdates button[aria-label="Hide updates"]') as HTMLButtonElement).click();
+    expect(root.querySelector(".pupdates")).toBeNull();
+    expect(root.querySelector("button.sz.upd")).toBeNull();
     dispose();
   });
 });

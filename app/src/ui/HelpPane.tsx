@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
 import { createEffect, createSignal, For, type JSX, on, onCleanup, Show, untrack } from "solid-js";
-import type { HelpMember, HelpPage, HelpSource, HelpTopics, SessionInfo } from "../backend/types";
+import type { FileBytes, FileText, HelpMember, HelpPage, HelpSource, HelpTopics, HelpVignette, SessionInfo } from "../backend/types";
 import { highlightedLines, languageFor } from "../editor/setup";
 import { consoleHelp, docBlocks, exampleCode, type HelpRequest, helpLink, inlineParts, signatureLines } from "../model/help";
 import { languageLabel } from "../model/machine";
@@ -19,6 +19,17 @@ const BUSY = "the session is busy running code";
 interface Place {
   topic: string;
   package?: string;
+}
+
+/** A vignette being read: its HTML, or its PDF as a URL, and its R code once asked for. */
+interface Reading {
+  vignette: HelpVignette;
+  html?: string;
+  pdf?: string;
+  text?: string;
+  error?: string;
+  code?: string;
+  showCode?: boolean;
 }
 
 const message = (err: unknown) => String(err instanceof Error ? err.message : err).replace(/^(daemon error: )?could not (search|read) the (help|source): /, "");
@@ -61,6 +72,8 @@ export function HelpPane(props: {
   const [at, setAt] = createSignal(-1);
   /** A read that waits for the session to finish running code. */
   const [waiting, setWaiting] = createSignal(false);
+  /** The vignette open in place of the search and the page. */
+  const [reading, setReading] = createSignal<Reading>();
   const id = () => props.session?.id;
   const language = () => props.session?.language.toLowerCase() ?? "";
   const python = () => language().startsWith("python");
@@ -142,6 +155,74 @@ export function HelpPane(props: {
   /** A page asked for while the session was busy, read once it's idle. */
   let pending: Place | undefined;
 
+  let pdfUrl: string | undefined;
+  const closeVignette = () => {
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    pdfUrl = undefined;
+    setReading(undefined);
+  };
+  onCleanup(closeVignette);
+
+  /** Opens a vignette's built file, read from the session's machine: HTML here, a PDF in the viewer. */
+  async function openVignette(vignette: HelpVignette) {
+    closeVignette();
+    setReading({ vignette });
+    const same = () => reading()?.vignette === vignette;
+    try {
+      if (/\.pdf$/i.test(vignette.file)) {
+        const url = URL.createObjectURL(new Blob(await readBytes(vignette.file), { type: "application/pdf" }));
+        if (!same()) return URL.revokeObjectURL(url);
+        pdfUrl = url;
+        setReading({ vignette, pdf: url });
+      } else {
+        const read = await ws.call<FileText>("read_file", { path: vignette.file });
+        if (!same()) return;
+        setReading(/\.html?$/i.test(vignette.file) ? { vignette, html: read.text } : { vignette, text: read.text });
+      }
+    } catch (err) {
+      if (same()) setReading({ vignette, error: `Could not read the vignette: ${message(err)}` });
+    }
+  }
+
+  async function readBytes(path: string): Promise<Uint8Array<ArrayBuffer>[]> {
+    const parts: Uint8Array<ArrayBuffer>[] = [];
+    let offset = 0;
+    for (;;) {
+      const part = await ws.call<FileBytes>("read_bytes", { path, offset });
+      const bytes = Uint8Array.from(atob(part.data), (c) => c.charCodeAt(0));
+      parts.push(bytes);
+      offset += bytes.length;
+      if (!bytes.length || offset >= part.size) return parts;
+    }
+  }
+
+  async function toggleCode() {
+    const now = reading();
+    if (!now?.vignette.code) return;
+    if (now.showCode) return void setReading({ ...now, showCode: false });
+    setReading({ ...now, showCode: true });
+    if (now.code !== undefined) return;
+    let code: string;
+    try {
+      code = (await ws.call<FileText>("read_file", { path: now.vignette.code })).text;
+    } catch (err) {
+      code = `# Could not read the code: ${message(err)}`;
+    }
+    const later = reading();
+    if (later?.vignette === now.vignette) setReading({ ...later, code });
+  }
+
+  /** Links in a vignette: its own anchors scroll it, the rest open in the browser. */
+  const hookLinks = (frame: HTMLIFrameElement) => {
+    frame.contentDocument?.addEventListener("click", (e) => {
+      const a = (e.target as Element | null)?.closest?.("a");
+      const href = a?.getAttribute("href") ?? "";
+      if (!a || href.startsWith("#")) return;
+      e.preventDefault();
+      if (/^(https?|mailto):/i.test(a.href)) props.openLink(a.href);
+    });
+  };
+
   /** Follows a reference in a Python docstring: as written, then within the page's package. */
   async function follow(ref: string) {
     const current = page();
@@ -170,6 +251,7 @@ export function HelpPane(props: {
   // A new session starts from scratch.
   createEffect(
     on(id, () => {
+      closeVignette();
       searchGeneration++;
       pageGeneration++;
       setFound(undefined);
@@ -198,6 +280,7 @@ export function HelpPane(props: {
       () => props.request,
       (asked) => {
         if (!asked) return;
+        closeVignette();
         if (asked.search) {
           setQuery(asked.topic);
           setPkg(asked.package ?? "");
@@ -307,112 +390,182 @@ export function HelpPane(props: {
           />
         </label>
       </div>
-      <div class="hbody" ref={body}>
+      <div class="hbody" classList={{ vig: !!reading() }} ref={body}>
         <Show
           when={props.session}
           fallback={<p class="vempty">Start R or Python in the Console, and its help shows here.</p>}
         >
-          <Show when={waiting()}>
-            <div class="vbusy">{name()} is running code; help shows when it finishes.</div>
+          <Show when={reading()}>
+            {(r) => <VignetteView reading={r()} onBack={closeVignette} onCode={() => void toggleCode()} onFrame={hookLinks} />}
           </Show>
-          <Show when={searchError()}>
-            <div class="var-note err">{searchError()}</div>
-          </Show>
-          <Show
-            when={query().trim() || pkg().trim()}
-            fallback={
-              <Show when={!page() && !pageError()}>
-                <div class="hr-n">
-                  Type a function name. Leave the {python() ? "module" : "package"} empty to search every {python() ? "imported module" : "installed package"}.
-                </div>
-              </Show>
-            }
-          >
-            <Show when={found()}>
-              {(result) => (
-                <div class="hres">
+          <div class="hmain" hidden={!!reading()}>
+            <Show when={waiting()}>
+              <div class="vbusy">{name()} is running code; help shows when it finishes.</div>
+            </Show>
+            <Show when={searchError()}>
+              <div class="var-note err">{searchError()}</div>
+            </Show>
+            <Show
+              when={query().trim() || pkg().trim()}
+              fallback={
+                <Show when={!page() && !pageError()}>
                   <div class="hr-n">
-                    {(result().topics.length + result().more).toLocaleString()} topic{result().topics.length + result().more === 1 ? "" : "s"} {scope()}
+                    Type a function name. Leave the {python() ? "module" : "package"} empty to search every {python() ? "imported module" : "installed package"}.
                   </div>
-                  <For each={shownTopics()}>
-                    {(t) => (
-                      <button class="hr" classList={{ on: isOpen(t.topic, t.package) }} title={t.title} onClick={() => void open({ topic: t.topic, package: t.package })}>
-                        <span class="hl-l" classList={{ py: python() }}>
-                          {python() ? "Py" : "R"}
-                        </span>
-                        <span class="hr-f">{t.topic}</span>
-                        <span class="hr-p">{t.package}</span>
-                      </button>
-                    )}
-                  </For>
-                  <Show when={hidden() > 0}>
-                    <button class="hr-n hr-more" onClick={() => setAll(true)}>
-                      {(hidden() + result().more).toLocaleString()} more
-                    </button>
-                  </Show>
-                  <Show when={all() && result().more > 0}>
-                    <div class="hr-n">… and {result().more.toLocaleString()} more; type more of the name to find them.</div>
-                  </Show>
-                  <Show when={!result().topics.length}>
+                </Show>
+              }
+            >
+              <Show when={found()}>
+                {(result) => (
+                  <div class="hres">
                     <div class="hr-n">
-                      No help topics match "{query().trim()}" {scope()}.
+                      {(result().topics.length + result().more).toLocaleString()} topic{result().topics.length + result().more === 1 ? "" : "s"} {scope()}
                     </div>
+                    <For each={shownTopics()}>
+                      {(t) => (
+                        <button class="hr" classList={{ on: isOpen(t.topic, t.package) }} title={t.title} onClick={() => void open({ topic: t.topic, package: t.package })}>
+                          <span class="hl-l" classList={{ py: python() }}>
+                            {python() ? "Py" : "R"}
+                          </span>
+                          <span class="hr-f">{t.topic}</span>
+                          <span class="hr-p">{t.package}</span>
+                        </button>
+                      )}
+                    </For>
+                    <Show when={hidden() > 0}>
+                      <button class="hr-n hr-more" onClick={() => setAll(true)}>
+                        {(hidden() + result().more).toLocaleString()} more
+                      </button>
+                    </Show>
+                    <Show when={all() && result().more > 0}>
+                      <div class="hr-n">… and {result().more.toLocaleString()} more; type more of the name to find them.</div>
+                    </Show>
+                    <Show when={result().vignettes?.length}>
+                      <div class="hr-n hr-h">Vignettes</div>
+                      <For each={result().vignettes}>
+                        {(v) => (
+                          <button class="hr" title={`${v.title} (${v.name})`} onClick={() => void openVignette(v)}>
+                            <span class="hl-l hl-vig">
+                              <Icon name="file" small />
+                            </span>
+                            <span class="hr-f hr-vt">{v.title || v.name}</span>
+                            <span class="hr-p">{v.package}</span>
+                          </button>
+                        )}
+                      </For>
+                    </Show>
+                    <Show when={!result().topics.length && !result().vignettes?.length}>
+                      <div class="hr-n">
+                        No help topics match "{query().trim()}" {scope()}.
+                      </div>
+                    </Show>
+                  </div>
+                )}
+              </Show>
+            </Show>
+            <Show when={pageError()}>
+              <div class="helpdoc">
+                <p class="var-note err">{pageError()}</p>
+              </div>
+            </Show>
+            <Show when={page()}>
+              {(p) => (
+                <div class="helpdoc" classList={{ loading: loading() }}>
+                  <div class="hd-top">
+                    <div class="hd-name">
+                      <h3>{p().topic}</h3>
+                      <div class="pkg">
+                        {[p().package, p().version, p().kind].filter(Boolean).join(" · ")}
+                      </div>
+                    </div>
+                    <button class="tab-btn" title="Back" disabled={at() <= 0} onClick={() => void open(trail()[at() - 1], at() - 1)}>
+                      <Icon name="chevronLeft" small />
+                    </button>
+                    <button class="tab-btn" title="Forward" disabled={at() >= trail().length - 1} onClick={() => void open(trail()[at() + 1], at() + 1)}>
+                      <Icon name="chevronRight" small />
+                    </button>
+                    <button class="vbtn hd-src" aria-pressed={showSource()} title={showSource() ? "Show the help" : "Show the function's source"} onClick={() => void toggleSource()}>
+                      <Icon name="source" small />
+                      {showSource() ? "Help" : "Source"}
+                    </button>
+                  </div>
+                  <Show when={p().alternatives?.length}>
+                    <p class="hd-also">
+                      Also in{" "}
+                      <For each={p().alternatives}>
+                        {(alt, i) => (
+                          <>
+                            {i() ? ", " : ""}
+                            <a href="#" title={alt.title} onClick={(e) => (e.preventDefault(), void open({ topic: alt.topic, package: alt.package }))}>
+                              {alt.package}
+                            </a>
+                          </>
+                        )}
+                      </For>
+                    </p>
+                  </Show>
+                  <Show when={!showSource()} fallback={<SourceView source={source()} language={language()} />}>
+                    <Show when={p().html} fallback={<PythonDoc page={p()} onTopic={(ref) => void follow(ref)} onMember={(m) => void open({ topic: `${p().topic}.${m}` })} openLink={props.openLink} />}>
+                      {(html) => <div class="rdoc" innerHTML={sanitize(html())} onClick={onPageClick} />}
+                    </Show>
                   </Show>
                 </div>
               )}
             </Show>
-          </Show>
-          <Show when={pageError()}>
-            <div class="helpdoc">
-              <p class="var-note err">{pageError()}</p>
-            </div>
-          </Show>
-          <Show when={page()}>
-            {(p) => (
-              <div class="helpdoc" classList={{ loading: loading() }}>
-                <div class="hd-top">
-                  <div class="hd-name">
-                    <h3>{p().topic}</h3>
-                    <div class="pkg">
-                      {[p().package, p().version, p().kind].filter(Boolean).join(" · ")}
-                    </div>
-                  </div>
-                  <button class="tab-btn" title="Back" disabled={at() <= 0} onClick={() => void open(trail()[at() - 1], at() - 1)}>
-                    <Icon name="chevronLeft" small />
-                  </button>
-                  <button class="tab-btn" title="Forward" disabled={at() >= trail().length - 1} onClick={() => void open(trail()[at() + 1], at() + 1)}>
-                    <Icon name="chevronRight" small />
-                  </button>
-                  <button class="vbtn hd-src" aria-pressed={showSource()} title={showSource() ? "Show the help" : "Show the function's source"} onClick={() => void toggleSource()}>
-                    <Icon name="source" small />
-                    {showSource() ? "Help" : "Source"}
-                  </button>
-                </div>
-                <Show when={p().alternatives?.length}>
-                  <p class="hd-also">
-                    Also in{" "}
-                    <For each={p().alternatives}>
-                      {(alt, i) => (
-                        <>
-                          {i() ? ", " : ""}
-                          <a href="#" title={alt.title} onClick={(e) => (e.preventDefault(), void open({ topic: alt.topic, package: alt.package }))}>
-                            {alt.package}
-                          </a>
-                        </>
-                      )}
-                    </For>
-                  </p>
-                </Show>
-                <Show when={!showSource()} fallback={<SourceView source={source()} language={language()} />}>
-                  <Show when={p().html} fallback={<PythonDoc page={p()} onTopic={(ref) => void follow(ref)} onMember={(m) => void open({ topic: `${p().topic}.${m}` })} openLink={props.openLink} />}>
-                    {(html) => <div class="rdoc" innerHTML={sanitize(html())} onClick={onPageClick} />}
-                  </Show>
-                </Show>
-              </div>
-            )}
-          </Show>
+          </div>
         </Show>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A vignette as its package built it. HTML shows in a frame of its own, with
+ * its styles and pictures but none of its scripts; a PDF in the PDF viewer.
+ */
+function VignetteView(props: { reading: Reading; onBack: () => void; onCode: () => void; onFrame: (frame: HTMLIFrameElement) => void }) {
+  const v = () => props.reading.vignette;
+  const code = () => (props.reading.code === undefined ? undefined : { file: v().code, text: props.reading.code });
+  const empty = () => !props.reading.error && props.reading.html === undefined && !props.reading.pdf && props.reading.text === undefined;
+  return (
+    <div class="helpdoc hvig">
+      <div class="hd-top">
+        <button class="tab-btn" title="Back to the help" onClick={() => props.onBack()}>
+          <Icon name="chevronLeft" small />
+        </button>
+        <div class="hd-name">
+          <h3>{v().title || v().name}</h3>
+          <div class="pkg">
+            {v().package} · vignette("{v().name}")
+          </div>
+        </div>
+        <Show when={v().code}>
+          <button
+            class="vbtn hd-src"
+            aria-pressed={!!props.reading.showCode}
+            title={props.reading.showCode ? "Show the vignette" : "Show the vignette's R code"}
+            onClick={() => props.onCode()}
+          >
+            <Icon name="source" small />
+            {props.reading.showCode ? "Vignette" : "R code"}
+          </button>
+        </Show>
+      </div>
+      <Show when={!props.reading.showCode} fallback={<SourceView source={code()} language="r" />}>
+        <Show when={props.reading.error}>
+          <p class="var-note err">{props.reading.error}</p>
+        </Show>
+        <Show when={props.reading.html !== undefined}>
+          <iframe class="hvframe" title={v().title} sandbox="allow-same-origin" srcdoc={props.reading.html} onLoad={(e) => props.onFrame(e.currentTarget)} />
+        </Show>
+        <Show when={props.reading.pdf}>{(url) => <iframe class="hvframe" title={v().title} src={url()} />}</Show>
+        <Show when={props.reading.text !== undefined}>
+          <pre class="hsrc">{props.reading.text}</pre>
+        </Show>
+        <Show when={empty()}>
+          <p class="hr-n">Reading the vignette…</p>
+        </Show>
+      </Show>
     </div>
   );
 }
@@ -423,7 +576,7 @@ function sanitize(html: string): string {
   return clean;
 }
 
-function SourceView(props: { source?: HelpSource | string; language: string }) {
+function SourceView(props: { source?: Pick<HelpSource, "text" | "file" | "line"> | string; language: string }) {
   return (
     <Show when={props.source} fallback={<p class="hr-n">Reading the source…</p>}>
       {(s) => {

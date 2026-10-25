@@ -15,9 +15,9 @@ use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, GitAction, GitCommitInfo, GitDiff, GitDone, GitLog,
     GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, KernelspecInfo, Outcome,
-    Packages, PingReply, ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo,
-    SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows, TableSort,
-    TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
+    PackageUpdates, Packages, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
+    SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows,
+    TableSort, TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -432,6 +432,13 @@ impl Client {
 
     pub async fn list_packages(&self, session: &str) -> Result<Packages> {
         self.call(Call::ListPackages {
+            session: session.into(),
+        })
+        .await
+    }
+
+    pub async fn package_updates(&self, session: &str) -> Result<PackageUpdates> {
+        self.call(Call::PackageUpdates {
             session: session.into(),
         })
         .await

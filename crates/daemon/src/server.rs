@@ -11,8 +11,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
     Blob, Call, CellEdited, Event, FileWritten, HelpPage, HelpSource, HelpTopics, HistoryPage,
-    Outcome, PROTOCOL_VERSION, Packages, PingReply, PlotRedraw, Request, ServerMessage,
-    SessionStatus, Subscribed, TableRows, TableSummary, Variables,
+    Outcome, PROTOCOL_VERSION, PackageUpdates, Packages, PingReply, PlotRedraw, Request,
+    ServerMessage, SessionStatus, Subscribed, TableRows, TableSummary, Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -441,6 +441,7 @@ impl Daemon {
                     session,
                     more: found.matched.saturating_sub(found.topics.len() as u64),
                     topics: found.topics,
+                    vignettes: found.vignettes,
                 })?
             }
             Call::HelpPage {
@@ -516,6 +517,23 @@ impl Daemon {
                     cran: listed.cran,
                     bioconductor: listed.bioconductor,
                     conda: listed.conda,
+                })?
+            }
+            Call::PackageUpdates { session } => {
+                let printed = self
+                    .quietly_for(
+                        &session,
+                        "check for updates",
+                        packages::UPDATES_TIMEOUT,
+                        packages::updates_code,
+                    )
+                    .await?;
+                let found = packages::parse_updates(&printed.stdout);
+                serde_json::to_value(PackageUpdates {
+                    session,
+                    updates: found.updates,
+                    repos: found.repos,
+                    unreached: found.unreached,
                 })?
             }
             Call::GitStatus { path } => serde_json::to_value(crate::git::status(&path).await?)?,
@@ -1034,6 +1052,18 @@ impl Daemon {
         what: &str,
         code: impl FnOnce(&str) -> Option<String>,
     ) -> Result<variables::Printed> {
+        self.quietly_for(session, what, variables::TIMEOUT, code)
+            .await
+    }
+
+    /// As [`Self::quietly`], waiting up to `timeout`.
+    async fn quietly_for(
+        &self,
+        session: &str,
+        what: &str,
+        timeout: std::time::Duration,
+        code: impl FnOnce(&str) -> Option<String>,
+    ) -> Result<variables::Printed> {
         let info = self.session_info(session)?;
         let code = code(&info.language)
             .with_context(|| format!("cannot {what} in a {} session", info.language))?;
@@ -1041,7 +1071,7 @@ impl Daemon {
             bail!("the session is busy running code; try again once it is idle");
         }
         let handle = self.live(session)?;
-        let printed = variables::run_quietly(&handle, &self.journal, code, variables::TIMEOUT)
+        let printed = variables::run_quietly(&handle, &self.journal, code, timeout)
             .await
             .with_context(|| format!("could not {what}"))?;
         if let Some(error) = &printed.error {

@@ -318,6 +318,20 @@ export interface HelpTopics {
   topics: HelpTopic[];
   /** How many more matched than are listed. */
   more: number;
+  /** R's vignettes: a package's, or those whose name or title matched. */
+  vignettes?: HelpVignette[];
+}
+
+/** An R package's vignette, as it was built when the package was installed. */
+export interface HelpVignette {
+  /** Its name, as `vignette()` takes it. */
+  name: string;
+  package: string;
+  title: string;
+  /** The built file, HTML or PDF, on the session's machine. */
+  file: string;
+  /** Its R code, if the package has it. */
+  code?: string;
 }
 
 export interface HelpMember {
@@ -377,6 +391,23 @@ export interface Packages {
   cran: boolean;
   bioconductor: boolean;
   conda: boolean;
+}
+
+/** R packages with a newer version on CRAN or Bioconductor (`package_updates`). */
+export interface PackageUpdates {
+  session: string;
+  updates: PackageUpdate[];
+  repos: string[];
+  /** Repositories that couldn't be reached. */
+  unreached?: string[];
+}
+
+export interface PackageUpdate {
+  name: string;
+  installed: string;
+  available: string;
+  library: string;
+  bioconductor: boolean;
 }
 
 /** A repository's state, from `git_status`; `repo` is empty outside one. */

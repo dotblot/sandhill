@@ -34,6 +34,7 @@ Responses can arrive out of order; match them by `id`.
 | `help_page` | `session`, `topic`, `package?` | `HelpPage`: R's page as HTML, or Python's signature, docstring and members |
 | `help_source` | `session`, `topic`, `package?` | `{session, topic, package, text, file?, line?}`: a function's source |
 | `list_packages` | `session` | `Packages`: what's installed for the session's language |
+| `package_updates` | `session` | `PackageUpdates`: R packages with newer versions on CRAN or Bioconductor |
 | `git_status` | `path` | `GitStatus`: the branch, the changed files and the refs of the repository `path` is in |
 | `git_log` | `path`, `skip?`, `limit?` | `{commits, more}`: a page of every branch's commits, newest first |
 | `git_show` | `path`, `sha` | `GitCommitInfo`: a commit's whole message and the files it changed |
@@ -199,8 +200,9 @@ at most 10).
 (made with its folders if need be; R's `write.csv`, pandas' `to_csv`), with
 the row names or index first when the table has them, and returns the file's `{path, mtime_ms}`.
 
-`help_topics`, `help_page`, `help_source` and `list_packages` also run quiet
-snippets, so they fail while the session runs other code.
+`help_topics`, `help_page`, `help_source`, `list_packages` and
+`package_updates` also run quiet snippets, so they fail while the session runs
+other code.
 
 `help_topics` returns `{session, topics, more}`, each topic `{topic, package,
 title}`, at most `limit` of them (50 unless asked, at most 500), and how many
@@ -214,7 +216,12 @@ its top-level module. An exact name comes first, then names that start with
 the query, then names (and in R titles) that contain it; packages the user
 attached or imported come first among equals. `package` keeps one package, or
 those its name starts with when none has that exact name; without `query` it
-lists that package's topics.
+lists that package's topics. In R, `vignettes` lists up to 30 of the packages'
+vignettes too (`package`'s, or those whose name or title has `query`), each
+`{name, package, title, file, code?}`: `file` is the built HTML or PDF and
+`code` its R code, on the session's machine, for the app to read with
+`read_file` or `read_bytes`. Only vignettes whose built file is installed are
+listed.
 
 `help_page` returns `{session, topic, package, title, version, ...}`. For R,
 `html` is the page from `tools::Rd2HTML` without its `<head>`, its links to
@@ -242,6 +249,17 @@ of its `modules`, and `installer` what installed it (`pip`, `conda`).
 says R has a CRAN mirror set, `bioconductor` that BiocManager is installed, and
 `conda` that the Python environment is a conda one. Installing and removing
 aren't calls: the app runs the code in the Console, where its output shows.
+
+`package_updates` asks R's repositories which installed packages have a newer
+version (`old.packages()`): CRAN as `options("repos")` names it
+(cloud.r-project.org when it's unset) and, when BiocManager is installed, the
+repositories of the Bioconductor release that goes with this R
+(`BiocManager::repositories()`). It returns `{session, updates, repos,
+unreached}`, each update `{name, installed, available, library,
+bioconductor}`, and `unreached` the repositories that didn't answer; when none
+did, the call fails ("couldn't reach ...") rather than saying nothing is new. The session
+downloads the repositories' indexes, so it can take a while (at most three
+minutes). Python's aren't checked yet.
 
 The `git_*` calls run the `git` program on the daemon's machine (a command
 line git, which on macOS is the Xcode one only when its tools are installed),
