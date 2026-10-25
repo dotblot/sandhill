@@ -20,6 +20,7 @@ pub mod memory;
 pub mod notebook;
 pub mod outputs;
 pub mod packages;
+pub mod patch;
 pub mod paths;
 pub mod projects;
 pub mod qmd;

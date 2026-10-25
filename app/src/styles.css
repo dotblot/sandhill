@@ -1359,6 +1359,19 @@ button.sz.upd:hover:not(:disabled) { background: var(--accent-soft); }
 .dl.hunk .dt { color: var(--muted); }
 .dl.hunk:first-child { margin-top: 0; }
 .dl.note .dt { color: var(--faint); font-style: italic; }
+/* Picking lines to stage: by their numbers, a hunk from its header. */
+.diffview:focus { outline: none; }
+.dhint { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.diffbar .dclear { padding: 0 5px; }
+.dl.pickable .dn, .dl.pickable .dm { cursor: pointer; }
+.dl.pickable:hover .dn { color: var(--muted); }
+.dl.picked { box-shadow: inset 3px 0 0 var(--accent); }
+.dl.picked .dn, .dl.picked .dm { background: var(--accent-soft); }
+.dl.picked .dn { color: var(--text); }
+.dl.hunk.acts { grid-template-columns: 104px max-content auto; }
+.dhacts { display: inline-flex; gap: 2px; padding-right: 10px; align-self: center; }
+.dhacts button { font: 400 var(--fs-small) var(--font-ui); color: var(--muted); padding: 0 6px; border-radius: var(--r); line-height: 18px; }
+.dhacts button:hover { background: var(--ink-8); color: var(--text); }
 
 /* Plots: the plot in front, where it came from, and thumbnails of the rest.
    Plots stay white in dark mode. */

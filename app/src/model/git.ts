@@ -213,6 +213,8 @@ export function splitMessage(message: string): { summary: string; body: string }
 export interface DiffLine {
   kind: "hunk" | "add" | "del" | "ctx" | "note";
   text: string;
+  /** Its place among the lines of the diff's text, which line staging names. */
+  at: number;
   /** Line numbers in the old and new file. */
   old?: number;
   new?: number;
@@ -224,26 +226,26 @@ export function diffLines(text: string): DiffLine[] {
   let old = 0;
   let now = 0;
   let width = 1;
-  for (const line of text.split("\n")) {
+  for (const [at, line] of text.split("\n").entries()) {
     if (line.startsWith("@@")) {
       const combined = line.startsWith("@@@");
       width = combined ? 2 : 1;
       const ranges = [...line.matchAll(/([-+])(\d+)/g)];
       old = Number(ranges.find((r) => r[1] === "-")?.[2] ?? 0);
       now = Number(ranges.find((r) => r[1] === "+")?.[2] ?? 0);
-      lines.push({ kind: "hunk", text: line });
+      lines.push({ kind: "hunk", text: line, at });
       continue;
     }
     if (line.startsWith("\\")) {
-      lines.push({ kind: "note", text: line.slice(2) });
+      lines.push({ kind: "note", text: line.slice(2), at });
       continue;
     }
     if (!lines.length) continue;
     const mark = line.slice(0, width);
     const body = line.slice(width);
-    if (mark.includes("+")) lines.push({ kind: "add", text: body, new: now++ });
-    else if (mark.includes("-")) lines.push({ kind: "del", text: body, old: old++ });
-    else if (line.length || lines[lines.length - 1].kind !== "hunk") lines.push({ kind: "ctx", text: body, old: old++, new: now++ });
+    if (mark.includes("+")) lines.push({ kind: "add", text: body, at, new: now++ });
+    else if (mark.includes("-")) lines.push({ kind: "del", text: body, at, old: old++ });
+    else if (line.length || lines[lines.length - 1].kind !== "hunk") lines.push({ kind: "ctx", text: body, at, old: old++, new: now++ });
   }
   // The text ends with a newline, which isn't a line.
   const last = lines[lines.length - 1];

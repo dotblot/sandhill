@@ -153,6 +153,7 @@ async fn a_repository_is_made_changed_committed_and_pushed() {
     );
     let diff = client.git_diff(path, "qc.R", false, None).await.unwrap();
     assert_eq!(diff.text, "@@ -0,0 +1,2 @@\n+x <- 1\n+y <- 2\n");
+    assert!(!diff.lines, "a new file is staged whole");
 
     // Staged, then committed.
     client
@@ -219,6 +220,7 @@ async fn a_repository_is_made_changed_committed_and_pushed() {
         .await
         .unwrap();
     assert!(diff.text.starts_with("@@ -0,0 +1,2 @@"), "{diff:?}");
+    assert!(!diff.lines);
     assert!(client.git_show(path, "--output=x").await.is_err());
 
     // A change: its diff before and after staging, then unstaged and
@@ -269,6 +271,72 @@ async fn a_repository_is_made_changed_committed_and_pushed() {
         std::fs::read_to_string(project.join("qc.R")).unwrap(),
         "x <- 1\ny <- 2\n"
     );
+
+    // Some lines of a change staged, unstaged and thrown away, by their
+    // places in the diff shown; a diff the file no longer matches is
+    // refused.
+    std::fs::write(project.join("qc.R"), "x <- 10\ny <- 20\nz <- 3\n").unwrap();
+    let place = |diff: &str, line: &str| diff.split('\n').position(|l| l == line).unwrap();
+    let lines = |kind: &str, diff: &sandhill_proto::GitDiff, picked: &[&str]| {
+        let (file, diff, lines) = (
+            "qc.R".to_string(),
+            diff.text.clone(),
+            picked.iter().map(|line| place(&diff.text, line)).collect(),
+        );
+        match kind {
+            "stage" => GitAction::StageLines { file, diff, lines },
+            "unstage" => GitAction::UnstageLines { file, diff, lines },
+            _ => GitAction::DiscardLines { file, diff, lines },
+        }
+    };
+    let index = || git(&project, &["show", ":qc.R"]);
+    let worktree = || std::fs::read_to_string(project.join("qc.R")).unwrap();
+    let diff = client.git_diff(path, "qc.R", false, None).await.unwrap();
+    assert!(diff.lines, "{diff:?}");
+    client
+        .git_run(path, lines("stage", &diff, &["-x <- 1", "+x <- 10"]))
+        .await
+        .unwrap();
+    assert_eq!(index(), "x <- 10\ny <- 2\n");
+    let diff = client.git_diff(path, "qc.R", false, None).await.unwrap();
+    client
+        .git_run(path, lines("stage", &diff, &["+z <- 3"]))
+        .await
+        .unwrap();
+    assert_eq!(index(), "x <- 10\ny <- 2\nz <- 3\n");
+    let staged = client.git_diff(path, "qc.R", true, None).await.unwrap();
+    assert!(staged.lines, "{staged:?}");
+    client
+        .git_run(path, lines("unstage", &staged, &["-x <- 1", "+x <- 10"]))
+        .await
+        .unwrap();
+    assert_eq!(index(), "x <- 1\ny <- 2\nz <- 3\n");
+    let diff = client.git_diff(path, "qc.R", false, None).await.unwrap();
+    client
+        .git_run(path, lines("discard", &diff, &["-y <- 2", "+y <- 20"]))
+        .await
+        .unwrap();
+    assert_eq!(worktree(), "x <- 10\ny <- 2\nz <- 3\n");
+    assert_eq!(index(), "x <- 1\ny <- 2\nz <- 3\n");
+    let err = client
+        .git_run(path, lines("discard", &diff, &["-y <- 2", "+y <- 20"]))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("changed since"), "{err}");
+    client
+        .git_run(path, GitAction::Unstage { files: vec![] })
+        .await
+        .unwrap();
+    client
+        .git_run(
+            path,
+            GitAction::Discard {
+                files: vec!["qc.R".into()],
+            },
+        )
+        .await
+        .unwrap();
+    assert!(client.git_status(path).await.unwrap().files.is_empty());
 
     // A branch with a commit, undone and made again.
     client
