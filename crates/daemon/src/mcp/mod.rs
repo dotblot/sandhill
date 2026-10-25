@@ -628,6 +628,16 @@ async fn images(client: &Client, rendered: &Rendered) -> Vec<Value> {
 }
 
 /// The tools that only look (`readOnlyHint`), which agents may use without asking.
+/// The names of Sandhill's tools.
+pub fn tool_names() -> Vec<String> {
+    tool_list()
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t["name"].as_str().map(String::from))
+        .collect()
+}
+
 pub fn read_only_tools() -> Vec<String> {
     let tools = tool_list();
     tools

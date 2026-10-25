@@ -553,8 +553,8 @@ omp.
     can't move to another agent.
   - Claude Code's models: Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5.
 - **Antigravity** (Google's agent):
-  - It runs as the Antigravity CLI on the server and shows as a chat, through its
-    ACP server.
+  - It runs as the Antigravity CLI on the server and shows as a chat, through
+    its headless mode (it has no ACP server; see docs/design.md).
   - It uses your Google AI plan.
   - Its chip is "Ag" on blue-teal `#2b6f8f`, with no Google logo.
   - Models: Gemini 3.5 Flash and Gemini 3 Pro in the mockup. The real list comes
@@ -688,9 +688,8 @@ fine: they only say what Sandhill works with.
 ## Open questions
 - Official marks for Claude Code, Codex and Antigravity: only with each owner's
   written permission for a product that is sold.
-- Antigravity: confirm the ACP server and model names against Google's current
-  docs, and whether its plan usage can be shown in the status bar like Claude's
-  and Codex's.
+- Antigravity: whether its plan usage can be shown in the status bar like
+  Claude's and Codex's (headless agy doesn't report it).
 - The monospace font for a commercial release: Maple Mono NF (needs third-party
   notices), plain Maple Mono (only its OFL text), or the system's SF Mono (nothing
   to ship, but no ligatures and no Nerd Font symbols).

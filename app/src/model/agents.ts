@@ -23,6 +23,10 @@ export interface AgentKind {
   /** The level new sessions get when none is picked: the CLI's own default. */
   recommended: string;
   placeholder: string;
+  /** The modes it has (`Mode.id`), when not every one. */
+  modes?: string[];
+  /** What a mode does with this agent, where that differs from `Mode.detail`. */
+  modeDetails?: Record<string, string>;
 }
 
 export const AGENT_KINDS: AgentKind[] = [
@@ -55,15 +59,30 @@ export const AGENT_KINDS: AgentKind[] = [
     recommended: "medium",
     placeholder: "Ask Codex…",
   },
+  {
+    kind: "antigravity",
+    name: "Antigravity",
+    program: "agy",
+    plan: "agy headless · your Google sign-in",
+    // Until a conversation starts and agy lists its models.
+    models: [{ label: "Antigravity's default model" }],
+    start: 0,
+    efforts: ["low", "medium", "high"],
+    recommended: "medium",
+    placeholder: "Ask Antigravity…",
+    // Headless agy can't stop to ask: what it would ask about is turned down.
+    modes: ["normal", "yolo", "plan"],
+    modeDetails: { normal: "Edits files in the project. Commands it would ask about are turned down." },
+  },
 ];
 
 /**
- * Agents whose chat Sandhill drives itself (Codex, through its app-server):
- * messages, modes and models go to it as commands rather than as keys typed
- * into its terminal.
+ * Agents whose chat Sandhill drives itself (Codex through its app-server,
+ * Antigravity through agy's headless mode): messages, modes and models go
+ * to it as commands rather than as keys typed into its terminal.
  */
 export function drivesChat(kind: string): boolean {
-  return kind === "codex";
+  return kind === "codex" || kind === "antigravity";
 }
 
 /** An agent kind with the models a running agent offers, and the efforts of the one it uses. */
@@ -136,6 +155,16 @@ export const MODES: Mode[] = [
   // Claude Code's own mode between Normal and Plan, reached with ⇧Tab in its terminal.
   { id: "edits", label: "Edits", detail: "Edits files without asking. Other steps ask first.", permission: "edits", claude: "acceptEdits", icon: "edits", offered: false },
 ];
+
+/** Whether the agent has the mode. */
+export function hasMode(kind: AgentKind, mode: Mode): boolean {
+  return !kind.modes || kind.modes.includes(mode.id);
+}
+
+/** `mode` if the agent has it, else Normal. */
+export function modeFor(kind: AgentKind, mode: Mode): Mode {
+  return hasMode(kind, mode) ? mode : MODES[0];
+}
 
 /** The mode a session started in: by its `permission`. */
 export function startMode(permission?: string): Mode {

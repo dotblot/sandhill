@@ -101,6 +101,15 @@ describe("AgentComposer", () => {
     t.dispose();
   });
 
+  it("offers only the modes the agent has, as it does them", () => {
+    const t = mount(() => ({ kind: AGENT_KINDS.find((k) => k.kind === "antigravity")! }));
+    (t.root.querySelector(".cbi.mode") as HTMLButtonElement).click();
+    const modes = [...t.root.querySelectorAll<HTMLButtonElement>(".pm-opt")];
+    expect(modes.map((b) => b.querySelector("b")?.textContent)).toEqual(["Normal", "YOLO", "Plan"]);
+    expect(modes[0].querySelector("small")?.textContent).toBe("Edits files in the project. Commands it would ask about are turned down.");
+    t.dispose();
+  });
+
   it("reads where code goes from the agent's report, then from how it started", () => {
     const terminal = (options: TerminalInfo["options"], agent?: TerminalInfo["agent"]) => ({ options, agent }) as TerminalInfo;
     expect(codeTo(terminal({}))).toBe("file");
@@ -193,6 +202,7 @@ describe("AgentComposer", () => {
       ["Favourites", false],
       ["Claude Code", false],
       ["Codex", true],
+      ["Antigravity", true],
     ]);
     expect(t.root.querySelector(".mt-sub")?.textContent).toBe("Claude Code · your Claude plan");
     expect(rows().map((r) => r.querySelector(".mt-n")?.textContent)).toEqual(["Fable 5.1", "Opus 5.5", "Sonnet 5.5", "Haiku 5.5"]);
