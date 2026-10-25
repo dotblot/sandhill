@@ -19,6 +19,7 @@ import {
   type FileText,
   type ProjectInfo,
   type ProjectState,
+  type SavedExtra,
   type SessionInfo,
   type SessionRuns,
 } from "../backend/types";
@@ -33,6 +34,7 @@ import { type NewKind, template, within } from "../model/files";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { listProjectFiles } from "../model/projectFiles";
+import { viewPath } from "../model/table";
 import { fromNotebook, isScript } from "../model/runs";
 import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
@@ -257,9 +259,24 @@ export function App(props: {
       for (const path of state.tabs ?? []) await open(path, true);
       const last = docs().find((d) => d.path === state.active);
       if (last && !openedWhileRestoring) setActive(last);
+      await restoreExtras(state);
       setRestored(true);
     })();
   });
+
+  /** Brings back the tables and diffs that were open; a table only while its session runs. */
+  async function restoreExtras(state: ProjectState) {
+    if (!state.extras?.length) return;
+    await ws.refreshSessions().catch(() => {});
+    const live = new Set(ws.liveSessions().map((s) => s.id));
+    const back = state.extras.flatMap((saved): ExtraTab[] => {
+      if (saved.kind === "diff") return [diffTab(saved)];
+      return live.has(saved.session) ? [tableTab({ id: saved.session, language: saved.language }, saved.path)] : [];
+    });
+    setExtras((open) => [...back.filter((t) => !open.some((o) => o.id === t.id)), ...open]);
+    const front = extras().find((t) => t.id === state.activeExtra);
+    if (front && !openedWhileRestoring) setActiveExtra(front);
+  }
 
   // Agents and shells the daemon keeps for this project, followed from each connection.
   const terminals = new TerminalStore(ws.backend, props.project);
@@ -282,7 +299,13 @@ export function App(props: {
     const outputs = { ...shownOutputs };
     for (const doc of docs()) outputs[doc.path] = doc.shownOutputs();
     for (const [path, ids] of Object.entries(outputs)) if (!ids.length) delete outputs[path];
-    return { tabs: docs().map((d) => d.path), active: active()?.path, outputs };
+    const saved = extras().map(
+      (tab): SavedExtra =>
+        tab.kind === "table"
+          ? { kind: "table", session: tab.session, language: tab.language, path: tab.path }
+          : { kind: "diff", repo: tab.repo, file: tab.file, staged: tab.staged, sha: tab.sha },
+    );
+    return { tabs: docs().map((d) => d.path), active: active()?.path, outputs, extras: saved, activeExtra: activeExtra()?.id };
   };
   const saveState = () => {
     clearTimeout(saveTimer);
@@ -650,6 +673,21 @@ export function App(props: {
     }
     setActiveExtra(table);
   }
+
+  // View(df) in one of this window's sessions opens it in the Data Explorer.
+  onCleanup(
+    ws.onView((session, title) => {
+      const info = ws.projectSessions().find((s) => s.id === session);
+      if (!info) return;
+      const path = viewPath(title, normalizeLanguage(info.language));
+      if (!path) {
+        notify(`View() can open a variable or a part of one, like df or seu@meta.data, not ${title}. Assign it to a variable first.`, "info");
+        return;
+      }
+      openTable(session, path);
+      if (isMin("editor")) toggleMin("editor");
+    }),
+  );
 
   /** Opens a file's diff as a tab, or brings it to the front. */
   function openDiff(request: DiffRequest) {

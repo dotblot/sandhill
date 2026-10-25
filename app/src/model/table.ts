@@ -235,3 +235,32 @@ export function exportName(path: string[]): string {
   const name = (path[path.length - 1] ?? "table").replace(/[^\w.-]+/g, "-").replace(/^[-.]+|-+$/g, "");
   return `${name || "table"}.csv`;
 }
+
+const R_PART = /^(?:[$@]([A-Za-z.][\w.]*|`[^`]+`|"[^"\\]*")|\[\[("[^"\\]*"|'[^'\\]*'|\d+)\]\])/;
+const PY_PART = /^(?:\.([A-Za-z_]\w*)|\[("[^"\\]*"|'[^'\\]*'|\d+)\])/;
+
+/**
+ * Where in the Variables pane what `View(...)` or `%view ...` was given is:
+ * `seu@meta.data` is `["seu", "meta.data"]` and `adata.obs` is
+ * `["adata", "obs"]`. Undefined for an expression that names no variable,
+ * like `head(df)`.
+ */
+export function viewPath(title: string, language: string): string[] | undefined {
+  const r = language === "r";
+  let rest = title.trim();
+  const first = (r ? /^([A-Za-z.][\w.]*|`[^`]+`)/ : /^([A-Za-z_]\w*)/).exec(rest);
+  if (!first) return undefined;
+  const unquote = (s: string) => (/^[`"']/.test(s) ? s.slice(1, -1) : s);
+  const path = [unquote(first[1])];
+  rest = rest.slice(first[0].length).trim();
+  while (rest) {
+    const part = (r ? R_PART : PY_PART).exec(rest);
+    if (!part) return undefined;
+    const [, name, index] = part;
+    if (name !== undefined) path.push(unquote(name));
+    else if (/^\d+$/.test(index)) path.push(r ? `[[${index}]]` : `[${index}]`);
+    else path.push(unquote(index));
+    rest = rest.slice(part[0].length).trim();
+  }
+  return path;
+}

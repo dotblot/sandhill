@@ -409,3 +409,78 @@ async fn python_tables_are_read_filtered_sorted_and_exported() {
     );
     client.shutdown(&session).await.unwrap();
 }
+
+/// Runs code and returns the events of its run.
+async fn run_events(client: &mut Client, session: &str, code: &str) -> Vec<sandhill_proto::Event> {
+    client.subscribe(session, None).await.unwrap();
+    let started: RunStarted = client
+        .call(Call::Execute {
+            session: session.into(),
+            code: code.into(),
+            cell: None,
+            quiet: false,
+            by: None,
+        })
+        .await
+        .unwrap();
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(TIMEOUT, client.next_event())
+            .await
+            .expect("timed out waiting for the run")
+            .expect("connection closed");
+        if event.run.as_deref() != Some(started.run.as_str()) {
+            continue;
+        }
+        let done = event.msg_type == EVENT_RUN_FINISHED;
+        events.push(event);
+        if done {
+            break;
+        }
+    }
+    client.unsubscribe(session).await.unwrap();
+    events
+}
+
+#[tokio::test]
+async fn view_asks_the_app_to_open_the_data_explorer() {
+    let mut kernels = Vec::new();
+    for (kernel, code) in [
+        ("ark", "df <- data.frame(a = 1:3)\nView(df)"),
+        ("ir", "df <- data.frame(a = 1:3)\nView(df)"),
+        ("python3", "df = {'a': [1, 2, 3]}\n%view df"),
+    ] {
+        if have_kernel(kernel).await {
+            kernels.push((kernel, code));
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    for (kernel, code) in kernels {
+        let session = client.start_session(kernel, None).await.unwrap().id;
+        let events = run_events(&mut client, &session, code).await;
+        let views: Vec<&Value> = events
+            .iter()
+            .filter(|e| e.msg_type == sandhill_proto::EVENT_VIEW)
+            .map(|e| &e.content)
+            .collect();
+        assert_eq!(views, [&json!({"title": "df"})], "{kernel}: {events:?}");
+        // Nothing shows in the output, and the run went well.
+        assert!(
+            events
+                .iter()
+                .all(|e| !["display_data", "error"].contains(&e.msg_type.as_str())),
+            "{kernel}: {events:?}"
+        );
+        let finished = events.last().unwrap();
+        assert_eq!(finished.content["status"], "ok", "{kernel}: {events:?}");
+        // The session goes on as before.
+        let next = run_events(&mut client, &session, "1 + 1").await;
+        assert!(
+            next.iter()
+                .any(|e| ["execute_result", "display_data"].contains(&e.msg_type.as_str())),
+            "{kernel}: {next:?}"
+        );
+    }
+}

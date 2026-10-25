@@ -58,7 +58,7 @@ export interface TableTab {
   setCount: (count: string) => void;
 }
 
-export function tableTab(session: SessionInfo, path: string[]): TableTab {
+export function tableTab(session: Pick<SessionInfo, "id" | "language">, path: string[]): TableTab {
   const [code, setCode] = createSignal(path.join(normalizeLanguage(session.language) === "r" ? "$" : "."));
   const [count, setCount] = createSignal("");
   return {

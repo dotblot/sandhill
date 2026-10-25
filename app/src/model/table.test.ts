@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TableColumn } from "../backend/types";
-import { columnWidth, exportName, filterError, filterText, formatCell, formatNumber, nextSort, opsFor, sortText, tableCode } from "./table";
+import { columnWidth, exportName, filterError, filterText, formatCell, formatNumber, nextSort, opsFor, sortText, tableCode, viewPath } from "./table";
 
 const COLUMNS: TableColumn[] = [
   { name: "nCount_RNA", kind: "number", type: "dbl" },
@@ -116,4 +116,20 @@ it("names an export after the table", () => {
   expect(exportName(["adata", "obs"])).toBe("obs.csv");
   expect(exportName(["my table!"])).toBe("my-table.csv");
   expect(exportName([])).toBe("table.csv");
+});
+
+describe("View()", () => {
+  it("finds what was viewed in the Variables pane", () => {
+    expect(viewPath("df", "r")).toEqual(["df"]);
+    expect(viewPath("seu@meta.data", "r")).toEqual(["seu", "meta.data"]);
+    expect(viewPath('res$tables[["DE genes"]]', "r")).toEqual(["res", "tables", "DE genes"]);
+    expect(viewPath("`my data`$x", "r")).toEqual(["my data", "x"]);
+    expect(viewPath("lst[[2]]", "r")).toEqual(["lst", "[[2]]"]);
+    expect(viewPath("head(df)", "r")).toBeUndefined();
+    expect(viewPath("adata.obs", "python")).toEqual(["adata", "obs"]);
+    expect(viewPath("d['counts']", "python")).toEqual(["d", "counts"]);
+    expect(viewPath("frames[0]", "python")).toEqual(["frames", "[0]"]);
+    expect(viewPath("df.head()", "python")).toBeUndefined();
+    expect(viewPath("", "python")).toBeUndefined();
+  });
 });

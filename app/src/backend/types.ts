@@ -6,6 +6,8 @@ import type { ChatEntry } from "../model/chat";
 export const EVENT_RUN_STARTED = "sandhill.run_started";
 export const EVENT_RUN_FINISHED = "sandhill.run_finished";
 export const EVENT_SESSION_ENDED = "sandhill.session_ended";
+/** `View(df)` or `%view df` ran: `{title}` is what to open in the Data Explorer. */
+export const EVENT_VIEW = "sandhill.view";
 export const BLOB_KEY = "sandhill_blob";
 export const CONFLICT_ERROR = "conflict:";
 
@@ -94,7 +96,15 @@ export interface ProjectState {
   active?: string;
   /** Per document, the cells whose outputs are shown; the rest start hidden. */
   outputs?: Record<string, string[]>;
+  /** Tables and diffs open beside the documents, in tab order, and the id of the one in front. */
+  extras?: SavedExtra[];
+  activeExtra?: string;
 }
+
+/** A Data Explorer or diff tab, as kept for next time. */
+export type SavedExtra =
+  | { kind: "table"; session: string; language: string; path: string[] }
+  | { kind: "diff"; repo: string; file: string; staged: boolean; sha?: string };
 
 export interface CellRef {
   file: string;

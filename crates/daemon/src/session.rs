@@ -8,12 +8,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use jupyter_protocol::{
-    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
-    KernelInfoRequest, ShutdownRequest,
+    CommClose, CommId, ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage,
+    JupyterMessageContent, KernelInfoRequest, ShutdownRequest,
 };
 use sandhill_proto::{
-    CellRef, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED, Event, RunFinished,
-    RunStarted, SessionStatus,
+    CellRef, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED, EVENT_VIEW, Event,
+    RunFinished, RunStarted, SessionStatus,
 };
 use serde_json::json;
 use tokio::process::Child;
@@ -22,6 +22,7 @@ use tokio::task::JoinHandle;
 
 use crate::journal::{Journal, NewRun, SessionRecord, now_ms};
 use crate::kernel::{self, KernelConnection, KernelMsg};
+use crate::view;
 
 /// IOPub message types that are outputs and get journaled.
 const JOURNALED: &[&str] = &[
@@ -118,9 +119,15 @@ impl SessionHandle {
                 }
             };
             let version = wait_until_ready(&mut conn, &mut rx).await?;
-            anyhow::Ok((conn, version))
+            let mut prelude = None;
+            if let Some(code) = view::prelude(&record.language) {
+                let msg = quietly(code);
+                prelude = Some(msg.header.msg_id.clone());
+                conn.shell.send(msg).await?;
+            }
+            anyhow::Ok((conn, version, prelude))
         };
-        let (conn, version) = match tokio::time::timeout(STARTUP_TIMEOUT, started).await {
+        let (conn, version, prelude) = match tokio::time::timeout(STARTUP_TIMEOUT, started).await {
             Ok(Ok(started)) => started,
             failure => {
                 kernel::kill_process_group(launched.pid);
@@ -140,15 +147,12 @@ impl SessionHandle {
             journal.set_language_version(&id, &version)?;
             record.language_version = Some(version);
         }
-        Ok(Self::spawn(
-            record,
-            journal,
-            conn,
-            rx,
-            Some(child),
-            HashMap::new(),
-            None,
-        ))
+        let begin = Begin {
+            child: Some(child),
+            prelude,
+            ..Begin::default()
+        };
+        Ok(Self::spawn(record, journal, conn, rx, begin))
     }
 
     /// Reconnects to a kernel that kept running while the daemon was down.
@@ -189,15 +193,12 @@ impl SessionHandle {
                 let probe = JupyterMessage::new(KernelInfoRequest {}, None);
                 let probe_id = probe.header.msg_id.clone();
                 conn.shell.send(probe).await?;
-                Ok(Self::spawn(
-                    record,
-                    journal,
-                    conn,
-                    rx,
-                    None,
+                let begin = Begin {
                     runs,
-                    Some(probe_id),
-                ))
+                    probe_id: Some(probe_id),
+                    ..Begin::default()
+                };
+                Ok(Self::spawn(record, journal, conn, rx, begin))
             }
             Err(err) => {
                 end_session(
@@ -215,9 +216,7 @@ impl SessionHandle {
         journal: Arc<Journal>,
         conn: KernelConnection,
         kernel_rx: mpsc::Receiver<KernelMsg>,
-        child: Option<Child>,
-        runs: HashMap<String, RunState>,
-        probe_id: Option<String>,
+        begin: Begin,
     ) -> SessionHandle {
         let (commands, command_rx) = mpsc::channel(64);
         let (events, _) = broadcast::channel(1024);
@@ -229,9 +228,11 @@ impl SessionHandle {
             kernel_rx,
             command_rx,
             events: events.clone(),
-            child,
-            runs,
-            probe_id,
+            child: begin.child,
+            runs: begin.runs,
+            probe_id: begin.probe_id,
+            prelude: begin.prelude,
+            busy: None,
         };
         let task = tokio::spawn(actor.run());
         SessionHandle {
@@ -300,6 +301,19 @@ fn ended() -> anyhow::Error {
     anyhow!("the session has ended")
 }
 
+/// What a session's actor starts with besides its connection.
+#[derive(Default)]
+struct Begin {
+    /// The kernel process, when this daemon started it.
+    child: Option<Child>,
+    /// Runs that were going when the daemon restarted, and the request that
+    /// tells when they are done.
+    runs: HashMap<String, RunState>,
+    probe_id: Option<String>,
+    /// The code run at start (see `view::prelude`).
+    prelude: Option<String>,
+}
+
 struct RunState {
     run_id: String,
     /// `(status, execution_count)` from `execute_reply`.
@@ -321,6 +335,12 @@ struct Actor {
     /// Keyed by the `msg_id` of the execute request.
     runs: HashMap<String, RunState>,
     probe_id: Option<String>,
+    /// The `msg_id` of the code run at start (see `view::prelude`), whose
+    /// messages stay out of the journal: IRkernel echoes even silent code.
+    prelude: Option<String>,
+    /// The request the kernel is busy with, for messages that name none:
+    /// Ark opens its comms without a parent.
+    busy: Option<String>,
 }
 
 impl Actor {
@@ -328,7 +348,7 @@ impl Actor {
         let mut liveness = tokio::time::interval(LIVENESS_INTERVAL);
         loop {
             tokio::select! {
-                Some(msg) = self.kernel_rx.recv() => self.on_kernel_message(msg),
+                Some(msg) = self.kernel_rx.recv() => self.on_kernel_message(msg).await,
                 command = self.command_rx.recv() => match command {
                     Some(Command::Shutdown { reply }) => {
                         let result = self.shutdown().await;
@@ -453,17 +473,22 @@ impl Actor {
         }
     }
 
-    fn on_kernel_message(&mut self, msg: KernelMsg) {
+    async fn on_kernel_message(&mut self, msg: KernelMsg) {
         match msg {
-            KernelMsg::IoPub(msg) => self.on_iopub(msg),
+            KernelMsg::IoPub(msg) => self.on_iopub(msg).await,
             KernelMsg::Shell(msg) => self.on_shell(msg),
             KernelMsg::Control(_) => {}
         }
     }
 
-    fn on_iopub(&mut self, msg: JupyterMessage) {
+    async fn on_iopub(&mut self, msg: JupyterMessage) {
         let parent = msg.parent_header.as_ref().map(|h| h.msg_id.clone());
         if let JupyterMessageContent::Status(status) = &msg.content {
+            if status.execution_state == ExecutionState::Busy {
+                self.busy = parent.clone();
+            } else if status.execution_state == ExecutionState::Idle && self.busy == parent {
+                self.busy = None;
+            }
             if status.execution_state == ExecutionState::Idle
                 && let Some(run) = parent.as_deref().and_then(|p| self.runs.get_mut(p))
             {
@@ -473,13 +498,30 @@ impl Actor {
             return;
         }
         let msg_type = msg.header.msg_type.as_str();
-        if !JOURNALED.contains(&msg_type) {
+        if !JOURNALED.contains(&msg_type) && msg_type != "comm_open"
+            || parent.is_some() && parent == self.prelude
+        {
             return;
         }
         let run_id = parent.as_deref().and_then(|p| self.run_id_for(p));
-        match serde_json::to_value(&msg.content) {
-            Ok(content) => self.publish(run_id.as_deref(), msg_type, content),
-            Err(err) => tracing::warn!("cannot serialize {msg_type}: {err}"),
+        let content = match serde_json::to_value(&msg.content) {
+            Ok(content) => content,
+            Err(err) => return tracing::warn!("cannot serialize {msg_type}: {err}"),
+        };
+        if let Some((title, comm)) = view::request(msg_type, &content) {
+            let run_id = run_id.or_else(|| self.busy.as_deref().and_then(|p| self.run_id_for(p)));
+            self.publish(run_id.as_deref(), EVENT_VIEW, json!({ "title": title }));
+            if let Some(comm) = comm {
+                let close = CommClose {
+                    comm_id: CommId(comm),
+                    data: Default::default(),
+                };
+                if let Err(err) = self.conn.shell.send(JupyterMessage::new(close, None)).await {
+                    tracing::warn!("cannot close the data explorer comm: {err}");
+                }
+            }
+        } else if JOURNALED.contains(&msg_type) {
+            self.publish(run_id.as_deref(), msg_type, content);
         }
     }
 
@@ -597,6 +639,20 @@ impl Actor {
         }
         let _ = std::fs::remove_file(&self.record.connection_file);
     }
+}
+
+/// An execute request that runs `code` out of sight: no history, no
+/// outputs, and no run in the journal.
+fn quietly(code: &str) -> JupyterMessage {
+    let request = ExecuteRequest {
+        code: code.to_string(),
+        silent: true,
+        store_history: false,
+        user_expressions: None,
+        allow_stdin: false,
+        stop_on_error: false,
+    };
+    JupyterMessage::new(request, None)
 }
 
 /// Sends `kernel_info_request` until a reply *and* a matching IOPub status

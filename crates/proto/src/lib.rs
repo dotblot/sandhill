@@ -20,6 +20,9 @@ pub const DAEMON_EVENT_PREFIX: &str = "sandhill.";
 pub const EVENT_RUN_STARTED: &str = "sandhill.run_started";
 pub const EVENT_RUN_FINISHED: &str = "sandhill.run_finished";
 pub const EVENT_SESSION_ENDED: &str = "sandhill.session_ended";
+/// `View(df)` (R) or `%view df` (Python) ran: `{title}` is what to open in
+/// the Data Explorer, as typed.
+pub const EVENT_VIEW: &str = "sandhill.view";
 
 /// Where the app installs Ark (Posit's R kernel) on a server, relative to
 /// the home folder. The daemon offers it as the `ark` kernel when R is on
