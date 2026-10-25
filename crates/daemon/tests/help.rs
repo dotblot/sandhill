@@ -147,6 +147,31 @@ async fn r_help_is_searched_read_and_packages_listed() {
     assert!(some.topics.iter().all(|t| t.package == "stats"));
     let none = topics(&client, &session, "zzzznothinglikethis", None).await;
     assert!(none.topics.is_empty() && none.more == 0);
+    assert!(none.vignettes.is_empty());
+    // A package's vignettes come with its topics, as files the app reads.
+    let grid = tokio::time::timeout(
+        TIMEOUT,
+        client.help_topics(&session, "", Some("grid"), Some(5)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    if grid.vignettes.is_empty() {
+        eprintln!("skipping vignettes: this R has none built for grid");
+    } else {
+        let intro = grid.vignettes.iter().find(|v| v.name == "grid");
+        let intro = intro.expect("grid's own vignette");
+        assert_eq!(intro.title, "Introduction to grid");
+        assert!(std::path::Path::new(&intro.file).is_file(), "{intro:?}");
+        assert!(intro.file.ends_with(".pdf") || intro.file.ends_with(".html"));
+        assert!(grid.vignettes.iter().all(|v| v.package == "grid"));
+        // And a search finds them by title.
+        let found = topics(&client, &session, "introduction to grid", None).await;
+        assert!(
+            found.vignettes.iter().any(|v| v.name == "grid"),
+            "{found:?}"
+        );
+    }
 
     let page = client.help_page(&session, "lm", None).await.unwrap();
     assert_eq!(
@@ -312,6 +337,63 @@ async fn python_help_is_searched_read_and_packages_listed() {
     assert!(listed.packages.iter().any(|p| !p.loaded));
     assert_eq!(listed.libraries.len(), 1);
 
+    left_no_trace(&client, &session).await;
+    client.shutdown(&session).await.unwrap();
+}
+
+#[tokio::test]
+async fn r_updates_come_from_the_repositories() {
+    let kernel = if have_kernel("ark").await {
+        "ark"
+    } else if have_kernel("ir").await {
+        "ir"
+    } else {
+        return;
+    };
+    // A repository of its own, with a jsonlite (which IRkernel needs) newer than any.
+    let repo = tempfile::tempdir().unwrap();
+    let contrib = repo.path().join("src/contrib");
+    std::fs::create_dir_all(&contrib).unwrap();
+    std::fs::write(
+        contrib.join("PACKAGES"),
+        "Package: jsonlite\nVersion: 999.0.0\n\n",
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session(kernel, None).await.unwrap().id;
+    let url = format!("file://{}", repo.path().display());
+    run(
+        &mut client,
+        &session,
+        &format!("options(repos = c(CRAN = \"{url}\"))"),
+    )
+    .await;
+    let checked = tokio::time::timeout(Duration::from_secs(200), client.package_updates(&session))
+        .await
+        .expect("checking for updates timed out")
+        .unwrap();
+    let json = checked.updates.iter().find(|u| u.name == "jsonlite");
+    let json = json.unwrap_or_else(|| panic!("{checked:?}"));
+    assert_eq!(json.available, "999.0.0");
+    assert!(!json.installed.is_empty() && !json.library.is_empty() && !json.bioconductor);
+    assert!(checked.repos.contains(&url), "{checked:?}");
+    assert!(!checked.unreached.contains(&url), "{checked:?}");
+    // A repository that can't be reached says so, rather than "up to date".
+    let gone = repo.path().join("gone");
+    run(
+        &mut client,
+        &session,
+        &format!("options(repos = c(CRAN = \"file://{}\"))", gone.display()),
+    )
+    .await;
+    let err = client
+        .package_updates(&session)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("couldn't reach"), "{err}");
     left_no_trace(&client, &session).await;
     client.shutdown(&session).await.unwrap();
 }

@@ -28,6 +28,16 @@ const FILTERS: HelpTopics = {
   more: 12,
 };
 
+const GRID: HelpTopics = {
+  session: "s1",
+  topics: [{ topic: "grid.newpage", package: "grid", title: "Move to a New Page" }],
+  more: 0,
+  vignettes: [
+    { name: "grid", package: "grid", title: "Introduction to grid", file: "/lib/grid/doc/grid.html", code: "/lib/grid/doc/grid.R" },
+    { name: "frame", package: "grid", title: "Frames and packing grobs", file: "/lib/grid/doc/frame.pdf" },
+  ],
+};
+
 const PAGES: Record<string, HelpPage> = {
   "stats/filter": {
     session: "s1",
@@ -74,7 +84,11 @@ function fakeWorkspace(options: { busyOnce?: boolean } = {}) {
             busy = false;
             throw new Error("daemon error: the session is busy running code; try again once it is idle");
           }
-          return FILTERS as T;
+          return (params.package === "grid" ? GRID : FILTERS) as T;
+        case "read_file":
+          return { path: params.path, text: String(params.path).endsWith(".R") ? "library(grid)\ngrid.newpage()\n" : "<html><body><h1>Introduction</h1></body></html>", mtime_ms: 1 } as T;
+        case "read_bytes":
+          return { path: params.path, offset: params.offset, data: btoa("%PDF-1.4"), size: 8 } as T;
         case "help_page": {
           // Python looks a dotted name up whatever the package.
           const page = PAGES[`${params.package ?? ""}/${params.topic}`] ?? PAGES[`/${params.topic}`];
@@ -231,6 +245,41 @@ describe("HelpPane", () => {
     await settle();
     expect(root.querySelector(".helpdoc h3")?.textContent).toBe("Seurat-package");
     expect(root.querySelector(".var-note.err")).toBeNull();
+    dispose();
+  });
+
+  it("lists a package's vignettes and reads one in the pane", async () => {
+    const { ws, calls } = fakeWorkspace();
+    const root = document.body.appendChild(document.createElement("div"));
+    const made: Blob[] = [];
+    URL.createObjectURL = (blob: Blob) => (made.push(blob), "blob:frame");
+    URL.revokeObjectURL = () => {};
+    const dispose = render(() => <HelpPane ws={ws} session={R_SESSION} sessions={[R_SESSION]} onSession={() => {}} onRun={() => {}} openLink={() => {}} shown />, root);
+    type(root.querySelector('input[aria-label="Package"]') as HTMLInputElement, "grid");
+    await pause();
+    const rows = [...root.querySelectorAll(".hr")].map((b) => b.textContent);
+    expect(rows).toEqual(["Rgrid.newpagegrid", "Introduction to gridgrid", "Frames and packing grobsgrid"]);
+    ([...root.querySelectorAll(".hr")][1] as HTMLButtonElement).click();
+    await settle();
+    expect(calls.find((c) => c.method === "read_file")?.params).toEqual({ path: "/lib/grid/doc/grid.html" });
+    const frame = root.querySelector(".hvframe") as HTMLIFrameElement;
+    expect(frame.getAttribute("srcdoc")).toContain("<h1>Introduction</h1>");
+    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
+    expect(root.querySelector(".hvig .pkg")?.textContent).toBe('grid · vignette("grid")');
+    expect((root.querySelector(".hmain") as HTMLElement).hidden).toBe(true);
+    // Its R code, a click away.
+    (root.querySelector(".hvig .hd-src") as HTMLButtonElement).click();
+    await settle();
+    expect(root.querySelector(".hvig .hsrc")?.textContent).toBe("library(grid)grid.newpage()");
+    // Back to the search, then a PDF one.
+    (root.querySelector(".hvig button[title='Back to the help']") as HTMLButtonElement).click();
+    expect(root.querySelector(".hvig")).toBeNull();
+    ([...root.querySelectorAll(".hr")][2] as HTMLButtonElement).click();
+    await settle();
+    expect(calls.find((c) => c.method === "read_bytes")?.params).toEqual({ path: "/lib/grid/doc/frame.pdf", offset: 0 });
+    expect(made[0].type).toBe("application/pdf");
+    expect((root.querySelector(".hvframe") as HTMLIFrameElement).getAttribute("src")).toBe("blob:frame");
+    expect(root.querySelector(".hvig .hd-src")).toBeNull();
     dispose();
   });
 });

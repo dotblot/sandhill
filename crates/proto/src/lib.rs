@@ -212,6 +212,13 @@ pub enum Call {
     ListPackages {
         session: String,
     },
+    /// R packages with a newer version on CRAN or Bioconductor
+    /// (`old.packages()`, with BiocManager's repositories when it is
+    /// installed). Reaches the repositories from the session, so it can take
+    /// a while. Returns [`PackageUpdates`].
+    PackageUpdates {
+        session: String,
+    },
     /// The Git state of the repository holding `path` (a project folder):
     /// its branch, how far it is ahead of and behind its upstream, and the
     /// changed files. Returns [`GitStatus`], with an empty `repo` when the
@@ -1347,6 +1354,23 @@ pub struct HelpTopics {
     /// How many more matched than are listed.
     #[serde(default)]
     pub more: u64,
+    /// R's vignettes: a package's, or those whose name or title matched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vignettes: Vec<HelpVignette>,
+}
+
+/// An R package's vignette, as it was built when the package was installed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct HelpVignette {
+    /// Its name, as `vignette()` takes it: `dplyr`, `colwise`.
+    pub name: String,
+    pub package: String,
+    pub title: String,
+    /// The built file, HTML or PDF, on the session's machine.
+    pub file: String,
+    /// The vignette's R code, if the package has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -1413,6 +1437,30 @@ pub struct HelpSource {
     pub file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+}
+
+/// Packages with a newer version, as [`Call::PackageUpdates`] asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PackageUpdates {
+    pub session: String,
+    pub updates: Vec<PackageUpdate>,
+    /// The repositories asked.
+    pub repos: Vec<String>,
+    /// Those that couldn't be reached. When none could, the call fails.
+    #[serde(default)]
+    pub unreached: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PackageUpdate {
+    pub name: String,
+    pub installed: String,
+    pub available: String,
+    /// The library the installed one is in.
+    pub library: String,
+    /// It comes from Bioconductor.
+    #[serde(default)]
+    pub bioconductor: bool,
 }
 
 /// Installed packages, as [`Call::ListPackages`] asked.

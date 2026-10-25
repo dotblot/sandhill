@@ -25,10 +25,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - name: Install Python and R kernels, pandas for the Data Explorer tests, and WebKitGTK for the app
+      - name: Install Python and R kernels, pandas for the Data Explorer tests, matplotlib for redrawing plots, and WebKitGTK for the app
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-ipykernel python3-pandas r-base-core r-cran-irkernel \
+          sudo apt-get install -y --no-install-recommends python3-ipykernel python3-pandas python3-matplotlib r-base-core r-cran-irkernel \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev libxdo-dev libssl-dev
           python3 -m ipykernel install --user
           # r-cran-irkernel ships its kernelspec in /usr/share/jupyter/kernels/ir,

@@ -5,18 +5,21 @@
 //! In R, topics are every installed package's help aliases, read from each
 //! package's `Meta/Rd.rds` and kept in the session (in `options()`) until a
 //! library folder changes; a page is the package's own HTML from
-//! `tools::Rd2HTML`. In Python, topics are the public functions, classes
+//! `tools::Rd2HTML`. A search lists the packages' vignettes too, from
+//! `Meta/vignette.rds`: the built files' paths, which the app reads. In Python, topics are the public functions, classes
 //! and modules of the modules already imported; a page is the object's
 //! signature, docstring and public members, found the way `pydoc` finds
 //! them (importing a module when asked for it by name).
 
-use sandhill_proto::{HelpMember, HelpTopic};
+use sandhill_proto::{HelpMember, HelpTopic, HelpVignette};
 
 use crate::tables::{literal, unescape};
 
 /// Topics returned unless asked otherwise, and at most.
 pub const TOPICS: u32 = 50;
 pub const MAX_TOPICS: u32 = 500;
+/// Vignettes a search lists, at most.
+const VIGNETTES: u32 = 30;
 
 /// What the code is asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,16 +71,27 @@ const R: &str = r#"local({
   # Every installed package's help aliases and titles, read again when a
   # library folder changes (a package was installed or removed).
   .index <- function() {
+    # Vignettes as rows of package, name, title, the built file and its R code.
     .libs <- .libPaths()
     .stamp <- paste(.libs, file.info(.libs)$mtime, collapse = "\n")
     .cache <- getOption("sandhill.help")
-    if (is.environment(.cache) && identical(.cache$stamp, .stamp)) return(.cache)
+    if (is.environment(.cache) && identical(.cache$stamp, .stamp) && !is.null(.cache$vignettes)) return(.cache)
     .dirs <- list.files(.libs, full.names = TRUE)
     .dirs <- .dirs[!duplicated(basename(.dirs))]
     .alias <- list()
     .pkg <- list()
     .title <- list()
+    .vig <- list()
     for (.d in .dirs) {
+      .v <- file.path(.d, "Meta", "vignette.rds")
+      .v <- if (file.exists(.v)) tryCatch(readRDS(.v), error = function(e) NULL)
+      if (is.data.frame(.v) && nrow(.v) && all(c("File", "Title", "PDF", "R") %in% names(.v))) {
+        .out <- file.path(.d, "doc", as.character(.v$PDF))
+        .ok <- nzchar(as.character(.v$PDF)) & file.exists(.out)
+        .code <- file.path(.d, "doc", as.character(.v$R))
+        .code[!nzchar(as.character(.v$R)) | !file.exists(.code)] <- ""
+        if (any(.ok)) .vig[[basename(.d)]] <- cbind(basename(.d), tools::file_path_sans_ext(as.character(.v$File)), gsub("\\s+", " ", as.character(.v$Title)), .out, .code)[.ok, , drop = FALSE]
+      }
       .f <- file.path(.d, "Meta", "Rd.rds")
       if (!file.exists(.f)) next
       .x <- tryCatch(readRDS(.f), error = function(e) NULL)
@@ -99,6 +113,7 @@ const R: &str = r#"local({
     .cache$package <- unlist(.pkg, use.names = FALSE)[.keep]
     .cache$title <- gsub("\\s+", " ", unlist(.title, use.names = FALSE)[.keep])
     .cache$ltitle <- tolower(.cache$title)
+    .cache$vignettes <- do.call(rbind, c(list(matrix(character(0), 0, 5)), unname(.vig)))
     options(sandhill.help = .cache)
     .cache
   }
@@ -136,6 +151,14 @@ const R: &str = r#"local({
     .line("SANDHILL_HELP", length(.hit))
     .top <- utils::head(.hit, .limit)
     if (length(.top)) writeLines(paste("SANDHILL_TOPIC", .esc(.ix$alias[.top]), .ix$package[.top], .esc(.ix$title[.top]), sep = "\t"))
+    # Vignettes: a package's, or those whose name or title has the words.
+    .v <- .ix$vignettes
+    .vin <- if (nzchar(.package)) .v[, 1] %in% .wanted(.v[, 1]) else rep(TRUE, nrow(.v))
+    if (nzchar(.q)) .vin <- .vin & (grepl(.q, tolower(.v[, 3]), fixed = TRUE) | grepl(.q, tolower(.v[, 2]), fixed = TRUE))
+    if (!nzchar(.package) && !nzchar(.q)) .vin <- rep(FALSE, nrow(.v))
+    .v <- .v[.vin, , drop = FALSE]
+    .v <- utils::head(.v[order(.rank_pkgs(.v[, 1]), .v[, 1]), , drop = FALSE], __VIGNETTES__)
+    if (nrow(.v)) writeLines(paste("SANDHILL_VIGNETTE", .esc(.v[, 2]), .v[, 1], .esc(.v[, 3]), .esc(.v[, 4]), .esc(.v[, 5]), sep = "\t"))
   }
   if (.mode != "topics") {
     .ix <- .index()
@@ -452,15 +475,18 @@ pub fn code(language: &str, ask: &Ask) -> Option<String> {
             .replace("__QUERY__", &literal(ask.query))
             .replace("__PACKAGE__", &literal(ask.package))
             .replace("__TOPIC__", &literal(ask.topic))
-            .replace("__LIMIT__", &ask.limit.to_string()),
+            .replace("__LIMIT__", &ask.limit.to_string())
+            .replace("__VIGNETTES__", &VIGNETTES.to_string()),
     )
 }
 
-/// What a search printed: the topics, and how many matched in all.
+/// What a search printed: the topics, how many matched in all, and the
+/// vignettes.
 #[derive(Debug, Default, PartialEq)]
 pub struct Topics {
     pub matched: u64,
     pub topics: Vec<HelpTopic>,
+    pub vignettes: Vec<HelpVignette>,
 }
 
 pub fn parse_topics(stdout: &str) -> Topics {
@@ -475,6 +501,16 @@ pub fn parse_topics(stdout: &str) -> Topics {
                     .unwrap_or(0)
             }
             Some("SANDHILL_TOPIC") => parsed.topics.push(topic(&mut fields)),
+            Some("SANDHILL_VIGNETTE") => {
+                let mut next = || unescape(fields.next().unwrap_or(""));
+                parsed.vignettes.push(HelpVignette {
+                    name: next(),
+                    package: next(),
+                    title: next(),
+                    file: next(),
+                    code: Some(next()).filter(|c| !c.is_empty()),
+                });
+            }
             _ => {}
         }
     }
@@ -638,6 +674,27 @@ mod tests {
                     topic: "filter".into(),
                     package: "dplyr".into(),
                     title: "Keep rows that \tmatch".into()
+                },
+            ]
+        );
+        let out = "SANDHILL_HELP\t0\nSANDHILL_VIGNETTE\tcolwise\tdplyr\tColumn-wise operations\t/lib/dplyr/doc/colwise.html\t/lib/dplyr/doc/colwise.R\nSANDHILL_VIGNETTE\tgrid\tgrid\tIntroduction to grid\t/lib/grid/doc/grid.pdf\t\n";
+        let parsed = parse_topics(out);
+        assert_eq!(
+            parsed.vignettes,
+            vec![
+                HelpVignette {
+                    name: "colwise".into(),
+                    package: "dplyr".into(),
+                    title: "Column-wise operations".into(),
+                    file: "/lib/dplyr/doc/colwise.html".into(),
+                    code: Some("/lib/dplyr/doc/colwise.R".into()),
+                },
+                HelpVignette {
+                    name: "grid".into(),
+                    package: "grid".into(),
+                    title: "Introduction to grid".into(),
+                    file: "/lib/grid/doc/grid.pdf".into(),
+                    code: None,
                 },
             ]
         );

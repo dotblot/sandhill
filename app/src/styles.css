@@ -1160,6 +1160,16 @@ button.hr-more:hover { text-decoration: underline; }
 .hr-p { font-size: var(--fs-small); color: var(--muted); white-space: nowrap; }
 .hl-l { font: 700 10px var(--font-ui); color: #2f6fbf; background: #2f6fbf1f; border-radius: 3px; text-align: center; padding: 1px 0; }
 .hl-l.py { color: #2f8a5c; background: #3a9b6b22; }
+.hl-l.hl-vig { display: grid; place-items: center; color: var(--muted); background: none; padding: 0; }
+.hr-vt { font-family: var(--font-ui); }
+.hr-h { margin-top: 6px; }
+/* A vignette fills the pane, in a frame of its own. */
+.hbody.vig { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+.hvig { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: 8px; }
+.hvig .hd-top { align-items: center; gap: 4px; }
+.hvig .hd-name h3 { font-family: var(--font-ui); }
+.hvframe { flex: 1; min-height: 0; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.hvig .hsrc { flex: 1; min-height: 0; }
 .helpdoc { padding: 8px 12px 4px; line-height: 1.5; -webkit-user-select: text; user-select: text; }
 .helpdoc.loading { opacity: 0.6; }
 .hd-top { display: flex; align-items: flex-start; gap: 2px; }
@@ -1214,6 +1224,12 @@ button.hr-more:hover { text-decoration: underline; }
 .vbtn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.06); }
 .pi-note { padding: 3px 2px 0; font-size: var(--fs-small); color: var(--faint); }
 .pi-note.err { color: var(--err); }
+.pupdates { flex: none; display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 2px 4px 2px 8px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: var(--fs-small); color: var(--muted); }
+.pupdates > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pupdates.err > span { color: var(--err); }
+.pkgrow .sz.upd { color: var(--accent); }
+button.sz.upd { padding: 0 4px; border-radius: var(--r); font: inherit; font-size: var(--fs-small); }
+button.sz.upd:hover:not(:disabled) { background: var(--accent-soft); }
 
 /* Git (draft 17): the branch and its buttons, the commit graph with avatars,
    then the working tree's files and the commit box, or a picked commit.
