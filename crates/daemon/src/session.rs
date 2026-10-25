@@ -232,6 +232,7 @@ impl SessionHandle {
             runs: begin.runs,
             probe_id: begin.probe_id,
             prelude: begin.prelude,
+            busy: None,
         };
         let task = tokio::spawn(actor.run());
         SessionHandle {
@@ -337,6 +338,9 @@ struct Actor {
     /// The `msg_id` of the code run at start (see `view::prelude`), whose
     /// messages stay out of the journal: IRkernel echoes even silent code.
     prelude: Option<String>,
+    /// The request the kernel is busy with, for messages that name none:
+    /// Ark opens its comms without a parent.
+    busy: Option<String>,
 }
 
 impl Actor {
@@ -480,6 +484,11 @@ impl Actor {
     async fn on_iopub(&mut self, msg: JupyterMessage) {
         let parent = msg.parent_header.as_ref().map(|h| h.msg_id.clone());
         if let JupyterMessageContent::Status(status) = &msg.content {
+            if status.execution_state == ExecutionState::Busy {
+                self.busy = parent.clone();
+            } else if status.execution_state == ExecutionState::Idle && self.busy == parent {
+                self.busy = None;
+            }
             if status.execution_state == ExecutionState::Idle
                 && let Some(run) = parent.as_deref().and_then(|p| self.runs.get_mut(p))
             {
@@ -500,6 +509,7 @@ impl Actor {
             Err(err) => return tracing::warn!("cannot serialize {msg_type}: {err}"),
         };
         if let Some((title, comm)) = view::request(msg_type, &content) {
+            let run_id = run_id.or_else(|| self.busy.as_deref().and_then(|p| self.run_id_for(p)));
             self.publish(run_id.as_deref(), EVENT_VIEW, json!({ "title": title }));
             if let Some(comm) = comm {
                 let close = CommClose {
