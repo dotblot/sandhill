@@ -269,7 +269,33 @@ const LINE_ICONS = {
       <path d="M8 7.5v6M6 11.5l2 2 2-2" />
     </>
   ),
-  undo: () => <path d="M5.5 3.5 2.5 6.5l3 3M2.5 6.5h7a3.5 3.5 0 0 1 0 7h-2" />,
+  undo: () => <path d="M5.5 4 2.5 7l3 3M2.5 7h7a3.5 3.5 0 0 1 0 7H7" />,
+  redo: () => <path d="M10.5 4l3 3-3 3M13.5 7h-7a3.5 3.5 0 0 0 0 7H9" />,
+  cut: () => (
+    <>
+      <circle cx="4.5" cy="11.5" r="2" />
+      <circle cx="11.5" cy="11.5" r="2" />
+      <path d="M6 10 12 2.5M10 10 4 2.5" />
+    </>
+  ),
+  paste: () => (
+    <>
+      <rect x="3" y="3" width="10" height="11" rx="1.4" />
+      <path d="M6 3V2.2h4V3" />
+      <rect x="5.8" y="1.6" width="4.4" height="2.4" rx=".8" />
+    </>
+  ),
+  docSave: () => <path d="M8 2v7.5M5 6.5l3 3 3-3M2.5 10v2.5c0 .6.4 1 1 1h9c.6 0 1-.4 1-1V10" />,
+  saveAll: () => (
+    <path d="M7 1.8v6M4.6 5.4 7 7.8l2.4-2.4M1.8 8.4v2c0 .5.4.9.9.9h8.6c.5 0 .9-.4.9-.9v-2M4 13.6h8.8c.6 0 1-.4 1-1V8.8" />
+  ),
+  sort: () => <path d="M5 3v10M2.8 10.8 5 13l2.2-2.2M11 13V3M8.8 5.2 11 3l2.2 2.2" />,
+  fileNew: () => (
+    <path d="M8.5 13.5H4c-.3 0-.5-.2-.5-.5V2.5c0-.3.2-.5.5-.5h4.5l3.5 3.5v2.5M8.3 2.1v3.6h3.6M12 10v4.5M9.8 12.2h4.4" />
+  ),
+  folderNew: () => (
+    <path d="M8 12.5H2.5c-.5 0-1-.4-1-1v-7c0-.5.5-1 1-1h3.3l1.5 1.6h6.2c.5 0 1 .4 1 1V8M12 9.5v4.5M9.8 11.7h4.4" />
+  ),
   stash: () => (
     <>
       <rect x="2.5" y="3" width="11" height="3" rx=".8" />
@@ -327,6 +353,14 @@ export const V32_ICONS = {
   "window.maximize": "maximize",
   "window.restore": "restore",
   "edit.undo": "undo",
+  "edit.redo": "redo",
+  "edit.cut": "cut",
+  "edit.paste": "paste",
+  "doc.save": "docSave",
+  "doc.save-all": "saveAll",
+  sort: "sort",
+  "file.new": "fileNew",
+  "folder.new": "folderNew",
   "edit.rename": "edits",
   "edit.copy": "copy",
   "doc.download": "save",

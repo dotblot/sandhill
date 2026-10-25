@@ -1,29 +1,20 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { type Backend, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
+import { type Backend, type LinkState, Listeners, type Shell, type WindowPlaces } from "./index";
 import type { AppRequest, DaemonEvent, TerminalEvent } from "./types";
 
 export class TauriShell implements Shell {
-  context(): Promise<WindowContext> {
-    return invoke<WindowContext>("window_context");
+  context(): Promise<WindowPlaces> {
+    return invoke<WindowPlaces>("window_context");
+  }
+
+  savePlaces(places: WindowPlaces, title: string): Promise<void> {
+    return invoke("set_window_places", { places, title });
   }
 
   connect(host: string): Promise<Backend> {
     return TauriBackend.create(host);
-  }
-
-  openProject(host: string, path: string): Promise<void> {
-    return invoke("open_project_window", { host, path });
-  }
-
-  showStart(): Promise<void> {
-    return invoke("show_start_window");
-  }
-
-  closeWindow(): Promise<void> {
-    // The start screen has nothing to confirm, so no close request.
-    return getCurrentWindow().destroy();
   }
 
   listServers(): Promise<string[]> {
@@ -39,6 +30,25 @@ export class TauriShell implements Shell {
   removeServer(host: string): Promise<string[]> {
     return invoke("remove_server", { host });
   }
+
+  onMenu(listener: (command: string) => void) {
+    void listen<string>("menu://command", (e) => listener(e.payload));
+  }
+
+  onCloseRequested(handler: () => Promise<boolean>) {
+    void getCurrentWindow().onCloseRequested(async (event) => {
+      if (await handler()) return;
+      event.preventDefault();
+      // If this close was part of Quit, the other windows stay too.
+      await invoke("cancel_quit");
+    });
+  }
+}
+
+/** A daemon message as the app forwards it: which machine it came from, and the message. */
+interface Hosted<T> {
+  host: string;
+  body: T;
 }
 
 class TauriBackend implements Backend {
@@ -52,10 +62,11 @@ class TauriBackend implements Backend {
 
   static async create(host: string): Promise<TauriBackend> {
     const backend = new TauriBackend(host);
-    // The app sends a host's events only to the windows using it.
-    await listen<DaemonEvent>("daemon://event", (e) => backend.events.emit(e.payload));
-    await listen<TerminalEvent>("daemon://terminal", (e) => backend.terminals.emit(e.payload));
-    await listen<AppRequest>("daemon://request", (e) => backend.requests.emit(e.payload));
+    // The app sends a host's events only to the windows using it; a window
+    // with a tab per machine gets every one of its machines' events.
+    await listen<Hosted<DaemonEvent>>("daemon://event", (e) => e.payload.host === host && backend.events.emit(e.payload.body));
+    await listen<Hosted<TerminalEvent>>("daemon://terminal", (e) => e.payload.host === host && backend.terminals.emit(e.payload.body));
+    await listen<Hosted<AppRequest>>("daemon://request", (e) => e.payload.host === host && backend.requests.emit(e.payload.body));
     await listen<LinkState & { host: string }>("daemon://link", (e) => {
       if (e.payload.host === host) backend.setLink(e.payload);
     });
@@ -102,19 +113,6 @@ class TauriBackend implements Backend {
 
   openLink(url: string) {
     invoke("open_link", { url }).catch((err) => console.warn(err));
-  }
-
-  onMenu(listener: (command: string) => void) {
-    void listen<string>("menu://command", (e) => listener(e.payload));
-  }
-
-  onCloseRequested(handler: () => Promise<boolean>) {
-    void getCurrentWindow().onCloseRequested(async (event) => {
-      if (await handler()) return;
-      event.preventDefault();
-      // If this close was part of Quit, the other windows stay too.
-      await invoke("cancel_quit");
-    });
   }
 
   private setLink(state: LinkState) {

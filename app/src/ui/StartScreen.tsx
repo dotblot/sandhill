@@ -1,10 +1,10 @@
-import { createResource, createSignal, For, onMount, Show } from "solid-js";
-import { LOCAL_HOST, type Shell } from "../backend";
+import { createResource, createSignal, For, type JSX, onMount, Show } from "solid-js";
+import { LOCAL_HOST, type Nav, type Shell } from "../backend";
 import type { DirEntry, ProjectInfo } from "../backend/types";
 import { buildText } from "../build";
 import type { Workspace } from "../model/workspace";
 import appIcon from "../../src-tauri/icons/icon.png";
-import { Dialogs, notify } from "./dialogs";
+import { notify } from "./dialogs";
 import { FileIcon, Icon } from "./icons";
 import { previousFolder as legacyFolder } from "./legacy";
 import { linkText } from "./linkText";
@@ -12,10 +12,17 @@ import { linkText } from "./linkText";
 const HOST_KEY = "sandhill.startHost";
 
 /**
- * The start window: a card for each server and this Mac, with its recent
- * projects, and a way to open a folder on one of them as a new project.
+ * The Start screen: a card for each server and this Mac, with its recent
+ * projects, and a way to open a folder on one of them as a new project. The
+ * project opens in its machine's tab.
  */
-export function StartScreen(props: { shell: Shell; workspace: (host: string) => Promise<Workspace> }) {
+export function StartScreen(props: {
+  shell: Shell;
+  nav: Nav;
+  workspace: (host: string) => Promise<Workspace>;
+  /** The window's title bar, with its machine tabs. */
+  titleBar?: JSX.Element;
+}) {
   const [servers, setServers] = createSignal<string[]>([]);
   const [adding, setAdding] = createSignal(false);
   /** The host the folder picker browses, while it is open. */
@@ -61,8 +68,7 @@ export function StartScreen(props: { shell: Shell; workspace: (host: string) => 
     try {
       const project = await ws.call<ProjectInfo>("open_project", { path });
       store(HOST_KEY, ws.backend.host);
-      await props.shell.openProject(ws.backend.host, project.path);
-      await props.shell.closeWindow();
+      props.nav.openProject(ws.backend.host, project.path);
     } catch (err) {
       notify(`Could not open ${path}: ${message(err)}`);
       throw err;
@@ -71,7 +77,7 @@ export function StartScreen(props: { shell: Shell; workspace: (host: string) => 
 
   return (
     <div class="start-window">
-      <div class="drag-strip" data-tauri-drag-region />
+      {props.titleBar}
       <div class="start">
         <div class="start-in">
           <header class="brand">
@@ -142,7 +148,6 @@ export function StartScreen(props: { shell: Shell; workspace: (host: string) => 
           </p>
         </div>
       </div>
-      <Dialogs />
     </div>
   );
 }

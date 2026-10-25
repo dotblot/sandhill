@@ -1,39 +1,47 @@
 // Development transport: the UI in an ordinary browser, talking to sandhilld
 // through dev/bridge.mjs. Not used by the Mac app.
 //
-// The page stands in for one window: `?project=<folder>` is a project
-// window, no project is the start screen. Opening a project navigates the
-// page instead of opening a window.
+// The page stands in for one window. `?project=<folder>` opens a project on
+// this machine; `?tab=<host>:<folder>`, once per tab, opens projects on
+// several machines, and `?current=<host>` picks the one shown. The page
+// keeps them in its address as they change, so reloading keeps them too.
 
-import { type Backend, LOCAL_HOST, type LinkState, Listeners, type Shell, type WindowContext } from "./index";
+import { type Backend, LOCAL_HOST, type LinkState, Listeners, type Place, type Shell, type WindowPlaces } from "./index";
 import type { AppRequest, DaemonEvent, TerminalEvent } from "./types";
 
 export class BrowserShell implements Shell {
   private params = new URLSearchParams(location.search);
 
-  async context(): Promise<WindowContext> {
-    const path = this.params.get("project");
-    return path ? { kind: "project", host: LOCAL_HOST, path } : { kind: "start" };
+  async context(): Promise<WindowPlaces> {
+    const tabs: Place[] = this.params.getAll("tab").flatMap((tab) => {
+      const colon = tab.indexOf(":");
+      return colon > 0 ? [{ host: tab.slice(0, colon), path: tab.slice(colon + 1) }] : [];
+    });
+    const project = this.params.get("project");
+    if (project && !tabs.some((t) => t.host === LOCAL_HOST)) tabs.unshift({ host: LOCAL_HOST, path: project });
+    const current = this.params.get("current");
+    if (current === "start") return { tabs, current: null };
+    return { tabs, current: tabs.some((t) => t.host === current) ? current : (tabs[0]?.host ?? null) };
   }
 
-  async connect(_host: string): Promise<Backend> {
-    return new WebSocketBackend(this.params.get("bridge") ?? "127.0.0.1:4639");
+  async savePlaces(places: WindowPlaces, title: string) {
+    const query = new URLSearchParams();
+    for (const tab of places.tabs) query.append("tab", `${tab.host}:${tab.path}`);
+    query.set("current", places.current ?? "start");
+    for (const keep of ["bridge", "servers"]) {
+      const value = this.params.get(keep);
+      if (value) query.set(keep, value);
+    }
+    history.replaceState(null, "", `?${query}`);
+    document.title = title;
   }
 
-  async openProject(_host: string, path: string) {
-    location.search = this.query({ project: path });
+  // The development bridge reaches only the daemon on this machine; a tab
+  // for another host, like `?servers=gpu01`, talks to it under that name.
+  async connect(host: string): Promise<Backend> {
+    return new WebSocketBackend(this.params.get("bridge") ?? "127.0.0.1:4639", host);
   }
 
-  async showStart() {
-    location.search = this.query({});
-  }
-
-  async closeWindow() {
-    // The page was already replaced by the project it opened.
-  }
-
-  // The development bridge reaches only the daemon on this machine;
-  // `?servers=gpu01` lists it again under that name, to see a server's tab.
   async listServers(): Promise<string[]> {
     return (this.params.get("servers") ?? "").split(",").filter(Boolean);
   }
@@ -45,13 +53,6 @@ export class BrowserShell implements Shell {
   async removeServer(_host: string): Promise<string[]> {
     return [];
   }
-
-  private query(extra: Record<string, string>): string {
-    const query = new URLSearchParams(extra);
-    const bridge = this.params.get("bridge");
-    if (bridge) query.set("bridge", bridge);
-    return query.toString();
-  }
 }
 
 interface Pending {
@@ -60,7 +61,6 @@ interface Pending {
 }
 
 export class WebSocketBackend implements Backend {
-  readonly host = LOCAL_HOST;
   private socket?: WebSocket;
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -76,7 +76,10 @@ export class WebSocketBackend implements Backend {
   private failures = 0;
   private stopped = false;
 
-  constructor(private bridge: string) {
+  constructor(
+    private bridge: string,
+    readonly host: string = LOCAL_HOST,
+  ) {
     this.connect();
   }
 

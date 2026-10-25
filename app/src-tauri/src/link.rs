@@ -5,7 +5,7 @@
 //! wraps: the `daemon_call` command for requests, `daemon://event`,
 //! `daemon://terminal`, `daemon://request` and `daemon://link` events, and the `sandhill-blob:`
 //! protocol for plots and other large outputs. A window first calls `use_host`; events for a host
-//! go only to the windows using it.
+//! go only to the windows using it, as `{ host, body }` since a window can use several.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -170,6 +170,25 @@ impl Links {
             let _ = app.emit_to(EventTarget::webview_window(label), event, payload.clone());
         }
     }
+
+    /// Sends a host's message to its windows, with the host's name: a window
+    /// with a tab per machine uses several.
+    fn emit_hosted<R: Runtime, S: Serialize + Clone>(
+        &self,
+        app: &AppHandle<R>,
+        host: &str,
+        event: &str,
+        body: S,
+    ) {
+        self.emit(app, host, event, Hosted { host, body });
+    }
+}
+
+/// A message from a host, as its windows get it: `{ "host", "body" }`.
+#[derive(Clone, Serialize)]
+struct Hosted<'a, S> {
+    host: &'a str,
+    body: S,
 }
 
 pub struct Link {
@@ -301,17 +320,17 @@ impl Link {
         // Both end when the connection drops.
         let terminals = async {
             while let Some(event) = terminals.recv().await {
-                links.emit(app, &self.host, TERMINAL, event);
+                links.emit_hosted(app, &self.host, TERMINAL, event);
             }
         };
         let sessions = async {
             while let Some(event) = events.recv().await {
-                links.emit(app, &self.host, EVENT, event);
+                links.emit_hosted(app, &self.host, EVENT, event);
             }
         };
         let requests = async {
             while let Some(request) = requests.recv().await {
-                links.emit(app, &self.host, REQUEST, request);
+                links.emit_hosted(app, &self.host, REQUEST, request);
             }
         };
         tokio::join!(sessions, terminals, requests);

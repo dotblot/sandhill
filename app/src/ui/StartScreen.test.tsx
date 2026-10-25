@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { LinkState, Shell } from "../backend";
+import type { LinkState, Nav, Shell } from "../backend";
 import type { ProjectInfo, SessionInfo } from "../backend/types";
 import type { Workspace } from "../model/workspace";
 import { openedAgo, StartScreen } from "./StartScreen";
@@ -32,20 +32,19 @@ function fakes(projects: ProjectInfo[], host = "local", sessions: Partial<Sessio
   } as unknown as Workspace;
   let servers = initialServers;
   const shell = {
-    openProject: vi.fn(async () => {}),
-    closeWindow: vi.fn(async () => {}),
     listServers: async () => servers,
     addServer: async (h: string) => (servers = [...servers, h]),
     removeServer: async (h: string) => (servers = servers.filter((s) => s !== h)),
   } as unknown as Shell;
-  return { ws, shell, calls };
+  const nav = { openProject: vi.fn(), showStart: vi.fn() } satisfies Nav;
+  return { ws, shell, nav, calls };
 }
 
 /** The start screen with `ws` for this Mac and `others` for servers. */
-function startScreen(ws: Workspace, shell: Shell, others: Record<string, Workspace> = {}) {
+function startScreen(ws: Workspace, { shell, nav }: { shell: Shell; nav: Nav }, others: Record<string, Workspace> = {}) {
   const root = document.body.appendChild(document.createElement("div"));
   const workspace = async (host: string) => (host === "local" ? ws : others[host]);
-  const dispose = render(() => <StartScreen shell={shell} workspace={workspace} />, root);
+  const dispose = render(() => <StartScreen shell={shell} nav={nav} workspace={workspace} />, root);
   return { root, dispose };
 }
 
@@ -61,9 +60,9 @@ describe("StartScreen", () => {
   });
 
   it("opens a recent project in its window and closes itself", async () => {
-    const { ws, shell, calls } = fakes([project("atlas"), project("gone", false)]);
+    const { ws, shell, nav, calls } = fakes([project("atlas"), project("gone", false)]);
     let root: HTMLElement;
-    ({ root, dispose } = startScreen(ws, shell));
+    ({ root, dispose } = startScreen(ws, { shell, nav }));
     await settle();
 
     const items = [...root.querySelectorAll(".recent-item")];
@@ -73,34 +72,33 @@ describe("StartScreen", () => {
     (items[0].querySelector(".recent-open") as HTMLButtonElement).click();
     await settle();
     expect(calls).toContainEqual(["open_project", { path: "/w/atlas" }]);
-    expect(shell.openProject).toHaveBeenCalledWith("local", "/w/atlas");
-    expect(shell.closeWindow).toHaveBeenCalled();
+    expect(nav.openProject).toHaveBeenCalledWith("local", "/w/atlas");
   });
 
   it("forgets a project without opening it", async () => {
-    const { ws, shell, calls } = fakes([project("gone", false)]);
+    const { ws, shell, nav, calls } = fakes([project("gone", false)]);
     let root: HTMLElement;
-    ({ root, dispose } = startScreen(ws, shell));
+    ({ root, dispose } = startScreen(ws, { shell, nav }));
     await settle();
 
     (root.querySelector(".recent-forget") as HTMLButtonElement).click();
     await settle();
     expect(calls).toContainEqual(["forget_project", { path: "/w/gone" }]);
     expect(root.querySelectorAll(".recent-item")).toHaveLength(0);
-    expect(shell.openProject).not.toHaveBeenCalled();
+    expect(nav.openProject).not.toHaveBeenCalled();
   });
 
   it("offers the folder used before projects until there is one", async () => {
     localStorage.setItem("sandhill.root", "/w/old-analysis");
-    const { ws, shell } = fakes([]);
+    const { ws, shell, nav } = fakes([]);
     let root: HTMLElement;
-    ({ root, dispose } = startScreen(ws, shell));
+    ({ root, dispose } = startScreen(ws, { shell, nav }));
     await settle();
 
     expect(root.querySelector(".recent-name")!.textContent).toBe("old-analysis");
     (root.querySelector(".recent-open") as HTMLButtonElement).click();
     await settle();
-    expect(shell.openProject).toHaveBeenCalledWith("local", "/w/old-analysis");
+    expect(nav.openProject).toHaveBeenCalledWith("local", "/w/old-analysis");
   });
 });
 
@@ -118,7 +116,7 @@ describe("StartScreen with servers", () => {
     const local = fakes([project("here")]);
     const lab = fakes([project("atlas")], "lab");
     let root: HTMLElement;
-    ({ root, dispose } = startScreen(local.ws, local.shell, { lab: lab.ws }));
+    ({ root, dispose } = startScreen(local.ws, local, { lab: lab.ws }));
     await settle();
     expect(card(root, "local").querySelector(".recent-name")!.textContent).toBe("here");
 
@@ -136,7 +134,7 @@ describe("StartScreen with servers", () => {
     expect(root.querySelector(".add-server")).toBeNull();
     (card(root, "lab").querySelector(".recent-open") as HTMLButtonElement).click();
     await settle();
-    expect(local.shell.openProject).toHaveBeenCalledWith("lab", "/w/atlas");
+    expect(local.nav.openProject).toHaveBeenCalledWith("lab", "/w/atlas");
   });
 
   it("says which projects have kernels running", async () => {
@@ -146,7 +144,7 @@ describe("StartScreen with servers", () => {
       { id: "c", project: "/w/quiet", status: "ended" },
     ]);
     let root: HTMLElement;
-    ({ root, dispose } = startScreen(local.ws, local.shell));
+    ({ root, dispose } = startScreen(local.ws, local));
     await settle();
 
     const when = [...root.querySelectorAll(".recent-when")].map((w) => w.textContent);
@@ -157,7 +155,7 @@ describe("StartScreen with servers", () => {
     const local = fakes([], "local", [], ["lab"]);
     const lab = fakes([project("atlas")], "lab");
     let root: HTMLElement;
-    ({ root, dispose } = startScreen(local.ws, local.shell, { lab: lab.ws }));
+    ({ root, dispose } = startScreen(local.ws, local, { lab: lab.ws }));
     await settle();
     await settle();
 
@@ -171,7 +169,7 @@ describe("StartScreen with servers", () => {
     const local = fakes([], "local", [], ["lab", "hpc"]);
     const others = { lab: fakes([], "lab").ws, hpc: fakes([], "hpc").ws };
     let root: HTMLElement;
-    ({ root, dispose } = startScreen(local.ws, local.shell, others));
+    ({ root, dispose } = startScreen(local.ws, local, others));
     await settle();
     await settle();
 

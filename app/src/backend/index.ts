@@ -18,8 +18,20 @@ export interface LinkState {
 /** The daemon on this Mac. A server is named by its ssh destination, like `lab` or `me@host`. */
 export const LOCAL_HOST = "local";
 
-/** What a window shows: the start screen, or one project. */
-export type WindowContext = { kind: "start" } | { kind: "project"; host: string; path: string };
+/** A project on a machine. */
+export interface Place {
+  host: string;
+  path: string;
+}
+
+/**
+ * What a window has open: one tab per machine, each with its project, and
+ * the machine shown, or none for the Start screen.
+ */
+export interface WindowPlaces {
+  tabs: Place[];
+  current: string | null;
+}
 
 /** One daemon, as one window sees it. */
 export interface Backend {
@@ -39,28 +51,36 @@ export interface Backend {
   disconnect(): Promise<void>;
   /** A URL the webview can load a blob from, decoded to bytes for binary MIME types. */
   blobUrl(hash: string, mime: string, near?: string): string;
-  /** Native menu commands (the Mac app only): "save", "close-tab", "run-all". */
-  onMenu?(listener: (command: string) => void): void;
   /** Opens a web link in the browser. */
   openLink(url: string): void;
-  /** Asked before the window closes; resolve false to keep it open. */
-  onCloseRequested?(handler: () => Promise<boolean>): void;
 }
 
-/** The app around the windows: which window this is, and opening others. */
+/** The app around the windows: what this window had open, and its menu bar. */
 export interface Shell {
-  context(): Promise<WindowContext>;
+  context(): Promise<WindowPlaces>;
+  /** Remembers what the window has open, for the next launch, and names the window after it. */
+  savePlaces(places: WindowPlaces, title: string): Promise<void>;
   connect(host: string): Promise<Backend>;
-  /** Opens a project in its own window, or brings that window forward. */
-  openProject(host: string, path: string): Promise<void>;
-  showStart(): Promise<void>;
-  /** Closes this window (the start screen, once a project is open). */
-  closeWindow(): Promise<void>;
-  /** Servers the start window offers besides this Mac. */
+  /** Servers the Start screen offers besides this Mac. */
   listServers(): Promise<string[]>;
   /** Adds a server and returns the new list. */
   addServer(host: string): Promise<string[]>;
   removeServer(host: string): Promise<string[]>;
+  /**
+   * Native menu commands (the Mac app only): "save", "save-all", "close-tab",
+   * "run-all", "open-project" and "connect".
+   */
+  onMenu?(listener: (command: string) => void): void;
+  /** Asked before the window closes; resolve false to keep it open. */
+  onCloseRequested?(handler: () => Promise<boolean>): void;
+}
+
+/** Moving around inside a window, which the Workbench does. */
+export interface Nav {
+  /** Shows a project, in its machine's tab: the tab switches to it if it showed another. */
+  openProject(host: string, path: string): void;
+  /** Shows the Start screen, to open a project or connect to a server. */
+  showStart(): void;
 }
 
 export async function createShell(): Promise<Shell> {

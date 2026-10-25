@@ -34,8 +34,7 @@ fn main() -> anyhow::Result<()> {
             link::reconnect_host,
             link::disconnect_host,
             windows::window_context,
-            windows::open_project_window,
-            windows::show_start_window,
+            windows::set_window_places,
             windows::cancel_quit,
             windows::open_link,
             servers::list_servers,
@@ -65,7 +64,7 @@ fn main() -> anyhow::Result<()> {
 
     app.run(|app, event| {
         // Every window has closed. Unless the user quit, closing the last
-        // project shows the start screen again.
+        // window with projects shows the Start screen again.
         if let RunEvent::ExitRequested {
             code: None, api, ..
         } = event
@@ -73,8 +72,8 @@ fn main() -> anyhow::Result<()> {
             let windows = app.state::<Arc<Windows>>();
             if windows.keep_running() {
                 api.prevent_exit();
-                if let Err(err) = windows.open_start(app) {
-                    tracing::warn!("cannot open the start window: {err}");
+                if let Err(err) = windows.open_window(app, Default::default()) {
+                    tracing::warn!("cannot open a window: {err}");
                 }
             }
         }
