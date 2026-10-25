@@ -164,6 +164,7 @@ async fn a_sessions_plots_come_from_every_kind_of_run() {
             text: blob.data,
             expected_mtime_ms: None,
             base64: true,
+            create: false,
         })
         .await
         .unwrap();

@@ -69,6 +69,7 @@
   --ink-6: color-mix(in srgb, var(--text) 6%, transparent);
   --ink-7: color-mix(in srgb, var(--text) 7%, transparent);
   --ink-8: color-mix(in srgb, var(--text) 8%, transparent);
+  --ink-9: color-mix(in srgb, var(--text) 9%, transparent);
   --ink-10: color-mix(in srgb, var(--text) 10%, transparent);
   --ink-11: color-mix(in srgb, var(--text) 11%, transparent);
   --ink-12: color-mix(in srgb, var(--text) 12%, transparent);
@@ -243,23 +244,42 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 .menu button { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r); text-align: left; }
 .menu button:hover { background: var(--accent); color: var(--accent-text); }
 
-.tree { flex: 1; min-height: 0; overflow: auto; padding: 2px 6px 10px; }
-.tree-item { position: relative; display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: var(--r); white-space: nowrap; cursor: default; }
+/* The file tree (drafts 26–28): a 14px chevron column, a 16px icon column, 16px per level. */
+.tree { flex: 1; min-height: 0; overflow: auto; padding: 2px 6px 10px; outline: none; }
+.tree-item { position: relative; display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: var(--r); white-space: nowrap; cursor: default; }
 .tree-item.dir, .tree-item.openable { cursor: pointer; }
-.tree-item.file:not(.openable) { color: var(--faint); }
+.tree-item.dim { color: var(--faint); }
+.tree-item.dim .fi { opacity: 0.55; }
 .tree-item:hover { background: var(--ink-7); }
+.tree-item.sel { background: var(--ink-9); }
 .tree-item.active { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.tree-item.sel.active { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 .tree-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tree-meta { margin-left: auto; padding-left: 8px; flex: none; display: flex; align-items: center; gap: 4px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .chev { width: 12px; display: grid; place-items: center; color: var(--faint); margin-right: -2px; flex: none; }
 .chev .ico { width: 11px; height: 11px; transition: transform 0.1s; }
+.tree .chev { width: 14px; }
 .tree-item.open .chev .ico { transform: rotate(90deg); }
 .tree-note { color: var(--err); padding: 4px 8px; }
-/* Guide lines: down from each open folder's chevron, with an elbow to each child. */
+/* Guide lines: one through each open folder's chevron column, beside all its children. */
 .tree { --tree-line: color-mix(in srgb, var(--text) 24%, transparent); }
 .tree-item .tg { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--tree-line); pointer-events: none; }
-.tree-item .tg.end { bottom: 50%; }
-.tree-item .te { position: absolute; top: 50%; width: 6px; height: 1px; background: var(--tree-line); pointer-events: none; }
+/* A folder's New file and New folder buttons, in place of its size on hover. */
+.tree-item .tacts { display: none; margin-left: auto; gap: 1px; flex: none; }
+.tree-item.dir:hover .tacts { display: flex; }
+.tree-item.dir:hover > .tree-meta { display: none; }
+.tree-item .tacts button { display: grid; place-items: center; width: 20px; height: 18px; border-radius: var(--r); color: var(--muted); }
+.tree-item .tacts button:hover { color: var(--text); background: var(--ink-10); }
+.tree-item .tacts .ico { width: 14px; height: 14px; }
+/* The name field for a new item or a rename. */
+.tree-item.tnew:hover { background: none; }
+.tree-item.tnew .tname { flex: 1; min-width: 0; height: 19px; margin-right: 4px; padding: 0 5px; border: 1px solid var(--accent); border-radius: 5px; background: var(--bg); color: var(--text); font: inherit; outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.tnew-err { color: var(--err); font-size: var(--fs-small); line-height: 1.3; padding: 1px 8px 4px 0; }
+.newpop { width: 250px; }
+.treemenu { width: 240px; }
+.sortpop { width: 220px; }
+:is(.newpop, .treemenu) .mm-i .fi { width: 14px; height: 14px; }
+.sortpop .mm-i kbd { color: var(--faint); }
 
 /* Kernels and resources, 11px */
 .kernels, .resources { flex: none; border-top: 1px solid var(--ink-12); font-size: var(--fs-small); }

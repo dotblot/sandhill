@@ -292,7 +292,8 @@ pub enum Call {
     /// `expected_mtime_ms`, fails with an error starting with
     /// [`CONFLICT_ERROR`] if the file changed on disk since it was read. With
     /// `base64`, `text` holds the file's bytes in base64 (a saved plot).
-    /// Returns [`FileWritten`].
+    /// With `create`, fails if anything is already at `path`, for a new
+    /// file. Returns [`FileWritten`].
     WriteFile {
         path: String,
         text: String,
@@ -300,10 +301,50 @@ pub enum Call {
         expected_mtime_ms: Option<i64>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         base64: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        create: bool,
     },
-    /// Returns `Vec<DirEntry>`, directories first, then by name.
+    /// Returns `Vec<DirEntry>`, directories first, then by name. With
+    /// `sizes`, a directory's `size` is the sum of the files in it, for
+    /// sorting by size.
     ListDir {
         path: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        sizes: bool,
+    },
+    /// Makes a folder and any folders above it. Fails if anything is
+    /// already at `path`. Returns [`FileWritten`].
+    MakeDir {
+        path: String,
+    },
+    /// Renames or moves a file or folder, making `to`'s folder if need be.
+    /// Fails if anything is already at `to`. Returns [`FileWritten`] for `to`.
+    MovePath {
+        from: String,
+        to: String,
+    },
+    /// Copies a file, or a folder and everything in it. Fails if anything
+    /// is already at `to`. Returns [`FileWritten`] for `to`.
+    CopyPath {
+        from: String,
+        to: String,
+    },
+    /// Removes a file or a folder and everything in it. With `trash`, moves
+    /// it to the machine's Trash instead (`~/.Trash` on macOS, the
+    /// freedesktop.org trash on Linux). Returns [`Deleted`].
+    DeletePath {
+        path: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        trash: bool,
+    },
+    /// Up to `limit` bytes of a file from `offset` (at most
+    /// [`MAX_READ_BYTES`]), for downloading it. Returns [`FileBytes`].
+    ReadBytes {
+        path: String,
+        #[serde(default)]
+        offset: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u64>,
     },
     /// The latest run of every cell of a notebook file, from the journal,
     /// including runs still in progress. Returns [`FileOutputs`].
@@ -571,6 +612,10 @@ pub const TERMINAL_SHELL: &str = "shell";
 /// disk since the file was read.
 pub const CONFLICT_ERROR: &str = "conflict:";
 
+/// Prefix of the error returned when making, moving or copying something
+/// would replace what is already there.
+pub const EXISTS_ERROR: &str = "exists:";
+
 /// Which notebook cell a piece of code came from, so clients can put outputs
 /// back under the right cell.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -757,6 +802,30 @@ pub struct FileText {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileWritten {
     pub path: String,
+    pub mtime_ms: i64,
+}
+
+/// What [`Call::DeletePath`] did.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Deleted {
+    pub path: String,
+    /// Where the Trash keeps it, when it was moved there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trashed_to: Option<String>,
+}
+
+/// The most [`Call::ReadBytes`] returns at once.
+pub const MAX_READ_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Part of a file, from [`Call::ReadBytes`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileBytes {
+    pub path: String,
+    pub offset: u64,
+    /// The bytes, in base64.
+    pub data: String,
+    /// The whole file's size.
+    pub size: u64,
     pub mtime_ms: i64,
 }
 

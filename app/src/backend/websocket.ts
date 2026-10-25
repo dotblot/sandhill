@@ -7,7 +7,7 @@
 // keeps them in its address as they change, so reloading keeps them too.
 
 import { type Backend, LOCAL_HOST, type LinkState, Listeners, type Place, type Shell, type WindowPlaces } from "./index";
-import type { AppRequest, DaemonEvent, TerminalEvent } from "./types";
+import type { AppRequest, DaemonEvent, FileBytes, TerminalEvent } from "./types";
 
 export class BrowserShell implements Shell {
   private params = new URLSearchParams(location.search);
@@ -134,6 +134,26 @@ export class WebSocketBackend implements Backend {
 
   openLink(url: string) {
     window.open(url, "_blank", "noopener");
+  }
+
+  /** Saves the file through the browser, read from the daemon in parts. */
+  async download(path: string): Promise<string> {
+    const parts: Uint8Array<ArrayBuffer>[] = [];
+    let offset = 0;
+    for (;;) {
+      const part = await this.call<FileBytes>("read_bytes", { path, offset });
+      const bytes = Uint8Array.from(atob(part.data), (c) => c.charCodeAt(0));
+      parts.push(bytes);
+      offset += bytes.length;
+      if (!bytes.length || offset >= part.size) break;
+    }
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob(parts));
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+    return name;
   }
 
   private connect() {

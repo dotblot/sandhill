@@ -147,9 +147,11 @@ pub fn stat(paths: &[String]) -> Vec<FileStat> {
         .collect()
 }
 
-pub fn list_dir(path: &str) -> Result<Vec<DirEntry>> {
+/// With `sizes`, a folder's size is the sum of the files in it.
+pub fn list_dir(path: &str, sizes: bool) -> Result<Vec<DirEntry>> {
     let resolved = resolve(path)?;
     let mut entries = Vec::new();
+    let mut budget = crate::fileops::SizeBudget::default();
     for entry in std::fs::read_dir(&resolved)
         .with_context(|| format!("cannot list {}", resolved.display()))?
     {
@@ -165,10 +167,15 @@ pub fn list_dir(path: &str) -> Result<Vec<DirEntry>> {
         } else {
             EntryKind::Other
         };
+        let size = if sizes && kind == EntryKind::Dir {
+            crate::fileops::dir_size(&entry.path(), &mut budget)
+        } else {
+            meta.len()
+        };
         entries.push(DirEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
             kind,
-            size: meta.len(),
+            size,
             mtime_ms: mtime_ms(&meta),
         });
     }
@@ -231,7 +238,7 @@ mod tests {
         std::fs::write(dir.path().join("b.ipynb"), "{}").unwrap();
         std::fs::write(dir.path().join("A.qmd"), "").unwrap();
         std::fs::create_dir(dir.path().join("zdata")).unwrap();
-        let names: Vec<_> = list_dir(&dir.path().to_string_lossy())
+        let names: Vec<_> = list_dir(&dir.path().to_string_lossy(), false)
             .unwrap()
             .into_iter()
             .map(|e| e.name)

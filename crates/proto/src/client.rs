@@ -267,6 +267,7 @@ impl Client {
             text: text.into(),
             expected_mtime_ms,
             base64: false,
+            create: false,
         })
         .await
     }
@@ -290,7 +291,11 @@ impl Client {
     }
 
     pub async fn list_dir(&self, path: &str) -> Result<Vec<DirEntry>> {
-        self.call(Call::ListDir { path: path.into() }).await
+        self.call(Call::ListDir {
+            path: path.into(),
+            sizes: false,
+        })
+        .await
     }
 
     pub async fn file_outputs(&self, file: &str) -> Result<FileOutputs> {

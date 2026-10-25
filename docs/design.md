@@ -135,6 +135,22 @@ bars blur; the panes still don't. The editor keeps the cursor clear of the
 bars (`underBars` in `app/src/editor/editing.ts`). Only the title bar drags
 the window. No text is smaller than 10px, the smallest size macOS uses.
 
+**The file tree (built 2026-10-25)** follows drafts 26–28: a chevron column,
+an icon column, 16px per level and plain guide lines. New files and folders
+are named in a field in the tree, from the + menu (in the selected folder),
+a folder's hover buttons, the right-click menu, ⌘N and ⌥⌘N; a name such as
+`raw/samples.csv` makes the folder too, and new Quarto documents, R scripts
+and notebooks start from a template (`app/src/model/files.ts`). The right-click
+menu renames, duplicates, copies the path and moves to the Trash, plus
+Reveal in Finder on this Mac, and Download to this Mac and Delete… on a
+server. These go through the daemon (`make_dir`, `move_path`, `copy_path`,
+`delete_path`, `read_bytes`; see `docs/protocol.md`), so they work the same on
+a server. The daemon never replaces anything: a clash comes back as an
+`exists:` error, which the field shows in red. Renaming or deleting closes
+the documents open from it first, and refuses while one has unsaved changes.
+The tree sorts by name, size (folders by the sum of their files) or date
+modified, folders first; the order is remembered on the Mac.
+
 Panes sit 3px below the title bar, 3px apart and 3px from the window's edges;
 the gaps are drag handles. The editor and Console are translucent cards on a
 warm gradient, each with minimize and maximize buttons; the left pane sits

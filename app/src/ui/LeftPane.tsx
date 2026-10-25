@@ -7,15 +7,15 @@ import { createResource, createSignal, For, type JSX, onCleanup, Show } from "so
 import { LOCAL_HOST, type Nav } from "../backend";
 import type { ProjectInfo, SessionInfo, SystemStats } from "../backend/types";
 import { formatBytes, languageLabel, languageVersion, percentOf, sessionLabel, watchMachine } from "../model/machine";
+import { baseName, SORTS } from "../model/files";
 import { shortPath } from "../model/places";
 import type { Workspace } from "../model/workspace";
 import { notify } from "./dialogs";
-import { FileTree } from "./FileTree";
-import { FileIcon, Icon, type IconName, LangIcon } from "./icons";
+import { FileTree, NewItems, type Tree, type TreeActions } from "./FileTree";
+import { Icon, type IconName, LangIcon } from "./icons";
 import { SessionMenu } from "./KernelBar";
 import { linkText } from "./linkText";
-
-export type NewFile = "qmd" | "ipynb" | "R" | "py";
+import { closeOnOutside } from "./popup";
 
 export function LeftPane(props: {
   ws: Workspace;
@@ -27,9 +27,9 @@ export function LeftPane(props: {
   activePath?: string;
   refreshKey: number;
   width: number;
-  onOpen: (path: string) => void;
+  tree: Tree;
+  actions: TreeActions;
   onRefresh: () => void;
-  onCreate: (kind: NewFile) => void;
   /** Names of the open documents using a session. */
   usedBy: (session: string) => string[];
   /** State of the session an open file runs in, for a dot in the tree. */
@@ -43,7 +43,8 @@ export function LeftPane(props: {
       <div class="pane-head proj-head">
         <ProjectButton ws={ws} nav={props.nav} project={props.project} name={props.name} />
         <span class="spacer" />
-        <NewFileMenu onCreate={props.onCreate} />
+        <NewMenu tree={props.tree} />
+        <SortMenu tree={props.tree} />
         <button class="pane-button" title="Refresh" onClick={() => props.onRefresh()}>
           <Icon name="refresh" small />
         </button>
@@ -54,8 +55,8 @@ export function LeftPane(props: {
       >
         <FileTree
           ws={ws}
-          root={props.project}
-          onOpen={props.onOpen}
+          tree={props.tree}
+          actions={props.actions}
           activePath={props.activePath}
           refreshKey={props.refreshKey}
           marker={props.marker}
@@ -501,50 +502,84 @@ function Bar(props: { percent: number }): JSX.Element {
   );
 }
 
-/** The + button: a new Quarto document, notebook or script. */
-function NewFileMenu(props: { onCreate: (kind: NewFile) => void }) {
+/** The + button: "New in …" the folder New works in. */
+function NewMenu(props: { tree: Tree }) {
   const [open, setOpen] = createSignal(false);
-  let wrap!: HTMLSpanElement;
-  const close = (e: MouseEvent) => {
-    if (!wrap.contains(e.target as Node)) setOpen(false);
-  };
-  const escape = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-  document.addEventListener("mousedown", close);
-  document.addEventListener("keydown", escape);
-  onCleanup(() => {
-    document.removeEventListener("mousedown", close);
-    document.removeEventListener("keydown", escape);
-  });
-  const pick = (kind: NewFile) => {
-    setOpen(false);
-    props.onCreate(kind);
-  };
+  let button!: HTMLButtonElement;
+  let pop: HTMLDivElement | undefined;
+  closeOnOutside(() => pop, () => button, () => setOpen(false));
+  const dir = () => props.tree.targetDir();
+  const name = () => baseName(dir());
+  const at = () => button.getBoundingClientRect();
   return (
-    <span class="menu-wrap" ref={wrap}>
-      <button class="pane-button" title="New file" aria-expanded={open()} onClick={() => setOpen(!open())}>
+    <>
+      <button
+        class="pane-button"
+        ref={button}
+        title={`New file or folder in ${name()}`}
+        aria-expanded={open()}
+        onClick={() => setOpen(!open())}
+      >
         <Icon name="plus" small />
       </button>
       <Show when={open()}>
-        <div class="menu" role="menu">
-          <button role="menuitem" onClick={() => pick("qmd")}>
-            <FileIcon name="Untitled.qmd" />
-            Quarto document
-          </button>
-          <button role="menuitem" onClick={() => pick("ipynb")}>
-            <FileIcon name="Untitled.ipynb" />
-            Jupyter notebook
-          </button>
-          <button role="menuitem" onClick={() => pick("R")}>
-            <FileIcon name="Untitled.R" />
-            R script
-          </button>
-          <button role="menuitem" onClick={() => pick("py")}>
-            <FileIcon name="Untitled.py" />
-            Python script
-          </button>
+        <div class="kpop newpop" role="menu" aria-label="New" ref={pop} style={{ left: `${Math.max(8, at().right - 250)}px`, top: `${at().bottom + 4}px` }}>
+          <NewItems
+            dir={dir()}
+            name={name()}
+            onPick={(kind) => {
+              setOpen(false);
+              props.tree.startNew(kind, dir());
+            }}
+          />
+          <Show when={dir() === props.tree.root()}>
+            <div class="mm-sep" />
+            <div class="mm-h">Select a folder first to create inside it</div>
+          </Show>
         </div>
       </Show>
-    </span>
+    </>
+  );
+}
+
+/** Sort files by name, size or date modified; folders always come first. */
+function SortMenu(props: { tree: Tree }) {
+  const [open, setOpen] = createSignal(false);
+  let button!: HTMLButtonElement;
+  let pop: HTMLDivElement | undefined;
+  closeOnOutside(() => pop, () => button, () => setOpen(false));
+  const current = () => SORTS.find((s) => s.by === props.tree.sortBy())!;
+  const at = () => button.getBoundingClientRect();
+  return (
+    <>
+      <button class="pane-button" ref={button} title={`Sort by ${current().label.toLowerCase()}`} aria-expanded={open()} onClick={() => setOpen(!open())}>
+        <Icon name="sort" small />
+      </button>
+      <Show when={open()}>
+        <div class="kpop sortpop" role="menu" aria-label="Sort files" ref={pop} style={{ left: `${at().left}px`, top: `${at().bottom + 4}px` }}>
+          <div class="mm-h">Sort files by</div>
+          <For each={SORTS}>
+            {(sort) => (
+              <button
+                class="mm-i"
+                role="menuitemradio"
+                aria-checked={sort.by === props.tree.sortBy()}
+                onClick={() => {
+                  setOpen(false);
+                  props.tree.setSort(sort.by);
+                }}
+              >
+                {sort.by === props.tree.sortBy() ? <Icon name="check" small /> : <span />}
+                <span>{sort.label}</span>
+                <kbd>{sort.order}</kbd>
+              </button>
+            )}
+          </For>
+          <div class="mm-sep" />
+          <div class="mm-h">Folders always come first</div>
+        </div>
+      </Show>
+    </>
   );
 }
 

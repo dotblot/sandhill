@@ -115,6 +115,14 @@ class TauriBackend implements Backend {
     invoke("open_link", { url }).catch((err) => console.warn(err));
   }
 
+  reveal(path: string): Promise<void> {
+    return invoke<void>("reveal_path", { path });
+  }
+
+  download(path: string): Promise<string> {
+    return invoke<string>("download_file", { host: this.host, path });
+  }
+
   private setLink(state: LinkState) {
     this.link = { status: state.status, error: state.error, detail: state.detail, stopped: state.stopped };
     this.links.emit(this.link);

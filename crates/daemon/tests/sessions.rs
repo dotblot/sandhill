@@ -8,8 +8,9 @@ use std::time::Duration;
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    BLOB_KEY, CONFLICT_ERROR, CellRef, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED,
-    EntryKind, Event, RunFinished, SessionStatus,
+    BLOB_KEY, CONFLICT_ERROR, Call, CellRef, Deleted, DirEntry, EVENT_RUN_FINISHED,
+    EVENT_RUN_STARTED, EVENT_SESSION_ENDED, EXISTS_ERROR, EntryKind, Event, FileBytes, FileWritten,
+    RunFinished, SessionStatus,
 };
 use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
@@ -490,6 +491,86 @@ async fn files_can_be_listed_read_and_saved() {
 
     let ping = client.ping().await.unwrap();
     assert!(!ping.home.is_empty());
+}
+
+#[tokio::test]
+async fn the_file_tree_makes_renames_copies_and_deletes() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let client = daemon.client().await;
+    let at = |rel: &str| work.join(rel).to_string_lossy().into_owned();
+
+    // A new file with a path makes its folders; making it again fails.
+    let new_file = |path: String| Call::WriteFile {
+        path,
+        text: "# raw\n".into(),
+        expected_mtime_ms: None,
+        base64: false,
+        create: true,
+    };
+    let _: FileWritten = client.call(new_file(at("raw/samples.csv"))).await.unwrap();
+    let err = client
+        .call::<FileWritten>(new_file(at("raw/samples.csv")))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains(EXISTS_ERROR), "{err}");
+    let _: FileWritten = client
+        .call(Call::MakeDir {
+            path: at("results/figures"),
+        })
+        .await
+        .unwrap();
+
+    let _: FileWritten = client
+        .call(Call::MovePath {
+            from: at("raw"),
+            to: at("data"),
+        })
+        .await
+        .unwrap();
+    let _: FileWritten = client
+        .call(Call::CopyPath {
+            from: at("data"),
+            to: at("data copy"),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(work.join("data copy/samples.csv")).unwrap(),
+        "# raw\n"
+    );
+    let deleted: Deleted = client
+        .call(Call::DeletePath {
+            path: at("data copy"),
+            trash: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(deleted.trashed_to, None);
+
+    // Folder sizes, for sorting by size.
+    let sized: Vec<DirEntry> = client
+        .call(Call::ListDir {
+            path: at(""),
+            sizes: true,
+        })
+        .await
+        .unwrap();
+    let listed: Vec<_> = sized.iter().map(|e| (e.name.as_str(), e.size)).collect();
+    assert_eq!(listed, [("data", 6), ("results", 0)]);
+
+    // Downloading reads a file in parts.
+    let part: FileBytes = client
+        .call(Call::ReadBytes {
+            path: at("data/samples.csv"),
+            offset: 2,
+            limit: Some(3),
+        })
+        .await
+        .unwrap();
+    assert_eq!((part.data.as_str(), part.size), ("cmF3", 6));
 }
 
 #[tokio::test]
