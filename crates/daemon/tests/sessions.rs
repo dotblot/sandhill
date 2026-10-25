@@ -537,6 +537,15 @@ async fn the_file_tree_makes_renames_copies_and_deletes() {
         })
         .await
         .unwrap();
+    // The @ menu lists the files under the folder, nearest first.
+    let files: Vec<String> = client
+        .call(Call::ListFiles {
+            path: at(""),
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(files, ["data/samples.csv", "data copy/samples.csv"]);
     assert_eq!(
         std::fs::read_to_string(work.join("data copy/samples.csv")).unwrap(),
         "# raw\n"

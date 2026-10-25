@@ -38,6 +38,19 @@ pub(super) struct Edit<'a> {
     pub timeout: Duration,
 }
 
+/// What goes with a message the user sends (see [`Tools::prompt`]).
+#[derive(Debug, Default)]
+pub struct Prompt {
+    /// What the agent is told with it.
+    pub context: Option<String>,
+    /// What the chat shows went with it: `{file?, cell?, line?, refs?}`,
+    /// the file as shown to the agent.
+    pub place: Option<Value>,
+    /// What the message changes in the terminal's report: the file it
+    /// works in (`document`), and the refs it took.
+    pub report: Value,
+}
+
 impl Tools {
     pub(super) async fn get_focus(&self) -> Result<Vec<Value>> {
         let client = self.client().await?;
@@ -55,44 +68,85 @@ impl Tools {
         Ok(vec![text_item(&text)])
     }
 
-    /// A few lines for the agent with each prompt (Claude Code's
-    /// UserPromptSubmit hook): where the user is, so "this cell" and "the
-    /// selection" mean something. `None` when Sandhill doesn't know.
-    pub async fn prompt_context(&self) -> Option<String> {
-        self.prompt_place().await.map(|(text, _)| text)
-    }
-
-    /// The prompt's context, and the place it names for the conversation:
-    /// `{file, cell?, line?}`, the file as shown to the agent.
-    pub async fn prompt_place(&self) -> Option<(String, Value)> {
-        let client = self.client().await.ok()?;
-        let focus = self.focus(&client).await?;
-        if now_ms() - focus.ts_ms > STALE_FOCUS_MS {
-            return None;
+    /// What goes with each message the user sends (Claude Code's
+    /// UserPromptSubmit hook, Codex's turns): a few lines for the agent and
+    /// what the chat shows went with it, from the user's choices in the
+    /// message box (see [`crate::terminal::choices`]) and where they are,
+    /// so "this cell" and "the selection" mean something.
+    pub async fn prompt(&self, wait: Duration) -> Prompt {
+        let choices = self
+            .terminal_dir
+            .as_deref()
+            .map(crate::terminal::choices::read)
+            .unwrap_or_default();
+        let focus = tokio::time::timeout(wait, async {
+            let client = self.client().await.ok()?;
+            self.focus(&client).await
+        })
+        .await
+        .ok()
+        .flatten()
+        .filter(|f| now_ms() - f.ts_ms <= STALE_FOCUS_MS);
+        let front = focus
+            .as_ref()
+            .and_then(|f| f.file.clone())
+            .filter(|f| cells::kind(Path::new(f)).is_some());
+        let mut lines = Vec::new();
+        let mut place = json!({});
+        if let Some(focus) = focus.as_ref().filter(|_| choices.context)
+            && let Some(file) = focus.file.as_deref()
+        {
+            place["file"] = json!(self.shown(file));
+            if let Some(cell) = &focus.cell {
+                place["cell"] = json!(cell);
+            }
+            if let Some(line) = focus.line {
+                place["line"] = json!(line);
+            }
+            let mut text = format!("Sandhill: the user is in {}", self.shown(file));
+            if let Some(cell) = &focus.cell {
+                text.push_str(&format!(", cell {cell}"));
+            }
+            if let Some(line) = focus.line {
+                text.push_str(&format!(", line {line}"));
+            }
+            text.push('.');
+            if let Some(selection) = focus.selection.as_deref().filter(|s| !s.trim().is_empty()) {
+                text.push_str(&format!(
+                    " They have selected:\n```\n{}\n```",
+                    text::shorten(selection, MAX_PROMPT_SELECTION)
+                ));
+            }
+            lines.push(text);
         }
-        let file = focus.file.as_deref()?;
-        let mut place = json!({"file": self.shown(file)});
-        if let Some(cell) = &focus.cell {
-            place["cell"] = json!(cell);
-        }
-        if let Some(line) = focus.line {
-            place["line"] = json!(line);
-        }
-        let mut text = format!("Sandhill: the user is in {}", self.shown(file));
-        if let Some(cell) = &focus.cell {
-            text.push_str(&format!(", cell {cell}"));
-        }
-        if let Some(line) = focus.line {
-            text.push_str(&format!(", line {line}"));
-        }
-        text.push('.');
-        if let Some(selection) = focus.selection.as_deref().filter(|s| !s.trim().is_empty()) {
-            text.push_str(&format!(
-                " They have selected:\n```\n{}\n```",
-                text::shorten(selection, MAX_PROMPT_SELECTION)
+        // The file this message works in: the pinned one, else the one in
+        // front, kept while the agent works on it.
+        let document = choices.pin.as_deref().map(|p| self.path(p)).or(front);
+        if let Some(pin) = &choices.pin {
+            lines.push(format!(
+                "Sandhill: the user pinned this conversation to {}; add_cell writes there.",
+                self.shown(&self.path(pin))
             ));
         }
-        Some((text, place))
+        if let Some(refs) = crate::terminal::choices::refs_text(&choices.refs) {
+            lines.push(refs);
+            place["refs"] = json!(choices.refs.iter().map(|r| &r.name).collect::<Vec<_>>());
+        }
+        if !choices.web {
+            lines.push(crate::terminal::choices::WEB_OFF_NOTE.to_string());
+        }
+        let mut report = json!({});
+        if let Some(document) = document {
+            report["document"] = json!(document);
+        }
+        if !choices.refs.is_empty() {
+            report["refs"] = Value::Null;
+        }
+        Prompt {
+            context: (!lines.is_empty()).then(|| lines.join("\n")),
+            place: (place.as_object().is_some_and(|p| !p.is_empty())).then_some(place),
+            report,
+        }
     }
 
     pub(super) async fn add_cell(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
@@ -327,8 +381,20 @@ impl Tools {
             .flatten()
     }
 
-    /// The document this conversation was started about, if any.
+    /// The document this conversation works in: the one its last message
+    /// worked in, else the one the user pinned it to, else the one it was
+    /// started about, if any.
     async fn linked_document(&self, client: &Client) -> Option<String> {
+        if let Some(dir) = self.terminal_dir.as_deref() {
+            let report = crate::terminal::choices::report(dir);
+            let chosen = report["document"]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| crate::terminal::choices::of(&report).pin);
+            if let Some(doc) = chosen.filter(|d| !d.is_empty()) {
+                return Some(self.path(&doc));
+            }
+        }
         let terminal = self.terminal.as_deref()?;
         let terminals = client.list_terminals().await.ok()?;
         let info = terminals.into_iter().find(|t| t.id == terminal)?;

@@ -145,6 +145,10 @@ export abstract class Doc {
   runCurrent?(): boolean;
   /** Where the user is in the document, for agents. */
   abstract place(): Place;
+  /** Its code cells, for the Agents pane's @ menu: the cell id and how to name it. */
+  codeCells(): { id: string; name: string }[] {
+    return [];
+  }
   /**
    * An agent's code, as the user would add it: a new cell after `after`
    * (else after the last cell), or for a script, code at its end. The cursor

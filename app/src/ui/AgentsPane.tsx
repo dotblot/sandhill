@@ -1,6 +1,6 @@
-import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
 import { LOCAL_HOST } from "../backend";
-import type { AgentInfo, AgentOptions, AgentReport, FileStat, TerminalInfo } from "../backend/types";
+import type { AgentInfo, AgentOptions, AgentReport, FileStat, MessageRef, SessionPlots, TerminalInfo, Variables } from "../backend/types";
 import type { Doc } from "../docs/doc";
 import {
   AGENT_KINDS,
@@ -13,6 +13,8 @@ import {
   documentPath,
   drivesChat,
   effortLevel,
+  effortName,
+  focusFile,
   liveOptions,
   type Mode,
   MODES,
@@ -20,10 +22,13 @@ import {
   modelLabel,
   SUBMIT_DELAY_MS,
   screenMode,
+  shortModel,
   withModels,
 } from "../model/agents";
 import { type Answer, type Ask, buildChat, chatTitle, lastActive } from "../model/chat";
 import { EXPORT_FORMATS, type ExportFormat, exportConversation, exportName } from "../model/export";
+import { ATTACHMENTS, attachmentName, type Mention } from "../model/mentions";
+import { fromJournal, type PlotItem } from "../model/plots";
 import type { TerminalStore } from "../model/terminals";
 import type { Workspace } from "../model/workspace";
 import { AgentChat, when } from "./AgentChat";
@@ -31,8 +36,11 @@ import { AgentComposer } from "./AgentComposer";
 import { ask, askText, notify } from "./dialogs";
 import { FileIcon, Icon, ProviderIcon } from "./icons";
 import { type Pane, PaneButtons } from "./PaneButtons";
+import { imageData, toBase64 } from "./plotImage";
 import { TermView } from "./termView";
 
+/** The @ menu offers this many of the project's latest plots. */
+const PLOTS_OFFERED = 12;
 /** Effort is sent to the agent once the knob has rested this long. */
 const EFFORT_SETTLE_MS = 600;
 /** A conversation that shows nothing this long after it started may be asking something in its terminal. */
@@ -99,6 +107,10 @@ export function AgentsPane(props: {
   const [now, setNow] = createSignal(Date.now());
   /** The current terminal's last lines, while its conversation hasn't started. */
   const [screen, setScreen] = createSignal("");
+  /** The conversation whose title is being renamed in the header. */
+  const [renaming, setRenaming] = createSignal<string>();
+  /** The message box's choices (pin, web, context) picked here for an ended conversation: they apply as it starts again. */
+  const [boxChoice, setBoxChoice] = createSignal<Record<string, Pick<AgentOptions, "pin" | "web" | "context">>>({});
   const views = new Map<string, TermView>();
   let body!: HTMLDivElement;
   let input: HTMLTextAreaElement | undefined;
@@ -109,6 +121,8 @@ export function AgentsPane(props: {
   };
   const relative = (path: string) => (path.startsWith(`${props.project}/`) ? path.slice(props.project.length + 1) : path);
   const activeFile = () => (props.active ? relative(props.active.path) : undefined);
+  /** The documents open in the editor, to pin a conversation to. */
+  const openFiles = () => props.docs.map((d) => relative(d.path));
   /** Conversations show as a chat; those started before chats existed keep their terminal. */
   const canChat = (t: TerminalInfo) =>
     (t.kind === "claude" || drivesChat(t.kind)) && (store.chat(t.id).length > 0 || (!t.outdated && t.running));
@@ -279,8 +293,12 @@ export function AgentsPane(props: {
     }
   }
 
-  /** Sends a message: to Codex's bridge, or as if typed into the agent's terminal. */
-  function send(t: TerminalInfo, text: string): boolean {
+  /**
+   * Sends a message, with what was added to it with @: to Codex's bridge,
+   * or as if typed into the agent's terminal, the chips going first so its
+   * prompt hook finds them.
+   */
+  function send(t: TerminalInfo, text: string, refs: MessageRef[] = []): boolean {
     if (chat()?.waiting.length) {
       notify(`Answer ${agentName(t)}'s question above first.`);
       return false;
@@ -288,8 +306,12 @@ export function AgentsPane(props: {
     setStopped((ids) => ids.filter((id) => id !== t.id));
     const view = views.get(t.id);
     if (driven(t)) {
-      tell(t, { kind: "say", text });
-    } else if (view) {
+      tell(t, refs.length ? { kind: "say", text, refs } : { kind: "say", text });
+      setSentAt(Date.now());
+      return true;
+    }
+    if (refs.length) tell(t, { kind: "set", refs });
+    if (view) {
       view.paste(text);
       // Enter on its own, once the paste has landed.
       setTimeout(() => void store.input(t.id, "\r"), SUBMIT_DELAY_MS);
@@ -317,6 +339,7 @@ export function AgentsPane(props: {
       setEffortChoice(drop);
       setModelChoice(drop);
       setCodeChoice(drop);
+      setBoxChoice(drop);
       setStopped((ids) => ids.filter((other) => other !== id));
       setSentAt(Date.now());
     } catch (err) {
@@ -336,6 +359,7 @@ export function AgentsPane(props: {
       effort: effortChoice()[t.id] ?? live.effort,
       permission: modeChoice()[t.id]?.permission ?? live.permission,
       code: (codeChoice()[t.id] ?? codeTo(t)) === "console" ? "console" : undefined,
+      ...boxChoice()[t.id],
     };
   }
 
@@ -450,15 +474,99 @@ export function AgentsPane(props: {
     notify(`Claude Code didn't switch to ${mode.label} mode here. Its terminal (gear menu) shows the modes it offers: ⇧Tab switches.`);
   }
 
+  /** Renames in the history's list, which has no field of its own. */
   async function rename(t: TerminalInfo) {
     setGear(false);
     const name = await askText("Rename conversation", title(t), "Rename", "Leave it empty to name it after its first message again.");
     if (name === undefined) return;
+    await saveName(t, name);
+  }
+
+  async function saveName(t: TerminalInfo, name: string) {
+    if (name.trim() === title(t)) return;
     try {
-      await store.rename(t.id, name);
+      await store.rename(t.id, name.trim());
     } catch (err) {
       notify(`Could not rename the conversation: ${err instanceof Error ? err.message : err}`);
     }
+  }
+
+  /** The message box's choices for a conversation: as the agent keeps them, or as picked here while it has ended. */
+  const choices = (t: TerminalInfo) => ({ ...liveOptions(t), ...boxChoice()[t.id] });
+  /** Changes a choice: the agent takes it from its next message, or it waits for the conversation to start again. */
+  function choose(t: TerminalInfo, choice: Pick<AgentOptions, "pin" | "web" | "context">) {
+    if (!t.running) {
+      setBoxChoice((all) => ({ ...all, [t.id]: { ...all[t.id], ...choice } }));
+      return;
+    }
+    const command: Record<string, unknown> = { kind: "set" };
+    if ("pin" in choice) command.pin = choice.pin ?? null;
+    if ("web" in choice) command.web = choice.web !== false;
+    if ("context" in choice) command.context = choice.context !== false;
+    tell(t, command);
+  }
+
+  /** What the @ menu offers: the project's files, the front document's chunks, the sessions' variables and recent plots. */
+  async function mentionList(): Promise<Mention[]> {
+    const sessions = props.ws.projectSessions().filter((s) => s.status === "running");
+    const [files, variables, plots] = await Promise.all([
+      props.ws.call<string[]>("list_files", { path: props.project }).catch(() => [] as string[]),
+      Promise.all(
+        sessions.map((s) =>
+          props.ws
+            .call<Variables>("list_variables", { session: s.id })
+            .then((v) => v.variables.map((variable): Mention => ({ ref: { kind: "variable", name: variable.name, session: s.id, language: s.language } })))
+            .catch(() => [] as Mention[]),
+        ),
+      ),
+      Promise.all(
+        sessions.map((s) =>
+          props.ws
+            .call<SessionPlots>("session_plots", { session: s.id, limit: PLOTS_OFFERED })
+            .then((p) => p.plots.flatMap((plot) => fromJournal(s.id, plot) ?? []))
+            .catch(() => [] as PlotItem[]),
+        ),
+      ),
+    ]);
+    const doc = props.active;
+    const chunks: Mention[] = doc
+      ? doc.codeCells().map((cell) => ({ ref: { kind: "chunk", name: `${doc.name} › ${cell.name}`, path: relative(doc.path), cell: cell.id } }))
+      : [];
+    const recent = plots
+      .flat()
+      .sort((a, b) => b.tsMs - a.tsMs)
+      .slice(0, PLOTS_OFFERED);
+    return [
+      ...files.map((file): Mention => ({ ref: { kind: "file", name: file, path: file } })),
+      ...chunks,
+      ...variables.flat(),
+      ...recent.map((plot): Mention => {
+        const name = plotName(plot, relative);
+        return { ref: { kind: "plot", name }, make: () => savePlot(plot, name) };
+      }),
+    ];
+  }
+
+  /** Saves a plot where the agent can look at it, in the project's attachments folder. */
+  async function savePlot(plot: PlotItem, name: string): Promise<MessageRef> {
+    const svg = plot.mime === "image/svg+xml";
+    const file = `${ATTACHMENTS}/plot-${plot.run.slice(0, 8)}.${svg ? "svg" : (plot.mime.split("/")[1] ?? "png").replace("jpeg", "jpg")}`;
+    await saveAttachment(file, await imageData(props.ws, plot), !svg);
+    return { kind: "plot", name, path: file };
+  }
+
+  /** A file from this Mac, saved in the project's attachments folder for the agent to read. */
+  async function attachFile(file: File): Promise<MessageRef> {
+    const name = attachmentName(file.name, new Date());
+    const path = `${ATTACHMENTS}/${name}`;
+    await saveAttachment(path, toBase64(new Uint8Array(await file.arrayBuffer())), true);
+    return { kind: "attach", name, path };
+  }
+
+  /** Writes into the attachments folder, which keeps itself out of git. */
+  async function saveAttachment(path: string, text: string, base64: boolean) {
+    await props.ws.call("write_file", { path: documentPath(props.project, path), text, base64 });
+    await props.ws.call("write_file", { path: documentPath(props.project, `${ATTACHMENTS}/.gitignore`), text: "*\n" });
   }
 
   /** Saves the conversation as a file in the project, under a name the user can change. */
@@ -537,9 +645,23 @@ export function AgentsPane(props: {
               {(t) => (
                 <>
                   <ProviderIcon kind={t().kind} />
-                  <span class="atl" title={tabTitle(t())}>
-                    {title(t())}
-                  </span>
+                  <Show
+                    when={renaming() === t().id}
+                    fallback={
+                      <span class="atl" title={`${tabTitle(t())} · Double-click to rename`} onDblClick={() => setRenaming(t().id)}>
+                        {title(t())}
+                      </span>
+                    }
+                  >
+                    <TitleField
+                      value={title(t())}
+                      onDone={(name) => {
+                        const term = t();
+                        setRenaming(undefined);
+                        if (name !== undefined) void saveName(term, name);
+                      }}
+                    />
+                  </Show>
                 </>
               )}
             </Match>
@@ -614,7 +736,14 @@ export function AgentsPane(props: {
                   )}
                 </For>
               </Show>
-              <button class="mm-i" onClick={() => void rename(t())}>
+              <button
+                class="mm-i"
+                onClick={() => {
+                  const id = t().id;
+                  setGear(false);
+                  setRenaming(id);
+                }}
+              >
                 <Icon name="edits" small />
                 <span>Rename</span>
               </button>
@@ -641,7 +770,17 @@ export function AgentsPane(props: {
           />
         </Show>
         <Show when={picking()}>
-          <NewConversation store={store} hostLabel={props.hostLabel} file={activeFile()} onOpen={openPath} onInstall={props.onInstall} choice={newChoice} />
+          <NewConversation
+            store={store}
+            hostLabel={props.hostLabel}
+            project={baseName(props.project)}
+            file={focusFile({ pin: newChoice.pin(), working: false, front: activeFile() })}
+            pinned={!!newChoice.pin()}
+            onOpen={openPath}
+            onInstall={props.onInstall}
+            choice={newChoice}
+            onCancel={store.agents().length ? () => setPicking(false) : undefined}
+          />
         </Show>
         <Show when={!picking() && !history() && !current() && !starting()}>
           <div class="agent-empty">
@@ -735,8 +874,12 @@ export function AgentsPane(props: {
       <Show when={picking()}>
         <NewComposer
           choice={newChoice}
-          file={activeFile()}
-          onOpenFile={() => activeFile() && openPath(activeFile()!)}
+          front={activeFile()}
+          openFiles={openFiles()}
+          project={baseName(props.project)}
+          mentions={mentionList}
+          onAttach={attachFile}
+          onOpenFile={openPath}
           ref={(el) => (input = el)}
           onSend={(kind, options, text) => {
             void start(kind, options, text);
@@ -751,6 +894,16 @@ export function AgentsPane(props: {
           const waiting = () => t().agent?.state === "waiting";
           /** Ended: what is picked here applies as the message starts it again. */
           const ended = () => !t().running;
+          const focus = () => {
+            const document = t().agent?.document;
+            return focusFile({
+              pin: choices(t()).pin,
+              working: working(t()),
+              document: document ? relative(document) : undefined,
+              front: activeFile(),
+              started: t().options?.documents?.[0],
+            });
+          };
           const modelNote = () => {
             if (ended()) return `Applies as ${agentName(t())} goes on with your next message.`;
             if (driven(t())) return working(t()) ? "Changes apply from your next message." : undefined;
@@ -758,9 +911,13 @@ export function AgentsPane(props: {
           };
           return (
             <AgentComposer
+              draftKey={t().id}
               kind={kind()}
+              kinds={AGENT_KINDS.map((k) => (k.kind === t().kind ? kind() : k))}
+              locked
               model={modelChoice()[t().id]?.label ?? modelLabel(t())}
-              isModel={(m) => {
+              isModel={(k, m) => {
+                if (k !== t().kind) return false;
                 const picked = modelChoice()[t().id];
                 return picked ? picked.id === m.id : currentModel(t(), m);
               }}
@@ -774,19 +931,30 @@ export function AgentsPane(props: {
                 if (m.id === "yolo" && mode().id !== "yolo" && !canResume(t())) return "Start a new conversation in YOLO mode";
                 return undefined;
               }}
-              file={t().options?.documents?.[0]}
+              focus={focus()}
+              pinned={!!choices(t()).pin}
+              front={activeFile()}
+              openFiles={openFiles()}
+              project={baseName(props.project)}
+              onPin={(file) => choose(t(), { pin: file })}
+              onOpenFile={openPath}
+              web={choices(t()).web !== false}
+              onWeb={(on) => choose(t(), { web: on ? undefined : false })}
+              context={choices(t()).context !== false}
+              onContext={(on) => choose(t(), { context: on ? undefined : false })}
+              mentions={mentionList}
+              onAttach={attachFile}
               status={t().agent?.status}
               busy={working(t())}
               modelNote={modelNote()}
-              mention={activeFile()}
               ref={(el) => (input = el)}
-              onSend={(text) => {
-                if (!ended()) return send(t(), text);
-                void restart(t(), resumeOptions(t()), text);
+              onSend={(text, refs) => {
+                if (!ended()) return send(t(), text, refs);
+                void restart(t(), { ...resumeOptions(t()), refs: refs.length ? refs : undefined }, text);
                 return true;
               }}
               onStop={() => stop(t())}
-              onModel={(m: ModelChoice) => {
+              onModel={(_, m: ModelChoice) => {
                 if (ended()) {
                   setModelChoice((all) => ({ ...all, [t().id]: m }));
                 } else if (driven(t())) {
@@ -811,7 +979,6 @@ export function AgentsPane(props: {
                 if (ended()) setCodeChoice((all) => ({ ...all, [t().id]: to }));
                 else tell(t(), { kind: "set", code: to === "console" ? "console" : null });
               }}
-              onOpenFile={() => t().options?.documents?.[0] && openPath(t().options!.documents![0])}
               onCompact={() => compact(t())}
             />
           );
@@ -833,6 +1000,12 @@ interface NewChoice {
   setMode: (mode: Mode) => void;
   code: () => CodeTo;
   setCode: (to: CodeTo) => void;
+  pin: () => string | undefined;
+  setPin: (file: string | undefined) => void;
+  web: () => boolean;
+  setWeb: (on: boolean) => void;
+  context: () => boolean;
+  setContext: (on: boolean) => void;
 }
 
 const [newKind, setNewKind] = createSignal("claude");
@@ -840,10 +1013,16 @@ const [newModel, setNewModel] = createSignal<Record<string, ModelChoice>>({});
 const [newEffort, setNewEffort] = createSignal<Record<string, string>>({});
 const [newMode, setNewMode] = createSignal<Mode>(MODES[0]);
 const [newCode, setNewCode] = createSignal<CodeTo>("file");
+const [newPin, setNewPin] = createSignal<string>();
+const [newWeb, setNewWeb] = createSignal(true);
+const [newContext, setNewContext] = createSignal(true);
 const newChoice: NewChoice = {
   kind: () => agentKind(newKind()) ?? AGENT_KINDS[0],
   setKind: setNewKind,
-  model: () => newModel()[newKind()] ?? (agentKind(newKind()) ?? AGENT_KINDS[0]).models[0],
+  model: () => {
+    const kind = agentKind(newKind()) ?? AGENT_KINDS[0];
+    return newModel()[newKind()] ?? kind.models[kind.start] ?? kind.models[0];
+  },
   setModel: (model) => setNewModel((all) => ({ ...all, [newKind()]: model })),
   effort: () => newEffort()[newKind()],
   setEffort: (level) => setNewEffort((all) => ({ ...all, [newKind()]: level })),
@@ -851,16 +1030,26 @@ const newChoice: NewChoice = {
   setMode: setNewMode,
   code: () => newCode(),
   setCode: setNewCode,
+  pin: newPin,
+  setPin: setNewPin,
+  web: newWeb,
+  setWeb: setNewWeb,
+  context: newContext,
+  setContext: setNewContext,
 };
 
-/** New conversation: which agent, and the file it is linked to. The message box under it starts it. */
+/** New conversation (draft 34): what it works in; the message box under it picks the agent and starts it. */
 function NewConversation(props: {
   store: TerminalStore;
   hostLabel: string;
+  project: string;
+  /** The file it will work in, relative to the project. */
   file?: string;
+  pinned: boolean;
   choice: NewChoice;
   onOpen: (path: string) => void;
   onInstall: (command: string) => void;
+  onCancel?: () => void;
 }) {
   const [installed] = createResource(() => props.store.listAgents().catch(() => [] as AgentInfo[]));
   const info = (kind: string) => installed()?.find((a) => a.kind === kind);
@@ -869,21 +1058,35 @@ function NewConversation(props: {
   return (
     <div class="newchat">
       <div class="nc-in">
-        <div class="nc-agents">
-          <For each={AGENT_KINDS}>
-            {(agent) => (
-              <button
-                classList={{ on: kind().kind === agent.kind }}
-                aria-pressed={kind().kind === agent.kind}
-                title={info(agent.kind)?.path ? `${agent.plan}${info(agent.kind)?.version ? ` · ${info(agent.kind)!.version}` : ""}` : `Not installed on ${props.hostLabel}`}
-                onClick={() => props.choice.setKind(agent.kind)}
-              >
-                <ProviderIcon kind={agent.kind} />
-                <span>{agent.name}</span>
-              </button>
-            )}
-          </For>
+        <div class="nc-h">
+          <b>New conversation</b>
+          <Show when={props.onCancel}>
+            <button class="nc-cancel" title="Back to the conversation you were in (esc)" onClick={() => props.onCancel?.()}>
+              Cancel
+            </button>
+          </Show>
         </div>
+        <p>
+          <Show when={props.file} fallback={<>It works in {props.project}</>}>
+            {(file) => (
+              <>
+                It works in {props.pinned ? "" : "the file in front of you ("}
+                <button class="flink" onClick={() => props.onOpen(file())}>
+                  {baseName(file())}
+                </button>
+                {props.pinned ? ", pinned" : " now)"}
+              </>
+            )}
+          </Show>{" "}
+          and sees your live sessions. Type @ to add other files, chunks, variables or plots.
+        </p>
+        <p class="nc-hint">
+          Choose the agent, model and thinking effort from{" "}
+          <b>
+            {shortModel(props.choice.model().label)} ({effortName(props.choice.effort() ?? kind().recommended)}) ⌄
+          </b>{" "}
+          in the message box.
+        </p>
         <Show when={missing()}>
           <div class="pk-install">
             <span>
@@ -894,16 +1097,6 @@ function NewConversation(props: {
             </button>
           </div>
         </Show>
-        <p>
-          <Show when={props.file} fallback="Not linked to a file: open a document first to have code go into it.">
-            Linked to{" "}
-            <button class="flink" onClick={() => props.onOpen(props.file!)}>
-              {props.file}
-            </button>
-            . Where you are in it goes with every message, and{" "}
-            {props.choice.code() === "console" ? "code runs in the Console." : "code goes into it below your active cell."}
-          </Show>
-        </p>
         <p class="nc-sign">
           Runs on {props.hostLabel} in this project's folder, signed in with your own {kind().name} account.
         </p>
@@ -914,41 +1107,71 @@ function NewConversation(props: {
 
 function NewComposer(props: {
   choice: NewChoice;
-  file?: string;
-  onOpenFile: () => void;
+  /** The editor's front document, relative to the project. */
+  front?: string;
+  openFiles: string[];
+  project: string;
+  mentions: () => Promise<Mention[]>;
+  onAttach: (file: File) => Promise<MessageRef>;
+  onOpenFile: (file: string) => void;
   ref: (el: HTMLTextAreaElement) => void;
   onSend: (kind: AgentKind, options: AgentOptions, text: string) => boolean;
 }) {
   const c = props.choice;
+  const focus = () => focusFile({ pin: c.pin(), working: false, front: props.front });
   return (
     <AgentComposer
+      draftKey="new"
       kind={c.kind()}
+      kinds={AGENT_KINDS}
       model={c.model().label}
-      isModel={(m) => m.id === c.model().id}
+      isModel={(kind, m) => kind === c.kind().kind && m.id === c.model().id}
       effort={c.effort()}
       mode={c.mode()}
-      file={props.file}
-      mention={props.file}
+      focus={focus()}
+      pinned={!!c.pin()}
+      front={props.front}
+      openFiles={props.openFiles}
+      project={props.project}
+      onPin={c.setPin}
+      onOpenFile={props.onOpenFile}
+      web={c.web()}
+      onWeb={c.setWeb}
+      context={c.context()}
+      onContext={c.setContext}
+      mentions={props.mentions}
+      onAttach={props.onAttach}
       ref={props.ref}
-      onSend={(text) =>
+      onSend={(text, refs) =>
         props.onSend(
           c.kind(),
           {
             model: c.model().id,
             effort: c.effort(),
             permission: c.mode().permission,
-            documents: props.file ? [props.file] : undefined,
+            documents: focus() ? [focus()!] : undefined,
             code: c.code() === "console" ? "console" : undefined,
+            pin: c.pin(),
+            web: c.web() ? undefined : false,
+            context: c.context() ? undefined : false,
+            refs: refs.length ? refs : undefined,
           },
           text,
         )
       }
-      onModel={c.setModel}
+      onModel={(kind, model) => {
+        if (kind.kind !== c.kind().kind) {
+          // Another agent keeps the effort if it has that level, else takes its own default.
+          const effort = c.effort();
+          c.setKind(kind.kind);
+          if (effort && kind.efforts.includes(effort)) c.setEffort(effort);
+        }
+        c.setModel(model);
+      }}
       onEffort={c.setEffort}
       onMode={c.setMode}
       codeTo={c.code()}
       onCodeTo={c.setCode}
-      onOpenFile={props.onOpenFile}
     />
   );
 }
@@ -1231,6 +1454,48 @@ function History(props: {
   );
 }
 
+/** The conversation's title as a field: Enter or leaving it keeps the name, Esc keeps the old one. */
+function TitleField(props: { value: string; onDone: (name: string | undefined) => void }) {
+  let field!: HTMLInputElement;
+  let done = false;
+  const finish = (name: string | undefined) => {
+    if (done) return;
+    done = true;
+    props.onDone(name?.trim() ? name : undefined);
+  };
+  onMount(() => {
+    field.focus();
+    field.select();
+  });
+  return (
+    <input
+      ref={field}
+      class="arename"
+      value={props.value}
+      aria-label="Conversation title"
+      spellcheck={false}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          finish(field.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          finish(undefined);
+        }
+      }}
+      onBlur={() => finish(field.value)}
+    />
+  );
+}
+
+/** "umap · analysis.qmd" for a cell's plot, "Console plot · 14:31" for one from the Console. */
+function plotName(plot: PlotItem, relative: (path: string) => string): string {
+  if (plot.cell) return `${plot.cell.cell_id} · ${relative(plot.cell.file)}`;
+  const time = new Date(plot.tsMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${plot.by ? `${plot.by}'s plot` : "Console plot"} · ${time}`;
+}
+
 function tabTitle(terminal: TerminalInfo): string {
   const parts = [`${terminal.title} · ${modelLabel(terminal)}`];
   const docs = terminal.options?.documents;
@@ -1321,4 +1586,8 @@ function currentModel(terminal: TerminalInfo, model: ModelChoice): boolean {
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function baseName(path: string): string {
+  return path.split("/").pop() ?? path;
 }

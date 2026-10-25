@@ -6,9 +6,11 @@
 // each turn.
 
 export interface Place {
-  file: string;
+  file?: string;
   cell?: string;
   line?: number;
+  /** The names of what the user added to the message with @. */
+  refs?: string[];
 }
 
 /** What the user answers to an `ask`: allow (once, for the chat or the project), or deny. */
@@ -295,9 +297,29 @@ export function lastActive(entries: ChatEntry[]): number | undefined {
   return undefined;
 }
 
-function titleOf(text: string): string {
-  const line = text.trim().split("\n")[0] ?? "";
-  return line.length > 60 ? `${line.slice(0, 58).trimEnd()}…` : line;
+/**
+ * A title from a first message (draft 31): its first few words, without
+ * file names, @ mentions, "Please" or "Can you", or a trailing "in" or "of".
+ */
+export function titleOf(text: string): string {
+  const first = (text.trim().split(/[.?!](?:\s|$)|\n/)[0] ?? "")
+    .replace(/@\S+/g, " ")
+    .replace(/^\s*(please|can you|could you|would you)\s+/i, "");
+  const words: string[] = [];
+  for (const raw of first.split(/\s+/)) {
+    const w = raw.replace(/^[`"'“‘(]+|[`"'”’),:;]+$/g, "");
+    if (!w) continue;
+    // A file name ends the title once it has a few words, else it is left out.
+    if (w.includes("/") || /\.[A-Za-z][A-Za-z0-9]*$/.test(w)) {
+      if (words.length >= 3) break;
+      continue;
+    }
+    words.push(w);
+    if (words.length === 6) break;
+  }
+  while (words.length > 2 && /^(in|of|for|to|the|a|an|and|with|on|from|at|by)$/i.test(words[words.length - 1] ?? "")) words.pop();
+  const title = words.join(" ");
+  return title ? title.charAt(0).toUpperCase() + title.slice(1) : "New conversation";
 }
 
 // biome-ignore lint: free-form JSON

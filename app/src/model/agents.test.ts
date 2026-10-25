@@ -7,10 +7,14 @@ import {
   documentPath,
   effortLabel,
   effortName,
+  favourites,
+  focusFile,
   liveOptions,
   modelLabel,
   planUsage,
+  saveFavourites,
   screenMode,
+  shortModel,
   timeLeft,
   tokens,
   withModels,
@@ -58,6 +62,12 @@ describe("agents", () => {
     expect(liveOptions(changed)).toEqual({ model: "claude-opus-5-5[1m]", effort: "high", permission: "plan", documents: ["qc.ipynb"] });
     expect(liveOptions(terminal({ options: { model: "sonnet" } }))).toEqual({ model: "sonnet", effort: undefined, permission: "supervised" });
     expect(liveOptions(terminal({ agent: { mode: "default", guard: "ask" } })).permission).toBe("ask");
+    // The message box's choices as the agent keeps them; the first message's chips are spent.
+    const chose = liveOptions(
+      terminal({ options: { pin: "a.qmd", web: false, refs: [{ kind: "file", name: "x" }] }, agent: { pin: null, web: true, context: false } }),
+    );
+    expect([chose.pin, chose.web, chose.context, chose.refs]).toEqual([undefined, undefined, false, undefined]);
+    expect(liveOptions(terminal({ options: { pin: "a.qmd", web: false } }))).toMatchObject({ pin: "a.qmd", web: false });
     expect(canResume(changed)).toBe(true);
     expect(canResume(terminal({ agent: { thread: "t1" } }))).toBe(false);
     expect(canResume(terminal({ kind: "codex", agent: { thread: "t1" } }))).toBe(true);
@@ -96,8 +106,12 @@ describe("agents", () => {
   });
 
   it("names the model as the agent reports it, else as it was started", () => {
-    expect(modelLabel(terminal({ options: { model: "opus" } }))).toBe("Opus");
+    expect(modelLabel(terminal({ options: { model: "claude-fable-5-1" } }))).toBe("Fable 5.1");
+    // Sessions started with an alias before the full names.
+    expect(modelLabel(terminal({ options: { model: "opus" } }))).toBe("opus");
     expect(modelLabel(terminal({ options: { model: "opus" }, agent: { status: { model: "Opus 5.5" } } }))).toBe("Opus 5.5");
+    expect(shortModel("Opus 5.5")).toBe("Opus");
+    expect(shortModel("GPT-5-Codex")).toBe("GPT-5-Codex");
     expect(modelLabel(terminal({ kind: "codex", title: "Codex" }))).toBe("Codex's default model");
   });
 
@@ -121,5 +135,20 @@ describe("agents", () => {
     expect(timeLeft((5 * 24 + 1) * 3_600_000, 0)).toBe("5d 1h");
     expect(tokens(200_000)).toBe("200K");
     expect(tokens(1_000_000)).toBe("1M");
+  });
+
+  it("works in the pinned file, else the one a working agent started in, else the editor's", () => {
+    expect(focusFile({ pin: "a.qmd", working: true, document: "b.qmd", front: "c.qmd" })).toBe("a.qmd");
+    expect(focusFile({ working: true, document: "b.qmd", front: "c.qmd" })).toBe("b.qmd");
+    expect(focusFile({ working: false, document: "b.qmd", front: "c.qmd" })).toBe("c.qmd");
+    expect(focusFile({ working: false, started: "d.qmd" })).toBe("d.qmd");
+  });
+
+  it("keeps starred models, with Opus starred to begin with", () => {
+    localStorage.clear();
+    expect(favourites()).toEqual(["claude:claude-opus-5-5"]);
+    saveFavourites([]);
+    expect(favourites()).toEqual([]);
+    localStorage.clear();
   });
 });

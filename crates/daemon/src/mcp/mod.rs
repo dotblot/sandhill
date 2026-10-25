@@ -9,6 +9,7 @@
 //! `get_focus`, `add_cell` and `edit_cell`.
 
 mod documents;
+pub use documents::Prompt;
 pub mod text;
 
 use std::path::{Path, PathBuf};

@@ -1,5 +1,6 @@
 //! Changing files and folders for the file tree: new folders, renames,
-//! copies, the Trash, and reading a file in parts to download it.
+//! copies, the Trash, and reading a file in parts to download it. Also the
+//! project's files for the Agents pane's @ menu.
 
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
@@ -152,6 +153,62 @@ pub fn dir_size(dir: &Path, budget: &mut SizeBudget) -> u64 {
         }
     }
     total
+}
+
+/// Folders `list_files` leaves out, besides hidden ones: installed
+/// packages and caches, not the user's work.
+const SKIPPED_DIRS: [&str; 5] = [
+    "node_modules",
+    "__pycache__",
+    "renv",
+    "site-packages",
+    "_freeze",
+];
+/// The most entries `list_files` looks at, so a huge folder answers quickly.
+const LIST_BUDGET: u64 = 50_000;
+/// The files `list_files` returns unless told.
+pub const LIST_FILES: usize = 5000;
+
+/// The files under `root`, as paths relative to it, nearest first and by
+/// name within a folder: for the Agents pane's @ menu. Hidden files and
+/// folders, and package folders, are left out, and links aren't followed.
+pub fn list_files(root: &str, limit: usize) -> Result<Vec<String>> {
+    let root = &resolve(root)?;
+    if !root.is_dir() {
+        bail!("{} is not a folder", root.display());
+    }
+    let mut files = Vec::new();
+    let mut budget = LIST_BUDGET;
+    let mut queue = std::collections::VecDeque::from([PathBuf::new()]);
+    while let Some(dir) = queue.pop_front() {
+        let Ok(entries) = fs::read_dir(root.join(&dir)) else {
+            continue;
+        };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|e| e.file_name().to_string_lossy().to_lowercase());
+        for entry in entries {
+            if budget == 0 || files.len() >= limit {
+                return Ok(files);
+            }
+            budget -= 1;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let path = dir.join(&name);
+            if kind.is_dir() {
+                if !SKIPPED_DIRS.contains(&name.as_str()) {
+                    queue.push_back(path);
+                }
+            } else if kind.is_file() {
+                files.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    Ok(files)
 }
 
 fn refuse_existing(path: &Path) -> Result<()> {
@@ -347,6 +404,29 @@ mod tests {
 
     fn s(path: &Path) -> String {
         path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn files_are_listed_nearest_first_without_hidden_or_package_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for path in [
+            "b.R",
+            "A.qmd",
+            "data/raw/s1.csv",
+            "data/z.csv",
+            ".git/HEAD",
+            "renv/library/x.R",
+            "data/.hidden",
+        ] {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "x").unwrap();
+        }
+        let files = list_files(&s(root), 100).unwrap();
+        assert_eq!(files, ["A.qmd", "b.R", "data/z.csv", "data/raw/s1.csv"]);
+        assert_eq!(list_files(&s(root), 2).unwrap(), ["A.qmd", "b.R"]);
+        assert!(list_files(&s(&root.join("b.R")), 2).is_err());
     }
 
     #[test]

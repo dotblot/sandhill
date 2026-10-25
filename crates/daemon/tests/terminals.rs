@@ -921,3 +921,148 @@ async fn restricted_and_ask_modes_guard_claudes_steps() {
     .unwrap();
     terminals.close(&info.id).await.unwrap();
 }
+
+#[tokio::test]
+async fn the_message_boxs_choices_go_with_each_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
+    // Stands in for Claude Code: a message, then a web search and a read.
+    let hook = |event: &str, id: &str, tool: &str| {
+        let mut line = serde_json::json!({
+            "hook_event_name": event,
+            "prompt_id": "p1",
+            "session_id": "s1",
+            "permission_mode": "default",
+        });
+        if event == "PreToolUse" {
+            line["tool_use_id"] = id.into();
+            line["tool_name"] = tool.into();
+            line["tool_input"] = serde_json::json!({"query": "PBMC markers"});
+        } else {
+            line["prompt"] = "What is in seu?".into();
+        }
+        format!("{line}\n")
+    };
+    let lines = [
+        hook("UserPromptSubmit", "", ""),
+        hook("PreToolUse", "t1", "WebSearch"),
+        hook("PreToolUse", "t2", "Read"),
+    ];
+    std::fs::write(dir.path().join("hooks.jsonl"), lines.concat()).unwrap();
+    let script = format!(
+        "echo ready; read go; n=0; while IFS= read -r line; do printf '%s' \"$line\" | '{exe}' --socket '{sock}' terminal-event hook > out.$n; n=$((n+1)); done < hooks.jsonl; echo done; read wait",
+        exe = sandhilld().display(),
+        sock = dir.path().join("no-daemon.sock").display(),
+    );
+    let mut launch = sh(&script, dir.path());
+    launch.options.pin = Some("fig3.qmd".into());
+    launch.options.web = Some(false);
+    let info = terminals.start(launch).await.unwrap();
+    // It starts with the choices it was started with.
+    let agent = info.agent.unwrap();
+    assert_eq!(agent["pin"], "fig3.qmd");
+    assert_eq!(agent["web"], false);
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut entries = Vec::new();
+    let mut output = Vec::new();
+    collect(&mut events, &mut entries, &mut output, |_, out| {
+        String::from_utf8_lossy(out).contains("ready")
+    })
+    .await;
+    // The user adds a variable to the message with @, then sends it.
+    let refs = serde_json::json!([{"kind": "variable", "name": "seu", "session": "r-7f3a", "language": "r"}]);
+    terminals
+        .send(
+            &info.id,
+            ToHost::Command {
+                command: serde_json::json!({"kind": "set", "refs": refs}),
+            },
+        )
+        .await
+        .unwrap();
+    let report = || terminals.info(&info.id).unwrap().agent.unwrap();
+    tokio::time::timeout(TIMEOUT, async {
+        while report()["refs"].is_null() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    terminals
+        .send(&info.id, ToHost::Input { data: "\n".into() })
+        .await
+        .unwrap();
+    collect(&mut events, &mut entries, &mut output, |e, out| {
+        String::from_utf8_lossy(out).contains("done")
+            && e.iter().any(|e| e.event["kind"] == "prompt")
+            && e.iter().any(|e| e.event["kind"] == "step_failed")
+    })
+    .await;
+    let out = |n: usize| std::fs::read_to_string(dir.path().join(format!("out.{n}"))).unwrap();
+    // The message names the pinned file and what was added, and says the web is off.
+    let told = out(0);
+    assert!(
+        told.contains("pinned this conversation to fig3.qmd"),
+        "{told}"
+    );
+    assert!(
+        told.contains("the R variable `seu` in session r-7f3a"),
+        "{told}"
+    );
+    assert!(told.contains("web search off"), "{told}");
+    let prompt = entries
+        .iter()
+        .find(|e| e.event["kind"] == "prompt")
+        .unwrap();
+    assert_eq!(prompt.event["place"]["refs"], serde_json::json!(["seu"]));
+    // The message took the refs and works in the pinned file.
+    tokio::time::timeout(TIMEOUT, async {
+        while report()["document"] != "fig3.qmd" {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(report()["refs"].is_null());
+    // The web search is stopped, in the chat too; the read goes on.
+    let decision: serde_json::Value = serde_json::from_str(&out(1)).unwrap();
+    assert_eq!(decision["hookSpecificOutput"]["permissionDecision"], "deny");
+    let failed = entries
+        .iter()
+        .find(|e| e.event["kind"] == "step_failed")
+        .unwrap();
+    assert_eq!(failed.event["id"], "t1");
+    assert!(
+        failed.event["error"]
+            .as_str()
+            .unwrap()
+            .contains("web search is off")
+    );
+    assert_eq!(out(2), "");
+
+    // Unpinned and with the web back on.
+    terminals
+        .send(
+            &info.id,
+            ToHost::Command {
+                command: serde_json::json!({"kind": "set", "pin": null, "web": true}),
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(TIMEOUT, async {
+        while !report()["pin"].is_null() || report()["web"] != true {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    terminals.close(&info.id).await.unwrap();
+}

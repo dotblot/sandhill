@@ -16,6 +16,8 @@ export interface AgentKind {
   program: string;
   plan: string;
   models: ModelChoice[];
+  /** The model new conversations get until another is picked. */
+  start: number;
   /** Thinking effort levels the CLI takes, lowest first. */
   efforts: string[];
   /** The level new sessions get when none is picked: the CLI's own default. */
@@ -29,12 +31,13 @@ export const AGENT_KINDS: AgentKind[] = [
     name: "Claude Code",
     program: "claude",
     plan: "Terminal · your Claude plan",
-    // Aliases: the CLI maps each to the latest model of that family.
     models: [
-      { id: "opus", label: "Opus" },
-      { id: "sonnet", label: "Sonnet" },
-      { id: "haiku", label: "Haiku" },
+      { id: "claude-fable-5-1", label: "Fable 5.1" },
+      { id: "claude-opus-5-5", label: "Opus 5.5" },
+      { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+      { id: "claude-haiku-5-5", label: "Haiku 5.5" },
     ],
+    start: 1,
     efforts: ["low", "medium", "high", "xhigh", "max"],
     // What Claude Code 2.1 reports in its status line when none is given.
     recommended: "medium",
@@ -47,6 +50,7 @@ export const AGENT_KINDS: AgentKind[] = [
     plan: "Codex app-server · your ChatGPT plan",
     // Until a conversation starts and Codex lists its models.
     models: [{ label: "Codex's default model" }],
+    start: 0,
     efforts: ["low", "medium", "high", "xhigh"],
     recommended: "medium",
     placeholder: "Ask Codex…",
@@ -182,13 +186,63 @@ export function canResume(terminal: TerminalInfo): boolean {
  */
 export function liveOptions(terminal: TerminalInfo): AgentOptions {
   const options = terminal.options ?? {};
+  const agent = terminal.agent;
   return {
     ...options,
-    model: terminal.agent?.status?.model_id ?? options.model,
+    model: agent?.status?.model_id ?? options.model,
     effort: effortLevel(terminal),
     permission: currentMode(terminal).permission,
     code: codeTo(terminal) === "console" ? "console" : undefined,
+    pin: pinnedFile(terminal),
+    web: (agent?.web ?? options.web) === false ? false : undefined,
+    context: (agent?.context ?? options.context) === false ? false : undefined,
+    // Taken by the first message.
+    refs: undefined,
   };
+}
+
+/** The file the conversation is pinned to, if it is. */
+export function pinnedFile(terminal: TerminalInfo): string | undefined {
+  const pin = terminal.agent && "pin" in terminal.agent ? terminal.agent.pin : terminal.options?.pin;
+  return pin || undefined;
+}
+
+/**
+ * The file a conversation works in (its focus file, draft 30): the pinned
+ * one, else while the agent works the one its message started in, else the
+ * editor's front document, else the one it started in.
+ */
+export function focusFile(at: { pin?: string; working: boolean; document?: string; front?: string; started?: string }): string | undefined {
+  return at.pin || (at.working && at.document) || at.front || at.started;
+}
+
+/** "Opus" for "Opus 5.5": the chip in the message box leaves the version out. */
+export function shortModel(label: string): string {
+  return label.replace(/ \d[\d.]*$/, "");
+}
+
+/** The models starred in the model menu, as `kind:id`. */
+const FAVOURITES_KEY = "sandhill.favouriteModels";
+
+export function favourites(): string[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(FAVOURITES_KEY) ?? "null");
+    return Array.isArray(stored) ? stored.filter((k) => typeof k === "string") : ["claude:claude-opus-5-5"];
+  } catch {
+    return ["claude:claude-opus-5-5"];
+  }
+}
+
+export function saveFavourites(keys: string[]) {
+  try {
+    localStorage.setItem(FAVOURITES_KEY, JSON.stringify(keys));
+  } catch {
+    // Favourites are a convenience.
+  }
+}
+
+export function modelKey(kind: string, model: ModelChoice): string {
+  return `${kind}:${model.id ?? ""}`;
 }
 
 export type CodeTo = "file" | "console";

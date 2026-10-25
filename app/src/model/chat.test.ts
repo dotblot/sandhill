@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askView, buildChat, type ChatEntry, type ChatEvent, displayName, type Step, stepView } from "./chat";
+import { askView, buildChat, type ChatEntry, type ChatEvent, displayName, type Step, stepView, titleOf } from "./chat";
 import recorded from "./chat.recorded.json";
 
 // A real conversation, as the daemon kept it: Claude looked around, asked to
@@ -257,5 +257,15 @@ describe("stepView", () => {
     expect(hooked.images).toEqual(["data:image/png;base64,BBB"]);
     expect(hooked.output).not.toContain("Image: source");
     expect(view.detail).toBe("R · 0.2 s");
+  });
+});
+
+describe("titleOf", () => {
+  it("takes a few words of the first message, as the agent would name it", () => {
+    expect(titleOf("The `markers` chunk is stale. Re-run it and tell me which cell type each cluster is.")).toBe("The markers chunk is stale");
+    expect(titleOf("Please check the QC thresholds in 01_qc.R against this dataset")).toBe("Check the QC thresholds");
+    expect(titleOf("can you plot @analysis.qmd the UMAP of")).toBe("Plot the UMAP");
+    expect(titleOf("Write results/cd14_stim_vs_ctrl.csv from the DE notebook")).toBe("Write from the DE notebook");
+    expect(titleOf("data.csv")).toBe("New conversation");
   });
 });

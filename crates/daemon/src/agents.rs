@@ -326,9 +326,14 @@ pub fn instructions(options: &AgentOptions) -> String {
          for quick looks they don't need to keep. get_focus says where the user is. Files you \
          edit show up in the user's open editor.",
     );
-    if !options.documents.is_empty() {
+    if let Some(pin) = &options.pin {
         text.push_str(&format!(
-            " The user started this session about: {}; add_cell writes there.",
+            " The user pinned this session to {pin}; add_cell writes there."
+        ));
+    } else if !options.documents.is_empty() {
+        text.push_str(&format!(
+            " The user started this session in {}. add_cell writes into the document in \
+             front of them when they send a message, unless they pin one.",
             options.documents.join(", ")
         ));
     }

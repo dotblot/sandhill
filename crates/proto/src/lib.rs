@@ -346,6 +346,14 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u64>,
     },
+    /// The files under a folder, relative to it, nearest first: hidden
+    /// ones and package folders left out. At most `limit` (5000 unless
+    /// given). Returns `Vec<String>`.
+    ListFiles {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
     /// The latest run of every cell of a notebook file, from the journal,
     /// including runs still in progress. Returns [`FileOutputs`].
     FileOutputs {
@@ -954,6 +962,23 @@ pub struct AgentOptions {
     /// document. A `set` command (`{kind: "set", code}`) changes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    /// The file the user pinned the conversation to, relative to the
+    /// project unless outside it. Unset, it works in the editor's front
+    /// document. A `set` command (`{kind: "set", pin}`) changes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<String>,
+    /// `false` turns web search off; unset is on. `set` changes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<bool>,
+    /// `false` keeps where the user is in the editor out of their
+    /// messages; unset sends it. `set` changes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<bool>,
+    /// What the user added to the first message with the @ menu (files,
+    /// chunks, variables, plots), which that message takes. A message
+    /// later takes them from a `set` or `say` command's `refs`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<Value>,
 }
 
 impl AgentOptions {

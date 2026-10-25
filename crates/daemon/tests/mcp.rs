@@ -522,6 +522,43 @@ async fn agents_write_into_the_document_their_conversation_is_about() {
         .unwrap();
     assert!(outputs.cells.iter().any(|c| c.cell_id == id));
 
+    // Pinned to another notebook in the message box, it writes there.
+    std::fs::write(project.join("de.ipynb"), notebook.to_string()).unwrap();
+    client
+        .call::<Value>(Call::TellTerminal {
+            terminal: terminal.id.clone(),
+            command: json!({"kind": "set", "pin": "de.ipynb"}),
+        })
+        .await
+        .unwrap();
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    )
+    .in_terminal(Some(dir.path().join("state/terminals").join(&terminal.id)));
+    let pinned = async || {
+        let terminals = client.list_terminals().await.unwrap();
+        terminals
+            .into_iter()
+            .find(|t| t.id == terminal.id)
+            .unwrap()
+            .agent
+    };
+    tokio::time::timeout(TIMEOUT, async {
+        while pinned().await.is_none_or(|a| a["pin"] != "de.ipynb") {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let added = call(
+        &tools,
+        "add_cell",
+        json!({"code": "print(6 * 7)", "run": false}),
+    )
+    .await;
+    assert!(added.contains("to de.ipynb"), "{added}");
+
     client.close_terminal(&terminal.id).await.unwrap();
     for session in client.list_sessions().await.unwrap() {
         client.shutdown(&session.id).await.unwrap();

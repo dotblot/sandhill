@@ -329,6 +329,23 @@ const LINE_ICONS = {
     </>
   ),
   open: () => <path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4" />,
+  eyeOff: () => (
+    <>
+      <path d="M1.5 8S4 3.6 8 3.6 14.5 8 14.5 8 12 12.4 8 12.4 1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="2" />
+      <path d="M2.5 2.5l11 11" />
+    </>
+  ),
+  pin: () => <path d="M6 2.5h4M6.8 2.5v4L4.5 9h7L9.2 6.5v-4M8 9v4.5" />,
+  upload: () => (
+    <>
+      <path d="M8 10.5V2.5M5 5.5l3-3 3 3" />
+      <path d="M2.5 9.5v3c0 .6.4 1 1 1h9c.6 0 1-.4 1-1v-3" />
+    </>
+  ),
+  star: () => <path d="M8 2.2l1.8 3.7 4 .6-2.9 2.8.7 4L8 11.4l-3.6 1.9.7-4L2.2 6.5l4-.6z" />,
+  starFilled: () => <path d="M8 2.2l1.8 3.7 4 .6-2.9 2.8.7 4L8 11.4l-3.6 1.9.7-4L2.2 6.5l4-.6z" fill="currentColor" />,
+  outline: () => <path d="M3 4h10M5 8h8M7 12h6" />,
 } satisfies Record<string, () => JSX.Element>;
 
 export type IconName = keyof typeof LINE_ICONS;
@@ -394,6 +411,12 @@ export const V32_ICONS = {
   "sparkle.ai": "spark",
   history: "clock",
   "context.show": "eye",
+  "context.hide": "eyeOff",
+  star: "star",
+  "star.filled": "starFilled",
+  pin: "pin",
+  upload: "upload",
+  outline: "outline",
   attach: "clip",
   send: "up",
   ask: "hand",
