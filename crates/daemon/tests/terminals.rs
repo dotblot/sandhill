@@ -115,6 +115,31 @@ async fn a_terminal_followed_while_it_starts_is_followed_live() {
 }
 
 #[tokio::test]
+async fn a_program_that_ends_at_once_has_started() {
+    // Its terminal may be gone before the daemon looks for it, as on a
+    // busy Mac: here the daemon is kept from looking while it ends.
+    let dir = tempfile::tempdir().unwrap();
+    let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
+    for _ in 0..3 {
+        let (info, ()) = tokio::join!(
+            terminals.start(sh("echo 'no such file'; exit 2", dir.path())),
+            async { std::thread::sleep(Duration::from_millis(1500)) },
+        );
+        let info = info.unwrap();
+        let info = loop {
+            let info = terminals.info(&info.id).unwrap();
+            if !info.running {
+                break info;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(info.exit.and_then(|e| e.code), Some(2));
+        let said = terminals.output_tail(&info.id, 100).unwrap();
+        assert!(said.contains("no such file"), "{said}");
+    }
+}
+
+#[tokio::test]
 async fn a_program_gets_input_and_its_output_is_kept_after_it_ends() {
     let dir = tempfile::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());

@@ -383,11 +383,15 @@ impl Terminals {
         let started = async {
             loop {
                 // The host listens first, then starts the program and says
-                // which it is.
-                if paths.host().exists() && UnixStream::connect(paths.socket()).await.is_ok() {
+                // which it is. A program that ended at once has started too,
+                // though its host may have let go of the socket already.
+                let gone = matches!(child.try_wait(), Ok(Some(_)));
+                if paths.host().exists()
+                    && (paths.exit().exists() || UnixStream::connect(paths.socket()).await.is_ok())
+                {
                     return Ok(());
                 }
-                if let Ok(Some(_)) = child.try_wait() {
+                if gone {
                     let log = std::fs::read_to_string(paths.host_log()).unwrap_or_default();
                     bail!("{}", log.trim());
                 }
