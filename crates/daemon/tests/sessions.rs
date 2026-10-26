@@ -242,7 +242,7 @@ async fn interrupt_stops_a_long_running_cell() {
     let mut client = daemon.client().await;
     for (kernel, code) in [
         ("python3", "import time\ntime.sleep(60)"),
-        // IRkernel answers with the status `abort`, which the daemon mends.
+        // IRkernel answers with the status `abort`, which the daemon mends to `error`.
         ("ir", "Sys.sleep(60)"),
         ("ark", "Sys.sleep(60)"),
     ] {
@@ -266,10 +266,7 @@ async fn interrupt_stops_a_long_running_cell() {
                 break event;
             }
         };
-        assert_ne!(finished.content["status"], "ok", "{kernel}: {finished:?}");
-        if kernel == "python3" {
-            assert_eq!(finished.content["status"], "error");
-        }
+        assert_eq!(finished.content["status"], "error", "{kernel}: {finished:?}");
         client.shutdown(&session).await.unwrap();
     }
 }

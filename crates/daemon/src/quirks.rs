@@ -1,9 +1,9 @@
 //! Reading kernel messages that bend the Jupyter protocol. R kernels write
 //! JSON from R lists, so an empty map can arrive as `[]` (IRkernel's
 //! metadata) or `null` (Ark's, for an htmlwidget), and IRkernel answers an
-//! interrupted run with the status `abort`. The protocol crate can't read
-//! those messages, so they are mended first; losing one would lose the
-//! output, or the reply that ends the run.
+//! interrupted run with the status `abort`, which the protocol doesn't
+//! have. The protocol crate can't read those messages, so they are mended
+//! first; losing one would lose the output, or the reply that ends the run.
 
 use jupyter_protocol::{Header, JupyterMessage, JupyterMessageContent};
 use jupyter_zmq_client::{Connection, RawMessage, RuntimeError};
@@ -63,8 +63,10 @@ fn mend(content: &mut Value) {
             content.insert(key.into(), Value::Object(Default::default()));
         }
     }
+    // An interrupted run, which failed as Python's does; not `aborted`,
+    // which is a run that never ran, queued behind an error.
     if content.get("status").and_then(Value::as_str) == Some("abort") {
-        content.insert("status".into(), "aborted".into());
+        content.insert("status".into(), "error".into());
     }
 }
 
@@ -120,7 +122,7 @@ mod tests {
         let JupyterMessageContent::ExecuteReply(reply) = msg.content else {
             panic!("{:?}", msg.content);
         };
-        assert_eq!(reply.status, ReplyStatus::Aborted);
+        assert_eq!(reply.status, ReplyStatus::Error);
     }
 
     #[test]
