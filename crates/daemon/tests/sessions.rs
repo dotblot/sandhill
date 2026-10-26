@@ -266,7 +266,10 @@ async fn interrupt_stops_a_long_running_cell() {
                 break event;
             }
         };
-        assert_eq!(finished.content["status"], "error", "{kernel}: {finished:?}");
+        assert_eq!(
+            finished.content["status"], "error",
+            "{kernel}: {finished:?}"
+        );
         client.shutdown(&session).await.unwrap();
     }
 }
