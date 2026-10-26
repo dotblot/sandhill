@@ -44,7 +44,7 @@ const JOURNAL: Plot[] = [
   },
 ];
 
-function fakeWorkspace(forwarded?: (port: number) => number) {
+function fakeWorkspace(forwarded?: (port: number) => number, answer?: (method: string, params: Record<string, unknown>) => Promise<unknown> | undefined) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   const opened: string[] = [];
   let emit: (event: DaemonEvent) => void = () => {};
@@ -52,6 +52,8 @@ function fakeWorkspace(forwarded?: (port: number) => number) {
     host: forwarded ? "lab" : "local",
     async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
       calls.push({ method, params });
+      const answered = answer?.(method, params);
+      if (answered) return answered as Promise<T>;
       switch (method) {
         case "session_pages":
           return { session: "s1", plots: JOURNAL, seq: 9 } as T;
@@ -225,6 +227,47 @@ describe("ViewerPane", () => {
     emit({ seq: 12, session: "s1", run: "r4", msg_type: "sandhill.run_finished", ts_ms: t + 9000, content: { status: "aborted" } });
     await settle();
     expect(button(root, "Stop")).toBeUndefined();
+    dispose();
+  });
+
+  it("previews a Quarto document, says so while it renders, and stops it", async () => {
+    let answer!: (info: unknown) => void;
+    const { ws, calls } = fakeWorkspace(
+      (port) => port + 50000,
+      (method) => (method === "preview_document" ? new Promise((done) => (answer = done)) : undefined),
+    );
+    const { root, dispose, ask, shown } = mount(ws);
+    await settle();
+    ask({ preview: `${PROJECT}/report.qmd` });
+    await settle();
+    expect(shown.length).toBe(1);
+    expect(address(root)).toBe("Quarto Preview · report.qmd");
+    expect(root.querySelector(".vempty")?.textContent).toBe("Rendering report.qmd with Quarto…");
+    expect(calls.find((c) => c.method === "preview_document")?.params).toEqual({ path: `${PROJECT}/report.qmd`, project: PROJECT });
+
+    answer({ url: "http://127.0.0.1:4200/report.html", terminal: { id: "t1", kind: "preview" } });
+    await settle();
+    await settle();
+    expect(frame(root).getAttribute("src")).toBe("http://127.0.0.1:54200/report.html");
+    expect(frame(root).getAttribute("sandbox")).toContain("allow-same-origin");
+    button(root, "Stop the preview").click();
+    await settle();
+    expect(calls.filter((c) => c.method === "close_terminal").map((c) => c.params)).toEqual([{ terminal: "t1" }]);
+    expect(button(root, "Stop")).toBeUndefined();
+    dispose();
+  });
+
+  it("says what Quarto said when a preview fails", async () => {
+    const { ws } = fakeWorkspace(undefined, (method) =>
+      method === "preview_document" ? Promise.reject(new Error("Quarto stopped before showing the page:\nERROR: YAML parse error")) : undefined,
+    );
+    const { root, dispose, ask } = mount(ws);
+    await settle();
+    ask({ preview: `${PROJECT}/broken.qmd` });
+    await settle();
+    await settle();
+    expect(root.querySelector(".viewer-failed p")?.textContent).toBe("Could not preview broken.qmd.");
+    expect(root.querySelector(".viewer-failed pre")?.textContent).toContain("ERROR: YAML parse error");
     dispose();
   });
 

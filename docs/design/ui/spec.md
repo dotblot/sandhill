@@ -425,6 +425,10 @@ and remote work are never shown together.
   the session list (the current session's ID, New session, and another installed
   version to switch to). Session IDs appear only there.
 - Run all shows no keyboard shortcut; ⌥⌘R is in its tooltip.
+- A `.qmd` or `.Rmd` document's bar has **Preview** (an eye) after Run all, with
+  ⇧⌘K in its tooltip. It shows the document in the Viewer, whose line reads
+  "Quarto Preview · report.qmd"; "Rendering report.qmd with Quarto…" shows while
+  Quarto works, and what Quarto said, in 11px code type, if it fails.
 - The Data Explorer's left panel (the column list with mini charts, and the
   selected column's stats) can be hidden with **Hide column stats** at the left
   of its document bar. The table then takes the full width, and the button reads
@@ -608,8 +612,8 @@ omp.
 - Plots has a zoom dialog: set the size or pick a preset, then copy, or save as PNG, PDF
   or SVG. Plots stay white in dark mode.
 - Viewer shares the bottom card with Plots, as a second tab. Its tab strip has Back,
-  Forward, Reload, Open in browser, Stop (only while the app in front runs) and
-  Clear, then the pane buttons; under it, one
+  Forward, Reload, Open in browser, Stop (only while the app or preview in front
+  runs) and Clear, then the pane buttons; under it, one
   11px line says where the page in front came from ("Console · datatables",
   "results/multiqc_report.html") and "2 of 5 · just now". The page fills the rest,
   white in dark mode. A page shown from the Console leaves one line there, the

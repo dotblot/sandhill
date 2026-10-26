@@ -383,11 +383,15 @@ impl Terminals {
         let started = async {
             loop {
                 // The host listens first, then starts the program and says
-                // which it is.
-                if paths.host().exists() && UnixStream::connect(paths.socket()).await.is_ok() {
+                // which it is. A program that ended at once has started too,
+                // though its host may have let go of the socket already.
+                let gone = matches!(child.try_wait(), Ok(Some(_)));
+                if paths.host().exists()
+                    && (paths.exit().exists() || UnixStream::connect(paths.socket()).await.is_ok())
+                {
                     return Ok(());
                 }
-                if let Ok(Some(_)) = child.try_wait() {
+                if gone {
                     let log = std::fs::read_to_string(paths.host_log()).unwrap_or_default();
                     bail!("{}", log.trim());
                 }
@@ -443,6 +447,21 @@ impl Terminals {
             outdated,
             name: meta.name,
         })
+    }
+
+    /// The program a terminal runs and its arguments.
+    pub fn command(&self, id: &str) -> Result<Vec<String>> {
+        let paths = self.paths(id)?;
+        let meta: Meta = serde_json::from_slice(&std::fs::read(paths.meta())?)?;
+        Ok(meta.command)
+    }
+
+    /// The last `bytes` of a terminal's output, as text.
+    pub fn output_tail(&self, id: &str, bytes: u64) -> Result<String> {
+        let paths = self.paths(id)?;
+        let (start, end) = log::bounds(paths.dir());
+        let (_, out) = log::read(paths.dir(), end.saturating_sub(bytes).max(start), end)?;
+        Ok(String::from_utf8_lossy(&out).into_owned())
     }
 
     /// Sends input, a resize or a hangup to a running terminal.

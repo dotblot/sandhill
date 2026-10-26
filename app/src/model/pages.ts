@@ -46,6 +46,8 @@ export interface PageItem {
   path?: string;
   /** A web address, such as a Shiny app's. */
   url?: string;
+  /** Or a Quarto document's preview: the document, on the daemon's machine. */
+  preview?: string;
 }
 
 /**
@@ -167,6 +169,16 @@ export function browserOpener(open: (url: string) => void): (run: RunState) => v
 /** An app's address opened from a link, as in the Terminal. */
 export function urlItem(url: string, nowMs: number): PageItem {
   return { key: `url:${url}`, tsMs: nowMs, exact: true, title: url, url };
+}
+
+/** A Quarto document's preview (`quarto preview`). */
+export function previewItem(path: string, nowMs: number): PageItem {
+  return { key: `preview:${path}`, tsMs: nowMs, exact: true, title: path.slice(path.lastIndexOf("/") + 1), preview: path };
+}
+
+/** Whether a file is a document Quarto previews; `previewable` in `crates/daemon/src/preview.rs` says the same. */
+export function isPreviewable(path: string): boolean {
+  return /\.(qmd|rmd)$/i.test(path);
 }
 
 /** An HTML file opened from the file tree. */

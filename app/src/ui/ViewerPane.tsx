@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, type JSX, Match, on, onCleanup, Show, Switch, untrack } from "solid-js";
-import { isBlobRef, type PageUrl, type SessionInfo, type SessionPlots } from "../backend/types";
+import { isBlobRef, type PageUrl, type PreviewInfo, type SessionInfo, type SessionPlots } from "../backend/types";
 import { ago } from "../docs/cellOutput";
-import { atPort, fileItem, fromJournal, fromRun, localPort, MAX_PAGES, type PageItem, pageCount, plotlyPage, urlItem } from "../model/pages";
+import { atPort, fileItem, fromJournal, fromRun, localPort, MAX_PAGES, type PageItem, pageCount, plotlyPage, previewItem, urlItem } from "../model/pages";
 import { afterClear, mergePlots, plotSource } from "../model/plots";
 import type { Workspace } from "../model/workspace";
 import { ask, notify } from "./dialogs";
@@ -14,9 +14,10 @@ const FILES = 20;
 
 /**
  * A page to bring to the front: an HTML file to open, an app's address (a
- * link in the Terminal), or a page shown, by key.
+ * link in the Terminal), a Quarto document to preview, or a page shown, by
+ * key.
  */
-export type ViewerRequest = { path: string } | { url: string } | { key: string };
+export type ViewerRequest = { path: string } | { url: string } | { preview: string } | { key: string };
 
 /**
  * Pages run in a frame with scripts but never with the app's origin: an
@@ -62,6 +63,8 @@ export function ViewerPane(props: {
   const [reload, setReload] = createSignal(0);
   /** Bumped as the run of the page in front goes, for Stop. */
   const [runTick, setRunTick] = createSignal(0);
+  /** The terminals running documents' previews, by page key, for Stop. */
+  const [previews, setPreviews] = createSignal<Record<string, string>>({});
   const [now, setNow] = createSignal(Date.now());
   const clock = setInterval(() => setNow(Date.now()), 30_000);
   onCleanup(() => clearInterval(clock));
@@ -91,6 +94,11 @@ export function ViewerPane(props: {
     setPicked(i === list.length - 1 ? undefined : list[i]?.key);
   };
   const step = (by: number) => pick(index() + by);
+  /** The terminal of the preview in front, which Stop closes. */
+  const previewTerminal = () => {
+    const p = item();
+    return p?.preview ? previews()[p.key] : undefined;
+  };
   /** The run of the app in front while it still runs, which Stop ends. */
   const appRun = () => {
     runTick();
@@ -177,6 +185,11 @@ export function ViewerPane(props: {
         } else if ("url" in request) {
           add([urlItem(request.url, Date.now())], false);
           setPicked(undefined);
+        } else if ("preview" in request) {
+          add([previewItem(request.preview, Date.now())], false);
+          setPicked(undefined);
+          // Asks again: a preview that stopped starts again.
+          setReload((n) => n + 1);
         } else if (pages().some((p) => p.key === request.key)) {
           setPicked(request.key);
           // The newest page is the one in front when none is picked.
@@ -205,7 +218,7 @@ export function ViewerPane(props: {
     const p = item();
     if (!p) return;
     try {
-      ws.backend.openLink(await pageAddress(ws, p));
+      ws.backend.openLink(await pageAddress(ws, p, props.project));
     } catch (err) {
       notify(`Could not open the page: ${message(err)}`);
     }
@@ -213,17 +226,24 @@ export function ViewerPane(props: {
 
   async function stop() {
     const run = appRun();
-    if (!run) return;
+    const terminal = previewTerminal();
+    const key = item()?.key;
     try {
-      await ws.interrupt(run.session);
+      if (run) await ws.interrupt(run.session);
+      else if (terminal) {
+        await ws.call("close_terminal", { terminal });
+        setPreviews((all) => Object.fromEntries(Object.entries(all).filter(([k]) => k !== key)));
+      }
     } catch (err) {
-      notify(`Could not stop the app: ${message(err)}`);
+      notify(`Could not stop ${run ? "the app" : "the preview"}: ${message(err)}`);
     }
   }
+  const previewed = (key: string, info: PreviewInfo) => setPreviews((all) => ({ ...all, [key]: info.terminal.id }));
 
-  const source = (p: PageItem) => (p.run ? plotSource(p, props.shortName) : props.shortName(p.path ?? p.title));
-  const label = (p: PageItem) => (p.run ? `${source(p)} · ${p.url ?? p.title}` : p.url ?? source(p));
-  const where = (p: PageItem) => p.url ?? p.path ?? p.title;
+  const source = (p: PageItem) => (p.run ? plotSource(p, props.shortName) : props.shortName(p.preview ?? p.path ?? p.title));
+  const label = (p: PageItem) =>
+    p.run ? `${source(p)} · ${p.url ?? p.title}` : p.preview ? `Quarto Preview · ${source(p)}` : (p.url ?? source(p));
+  const where = (p: PageItem) => p.url ?? p.preview ?? p.path ?? p.title;
 
   const onKey = (e: KeyboardEvent) => {
     if (e.target !== e.currentTarget) return;
@@ -250,8 +270,8 @@ export function ViewerPane(props: {
         <button class="tab-btn" title="Open in browser" disabled={!item()} onClick={() => void openInBrowser()}>
           <Icon name="open" small />
         </button>
-        <Show when={appRun()}>
-          <button class="tab-btn" title="Stop the app" onClick={() => void stop()}>
+        <Show when={appRun() || previewTerminal()}>
+          <button class="tab-btn" title={appRun() ? "Stop the app" : "Stop the preview"} onClick={() => void stop()}>
             <Icon name="stop" small />
           </button>
         </Show>
@@ -280,7 +300,7 @@ export function ViewerPane(props: {
                   {index() + 1} of {shown().length} · {ago(Math.max(0, now() - p().tsMs))}
                 </span>
               </div>
-              <PageFrame ws={ws} item={p()} reload={reload()} />
+              <PageFrame ws={ws} item={p()} reload={reload()} project={props.project} onPreview={previewed} />
             </>
           )}
         </Show>
@@ -290,15 +310,34 @@ export function ViewerPane(props: {
 }
 
 /** One page, in a frame that fills the pane. */
-function PageFrame(props: { ws: Workspace; item: PageItem; reload: number }) {
+function PageFrame(props: {
+  ws: Workspace;
+  item: PageItem;
+  reload: number;
+  project: string;
+  /** A document's preview answered. */
+  onPreview: (key: string, info: PreviewInfo) => void;
+}) {
   // Loaded again for another page or a Reload, not when the journal's copy
   // of the page replaces the one seen as its run went.
   const [frame] = createResource(
     () => `${props.item.key}\n${props.reload}`,
-    () => frameSource(props.ws, untrack(() => props.item)),
+    () => {
+      const item = untrack(() => props.item);
+      return frameSource(props.ws, item, props.project, (info) => props.onPreview(item.key, info));
+    },
   );
   return (
     <Switch>
+      <Match when={frame.loading && props.item.preview}>
+        <p class="vempty">Rendering {props.item.title} with Quarto…</p>
+      </Match>
+      <Match when={frame.error && props.item.preview}>
+        <div class="vempty viewer-failed">
+          <p>Could not preview {props.item.title}.</p>
+          <pre>{message(frame.error)}</pre>
+        </div>
+      </Match>
       <Match when={frame.error}>
         <p class="vempty">Could not show the page: {message(frame.error)}</p>
       </Match>
@@ -317,17 +356,27 @@ function PageFrame(props: { ws: Workspace; item: PageItem; reload: number }) {
 }
 
 /** What a page's frame shows: an output's HTML, or an address. */
-async function frameSource(ws: Workspace, item: PageItem): Promise<{ srcdoc?: string; src?: string }> {
+async function frameSource(
+  ws: Workspace,
+  item: PageItem,
+  project: string,
+  onPreview: (info: PreviewInfo) => void,
+): Promise<{ srcdoc?: string; src?: string }> {
   const html = await outputHtml(ws, item);
-  return html !== undefined ? { srcdoc: wholePage(html) } : { src: await pageAddress(ws, item) };
+  return html !== undefined ? { srcdoc: wholePage(html) } : { src: await pageAddress(ws, item, project, onPreview) };
 }
 
 /**
- * Where a page loads from on this Mac: an app's address, or the daemon's
- * page server; a server's ports are reached through the daemon's
- * connection.
+ * Where a page loads from on this Mac: an app's address, a document's
+ * preview (started if it isn't running), or the daemon's page server; a
+ * server's ports are reached through the daemon's connection.
  */
-export async function pageAddress(ws: Workspace, item: PageItem): Promise<string> {
+export async function pageAddress(ws: Workspace, item: PageItem, project?: string, onPreview?: (info: PreviewInfo) => void): Promise<string> {
+  if (item.preview) {
+    const info = await ws.call<PreviewInfo>("preview_document", { path: item.preview, project });
+    onPreview?.(info);
+    return atPort(info.url, await reach(ws, localPort(info.url) ?? 0));
+  }
   if (item.url) {
     const port = localPort(item.url);
     return port === undefined ? item.url : atPort(item.url, await reach(ws, port));

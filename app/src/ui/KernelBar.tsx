@@ -18,6 +18,8 @@ export function KernelBar(props: {
   /** The names of the open documents using a session. */
   usedBy?: (session: string) => string[];
   onError: (msg: string) => void;
+  /** Previews the document with Quarto, for a `.qmd` or `.Rmd`. */
+  onPreview?: () => void;
 }) {
   const languages = () => props.doc.languages();
   // Shows every output when none are shown, else hides them all.
@@ -47,6 +49,18 @@ export function KernelBar(props: {
               <Icon name="play" small />
               Run all
             </button>
+            <Show when={props.onPreview}>
+              {(preview) => (
+                <button
+                  class="bar-button"
+                  onClick={() => preview()()}
+                  title="Render the document with Quarto and show it in the Viewer, again each time you save (⇧⌘K)"
+                >
+                  <Icon name="eye" small />
+                  Preview
+                </button>
+              )}
+            </Show>
           </>
         }
       >

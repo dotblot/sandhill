@@ -27,6 +27,7 @@ Responses can arrive out of order; match them by `id`.
 | `session_pages` | `session`, `limit?` | `{session, plots, seq}`: the web pages the session's Console and scripts showed, for the Viewer |
 | `serve_page` | `path` | `{port, path}`: where the daemon serves an HTML file, with its folder |
 | `serve_html` | `html?`, `blob?` | `{port, path}`: where the daemon serves an output's HTML |
+| `preview_document` | `path`, `project?` | `{url, terminal}` once the `quarto preview` of a `.qmd` or `.Rmd` answers |
 | `open_tunnel` | `tunnel`, `port` | `null` once connected to `127.0.0.1:port` on the daemon's machine |
 | `tunnel_write` | `tunnel`, `data` | not answered: bytes (base64) for the tunnel |
 | `close_tunnel` | `tunnel` | not answered |
@@ -645,6 +646,19 @@ where `path` is signed for the folder, so only that folder's files are
 served. A folder's address serves its `index.html`. `serve_html` serves HTML
 (the text, or the blob holding it) from a folder of the daemon's own, which
 keeps the latest 50.
+
+`preview_document` runs `quarto preview <path> --no-browser --port <port>`
+in a terminal of kind `preview`, in the document's folder, with the
+project's env files' variables and, when the project names a Python kernel,
+its Python as `QUARTO_PYTHON`. Quarto renders the document again each time
+it is saved, and its page reloads itself. The call answers once the page
+answers, with `url` (`http://127.0.0.1:{port}/`, or the page Quarto says to
+browse, for a document in a Quarto project) and the terminal, which
+`close_terminal` ends; a preview of the same file still running is used
+again. It fails with the end of Quarto's output if Quarto stops first, and
+says how to install Quarto when it isn't found (on the `PATH`, at
+`$QUARTO_PATH`, in a conda environment, or bundled with RStudio or
+Positron).
 
 A **tunnel** carries a TCP connection to a port on the daemon's machine over
 the client's own connection, as `ssh -L` would, so the app reaches a

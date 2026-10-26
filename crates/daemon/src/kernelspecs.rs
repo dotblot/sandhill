@@ -643,7 +643,7 @@ fn default_prefix(search: &Search) -> Option<PathBuf> {
 
 /// Every conda environment, from conda's own list and the usual install
 /// locations, each once.
-fn conda_envs(search: &Search) -> Vec<PathBuf> {
+pub fn conda_envs(search: &Search) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     for list in &search.conda_lists {
         if let Ok(text) = std::fs::read_to_string(list) {

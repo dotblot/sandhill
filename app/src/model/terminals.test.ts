@@ -54,6 +54,14 @@ describe("TerminalStore", () => {
     ]);
   });
 
+  it("keeps documents' previews out of the agents and the shells", async () => {
+    const fake = fakeBackend([info("a"), info("q", { kind: "preview", title: "Preview report.qmd" })]);
+    const store = new TerminalStore(fake.backend, "/p");
+    await store.refresh();
+    expect(store.agents().map((t) => t.id)).toEqual(["a"]);
+    expect(store.shells()).toEqual([]);
+  });
+
   it("keeps output until a view attaches, then passes it straight on", async () => {
     const fake = fakeBackend([info("a")]);
     const store = new TerminalStore(fake.backend, "/p");
