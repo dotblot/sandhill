@@ -16,6 +16,7 @@ import {
   type NewKind,
   nameProblem,
   parentOf,
+  shownInTree,
   type SortBy,
   sortEntries,
   stemLength,
@@ -184,7 +185,7 @@ function Dir(props: TreeProps & { ops: Ops; path: string; depth: number }) {
   const [entries] = createResource(
     () => [props.path, props.refreshKey, props.tree.reload(), sizes()] as const,
     async ([path, , , sizes]) =>
-      (await props.ws.call<DirEntry[]>("list_dir", sizes ? { path, sizes } : { path })).filter((e) => !e.name.startsWith(".")),
+      (await props.ws.call<DirEntry[]>("list_dir", sizes ? { path, sizes } : { path })).filter((e) => shownInTree(e.name)),
   );
   const sorted = () => sortEntries(entries() ?? [], props.tree.sortBy());
   const newHere = () => {

@@ -98,6 +98,14 @@ export function template(name: string): string {
   return "";
 }
 
+/** What the file tree leaves out, as VS Code does: git's folder, and what macOS, Jupyter and RStudio keep beside the files. */
+const TREE_HIDDEN = new Set([".git", ".DS_Store", ".ipynb_checkpoints", ".Rproj.user"]);
+
+/** Whether the file tree lists a file or folder. Other names that start with a dot, like .env, .gitignore and .sandhill, show. */
+export function shownInTree(name: string): boolean {
+  return !TREE_HIDDEN.has(name);
+}
+
 /** Folders first, then by name (A to Z), size (largest first) or date modified (newest first). */
 export function sortEntries(entries: DirEntry[], by: SortBy): DirEntry[] {
   const name = (a: DirEntry, b: DirEntry) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
