@@ -1388,6 +1388,17 @@ button.sz.upd:hover:not(:disabled) { background: var(--accent-soft); }
 .plot-thumbs button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .plot-thumbs img { width: 100%; height: 100%; object-fit: contain; display: block; }
 
+/* The Viewer: where the page in front came from, then the page, which
+   fills the pane. Pages stay white in dark mode, as plots do. */
+.viewer { flex: 1; min-height: 0; display: flex; flex-direction: column; outline: none; }
+.viewer-address { flex: none; display: flex; gap: 8px; justify-content: space-between; padding: 0 10px 4px; font-size: var(--fs-small); color: var(--faint); white-space: nowrap; }
+.viewer-where { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.viewer-frame { flex: 1 1 0; min-height: 0; width: 100%; border: none; background: #fff; border-radius: 0 0 var(--r) var(--r); }
+/* In the Console, a page the Viewer shows. */
+.out-page { color: var(--muted); }
+.out-page-show { padding: 0 2px; border-radius: var(--r); color: var(--text); text-decoration: underline; text-decoration-color: var(--line); }
+.out-page-show:hover { background: var(--hover); }
+
 /* A plot large: its size and format, then copy or save. 11px, like every popup. */
 .pzoom { position: fixed; inset: 0; z-index: 30; background: rgb(20 14 10 / 0.35); display: grid; place-items: center; font-size: var(--fs-small); }
 .pz-card { width: min(980px, calc(100% - 60px)); height: min(720px, calc(100% - 60px)); display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--glass-edge); border-radius: 12px; box-shadow: var(--pop-shadow); overflow: hidden; }

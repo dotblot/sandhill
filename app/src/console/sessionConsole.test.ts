@@ -78,6 +78,7 @@ async function openConsole(ws: Workspace) {
   await ws.refreshSessions();
   const files: string[] = [];
   const helped: HelpRequest[] = [];
+  const pages: string[] = [];
   const console = new SessionConsole(ws, "s1", "r", {
     openFile: (path) => files.push(path),
     shortName: (path) => path.replace("/home/huan/pbmc/", ""),
@@ -85,12 +86,13 @@ async function openConsole(ws: Workspace) {
       throw new Error(message);
     },
     openHelp: (request) => helped.push(request),
+    showPage: (key) => pages.push(key),
   });
   const host = document.body.appendChild(document.createElement("div"));
   host.append(console.element);
   await console.ready;
   opened.push({ console, host });
-  return { console, files, helped };
+  return { console, files, helped, pages };
 }
 
 const echoes = (console: SessionConsole) =>
@@ -105,6 +107,24 @@ afterEach(() => {
 });
 
 describe("SessionConsole", () => {
+  it("says where the Viewer shows a page, and brings it to the front there", async () => {
+    const page = { "application/vnd.sandhill.page+json": { path: "/tmp/Rtmp/viewhtml1/index.html", title: "datatables" }, "text/html": "<script>dt()</script>" };
+    const { ws } = fakeWorkspace([
+      done("a", "DT::datatable(iris)", 10, { outputs: [{ output_type: "display_data", data: page, metadata: {} }] }),
+      done("b", "head(iris)", 20, { outputs: [{ output_type: "display_data", data: { "text/html": "<table><tr><td>5.1</td></tr></table>" }, metadata: {} }] }),
+      done("c", "dt", 30, { cell: { file: "/home/huan/pbmc/analysis.qmd", cell_id: "dt" }, outputs: [{ output_type: "display_data", data: page, metadata: {} }] }),
+    ]);
+    const { console, pages } = await openConsole(ws);
+    const entries = console.element.querySelectorAll(".console-entry");
+    expect(entries[0].querySelector(".out-page")?.textContent).toBe("datatables in the Viewer");
+    expect(entries[0].querySelector("iframe")).toBeNull();
+    (entries[0].querySelector(".out-page-show") as HTMLButtonElement).click();
+    expect(pages).toEqual([expect.stringMatching(/^a:/)]);
+    // A table stays here; a notebook's page is under its cell, so it shows here too.
+    expect(entries[1].querySelector(".out-page")).toBeNull();
+    expect(entries[2].querySelector(".out-page")).toBeNull();
+  });
+
   it("leaves notebook and Quarto cells' runs out when asked, and brings them back", async () => {
     const { ws, emit } = fakeWorkspace([
       done("a", "x <- 1", 10),

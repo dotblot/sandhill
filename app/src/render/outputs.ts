@@ -5,6 +5,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { isBlobRef, type Output } from "../backend/types";
+import { PLOTLY_MIME, plotlyPage } from "../model/pages";
 import { appendAnsi } from "./ansi";
 
 export interface RenderContext {
@@ -14,10 +15,16 @@ export interface RenderContext {
   blobText(hash: string): Promise<string>;
   /** Content changed size after rendering (an image loaded, an iframe resized). */
   onResize(): void;
+  /**
+   * What to show for an output another pane shows instead (the Console's
+   * web pages, which the Viewer shows); nothing to render it here.
+   */
+  elsewhere?(data: Record<string, unknown>, metadata: Record<string, any>): HTMLElement | undefined;
 }
 
 const MIME_ORDER = [
   "text/html",
+  PLOTLY_MIME,
   "image/svg+xml",
   "image/png",
   "image/jpeg",
@@ -110,6 +117,8 @@ export function renderOutput(output: Output, ctx: RenderContext): HTMLElement {
 }
 
 function renderBundle(data: Record<string, unknown>, metadata: Record<string, any>, ctx: RenderContext) {
+  const elsewhere = ctx.elsewhere?.(data, metadata);
+  if (elsewhere) return elsewhere;
   const mime = MIME_ORDER.find((m) => m in data);
   if (!mime) {
     return el("div", "out out-note", `No renderer for ${Object.keys(data).join(", ") || "empty output"}`);
@@ -134,6 +143,12 @@ function renderText(mime: string, text: string, ctx: RenderContext): HTMLElement
   switch (mime) {
     case "text/html":
       return needsFrame(text) ? renderFrame(text, ctx) : renderInlineHtml(text);
+    case PLOTLY_MIME:
+      try {
+        return renderFrame(plotlyPage(JSON.parse(text), false), ctx);
+      } catch {
+        return el("div", "out out-note", "This plotly figure could not be read.");
+      }
     case "text/markdown": {
       const div = el("div", "out out-markdown");
       div.innerHTML = DOMPurify.sanitize(marked.parse(text, { async: false }) as string);

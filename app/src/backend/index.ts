@@ -53,6 +53,12 @@ export interface Backend {
   blobUrl(hash: string, mime: string, near?: string): string;
   /** Opens a web link in the browser. */
   openLink(url: string): void;
+  /**
+   * The port on this Mac that reaches `port` on the daemon's machine, for
+   * the Viewer: a server's ports are carried over the daemon's connection.
+   * Without it, the port is reached as it is.
+   */
+  forwardPort?(port: number): Promise<number>;
   /** Shows a file in Finder (in the app; the UI offers it for this Mac's files). */
   reveal?(path: string): Promise<void>;
   /** Copies a file of the daemon's machine to this Mac (to Downloads), and says where it went. */

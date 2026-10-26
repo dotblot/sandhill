@@ -30,8 +30,10 @@ import { closeOnOutside } from "./popup";
 
 /** What the tree needs from the window around it. */
 export interface TreeActions {
-  /** Whether a file opens in Sandhill's editor. */
+  /** Whether a file opens in Sandhill: in the editor, or the Viewer. */
   openable(path: string): boolean;
+  /** What opening it is called in the menu: "Open", unless said. */
+  openLabel?(path: string): string;
   open(path: string): void;
   /** What a new file starts with. */
   newText(name: string): string;
@@ -389,7 +391,7 @@ function TreeMenu(props: TreeProps & { ops: Ops; at: MenuAt; onClose: () => void
         when={at.dir}
         fallback={
           <Show when={props.actions.openable(at.path)}>
-            <Item label="Open" keys="⌘↓" onClick={run(() => props.actions.open(at.path))} />
+            <Item label={props.actions.openLabel?.(at.path) ?? "Open"} keys="⌘↓" onClick={run(() => props.actions.open(at.path))} />
             <div class="mm-sep" />
           </Show>
         }

@@ -49,6 +49,27 @@ describe("renderOutput", () => {
     expect(needsFrame("<table></table>")).toBe(false);
   });
 
+  it("draws plotly figures sent as data in a frame", () => {
+    const node = renderOutput(
+      { output_type: "display_data", data: { "application/vnd.plotly.v1+json": { data: [{ type: "bar" }], layout: {} }, "text/plain": "Figure" }, metadata: {} },
+      ctx,
+    );
+    expect(node.classList.contains("out-frame")).toBe(true);
+  });
+
+  it("leaves outputs another pane shows to a line saying so", () => {
+    const elsewhere = (data: Record<string, unknown>) => {
+      if (!("text/html" in data)) return undefined;
+      const note = document.createElement("div");
+      note.textContent = "in the Viewer";
+      return note;
+    };
+    const page = renderOutput({ output_type: "display_data", data: { "text/html": "<script>x</script>" }, metadata: {} }, { ...ctx, elsewhere });
+    expect(page.textContent).toBe("in the Viewer");
+    const text = renderOutput({ output_type: "execute_result", data: { "text/plain": "1" }, metadata: {} }, { ...ctx, elsewhere });
+    expect(text.textContent).toBe("1");
+  });
+
   it("shows tracebacks", () => {
     const node = renderOutput(
       { output_type: "error", ename: "ValueError", evalue: "x", traceback: ["\x1b[31mValueError\x1b[0m: x"] },

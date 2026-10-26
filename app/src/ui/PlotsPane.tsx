@@ -53,6 +53,8 @@ export function PlotsPane(props: {
   hostLabel: string;
   classList?: Record<string, boolean>;
   style?: JSX.CSSProperties;
+  /** The tabs, when the pane shares its place (with the Viewer); else its name. */
+  tabs?: JSX.Element;
   /** The minimize and maximize buttons. */
   buttons: JSX.Element;
   /** A plot that shows here was just drawn. */
@@ -228,11 +230,13 @@ export function PlotsPane(props: {
   return (
     <div class="pane plots-pane" classList={props.classList} style={props.style}>
       <div class="tabs" role="tablist">
-        <div class="cap tabcap">
-          <div class="tab active" role="tab" aria-selected="true">
-            <span class="tab-name">Plots</span>
+        {props.tabs ?? (
+          <div class="cap tabcap">
+            <div class="tab active" role="tab" aria-selected="true">
+              <span class="tab-name">Plots</span>
+            </div>
           </div>
-        </div>
+        )}
         <span class="spacer" />
         <button class="tab-btn" title="Previous plot (←)" disabled={index() <= 0} onClick={() => step(-1)}>
           <Icon name="chevronLeft" small />

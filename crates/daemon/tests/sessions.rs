@@ -237,35 +237,44 @@ async fn kernel_and_running_cell_survive_a_daemon_restart() {
 
 #[tokio::test]
 async fn interrupt_stops_a_long_running_cell() {
-    if !have_kernel("python3").await {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
-    let session = client.start_session("python3", None).await.unwrap().id;
-
-    client.subscribe(&session, None).await.unwrap();
-    let run_id = client
-        .execute(&session, "import time\ntime.sleep(60)", None)
-        .await
-        .unwrap()
-        .run;
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    client.interrupt(&session).await.unwrap();
-
-    let finished = loop {
-        let event = tokio::time::timeout(Duration::from_secs(20), client.next_event())
-            .await
-            .expect("interrupt did not stop the cell")
-            .unwrap();
-        if event.run.as_deref() == Some(run_id.as_str()) && event.msg_type == EVENT_RUN_FINISHED {
-            break event;
+    for (kernel, code) in [
+        ("python3", "import time\ntime.sleep(60)"),
+        // IRkernel answers with the status `abort`, which the daemon mends to `error`.
+        ("ir", "Sys.sleep(60)"),
+        ("ark", "Sys.sleep(60)"),
+    ] {
+        if !have_kernel(kernel).await {
+            eprintln!("skipping {kernel}: not installed");
+            continue;
         }
-    };
-    assert_eq!(finished.content["status"], "error");
+        let session = client.start_session(kernel, None).await.unwrap().id;
+        client.subscribe(&session, None).await.unwrap();
+        let run_id = client.execute(&session, code, None).await.unwrap().run;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        client.interrupt(&session).await.unwrap();
 
-    client.shutdown(&session).await.unwrap();
+        let finished = loop {
+            let event = tokio::time::timeout(Duration::from_secs(20), client.next_event())
+                .await
+                .unwrap_or_else(|_| panic!("interrupt did not stop {kernel}'s cell"))
+                .unwrap();
+            if event.run.as_deref() == Some(run_id.as_str()) && event.msg_type == EVENT_RUN_FINISHED
+            {
+                break event;
+            }
+        };
+        // Ark says an interrupted run went well; the others that it failed.
+        if kernel != "ark" {
+            assert_eq!(
+                finished.content["status"], "error",
+                "{kernel}: {finished:?}"
+            );
+        }
+        client.shutdown(&session).await.unwrap();
+    }
 }
 
 /// The app tells busy sessions from idle ones by this count, even for

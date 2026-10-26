@@ -24,7 +24,8 @@ function setup(files: Record<string, DirEntry[]>, host = "local") {
     },
   } as unknown as Workspace;
   const actions: TreeActions = {
-    openable: (path) => /\.(qmd|R|py|ipynb)$/.test(path),
+    openable: (path) => /\.(qmd|R|py|ipynb|html)$/.test(path),
+    openLabel: (path) => (path.endsWith(".html") ? "Open in Viewer" : "Open"),
     open: vi.fn(),
     newText: (name) => `# ${name}\n`,
     release: vi.fn(async (path: string) => [`${path}/x.R`]),
@@ -169,6 +170,19 @@ describe("FileTree", () => {
     await settle();
     expect(document.querySelector(".treemenu .mm-h")?.textContent).toBe("New in p");
     expect(t.menuItem("Move to Trash")).toBeUndefined();
+  });
+
+  it("opens an HTML report in the Viewer, saying so", async () => {
+    const t = setup({ "/p": [file("multiqc_report.html"), file("notes.md")] });
+    dispose = t.dispose;
+    await settle();
+    t.rightClick(t.row("multiqc_report.html"));
+    await settle();
+    t.menuItem("Open in Viewer").click();
+    expect(t.actions.open).toHaveBeenCalledWith("/p/multiqc_report.html");
+    t.rightClick(t.row("notes.md"));
+    await settle();
+    expect(t.menuItem("Open")).toBeUndefined();
   });
 
   it("duplicates with Finder's names and downloads from a server", async () => {

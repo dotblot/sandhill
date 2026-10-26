@@ -92,6 +92,49 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
+    /// The session's latest web pages, oldest first, for the Viewer: the
+    /// HTML outputs of runs outside notebooks and Quarto documents (the
+    /// Console's and scripts'). Quiet runs are left out. Returns
+    /// [`SessionPlots`], whose `plots` hold the pages.
+    SessionPages {
+        session: String,
+        /// How many pages, at most; 20 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Serves a file on the daemon's machine over HTTP, with the folder it
+    /// is in, so its pictures, scripts and styles load too: an HTML report,
+    /// or the page an htmlwidget was saved to. Returns [`PageUrl`].
+    ServePage {
+        path: String,
+    },
+    /// Serves HTML (an output's, for opening in a browser): the text, or a
+    /// blob that holds it. Returns [`PageUrl`].
+    ServeHtml {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        html: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blob: Option<String>,
+    },
+    /// Connects to `127.0.0.1:port` on the daemon's machine (a Shiny app,
+    /// the page server) for a TCP connection the client has, numbered
+    /// `tunnel` by the client. What the client sends goes as
+    /// [`Call::TunnelWrite`]; what comes back arrives as
+    /// [`ServerMessage::Tunnel`]. Returns null once connected.
+    OpenTunnel {
+        tunnel: u64,
+        port: u16,
+    },
+    /// Bytes for a tunnel, base64. Not answered: a tunnel that has gone
+    /// sends [`TunnelData`] with `closed`.
+    TunnelWrite {
+        tunnel: u64,
+        data: String,
+    },
+    /// Ends a tunnel. Not answered.
+    CloseTunnel {
+        tunnel: u64,
+    },
     /// Draws a plot again, in the kernel that drew it, and saves it to
     /// `file` at `width` × `height` inches (and `dpi`, for a PNG): the image
     /// of `run` holding the blob `image`, else its `index`-th image. Ark
@@ -705,6 +748,31 @@ pub enum ServerMessage {
     Request {
         request: AppRequest,
     },
+    /// Bytes from a tunnel's connection (see [`Call::OpenTunnel`]), sent
+    /// only to the client that opened it.
+    Tunnel {
+        tunnel: TunnelData,
+    },
+}
+
+/// What came back through a tunnel: `data` (base64), or `closed` once the
+/// connection on the daemon's machine has ended.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TunnelData {
+    pub id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
+}
+
+/// Where the daemon serves a page: `http://127.0.0.1:{port}{path}` on its
+/// machine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PageUrl {
+    pub port: u16,
+    /// Starts with `/`, percent-encoded.
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

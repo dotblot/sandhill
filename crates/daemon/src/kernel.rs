@@ -173,23 +173,47 @@ pub async fn connect(
     let control_tx = tx;
     let readers = vec![
         tokio::spawn(async move {
-            while let Ok(msg) = iopub.read().await {
-                if iopub_tx.send(KernelMsg::IoPub(msg)).await.is_err() {
-                    break;
+            loop {
+                match crate::quirks::read(&mut iopub).await {
+                    Ok(msg) => {
+                        if iopub_tx.send(KernelMsg::IoPub(msg)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) if skippable(&err) => {
+                        tracing::warn!("skipped a kernel message: {err}")
+                    }
+                    Err(_) => break,
                 }
             }
         }),
         tokio::spawn(async move {
-            while let Ok(msg) = shell_recv.read().await {
-                if shell_tx.send(KernelMsg::Shell(msg)).await.is_err() {
-                    break;
+            loop {
+                match crate::quirks::read(&mut shell_recv).await {
+                    Ok(msg) => {
+                        if shell_tx.send(KernelMsg::Shell(msg)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) if skippable(&err) => {
+                        tracing::warn!("skipped a kernel message: {err}")
+                    }
+                    Err(_) => break,
                 }
             }
         }),
         tokio::spawn(async move {
-            while let Ok(msg) = control_recv.read().await {
-                if control_tx.send(KernelMsg::Control(msg)).await.is_err() {
-                    break;
+            loop {
+                match crate::quirks::read(&mut control_recv).await {
+                    Ok(msg) => {
+                        if control_tx.send(KernelMsg::Control(msg)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) if skippable(&err) => {
+                        tracing::warn!("skipped a kernel message: {err}")
+                    }
+                    Err(_) => break,
                 }
             }
         }),
@@ -199,6 +223,14 @@ pub async fn connect(
         control: control_send,
         readers,
     })
+}
+
+/// Whether a message that couldn't be read leaves the socket as it was,
+/// to read the next: one whose content can't be parsed even mended (see
+/// `quirks`), not a closed socket. Skipping it keeps one odd output from
+/// ending the session's output.
+fn skippable(err: &jupyter_zmq_client::RuntimeError) -> bool {
+    !matches!(err, jupyter_zmq_client::RuntimeError::ZmqError(_))
 }
 
 /// True if the kernel answers on its heartbeat socket. This works even while

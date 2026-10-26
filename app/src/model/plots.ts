@@ -110,11 +110,20 @@ function isDisplay(output: Output): boolean {
   return output.output_type === "display_data" || output.output_type === "execute_result";
 }
 
+/** What the history needs of an item: a plot, or a page of the Viewer's. */
+export interface Shown {
+  key: string;
+  tsMs: number;
+  exact: boolean;
+  cell?: CellRef;
+  by?: string;
+}
+
 /**
- * Adds plots to the history, or updates ones it has, oldest first. A plot
- * keeps the journal's time once it has it.
+ * Adds plots to the history, or updates ones it has, oldest first, keeping
+ * the newest `max`. A plot keeps the journal's time once it has it.
  */
-export function mergePlots(list: PlotItem[], add: PlotItem[]): PlotItem[] {
+export function mergePlots<T extends Shown>(list: T[], add: T[], max = MAX_PLOTS): T[] {
   if (!add.length) return list;
   const index = new Map(list.map((p, i) => [p.key, i]));
   const next = [...list];
@@ -134,15 +143,15 @@ export function mergePlots(list: PlotItem[], add: PlotItem[]): PlotItem[] {
   if (!changed) return list;
   // Stable: plots of one run keep the order they came in.
   next.sort((a, b) => a.tsMs - b.tsMs);
-  return next.length > MAX_PLOTS ? next.slice(next.length - MAX_PLOTS) : next;
+  return next.length > max ? next.slice(next.length - max) : next;
 }
 
-function sameItem(a: PlotItem, b: PlotItem): boolean {
+function sameItem(a: Shown, b: Shown): boolean {
   return a.tsMs === b.tsMs && a.exact === b.exact && a.by === b.by && a.cell?.cell_id === b.cell?.cell_id;
 }
 
 /** Where a plot came from: "Console", an agent, "qc.py", or "analysis.qmd · umap". */
-export function plotSource(item: PlotItem, shortName: (path: string) => string): string {
+export function plotSource(item: Pick<PlotItem, "cell" | "by">, shortName: (path: string) => string): string {
   if (item.cell) {
     const file = shortName(item.cell.file);
     const label = chunkLabel(item.cell);
@@ -212,12 +221,12 @@ export function plotSrc(item: PlotItem, blobUrl: (hash: string, mime: string) =>
 }
 
 /** Plots shown after a clear: `cleared` is the time of the newest plot cleared. */
-export function afterClear(list: PlotItem[], cleared: number | undefined): PlotItem[] {
+export function afterClear<T extends Shown>(list: T[], cleared: number | undefined): T[] {
   return cleared === undefined ? list : list.filter((p) => p.tsMs > cleared);
 }
 
 /** A short id for an image: its blob's hash, or a hash of the inline value. */
-function imageId(value: unknown): string {
+export function imageId(value: unknown): string {
   if (isBlobRef(value)) return value.sandhill_blob;
   const text = typeof value === "string" ? value : JSON.stringify(value);
   // FNV-1a, enough to tell a run's images apart.

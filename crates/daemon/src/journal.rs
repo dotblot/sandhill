@@ -386,15 +386,39 @@ impl Journal {
     /// A session's latest outputs that hold an image, oldest first, leaving
     /// out quiet runs.
     pub fn session_plots(&self, session_id: &str, limit: u32) -> Result<Vec<PlotRecord>> {
+        self.session_displays(session_id, limit, "e.content LIKE '%\"image/%'")
+    }
+
+    /// A session's latest outputs that hold HTML, name a page (see
+    /// `viewer`) or hold a plotly figure, oldest first, leaving out quiet
+    /// runs.
+    pub fn session_html(&self, session_id: &str, limit: u32) -> Result<Vec<PlotRecord>> {
+        self.session_displays(
+            session_id,
+            limit,
+            "(e.content LIKE '%\"text/html\"%'
+              OR e.content LIKE '%\"application/vnd.sandhill.page+json\"%'
+              OR e.content LIKE '%\"application/vnd.plotly.v1+json\"%')",
+        )
+    }
+
+    /// A session's latest display outputs whose content meets `matching`,
+    /// a condition on `e.content`.
+    fn session_displays(
+        &self,
+        session_id: &str,
+        limit: u32,
+        matching: &str,
+    ) -> Result<Vec<PlotRecord>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT e.run_id, e.seq, e.ts_ms, e.content, r.cell_file, r.cell_id, r.origin, r.code
              FROM events e JOIN runs r ON r.id = e.run_id
              WHERE e.session_id = ?1 AND r.quiet = 0
                AND e.msg_type IN ('display_data', 'execute_result')
-               AND e.content LIKE '%\"image/%'
-             ORDER BY e.seq DESC LIMIT ?2",
-        )?;
+               AND {matching}
+             ORDER BY e.seq DESC LIMIT ?2"
+        ))?;
         let rows = stmt.query_map(params![session_id, limit], |row| {
             let file: Option<String> = row.get(4)?;
             let cell_id: Option<String> = row.get(5)?;

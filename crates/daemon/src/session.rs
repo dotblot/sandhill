@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 
 use crate::journal::{Journal, NewRun, SessionRecord, now_ms};
 use crate::kernel::{self, KernelConnection, KernelMsg};
-use crate::{startup, view};
+use crate::{startup, view, viewer};
 
 /// IOPub message types that are outputs and get journaled.
 const JOURNALED: &[&str] = &[
@@ -531,6 +531,29 @@ impl Actor {
         let content = match serde_json::to_value(&msg.content) {
             Ok(content) => content,
             Err(err) => return tracing::warn!("cannot serialize {msg_type}: {err}"),
+        };
+        if msg_type == "stream"
+            && let Some((left, pages)) = content["text"].as_str().and_then(viewer::take)
+        {
+            let run_id = run_id.or_else(|| self.busy.as_deref().and_then(|p| self.run_id_for(p)));
+            if !left.is_empty() {
+                let mut content = content;
+                content["text"] = serde_json::Value::String(left);
+                self.publish(run_id.as_deref(), msg_type, content);
+            }
+            for target in pages {
+                // Reads the page and the files beside it.
+                let shown = tokio::task::spawn_blocking(move || viewer::display(&target))
+                    .await
+                    .unwrap_or_default();
+                self.publish(run_id.as_deref(), "display_data", shown);
+            }
+            return;
+        }
+        let content = if matches!(msg_type, "display_data" | "execute_result") {
+            viewer::name(content)
+        } else {
+            content
         };
         if let Some((title, comm)) = view::request(msg_type, &content) {
             let run_id = run_id.or_else(|| self.busy.as_deref().and_then(|p| self.run_id_for(p)));
