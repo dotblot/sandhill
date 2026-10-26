@@ -5,6 +5,7 @@ mod finder;
 mod link;
 mod memory;
 mod menu;
+mod ports;
 mod servers;
 mod windows;
 
@@ -14,6 +15,7 @@ use anyhow::Context;
 use tauri::{Manager, RunEvent, WindowEvent};
 
 use crate::link::Links;
+use crate::ports::Ports;
 use crate::servers::Servers;
 use crate::windows::Windows;
 
@@ -40,6 +42,7 @@ fn main() -> anyhow::Result<()> {
             windows::open_link,
             finder::reveal_path,
             finder::download_file,
+            ports::forward_port,
             servers::list_servers,
             servers::add_server,
             servers::remove_server,
@@ -54,6 +57,7 @@ fn main() -> anyhow::Result<()> {
         })
         .setup(|app| {
             app.manage(Arc::new(Links::new(link_options(app.handle()))));
+            app.manage(Arc::new(Ports::default()));
             let data = app.path().app_data_dir()?;
             app.manage(Arc::new(Servers::load(data.join("servers.json"))));
             let saved = data.join("open-projects.json");

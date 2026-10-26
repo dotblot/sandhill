@@ -155,7 +155,7 @@ export function ToolbarCapsule(props: {
         onClick={props.onAgents}
         dot={props.waiting}
       />
-      <CapButton icon="sidebar.right" title="Right pane: Variables, Help, Packages, Git and Plots ⌥⌘B" pressed={props.right} onClick={props.onRight} />
+      <CapButton icon="sidebar.right" title="Right pane: Variables, Help, Packages, Git, Plots and Viewer ⌥⌘B" pressed={props.right} onClick={props.onRight} />
       <CapDivider />
       <CapButton icon="search" title="Go to a file or run a command ⌘K" onClick={props.onSearch} />
       <CapButton icon="menu" title="Menu" menu pressed={props.menu} onClick={props.onMenu} ref={props.menuRef} />

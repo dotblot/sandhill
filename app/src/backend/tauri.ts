@@ -115,6 +115,10 @@ class TauriBackend implements Backend {
     invoke("open_link", { url }).catch((err) => console.warn(err));
   }
 
+  forwardPort(port: number): Promise<number> {
+    return invoke<number>("forward_port", { host: this.host, port });
+  }
+
   reveal(path: string): Promise<void> {
     return invoke<void>("reveal_path", { path });
   }

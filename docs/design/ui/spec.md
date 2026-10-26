@@ -224,7 +224,7 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
   - toggle the left pane (files, Kernels, Resources), ⌘B;
   - Agents, a chat icon with an orange dot when an agent on this machine waits
     for you;
-  - toggle the right pane (Variables, Plots), ⌥⌘B;
+  - toggle the right pane (Variables, Plots, Viewer), ⌥⌘B;
   - search, which opens a ⌘K palette for files, symbols, commands and "search in files";
   - menu, with Connect to server, Open project, New project, Recent projects, Show console and Settings.
     It opens under its button and stays inside the window.
@@ -249,7 +249,7 @@ and remote work are never shown together.
   - the editor: "No files open in …";
   - the Console: "No R or Python session in …", with Start R and Start Python
     buttons;
-  - Variables, Packages, Git and Plots: what will show there;
+  - Variables, Packages, Git, Plots and Viewer: what will show there;
   - Agents: no conversations.
   - Its file tree, the Terminal and the ⌘K palette (its files) work as usual.
 - **Switching remembers where you were.** Each machine keeps its open tab,
@@ -607,6 +607,13 @@ omp.
   commit box. Everything below its tab strip is **11px** and never bold.
 - Plots has a zoom dialog: set the size or pick a preset, then copy, or save as PNG, PDF
   or SVG. Plots stay white in dark mode.
+- Viewer shares the bottom card with Plots, as a second tab. Its tab strip has Back,
+  Forward, Reload, Open in browser and Clear, then the pane buttons; under it, one
+  11px line says where the page in front came from ("Console · datatables",
+  "results/multiqc_report.html") and "2 of 5 · just now". The page fills the rest,
+  white in dark mode. A page shown from the Console leaves one line there, the
+  page's name as a link and "in the Viewer". An `.html` file in the file tree opens
+  here when clicked, and its menu says Open in Viewer.
 
 ## Status bar (26px)
 - Left: the connection, then the kernel state ("R idle", "Python running") and

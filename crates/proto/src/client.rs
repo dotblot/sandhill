@@ -15,7 +15,7 @@ use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, GitAction, GitCommitInfo, GitDiff, GitDone, GitLog,
     GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, KernelspecInfo, Outcome,
-    PackageUpdates, Packages, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
+    PackageUpdates, Packages, PageUrl, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
     SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows,
     TableSort, TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
@@ -35,6 +35,15 @@ pub enum ClientError {
 pub type Result<T> = std::result::Result<T, ClientError>;
 
 type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Outcome>>>>;
+/// Where each open tunnel's incoming bytes go.
+type Tunnels = Arc<std::sync::Mutex<HashMap<u64, mpsc::UnboundedSender<Vec<u8>>>>>;
+
+/// A connection to a port on the daemon's machine (see
+/// [`Client::open_tunnel`]). `incoming` ends when that connection does.
+pub struct Tunnel {
+    pub id: u64,
+    pub incoming: mpsc::UnboundedReceiver<Vec<u8>>,
+}
 
 pub struct Client {
     writer: Mutex<Box<dyn AsyncWrite + Send + Unpin>>,
@@ -42,7 +51,9 @@ pub struct Client {
     events: Option<mpsc::UnboundedReceiver<Event>>,
     terminal_events: Option<mpsc::UnboundedReceiver<TerminalEvent>>,
     requests: Option<mpsc::UnboundedReceiver<AppRequest>>,
+    tunnels: Tunnels,
     next_id: AtomicU64,
+    next_tunnel: AtomicU64,
 }
 
 impl Client {
@@ -56,12 +67,16 @@ impl Client {
         let (event_tx, events) = mpsc::unbounded_channel();
         let (terminal_tx, terminal_events) = mpsc::unbounded_channel();
         let (request_tx, requests) = mpsc::unbounded_channel();
+        let tunnels: Tunnels = Default::default();
         tokio::spawn(read_loop(
             reader,
             pending.clone(),
-            event_tx,
-            terminal_tx,
-            request_tx,
+            Senders {
+                events: event_tx,
+                terminal_events: terminal_tx,
+                requests: request_tx,
+                tunnels: tunnels.clone(),
+            },
         ));
         Client {
             writer: Mutex::new(Box::new(writer)),
@@ -69,7 +84,9 @@ impl Client {
             events: Some(events),
             terminal_events: Some(terminal_events),
             requests: Some(requests),
+            tunnels,
             next_id: AtomicU64::new(1),
+            next_tunnel: AtomicU64::new(1),
         }
     }
 
@@ -91,6 +108,44 @@ impl Client {
         let stdin = child.stdin.take().ok_or(ClientError::Disconnected)?;
         let stdout = child.stdout.take().ok_or(ClientError::Disconnected)?;
         Ok((Self::new(stdout, stdin), child))
+    }
+
+    /// Sends a request the daemon doesn't answer.
+    async fn send(&self, call: Call) -> Result<()> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut line = serde_json::to_vec(&Request { id, call })?;
+        line.push(b'\n');
+        let mut writer = self.writer.lock().await;
+        writer.write_all(&line).await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
+    /// Connects to `127.0.0.1:port` on the daemon's machine.
+    pub async fn open_tunnel(&self, port: u16) -> Result<Tunnel> {
+        let id = self.next_tunnel.fetch_add(1, Ordering::Relaxed);
+        let (tx, incoming) = mpsc::unbounded_channel();
+        self.tunnels.lock().unwrap().insert(id, tx);
+        if let Err(err) = self
+            .call::<serde_json::Value>(Call::OpenTunnel { tunnel: id, port })
+            .await
+        {
+            self.tunnels.lock().unwrap().remove(&id);
+            return Err(err);
+        }
+        Ok(Tunnel { id, incoming })
+    }
+
+    /// Sends bytes through a tunnel, in order.
+    pub async fn tunnel_write(&self, tunnel: u64, data: &[u8]) -> Result<()> {
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        self.send(Call::TunnelWrite { tunnel, data }).await
+    }
+
+    pub async fn close_tunnel(&self, tunnel: u64) -> Result<()> {
+        self.tunnels.lock().unwrap().remove(&tunnel);
+        self.send(Call::CloseTunnel { tunnel }).await
     }
 
     /// Sends a request and waits for its response.
@@ -314,6 +369,26 @@ impl Client {
         self.call(Call::SessionPlots {
             session: session.into(),
             limit,
+        })
+        .await
+    }
+
+    pub async fn session_pages(&self, session: &str, limit: Option<u32>) -> Result<SessionPlots> {
+        self.call(Call::SessionPages {
+            session: session.into(),
+            limit,
+        })
+        .await
+    }
+
+    pub async fn serve_page(&self, path: &str) -> Result<PageUrl> {
+        self.call(Call::ServePage { path: path.into() }).await
+    }
+
+    pub async fn serve_html(&self, html: &str) -> Result<PageUrl> {
+        self.call(Call::ServeHtml {
+            html: Some(html.into()),
+            blob: None,
         })
         .await
     }
@@ -665,13 +740,15 @@ impl Client {
     }
 }
 
-async fn read_loop<R: AsyncRead + Unpin>(
-    reader: R,
-    pending: Pending,
+/// Where the read loop hands what the daemon pushes.
+struct Senders {
     events: mpsc::UnboundedSender<Event>,
     terminal_events: mpsc::UnboundedSender<TerminalEvent>,
     requests: mpsc::UnboundedSender<AppRequest>,
-) {
+    tunnels: Tunnels,
+}
+
+async fn read_loop<R: AsyncRead + Unpin>(reader: R, pending: Pending, to: Senders) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if line.trim().is_empty() {
@@ -684,13 +761,31 @@ async fn read_loop<R: AsyncRead + Unpin>(
                 }
             }
             Ok(ServerMessage::Event { event }) => {
-                let _ = events.send(event);
+                let _ = to.events.send(event);
             }
             Ok(ServerMessage::Terminal { terminal }) => {
-                let _ = terminal_events.send(terminal);
+                let _ = to.terminal_events.send(terminal);
             }
             Ok(ServerMessage::Request { request }) => {
-                let _ = requests.send(request);
+                let _ = to.requests.send(request);
+            }
+            Ok(ServerMessage::Tunnel { tunnel }) => {
+                use base64::Engine;
+                let mut tunnels = to.tunnels.lock().unwrap();
+                let bytes = tunnel
+                    .data
+                    .and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok());
+                match bytes {
+                    Some(bytes) if !tunnel.closed => {
+                        if let Some(tx) = tunnels.get(&tunnel.id) {
+                            let _ = tx.send(bytes);
+                        }
+                    }
+                    // Dropping the sender ends the tunnel's `incoming`.
+                    _ => {
+                        tunnels.remove(&tunnel.id);
+                    }
+                }
             }
             // A newer daemon may send messages this client doesn't know.
             Err(_) => continue,
@@ -698,4 +793,5 @@ async fn read_loop<R: AsyncRead + Unpin>(
     }
     // Dropping the senders wakes every waiting call with `Disconnected`.
     pending.lock().unwrap().clear();
+    to.tunnels.lock().unwrap().clear();
 }

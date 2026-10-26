@@ -254,6 +254,12 @@ export interface SessionPlots {
   seq: number;
 }
 
+/** Where the daemon serves a page (`serve_page`, `serve_html`): `http://127.0.0.1:{port}{path}` on its machine. */
+export interface PageUrl {
+  port: number;
+  path: string;
+}
+
 /** Whether a plot's session can draw it again (`redraw_plot`), and why not. */
 export interface PlotRedraw {
   can: boolean;

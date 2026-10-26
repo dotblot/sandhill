@@ -102,6 +102,83 @@ pub fn session_plots(journal: &Journal, session: &str, limit: u32) -> Result<Ses
     })
 }
 
+/// A session's latest web pages, for the Viewer: see [`for_viewer`].
+pub fn session_pages(journal: &Journal, session: &str, limit: u32) -> Result<SessionPlots> {
+    let seq = journal.max_seq()?;
+    // Read more than asked for, as notebooks' outputs are left out.
+    let plots = journal
+        .session_html(session, limit.saturating_mul(4))?
+        .into_iter()
+        .filter(|p| {
+            for_viewer(
+                p.cell.as_ref().map(|c| c.file.as_str()),
+                &p.content["data"],
+                &p.content["metadata"],
+            )
+        })
+        .map(|p| Plot {
+            run: p.run_id,
+            seq: p.seq,
+            ts_ms: p.ts_ms,
+            cell: p.cell,
+            by: p.by,
+            code: p.code,
+            data: p.content["data"].clone(),
+            metadata: p.content.get("metadata").cloned().unwrap_or(Value::Null),
+        })
+        .collect::<Vec<_>>();
+    let skip = plots.len().saturating_sub(limit as usize);
+    Ok(SessionPlots {
+        session: session.to_string(),
+        plots: plots.into_iter().skip(skip).collect(),
+        seq,
+    })
+}
+
+/// Whether the Viewer shows an output of a run from `file` (none for the
+/// Console): a page from the Console or a script, or a web address (an
+/// app) from anywhere. Notebooks keep their other pages under their cells.
+/// `forViewer` in `app/src/model/pages.ts` says the same.
+pub fn for_viewer(file: Option<&str>, data: &Value, metadata: &Value) -> bool {
+    if file.is_some_and(|f| !is_script(f)) {
+        return data[crate::viewer::MIME]["url"].is_string();
+    }
+    is_page(data, metadata)
+}
+
+/// Whether an output is a web page rather than HTML for the Console (a
+/// table): it names a page (see `viewer`), is a plotly figure, runs
+/// scripts (htmlwidgets, plotly), says it wants a frame of its own
+/// (IRkernel's `isolated`), or is large enough to be kept as a blob.
+pub fn is_page(data: &Value, metadata: &Value) -> bool {
+    if data.get(crate::viewer::MIME).is_some() || data.get(PLOTLY_MIME).is_some() {
+        return true;
+    }
+    let Some(html) = data.get("text/html") else {
+        return false;
+    };
+    if html.get(sandhill_proto::BLOB_KEY).is_some()
+        || metadata["text/html"]["isolated"] == Value::Bool(true)
+    {
+        return true;
+    }
+    let text = match html {
+        Value::String(text) => text.clone(),
+        Value::Array(lines) => lines.iter().filter_map(Value::as_str).collect(),
+        _ => return false,
+    };
+    text.to_ascii_lowercase().contains("<script")
+}
+
+/// A plotly figure as data, which Python's plotly shows in Jupyter.
+pub const PLOTLY_MIME: &str = "application/vnd.plotly.v1+json";
+
+/// A script's file (`.R`, `.py`), whose code runs as the Console's does.
+fn is_script(file: &str) -> bool {
+    let lower = file.to_ascii_lowercase();
+    lower.ends_with(".r") || lower.ends_with(".py")
+}
+
 /// The image types the Plots pane shows.
 pub fn is_plot_mime(mime: &str) -> bool {
     matches!(
@@ -248,6 +325,23 @@ mod tests {
             assert_eq!(
                 Value::Array(builder.finish()),
                 case["outputs"],
+                "case {}",
+                case["name"]
+            );
+        }
+    }
+
+    /// Shared with the UI's tests so both sides send the same pages to the
+    /// Viewer.
+    #[test]
+    fn the_viewer_takes_the_shared_fixtures_pages() {
+        let text = include_str!("../../../tests/fixtures/pages.json");
+        let cases: Vec<Value> = serde_json::from_str(text).unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            assert_eq!(
+                for_viewer(case["file"].as_str(), &case["data"], &case["metadata"]),
+                case["viewer"].as_bool().unwrap(),
                 "case {}",
                 case["name"]
             );

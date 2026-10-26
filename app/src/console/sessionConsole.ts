@@ -13,6 +13,7 @@ import { baseExtensions, highlightedLines, languageFor } from "../editor/setup";
 import { InputHistory, isComplete } from "../model/consoleInput";
 import { consoleHelp, type HelpRequest } from "../model/help";
 import { sessionLabel } from "../model/machine";
+import { pageItem } from "../model/pages";
 import { fromNotebook, isScript, type RunState } from "../model/runs";
 import type { Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
@@ -34,6 +35,8 @@ export interface ConsoleHost {
   onError(message: string): void;
   /** Shows help asked for at the prompt (`?lm`, `np.mean?`) in the Help pane. */
   openHelp?(request: HelpRequest): void;
+  /** Brings a page to the front in the Viewer, by its key (see `model/pages`). */
+  showPage?(key: string): void;
 }
 
 interface Entry {
@@ -270,6 +273,7 @@ export class SessionConsole {
       blobUrl: (hash, mime) => this.ws.backend.blobUrl(hash, mime, near),
       blobText: async (hash) => (await this.ws.call<{ data: string }>("get_blob", { hash, near })).data,
       onResize: () => this.keepFollowing(),
+      elsewhere: (data, metadata) => this.pageNote(run, data, metadata),
     };
     const output = new CellOutput(ctx, () => this.keepFollowing());
     root.append(echo, output.element);
@@ -281,6 +285,20 @@ export class SessionConsole {
     this.entries.splice(at, 0, entry);
     output.bindRun(this.ws.runs, run.id);
     this.keepFollowing();
+  }
+
+  /** A web page the Viewer shows, as a line here that brings it to the front there. */
+  private pageNote(run: RunState, data: Record<string, unknown>, metadata: Record<string, any>): HTMLElement | undefined {
+    if (!this.host.showPage) return undefined;
+    const page = pageItem({ run: run.id, session: run.session, cell: run.cell, by: run.by }, run.startedMs, false, data, metadata);
+    if (!page) return undefined;
+    const note = el("div", "out out-page");
+    const show = el("button", "out-page-show");
+    show.textContent = page.url ?? page.title;
+    show.title = "Show it in the Viewer";
+    show.addEventListener("click", () => this.host.showPage?.(page.key));
+    note.append(show, " in the Viewer");
+    return note;
   }
 
   /** Where a run came from, when not the prompt: an agent, or a document. */

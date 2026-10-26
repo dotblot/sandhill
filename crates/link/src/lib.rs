@@ -7,6 +7,7 @@
 //! server, the link installs the app's own build of sandhilld there if the
 //! server has none or another build.
 
+pub mod forward;
 mod local;
 mod ssh;
 

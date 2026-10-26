@@ -22,8 +22,10 @@ use tokio::task::JoinHandle;
 
 use crate::blobs::BlobStore;
 use crate::journal::Journal;
+use crate::pages::Pages;
 use crate::paths::StateDir;
 use crate::session::{self, SessionHandle};
+use crate::tunnels::Tunnels;
 use crate::windows::Windows;
 use crate::{
     cells, fileops, files, help, memory, notebook, outputs, packages, projects, redraw, sidecar,
@@ -40,6 +42,9 @@ const MAX_CONSOLE_RUNS: u32 = 1000;
 /// How many plots the Plots pane gets back unless it asks for another number.
 const PLOTS: u32 = 100;
 const MAX_PLOTS: u32 = 500;
+/// Pages the Viewer reads back from a session's journal.
+const PAGES: u32 = 20;
+const MAX_PAGES: u32 = 100;
 
 pub struct Daemon {
     state: StateDir,
@@ -47,6 +52,7 @@ pub struct Daemon {
     sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
     terminals: Terminals,
     windows: Windows,
+    pages: Pages,
     next_connection: AtomicU64,
     options: DaemonOptions,
     /// Milliseconds since the Unix epoch.
@@ -95,8 +101,10 @@ impl Daemon {
             &state.db_path(),
             BlobStore::new(state.blobs_dir()),
         )?);
+        let pages = Pages::open(state.root())?;
         let daemon = Arc::new(Daemon {
             terminals: Terminals::new(state.terminals_dir(), options.executable.clone()),
+            pages,
             state,
             journal: journal.clone(),
             sessions: Mutex::new(HashMap::new()),
@@ -156,6 +164,7 @@ impl Daemon {
         let (out, out_rx) = mpsc::unbounded_channel::<ServerMessage>();
         let writer_task = tokio::spawn(write_loop(writer, out_rx));
         let subscriptions: Subscriptions = Default::default();
+        let tunnels = Tunnels::new(out.clone());
         let connection = self.next_connection.fetch_add(1, Ordering::Relaxed);
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
@@ -173,6 +182,26 @@ impl Daemon {
                     continue;
                 }
             };
+            // A tunnel's bytes are handled here, not in a task of their own,
+            // so they keep their order.
+            let request = match request.call {
+                Call::OpenTunnel { tunnel, port } => {
+                    tunnels.open(request.id, tunnel, port);
+                    continue;
+                }
+                Call::TunnelWrite { tunnel, data } => {
+                    tunnels.write(tunnel, &data);
+                    continue;
+                }
+                Call::CloseTunnel { tunnel } => {
+                    tunnels.close(tunnel);
+                    continue;
+                }
+                call => Request {
+                    id: request.id,
+                    call,
+                },
+            };
             let large = line.len() > memory::LARGE;
             drop(line);
             let daemon = self.clone();
@@ -188,6 +217,7 @@ impl Daemon {
         for (_, task) in subscriptions.lock().unwrap().drain() {
             task.abort();
         }
+        drop(tunnels);
         self.windows.disconnected(connection);
         drop(out);
         let _ = writer_task.await;
@@ -336,6 +366,36 @@ impl Daemon {
                     blocking(move || Ok(outputs::session_plots(&journal, &session, limit)?))
                         .await?,
                 )?
+            }
+            Call::SessionPages { session, limit } => {
+                let journal = self.journal.clone();
+                let limit = limit.unwrap_or(PAGES).min(MAX_PAGES);
+                serde_json::to_value(
+                    blocking(move || Ok(outputs::session_pages(&journal, &session, limit)?))
+                        .await?,
+                )?
+            }
+            Call::ServePage { path } => {
+                let path = files::resolve(&path)?;
+                serde_json::to_value(self.pages.serve(&path).await?)?
+            }
+            Call::ServeHtml { html, blob } => {
+                let html = match (html, blob) {
+                    (Some(html), _) => html,
+                    (None, Some(hash)) => {
+                        let bytes = self
+                            .journal
+                            .blobs()
+                            .get(&hash)
+                            .with_context(|| format!("no blob {hash}"))?;
+                        String::from_utf8_lossy(&bytes).into_owned()
+                    }
+                    (None, None) => bail!("give html or a blob"),
+                };
+                serde_json::to_value(self.pages.serve_html(&html).await?)?
+            }
+            Call::OpenTunnel { .. } | Call::TunnelWrite { .. } | Call::CloseTunnel { .. } => {
+                bail!("tunnels are handled by the connection")
             }
             Call::SessionRuns { session, limit } => {
                 let journal = self.journal.clone();
@@ -1330,7 +1390,7 @@ fn user_name() -> String {
     }
 }
 
-fn response(id: u64, result: Result<Value>) -> ServerMessage {
+pub(crate) fn response(id: u64, result: Result<Value>) -> ServerMessage {
     ServerMessage::Response {
         id,
         outcome: match result {

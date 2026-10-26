@@ -24,6 +24,12 @@ Responses can arrive out of order; match them by `id`.
 | `execute` | `session`, `code`, `cell?: {file, cell_id}`, `quiet?`, `by?` | `{run, msg_id}` |
 | `session_runs` | `session`, `limit?` | `{session, runs, seq}`: the session's latest runs, for its Console |
 | `session_plots` | `session`, `limit?` | `{session, plots, seq}`: the images the session's runs showed, for the Plots pane |
+| `session_pages` | `session`, `limit?` | `{session, plots, seq}`: the web pages the session's Console and scripts showed, for the Viewer |
+| `serve_page` | `path` | `{port, path}`: where the daemon serves an HTML file, with its folder |
+| `serve_html` | `html?`, `blob?` | `{port, path}`: where the daemon serves an output's HTML |
+| `open_tunnel` | `tunnel`, `port` | `null` once connected to `127.0.0.1:port` on the daemon's machine |
+| `tunnel_write` | `tunnel`, `data` | not answered: bytes (base64) for the tunnel |
+| `close_tunnel` | `tunnel` | not answered |
 | `redraw_plot` | `session`, `run`, `image?`, `index?`, `file?`, `format?`, `width?`, `height?`, `dpi?` | `{can, reason?}`: whether the session can draw the plot again, or draws it into `file` |
 | `list_variables` | `session`, `path?` | `Variables` |
 | `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
@@ -163,6 +169,12 @@ the code. Each is `{run, seq, ts_ms, cell?, by?, code, data, metadata}`:
 `data` is the output's MIME bundle, with images as blob references (an SVG
 under 64 KB stays inline), and `ts_ms` is when the kernel sent it. `seq` is
 where to subscribe from.
+
+`session_pages` returns the web pages a session showed, oldest first (the
+latest 20 unless `limit` says, at most 100), in the same form: outputs of
+runs from the Console, agents and scripts that are pages (see *The Viewer*
+below), and apps (`{url}` pages) from anywhere. Notebooks' and Quarto
+documents' other pages stay under their cells.
 
 `redraw_plot` draws one of a run's plots again, in the session that drew it,
 at another size. The plot is the image holding the blob `image`, else the
@@ -585,6 +597,53 @@ refs?}` for either agent:
   becomes null), the agent is told of each, and the chat's `prompt` entry
   lists their names in `place.refs`. Codex's `say` command can carry `refs`
   itself.
+
+## The Viewer: pages and tunnels
+
+An output is a **page** when it has `application/vnd.sandhill.page+json` or
+a plotly figure (`application/vnd.plotly.v1+json`), or `text/html` that runs
+scripts, says it is `isolated` (IRkernel's metadata), or is kept as a blob.
+Other HTML, such as a data frame's table, stays in the Console. The rule is
+`outputs::is_page` here and `isPage` in the app; `tests/fixtures/pages.json`
+keeps the two in step.
+
+R sessions get a `viewer` option when they start (Ark's own viewer waits for
+Positron, and IRkernel has none). It prints the page's file, or a web
+address, between `ESC ]sandhill-page;` and `BEL`; the daemon takes that out
+of the stream and sends a `display_data` in its place:
+
+```json
+{"data": {"application/vnd.sandhill.page+json": {"path": "/tmp/RtmpX/viewhtml1/index.html", "title": "datatables"},
+          "text/html": "<!DOCTYPE html>…", "text/plain": "datatables (in the Viewer)"},
+ "metadata": {"text/html": {"isolated": true}}}
+```
+
+`text/html` is the page with the scripts, styles and pictures beside it put
+inside it, so it outlives R's temporary folder; a notebook shows it under
+its cell. An address gives `{url, title}` and no HTML. A page a kernel shows
+itself (IRkernel's htmlwidgets, a plotly figure's HTML) gets the type too,
+with only its `title`, when it has one.
+
+`serve_page` serves a file and the folder it is in over HTTP on
+`127.0.0.1`, at a port the daemon picks: `http://127.0.0.1:{port}{path}`,
+where `path` is signed for the folder, so only that folder's files are
+served. A folder's address serves its `index.html`. `serve_html` serves HTML
+(the text, or the blob holding it) from a folder of the daemon's own, which
+keeps the latest 50.
+
+A **tunnel** carries a TCP connection to a port on the daemon's machine over
+the client's own connection, as `ssh -L` would, so the app reaches a
+server's page server and apps without a second login. The client numbers
+each tunnel; `open_tunnel` answers once connected, or with an error when
+nothing answers on the port. Bytes go as `tunnel_write` and come back as
+
+```json
+{"type": "tunnel", "tunnel": {"id": 3, "data": "SFRUUC8xLjEgMjAw…"}}
+{"type": "tunnel", "tunnel": {"id": 3, "closed": true}}
+```
+
+in order; `closed` says the daemon's side ended. A tunnel ends with
+`close_tunnel`, or with the client's connection.
 
 ## Blobs
 

@@ -1,0 +1,65 @@
+[
+  {
+    "name": "a page R's viewer named goes to the Viewer",
+    "file": null,
+    "data": {"application/vnd.sandhill.page+json": {"path": "/tmp/Rtmp1/viewhtml1/index.html", "title": "datatables"}, "text/html": "<html><script>var w = 1;</script></html>", "text/plain": "datatables (in the Viewer)"},
+    "metadata": {"text/html": {"isolated": true}},
+    "viewer": true
+  },
+  {
+    "name": "a script's widget goes to the Viewer",
+    "file": "/p/qc.R",
+    "data": {"text/html": ["<div id=\"w\"></div>\n", "<SCRIPT>draw()</SCRIPT>"], "text/plain": "widget"},
+    "metadata": {},
+    "viewer": true
+  },
+  {
+    "name": "an isolated page without scripts goes to the Viewer",
+    "file": null,
+    "data": {"text/html": "<p>report</p>"},
+    "metadata": {"text/html": {"isolated": true}},
+    "viewer": true
+  },
+  {
+    "name": "HTML kept as a blob goes to the Viewer",
+    "file": null,
+    "data": {"text/html": {"sandhill_blob": "ab12", "size": 4000000}, "text/plain": "Figure"},
+    "metadata": {},
+    "viewer": true
+  },
+  {
+    "name": "a table stays in the Console",
+    "file": null,
+    "data": {"text/html": "<table><tr><td>1</td></tr></table>", "text/plain": "   a\n0  1"},
+    "metadata": {},
+    "viewer": false
+  },
+  {
+    "name": "a plotly figure sent as data goes to the Viewer",
+    "file": "/p/umap.py",
+    "data": {"application/vnd.plotly.v1+json": {"data": [{"type": "scatter", "x": [1, 2], "y": [2, 1]}], "layout": {}}, "text/plain": "Figure"},
+    "metadata": {},
+    "viewer": true
+  },
+  {
+    "name": "a plot is not a page",
+    "file": null,
+    "data": {"image/png": {"sandhill_blob": "cd", "size": 10}, "text/plain": "<Figure>"},
+    "metadata": {},
+    "viewer": false
+  },
+  {
+    "name": "a notebook's widget stays under its cell",
+    "file": "/p/analysis.qmd",
+    "data": {"application/vnd.sandhill.page+json": {"path": "/tmp/Rtmp1/viewhtml2/index.html", "title": "plotly"}, "text/html": "<script>x</script>"},
+    "metadata": {"text/html": {"isolated": true}},
+    "viewer": false
+  },
+  {
+    "name": "an app goes to the Viewer, even from a notebook",
+    "file": "/p/explore.ipynb",
+    "data": {"application/vnd.sandhill.page+json": {"url": "http://127.0.0.1:7123", "title": "http://127.0.0.1:7123"}, "text/plain": "http://127.0.0.1:7123 (in the Viewer)"},
+    "metadata": {},
+    "viewer": true
+  }
+]

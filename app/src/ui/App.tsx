@@ -34,6 +34,7 @@ import { type HelpRequest, nameAt } from "../model/help";
 import { type NewKind, template, within } from "../model/files";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
+import { fromRun as pagesOf, isHtmlFile } from "../model/pages";
 import { listProjectFiles } from "../model/projectFiles";
 import { viewPath } from "../model/table";
 import { fromNotebook, isScript } from "../model/runs";
@@ -57,6 +58,7 @@ import { type Command, Palette } from "./Palette";
 import { type Pane, PaneButtons } from "./PaneButtons";
 import { PackagesPane } from "./PackagesPane";
 import { PlotsPane } from "./PlotsPane";
+import { type ViewerRequest, ViewerPane } from "./ViewerPane";
 import { ProjectSettingsDialog, worthAsking } from "./ProjectSettings";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
 import { type EditButtons, EditCapsule, TitleBar, ToolbarCapsule } from "./TitleBar";
@@ -80,6 +82,13 @@ const RIGHT_MIN = 240;
 const VARIABLES_HEIGHT_KEY = "sandhill.variablesHeight";
 const VARIABLES_MIN = 90;
 const PLOTS_MIN = 120;
+/** The right pane's bottom group of tabs, and the one in front. */
+const BOTTOM_TABS = [
+  ["plots", "Plots"],
+  ["viewer", "Viewer"],
+] as const;
+type BottomTab = (typeof BOTTOM_TABS)[number][0];
+const BOTTOM_TAB_KEY = "sandhill.bottomTab";
 /** The right pane's top group of tabs. */
 const TOP_TABS = [
   ["variables", "Variables"],
@@ -176,6 +185,9 @@ export function App(props: {
   const [helpKey, setHelpKey] = createSignal(0);
   const [packagesKey, setPackagesKey] = createSignal(0);
   const [gitKey, setGitKey] = createSignal(0);
+  const [bottomTab, setBottomTab] = createSignal<BottomTab>(stored(BOTTOM_TAB_KEY) === "viewer" ? "viewer" : "plots");
+  /** A page for the Viewer to show; `n` changes each time. */
+  const [viewerAsk, setViewerAsk] = createSignal<ViewerRequest & { n: number }>();
   /** A topic for the Help pane to show; `n` changes each time. */
   const [helpAsk, setHelpAsk] = createSignal<HelpRequest & { n: number }>();
   const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) === "shown");
@@ -231,6 +243,18 @@ export function App(props: {
     setMinimized((list) => list.filter((p) => p !== "variables"));
     setTopTab("help");
     setHelpAsk({ ...request, n: (helpAsk()?.n ?? 0) + 1 });
+  };
+  /** Brings Plots or the Viewer to the front, opening the right pane if need be. */
+  const showBottom = (tab: BottomTab) => {
+    if (!rightOn()) toggleRight();
+    setMinimized((list) => list.filter((p) => p !== "plots"));
+    setBottomTab(tab);
+    store(BOTTOM_TAB_KEY, tab);
+  };
+  /** Shows a page in the Viewer: an HTML file, or one the Console points to. */
+  const showPage = (request: ViewerRequest) => {
+    showBottom("viewer");
+    setViewerAsk({ ...request, n: (viewerAsk()?.n ?? 0) + 1 });
   };
   const isMin = (pane: Pane) => minimized().includes(pane) && maximized() !== pane;
   /** Whether a tab of the right pane's top group shows. A function: an expression in a prop would be a memo read outside it. */
@@ -417,6 +441,7 @@ export function App(props: {
         shortName: relative,
         onError: (text) => notify(text),
         openHelp,
+        showPage: (key) => showPage({ key }),
       });
       found.setCells(untrack(notebookConsole));
       consoles.set(id, found);
@@ -772,11 +797,46 @@ export function App(props: {
     return true;
   }
 
+  /** Plots and the Viewer, which share the right pane's bottom place. */
+  const bottomTabs = () => (
+    <div class="cap tabcap">
+      <For each={BOTTOM_TABS}>
+        {([tab, label]) => (
+          <div
+            class="tab"
+            role="tab"
+            aria-selected={bottomTab() === tab}
+            classList={{ active: bottomTab() === tab }}
+            onClick={() => showBottom(tab)}
+          >
+            <span class="tab-name">{label}</span>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+  // A page shown from the Console or a script opens the right pane, which
+  // the Viewer is in; the Console only says it is there.
+  const pagesSeen = new Map<string, number>();
+  onCleanup(
+    ws.runs.watchAll((run) => {
+      if (run.phase === "done") {
+        pagesSeen.delete(run.id);
+        return;
+      }
+      if (rightOn() || run.quiet || !untrack(consoleSessions).some((s) => s.id === run.session)) return;
+      const count = pagesOf(run).length;
+      if (count > (pagesSeen.get(run.id) ?? 0)) showBottom("viewer");
+      pagesSeen.set(run.id, count);
+    }),
+  );
+
   // The file tree, kept while the left pane is hidden.
   const tree = createTree(root);
   const treeActions: TreeActions = {
-    openable: (path) => !!docKind(path),
-    open: (path) => void open(path),
+    openable: (path) => !!docKind(path) || isHtmlFile(path),
+    openLabel: (path) => (isHtmlFile(path) ? "Open in Viewer" : "Open"),
+    open: (path) => (isHtmlFile(path) ? showPage({ path }) : void open(path)),
     newText: (name) => (docKind(name) === "ipynb" ? notebookText() : template(name)),
     async release(path) {
       const inside = docs().filter((d) => within(d.path, path));
@@ -1349,9 +1409,21 @@ export function App(props: {
               notebooks={notebookPlots()}
               shortName={relative}
               hostLabel={hostLabel}
-              classList={{ min: isMin("plots"), max: maximized() === "plots" }}
+              classList={{ min: isMin("plots"), max: maximized() === "plots", hidden: bottomTab() !== "plots" }}
+              tabs={bottomTabs()}
               buttons={<PaneButtons pane="plots" min={isMin("plots")} max={maximized() === "plots"} onMin={toggleMin} onMax={toggleMax} />}
-              onNew={() => setMinimized((list) => list.filter((p) => p !== "plots"))}
+              onNew={() => showBottom("plots")}
+            />
+            <ViewerPane
+              ws={ws}
+              project={props.project}
+              sessions={consoleSessions()}
+              shortName={relative}
+              classList={{ min: isMin("plots"), max: maximized() === "plots", hidden: bottomTab() !== "viewer" }}
+              tabs={bottomTabs()}
+              buttons={<PaneButtons pane="plots" min={isMin("plots")} max={maximized() === "plots"} onMin={toggleMin} onMax={toggleMax} />}
+              request={viewerAsk()}
+              onNew={() => showBottom("viewer")}
             />
           </aside>
         </Show>
