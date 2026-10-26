@@ -3030,6 +3030,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeromq",
 ]
 
 [[package]]

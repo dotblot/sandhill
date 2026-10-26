@@ -174,7 +174,7 @@ pub async fn connect(
     let readers = vec![
         tokio::spawn(async move {
             loop {
-                match iopub.read().await {
+                match crate::quirks::read(&mut iopub).await {
                     Ok(msg) => {
                         if iopub_tx.send(KernelMsg::IoPub(msg)).await.is_err() {
                             break;
@@ -189,7 +189,7 @@ pub async fn connect(
         }),
         tokio::spawn(async move {
             loop {
-                match shell_recv.read().await {
+                match crate::quirks::read(&mut shell_recv).await {
                     Ok(msg) => {
                         if shell_tx.send(KernelMsg::Shell(msg)).await.is_err() {
                             break;
@@ -204,7 +204,7 @@ pub async fn connect(
         }),
         tokio::spawn(async move {
             loop {
-                match control_recv.read().await {
+                match crate::quirks::read(&mut control_recv).await {
                     Ok(msg) => {
                         if control_tx.send(KernelMsg::Control(msg)).await.is_err() {
                             break;
@@ -226,9 +226,9 @@ pub async fn connect(
 }
 
 /// Whether a message that couldn't be read leaves the socket as it was,
-/// to read the next: one whose content this crate can't parse (IRkernel
-/// sends an empty list for empty metadata), not a closed socket. Skipping
-/// it keeps one odd output from ending the session's output.
+/// to read the next: one whose content can't be parsed even mended (see
+/// `quirks`), not a closed socket. Skipping it keeps one odd output from
+/// ending the session's output.
 fn skippable(err: &jupyter_zmq_client::RuntimeError) -> bool {
     !matches!(err, jupyter_zmq_client::RuntimeError::ZmqError(_))
 }

@@ -26,6 +26,7 @@ pub mod patch;
 pub mod paths;
 pub mod projects;
 pub mod qmd;
+pub mod quirks;
 pub mod redraw;
 pub mod server;
 pub mod session;
