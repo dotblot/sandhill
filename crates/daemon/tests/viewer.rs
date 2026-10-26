@@ -346,14 +346,33 @@ async fn r_apps_open_in_the_viewer_and_stop_when_interrupted() {
         );
         client.subscribe(&session, None).await.unwrap();
         let run = client.execute(&session, &code, None).await.unwrap().run;
+        let mut seen = Vec::new();
         let url = loop {
-            let event = tokio::time::timeout(TIMEOUT, client.next_event())
-                .await
-                .expect("timed out waiting for the app")
-                .expect("connection closed");
+            let Ok(event) = tokio::time::timeout(TIMEOUT, client.next_event()).await else {
+                // What came after an interrupt, too: output held back until then.
+                client.interrupt(&session).await.unwrap();
+                while let Ok(Some(event)) =
+                    tokio::time::timeout(Duration::from_secs(20), client.next_event()).await
+                {
+                    if event.run.as_deref() == Some(run.as_str()) {
+                        let content: String = event.content.to_string().chars().take(300).collect();
+                        seen.push(format!("after the interrupt: {} {content}", event.msg_type));
+                        if event.msg_type == EVENT_RUN_FINISHED {
+                            break;
+                        }
+                    }
+                }
+                panic!(
+                    "{kernel}: the app didn't show; seen: {seen:#?}\nkernel log:\n{}",
+                    daemon.kernel_log(&session)
+                );
+            };
+            let event = event.expect("connection closed");
             if event.run.as_deref() != Some(run.as_str()) {
                 continue;
             }
+            let content: String = event.content.to_string().chars().take(300).collect();
+            seen.push(format!("{} {content}", event.msg_type));
             match event.msg_type.as_str() {
                 "display_data" => {
                     if let Some(url) = event.content["data"][PAGE]["url"].as_str() {

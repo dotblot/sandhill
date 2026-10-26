@@ -36,8 +36,11 @@ pub const R: &str = r#"tryCatch(local({
       return(invisible())
     }
     flush(stdout())
-    cat(paste0("\033]sandhill-page;", utils::URLencode(enc2utf8(target), reserved = TRUE), "\a"))
-    flush(stdout())
+    # IRkernel shows only stdout. Ark holds back stdout while it prints a
+    # value until the value is printed, and printing a Shiny app runs it.
+    to <- if (is.function(show)) stdout() else stderr()
+    cat(paste0("\033]sandhill-page;", utils::URLencode(enc2utf8(target), reserved = TRUE), "\a"), file = to)
+    flush(to)
     invisible()
   }
   options(
