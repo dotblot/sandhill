@@ -191,7 +191,8 @@ async fn r_pages_and_widgets_reach_the_viewer_in_every_r_kernel() {
                 &html[..html.len().min(300)]
             );
             if kernel == "ark" {
-                let seen: String = format!("{shown:?}").chars().take(1500).collect();
+                // What Ark showed, and the start of its page.
+                let seen = format!("{:.1500}\npage: {html:.1500}", format!("{shown:?}"));
                 assert_eq!(shown[0][PAGE]["title"], "datatables", "{seen}");
                 // Its scripts are inside it, for a notebook to keep.
                 assert!(!html.contains("src=\"lib/"), "{seen}");

@@ -102,13 +102,13 @@ pub fn display(target: &str) -> Value {
     }
 }
 
-/// Names a web page a kernel showed itself (IRkernel's htmlwidgets, a
-/// Python plotly figure), so the app can say what it is: the output gets
-/// Sandhill's page type with the page's title, when it has one. Pages R's
-/// viewer named have it already.
+/// Names a web page a kernel showed itself (IRkernel's and Ark's
+/// htmlwidgets, a Python plotly figure), so the app can say what it is: the
+/// output gets Sandhill's page type with the page's title, when it has one.
+/// Pages R's viewer named have it already.
 pub fn name(mut content: Value) -> Value {
     let data = &content["data"];
-    if data.get(MIME).is_some() || !crate::outputs::is_page(data, &content["metadata"]) {
+    if data.get(MIME).is_some() {
         return content;
     }
     let html = match &data["text/html"] {
@@ -116,10 +116,29 @@ pub fn name(mut content: Value) -> Value {
         Value::Array(lines) => lines.iter().filter_map(Value::as_str).collect(),
         _ => return content,
     };
-    if let Some(title) = named(&html) {
+    let title = match labelled(&data["text/plain"]) {
+        Some(name) => Some(name),
+        None if crate::outputs::is_page(data, &content["metadata"]) => named(&html),
+        None => None,
+    };
+    if let Some(title) = title {
         content["data"][MIME] = json!({ "title": title });
     }
     content
+}
+
+/// The kind of htmlwidget Ark says it shows: `<datatables HTML widget>`.
+fn labelled(plain: &Value) -> Option<String> {
+    let plain = match plain {
+        Value::String(text) => text.clone(),
+        Value::Array(lines) => lines.iter().filter_map(Value::as_str).collect(),
+        _ => return None,
+    };
+    let name = plain
+        .trim()
+        .strip_prefix('<')?
+        .strip_suffix(" HTML widget>")?;
+    (!name.is_empty() && !name.contains(char::is_whitespace)).then(|| name.to_string())
 }
 
 /// A page's `<title>`, else what it holds, else "Page".
@@ -263,5 +282,14 @@ mod tests {
         assert_eq!(name(table.clone()), table);
         let nameless = json!({ "data": { "text/html": "<script>1</script>" }, "metadata": {} });
         assert_eq!(name(nameless.clone()), nameless);
+        // Ark's, named by its label.
+        let ark = json!({
+            "data": { "text/html": "<iframe></iframe>", "text/plain": "<datatables HTML widget>" },
+            "metadata": {},
+        });
+        assert_eq!(name(ark)["data"][MIME]["title"], "datatables");
+        let spaced =
+            json!({ "data": { "text/html": "<p>x</p>", "text/plain": "<a b HTML widget>" } });
+        assert_eq!(name(spaced.clone()), spaced);
     }
 }
