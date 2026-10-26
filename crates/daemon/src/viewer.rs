@@ -21,18 +21,33 @@ const START: &str = "\x1b]sandhill-page;";
 const END: char = '\x07';
 
 /// The viewer for R sessions, set as they start (see `startup`): it prints
-/// the page's path, or address, between `START` and `END`.
+/// the page's path, or address, between `START` and `END`. Shiny's apps and
+/// `browseURL()` go the same way, and the daemon sends an app's address to
+/// the Viewer and any other web page to the browser.
 pub const R: &str = r#"tryCatch(local({
   page <- function(target) {
+    if (!is.character(target) || length(target) != 1) stop("`url` must be a string.")
+    target <- sub("^file://", "", target)
+    if (!grepl("^https?://", target)) target <- normalizePath(target, mustWork = FALSE)
+    show <- getOption("jupyter.base_display_func")
+    if (is.function(show) && grepl("^https?://", target)) {
+      # IRkernel sends what is printed once the code is done, and an app's never is.
+      show(list("application/vnd.sandhill.page+json" = list(url = target), "text/plain" = target), NULL)
+      return(invisible())
+    }
     flush(stdout())
-    cat(paste0("\033]sandhill-page;", utils::URLencode(enc2utf8(target), reserved = TRUE), "\a"))
-    flush(stdout())
+    # IRkernel shows only stdout. Ark holds back stdout while it prints a
+    # value until the value is printed, and printing a Shiny app runs it.
+    to <- if (is.function(show)) stdout() else stderr()
+    cat(paste0("\033]sandhill-page;", utils::URLencode(enc2utf8(target), reserved = TRUE), "\a"), file = to)
+    flush(to)
     invisible()
   }
-  options(viewer = function(url, height = NULL, ...) {
-    if (!is.character(url) || length(url) != 1) stop("`url` must be a string.")
-    page(if (grepl("^https?://", url)) url else normalizePath(url, mustWork = FALSE))
-  })
+  options(
+    viewer = function(url, height = NULL, ...) page(url),
+    shiny.launch.browser = function(url) page(url),
+    browser = function(url, ...) page(url)
+  )
 }), error = function(e) invisible())
 "#;
 
@@ -61,14 +76,23 @@ pub fn take(text: &str) -> Option<(String, Vec<String>)> {
     Some((left, targets))
 }
 
-/// The display_data content for a page R named.
+/// The display_data content for a page R named: an app on this machine
+/// goes to the Viewer, and another web page to the browser (`browser`).
 pub fn display(target: &str) -> Value {
     if target.starts_with("http://") || target.starts_with("https://") {
+        let (page, text) = if is_local(target) {
+            (
+                json!({ "url": target, "title": target }),
+                format!("{target} (in the Viewer)"),
+            )
+        } else {
+            (
+                json!({ "url": target, "title": target, "browser": true }),
+                format!("Opening {target} in the browser"),
+            )
+        };
         return json!({
-            "data": {
-                MIME: { "url": target, "title": target },
-                "text/plain": format!("{target} (in the Viewer)"),
-            },
+            "data": { MIME: page, "text/plain": text },
             "metadata": {},
             "transient": {},
         });
@@ -105,9 +129,18 @@ pub fn display(target: &str) -> Value {
 /// Names a web page a kernel showed itself (IRkernel's and Ark's
 /// htmlwidgets, a Python plotly figure), so the app can say what it is: the
 /// output gets Sandhill's page type with the page's title, when it has one.
-/// Pages R's viewer named have it already.
+/// Pages R's viewer named have it already, except an address IRkernel sent,
+/// which gets the rest of what [`display`] gives.
 pub fn name(mut content: Value) -> Value {
     let data = &content["data"];
+    // An address IRkernel's viewer sent as it is (see `R`).
+    if let Some(url) = data[MIME]["url"].as_str()
+        && data[MIME].get("title").is_none()
+    {
+        let mut shown = display(url);
+        shown["transient"] = content["transient"].take();
+        return shown;
+    }
     if data.get(MIME).is_some() {
         return content;
     }
@@ -139,6 +172,21 @@ fn labelled(plain: &Value) -> Option<String> {
         .strip_prefix('<')?
         .strip_suffix(" HTML widget>")?;
     (!name.is_empty() && !name.contains(char::is_whitespace)).then(|| name.to_string())
+}
+
+/// Whether a web address is on this machine (`localhost`, `127.0.0.1`), as
+/// an app's is, for the Viewer. `localPort` in `app/src/model/pages.ts`
+/// says the same.
+pub fn is_local(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if !name.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host,
+    };
+    matches!(name, "localhost" | "127.0.0.1" | "0.0.0.0" | "[::1]")
 }
 
 /// A page's `<title>`, else what it holds, else "Page".
@@ -249,12 +297,32 @@ mod tests {
 
         let app = display("http://127.0.0.1:7123");
         assert_eq!(app["data"][MIME]["url"], "http://127.0.0.1:7123");
+        assert_eq!(app["data"][MIME].get("browser"), None);
+        let web = display("https://bioconductor.org/packages/DESeq2");
+        assert_eq!(web["data"][MIME]["browser"], true);
+        assert!(
+            web["data"]["text/plain"]
+                .as_str()
+                .unwrap()
+                .starts_with("Opening")
+        );
         assert!(
             display("/nowhere/index.html")["data"]["text/plain"]
                 .as_str()
                 .unwrap()
                 .starts_with("Could not show")
         );
+    }
+
+    #[test]
+    fn apps_are_on_this_machine() {
+        assert!(is_local("http://127.0.0.1:7123"));
+        assert!(is_local("http://localhost:8501/?embed=true"));
+        assert!(is_local("http://0.0.0.0:8050/"));
+        assert!(is_local("http://[::1]:4321/"));
+        assert!(!is_local("https://localhost:8443/"));
+        assert!(!is_local("http://localhost.example.org/"));
+        assert!(!is_local("http://10.0.0.5:8501"));
     }
 
     #[test]
@@ -291,5 +359,13 @@ mod tests {
         let spaced =
             json!({ "data": { "text/html": "<p>x</p>", "text/plain": "<a b HTML widget>" } });
         assert_eq!(name(spaced.clone()), spaced);
+        // An app's address, as IRkernel sends it.
+        let app = json!({ "data": { MIME: { "url": "http://127.0.0.1:7123" } }, "metadata": {} });
+        let app = name(app);
+        assert_eq!(app["data"][MIME]["title"], "http://127.0.0.1:7123");
+        assert_eq!(
+            app["data"]["text/plain"],
+            "http://127.0.0.1:7123 (in the Viewer)"
+        );
     }
 }

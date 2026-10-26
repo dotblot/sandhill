@@ -607,10 +607,12 @@ Other HTML, such as a data frame's table, stays in the Console. The rule is
 `outputs::is_page` here and `isPage` in the app; `tests/fixtures/pages.json`
 keeps the two in step.
 
-R sessions get a `viewer` option when they start (Ark's own viewer waits for
-Positron, and IRkernel has none). It prints the page's file, or a web
-address, between `ESC ]sandhill-page;` and `BEL`; the daemon takes that out
-of the stream and sends a `display_data` in its place:
+R sessions get a `viewer` option when they start (IRkernel sets none). It
+prints the page's file, or a web address, between `ESC ]sandhill-page;` and
+`BEL`, to stdout in IRkernel and to stderr in Ark (which holds back stdout
+while it prints a value, and printing a `shinyApp()` runs the app); IRkernel
+sends a web address as a `display_data` through its display function. The
+daemon takes that out of the stream and sends a `display_data` in its place:
 
 ```json
 {"data": {"application/vnd.sandhill.page+json": {"path": "/tmp/RtmpX/viewhtml1/index.html", "title": "datatables"},
@@ -620,7 +622,20 @@ of the stream and sends a `display_data` in its place:
 
 `text/html` is the page with the scripts, styles and pictures beside it put
 inside it, so it outlives R's temporary folder; a notebook shows it under
-its cell. An address gives `{url, title}` and no HTML. A page a kernel shows
+its cell. An address gives `{url, title}` and no HTML.
+
+The `browser` and `shiny.launch.browser` options go the same way, so
+`browseURL()` and a Shiny app (`shiny::runApp()`, or a printed
+`shinyApp()`) say where they are. An address on the daemon's machine
+(`localhost`, `127.0.0.1`), such as an app's, gives `{url, title}`, which the
+Viewer opens; any other gives `{url, title, "browser": true}` and the text
+"Opening … in the browser", which the app opens in the browser and the
+Viewer leaves out. IRkernel sends what R prints only once the code is done,
+and an app's code never is, so there R shows an address as a `display_data`
+of `{url}` itself, which the daemon completes in the same way. Stopping an
+app is interrupting its run.
+
+A page a kernel shows
 itself (IRkernel's htmlwidgets, a plotly figure's HTML) gets the type too,
 with only its `title`, when it has one.
 

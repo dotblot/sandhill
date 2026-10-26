@@ -34,7 +34,7 @@ import { type HelpRequest, nameAt } from "../model/help";
 import { type NewKind, template, within } from "../model/files";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
-import { fromRun as pagesOf, isHtmlFile } from "../model/pages";
+import { browserOpener, fromRun as pagesOf, isHtmlFile, localPort } from "../model/pages";
 import { listProjectFiles } from "../model/projectFiles";
 import { viewPath } from "../model/table";
 import { fromNotebook, isScript } from "../model/runs";
@@ -251,11 +251,17 @@ export function App(props: {
     setBottomTab(tab);
     store(BOTTOM_TAB_KEY, tab);
   };
-  /** Shows a page in the Viewer: an HTML file, or one the Console points to. */
+  /** Shows a page in the Viewer: an HTML file, an app, or one the Console points to. */
   const showPage = (request: ViewerRequest) => {
     showBottom("viewer");
     setViewerAsk({ ...request, n: (viewerAsk()?.n ?? 0) + 1 });
   };
+  /**
+   * A link in the Terminal: an app on the server (Streamlit, Dash, Shiny
+   * for Python, `quarto preview`) opens in the Viewer, any other page in
+   * the browser.
+   */
+  const openTerminalLink = (url: string) => (localPort(url) !== undefined ? showPage({ url }) : ws.backend.openLink(url));
   const isMin = (pane: Pane) => minimized().includes(pane) && maximized() !== pane;
   /** Whether a tab of the right pane's top group shows. A function: an expression in a prop would be a memo read outside it. */
   const topShown = (tab: TopTab) => current() && !isMin("variables") && topTab() === tab;
@@ -830,6 +836,8 @@ export function App(props: {
       pagesSeen.set(run.id, count);
     }),
   );
+  // A web page R opens with browseURL() goes to the browser; the Console says so.
+  onCleanup(ws.runs.watchAll(browserOpener((url) => ws.backend.openLink(url))));
 
   // The file tree, kept while the left pane is hidden.
   const tree = createTree(root);
@@ -1306,7 +1314,7 @@ export function App(props: {
               <ShellTerminal
                 store={terminals}
                 shown={consoleTab() === "terminal" && !isMin("console")}
-                openLink={(url) => ws.backend.openLink(url)}
+                openLink={openTerminalLink}
                 api={(api) => (shellApi = api)}
               />
             </div>

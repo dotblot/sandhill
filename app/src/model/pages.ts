@@ -65,10 +65,12 @@ export function isPage(data: Record<string, unknown>, metadata?: Record<string, 
 
 /**
  * Whether the Viewer shows an output of a run from `file` (none for the
- * Console): a page from the Console or a script, or a web address (an app)
- * from anywhere.
+ * Console): a page from the Console or a script, or an app's address from
+ * anywhere, but not a web page opened in the browser.
  */
 export function forViewer(file: string | undefined, data: Record<string, unknown>, metadata?: Record<string, any> | null): boolean {
+  // A web page R opened in the browser.
+  if (named(data)?.browser === true) return false;
   if (file && !isScript(file)) return typeof named(data)?.url === "string";
   return isPage(data, metadata);
 }
@@ -132,6 +134,41 @@ export function pageCount(run: RunState): number {
   return fromRun(run).length;
 }
 
+/** The web pages a run asked to open in the browser (R's `browseURL()`). */
+export function browserPages(run: RunState): string[] {
+  return run.outputs
+    .filter(isDisplay)
+    .map((o) => named(o.data ?? {}))
+    .filter((p) => p?.browser === true && typeof p.url === "string")
+    .map((p) => p!.url as string);
+}
+
+/**
+ * Watches runs, opening each web page a run asks for once, as it asks. A
+ * run first seen part way (as the window opens) has opened its pages before.
+ */
+export function browserOpener(open: (url: string) => void): (run: RunState) => void {
+  const opened = new Map<string, Set<string>>();
+  return (run) => {
+    const urls = browserPages(run);
+    const seen = opened.get(run.id);
+    if (!seen) opened.set(run.id, new Set(urls));
+    else {
+      for (const url of urls) {
+        if (seen.has(url)) continue;
+        seen.add(url);
+        open(url);
+      }
+    }
+    if (run.phase === "done") opened.delete(run.id);
+  };
+}
+
+/** An app's address opened from a link, as in the Terminal. */
+export function urlItem(url: string, nowMs: number): PageItem {
+  return { key: `url:${url}`, tsMs: nowMs, exact: true, title: url, url };
+}
+
 /** An HTML file opened from the file tree. */
 export function fileItem(path: string, nowMs: number): PageItem {
   return { key: `file:${path}`, tsMs: nowMs, exact: true, title: path.slice(path.lastIndexOf("/") + 1), path };
@@ -145,6 +182,7 @@ export function isHtmlFile(path: string): boolean {
 /**
  * A web address on the daemon's machine (`localhost`, `127.0.0.1`), which
  * the app reaches through the daemon's connection: its port, else none.
+ * `is_local` in `crates/daemon/src/viewer.rs` says the same.
  */
 export function localPort(url: string): number | undefined {
   try {

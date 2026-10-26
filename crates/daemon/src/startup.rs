@@ -31,7 +31,7 @@ mod tests {
     #[test]
     fn r_and_python_sessions_get_code_at_start() {
         let r = super::code("R", None).unwrap();
-        assert!(r.contains("tools:sandhill") && r.contains("options(viewer"));
+        assert!(r.contains("tools:sandhill") && r.contains("shiny.launch.browser"));
         let python = super::code("python3", None).unwrap();
         assert!(python.contains("%view") && python.contains("_sandhill_figures"));
         assert!(super::code("julia", None).is_none());

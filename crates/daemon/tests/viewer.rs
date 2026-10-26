@@ -301,3 +301,124 @@ async fn pages_reach_another_machine_through_a_tunnel() {
     let err = client.open_tunnel(closed).await.err().unwrap().to_string();
     assert!(err.contains("nothing answers"), "{err}");
 }
+
+#[tokio::test]
+async fn r_apps_open_in_the_viewer_and_stop_when_interrupted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&tmp.path().join("state")).await;
+    let names = kernels(&daemon.client().await).await;
+    let r: Vec<&str> = ["ir", "ark"]
+        .into_iter()
+        .filter(|k| names.iter().any(|n| n == k))
+        .collect();
+    if r.is_empty() {
+        eprintln!("skipping: no R kernel (IRkernel or Ark) is installed");
+        return;
+    }
+    for kernel in r {
+        let mut client = daemon.client().await;
+        let session = client.start_session(kernel, None).await.unwrap().id;
+
+        // browseURL(): a web page goes to the browser, an app's address to the Viewer.
+        let shown = displays(
+            &daemon,
+            &mut client,
+            &session,
+            "utils::browseURL('https://bioconductor.org/'); utils::browseURL('http://127.0.0.1:9/x')",
+        )
+        .await;
+        assert_eq!(shown.len(), 2, "{kernel}: {shown:?}");
+        assert_eq!(shown[0][PAGE]["browser"], true, "{kernel}: {shown:?}");
+        assert_eq!(shown[1][PAGE]["url"], "http://127.0.0.1:9/x", "{kernel}");
+        assert!(shown[1][PAGE].get("browser").is_none(), "{kernel}");
+
+        if !r_has(&mut client, &session, "shiny").await {
+            eprintln!("{kernel}: skipping the Shiny app: shiny is not installed");
+            client.shutdown(&session).await.unwrap();
+            continue;
+        }
+        // A Shiny app printed at the top level, as a script's last line is.
+        let free = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = free.local_addr().unwrap().port();
+        drop(free);
+        let code = format!(
+            "shiny::shinyApp(shiny::fluidPage(shiny::h1('sandhill cranes')), function(input, output) {{}}, options = list(port = {port}))"
+        );
+        client.subscribe(&session, None).await.unwrap();
+        let run = client.execute(&session, &code, None).await.unwrap().run;
+        let mut seen = Vec::new();
+        let url = loop {
+            let Ok(event) = tokio::time::timeout(TIMEOUT, client.next_event()).await else {
+                // What came after an interrupt, too: output held back until then.
+                client.interrupt(&session).await.unwrap();
+                while let Ok(Some(event)) =
+                    tokio::time::timeout(Duration::from_secs(20), client.next_event()).await
+                {
+                    if event.run.as_deref() == Some(run.as_str()) {
+                        let content: String = event.content.to_string().chars().take(300).collect();
+                        seen.push(format!("after the interrupt: {} {content}", event.msg_type));
+                        if event.msg_type == EVENT_RUN_FINISHED {
+                            break;
+                        }
+                    }
+                }
+                panic!(
+                    "{kernel}: the app didn't show; seen: {seen:#?}\nkernel log:\n{}",
+                    daemon.kernel_log(&session)
+                );
+            };
+            let event = event.expect("connection closed");
+            if event.run.as_deref() != Some(run.as_str()) {
+                continue;
+            }
+            let content: String = event.content.to_string().chars().take(300).collect();
+            seen.push(format!("{} {content}", event.msg_type));
+            match event.msg_type.as_str() {
+                "display_data" => {
+                    if let Some(url) = event.content["data"][PAGE]["url"].as_str() {
+                        break url.to_string();
+                    }
+                }
+                "error" => panic!("{kernel}: the app failed: {}", event.content),
+                EVENT_RUN_FINISHED => panic!("{kernel}: the app ended without showing"),
+                _ => {}
+            }
+        };
+        assert_eq!(url, format!("http://127.0.0.1:{port}"), "{kernel}");
+
+        // The app answers through a tunnel while the run goes on.
+        let mut events = client.take_events().unwrap();
+        let client = Arc::new(client);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let here = listener.local_addr().unwrap().port();
+        let carried = client.clone();
+        let forward = tokio::spawn(sandhill_link::forward::forward(listener, port, move || {
+            Some(carried.clone())
+        }));
+        let page = get(here, "/").await;
+        assert!(page.starts_with("HTTP/1.1 200 OK"), "{kernel}: {page}");
+        assert!(page.contains("sandhill cranes"), "{kernel}: {page}");
+        forward.abort();
+
+        // Stop: an interrupt ends the app, and its run.
+        client.interrupt(&session).await.unwrap();
+        loop {
+            let event = tokio::time::timeout(TIMEOUT, events.recv())
+                .await
+                .expect("timed out waiting for the app to stop")
+                .expect("connection closed");
+            if event.run.as_deref() == Some(run.as_str()) && event.msg_type == EVENT_RUN_FINISHED {
+                break;
+            }
+        }
+        let pages = client.session_pages(&session, None).await.unwrap();
+        assert!(
+            pages
+                .plots
+                .iter()
+                .any(|p| p.data[PAGE]["url"] == url.as_str()),
+            "{kernel}: {pages:?}"
+        );
+        client.shutdown(&session).await.unwrap();
+    }
+}

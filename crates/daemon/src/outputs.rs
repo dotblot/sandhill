@@ -136,10 +136,14 @@ pub fn session_pages(journal: &Journal, session: &str, limit: u32) -> Result<Ses
 }
 
 /// Whether the Viewer shows an output of a run from `file` (none for the
-/// Console): a page from the Console or a script, or a web address (an
-/// app) from anywhere. Notebooks keep their other pages under their cells.
+/// Console): a page from the Console or a script, or an app's address from
+/// anywhere, but not a web page opened in the browser. Notebooks keep their other pages under their cells.
 /// `forViewer` in `app/src/model/pages.ts` says the same.
 pub fn for_viewer(file: Option<&str>, data: &Value, metadata: &Value) -> bool {
+    // A web page R opened in the browser.
+    if data[crate::viewer::MIME]["browser"] == Value::Bool(true) {
+        return false;
+    }
     if file.is_some_and(|f| !is_script(f)) {
         return data[crate::viewer::MIME]["url"].is_string();
     }
