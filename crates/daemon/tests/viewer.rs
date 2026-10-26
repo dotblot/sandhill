@@ -191,9 +191,10 @@ async fn r_pages_and_widgets_reach_the_viewer_in_every_r_kernel() {
                 &html[..html.len().min(300)]
             );
             if kernel == "ark" {
-                assert_eq!(shown[0][PAGE]["title"], "datatables");
+                let seen: String = format!("{shown:?}").chars().take(1500).collect();
+                assert_eq!(shown[0][PAGE]["title"], "datatables", "{seen}");
                 // Its scripts are inside it, for a notebook to keep.
-                assert!(!html.contains("src=\"lib/"), "{kernel}");
+                assert!(!html.contains("src=\"lib/"), "{seen}");
             }
         } else {
             eprintln!("{kernel}: skipping the DT widget: DT is not installed");
