@@ -116,6 +116,17 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         blob: Option<String>,
     },
+    /// Previews a Quarto document (`.qmd`, `.Rmd`) with `quarto preview` on
+    /// the daemon's machine, in a terminal of kind [`TERMINAL_PREVIEW`],
+    /// which renders it again each time it is saved. A preview of the same
+    /// file still running is used again. Answers once the preview's page
+    /// answers, with [`PreviewInfo`]; fails, with what Quarto said, if it
+    /// stops first, or when Quarto isn't installed.
+    PreviewDocument {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
     /// Connects to `127.0.0.1:port` on the daemon's machine (a Shiny app,
     /// the page server) for a TCP connection the client has, numbered
     /// `tunnel` by the client. What the client sends goes as
@@ -711,6 +722,8 @@ pub struct AppRequest {
 
 /// The `kind` of a plain shell terminal.
 pub const TERMINAL_SHELL: &str = "shell";
+/// The kind of terminal a document's preview runs in (`quarto preview`).
+pub const TERMINAL_PREVIEW: &str = "preview";
 
 /// Prefix of the error returned when a write would overwrite changes made on
 /// disk since the file was read.
@@ -764,6 +777,15 @@ pub struct TunnelData {
     pub data: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub closed: bool,
+}
+
+/// A document's preview (see [`Call::PreviewDocument`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreviewInfo {
+    /// Where its page is on the daemon's machine: `http://127.0.0.1:{port}/`.
+    pub url: String,
+    /// The terminal `quarto preview` runs in; closing it ends the preview.
+    pub terminal: TerminalInfo,
 }
 
 /// Where the daemon serves a page: `http://127.0.0.1:{port}{path}` on its

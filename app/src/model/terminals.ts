@@ -9,6 +9,7 @@ import type { Backend } from "../backend";
 import {
   type AgentInfo,
   type AgentOptions,
+  TERMINAL_PREVIEW,
   TERMINAL_SHELL,
   type TerminalEvent,
   type TerminalInfo,
@@ -62,8 +63,9 @@ export class TerminalStore {
     backend.onTerminal((event) => this.onEvent(event));
   }
 
+  /** The agents' terminals: not shells, nor the ones documents' previews run in. */
   agents(): TerminalInfo[] {
-    return this.list().filter((t) => t.kind !== TERMINAL_SHELL);
+    return this.list().filter((t) => t.kind !== TERMINAL_SHELL && t.kind !== TERMINAL_PREVIEW);
   }
 
   shells(): TerminalInfo[] {

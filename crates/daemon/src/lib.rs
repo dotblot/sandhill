@@ -24,6 +24,7 @@ pub mod packages;
 pub mod pages;
 pub mod patch;
 pub mod paths;
+pub mod preview;
 pub mod projects;
 pub mod qmd;
 pub mod quirks;

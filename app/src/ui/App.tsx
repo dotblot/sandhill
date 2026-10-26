@@ -34,7 +34,7 @@ import { type HelpRequest, nameAt } from "../model/help";
 import { type NewKind, template, within } from "../model/files";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
-import { browserOpener, fromRun as pagesOf, isHtmlFile, localPort } from "../model/pages";
+import { browserOpener, fromRun as pagesOf, isHtmlFile, isPreviewable, localPort } from "../model/pages";
 import { listProjectFiles } from "../model/projectFiles";
 import { viewPath } from "../model/table";
 import { fromNotebook, isScript } from "../model/runs";
@@ -714,6 +714,12 @@ export function App(props: {
     }
   }
 
+  /** Previews a Quarto document in the Viewer, saved first, as Quarto renders what is on disk. */
+  async function previewDoc(doc: Doc) {
+    if (doc.dirty() && !(await saveDoc(doc))) return;
+    showPage({ preview: doc.path });
+  }
+
   async function close(doc: Doc): Promise<boolean> {
     if (doc.dirty()) {
       const choice = await ask(`Save changes to ${doc.name}?`, ["Save", "Don't save", "Cancel"]);
@@ -905,6 +911,7 @@ export function App(props: {
       list.push({ label: "Save all", keys: "⌥⌘S", run: () => command("save-all") });
       list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
       list.push({ label: doc.kind === "script" ? "Run file" : "Run all", keys: "⌥⌘R", run: () => command("run-all") });
+      if (isPreviewable(doc.path)) list.push({ label: "Quarto Preview", keys: "⇧⌘K", run: () => void previewDoc(doc) });
       for (const language of doc.languages()) {
         const label = languageLabel(language);
         list.push({ label: `${label}: Restart session`, run: () => void doc.kernels.restart(language).catch((e) => notify(message(e))) });
@@ -963,6 +970,15 @@ export function App(props: {
         e.preventDefault();
         toggleRight();
         return;
+      }
+      // Quarto Preview, as in RStudio and Positron.
+      if (mod && e.shiftKey && !e.altKey && e.code === "KeyK") {
+        const doc = activeExtra() ? undefined : active();
+        if (doc && isPreviewable(doc.path)) {
+          e.preventDefault();
+          void previewDoc(doc);
+          return;
+        }
       }
       if (mod && !e.altKey && !e.shiftKey) {
         const key = e.key.toLowerCase();
@@ -1216,7 +1232,15 @@ export function App(props: {
               <span class="spacer" />
               <PaneButtons pane="editor" min={isMin("editor")} max={maximized() === "editor"} onMin={toggleMin} onMax={toggleMax} />
             </div>
-            <Show when={!activeExtra() && active()}>{(doc) => <KernelBar ws={ws} doc={doc()} usedBy={usedBy} onError={notify} />}</Show>
+            <Show when={!activeExtra() && active()}>{(doc) => (
+                <KernelBar
+                  ws={ws}
+                  doc={doc()}
+                  usedBy={usedBy}
+                  onError={notify}
+                  onPreview={isPreviewable(doc().path) ? () => void previewDoc(doc()) : undefined}
+                />
+              )}</Show>
             <div class="doc-area" ref={docArea}>
               <div class="table-hosts">
                 <For each={extras()}>

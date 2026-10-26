@@ -375,6 +375,37 @@ impl Daemon {
                         .await?,
                 )?
             }
+            Call::PreviewDocument { path, project } => {
+                let file = files::resolve(&path)?;
+                if !crate::preview::previewable(&file) {
+                    bail!("{} is not a Quarto document (.qmd or .Rmd)", file.display());
+                }
+                if !file.is_file() {
+                    bail!("{} does not exist", file.display());
+                }
+                let project = project.map(|p| projects::normalize(&p)).transpose()?;
+                let (id, port) = match crate::preview::running(&self.terminals, &file) {
+                    Some(found) => found,
+                    None => {
+                        let quarto = blocking(|| {
+                            Ok(crate::preview::find_quarto(
+                                &crate::kernelspecs::Search::from_env(),
+                            ))
+                        })
+                        .await?
+                        .with_context(crate::preview::install_advice)?;
+                        let port = crate::preview::free_port()?;
+                        let mut launch =
+                            crate::preview::launch(&quarto, &file, port, project.clone());
+                        if let Some(root) = project {
+                            launch.env =
+                                blocking(move || Ok(crate::preview::env(Path::new(&root)))).await?;
+                        }
+                        (self.terminals.start(launch).await?.id, port)
+                    }
+                };
+                serde_json::to_value(crate::preview::ready(&self.terminals, &id, port).await?)?
+            }
             Call::ServePage { path } => {
                 let path = files::resolve(&path)?;
                 serde_json::to_value(self.pages.serve(&path).await?)?

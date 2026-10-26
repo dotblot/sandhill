@@ -260,6 +260,14 @@ export interface PageUrl {
   path: string;
 }
 
+/** A document's preview (`preview_document`): `quarto preview` in a terminal of its own. */
+export interface PreviewInfo {
+  /** Where its page is on the daemon's machine: `http://127.0.0.1:{port}/…`. */
+  url: string;
+  /** Closing it ends the preview. */
+  terminal: TerminalInfo;
+}
+
 /** Whether a plot's session can draw it again (`redraw_plot`), and why not. */
 export interface PlotRedraw {
   can: boolean;
@@ -613,6 +621,8 @@ export interface Blob {
 
 /** `kind` of a plain shell terminal; agents use their own kind, like "claude". */
 export const TERMINAL_SHELL = "shell";
+/** `kind` of the terminal a document's preview runs in. */
+export const TERMINAL_PREVIEW = "preview";
 
 export interface FileStat {
   path: string;

@@ -146,4 +146,20 @@ describe("KernelBar", () => {
     dispose();
     root.remove();
   });
+
+  it("offers Quarto Preview when the app says the document has one", () => {
+    const ws = fakeWorkspace([]);
+    const previewed: number[] = [];
+    const root = document.body.appendChild(document.createElement("div"));
+    const [onPreview, setOnPreview] = createSignal<(() => void) | undefined>();
+    const dispose = render(() => <KernelBar ws={ws} doc={fakeDoc(() => undefined)} onError={() => {}} onPreview={onPreview()} />, root);
+    const preview = () => [...root.querySelectorAll("button")].find((b) => b.textContent === "Preview");
+    expect(preview()).toBeUndefined();
+    setOnPreview(() => () => previewed.push(1));
+    expect(preview()!.title).toContain("⇧⌘K");
+    preview()!.click();
+    expect(previewed).toEqual([1]);
+    dispose();
+    root.remove();
+  });
 });

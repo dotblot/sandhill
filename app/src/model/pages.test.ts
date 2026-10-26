@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cases from "../../../tests/fixtures/pages.json";
 import type { Plot } from "../backend/types";
-import { atPort, browserOpener, fileItem, forViewer, fromJournal, fromRun, localPort, PAGE_MIME, PLOTLY_MIME, plotlyPage, titleOf, urlItem } from "./pages";
+import { atPort, browserOpener, fileItem, forViewer, fromJournal, fromRun, isPreviewable, localPort, PAGE_MIME, PLOTLY_MIME, plotlyPage, previewItem, titleOf, urlItem } from "./pages";
 import type { RunState } from "./runs";
 
 describe("pages", () => {
@@ -66,6 +66,11 @@ describe("pages", () => {
       title: "multiqc_report.html",
       path: "/p/qc/multiqc_report.html",
     });
+  });
+
+  it("previews Quarto documents", () => {
+    expect(previewItem("/p/qc/report.qmd", 9)).toEqual({ key: "preview:/p/qc/report.qmd", tsMs: 9, exact: true, title: "report.qmd", preview: "/p/qc/report.qmd" });
+    expect(["a.qmd", "b.Rmd", "c.R", "d.ipynb", "e.md"].filter(isPreviewable)).toEqual(["a.qmd", "b.Rmd"]);
   });
 
   it("opens an app's address from a link", () => {

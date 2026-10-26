@@ -15,9 +15,9 @@ use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, GitAction, GitCommitInfo, GitDiff, GitDone, GitLog,
     GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, KernelspecInfo, Outcome,
-    PackageUpdates, Packages, PageUrl, PingReply, ProjectInfo, Request, RunStarted, ServerMessage,
-    SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter, TableRows,
-    TableSort, TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
+    PackageUpdates, Packages, PageUrl, PingReply, PreviewInfo, ProjectInfo, Request, RunStarted,
+    ServerMessage, SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter,
+    TableRows, TableSort, TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -377,6 +377,14 @@ impl Client {
         self.call(Call::SessionPages {
             session: session.into(),
             limit,
+        })
+        .await
+    }
+
+    pub async fn preview_document(&self, path: &str) -> Result<PreviewInfo> {
+        self.call(Call::PreviewDocument {
+            path: path.into(),
+            project: None,
         })
         .await
     }
