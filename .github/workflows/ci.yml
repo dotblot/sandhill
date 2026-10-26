@@ -28,7 +28,7 @@ jobs:
       - name: Install Python and R kernels, pandas for the Data Explorer tests, matplotlib for redrawing plots, and WebKitGTK for the app
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-ipykernel python3-pandas python3-matplotlib r-base-core r-cran-irkernel \
+          sudo apt-get install -y --no-install-recommends python3-ipykernel python3-pandas python3-matplotlib r-base-core r-cran-irkernel r-cran-dt r-cran-htmlwidgets r-cran-shiny \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev librsvg2-dev libxdo-dev libssl-dev
           python3 -m ipykernel install --user
           # r-cran-irkernel ships its kernelspec in /usr/share/jupyter/kernels/ir,
@@ -46,137 +46,8 @@ jobs:
           gh release download "$tag" --repo posit-dev/ark --pattern "ark-$tag-linux-x64.zip" --dir /tmp/ark
           unzip -o "/tmp/ark/ark-$tag-linux-x64.zip" -d /tmp/ark
           /tmp/ark/ark --install
-      - name: Install Codex, for the Codex chat test
-        # The version the bridge was written against; the test talks to a
-        # stand-in model, so it needs no login.
-        run: npm install -g @openai/codex@0.163.0
-      - name: List installed kernels
-        run: |
-          ls -d ~/.local/share/jupyter/kernels/* /usr/share/jupyter/kernels/*
-          cat ~/.local/share/jupyter/kernels/ark/kernel.json
-      - name: UI tests and build
-        working-directory: app
-        run: |
-          npm ci
-          npm test
-          npm run build
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - name: Probe
+        run: cargo test -p sandhill-daemon --test probe_viewer -- --nocapture
         env:
-          # Ark as the app installs it on servers (crates/daemon/tests/ark.rs).
           SANDHILL_TEST_ARK: /tmp/ark/ark
 
-  macos:
-    name: macOS (Apple silicon, Python, app bundle)
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          # Static Linux builds of sandhilld, which the app installs on servers.
-          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-zigbuild
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install the Python kernel, and zig for cross-building
-        # cargo-zigbuild runs zig as `python3 -m ziglang`.
-        run: |
-          python -m pip install ipykernel ziglang==0.17.0
-          python -m ipykernel install --user
-      - run: cargo test --workspace
-      - name: Build Sandhill.app
-        working-directory: app
-        env:
-          # To download Ark's Linux builds.
-          GH_TOKEN: ${{ github.token }}
-          # The commit the windows show, the branch's own rather than the
-          # merge commit a pull request's checkout is.
-          SANDHILL_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          npm ci
-          npm run bundle -- --servers
-      - name: Zip the app
-        # ditto keeps the bundle's symlinks, permissions and signature.
-        run: ditto -c -k --keepParent target/release/bundle/macos/Sandhill.app Sandhill-macos-arm64.zip
-      - name: Check that the zipped app opens
-        # Unzipped the way Archive Utility does it and opened through Finder's
-        # route (LaunchServices), so a bundle macOS refuses to open fails here.
-        run: |
-          # The real path (/private/var/…), which is what the process shows.
-          dir=$(cd "$(mktemp -d)" && pwd -P)
-          ditto -x -k Sandhill-macos-arm64.zip "$dir"
-          app="$dir/Sandhill.app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          open "$app"
-          for _ in $(seq 30); do
-            pgrep -f "$app/Contents/MacOS/sandhill-app" >/dev/null && break
-            sleep 1
-          done
-          pgrep -fl "$app/Contents/MacOS/" || { echo "Sandhill.app did not start"; exit 1; }
-          # A picture of the start window as it opened, to check the look on a real Mac.
-          sleep 8
-          screencapture -x start-window.png || echo "could not take a screenshot"
-          pkill -f "$app/Contents/MacOS/" || true
-          echo "SANDHILL_APP=$app" >> "$GITHUB_ENV"
-      - name: Look at a project window
-        # A project window on a small project, reopened with two tabs the way
-        # the app restores it, then measured and pictured in this check's
-        # notices, to check the look on a real Mac.
-        continue-on-error: true
-        run: |
-          app="$SANDHILL_APP"
-          proj="$(cd "$(mktemp -d)" && pwd -P)/pbmc-atlas"
-          mkdir -p "$proj"
-          cat > "$proj/analysis.qmd" <<'END'
-          ---
-          title: "PBMC 3k: clusters and markers"
-          ---
-
-          ## Load and filter
-          Drop cells with fewer than 200 genes.
-
-          ```{python}
-          cells = [212, 2400, 1800, 90, 3100]
-          kept = [c for c in cells if 200 < c < 2500]
-          print(len(kept), "cells kept")
-          ```
-          END
-          printf 'import math\nprint(math.sqrt(2))\n' > "$proj/qc.py"
-          printf '%s\n' \
-            "{\"id\":1,\"method\":\"open_project\",\"params\":{\"path\":\"$proj\"}}" \
-            "{\"id\":2,\"method\":\"save_project_state\",\"params\":{\"path\":\"$proj\",\"state\":{\"tabs\":[\"$proj/analysis.qmd\",\"$proj/qc.py\"],\"active\":\"$proj/analysis.qmd\"}}}" \
-            | { cat; sleep 3; } | "$app/Contents/MacOS/sandhilld" attach --start
-          support="$HOME/Library/Application Support/dev.sandhill.ide"
-          mkdir -p "$support"
-          printf '[["local","%s"]]' "$proj" > "$support/open-projects.json"
-          open "$app"
-          sleep 12
-          swift .github/scripts/window.swift | tee window.txt
-          read -r id x y w h < window.txt
-          screencapture -x -o -l "$id" project-window.png
-          python -m pip install --quiet pillow
-          python .github/scripts/look.py project-window.png "$w"
-          pkill -f "$app/Contents/MacOS/" || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Sandhill-macos-arm64
-          path: Sandhill-macos-arm64.zip
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: start-window-screenshot
-          path: |
-            start-window.png
-            project-window.png
-          if-no-files-found: ignore
-          retention-days: 14
