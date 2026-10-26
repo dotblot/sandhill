@@ -61,5 +61,12 @@
     "data": {"application/vnd.sandhill.page+json": {"url": "http://127.0.0.1:7123", "title": "http://127.0.0.1:7123"}, "text/plain": "http://127.0.0.1:7123 (in the Viewer)"},
     "metadata": {},
     "viewer": true
+  },
+  {
+    "name": "a web page R opens in the browser isn't the Viewer's",
+    "file": null,
+    "data": {"application/vnd.sandhill.page+json": {"url": "https://bioconductor.org/", "title": "https://bioconductor.org/", "browser": true}, "text/plain": "Opening https://bioconductor.org/ in the browser"},
+    "metadata": {},
+    "viewer": false
   }
 ]

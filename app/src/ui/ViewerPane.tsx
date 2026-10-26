@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, type JSX, Match, on, onCleanup, Show, Switch, untrack } from "solid-js";
 import { isBlobRef, type PageUrl, type SessionInfo, type SessionPlots } from "../backend/types";
 import { ago } from "../docs/cellOutput";
-import { atPort, fileItem, fromJournal, fromRun, localPort, MAX_PAGES, type PageItem, pageCount, plotlyPage } from "../model/pages";
+import { atPort, fileItem, fromJournal, fromRun, localPort, MAX_PAGES, type PageItem, pageCount, plotlyPage, urlItem } from "../model/pages";
 import { afterClear, mergePlots, plotSource } from "../model/plots";
 import type { Workspace } from "../model/workspace";
 import { ask, notify } from "./dialogs";
@@ -12,8 +12,11 @@ const LOAD = 20;
 /** HTML files opened from the tree that the pane remembers. */
 const FILES = 20;
 
-/** A page to bring to the front: an HTML file to open, or a page shown, by key. */
-export type ViewerRequest = { path: string } | { key: string };
+/**
+ * A page to bring to the front: an HTML file to open, an app's address (a
+ * link in the Terminal), or a page shown, by key.
+ */
+export type ViewerRequest = { path: string } | { url: string } | { key: string };
 
 /**
  * Pages run in a frame with scripts but never with the app's origin: an
@@ -57,6 +60,8 @@ export function ViewerPane(props: {
   const [cleared, setCleared] = createSignal<number | undefined>(Number(stored(clearKey)) || undefined);
   /** Bumped by Reload. */
   const [reload, setReload] = createSignal(0);
+  /** Bumped as the run of the page in front goes, for Stop. */
+  const [runTick, setRunTick] = createSignal(0);
   const [now, setNow] = createSignal(Date.now());
   const clock = setInterval(() => setNow(Date.now()), 30_000);
   onCleanup(() => clearInterval(clock));
@@ -86,6 +91,13 @@ export function ViewerPane(props: {
     setPicked(i === list.length - 1 ? undefined : list[i]?.key);
   };
   const step = (by: number) => pick(index() + by);
+  /** The run of the app in front while it still runs, which Stop ends. */
+  const appRun = () => {
+    runTick();
+    const p = item();
+    const run = p?.url && p.run ? ws.runs.get(p.run) : undefined;
+    return run && run.phase !== "done" ? run : undefined;
+  };
 
   /** Adds pages; with `jump`, a new one comes to the front. */
   const add = (items: PageItem[], jump: boolean) => {
@@ -137,6 +149,7 @@ export function ViewerPane(props: {
   const showing = new Set<string>();
   onCleanup(
     ws.runs.watchAll((run) => {
+      if (run.id === untrack(item)?.run) setRunTick((n) => n + 1);
       if (run.quiet || !untrack(ids).includes(run.session)) return;
       if (run.phase !== "done") {
         const found = fromRun(run);
@@ -161,6 +174,9 @@ export function ViewerPane(props: {
           add([file], false);
           setPicked(undefined);
           saveFiles(filesKey, pages());
+        } else if ("url" in request) {
+          add([urlItem(request.url, Date.now())], false);
+          setPicked(undefined);
         } else if (pages().some((p) => p.key === request.key)) {
           setPicked(request.key);
           // The newest page is the one in front when none is picked.
@@ -195,8 +211,18 @@ export function ViewerPane(props: {
     }
   }
 
+  async function stop() {
+    const run = appRun();
+    if (!run) return;
+    try {
+      await ws.interrupt(run.session);
+    } catch (err) {
+      notify(`Could not stop the app: ${message(err)}`);
+    }
+  }
+
   const source = (p: PageItem) => (p.run ? plotSource(p, props.shortName) : props.shortName(p.path ?? p.title));
-  const label = (p: PageItem) => (p.run ? `${source(p)} · ${p.url ?? p.title}` : source(p));
+  const label = (p: PageItem) => (p.run ? `${source(p)} · ${p.url ?? p.title}` : p.url ?? source(p));
   const where = (p: PageItem) => p.url ?? p.path ?? p.title;
 
   const onKey = (e: KeyboardEvent) => {
@@ -224,6 +250,11 @@ export function ViewerPane(props: {
         <button class="tab-btn" title="Open in browser" disabled={!item()} onClick={() => void openInBrowser()}>
           <Icon name="open" small />
         </button>
+        <Show when={appRun()}>
+          <button class="tab-btn" title="Stop the app" onClick={() => void stop()}>
+            <Icon name="stop" small />
+          </button>
+        </Show>
         <button class="tab-btn" title="Clear the Viewer" disabled={!shown().length} onClick={() => void clear()}>
           <Icon name="trash" small />
         </button>
@@ -234,8 +265,8 @@ export function ViewerPane(props: {
           when={item()}
           fallback={
             <p class="vempty">
-              Web pages show here: htmlwidgets such as DT, plotly and leaflet from the Console and scripts, and HTML reports you open from the
-              file tree. Notebooks' pages stay under their cells.
+              Web pages show here: htmlwidgets such as DT, plotly and leaflet from the Console and scripts, Shiny and other apps, and HTML
+              reports you open from the file tree. Notebooks' pages stay under their cells.
             </p>
           }
         >

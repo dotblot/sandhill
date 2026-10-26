@@ -192,6 +192,42 @@ describe("ViewerPane", () => {
     dispose();
   });
 
+  it("opens an app from a Terminal link, and stops one a run started", async () => {
+    const { ws, calls, emit } = fakeWorkspace((port) => port + 50000);
+    const { root, dispose, ask } = mount(ws);
+    await settle();
+    ask({ url: "http://localhost:8501/" });
+    await settle();
+    await settle();
+    expect(address(root)).toBe("http://localhost:8501/");
+    expect(frame(root).getAttribute("src")).toBe("http://127.0.0.1:58501/");
+    // The Terminal stops what it started.
+    expect(button(root, "Stop")).toBeUndefined();
+
+    // By the daemon's clock, after the link was opened.
+    const t = Date.now() + 1000;
+    emit({ seq: 10, session: "s1", run: "r4", msg_type: "sandhill.run_started", ts_ms: t, content: { code: "shiny::runApp()" } });
+    emit({
+      seq: 11,
+      session: "s1",
+      run: "r4",
+      msg_type: "display_data",
+      ts_ms: t + 100,
+      content: { data: { [PAGE_MIME]: { url: "http://127.0.0.1:7123", title: "http://127.0.0.1:7123" } }, metadata: {} },
+    });
+    await settle();
+    await settle();
+    expect(address(root)).toBe("Console · http://127.0.0.1:7123");
+    expect(frame(root).getAttribute("src")).toBe("http://127.0.0.1:57123/");
+    button(root, "Stop").click();
+    await settle();
+    expect(calls.filter((c) => c.method === "interrupt").map((c) => c.params)).toEqual([{ session: "s1" }]);
+    emit({ seq: 12, session: "s1", run: "r4", msg_type: "sandhill.run_finished", ts_ms: t + 9000, content: { status: "aborted" } });
+    await settle();
+    expect(button(root, "Stop")).toBeUndefined();
+    dispose();
+  });
+
   it("clears the pages, and the files opened", async () => {
     const { ws } = fakeWorkspace();
     const { root, dispose, ask } = mount(ws);

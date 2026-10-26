@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cases from "../../../tests/fixtures/pages.json";
 import type { Plot } from "../backend/types";
-import { atPort, fileItem, forViewer, fromJournal, fromRun, localPort, PAGE_MIME, PLOTLY_MIME, plotlyPage, titleOf } from "./pages";
+import { atPort, browserOpener, fileItem, forViewer, fromJournal, fromRun, localPort, PAGE_MIME, PLOTLY_MIME, plotlyPage, titleOf, urlItem } from "./pages";
 import type { RunState } from "./runs";
 
 describe("pages", () => {
@@ -66,6 +66,30 @@ describe("pages", () => {
       title: "multiqc_report.html",
       path: "/p/qc/multiqc_report.html",
     });
+  });
+
+  it("opens an app's address from a link", () => {
+    expect(urlItem("http://localhost:8501/", 9)).toEqual({ key: "url:http://localhost:8501/", tsMs: 9, exact: true, title: "http://localhost:8501/", url: "http://localhost:8501/" });
+  });
+
+  it("opens each web page R asks for in the browser once, as it asks", () => {
+    const opened: string[] = [];
+    const watch = browserOpener((url) => opened.push(url));
+    const page = (url: string, browser = true) => ({
+      output_type: "display_data" as const,
+      data: { [PAGE_MIME]: { url, title: url, ...(browser ? { browser } : {}) }, "text/plain": `Opening ${url} in the browser` },
+      metadata: {},
+    });
+    const run: RunState = { id: "r1", session: "s1", code: "browseURL(u)", phase: "running", startedMs: 0, outputs: [] };
+    watch(run);
+    watch({ ...run, outputs: [page("https://bioconductor.org/")] });
+    watch({ ...run, outputs: [page("https://bioconductor.org/"), page("http://127.0.0.1:7123", false)] });
+    watch({ ...run, phase: "done", outputs: [page("https://bioconductor.org/"), page("https://cran.r-project.org/")] });
+    expect(opened).toEqual(["https://bioconductor.org/", "https://cran.r-project.org/"]);
+    // A run that had opened its page before the window opened.
+    watch({ ...run, id: "r2", outputs: [page("https://example.org/")] });
+    watch({ ...run, id: "r2", phase: "done", outputs: [page("https://example.org/")] });
+    expect(opened).toHaveLength(2);
   });
 
   it("reaches apps on the daemon's machine at a port here", () => {

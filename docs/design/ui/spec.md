@@ -608,12 +608,15 @@ omp.
 - Plots has a zoom dialog: set the size or pick a preset, then copy, or save as PNG, PDF
   or SVG. Plots stay white in dark mode.
 - Viewer shares the bottom card with Plots, as a second tab. Its tab strip has Back,
-  Forward, Reload, Open in browser and Clear, then the pane buttons; under it, one
+  Forward, Reload, Open in browser, Stop (only while the app in front runs) and
+  Clear, then the pane buttons; under it, one
   11px line says where the page in front came from ("Console · datatables",
   "results/multiqc_report.html") and "2 of 5 · just now". The page fills the rest,
   white in dark mode. A page shown from the Console leaves one line there, the
   page's name as a link and "in the Viewer". An `.html` file in the file tree opens
-  here when clicked, and its menu says Open in Viewer.
+  here when clicked, and its menu says Open in Viewer. A link in the Terminal to the
+  server's own `localhost` (Streamlit, Dash, `quarto preview`) opens here too; its
+  line is the address.
 
 ## Status bar (26px)
 - Left: the connection, then the kernel state ("R idle", "Python running") and
