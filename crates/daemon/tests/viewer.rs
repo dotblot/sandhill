@@ -20,6 +20,7 @@ const PAGE: &str = "application/vnd.sandhill.page+json";
 struct TestDaemon {
     _daemon: Arc<Daemon>,
     socket: PathBuf,
+    state: PathBuf,
 }
 
 impl TestDaemon {
@@ -36,11 +37,20 @@ impl TestDaemon {
         TestDaemon {
             _daemon: daemon,
             socket,
+            state: state.to_path_buf(),
         }
     }
 
     async fn client(&self) -> Client {
         Client::connect_unix(&self.socket).await.unwrap()
+    }
+
+    /// The end of a session's kernel log, to say what a kernel was doing.
+    fn kernel_log(&self, session: &str) -> String {
+        let log = std::fs::read_to_string(self.state.join(format!("kernels/{session}.log")))
+            .unwrap_or_default();
+        let lines: Vec<&str> = log.lines().collect();
+        lines[lines.len().saturating_sub(40)..].join("\n")
     }
 }
 
@@ -55,18 +65,29 @@ async fn kernels(client: &Client) -> Vec<String> {
 }
 
 /// Runs code and returns its display outputs' data.
-async fn displays(client: &mut Client, session: &str, code: &str) -> Vec<Value> {
+async fn displays(
+    daemon: &TestDaemon,
+    client: &mut Client,
+    session: &str,
+    code: &str,
+) -> Vec<Value> {
     client.subscribe(session, None).await.unwrap();
     let run = client.execute(session, code, None).await.unwrap().run;
     let mut found = Vec::new();
+    let mut seen = Vec::new();
     loop {
-        let event = tokio::time::timeout(TIMEOUT, client.next_event())
-            .await
-            .expect("timed out waiting for the run")
-            .expect("connection closed");
+        let Ok(event) = tokio::time::timeout(TIMEOUT, client.next_event()).await else {
+            panic!(
+                "timed out waiting for `{code}`, having seen {seen:?}; the kernel's log ends:\n{}",
+                daemon.kernel_log(session)
+            );
+        };
+        let event = event.expect("connection closed");
         if event.run.as_deref() != Some(run.as_str()) {
             continue;
         }
+        let content: String = event.content.to_string().chars().take(300).collect();
+        seen.push(format!("{}: {content}", event.msg_type));
         match event.msg_type.as_str() {
             "display_data" | "execute_result" => found.push(event.content["data"].clone()),
             "error" => panic!("the run failed: {}", event.content),
@@ -116,6 +137,11 @@ async fn r_has(client: &mut Client, session: &str, package: &str) -> bool {
 
 #[tokio::test]
 async fn r_pages_and_widgets_reach_the_viewer_in_every_r_kernel() {
+    // The daemon's warnings, such as a kernel message it couldn't read.
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_max_level(tracing::Level::WARN)
+        .try_init();
     let tmp = tempfile::tempdir().unwrap();
     let daemon = TestDaemon::start(&tmp.path().join("state")).await;
     let mut client = daemon.client().await;
@@ -134,6 +160,7 @@ async fn r_pages_and_widgets_reach_the_viewer_in_every_r_kernel() {
         // A page htmltools saves and hands to the viewer, as print() of an
         // htmlwidget does.
         let shown = displays(
+            &daemon,
             &mut client,
             &session,
             "htmltools::html_print(htmltools::tags$b('hi'))",
@@ -152,7 +179,7 @@ async fn r_pages_and_widgets_reach_the_viewer_in_every_r_kernel() {
 
         if r_has(&mut client, &session, "DT").await {
             // Ark prints a widget through the viewer; IRkernel shows its own HTML.
-            let shown = displays(&mut client, &session, "DT::datatable(head(iris))").await;
+            let shown = displays(&daemon, &mut client, &session, "DT::datatable(head(iris))").await;
             let html = shown
                 .iter()
                 .find(|d| d.get("text/html").is_some())
@@ -191,7 +218,10 @@ async fn the_viewer_takes_pages_but_leaves_tables_to_the_console() {
     let code = "from IPython.display import HTML, display\n\
                 display(HTML('<table><tr><td>1</td></tr></table>'))\n\
                 display(HTML('<div id=\"x\"></div><script>x.textContent = \"plotly\"</script>'))";
-    assert_eq!(displays(&mut client, &session, code).await.len(), 2);
+    assert_eq!(
+        displays(&daemon, &mut client, &session, code).await.len(),
+        2
+    );
     let pages = client.session_pages(&session, None).await.unwrap();
     assert_eq!(pages.plots.len(), 1, "{pages:?}");
     assert!(
