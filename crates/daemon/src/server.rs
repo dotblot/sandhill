@@ -12,7 +12,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
     Blob, Call, CellEdited, Event, FileWritten, HelpPage, HelpSource, HelpTopics, HistoryPage,
     Outcome, PROTOCOL_VERSION, PackageUpdates, Packages, PingReply, PlotRedraw, Request,
-    ServerMessage, SessionStatus, Subscribed, TableRows, TableSummary, Variables,
+    ServerMessage, SessionStatus, Subscribed, TERMINAL_JOB, TableRows, TableSummary, Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -881,6 +881,13 @@ impl Daemon {
             }
             Call::SystemStats { path } => {
                 let journal = self.journal.clone();
+                let jobs: Vec<(String, u32)> = self
+                    .terminals
+                    .list()
+                    .into_iter()
+                    .filter(|t| t.kind == TERMINAL_JOB && t.running)
+                    .filter_map(|t| Some((t.id.clone(), self.terminals.pid(&t.id)?)))
+                    .collect();
                 serde_json::to_value(
                     blocking(move || {
                         let path = match path {
@@ -893,7 +900,7 @@ impl Daemon {
                             .filter(|s| s.status != SessionStatus::Ended)
                             .filter_map(|s| Some((s.id, s.pid?)))
                             .collect();
-                        Ok(crate::system::stats(&path, &kernels))
+                        Ok(crate::system::stats(&path, &kernels, &jobs))
                     })
                     .await?,
                 )?
@@ -954,6 +961,39 @@ impl Daemon {
                 let mut launch = crate::agents::launch(&kind, &options, &context).await?;
                 launch.size = cols.zip(rows);
                 serde_json::to_value(self.terminals.start(launch).await?)?
+            }
+            Call::StartJob { job, cwd, project } => {
+                let project = project.map(|p| projects::normalize(&p)).transpose()?;
+                let cwd = cwd.map(|cwd| files::resolve(&cwd)).transpose()?;
+                let launch =
+                    blocking(move || crate::jobs::launch(&job, cwd.as_deref(), project.as_deref()))
+                        .await?;
+                serde_json::to_value(self.terminals.start(launch).await?)?
+            }
+            Call::StopTerminal { terminal } => {
+                self.terminals.stop(&terminal).await?;
+                Value::Null
+            }
+            Call::RestartTerminal {
+                terminal,
+                options: _,
+                cols: _,
+                rows: _,
+                prompt: _,
+            } if self
+                .terminals
+                .info(&terminal)
+                .is_ok_and(|t| t.kind == TERMINAL_JOB) =>
+            {
+                // A job runs again as it was asked to, in the same place.
+                let info = self.terminals.info(&terminal)?;
+                let job = info.job.unwrap_or_default();
+                let cwd = PathBuf::from(&info.cwd);
+                let project = info.project;
+                let launch =
+                    blocking(move || crate::jobs::launch(&job, Some(&cwd), project.as_deref()))
+                        .await?;
+                serde_json::to_value(self.terminals.restart(&terminal, launch, &[]).await?)?
             }
             Call::RestartTerminal {
                 terminal,

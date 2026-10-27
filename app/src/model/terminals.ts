@@ -9,6 +9,8 @@ import type { Backend } from "../backend";
 import {
   type AgentInfo,
   type AgentOptions,
+  type JobSpec,
+  TERMINAL_JOB,
   TERMINAL_PREVIEW,
   TERMINAL_SHELL,
   type TerminalEvent,
@@ -20,6 +22,15 @@ import type { Answer, ChatEntry } from "./chat";
 
 /** Output kept for a terminal no view shows yet. Older output is dropped. */
 const MAX_PENDING = 4 << 20;
+
+/** Kinds of terminal that aren't agents. */
+const NOT_AGENTS = new Set([TERMINAL_SHELL, TERMINAL_PREVIEW, TERMINAL_JOB]);
+
+/** Where a window keeps the time up to which it has told of jobs ending. */
+export interface JobsSeen {
+  get(): number | undefined;
+  set(ms: number): void;
+}
 
 /** Where a terminal's output goes. `reset` comes before a replay that doesn't follow on. */
 export interface TerminalSink {
@@ -53,19 +64,26 @@ export class TerminalStore {
   private setList: Setter<TerminalInfo[]>;
   private follows = new Map<string, Follow>();
   private chats = new Map<string, Conversation>();
+  /** Called once for each job that ends, whether this window saw it end or was away. */
+  onJobEnded?: (job: TerminalInfo) => void;
 
   constructor(
     private backend: Backend,
     /** The project folder; only its terminals are listed. */
     readonly project: string,
+    private jobsSeen: JobsSeen = memorySeen(),
   ) {
     [this.list, this.setList] = createSignal<TerminalInfo[]>([]);
     backend.onTerminal((event) => this.onEvent(event));
   }
 
-  /** The agents' terminals: not shells, nor the ones documents' previews run in. */
+  /** The agents' terminals: not shells, jobs, nor the ones documents' previews run in. */
   agents(): TerminalInfo[] {
-    return this.list().filter((t) => t.kind !== TERMINAL_SHELL && t.kind !== TERMINAL_PREVIEW);
+    return this.list().filter((t) => !NOT_AGENTS.has(t.kind));
+  }
+
+  jobs(): TerminalInfo[] {
+    return this.list().filter((t) => t.kind === TERMINAL_JOB);
   }
 
   shells(): TerminalInfo[] {
@@ -89,6 +107,7 @@ export class TerminalStore {
     const all = await this.backend.call<TerminalInfo[]>("list_terminals");
     const mine = all.filter((t) => t.project === this.project).sort((a, b) => a.created_ms - b.created_ms);
     this.setList(mine);
+    this.tellJobsEnded(mine);
     const ids = new Set(mine.map((t) => t.id));
     for (const id of this.follows.keys()) if (!ids.has(id)) this.follows.delete(id);
     for (const id of this.chats.keys()) if (!ids.has(id)) this.forgetChat(id);
@@ -118,6 +137,20 @@ export class TerminalStore {
     this.setList((list) => [...list.filter((t) => t.id !== info.id), info]);
     await this.subscribe(info.id);
     return info;
+  }
+
+  /** Runs a script or a command line in the background, in the project's folder. */
+  async startJob(job: JobSpec): Promise<TerminalInfo> {
+    const info = await this.backend.call<TerminalInfo>("start_job", { ...job, project: this.project });
+    if (!this.follows.has(info.id)) this.follows.set(info.id, newFollow(0));
+    this.setList((list) => [...list.filter((t) => t.id !== info.id), info]);
+    await this.subscribe(info.id);
+    return info;
+  }
+
+  /** Ends a terminal's program, keeping the terminal and its output. */
+  stop(id: string): Promise<void> {
+    return this.backend.call("stop_terminal", { terminal: id });
   }
 
   /** Names a conversation (or takes its name away, with a blank name). */
@@ -223,7 +256,8 @@ export class TerminalStore {
       // From where this window got to; the first time, the recent output.
       const from = follow.end >= 0 ? follow.end : undefined;
       // An agent's conversation too, from the entry this window got to.
-      const agent = this.get(id)?.kind !== TERMINAL_SHELL;
+      const kind = this.get(id)?.kind;
+      const agent = kind === undefined || !NOT_AGENTS.has(kind);
       const chat_from = agent ? this.conversation(id).next : undefined;
       const reply = await this.backend.call<TerminalSubscribed>("subscribe_terminal", { terminal: id, from, chat_from });
       // Output we had is gone from the daemon's log: start over from what it kept.
@@ -258,7 +292,24 @@ export class TerminalStore {
     if (event.agent) this.update(event.terminal, (t) => ({ ...t, agent: event.agent }));
     // Not the end of a program started again since.
     const exit = event.exit;
-    if (exit) this.update(event.terminal, (t) => (exit.ended_ms < (t.started_ms ?? 0) ? t : { ...t, running: false, exit }));
+    if (exit) {
+      this.update(event.terminal, (t) => (exit.ended_ms < (t.started_ms ?? 0) ? t : { ...t, running: false, exit }));
+      this.tellJobsEnded(this.list());
+    }
+  }
+
+  /**
+   * Tells of jobs that ended since the window last told of one. The first
+   * time, jobs that had already ended are taken as told.
+   */
+  private tellJobsEnded(list: TerminalInfo[]) {
+    const ends = list
+      .filter((t) => t.kind === TERMINAL_JOB && !t.running && t.exit && t.exit.ended_ms >= (t.started_ms ?? 0))
+      .sort((a, b) => a.exit!.ended_ms - b.exit!.ended_ms);
+    const seen = this.jobsSeen.get();
+    const latest = Math.max(seen ?? 0, ...ends.map((t) => t.exit!.ended_ms));
+    if (seen !== undefined) for (const job of ends) if (job.exit!.ended_ms > seen) this.onJobEnded?.(job);
+    if (seen === undefined || latest > seen) this.jobsSeen.set(latest);
   }
 
   private conversation(id: string): Conversation {
@@ -305,6 +356,11 @@ export class TerminalStore {
   private update(id: string, change: (t: TerminalInfo) => TerminalInfo) {
     this.setList((list) => list.map((t) => (t.id === id ? change(t) : t)));
   }
+}
+
+function memorySeen(): JobsSeen {
+  let seen: number | undefined;
+  return { get: () => seen, set: (ms) => (seen = ms) };
 }
 
 function newFollow(end: number): Follow {

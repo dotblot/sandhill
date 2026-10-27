@@ -35,8 +35,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use sandhill_proto::{
-    AgentOptions, ChatEntry, ServerMessage, TERMINAL_SHELL, TerminalEvent, TerminalExit,
-    TerminalInfo, TerminalSubscribed,
+    AgentOptions, ChatEntry, JobSpec, ServerMessage, TerminalEvent, TerminalExit, TerminalInfo,
+    TerminalSubscribed,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -209,6 +209,9 @@ struct Meta {
     /// The name the user gave it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    /// For a job, what it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    job: Option<JobSpec>,
 }
 
 /// What to run in a new terminal.
@@ -224,6 +227,8 @@ pub struct Launch {
     pub project: Option<String>,
     pub options: AgentOptions,
     pub size: Option<(u16, u16)>,
+    /// For a job, what it runs.
+    pub job: Option<JobSpec>,
 }
 
 /// Every terminal under `<state>/terminals`.
@@ -278,6 +283,7 @@ impl Terminals {
             command: command_of(&launch),
             build: crate::build_id().to_string(),
             name: None,
+            job: launch.job.clone(),
         };
         std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
         write_report(&paths, serde_json::Map::new(), &launch.options)?;
@@ -322,6 +328,7 @@ impl Terminals {
         meta.options = launch.options.clone();
         meta.command = command_of(&launch);
         meta.build = crate::build_id().to_string();
+        meta.job = launch.job.clone();
         std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
         // What the old program reported no longer holds, except what
         // finds its conversation again.
@@ -446,7 +453,18 @@ impl Terminals {
             agent: read_json::<Value>(&paths.agent()),
             outdated,
             name: meta.name,
+            job: meta.job,
         })
+    }
+
+    /// The process id of a terminal's program while it runs.
+    pub fn pid(&self, id: &str) -> Option<u32> {
+        let paths = self.paths(id).ok()?;
+        if paths.exit().exists() {
+            return None;
+        }
+        let host = read_json::<Value>(&paths.host())?;
+        u32::try_from(host.get("pid")?.as_u64()?).ok()
     }
 
     /// The program a terminal runs and its arguments.
@@ -563,6 +581,14 @@ impl Terminals {
                 }),
             },
         })
+    }
+
+    /// Ends the program if it runs, keeping the terminal and its output.
+    pub async fn stop(&self, id: &str) -> Result<()> {
+        if self.info(id)?.running {
+            self.send(id, ToHost::Hangup).await?;
+        }
+        Ok(())
     }
 
     /// Ends the program if it runs, waits for it, and removes the terminal.
@@ -848,7 +874,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
 /// records them.
 fn outdated(meta: &Meta) -> bool {
     let ours = crate::build_id();
-    meta.kind != TERMINAL_SHELL && !ours.is_empty() && meta.build != ours
+    crate::agents::is_agent(&meta.kind) && !ours.is_empty() && meta.build != ours
 }
 
 #[cfg(test)]
@@ -869,6 +895,7 @@ mod tests {
             command: Vec::new(),
             build: build.into(),
             name: None,
+            job: None,
         };
         let ours = crate::build_id();
         assert!(!ours.is_empty());
@@ -880,7 +907,8 @@ mod tests {
         }))
         .unwrap();
         assert!(outdated(&old));
-        // A shell has no tools to miss.
-        assert!(!outdated(&meta(TERMINAL_SHELL, "")));
+        // A shell or a job has no tools to miss.
+        assert!(!outdated(&meta(sandhill_proto::TERMINAL_SHELL, "")));
+        assert!(!outdated(&meta(sandhill_proto::TERMINAL_JOB, "")));
     }
 }

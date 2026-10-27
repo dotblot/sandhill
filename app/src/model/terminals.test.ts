@@ -172,6 +172,33 @@ describe("TerminalStore", () => {
       { method: "terminal_input", params: { terminal: "a", data: "\x1b" } },
     ]);
   });
+
+  it("tells of jobs that end, and of those that ended while the window was away", async () => {
+    const job = (id: string, extra: Partial<TerminalInfo>) => info(id, { kind: "job", title: `${id}.sh`, started_ms: 1, ...extra });
+    const terminals = [job("old", { running: false, exit: { code: 0, ended_ms: 5 } }), job("run", {})];
+    const fake = fakeBackend(terminals);
+    let seen: number | undefined;
+    const ended: string[] = [];
+    const store = new TerminalStore(fake.backend, "/p", { get: () => seen, set: (ms) => (seen = ms) });
+    store.onJobEnded = (t) => ended.push(`${t.id} ${t.exit?.code}`);
+    await store.refresh();
+    expect(store.jobs().map((t) => t.id)).toEqual(["old", "run"]);
+    expect(store.agents()).toEqual([]);
+    // Jobs that had ended before the window ever looked aren't news.
+    expect(ended).toEqual([]);
+
+    fake.emit({ terminal: "run", exit: { code: 3, ended_ms: 20 } });
+    expect(ended).toEqual(["run 3"]);
+    expect(seen).toBe(20);
+
+    // Another window, after one more ended while none was open.
+    terminals[1] = job("run", { running: false, exit: { code: 3, ended_ms: 20 } });
+    terminals.push(job("late", { running: false, exit: { code: 0, ended_ms: 30 } }));
+    const next = new TerminalStore(fakeBackend(terminals).backend, "/p", { get: () => seen, set: (ms) => (seen = ms) });
+    next.onJobEnded = (t) => ended.push(`${t.id} ${t.exit?.code}`);
+    await next.refresh();
+    expect(ended).toEqual(["run 3", "late 0"]);
+  });
 });
 
 const tick = () => new Promise((done) => setTimeout(done, 0));

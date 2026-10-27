@@ -35,6 +35,8 @@ export interface TreeActions {
   /** What opening it is called in the menu: "Open", unless said. */
   openLabel?(path: string): string;
   open(path: string): void;
+  /** Runs a script as a background job; undefined for files that can't be. */
+  runJob?(path: string): (() => void) | undefined;
   /** What a new file starts with. */
   newText(name: string): string;
   /**
@@ -390,10 +392,17 @@ function TreeMenu(props: TreeProps & { ops: Ops; at: MenuAt; onClose: () => void
       <Show
         when={at.dir}
         fallback={
-          <Show when={props.actions.openable(at.path)}>
-            <Item label={props.actions.openLabel?.(at.path) ?? "Open"} keys="⌘↓" onClick={run(() => props.actions.open(at.path))} />
-            <div class="mm-sep" />
-          </Show>
+          <>
+            <Show when={props.actions.openable(at.path)}>
+              <Item label={props.actions.openLabel?.(at.path) ?? "Open"} keys="⌘↓" onClick={run(() => props.actions.open(at.path))} />
+            </Show>
+            <Show when={props.actions.runJob?.(at.path)}>
+              {(runJob) => <Item label="Run as job" onClick={run(runJob())} />}
+            </Show>
+            <Show when={props.actions.openable(at.path) || props.actions.runJob?.(at.path)}>
+              <div class="mm-sep" />
+            </Show>
+          </>
         }
       >
         <NewItems dir={dirOf()} name={top() ? projectName(props.tree.root()) : name()} onPick={(kind) => run(() => props.tree.startNew(kind, dirOf()))()} />

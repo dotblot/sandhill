@@ -1,14 +1,17 @@
 //! What the machine is doing, for the resource rows in the app's left pane:
 //! how busy the CPU is, memory in use, NVIDIA GPUs, the disk a project is
-//! on, and the memory each kernel holds. Linux reads `/proc`; macOS asks the
-//! kernel through libc.
+//! on, the memory each kernel holds, and the CPU and memory each job uses.
+//! Linux reads `/proc`; macOS asks the kernel through libc.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use sandhill_proto::{CpuStats, DiskStats, GpuStats, MemoryStats, SessionMemory, SystemStats};
+use sandhill_proto::{
+    CpuStats, DiskStats, GpuStats, JobUsage, MemoryStats, SessionMemory, SystemStats,
+};
 
 /// A CPU percentage needs two readings. Each call measures from the
 /// previous one; without a recent one it takes a second reading after this.
@@ -27,10 +30,22 @@ struct CpuTimes {
 
 static LAST_CPU: Mutex<Option<(Instant, CpuTimes)>> = Mutex::new(None);
 
+/// Each job's CPU time at its last measuring, to measure the next from.
+static LAST_JOBS: Mutex<Option<HashMap<String, (Instant, Duration)>>> = Mutex::new(None);
+
+/// What a process and the processes it started hold now, and the CPU time
+/// they have used so far (processes that have ended no longer count).
+#[derive(Debug, Clone, Copy)]
+struct TreeUsage {
+    rss: u64,
+    cpu: Duration,
+}
+
 /// A snapshot of the machine. `path` picks the disk; `kernels` pairs each
-/// running session with its kernel's process id. Blocks for a moment on the
-/// first call, to measure the CPU.
-pub fn stats(path: &Path, kernels: &[(String, u32)]) -> SystemStats {
+/// running session with its kernel's process id, and `jobs` each running
+/// job with its program's. Blocks for a moment on the first call, to
+/// measure the CPU.
+pub fn stats(path: &Path, kernels: &[(String, u32)], jobs: &[(String, u32)]) -> SystemStats {
     SystemStats {
         cpu: cpu(),
         memory: memory().unwrap_or(MemoryStats { total: 0, used: 0 }),
@@ -39,13 +54,43 @@ pub fn stats(path: &Path, kernels: &[(String, u32)]) -> SystemStats {
         sessions: kernels
             .iter()
             .filter_map(|(session, pid)| {
-                process_tree_rss(*pid).map(|rss| SessionMemory {
+                process_tree(*pid).map(|usage| SessionMemory {
                     session: session.clone(),
-                    rss,
+                    rss: usage.rss,
                 })
             })
             .collect(),
+        jobs: job_usage(jobs),
     }
+}
+
+/// The CPU and memory of each job, the CPU since it was last measured.
+fn job_usage(jobs: &[(String, u32)]) -> Vec<JobUsage> {
+    let now = Instant::now();
+    let mut last = LAST_JOBS.lock().unwrap_or_else(|e| e.into_inner());
+    let last = last.get_or_insert_with(HashMap::new);
+    let usage: Vec<JobUsage> = jobs
+        .iter()
+        .filter_map(|(terminal, pid)| {
+            let usage = process_tree(*pid)?;
+            let cpu = last
+                .insert(terminal.clone(), (now, usage.cpu))
+                .and_then(|(then, before)| {
+                    let wall = now.duration_since(then);
+                    (wall >= CPU_SAMPLE && wall <= CPU_STALE).then(|| {
+                        let busy = usage.cpu.saturating_sub(before);
+                        (busy.as_secs_f64() / wall.as_secs_f64() * 1000.0).round() / 10.0
+                    })
+                });
+            Some(JobUsage {
+                terminal: terminal.clone(),
+                cpu,
+                rss: usage.rss,
+            })
+        })
+        .collect();
+    last.retain(|terminal, _| jobs.iter().any(|(t, _)| t == terminal));
+    usage
 }
 
 fn cpu() -> CpuStats {
@@ -226,18 +271,24 @@ fn parse_meminfo(text: &str) -> Option<MemoryStats> {
     })
 }
 
-/// Resident memory of a process and everything it started (an R kernel
-/// running mclapply, say).
+/// Resident memory and CPU time of a process and everything it started (an
+/// R kernel running mclapply, say).
 #[cfg(target_os = "linux")]
-fn process_tree_rss(pid: u32) -> Option<u64> {
+fn process_tree(pid: u32) -> Option<TreeUsage> {
     let page = page_size();
+    // SAFETY: sysconf only reads a system setting.
+    let ticks = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) })
+        .ok()
+        .filter(|&t| t > 0)
+        .unwrap_or(100);
     let rss = |pid: u32| -> Option<u64> {
         let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
         Some(statm.split_whitespace().nth(1)?.parse::<u64>().ok()? * page)
     };
     let mut total = rss(pid)?;
-    // Parent of every process, to find the tree under pid.
-    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    // Parent and CPU ticks (user and system) of every process, to find the tree under pid.
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut cpu: HashMap<u32, u64> = HashMap::new();
     for entry in std::fs::read_dir("/proc").ok()?.flatten() {
         let Some(child) = entry
             .file_name()
@@ -253,16 +304,29 @@ fn process_tree_rss(pid: u32) -> Option<u64> {
         let Some(after) = stat.rsplit_once(')').map(|(_, rest)| rest) else {
             continue;
         };
-        if let Some(parent) = after.split_whitespace().nth(1).and_then(|p| p.parse().ok()) {
+        let fields: Vec<&str> = after.split_whitespace().collect();
+        if let Some(parent) = fields.get(1).and_then(|p| p.parse().ok()) {
             children.entry(parent).or_default().push(child);
         }
+        let time = |i: usize| {
+            fields
+                .get(i)
+                .and_then(|t| t.parse::<u64>().ok())
+                .unwrap_or(0)
+        };
+        cpu.insert(child, time(11) + time(12));
     }
+    let mut busy = cpu.get(&pid).copied().unwrap_or(0);
     let mut stack = children.remove(&pid).unwrap_or_default();
     while let Some(p) = stack.pop() {
         total += rss(p).unwrap_or(0);
+        busy += cpu.get(&p).copied().unwrap_or(0);
         stack.extend(children.remove(&p).unwrap_or_default());
     }
-    Some(total)
+    Some(TreeUsage {
+        rss: total,
+        cpu: Duration::from_nanos(busy.saturating_mul(1_000_000_000) / ticks),
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -385,10 +449,10 @@ fn memory() -> Option<MemoryStats> {
     })
 }
 
-/// Resident memory of a process and the processes it started.
+/// Resident memory and CPU time of a process and the processes it started.
 #[cfg(target_os = "macos")]
-fn process_tree_rss(pid: u32) -> Option<u64> {
-    let rss = |pid: i32| -> Option<u64> {
+fn process_tree(pid: u32) -> Option<TreeUsage> {
+    let info = |pid: i32| -> Option<libc::proc_taskinfo> {
         let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
         let size = std::mem::size_of::<libc::proc_taskinfo>() as i32;
         // SAFETY: info is size bytes long.
@@ -402,7 +466,25 @@ fn process_tree_rss(pid: u32) -> Option<u64> {
             )
         };
         // SAFETY: proc_pidinfo filled all of info.
-        (n == size).then(|| unsafe { info.assume_init() }.pti_resident_size)
+        (n == size).then(|| unsafe { info.assume_init() })
+    };
+    // Task times are in Mach ticks: nanoseconds on Intel, not on Apple silicon.
+    #[allow(deprecated)]
+    let mut base = std::mem::MaybeUninit::<libc::mach_timebase_info>::zeroed();
+    // SAFETY: base is a mach_timebase_info, which the call fills.
+    #[allow(deprecated)]
+    let ok = unsafe { libc::mach_timebase_info(base.as_mut_ptr()) } == 0;
+    // SAFETY: zeroed is a valid mach_timebase_info, filled if ok.
+    #[allow(deprecated)]
+    let base = unsafe { base.assume_init() };
+    let (numer, denom) = if ok && base.denom > 0 {
+        (u128::from(base.numer), u128::from(base.denom))
+    } else {
+        (1, 1)
+    };
+    let usage = |task: &libc::proc_taskinfo| {
+        let ticks = u128::from(task.pti_total_user) + u128::from(task.pti_total_system);
+        (task.pti_resident_size, ticks * numer / denom)
     };
     let children = |pid: i32| -> Vec<i32> {
         let mut buf = vec![0i32; 256];
@@ -413,13 +495,19 @@ fn process_tree_rss(pid: u32) -> Option<u64> {
         buf
     };
     let root = i32::try_from(pid).ok()?;
-    let mut total = rss(root)?;
+    let (mut total, mut nanos) = usage(&info(root)?);
     let mut stack = children(root);
     while let Some(p) = stack.pop() {
-        total += rss(p).unwrap_or(0);
+        if let Some((rss, busy)) = info(p).as_ref().map(usage) {
+            total += rss;
+            nanos += busy;
+        }
         stack.extend(children(p));
     }
-    Some(total)
+    Some(TreeUsage {
+        rss: total,
+        cpu: Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX)),
+    })
 }
 
 #[cfg(test)]
@@ -452,7 +540,8 @@ mod tests {
     #[test]
     fn measures_this_machine() {
         let dir = tempfile::tempdir().unwrap();
-        let s = stats(dir.path(), &[("me".into(), std::process::id())]);
+        let me = std::process::id();
+        let s = stats(dir.path(), &[("me".into(), me)], &[("job".into(), me)]);
         assert!(s.cpu.cores >= 1);
         assert!((0.0..=100.0).contains(&s.cpu.percent));
         assert!(s.memory.total > 0 && s.memory.used <= s.memory.total);
@@ -460,5 +549,19 @@ mod tests {
         assert!(disk.total > 0 && disk.used <= disk.total);
         assert_eq!(s.sessions.len(), 1);
         assert!(s.sessions[0].rss > 0);
+        assert_eq!(s.jobs.len(), 1);
+        assert!(s.jobs[0].rss > 0);
+        assert_eq!(s.jobs[0].cpu, None);
+        // Busy for a moment: the next measuring says how busy.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(400) {
+            std::hint::black_box(0);
+        }
+        let again = stats(dir.path(), &[], &[("job".into(), me)]);
+        assert!(
+            again.jobs[0].cpu.is_some_and(|cpu| cpu > 10.0),
+            "{:?}",
+            again.jobs
+        );
     }
 }

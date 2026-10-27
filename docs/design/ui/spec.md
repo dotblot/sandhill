@@ -442,6 +442,22 @@ and remote work are never shown together.
   status dot or language name. Clicking one shows that session's console; the
   tooltip gives the language, version and state.
 
+- **Jobs** is the third tab, after Console and Terminal. Its tab shows how many
+  jobs run, or in the accent colour, how many ended since the tab was last
+  looked at.
+  - Left, at 11px: New job (a command line), then the jobs, newest first. Each
+    row shows a spinner, a green check or a red cross, the script's name or the
+    command, and under it the run time and, while it runs, CPU (as `top`
+    counts) and memory. Stop (with a confirmation), Run again and Remove show
+    on hover.
+  - Right: one 11px line with the state ("Running", "Failed, exit 3"), what
+    runs and where, then the job's log as a terminal.
+  - Run as job is in the file tree's menu for R, Python, shell, Nextflow and
+    Snakemake files, and in the ⌘K palette for the open file.
+  - When a job ends, a note says so ("Job align.sh finished after 2h 13m."),
+    in red if it failed. The status bar shows "2 jobs" with a spinner while
+    jobs run; clicking it shows the tab.
+
 ## Agents pane: a chat, after Posit Assistant (draft 18)
 Draft 18 replaces the terminal tabs with one chat pane laid out like Posit
 Assistant in Positron, in Sandhill's own fonts, colours and glass. The plan behind

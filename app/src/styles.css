@@ -1017,6 +1017,37 @@ pre.diff { padding: 6px 0; }
 .shell-terminal { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 29px; }
 .shell-terminal .term-view { inset: 4px 2px 2px 12px; }
 
+/* The Console's Jobs tab: the jobs on the left, the picked one's log on the right */
+.tab-count { min-width: 15px; height: 14px; padding: 0 4px; border-radius: 7px; background: var(--ink-7); color: var(--muted); font-size: 10px; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+.tab-count.news { background: var(--accent); color: white; }
+.jobs { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(200px, 26%) minmax(0, 1fr); padding-top: 29px; font-size: 11px; }
+.jobs[hidden] { display: none; }
+.jobs-list { min-height: 0; overflow-y: auto; padding: 4px 6px 6px 8px; border-right: 1px solid var(--line); }
+.jobs-head { display: flex; padding: 2px 0 4px; }
+.jobs-new { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px 0 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: var(--muted); }
+.jobs-new:hover { color: var(--text); border-color: var(--faint); }
+.job { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 6px; align-items: center; padding: 3px 6px; border-radius: var(--r); cursor: default; }
+.job:hover { background: var(--ink-7); }
+.job.on { background: var(--ink-7); }
+.job-mark { grid-row: span 2; display: grid; place-items: center; color: var(--muted); }
+.job-mark .spin { width: 10px; height: 10px; }
+.job-mark[data-state="done"] { color: var(--ok); }
+.job-mark[data-state="failed"] { color: var(--err); }
+.job-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.job-detail { grid-column: 2; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.job-acts { grid-column: 3; grid-row: 1 / span 2; display: flex; gap: 2px; opacity: 0; }
+.job:hover .job-acts, .job.on .job-acts { opacity: 1; }
+.job-acts button { width: 20px; height: 20px; display: grid; place-items: center; border-radius: var(--r); color: var(--muted); }
+.job-acts button:hover { background: var(--ink-8); color: var(--text); }
+.jobs-empty { margin: 6px 4px; color: var(--muted); line-height: 1.4; }
+.jobs-log { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.jobs-line { flex: none; display: flex; gap: 8px; align-items: baseline; padding: 4px 12px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.job-state { color: var(--text); font-weight: 500; }
+.job-where { overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); }
+.jobs-log .term-view { inset: 2px 2px 2px 12px; }
+.status-item.jobs-status { border-radius: var(--r); }
+.status-item.jobs-status:hover { background: var(--ink-7); }
+
 /* Agents in the status bar */
 .status-item.waiting { color: var(--accent); font-weight: 600; border-radius: var(--r); }
 .status-item.waiting:hover { background: var(--ink-7); }
