@@ -44,6 +44,22 @@ describe("renderOutput", () => {
     expect(plain.shadowRoot?.querySelector("td")?.textContent).toBe("1");
   });
 
+  it("shows the first rows of a long table until asked for all", () => {
+    const rows = Array.from({ length: 250 }, (_, i) => `<tr><td>${i}</td></tr>`).join("");
+    const node = renderOutput(
+      { output_type: "execute_result", data: { "text/html": `<table><tbody>${rows}</tbody></table>` }, metadata: {} },
+      ctx,
+    );
+    const root = node.shadowRoot!;
+    expect(root.querySelectorAll("tr")).toHaveLength(200);
+    const more = root.querySelector("button")!;
+    expect(more.textContent).toBe("Show all 250 rows");
+    more.click();
+    expect(root.querySelectorAll("tr")).toHaveLength(250);
+    expect(root.querySelector("tr:last-child td")?.textContent).toBe("249");
+    expect(root.querySelector("button")).toBeNull();
+  });
+
   it("sends scripted HTML to a sandboxed frame", () => {
     expect(needsFrame('<div id="w"></div><script>render()</script>')).toBe(true);
     expect(needsFrame("<table></table>")).toBe(false);

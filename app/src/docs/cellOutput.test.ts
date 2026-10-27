@@ -48,6 +48,16 @@ describe("CellOutput", () => {
 });
 
 describe("outputSummary", () => {
+  it("waits until near view to draw a shown output", () => {
+    const output = new CellOutput(ctx, () => {}, true, () => {}, true);
+    output.showSaved({ phase: "done", status: "ok", code: "plot()", outputs: [plot] });
+    expect(output.element.querySelector("img")).toBeNull();
+    expect(output.element.querySelector(".cell-status")?.textContent).not.toContain("plot");
+
+    output.setNearView(true);
+    expect(output.element.querySelector("img")).not.toBeNull();
+  });
+
   it("names what a hidden output holds", () => {
     expect(outputSummary([plot])).toBe("plot");
     expect(outputSummary([plot, plot, table])).toBe("2 plots, table");

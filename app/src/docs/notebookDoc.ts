@@ -295,6 +295,7 @@ export class NotebookDoc extends Doc {
       button("+ Markdown", "Insert a text cell below", () => this.insertCell(cell.id, "markdown")),
     );
     root.append(gutter, body, tools, insert);
+    body.style.containIntrinsicSize = `auto ${estimatedHeight(cell, this.outputShown(cell.id))}px`;
 
     const view: CellView = { cell, root, body, count };
     if (cell.cell_type === "code") {
@@ -302,7 +303,11 @@ export class NotebookDoc extends Doc {
         this.renderContext(() => {}),
         (info) => this.onOutput(view, info),
         this.outputShown(cell.id),
-        (visible) => this.outputToggled(cell.id, visible),
+        (visible) => {
+          this.outputToggled(cell.id, visible);
+          body.style.containIntrinsicSize = `auto ${estimatedHeight(cell, visible)}px`;
+        },
+        typeof IntersectionObserver !== "undefined",
       );
       if (cell.outputs.length || cell.execution_count !== null) {
         view.output.showSaved({
@@ -371,6 +376,7 @@ export class NotebookDoc extends Doc {
       }),
     });
     view.editor = editor;
+    view.body.classList.add("editing");
     view.body.querySelector(".nb-placeholder")?.replaceWith(editor.dom);
     if (!editor.dom.isConnected) view.body.prepend(editor.dom);
     return editor;
@@ -388,6 +394,7 @@ export class NotebookDoc extends Doc {
     editor.dom.replaceWith(this.placeholder(view));
     editor.destroy();
     view.editor = undefined;
+    view.body.classList.remove("editing");
   }
 
   private showPreview(view: CellView) {
@@ -395,6 +402,7 @@ export class NotebookDoc extends Doc {
     view.cell.source = this.sourceOf(view);
     view.editor?.destroy();
     view.editor = undefined;
+    view.body.classList.remove("editing");
     view.parked = undefined;
     const preview = document.createElement("div");
     preview.className = "nb-markdown";
@@ -482,7 +490,7 @@ export class NotebookDoc extends Doc {
     this.root.replaceChildren(...this.nb.cells.map((c) => this.views.get(c.id)!.root));
     for (const view of this.views.values()) {
       this.observer?.observe(view.root);
-      if (view.output) this.nearObserver?.observe(view.output.element);
+      if (view.output) this.nearObserver?.observe(view.root);
     }
   }
 
@@ -535,6 +543,29 @@ async function readNotebook(ws: Workspace, path: string): Promise<FileText> {
     if (!String(err).includes("unknown variant")) throw err;
     return ws.call<FileText>("read_file", { path });
   }
+}
+
+/**
+ * About how tall a cell's code and outputs are, which they are taken to be
+ * until first drawn (cells far from view aren't laid out), so the scroll bar
+ * starts out about right.
+ */
+export function estimatedHeight(cell: NbCell, outputsShown: boolean): number {
+  const lines = (text: string) => text.split("\n").length;
+  let px = 10 + lines(cell.source) * 17;
+  if (cell.cell_type !== "code" || !cell.outputs.length) return px;
+  px += 26;
+  if (!outputsShown) return px;
+  for (const output of cell.outputs) {
+    const data: Record<string, unknown> = output.data ?? {};
+    const html = data["text/html"];
+    if (output.output_type === "stream") px += lines(String(output.text ?? "")) * 16;
+    else if (output.output_type === "error") px += lines([output.traceback ?? []].flat().join("\n")) * 16;
+    else if (Object.keys(data).some((mime) => mime.startsWith("image/"))) px += 460;
+    else if (typeof html === "string") px += Math.min(html.match(/<tr\b/g)?.length ?? 8, 201) * 21;
+    else px += 200;
+  }
+  return px;
 }
 
 function button(label: string, title: string, onClick: () => void): HTMLButtonElement {

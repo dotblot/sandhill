@@ -499,12 +499,7 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 
 /* Outputs */
 .cell-output { border-left: 2px solid var(--line); padding: 2px 0 2px 12px; margin: 2px 0; font-family: var(--font-ui); }
-/* Outputs far from view (big tables, plots) get no layout or paint; once
-   shown they keep their last height, so scrolling doesn't jump. */
-.nb-cell .cell-output { content-visibility: auto; contain-intrinsic-size: auto 240px; }
 .cell-output.empty { display: none; }
-/* A hidden output is just its status line, so it needs no stand-in height. */
-.nb-cell .cell-output.collapsed { content-visibility: visible; contain-intrinsic-size: none; }
 .cell-output.collapsed { padding-left: 4px; }
 .cell-status { display: flex; align-items: center; gap: 5px; min-height: 22px; padding: 0 8px 0 2px; border-radius: var(--r); font-size: var(--fs-chrome); color: var(--faint); }
 .cell-output:not(.collapsed) .cell-status { margin-bottom: 4px; }
@@ -603,7 +598,13 @@ pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; wor
 .nb-run { color: var(--accent); padding: 0 2px; font-size: var(--fs-chrome); opacity: 0; }
 .nb-cell:hover .nb-run, .nb-cell:focus-within .nb-run { opacity: 1; }
 .nb-cell[data-phase="running"] .nb-count, .nb-cell[data-phase="queued"] .nb-count { color: var(--busy); }
-.nb-body { min-width: 0; }
+/* Cells far from view get no layout or paint, which keeps a notebook of
+   hundreds of plots and tables smooth to scroll. Until first drawn a cell
+   takes the height the notebook guesses for it, then keeps its last height,
+   so scrolling doesn't jump. A cell being edited is drawn in full, so the
+   editor's pop-ups that reach outside it aren't cut off. */
+.nb-body { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 200px; }
+.nb-body.editing { content-visibility: visible; }
 .nb-code .nb-body > .cm-editor, .nb-code .nb-placeholder, .nb-raw .nb-body > .cm-editor, .nb-raw .nb-placeholder { background: var(--chunk); border: 1px solid var(--line); border-radius: var(--r); }
 .nb-cell:focus-within .nb-body > .cm-editor { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .nb-code .cell-output { margin-top: 4px; }

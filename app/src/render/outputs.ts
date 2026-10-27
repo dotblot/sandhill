@@ -38,6 +38,8 @@ const MIME_ORDER = [
 
 /** Streams longer than this show only their end, so a runaway loop can't freeze the UI. */
 const MAX_STREAM_CHARS = 200_000;
+/** Tables longer than this show their first rows and a button for the rest. */
+const MAX_TABLE_ROWS = 200;
 
 export class OutputArea {
   readonly element: HTMLElement;
@@ -73,9 +75,8 @@ export class OutputArea {
    * the web view can drop their decoded pixels; `resume` loads them again.
    */
   suspend() {
+    // Each plot keeps the shape it was given when it loaded, so the page doesn't jump.
     for (const img of this.element.querySelectorAll<HTMLImageElement>("img.out-image[src]")) {
-      // Keep the box the plot had, so the page doesn't jump.
-      if (img.offsetHeight) img.style.aspectRatio = `${img.offsetWidth} / ${img.offsetHeight}`;
       img.dataset.src = img.getAttribute("src")!;
       img.removeAttribute("src");
     }
@@ -183,7 +184,12 @@ function renderImage(mime: string, value: unknown, meta: Record<string, any>, ct
   }
   if (typeof meta.width === "number") img.width = meta.width;
   if (typeof meta.height === "number") img.height = meta.height;
-  img.addEventListener("load", () => ctx.onResize());
+  img.addEventListener("load", () => {
+    // Its size, kept while its pixels are let go far from view (see `suspend`).
+    if (!img.getAttribute("width")) img.width = img.naturalWidth;
+    if (img.naturalWidth) img.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+    ctx.onResize();
+  });
   return img;
 }
 
@@ -192,7 +198,10 @@ export function needsFrame(html: string): boolean {
   return /<(script|iframe|object|embed|link|canvas)\b|\bon[a-z]+\s*=|javascript:/i.test(html);
 }
 
-/** Static HTML (data frames, styled tables) renders inline, sanitized, with its CSS kept inside. */
+/**
+ * Static HTML (data frames, styled tables) renders inline, sanitized, with
+ * its CSS kept inside. A long table shows its first rows until asked for all.
+ */
 function renderInlineHtml(html: string): HTMLElement {
   const host = el("div", "out out-html");
   const root = host.attachShadow({ mode: "open" });
@@ -200,8 +209,22 @@ function renderInlineHtml(html: string): HTMLElement {
     `<style>:host{display:block;overflow-x:auto;font:14px/1.3 var(--font-ui)}` +
     `table{border-collapse:collapse;border:none;font-variant-numeric:tabular-nums}` +
     `th,td{padding:2px 10px;border:none;border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent);text-align:right}` +
-    `thead th{color:var(--muted);font-weight:500;border-bottom:1px solid var(--line)}tbody tr:hover{background:var(--hover)}</style>` +
+    `thead th{color:var(--muted);font-weight:500;border-bottom:1px solid var(--line)}tbody tr:hover{background:var(--hover)}` +
+    `.sandhill-more{margin:4px 0;padding:1px 8px;border:1px solid var(--line);border-radius:var(--r);background:none;color:var(--muted);font:var(--fs-chrome) var(--font-ui);cursor:pointer}` +
+    `.sandhill-more:hover{color:var(--text)}</style>` +
     DOMPurify.sanitize(html, { FORCE_BODY: true });
+  for (const body of root.querySelectorAll("tbody")) {
+    const rows = [...body.rows];
+    if (rows.length <= MAX_TABLE_ROWS) continue;
+    const rest = rows.slice(MAX_TABLE_ROWS);
+    for (const row of rest) row.remove();
+    const more = el("button", "sandhill-more", `Show all ${rows.length.toLocaleString()} rows`);
+    more.addEventListener("click", () => {
+      body.append(...rest);
+      more.remove();
+    });
+    (body.closest("table") ?? body).after(more);
+  }
   return host;
 }
 
