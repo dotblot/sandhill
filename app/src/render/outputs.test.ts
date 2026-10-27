@@ -94,6 +94,17 @@ describe("renderOutput", () => {
     expect(node.textContent).toBe("ValueError: x");
   });
 
+  it("offers to hand an error to the agent", () => {
+    const asked: string[] = [];
+    const error = { output_type: "error", ename: "ValueError", evalue: "x", traceback: ["ValueError: x"] };
+    const node = renderOutput(error, { ...ctx, handError: (action, e) => asked.push(`${action} ${e.ename}`) });
+    expect(node.querySelector("pre.out-error")?.textContent).toBe("ValueError: x");
+    const buttons = [...node.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["Fix", "Explain"]);
+    for (const button of buttons) button.click();
+    expect(asked).toEqual(["fix ValueError", "explain ValueError"]);
+  });
+
   it("loads large text values from blobs", async () => {
     const node = renderOutput(
       { output_type: "display_data", data: { "text/html": { sandhill_blob: "big", size: 1e6 } }, metadata: {} },

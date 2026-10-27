@@ -338,7 +338,7 @@ Positron is the target experience. The plan is to keep its features and drop its
 | **Quarto inline output** | MVP | Already the core of §4. |
 | **Interpreter discovery and switching** (conda/mamba, venv, uv, renv, several R versions) | v1 | The daemon scans the server and remembers a choice per project. Started: kernels inside conda environments, pyenv versions and the shell's environment are found without `ipykernel install` and run with their environment activated, including environments that have ipykernel but no `kernel.json` (Jupyter starts those too). |
 | **MCP server for coding agents in live sessions** (Positron 2026.10, experimental) | MVP | Already the core of §5. Positron adding the same thing confirms the design. |
-| **Assistant aware of your session** (variables, plots, errors) | v1 | The same MCP tools, plus "Fix" and "Explain" buttons on errors. |
+| **Assistant aware of your session** (variables, plots, errors) | v1 | The same MCP tools, plus "Fix" and "Explain" buttons on errors (built 2026-10-27: under every error in a cell or the Console, they send the error, the code that raised it and the cell to the conversation in front, or put them in the new conversation's box when no agent is running). |
 | **Packages pane** | v1 | Built 2026-10-18: see below. |
 | **Run App** (Shiny, Streamlit, Dash…) | later | A job plus the Viewer pane. |
 | **Data Connections pane** (databases, warehouses) | skip | Rarely needed for bioinformatics. |

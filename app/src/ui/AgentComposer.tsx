@@ -92,6 +92,9 @@ export interface ComposerProps {
   onCodeTo?: (to: CodeTo) => void;
   onCompact?: () => void;
   ref?: (el: HTMLTextAreaElement) => void;
+  /** A message put in the box from elsewhere, as by an error's Fix button, to send or change; `onFilled` says it's in. */
+  fill?: { text: string; refs: MessageRef[] };
+  onFilled?: () => void;
 }
 
 export function AgentComposer(props: ComposerProps) {
@@ -120,6 +123,23 @@ export function AgentComposer(props: ComposerProps) {
         setText(input.value);
         setRefs(draft?.refs ?? []);
         setPopover(undefined);
+      },
+    ),
+  );
+  createEffect(
+    on(
+      () => props.fill,
+      (fill) => {
+        if (!fill) return;
+        input.value = fill.text;
+        setText(fill.text);
+        setRefs(fill.refs);
+        setPopover(undefined);
+        input.focus();
+        // From its start, which says what is asked.
+        input.setSelectionRange(0, 0);
+        input.scrollTop = 0;
+        props.onFilled?.();
       },
     ),
   );

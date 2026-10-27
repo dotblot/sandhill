@@ -186,12 +186,20 @@ export abstract class Doc {
     this.setShownOutputs(visible ? [...rest, cellId] : rest);
   }
 
-  protected renderContext(onResize: () => void): RenderContext {
+  /**
+   * How a cell's outputs render. With `ran`, which says what code of which
+   * cell they came from, errors get Fix and Explain buttons for the agent.
+   */
+  protected renderContext(onResize: () => void, ran?: () => { cell: string; code?: string; language?: string }): RenderContext {
     return {
       blobUrl: (hash, mime) => this.ws.backend.blobUrl(hash, mime, this.path),
       blobText: async (hash) =>
         (await this.ws.call<{ data: string }>("get_blob", { hash, near: this.path })).data,
       onResize,
+      handError: ran && ((action, error) => {
+        const { cell, code = "", language } = ran();
+        this.ws.askAgent?.({ action, error, code, language, cell: { path: this.path, id: cell } });
+      }),
     };
   }
 

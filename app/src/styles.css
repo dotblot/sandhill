@@ -520,6 +520,10 @@ button.primary:hover:not(:disabled) { border-color: var(--accent); filter: brigh
 pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; word-break: break-word; }
 .out-stderr { background: color-mix(in srgb, var(--accent) 8%, transparent); padding: 2px 6px; border-radius: var(--r); }
 .out-error { background: var(--err-soft); padding: 4px 8px; border-radius: var(--r); }
+/* Fix and Explain, under an error: they hand it to the agent. */
+.out-error-acts { display: flex; gap: 6px; padding: 4px 0 2px; font: var(--fs-small) var(--font-ui); }
+.out-error-act { padding: 1px 8px; border: 1px solid var(--line); border-radius: var(--r); color: var(--muted); }
+.out-error-act:hover { color: var(--text); background: var(--hover); }
 /* Plots stay white in dark mode, as they will be printed */
 .out-image { max-width: 100%; height: auto; display: block; background: white; border-radius: var(--r); }
 .out-frame { width: 100%; }

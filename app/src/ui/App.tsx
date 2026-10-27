@@ -17,6 +17,7 @@ import {
   type DirEntry,
   type FileStat,
   type FileText,
+  type MessageRef,
   type ProjectInfo,
   type ProjectState,
   type SavedExtra,
@@ -30,6 +31,7 @@ import { NotebookDoc } from "../docs/notebookDoc";
 import { QmdDoc } from "../docs/qmdDoc";
 import { ScriptDoc } from "../docs/scriptDoc";
 import { canEdit, type EditAction, lastEditor, runEdit } from "../editor/editing";
+import { errorMessage } from "../model/errorHelp";
 import { type HelpRequest, nameAt } from "../model/help";
 import { type NewKind, template, within } from "../model/files";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
@@ -236,6 +238,15 @@ export function App(props: {
     if (id) selectAgent(id);
     if (!agentsOn()) toggleAgents();
     setMinimized((list) => list.filter((p) => p !== "agents"));
+  };
+  /** A message for the agent from an error's Fix or Explain button, until the Agents pane takes it. */
+  const [handoff, setHandoff] = createSignal<{ text: string; refs: MessageRef[] }>();
+  ws.askAgent = (ask) => {
+    const cell = ask.cell;
+    // The cell as the @ menu names it; a document's own outputs don't know it.
+    const cellName = cell && (cell.name ?? docs().find((d) => d.path === cell.path)?.codeCells().find((c) => c.id === cell.id)?.name);
+    setHandoff(errorMessage({ ...ask, cell: cell && { ...cell, name: cellName } }, props.project));
+    showAgent();
   };
   /** Shows help in the right pane's Help tab, opening the pane if need be. */
   const openHelp = (request: HelpRequest) => {
@@ -1163,6 +1174,8 @@ export function App(props: {
               onMin={toggleMin}
               onMax={toggleMax}
               onInstall={runInTerminal}
+              handoff={handoff()}
+              onHandoff={() => setHandoff(undefined)}
             />
           </ErrorBoundary>
           <div class="split v" title="Drag to resize" onPointerDown={resizeAgents} />

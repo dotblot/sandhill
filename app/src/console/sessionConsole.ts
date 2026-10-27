@@ -274,6 +274,19 @@ export class SessionConsole {
       blobText: async (hash) => (await this.ws.call<{ data: string }>("get_blob", { hash, near })).data,
       onResize: () => this.keepFollowing(),
       elsewhere: (data, metadata) => this.pageNote(run, data, metadata),
+      handError: (action, error) => {
+        const cell = run.cell;
+        const script = cell && isScript(cell.file) ? cell.file : undefined;
+        this.ws.askAgent?.({
+          action,
+          error,
+          code: run.code,
+          language: this.python ? "python" : "r",
+          cell: cell && !script ? { path: cell.file, id: cell.cell_id } : undefined,
+          file: script,
+          session: run.session,
+        });
+      },
     };
     const output = new CellOutput(ctx, () => this.keepFollowing());
     root.append(echo, output.element);

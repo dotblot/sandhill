@@ -19,6 +19,7 @@ import {
   type RunStarted,
   type SessionInfo,
 } from "../backend/types";
+import type { ErrorAsk } from "./errorHelp";
 import { RunStore } from "./runs";
 
 export class Workspace {
@@ -51,6 +52,8 @@ export class Workspace {
   /** Sessions being started for documents to share, by kernel and folder. */
   private sharedStarts = new Map<string, Promise<SessionInfo>>();
   private viewers = new Set<(session: string, title: string) => void>();
+  /** Hands an error to the agent, from an output's Fix or Explain button; set by the app. */
+  askAgent?: (ask: ErrorAsk) => void;
 
   constructor(
     readonly backend: Backend,

@@ -300,7 +300,10 @@ export class NotebookDoc extends Doc {
     const view: CellView = { cell, root, body, count };
     if (cell.cell_type === "code") {
       view.output = new CellOutput(
-        this.renderContext(() => {}),
+        this.renderContext(
+          () => {},
+          () => ({ cell: cell.id, code: view.output?.info?.code ?? cell.source, language: this.language() }),
+        ),
         (info) => this.onOutput(view, info),
         this.outputShown(cell.id),
         (visible) => {
