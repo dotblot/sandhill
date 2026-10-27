@@ -3,7 +3,9 @@
 //
 // Outputs can be hidden, leaving the status line with a summary ("plot,
 // table"). A hidden output is not rendered at all, so its plots are never
-// loaded or decoded: that is what keeps a notebook full of plots small.
+// loaded or decoded: that is what keeps a notebook full of plots small. A
+// notebook's outputs also wait until their cell comes near view, so showing
+// every output of a long notebook draws only the few on screen.
 
 import type { Output } from "../backend/types";
 import type { RunPhase, RunState, RunStore } from "../model/runs";
@@ -26,6 +28,10 @@ export class CellOutput {
   private area: OutputArea;
   private unwatch?: () => void;
   private timer?: ReturnType<typeof setInterval>;
+  /** Whether the outputs may be drawn now: false while far from view, see `setNearView`. */
+  private near: boolean;
+  /** Outputs to draw once near view. */
+  private waiting = false;
   info?: OutputInfo;
   runId?: string;
 
@@ -35,7 +41,10 @@ export class CellOutput {
     private visible = true,
     /** Called whenever the output is shown or hidden. */
     private onToggle: (visible: boolean) => void = () => {},
+    /** Wait for `setNearView(true)` before drawing anything. */
+    deferred = false,
   ) {
+    this.near = !deferred;
     this.element = document.createElement("div");
     this.element.className = "cell-output empty";
     this.element.classList.toggle("collapsed", !visible);
@@ -61,7 +70,7 @@ export class CellOutput {
     if (visible === this.visible) return;
     this.visible = visible;
     this.element.classList.toggle("collapsed", !visible);
-    this.area.update(visible ? (this.info?.outputs ?? []) : []);
+    this.draw();
     this.renderStatus();
     this.onToggle(visible);
     this.ctx.onResize();
@@ -89,6 +98,7 @@ export class CellOutput {
     this.detach();
     this.runId = undefined;
     this.info = undefined;
+    this.waiting = false;
     this.area.update([]);
     this.statusText.textContent = "";
     this.element.classList.add("empty");
@@ -105,13 +115,22 @@ export class CellOutput {
 
   /** Called as the output moves far from view and back. */
   setNearView(near: boolean) {
+    this.near = near;
+    if (near && this.waiting) this.draw();
     if (near) this.area.resume();
     else this.area.suspend();
   }
 
+  /** Draws the outputs, or waits until near view to; hidden ones are taken out at once. */
+  private draw() {
+    const outputs = this.visible ? (this.info?.outputs ?? []) : [];
+    this.waiting = outputs.length > 0 && !this.near;
+    if (!this.waiting) this.area.update(outputs);
+  }
+
   private render(info: OutputInfo) {
     this.info = info;
-    if (this.visible) this.area.update(info.outputs);
+    if (this.visible) this.draw();
     this.element.classList.toggle("empty", false);
     this.element.classList.toggle("has-outputs", info.outputs.length > 0);
     this.element.dataset.phase = info.phase;
