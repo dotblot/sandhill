@@ -81,6 +81,9 @@ export function AgentsPane(props: {
   onInstall: (command: string) => void;
   /** Opens a file in the editor and brings it to the front. */
   onOpen: (path: string) => Promise<Doc | undefined>;
+  /** A message for the agent from an error's Fix or Explain button; `onHandoff` says it was taken. */
+  handoff?: { text: string; refs: MessageRef[] };
+  onHandoff?: () => void;
 }) {
   const store = props.store;
   const [picking, setPicking] = createSignal(false);
@@ -113,6 +116,8 @@ export function AgentsPane(props: {
   const [renaming, setRenaming] = createSignal<string>();
   /** The message box's choices (pin, web, context) picked here for an ended conversation: they apply as it starts again. */
   const [boxChoice, setBoxChoice] = createSignal<Record<string, Pick<AgentOptions, "pin" | "web" | "context">>>({});
+  /** A message put in a conversation's box (or "new", the new conversation's) to send from there. */
+  const [fill, setFill] = createSignal<{ key: string; text: string; refs: MessageRef[] }>();
   const views = new Map<string, TermView>();
   let body!: HTMLDivElement;
   let input: HTMLTextAreaElement | undefined;
@@ -245,6 +250,28 @@ export function AgentsPane(props: {
   };
   document.addEventListener("mousedown", closeGear);
   onCleanup(() => document.removeEventListener("mousedown", closeGear));
+
+  // An error from Fix or Explain goes to the conversation in front, if its
+  // agent is running; else into a box, to send from there.
+  createEffect(
+    on(
+      () => props.handoff,
+      (handoff) => {
+        if (!handoff) return;
+        props.onHandoff?.();
+        const t = current();
+        if (!t || !(t.running || resumable(t))) {
+          openNew();
+          setFill({ key: "new", ...handoff });
+          return;
+        }
+        setPicking(false);
+        setHistory(false);
+        props.onSelect(t.id);
+        if (!t.running || !send(t, handoff.text, handoff.refs)) setFill({ key: t.id, ...handoff });
+      },
+    ),
+  );
 
   function openNew() {
     setHistory(false);
@@ -887,6 +914,8 @@ export function AgentsPane(props: {
             void start(kind, options, text);
             return true;
           }}
+          fill={fill()?.key === "new" ? fill() : undefined}
+          onFilled={() => setFill(undefined)}
         />
       </Show>
       <Show when={!picking() && !history() && !starting() && current() && (current()!.running || resumable(current()!)) && current()}>
@@ -914,6 +943,8 @@ export function AgentsPane(props: {
           return (
             <AgentComposer
               draftKey={t().id}
+              fill={fill()?.key === t().id ? fill() : undefined}
+              onFilled={() => setFill(undefined)}
               kind={kind()}
               kinds={AGENT_KINDS.map((k) => (k.kind === t().kind ? kind() : k))}
               locked
@@ -1118,12 +1149,16 @@ function NewComposer(props: {
   onOpenFile: (file: string) => void;
   ref: (el: HTMLTextAreaElement) => void;
   onSend: (kind: AgentKind, options: AgentOptions, text: string) => boolean;
+  fill?: { text: string; refs: MessageRef[] };
+  onFilled: () => void;
 }) {
   const c = props.choice;
   const focus = () => focusFile({ pin: c.pin(), working: false, front: props.front });
   return (
     <AgentComposer
       draftKey="new"
+      fill={props.fill}
+      onFilled={props.onFilled}
       kind={c.kind()}
       kinds={AGENT_KINDS}
       model={c.model().label}

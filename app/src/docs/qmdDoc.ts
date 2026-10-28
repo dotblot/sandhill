@@ -217,7 +217,14 @@ export class QmdDoc extends Doc {
     let slot = this.slots.get(key);
     if (!slot) {
       const output = new CellOutput(
-        this.renderContext(() => this.view?.requestMeasure()),
+        this.renderContext(
+          () => this.view?.requestMeasure(),
+          () => ({
+            cell: slot!.key,
+            code: slot!.output.info?.code,
+            language: this.chunks().find((c) => c.cellId === slot!.key)?.language,
+          }),
+        ),
         () => this.view?.requestMeasure(),
         this.outputShown(key),
         (visible) => this.outputToggled(slot!.key, visible),

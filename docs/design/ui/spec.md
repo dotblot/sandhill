@@ -608,6 +608,16 @@ omp.
   conversation you were in.
 - **Provider icons** are letter chips, not company logos (see "Icons and
   licences").
+- **Fix and Explain** (built 2026-10-27): small buttons (11px) under every
+  error, in a cell's output and in the Console.
+  - Fix asks the agent to change the code so it works and run it again;
+    Explain asks what went wrong, without changing anything.
+  - The message holds the code, the error's last 80 lines as plain text, and
+    the cell as a chip ("de.ipynb › cell 3"), so the agent knows what to edit.
+  - It goes to the conversation in front when its agent is running, and the
+    Agents pane opens if it was closed. With no agent running it waits in the
+    new conversation's box (or an ended conversation's, which goes on when
+    sent), so the user picks the agent first.
 
 ## Right pane
 - Variables can be selected and deleted to free memory; Sandhill runs `rm()`

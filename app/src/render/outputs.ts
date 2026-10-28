@@ -5,6 +5,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { isBlobRef, type Output } from "../backend/types";
+import type { ErrorAction } from "../model/errorHelp";
 import { PLOTLY_MIME, plotlyPage } from "../model/pages";
 import { appendAnsi } from "./ansi";
 
@@ -20,6 +21,8 @@ export interface RenderContext {
    * web pages, which the Viewer shows); nothing to render it here.
    */
   elsewhere?(data: Record<string, unknown>, metadata: Record<string, any>): HTMLElement | undefined;
+  /** Hands an error to the agent, to fix the code that raised it or explain it; without it, errors get no buttons. */
+  handError?(action: ErrorAction, error: Output): void;
 }
 
 const MIME_ORDER = [
@@ -34,6 +37,12 @@ const MIME_ORDER = [
   "text/latex",
   "application/json",
   "text/plain",
+];
+
+/** The buttons under an error. */
+const ERROR_ACTIONS: [ErrorAction, string, string][] = [
+  ["fix", "Fix", "Ask the agent to fix the code, and run it again"],
+  ["explain", "Explain", "Ask the agent what went wrong, without changing anything"],
 ];
 
 /** Streams longer than this show only their end, so a runaway loop can't freeze the UI. */
@@ -107,7 +116,18 @@ export function renderOutput(output: Output, ctx: RenderContext): HTMLElement {
       const pre = el("pre", "out out-error");
       const tb: string[] = Array.isArray(output.traceback) ? output.traceback : [];
       appendAnsi(pre, tb.length ? tb.join("\n") : `${output.ename}: ${output.evalue}`);
-      return pre;
+      const hand = ctx.handError;
+      if (!hand) return pre;
+      const box = el("div", "out-error-box");
+      const acts = el("div", "out-error-acts");
+      for (const [action, label, title] of ERROR_ACTIONS) {
+        const button = el("button", "out-error-act", label);
+        button.title = title;
+        button.addEventListener("click", () => hand(action, output));
+        acts.append(button);
+      }
+      box.append(pre, acts);
+      return box;
     }
     case "display_data":
     case "execute_result":

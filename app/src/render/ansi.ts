@@ -31,6 +31,13 @@ export function consoleText(text: string): string {
     .join("\n");
 }
 
+/** The text without its escape sequences: colours, cursor moves, links. */
+export function plainText(text: string): string {
+  return parseAnsi(consoleText(text))
+    .map((span) => span.text)
+    .join("");
+}
+
 /** Splits text into styled spans, dropping escape sequences that aren't colors. */
 export function parseAnsi(text: string): Span[] {
   const spans: Span[] = [];
