@@ -81,13 +81,18 @@ pub struct Context<'a> {
 /// conversation (from Sandhill's bridges).
 pub const RESUME_KEYS: [&str; 2] = ["session_id", "thread"];
 
+/// Which of [`RESUME_KEYS`] an agent of `kind` reports.
+pub fn resume_key(kind: &str) -> Option<&'static str> {
+    match kind {
+        CLAUDE => Some(RESUME_KEYS[0]),
+        CODEX | ANTIGRAVITY => Some(RESUME_KEYS[1]),
+        _ => None,
+    }
+}
+
 /// The conversation an agent of `kind` would resume, from its report.
 pub fn resume_id(kind: &str, report: Option<&serde_json::Value>) -> Option<String> {
-    let key = match kind {
-        CLAUDE => RESUME_KEYS[0],
-        CODEX | ANTIGRAVITY => RESUME_KEYS[1],
-        _ => return None,
-    };
+    let key = resume_key(kind)?;
     report?[key]
         .as_str()
         .filter(|id| !id.is_empty())

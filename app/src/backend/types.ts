@@ -123,7 +123,11 @@ export interface ProjectSettings {
   documents: DocumentsRunIn;
   /** Files of NAME=value lines, relative to the project, whose variables its kernels start with. */
   env_files: string[];
+  /** Where agent conversations are kept: in the project's folder (.sandhill/agents/), or on the machine. */
+  chat_history?: ChatHistory;
 }
+
+export type ChatHistory = "project" | "machine";
 
 /** An environment a project's files point to, such as the conda env its environment.yml names. */
 export interface FoundEnvironment {

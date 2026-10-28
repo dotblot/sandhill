@@ -946,6 +946,18 @@ pub enum DocumentsRunIn {
     Project,
 }
 
+/// Where a project's agent conversations are kept.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatHistory {
+    /// In the project's folder (`.sandhill/agents/`), so they go with it to
+    /// another machine.
+    #[default]
+    Project,
+    /// On the machine the project is on, in the daemon's own folder.
+    Machine,
+}
+
 /// A project's shared settings, kept in `.sandhill/project.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSettings {
@@ -962,6 +974,8 @@ pub struct ProjectSettings {
     /// variables its kernels start with. Missing files are skipped.
     #[serde(default = "default_env_files")]
     pub env_files: Vec<String>,
+    #[serde(default)]
+    pub chat_history: ChatHistory,
 }
 
 fn default_env_files() -> Vec<String> {
@@ -975,6 +989,7 @@ impl Default for ProjectSettings {
             python: None,
             documents: DocumentsRunIn::default(),
             env_files: default_env_files(),
+            chat_history: ChatHistory::default(),
         }
     }
 }

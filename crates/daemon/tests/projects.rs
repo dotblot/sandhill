@@ -215,6 +215,7 @@ async fn a_project_runs_python_in_its_own_venv_with_its_env_file() {
         python: Some("python3".into()),
         documents: DocumentsRunIn::Project,
         env_files: vec!["local.env".into()],
+        ..ProjectSettings::default()
     };
     let saved: ProjectSetup = client
         .call(Call::SaveProjectSettings {
