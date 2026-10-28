@@ -76,6 +76,15 @@ export interface SystemStats {
   disk?: { path: string; total: number; used: number; available: number };
   /** Resident memory of each running kernel, with the processes it started. */
   sessions: { session: string; rss: number }[];
+  /** What each running job uses; missing from older daemons. */
+  jobs?: JobUsage[];
+}
+
+export interface JobUsage {
+  terminal: string;
+  /** Share of one core since the last `system_stats`, as `top` counts (200 is two cores); none at first. */
+  cpu?: number;
+  rss: number;
 }
 
 /** A folder opened as a project on the daemon's machine. */
@@ -623,6 +632,15 @@ export interface Blob {
 export const TERMINAL_SHELL = "shell";
 /** `kind` of the terminal a document's preview runs in. */
 export const TERMINAL_PREVIEW = "preview";
+/** `kind` of the terminal a job runs in (`start_job`). */
+export const TERMINAL_JOB = "job";
+
+/** What a job runs: a script, with the program for its kind, or a command line. */
+export interface JobSpec {
+  path?: string;
+  /** A command line; with `path`, the arguments after the script. */
+  command?: string;
+}
 
 export interface FileStat {
   path: string;
@@ -758,6 +776,8 @@ export interface TerminalInfo {
   outdated?: boolean;
   /** The name the user gave it. */
   name?: string;
+  /** For a job: what it runs. */
+  job?: JobSpec;
 }
 
 export interface TerminalSubscribed {

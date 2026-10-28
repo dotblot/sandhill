@@ -80,6 +80,8 @@ Responses can arrive out of order; match them by `id`.
 | `list_agents` | | `[{kind, name, path?, version?, install}]` |
 | `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?`, `prompt?` | `TerminalInfo` |
 | `restart_terminal` | `terminal`, `options?`, `cols?`, `rows?`, `prompt?` | `TerminalInfo` |
+| `start_job` | `path?`, `command?`, `cwd?`, `project?` | `TerminalInfo` |
+| `stop_terminal` | `terminal` | `null`; the terminal and its output stay |
 | `rename_terminal` | `terminal`, `name?` | `TerminalInfo` |
 | `list_terminals` | | `[TerminalInfo]`, oldest first |
 | `subscribe_terminal` | `terminal`, `from?`, `chat_from?` | `{terminal, from}`, then terminal messages |
@@ -101,12 +103,15 @@ what the kernel reports in its `kernel_info_reply` ("4.4.1", "3.12.4").
 
 `SystemStats` is `{cpu: {percent, cores, model, load}, memory: {total, used},
 gpus: [{name, percent, memory_used, memory_total}], disk?: {path, total, used,
-available}, sessions: [{session, rss}]}`, sizes in bytes. CPU `percent` is the
+available}, sessions: [{session, rss}], jobs: [{terminal, cpu?, rss}]}`, sizes in bytes. CPU `percent` is the
 whole machine's use since the previous call (or over a quarter second for the
 first), `load` the one-minute load average. Memory `used` leaves out caches the
 system can drop. `gpus` come from `nvidia-smi` when there is one. `disk` is the
 file system holding `path` (default: the home folder). `sessions` gives the
-memory each running kernel holds, with the processes it started.
+memory each running kernel holds, with the processes it started. `jobs` does
+the same for each running job (below), with `cpu` the share of one core it
+and its processes used since the previous call, as `top` counts (200 is two
+cores busy); there is none the first time a job is measured.
 
 `ProjectInfo` is `{path, name, opened_ms, exists, state}`. A project is a
 folder on the daemon's machine, named by its absolute path without a trailing
@@ -413,7 +418,7 @@ says which agent CLIs are installed, and how to install the others.
 
 `TerminalInfo` is `{id, kind, title, cwd, project?, created_ms, started_ms,
 running, exit?: {code?, signal?, ended_ms}, end, options?, agent?,
-outdated?, name?}`. `started_ms` is when its program last started. `end`
+outdated?, name?, job?}`. `started_ms` is when its program last started. `end`
 is the number of output bytes so far. `options` is what the agent was started
 with: `{model?, effort?, permission?, documents?, code?, pin?, web?, context?,
 refs?}`, where `permission` is `supervised`, `edits`, `auto`, `full`, `plan`,
@@ -535,6 +540,32 @@ same protocol: `list_sessions`, `list_variables`, `run_code` and
 `get_outputs`; and the user's documents (below): `get_focus`, `add_cell` and
 `edit_cell`. Claude Code's prompt hook (`terminal-event prompt`) adds where
 the user is to each prompt.
+
+### Jobs
+
+`start_job` runs a long script or pipeline in the background, in a terminal of
+kind `job`, so it goes on when the app disconnects or the daemon restarts, and
+its output is its log (`subscribe_terminal`, as above). `job` in its
+`TerminalInfo` is what it runs, `{path?, command?}`. It runs in the user's
+login shell, started as an interactive one so that conda and modules are set up
+as in their Terminal, in `cwd`, else the project folder, else the script's
+folder, with the project's env files. `path` is a script, which runs with the
+program for its kind:
+
+- `.R`: `Rscript`, and `.py`: `python`, each from the environment of the
+  project's kernel for the language (its settings, else what its files point
+  to), with that environment's `bin` first on `PATH`; without one, the shell's
+  `Rscript` or `python3`;
+- `.sh`: `bash`; `.nf`: `nextflow run`; `.smk` or `Snakefile`: `snakemake
+  --snakefile` (with `--cores all` when nothing else is said);
+- any other file runs itself, if it is executable.
+
+`command` is the arguments after the script, or without `path`, a command line
+for the shell. A job's `title` is the script's name or the command line.
+`restart_terminal` runs a job again as it was started, its log going on;
+`stop_terminal` ends it (and works for any terminal), keeping it and its log;
+`close_terminal` removes it. While it runs, `system_stats` says how much CPU and
+memory it uses.
 
 ## Windows and agents' edits
 

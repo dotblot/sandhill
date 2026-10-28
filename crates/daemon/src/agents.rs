@@ -126,6 +126,7 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         project: context.project.map(str::to_string),
         options: options.clone(),
         size: None,
+        job: None,
     };
     if kind == TERMINAL_SHELL {
         launch.title = "Terminal".into();
@@ -389,7 +390,7 @@ pub fn instructions(options: &AgentOptions) -> String {
 }
 
 /// The user's login shell.
-fn shell() -> PathBuf {
+pub fn shell() -> PathBuf {
     std::env::var_os("SHELL")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute() && p.is_file())
@@ -400,6 +401,11 @@ fn shell() -> PathBuf {
                 .find(|p| p.is_file())
         })
         .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+}
+
+/// Whether `kind` is a coding agent's terminal, rather than a shell's or a job's.
+pub fn is_agent(kind: &str) -> bool {
+    AGENTS.iter().any(|a| a.kind == kind)
 }
 
 /// Finds a CLI on `PATH`, or where its installers put it.
@@ -491,8 +497,8 @@ async fn run(program: &Path, arg: &str) -> Option<String> {
     Some(text)
 }
 
-/// Quotes a word for `sh`, which runs hook commands.
-fn shell_quote(word: &str) -> String {
+/// Quotes a word for `sh`, which runs hook commands and jobs.
+pub fn shell_quote(word: &str) -> String {
     format!("'{}'", word.replace('\'', r"'\''"))
 }
 

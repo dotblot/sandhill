@@ -93,6 +93,7 @@ pub fn launch(quarto: &Path, file: &Path, port: u16, project: Option<String>) ->
         project,
         options: AgentOptions::default(),
         size: None,
+        job: None,
     }
 }
 

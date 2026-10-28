@@ -32,6 +32,7 @@ import { ScriptDoc } from "../docs/scriptDoc";
 import { canEdit, type EditAction, lastEditor, runEdit } from "../editor/editing";
 import { type HelpRequest, nameAt } from "../model/help";
 import { type NewKind, template, within } from "../model/files";
+import { isJobScript, jobNote, jobState } from "../model/jobs";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
 import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
 import { browserOpener, fromRun as pagesOf, isHtmlFile, isPreviewable, localPort } from "../model/pages";
@@ -60,6 +61,7 @@ import { PackagesPane } from "./PackagesPane";
 import { PlotsPane } from "./PlotsPane";
 import { type ViewerRequest, ViewerPane } from "./ViewerPane";
 import { ProjectSettingsDialog, worthAsking } from "./ProjectSettings";
+import { type JobsApi, JobsPane } from "./JobsPane";
 import { type ShellApi, ShellTerminal } from "./ShellTerminal";
 import { type EditButtons, EditCapsule, TitleBar, ToolbarCapsule } from "./TitleBar";
 import { VariablesPane } from "./VariablesPane";
@@ -194,7 +196,7 @@ export function App(props: {
   const [agentsWidth, setAgentsWidth] = createSignal(clampAgents(Number(stored(AGENTS_WIDTH_KEY)) || AGENTS_WIDTH));
   /** The agent session in front in the Agents pane. */
   const [agentTab, setAgentTab] = createSignal<string>();
-  const [consoleTab, setConsoleTab] = createSignal<"console" | "terminal">("console");
+  const [consoleTab, setConsoleTab] = createSignal<"console" | "terminal" | "jobs">("console");
   const [palette, setPalette] = createSignal(false);
   const [menu, setMenu] = createSignal(false);
   const toggleLeft = () => {
@@ -333,9 +335,38 @@ export function App(props: {
     setSetupAsked(true);
   };
 
-  // Agents and shells the daemon keeps for this project, followed from each connection.
-  const terminals = new TerminalStore(ws.backend, props.project);
+  // Agents, shells and jobs the daemon keeps for this project, followed from each connection.
+  const seenKey = `sandhill.jobsSeen:${ws.backend.host}:${props.project}`;
+  const terminals = new TerminalStore(ws.backend, props.project, {
+    get: () => {
+      const ms = Number(stored(seenKey) ?? NaN);
+      return Number.isFinite(ms) ? ms : undefined;
+    },
+    set: (ms) => store(seenKey, String(ms)),
+  });
   let shellApi: ShellApi | undefined;
+  let jobsApi: JobsApi | undefined;
+  /** Jobs that ended since the Jobs tab was last looked at. */
+  const [jobNews, setJobNews] = createSignal(0);
+  terminals.onJobEnded = (job) => {
+    notify(jobNote(job), jobState(job) === "failed" ? "error" : "info");
+    if (consoleTab() !== "jobs" || isMin("console") || !consoleOn()) setJobNews((n) => n + 1);
+  };
+  createEffect(() => consoleTab() === "jobs" && setJobNews(0));
+  /** Shows the Jobs tab, at `id`'s log if given. */
+  const showJobs = (id?: string) => {
+    if (!consoleOn()) toggleConsole();
+    setMinimized((list) => list.filter((p) => p !== "console"));
+    setConsoleTab("jobs");
+    if (id) jobsApi?.show(id);
+  };
+  const runJob = async (path: string) => {
+    try {
+      showJobs((await terminals.startJob({ path })).id);
+    } catch (err) {
+      notify(`Could not run ${path.split("/").pop()} as a job: ${message(err)}`);
+    }
+  };
   createEffect(() => {
     if (ws.link().status !== "connected" || !ws.host()) return;
     terminals.refresh().catch((err) => console.warn("could not list the terminals", err));
@@ -851,6 +882,7 @@ export function App(props: {
     openable: (path) => !!docKind(path) || isHtmlFile(path),
     openLabel: (path) => (isHtmlFile(path) ? "Open in Viewer" : "Open"),
     open: (path) => (isHtmlFile(path) ? showPage({ path }) : void open(path)),
+    runJob: (path) => (isJobScript(path) ? () => void runJob(path) : undefined),
     newText: (name) => (docKind(name) === "ipynb" ? notebookText() : template(name)),
     async release(path) {
       const inside = docs().filter((d) => within(d.path, path));
@@ -912,6 +944,7 @@ export function App(props: {
       list.push({ label: "Close tab", keys: "⌘W", run: () => command("close-tab") });
       list.push({ label: doc.kind === "script" ? "Run file" : "Run all", keys: "⌥⌘R", run: () => command("run-all") });
       if (isPreviewable(doc.path)) list.push({ label: "Quarto Preview", keys: "⇧⌘K", run: () => void previewDoc(doc) });
+      if (isJobScript(doc.path)) list.push({ label: "Run as job", run: () => void runJob(doc.path) });
       for (const language of doc.languages()) {
         const label = languageLabel(language);
         list.push({ label: `${label}: Restart session`, run: () => void doc.kernels.restart(language).catch((e) => notify(message(e))) });
@@ -940,6 +973,7 @@ export function App(props: {
           setConsoleTab("terminal");
         },
       },
+      { label: "Show jobs", run: () => showJobs() },
       { label: "Refresh files", run: () => setTreeKey((k) => k + 1) },
       { label: "Open project…", keys: "⌘O", run: props.nav.showStart },
       { label: "Connect to server…", keys: "⇧⌘O", run: props.nav.showStart },
@@ -1320,6 +1354,21 @@ export function App(props: {
                 >
                   <span class="tab-name">Terminal</span>
                 </div>
+                <div
+                  class="tab"
+                  role="tab"
+                  aria-selected={consoleTab() === "jobs"}
+                  classList={{ active: consoleTab() === "jobs" }}
+                  title={`Scripts and pipelines running in the background on ${hostLabel}`}
+                  onClick={() => setConsoleTab("jobs")}
+                >
+                  <span class="tab-name">Jobs</span>
+                  <Show when={jobNews() || terminals.jobs().some((j) => j.running)}>
+                    <span class="tab-count" classList={{ news: jobNews() > 0 }}>
+                      {jobNews() || terminals.jobs().filter((j) => j.running).length}
+                    </span>
+                  </Show>
+                </div>
                 </div>
                 <span class="spacer" />
                 <Show when={consoleTab() === "console"}>
@@ -1340,6 +1389,13 @@ export function App(props: {
                 shown={consoleTab() === "terminal" && !isMin("console")}
                 openLink={openTerminalLink}
                 api={(api) => (shellApi = api)}
+              />
+              <JobsPane
+                ws={ws}
+                store={terminals}
+                shown={consoleTab() === "jobs" && !isMin("console")}
+                openLink={openTerminalLink}
+                api={(api) => (jobsApi = api)}
               />
             </div>
           </Show>
@@ -1467,6 +1523,7 @@ export function App(props: {
           <Show when={active()}>{(doc) => <KernelStates ws={ws} doc={doc()} />}</Show>
         </Show>
         <span class="spacer" />
+        <JobStatus store={terminals} onShow={() => showJobs()} />
         <AgentStatus store={terminals} onShow={showAgent} />
         <span class="status-item">{extraStatus() ?? active()?.cursor() ?? ""}</span>
       </footer>
@@ -1637,6 +1694,19 @@ function ConsoleSessions(props: {
  * In the status bar: which agent waits for you, then how much of the Claude
  * plan's 5-hour and weekly limits is used, as Claude Code last reported.
  */
+/** How many jobs run, in the status bar; clicking shows them. */
+function JobStatus(props: { store: TerminalStore; onShow: () => void }) {
+  const running = () => props.store.jobs().filter((j) => j.running).length;
+  return (
+    <Show when={running()}>
+      <button class="status-item jobs-status" title="Show the jobs running in the background" onClick={() => props.onShow()}>
+        <span class="spin" />
+        {running() === 1 ? "1 job" : `${running()} jobs`}
+      </button>
+    </Show>
+  );
+}
+
 function AgentStatus(props: { store: TerminalStore; onShow: (id: string) => void }) {
   const waiting = () => props.store.waiting()[0];
   const usage = () => {

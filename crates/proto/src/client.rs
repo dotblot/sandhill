@@ -14,10 +14,11 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, GitAction, GitCommitInfo, GitDiff, GitDone, GitLog,
-    GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, KernelspecInfo, Outcome,
-    PackageUpdates, Packages, PageUrl, PingReply, PreviewInfo, ProjectInfo, Request, RunStarted,
-    ServerMessage, SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats, TableFilter,
-    TableRows, TableSort, TableSummary, TerminalEvent, TerminalInfo, TerminalSubscribed, Variables,
+    GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, JobSpec, KernelspecInfo,
+    Outcome, PackageUpdates, Packages, PageUrl, PingReply, PreviewInfo, ProjectInfo, Request,
+    RunStarted, ServerMessage, SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats,
+    TableFilter, TableRows, TableSort, TableSummary, TerminalEvent, TerminalInfo,
+    TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -708,6 +709,23 @@ impl Client {
             terminal: terminal.into(),
             cols,
             rows,
+        })
+        .await
+    }
+
+    /// Runs `job` in the background (see [`Call::StartJob`]).
+    pub async fn start_job(&self, job: JobSpec, project: Option<&str>) -> Result<TerminalInfo> {
+        self.call(Call::StartJob {
+            job,
+            cwd: None,
+            project: project.map(Into::into),
+        })
+        .await
+    }
+
+    pub async fn stop_terminal(&self, terminal: &str) -> Result<()> {
+        self.call(Call::StopTerminal {
+            terminal: terminal.into(),
         })
         .await
     }

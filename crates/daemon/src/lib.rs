@@ -12,6 +12,7 @@ pub mod files;
 pub mod git;
 pub mod help;
 pub mod inline;
+pub mod jobs;
 pub mod journal;
 pub mod kernel;
 pub mod kernelspecs;

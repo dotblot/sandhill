@@ -32,6 +32,7 @@ fn sh(script: &str, cwd: &Path) -> Launch {
         project: None,
         options: AgentOptions::default(),
         size: Some((80, 24)),
+        job: None,
     }
 }
 

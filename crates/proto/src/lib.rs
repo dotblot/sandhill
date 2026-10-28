@@ -550,6 +550,25 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
     },
+    /// Runs a script or a command line in the background on the daemon's
+    /// machine, in a terminal of kind [`TERMINAL_JOB`], which keeps running
+    /// when clients disconnect and when the daemon restarts, and keeps its
+    /// log. See [`JobSpec`] for what runs. `restart_terminal` runs a job
+    /// again; `stop_terminal` stops it. Returns [`TerminalInfo`].
+    StartJob {
+        #[serde(flatten)]
+        job: JobSpec,
+        /// Where it runs: the project folder, else the script's folder.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
+    /// Ends a terminal's program, as hanging up its terminal does, and
+    /// keeps the terminal and its output.
+    StopTerminal {
+        terminal: String,
+    },
     /// Names a terminal, as the user renames a conversation; a blank or
     /// missing name takes the name away. Returns [`TerminalInfo`].
     RenameTerminal {
@@ -724,6 +743,23 @@ pub struct AppRequest {
 pub const TERMINAL_SHELL: &str = "shell";
 /// The kind of terminal a document's preview runs in (`quarto preview`).
 pub const TERMINAL_PREVIEW: &str = "preview";
+/// The kind of terminal a job runs in (see [`Call::StartJob`]).
+pub const TERMINAL_JOB: &str = "job";
+
+/// What a job runs: a script, with the program for its kind, or a command
+/// line, which the user's shell runs as their Terminal would.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct JobSpec {
+    /// A script: R runs with `Rscript` and Python with `python`, each from
+    /// the environment of the project's kernel for it; shell scripts with
+    /// `bash`, Nextflow pipelines with `nextflow run`, Snakefiles with
+    /// `snakemake`; any other file runs as a program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// A command line; with `path`, the arguments that follow the script.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+}
 
 /// Prefix of the error returned when a write would overwrite changes made on
 /// disk since the file was read.
@@ -1086,6 +1122,9 @@ pub struct SystemStats {
     /// Memory held by each running session's kernel, with the processes it started.
     #[serde(default)]
     pub sessions: Vec<SessionMemory>,
+    /// What each running job uses, with the processes it started.
+    #[serde(default)]
+    pub jobs: Vec<JobUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1130,6 +1169,17 @@ pub struct DiskStats {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionMemory {
     pub session: String,
+    /// Resident memory, in bytes.
+    pub rss: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JobUsage {
+    pub terminal: String,
+    /// Share of one core busy since the last `system_stats` (200 is two
+    /// cores' worth); none the first time a job is measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<f64>,
     /// Resident memory, in bytes.
     pub rss: u64,
 }
@@ -1251,6 +1301,9 @@ pub struct TerminalInfo {
     /// The name the user gave it (see [`Call::RenameTerminal`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// For a job: what it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<JobSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
