@@ -421,6 +421,7 @@ my-analysis/
   .sandhill/
     project.toml     # shared settings, committed to git
     outputs/         # project-level output cache (gitignored)
+    agents/          # agent conversations, to go on elsewhere (gitignored)
     .gitignore       # written by Sandhill, ignores outputs/
   analysis.qmd
   renv.lock / environment.yml / pyproject.toml ...
@@ -428,6 +429,7 @@ my-analysis/
 
 - `project.toml` holds only settings a collaborator should share: the R and Python interpreters (or "detect"), the working-directory rule, and env files to load.
 - Personal state (open tabs, pane layout, recent commands) is **not** written into the folder. The daemon keeps it in its own state directory, keyed by the project path. RStudio puts this in `.Rproj.user/`, which people then have to gitignore; we avoid that.
+- *Agent conversations are the exception (decided 2026-10-28).* Huan wants a project's chat history bound to the project, so a folder on a portable drive or a synced copy opened on another Mac shows its conversations and goes on with them. They are saved in `.sandhill/agents/`, which git ignores by default (repositories can be public, and chats hold pieces of data, paths and sometimes tokens). Project settings has "Chat history: Kept with the project" (default) or "Kept on this machine only"; switching moves them. Each agent keeps its own copy of a conversation in the home folder (`~/.claude/projects/<path>`, `~/.codex/sessions`), so the folder also carries that copy and Sandhill puts it back before the agent resumes; checked with Claude Code moved to a path with a space, which went on with what it was told. Where Antigravity keeps its conversations isn't known, so on another machine it starts afresh with the chat to read, as any agent does without its copy. Logins never move. Not done: Codex wasn't checked with a real login; removing a conversation on one machine doesn't remove it on another; the terminal's raw output stays on the machine. Protocol: docs/protocol.md, "Conversations kept with the project".
 - Any folder can be opened as a project. `.sandhill/` is created only when you first change a project setting, so opening a colleague's repo leaves no trace.
 
 **What it does.**

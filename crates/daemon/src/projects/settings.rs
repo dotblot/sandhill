@@ -1,6 +1,6 @@
 //! A project's shared settings, in `.sandhill/project.toml`: the kernel each
-//! language runs in, where documents run, and the env files its kernels
-//! load. The folder is made only when a setting is first saved, so opening
+//! language runs in, where documents run, the env files its kernels load,
+//! and where its agent conversations are kept. The folder is made only when a setting is first saved, so opening
 //! someone's repository leaves no trace in it.
 //!
 //! Saving changes only the keys Sandhill knows and keeps the rest of the
@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use sandhill_proto::{DocumentsRunIn, ProjectSettings};
+use sandhill_proto::{ChatHistory, DocumentsRunIn, ProjectSettings};
 use serde::Deserialize;
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
@@ -36,9 +36,16 @@ documents = "document"
 [env]
 # Files of NAME=value lines whose variables the project's kernels start with.
 files = [".env"]
+
+[agents]
+# Where agent conversations are kept: "project" (in .sandhill/agents/, so
+# they go with the folder to another computer; git ignores them) or
+# "machine" (on the computer the project is on).
+history = "project"
 "#;
 
-const GITIGNORE: &str = "# Written by Sandhill: saved outputs stay on this machine.\noutputs/\n";
+const GITIGNORE: &str =
+    "# Written by Sandhill: saved outputs and agent conversations stay out of git.\noutputs/\n";
 
 pub fn file(root: &Path) -> PathBuf {
     root.join(".sandhill/project.toml")
@@ -61,6 +68,7 @@ pub fn read(root: &Path) -> Result<Option<ProjectSettings>> {
         python: kernel(parsed.kernels.python),
         documents: parsed.run.documents.unwrap_or(defaults.documents),
         env_files: parsed.env.files.unwrap_or(defaults.env_files),
+        chat_history: parsed.agents.history.unwrap_or(defaults.chat_history),
     }))
 }
 
@@ -91,8 +99,33 @@ pub fn write(root: &Path, settings: &ProjectSettings) -> Result<()> {
     set(&mut doc, "run", "documents", value(documents));
     let files: Array = settings.env_files.iter().map(String::as_str).collect();
     set(&mut doc, "env", "files", value(files));
+    let history = match settings.chat_history {
+        ChatHistory::Project => "project",
+        ChatHistory::Machine => "machine",
+    };
+    set(&mut doc, "agents", "history", value(history));
     std::fs::write(&path, doc.to_string())
         .with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// Has `.sandhill/.gitignore` ignore `line` (`agents/`), making it if need be.
+pub fn ignore(root: &Path, line: &str) -> Result<()> {
+    let dir = file(root)
+        .parent()
+        .context("no .sandhill folder")?
+        .to_path_buf();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(".gitignore");
+    let mut text = std::fs::read_to_string(&path).unwrap_or_else(|_| GITIGNORE.to_string());
+    if text.lines().any(|l| l.trim() == line) {
+        return Ok(());
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(line);
+    text.push('\n');
+    std::fs::write(&path, text).with_context(|| format!("cannot write {}", path.display()))
 }
 
 /// Sets `[section] key`, keeping the comments around it.
@@ -132,6 +165,8 @@ struct File {
     run: Run,
     #[serde(default)]
     env: Env,
+    #[serde(default)]
+    agents: Agents,
 }
 
 #[derive(Deserialize, Default)]
@@ -150,6 +185,11 @@ struct Env {
     files: Option<Vec<String>>,
 }
 
+#[derive(Deserialize, Default)]
+struct Agents {
+    history: Option<ChatHistory>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +200,7 @@ mod tests {
             python: Some("conda-env-omicverse-py".into()),
             documents: DocumentsRunIn::Project,
             env_files: vec![".env".into(), "secrets.env".into()],
+            chat_history: ChatHistory::Machine,
         }
     }
 
@@ -180,6 +221,16 @@ mod tests {
         let text = std::fs::read_to_string(file(dir.path())).unwrap();
         assert!(text.starts_with("# Sandhill project settings."));
         assert!(text.contains("python = \"conda-env-omicverse-py\""));
+        assert!(text.contains("history = \"machine\""), "{text}");
+
+        super::ignore(dir.path(), "agents/").unwrap();
+        super::ignore(dir.path(), "agents/").unwrap();
+        let ignored = std::fs::read_to_string(dir.path().join(".sandhill/.gitignore")).unwrap();
+        assert_eq!(
+            ignored.lines().filter(|l| *l == "agents/").count(),
+            1,
+            "{ignored}"
+        );
 
         // "detect" is no kernel.
         write(dir.path(), &ProjectSettings::default()).unwrap();

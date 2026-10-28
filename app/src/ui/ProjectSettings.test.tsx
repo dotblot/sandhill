@@ -114,9 +114,15 @@ describe("ProjectSettingsDialog", () => {
     const env = root.querySelector<HTMLInputElement>("#ps-env")!;
     env.value = ".env, secrets.env ,";
     env.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    // Conversations go with the project unless asked otherwise.
+    expect(select("history").value).toBe("project");
+    select("history").value = "machine";
+    select("history").dispatchEvent(new Event("change"));
     button("Save").click();
     await settle();
-    expect(saved).toEqual([{ r: "ark", python: "python3", documents: "project", env_files: [".env", "secrets.env"] }]);
+    expect(saved).toEqual([
+      { r: "ark", python: "python3", documents: "project", env_files: [".env", "secrets.env"], chat_history: "machine" },
+    ]);
     // The file tree shows .sandhill/ then.
     expect(onSaved).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();

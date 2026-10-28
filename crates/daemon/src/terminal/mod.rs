@@ -231,6 +231,23 @@ pub struct Launch {
     pub job: Option<JobSpec>,
 }
 
+/// A conversation from another machine, to make an ended terminal of (see
+/// [`Terminals::adopt`]).
+#[derive(Debug, Clone)]
+pub struct Adopted {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub name: Option<String>,
+    /// The project's folder on this machine, where the agent works.
+    pub project: String,
+    pub options: AgentOptions,
+    pub created_ms: i64,
+    pub ended_ms: i64,
+    /// What finds the agent's conversation again ([`crate::agents::RESUME_KEYS`]).
+    pub report: serde_json::Map<String, Value>,
+}
+
 /// Every terminal under `<state>/terminals`.
 pub struct Terminals {
     root: PathBuf,
@@ -357,6 +374,73 @@ impl Terminals {
             .map(str::to_string);
         crate::files::write_atomic(&paths.meta(), &serde_json::to_vec_pretty(&meta)?)?;
         self.info(id)
+    }
+
+    /// A terminal's folder.
+    pub fn dir(&self, id: &str) -> Result<PathBuf> {
+        Ok(self.paths(id)?.dir)
+    }
+
+    /// Makes an ended terminal for a conversation that ran on another
+    /// machine, with its chat, so it shows in the history and can go on.
+    pub fn adopt(&self, adopted: Adopted, chat: &Path) -> Result<()> {
+        let id = &adopted.id;
+        if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("{id} is no terminal id");
+        }
+        let paths = Paths::new(self.root.join(id));
+        if paths.meta().exists() {
+            bail!("terminal {id} exists");
+        }
+        std::fs::create_dir_all(paths.dir())?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700))?;
+            std::fs::set_permissions(paths.dir(), std::fs::Permissions::from_mode(0o700))?;
+        }
+        std::fs::copy(chat, chat::path(paths.dir()))?;
+        write_report(&paths, adopted.report, &adopted.options)?;
+        let exit = TerminalExit {
+            code: None,
+            signal: None,
+            ended_ms: adopted.ended_ms,
+        };
+        std::fs::write(paths.exit(), serde_json::to_vec(&exit)?)?;
+        // Last, as it makes the terminal.
+        let meta = Meta {
+            id: id.clone(),
+            kind: adopted.kind,
+            title: adopted.title,
+            cwd: adopted.project.clone(),
+            project: Some(adopted.project),
+            created_ms: adopted.created_ms,
+            started_ms: adopted.created_ms,
+            options: adopted.options,
+            command: Vec::new(),
+            build: crate::build_id().to_string(),
+            name: adopted.name,
+            job: None,
+        };
+        crate::files::write_atomic(&paths.meta(), &serde_json::to_vec_pretty(&meta)?)
+    }
+
+    /// Moves a terminal to a project's folder, after the folder moved.
+    pub fn move_to(&self, id: &str, project: &str) -> Result<()> {
+        let paths = self.paths(id)?;
+        let mut meta: Meta = serde_json::from_slice(&std::fs::read(paths.meta())?)?;
+        meta.cwd = project.to_string();
+        meta.project = Some(project.to_string());
+        crate::files::write_atomic(&paths.meta(), &serde_json::to_vec_pretty(&meta)?)
+    }
+
+    /// Sets one thing an agent reported, as which conversation it goes on with.
+    pub fn set_report(&self, id: &str, key: &str, value: Value) -> Result<()> {
+        let paths = self.paths(id)?;
+        let mut report = read_json::<Value>(&paths.agent())
+            .and_then(|r| r.as_object().cloned())
+            .unwrap_or_default();
+        report.insert(key.to_string(), value);
+        crate::files::write_atomic(&paths.agent(), &serde_json::to_vec(&report)?)
     }
 
     /// Starts the terminal host for `launch` in its folder and waits until

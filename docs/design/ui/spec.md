@@ -274,7 +274,7 @@ and remote work are never shown together.
   - Then Project settings…, and Open project… (⌘O) and New project… (⇧⌘N),
     which go to the Start screen.
 - **Project settings** (2026-10-25), from that menu or the ☰ menu, is a dialog
-  of four rows, a label on the left and an 11px select or field with 11px
+  of five rows, a label on the left and an 11px select or field with 11px
   notes under it:
   - R and Python: "Automatic: <the kernel it means>, from <file>" (follow what
     the project's files point to), then every installed kernel of the
@@ -284,6 +284,10 @@ and remote work are never shown together.
   - Notebooks: run in their own folder, as quarto render does, or in the
     project's folder.
   - Env files, comma-separated.
+  - Chat history (2026-10-28): "Kept with the project" (the default; agent
+    conversations are saved in `.sandhill/agents/`, go with the folder to
+    another computer and go on there, and git ignores them) or "Kept on this
+    machine only". The note under it says which.
   - Cancel and Save. Save writes `.sandhill/project.toml`; running sessions
     keep their kernel until restarted, and a toast says so.
   - A language with only one kernel says why: "Only environments with

@@ -125,13 +125,16 @@ started with `project` lists it in its `SessionInfo`, also after a daemon
 restart.
 
 A project's shared settings live in `.sandhill/project.toml`, which can be
-committed. `ProjectSettings` is `{r?, python?, documents, env_files}`: the
-kernel each language runs in (none: detect it), where notebook and Quarto
-chunks run (`document`, their own folder, or `project`), and the env files,
-relative to the project, whose `NAME=value` lines its kernels start with
-(`[".env"]` unless set). `save_project_settings` makes `.sandhill/` the first
-time, with a `.gitignore` for `outputs/`, and keeps the rest of an existing
-file, comments included. `ProjectSetup` is `{settings, saved, problem?,
+committed. `ProjectSettings` is `{r?, python?, documents, env_files,
+chat_history}`: the kernel each language runs in (none: detect it), where
+notebook and Quarto chunks run (`document`, their own folder, or `project`),
+the env files, relative to the project, whose `NAME=value` lines its kernels
+start with (`[".env"]` unless set), and where agent conversations are kept
+(`project`, the default, or `machine`; see "Conversations kept with the
+project" below). `save_project_settings` makes `.sandhill/` the first time,
+with a `.gitignore` for `outputs/`, and keeps the rest of an existing file,
+comments included. Saving `machine` moves the project's conversations out of
+its folder. `ProjectSetup` is `{settings, saved, problem?,
 found, r?, python?}`: `saved` says whether the file exists, `problem` why it
 couldn't be read, `found` lists the environments the folder's files point
 to, best first for each language, as `{language, file, label, kernel?,
@@ -540,6 +543,41 @@ same protocol: `list_sessions`, `list_variables`, `run_code` and
 `get_outputs`; and the user's documents (below): `get_focus`, `add_cell` and
 `edit_cell`. Claude Code's prompt hook (`terminal-event prompt`) adds where
 the user is to each prompt.
+
+### Conversations kept with the project
+
+A project keeps its agent conversations in its folder unless its settings
+say `chat_history = machine`, so they go with the folder to another
+computer (a portable drive, a synced copy). Each conversation still runs in
+a terminal on the machine; every few seconds the daemon copies what changed
+to `.sandhill/agents/<terminal id>/`, which `.sandhill/.gitignore` lists:
+
+- `conversation.json`: its title, agent, options, `resume` (the agent's
+  session, thread or conversation), `session_file`, `machine` (the one it
+  last ran on) and, while it runs, `running_ms`, renewed every minute.
+- `chat.jsonl`: the chat entries, as the terminal keeps them.
+- `session.jsonl`: the agent's own copy of the conversation, from the
+  `transcript` path the agent reports (Claude Code's transcript, Codex's
+  rollout).
+
+Both files only grow, so the longer copy is the newer, and the daemon copies
+what one side has beyond the other: this machine's news to the folder, or
+another machine's news into an ended terminal here. Only the machine with
+news, else the one that wrote last, writes `conversation.json`.
+
+`open_project` makes an ended terminal (with the project's path on this
+machine as its `project` and `cwd`) for each conversation in the folder
+that this machine doesn't have; `list_terminals` does again for the projects
+opened since the daemon started. `restart_terminal` first puts
+`session.jsonl` back where the agent looks (Claude Code's
+`~/.claude/projects/<the path, every character but letters and digits made
+a dash>/<session>.jsonl`, or under Codex's `~/.codex/sessions/`) and resumes
+it. Without that copy (or for Antigravity, on another machine than it ran
+on) the agent starts afresh and its first message says to read
+`.sandhill/agents/<id>/earlier.md`, the chat as text. It fails while
+`conversation.json` says another machine runs the conversation.
+`close_terminal` removes the folder's copy too; removing a conversation on
+one machine doesn't remove it on another. Logins never move.
 
 ### Jobs
 

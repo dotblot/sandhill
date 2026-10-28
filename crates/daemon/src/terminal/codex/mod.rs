@@ -345,7 +345,12 @@ impl Bridge {
             started["model"].as_str().unwrap_or(""),
             self.cwd.display()
         );
-        self.report(json!({"thread": thread})).await;
+        let mut report = json!({"thread": thread});
+        // Codex's own copy of the conversation, which goes with the project (see `chats`).
+        if let Some(path) = started["thread"]["path"].as_str() {
+            report["transcript"] = json!(path);
+        }
+        self.report(report).await;
         // The conversation has started, as Claude Code's SessionStart hook says.
         let source = if options.thread.is_some() {
             "resume"

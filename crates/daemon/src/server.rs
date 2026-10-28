@@ -1,6 +1,6 @@
 //! The daemon: owns every session and serves clients over a byte stream.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,9 +10,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use sandhill_proto::{
-    Blob, Call, CellEdited, Event, FileWritten, HelpPage, HelpSource, HelpTopics, HistoryPage,
-    Outcome, PROTOCOL_VERSION, PackageUpdates, Packages, PingReply, PlotRedraw, Request,
-    ServerMessage, SessionStatus, Subscribed, TERMINAL_JOB, TableRows, TableSummary, Variables,
+    Blob, Call, CellEdited, ChatHistory, Event, FileWritten, HelpPage, HelpSource, HelpTopics,
+    HistoryPage, Outcome, PROTOCOL_VERSION, PackageUpdates, Packages, PingReply, PlotRedraw,
+    Request, ServerMessage, SessionStatus, Subscribed, TERMINAL_JOB, TableRows, TableSummary,
+    Variables,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -21,6 +22,7 @@ use tokio::sync::{Notify, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::blobs::BlobStore;
+use crate::chats;
 use crate::journal::Journal;
 use crate::pages::Pages;
 use crate::paths::StateDir;
@@ -58,9 +60,19 @@ pub struct Daemon {
     /// Milliseconds since the Unix epoch.
     started_ms: i64,
     user: String,
+    /// This machine's name, for conversations kept with their project.
+    machine: String,
+    /// Where the agents keep their own conversations here.
+    homes: chats::Homes,
+    /// Projects opened since the daemon started, whose conversations from
+    /// other machines show in the history.
+    opened: Mutex<HashSet<String>>,
     /// Ends `serve`, for `stop_daemon`.
     stop: Arc<Notify>,
 }
+
+/// How often conversations are copied to and from their projects.
+const CHAT_SYNC: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// What the daemon needs to know about how it runs.
 #[derive(Debug, Clone)]
@@ -113,6 +125,9 @@ impl Daemon {
             options,
             started_ms: crate::journal::now_ms(),
             user: user_name(),
+            machine: hostname(),
+            homes: chats::Homes::from_env(),
+            opened: Mutex::default(),
             stop: Arc::default(),
         });
         for record in journal.sessions()? {
@@ -145,6 +160,20 @@ impl Daemon {
 
     /// Serves clients until `stop_daemon` asks it to stop.
     pub async fn serve(self: Arc<Self>, listener: UnixListener) -> std::io::Result<()> {
+        // Conversations go to and from their projects while it serves.
+        let daemon = Arc::downgrade(&self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(CHAT_SYNC).await;
+                let Some(daemon) = daemon.upgrade() else {
+                    return;
+                };
+                let _ = tokio::task::spawn_blocking(move || {
+                    chats::sync(&daemon.terminals, &daemon.homes, &daemon.machine);
+                })
+                .await;
+            }
+        });
         loop {
             let (stream, _) = tokio::select! {
                 accepted = listener.accept() => accepted?,
@@ -843,7 +872,10 @@ impl Daemon {
             }
             Call::OpenProject { path } => {
                 let journal = self.journal.clone();
-                serde_json::to_value(blocking(move || projects::open(&journal, &path)).await?)?
+                let info = blocking(move || projects::open(&journal, &path)).await?;
+                self.opened.lock().unwrap().insert(info.path.clone());
+                chats::adopt(&self.terminals, Path::new(&info.path));
+                serde_json::to_value(info)?
             }
             Call::ListRecentProjects => {
                 let journal = self.journal.clone();
@@ -866,13 +898,19 @@ impl Daemon {
                 if !root.is_dir() {
                     anyhow::bail!("{} is not a folder", root.display());
                 }
-                serde_json::to_value(
-                    blocking(move || {
+                let machine = settings.chat_history == ChatHistory::Machine;
+                let setup = blocking({
+                    let root = root.clone();
+                    move || {
                         projects::settings::write(&root, &settings)?;
                         Ok(projects::setup(&root))
-                    })
-                    .await?,
-                )?
+                    }
+                })
+                .await?;
+                if machine {
+                    chats::move_out(&self.terminals, &root)?;
+                }
+                serde_json::to_value(setup)?
             }
             Call::ForgetProject { path } => {
                 let journal = self.journal.clone();
@@ -1003,7 +1041,12 @@ impl Daemon {
                 prompt,
             } => {
                 let info = self.terminals.info(&terminal)?;
-                let resume = crate::agents::resume_id(&info.kind, info.agent.as_ref());
+                // It may have run on another machine, or have to start afresh.
+                let resume = chats::prepare(&info, &self.homes, &self.machine)?;
+                let prompt = match &resume.note {
+                    Some(note) => Some(chats::with_note(note, prompt.as_deref())),
+                    None => prompt,
+                };
                 let cwd = PathBuf::from(&info.cwd);
                 let context = crate::agents::Context {
                     executable: &self.options.executable,
@@ -1011,7 +1054,7 @@ impl Daemon {
                     project: info.project.as_deref(),
                     cwd: &cwd,
                     prompt: prompt.as_deref(),
-                    resume: resume.as_deref(),
+                    resume: resume.id.as_deref(),
                 };
                 let options = options.unwrap_or(info.options);
                 let mut launch = crate::agents::launch(&info.kind, &options, &context).await?;
@@ -1022,7 +1065,13 @@ impl Daemon {
             Call::RenameTerminal { terminal, name } => {
                 serde_json::to_value(self.terminals.rename(&terminal, name.as_deref())?)?
             }
-            Call::ListTerminals => serde_json::to_value(self.terminals.list())?,
+            Call::ListTerminals => {
+                let opened: Vec<String> = self.opened.lock().unwrap().iter().cloned().collect();
+                for project in opened {
+                    chats::adopt(&self.terminals, Path::new(&project));
+                }
+                serde_json::to_value(self.terminals.list())?
+            }
             Call::TerminalInput { terminal, data } => {
                 self.terminals
                     .send(&terminal, ToHost::Input { data })
@@ -1054,7 +1103,11 @@ impl Daemon {
                 Value::Null
             }
             Call::CloseTerminal { terminal } => {
+                let project = self.terminals.info(&terminal)?.project;
                 self.terminals.close(&terminal).await?;
+                if let Some(project) = project {
+                    chats::forget(Path::new(&project), &terminal)?;
+                }
                 Value::Null
             }
             Call::GetFocus { project } => {

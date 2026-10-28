@@ -1,11 +1,12 @@
 // Project settings: the R and Python each language runs in, where notebooks
-// and Quarto documents run, and the env files kernels start with. The
+// and Quarto documents run, the env files kernels start with, and where
+// agent conversations are kept. The
 // daemon saves them in .sandhill/project.toml, so collaborators get them
 // too. The first time a project opens without saved settings, this asks
 // once; the ☰ menu brings it back.
 
 import { createSignal, For, onMount, Show } from "solid-js";
-import type { DocumentsRunIn, FoundEnvironment, KernelspecInfo, ProjectSettings, ProjectSetup } from "../backend/types";
+import type { ChatHistory, DocumentsRunIn, FoundEnvironment, KernelspecInfo, ProjectSettings, ProjectSetup } from "../backend/types";
 import { normalizeLanguage, pickKernel, type Workspace } from "../model/workspace";
 import { notify } from "./dialogs";
 
@@ -58,6 +59,7 @@ export function ProjectSettingsDialog(props: {
   });
   const [documents, setDocuments] = createSignal<DocumentsRunIn>(props.setup.settings.documents);
   const [envFiles, setEnvFiles] = createSignal(props.setup.settings.env_files.join(", "));
+  const [history, setHistory] = createSignal<ChatHistory>(props.setup.settings.chat_history ?? "project");
   const [saving, setSaving] = createSignal(false);
   const specsFor = (language: string) => ws.kernelspecs().filter((k) => normalizeLanguage(k.language) === language);
   /** What "Automatic" runs: the first environment found with a kernel, else the usual kernel. */
@@ -79,6 +81,7 @@ export function ProjectSettingsDialog(props: {
       python: kernels().python || undefined,
       documents: documents(),
       env_files: files,
+      chat_history: history(),
     };
     setSaving(true);
     try {
@@ -177,6 +180,20 @@ export function ProjectSettingsDialog(props: {
               onKeyDown={(e) => e.key === "Enter" && void save()}
             />
             <p class="ps-note">NAME=value lines new R and Python sessions start with, comma-separated. Missing files are skipped.</p>
+          </div>
+          <label class="ps-label" for="ps-history">
+            Chat history
+          </label>
+          <div class="ps-field">
+            <select id="ps-history" value={history()} onChange={(e) => setHistory(e.currentTarget.value as ChatHistory)}>
+              <option value="project">Kept with the project</option>
+              <option value="machine">Kept on this machine only</option>
+            </select>
+            <p class="ps-note">
+              {history() === "project"
+                ? "Agent conversations are saved in .sandhill/agents/, so they go with the folder to another computer and go on there. Git ignores them."
+                : "Agent conversations stay on the computer the project is on."}
+            </p>
           </div>
         </div>
         <div class="modal-buttons">
