@@ -12,6 +12,7 @@ interface TextQuestion {
   detail?: string;
   value: string;
   ok: string;
+  secret?: boolean;
   resolve: (text: string | undefined) => void;
 }
 
@@ -26,8 +27,8 @@ export function ask(message: string, choices: string[], detail?: string): Promis
 }
 
 /** Asks the user for a line of text, starting from `value`; undefined if they cancel. */
-export function askText(message: string, value: string, ok: string, detail?: string): Promise<string | undefined> {
-  return new Promise((resolve) => setTextQuestion({ message, detail, value, ok, resolve }));
+export function askText(message: string, value: string, ok: string, detail?: string, secret = false): Promise<string | undefined> {
+  return new Promise((resolve) => setTextQuestion({ message, detail, value, ok, secret, resolve }));
 }
 
 /** Shows a message for a while: something that went wrong, or with `info`, something done. */
@@ -93,6 +94,8 @@ export function Dialogs() {
               </Show>
               <input
                 class="modal-input"
+                type={q().secret ? "password" : "text"}
+                autocomplete="off"
                 value={q().value}
                 ref={(el) => {
                   field = el;

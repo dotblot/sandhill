@@ -24,6 +24,8 @@ import { closeOnOutside } from "./popup";
 
 /** How often the status is read while the pane shows. */
 const POLL_MS = 3000;
+/** Tags the branch menu lists, the newest. */
+const TAGS_SHOWN = 12;
 /** Commits read at a time. */
 const PAGE = 200;
 /** The graph's row height and lane spacing, in pixels. */
@@ -96,7 +98,7 @@ export function GitPane(props: {
   const [summary, setSummary] = createSignal("");
   const [body, setBody] = createSignal("");
   const [amend, setAmend] = createSignal(false);
-  const [menu, setMenu] = createSignal<{ kind: "branches" | "merge" | "stash" | "more" | "commit"; anchor: HTMLElement }>();
+  const [menu, setMenu] = createSignal<{ kind: "branches" | "merge" | "rebase" | "stash" | "more" | "commit"; anchor: HTMLElement }>();
   const [userName, setUserName] = createSignal("");
   const [userEmail, setUserEmail] = createSignal("");
   const [now, setNow] = createSignal(Date.now());
@@ -174,6 +176,21 @@ export function GitPane(props: {
   onCleanup(() => {
     clearInterval(poll);
     window.removeEventListener("focus", focus);
+  });
+
+  // Git, or ssh, asks for a password, a token or a passphrase while
+  // fetching, pulling or pushing.
+  let gone = false;
+  onCleanup(() => (gone = true));
+  ws.backend.onRequest((request) => {
+    if (gone || request.method !== "git_credential" || request.project !== props.project) return;
+    void (async () => {
+      const prompt = String(request.params?.prompt ?? "").replace(/:\s*$/, "");
+      const secret = !!request.params?.secret;
+      const text = await askText(prompt, "", "Sign in", secret ? credentialNote(prompt) : undefined, secret);
+      const answer = text === undefined ? { id: request.id, error: "cancelled" } : { id: request.id, result: text };
+      await ws.call("answer", answer).catch(() => {});
+    })();
   });
 
   // A picked commit's message and files.
@@ -341,6 +358,37 @@ export function GitPane(props: {
     await act({ op: "merge", branch }, `Could not merge ${branch}`, (output) =>
       /CONFLICT/.test(output) ? undefined : /up to date/i.test(output) ? `${into} already has everything in ${branch}` : `Merged ${branch} into ${into}`,
     );
+  }
+
+  /** Rebases the branch checked out onto `branch`, after asking. */
+  async function rebase(branch: string) {
+    setMenu(undefined);
+    const mine = status()?.branch ?? "HEAD";
+    const answer = await ask(
+      `Rebase ${mine} onto ${branch}?`,
+      ["Rebase", "Cancel"],
+      `${mine}'s own commits are made again on top of ${branch}, for a straight history. Where both changed the same lines, it stops with the files marked ! to settle: edit them, or keep Mine or take Theirs, stage them, then Continue.`,
+    );
+    if (answer !== "Rebase") return;
+    await act({ op: "rebase", branch }, `Could not rebase onto ${branch}`, (output) =>
+      /CONFLICT|could not apply/i.test(output) ? undefined : /up to date/i.test(output) ? `${mine} is already on top of ${branch}` : `Rebased ${mine} onto ${branch}`,
+    );
+  }
+
+  async function newTag() {
+    setMenu(undefined);
+    const text = await askText("New tag", "", "Create", "Marks the current commit: a release like v1.0, or the version a paper used.");
+    if (text === undefined || !text.trim()) return;
+    const name = text.trim();
+    await act({ op: "create_tag", name }, "Could not make the tag", () => `Tagged the current commit ${name}`);
+  }
+
+  async function tag(name: string) {
+    setMenu(undefined);
+    const remote = status()?.remotes.length;
+    const answer = await ask(`Tag ${name}`, remote ? ["Push", "Delete", "Cancel"] : ["Delete", "Cancel"], remote ? "Push sends it to the remote; Delete takes it off here only." : undefined);
+    if (answer === "Push") await act({ op: "push_tag", name }, `Could not push ${name}`, () => `Pushed ${name}`);
+    if (answer === "Delete") await act({ op: "delete_tag", name }, `Could not delete ${name}`);
   }
 
   async function newBranch() {
@@ -593,8 +641,18 @@ export function GitPane(props: {
                   {status()!.state === "merging" ? "Merging" : status()!.state === "rebasing" ? "Rebasing" : status()!.state === "cherry-picking" ? "Cherry-picking" : "Reverting"}
                   {status()!.state === "merging"
                     ? ": fix each ! file in the editor and stage it, or pick Mine or Theirs; then commit."
-                    : ": fix the conflicts, stage them, then commit."}
+                    : ": fix each ! file in the editor and stage it, or pick Mine or Theirs; then Continue."}
                 </span>
+                <Show when={status()!.state !== "merging"}>
+                  <button
+                    class="vbtn primary"
+                    disabled={!!busy() || unstaged().some((f) => f.conflict)}
+                    title={unstaged().some((f) => f.conflict) ? "Settle and stage the ! files first" : undefined}
+                    onClick={() => act({ op: "continue" }, "Could not go on")}
+                  >
+                    Continue
+                  </button>
+                </Show>
                 <button class="vbtn" disabled={!!busy()} onClick={() => act({ op: "abort" }, "Could not stop it")}>
                   Stop
                 </button>
@@ -624,7 +682,7 @@ export function GitPane(props: {
                   onToggle={(f) => stage([f])}
                   onDiscard={(f) => discard([f])}
                   onResolve={
-                    status()!.state === "merging"
+                    status()!.state === "merging" || status()!.state === "rebasing"
                       ? (f, side) => act({ op: "resolve", file: f.path, side }, `Could not settle ${f.path}`)
                       : undefined
                   }
@@ -755,11 +813,33 @@ export function GitPane(props: {
                   setTimeout(() => setMenu({ kind: "merge", anchor }));
                 }}
               />
+              <MenuItem
+                icon="branch"
+                label={`Rebase ${status()?.branch ?? "HEAD"} onto…`}
+                disabled={!status()?.branch || !mergeable(status()).length || !!status()?.state}
+                run={() => {
+                  const anchor = open().anchor;
+                  setTimeout(() => setMenu({ kind: "rebase", anchor }));
+                }}
+              />
+              <div class="mm-sep" />
+              <div class="mm-h">Tags</div>
+              <For each={(status()?.tags ?? []).slice(0, TAGS_SHOWN)}>{(name) => <MenuItem icon="tag" label={name} run={() => tag(name)} />}</For>
+              <MenuItem icon="plus" label="New tag…" disabled={!status()?.head} run={newTag} />
             </Show>
-            <Show when={open().kind === "merge"}>
-              <div class="mm-h">Merge into {status()?.branch}</div>
+            <Show when={open().kind === "merge" || open().kind === "rebase"}>
+              <div class="mm-h">
+                {open().kind === "merge" ? "Merge into" : "Rebase"} {status()?.branch}
+                {open().kind === "rebase" ? " onto" : ""}
+              </div>
               <For each={mergeable(status())}>
-                {(branch) => <MenuItem icon={branch.includes("/") && status()?.remote_branches.includes(branch) ? "globe" : "branch"} label={branch} run={() => merge(branch)} />}
+                {(branch) => (
+                  <MenuItem
+                    icon={branch.includes("/") && status()?.remote_branches.includes(branch) ? "globe" : "branch"}
+                    label={branch}
+                    run={() => (open().kind === "merge" ? merge(branch) : rebase(branch))}
+                  />
+                )}
               </For>
             </Show>
             <Show when={open().kind === "stash"}>
@@ -772,6 +852,13 @@ export function GitPane(props: {
               />
             </Show>
             <Show when={open().kind === "more"}>
+              <MenuItem
+                icon="pull"
+                label="Pull, with my commits on top"
+                disabled={!status()?.upstream || !!status()?.state}
+                run={() => act({ op: "pull", rebase: true }, "Could not pull", lastLine)}
+              />
+              <div class="mm-sep" />
               <MenuItem icon="plus" label="Stage all" disabled={!unstaged().length} run={() => stage(unstaged(), true)} />
               <MenuItem icon="minus" label="Unstage all" disabled={!staged().length} run={() => act({ op: "unstage", files: [] }, "Could not unstage")} />
               <MenuItem
@@ -825,6 +912,13 @@ function tooBig(bytes: number): string {
 }
 
 /** Branches that can be merged into the one checked out: the other local ones, then the remote ones. */
+/** What a password prompt needs saying. */
+function credentialNote(prompt: string): string | undefined {
+  if (/passphrase/i.test(prompt)) return "The passphrase of your ssh key, which stays on this machine.";
+  if (/github|gitlab|bitbucket/i.test(prompt)) return "Not your account password: a personal access token, made in the site's settings.";
+  return undefined;
+}
+
 function mergeable(status?: GitStatus): string[] {
   if (!status) return [];
   return [...status.branches.filter((b) => b !== status.branch), ...status.remote_branches];
@@ -914,7 +1008,7 @@ function FileGroup(props: {
                 <Show when={props.onResolve && file.conflict}>
                   <button
                     class="gside"
-                    title="Keep this branch's version of the whole file"
+                    title="Keep your branch's version of the whole file"
                     disabled={props.busy}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -925,7 +1019,7 @@ function FileGroup(props: {
                   </button>
                   <button
                     class="gside"
-                    title="Take the merged branch's version of the whole file"
+                    title="Take the other branch's version of the whole file"
                     disabled={props.busy}
                     onClick={(e) => {
                       e.stopPropagation();

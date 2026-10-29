@@ -436,7 +436,10 @@ async fn a_repository_is_made_changed_committed_and_pushed() {
     assert_eq!(client.git_status(path).await.unwrap().ahead, 1);
     client.git_run(path, GitAction::Push).await.unwrap();
     client.git_run(path, GitAction::Fetch).await.unwrap();
-    client.git_run(path, GitAction::Pull).await.unwrap();
+    client
+        .git_run(path, GitAction::Pull { rebase: false })
+        .await
+        .unwrap();
     let status = client.git_status(path).await.unwrap();
     assert_eq!((status.ahead, status.behind), (0, 0));
     let log = client.git_log(path, 0, None).await.unwrap();

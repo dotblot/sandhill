@@ -1,9 +1,9 @@
 import { render } from "solid-js/web";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../backend";
-import type { GitCommitInfo, GitLog, GitStatus } from "../backend/types";
+import type { AppRequest, GitCommitInfo, GitLog, GitStatus } from "../backend/types";
 import { Workspace } from "../model/workspace";
-import { ask, notify } from "./dialogs";
+import { ask, askText, notify } from "./dialogs";
 import { type DiffRequest, GitPane } from "./GitPane";
 
 vi.mock("./dialogs", () => ({ ask: vi.fn(async () => "Ignore it"), askText: vi.fn(async () => undefined), notify: vi.fn() }));
@@ -81,6 +81,7 @@ const SHOWN: GitCommitInfo = {
 
 function fakeWorkspace(status: GitStatus = STATUS) {
   const calls: { method: string; params: Record<string, any> }[] = [];
+  let request: (request: AppRequest) => void = () => {};
   const backend: Backend = {
     host: "local",
     async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -106,7 +107,9 @@ function fakeWorkspace(status: GitStatus = STATUS) {
     },
     onEvent() {},
     onTerminal() {},
-    onRequest() {},
+    onRequest(listener) {
+      request = listener;
+    },
     openLink() {},
     onLink() {},
     blobUrl: () => "",
@@ -115,7 +118,7 @@ function fakeWorkspace(status: GitStatus = STATUS) {
   };
   const ws = new Workspace(backend, REPO);
   const runs = () => calls.filter((c) => c.method === "git_run").map((c) => c.params.action);
-  return { ws, calls, runs };
+  return { ws, calls, runs, request: (r: AppRequest) => request(r) };
 }
 
 const settle = async () => {
@@ -145,6 +148,33 @@ afterEach(() => {
 });
 
 describe("GitPane", () => {
+  it("asks for a token when git does, and says what was typed", async () => {
+    const { ws, calls, request } = fakeWorkspace();
+    const { dispose } = mount(ws);
+    await settle();
+    vi.mocked(askText).mockResolvedValueOnce("ghp_token");
+    const prompt = "Password for 'https://huan@github.com':";
+    request({ id: 7, project: REPO, method: "git_credential", params: { prompt, secret: true } as AppRequest["params"] });
+    await settle();
+    expect(vi.mocked(askText)).toHaveBeenCalledWith(
+      "Password for 'https://huan@github.com'",
+      "",
+      "Sign in",
+      "Not your account password: a personal access token, made in the site's settings.",
+      true,
+    );
+    expect(calls.find((c) => c.method === "answer")?.params).toEqual({ id: 7, result: "ghp_token" });
+    // Another project's, or cancelled.
+    request({ id: 8, project: "/elsewhere", method: "git_credential", params: { prompt, secret: true } as AppRequest["params"] });
+    request({ id: 9, project: REPO, method: "git_credential", params: { prompt: "Username for 'https://github.com':" } as AppRequest["params"] });
+    await settle();
+    expect(calls.filter((c) => c.method === "answer").map((c) => c.params)).toEqual([
+      { id: 7, result: "ghp_token" },
+      { id: 9, error: "cancelled" },
+    ]);
+    dispose();
+  });
+
   it("shows the branch, the graph with avatars and refs, and the changed files", async () => {
     const { ws } = fakeWorkspace();
     const { root, dispose, diffs, opened } = mount(ws);

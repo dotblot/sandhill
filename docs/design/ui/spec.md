@@ -639,6 +639,10 @@ omp.
 - Help searches by package.
 - Git shows a commit graph with avatars, then staged and unstaged files with a
   commit box. Everything below its tab strip is **11px** and never bold.
+- When git needs a password, token or passphrase, the window shows the standard text
+  dialog with git's prompt as its title ("Password for 'https://huan@github.com'"),
+  a hidden field, and **Sign in** / Cancel; under a GitHub or GitLab prompt, a line
+  says to use a personal access token.
 - Plots has a zoom dialog: set the size or pick a preset, then copy, or save as PNG, PDF
   or SVG. Plots stay white in dark mode.
 - When the Plots pane changes size, the plot is stretched at first, then drawn again at

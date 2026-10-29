@@ -24,6 +24,17 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(20);
 
 type Answer = std::result::Result<Value, String>;
 
+/// Why a window gave no answer.
+#[derive(Debug)]
+pub enum Unanswered {
+    /// It closed first.
+    Closed,
+    /// It took too long.
+    Late,
+    /// It answered with this error.
+    Said(String),
+}
+
 #[derive(Default)]
 pub struct Windows {
     /// The latest place per project, kept after its window goes.
@@ -96,12 +107,35 @@ impl Windows {
         params: Value,
     ) -> Option<Result<Value>> {
         let (window, out) = self.window_with(file, project)?;
+        let answer = self
+            .ask_on(&out, window, method, params, ANSWER_TIMEOUT)
+            .await?;
+        Some(answer.map_err(|err| match err {
+            Unanswered::Closed => anyhow!("the Sandhill window closed before it answered"),
+            Unanswered::Late => anyhow!(
+                "the Sandhill window with {} open didn't answer",
+                file.display()
+            ),
+            Unanswered::Said(message) => anyhow!("{message}"),
+        }))
+    }
+
+    /// Asks the `project` window of the connection that `out` sends to;
+    /// `None` when it has gone.
+    pub async fn ask_on(
+        &self,
+        out: &mpsc::UnboundedSender<ServerMessage>,
+        project: String,
+        method: &str,
+        params: Value,
+        wait: Duration,
+    ) -> Option<std::result::Result<Value, Unanswered>> {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
         let request = AppRequest {
             id,
-            project: window,
+            project,
             method: method.into(),
             params,
         };
@@ -109,16 +143,13 @@ impl Windows {
             self.pending.lock().unwrap().remove(&id);
             return None;
         }
-        let answer = tokio::time::timeout(ANSWER_TIMEOUT, rx).await;
+        let answer = tokio::time::timeout(wait, rx).await;
         self.pending.lock().unwrap().remove(&id);
         Some(match answer {
             Ok(Ok(Ok(value))) => Ok(value),
-            Ok(Ok(Err(message))) => Err(anyhow!("{message}")),
-            Ok(Err(_)) => Err(anyhow!("the Sandhill window closed before it answered")),
-            Err(_) => Err(anyhow!(
-                "the Sandhill window with {} open didn't answer",
-                file.display()
-            )),
+            Ok(Ok(Err(message))) => Err(Unanswered::Said(message)),
+            Ok(Err(_)) => Err(Unanswered::Closed),
+            Err(_) => Err(Unanswered::Late),
         })
     }
 

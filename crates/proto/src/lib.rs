@@ -329,10 +329,20 @@ pub enum Call {
     },
     /// Changes the repository: stages, commits, pulls, pushes, switches
     /// branch. Runs `git` with the user's own configuration and
-    /// credentials, and never waits for a password. Returns [`GitDone`].
+    /// credentials. When git or ssh needs a password, a token or a
+    /// passphrase, the window that asked is sent a `git_credential`
+    /// [`AppRequest`] with `{prompt, secret}` and answers it with the text
+    /// typed (or an error, to cancel). Returns [`GitDone`].
     GitRun {
         path: String,
         action: GitAction,
+    },
+    /// From `sandhilld` run as git's or ssh's askpass program: what the user
+    /// types for `prompt`, for the [`Call::GitRun`] that `token` names.
+    /// Returns the text, a string.
+    GitCredential {
+        token: String,
+        prompt: String,
     },
     /// Asks an agent CLI (Claude Code, or else Codex) for a commit message
     /// for the staged changes. `agent` picks one. Returns [`GitMessage`].
@@ -1847,6 +1857,9 @@ pub struct GitStatus {
     /// Remote branches, like `origin/main`.
     #[serde(default)]
     pub remote_branches: Vec<String>,
+    /// Tags, the newest first.
+    #[serde(default)]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub remotes: Vec<String>,
     /// `user.name` and `user.email`, which a commit needs; empty when unset.
@@ -2016,8 +2029,11 @@ pub enum GitAction {
     },
     Fetch,
     /// Pulls the upstream, merging unless the user's configuration says to
-    /// rebase.
-    Pull,
+    /// rebase, or with `rebase`, putting the branch's own commits on top.
+    Pull {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        rebase: bool,
+    },
     /// Pushes, setting the upstream to the first remote when there is none.
     Push,
     /// Undoes the last commit, keeping its changes staged.
@@ -2052,6 +2068,29 @@ pub enum GitAction {
     },
     /// Stops a merge, rebase, cherry-pick or revert that stopped on conflicts.
     Abort,
+    /// Goes on with a rebase, cherry-pick or revert once its conflicts are
+    /// settled and staged; it may stop again at a later commit. A merge
+    /// goes on with a commit.
+    Continue,
+    /// Puts the branch checked out's own commits on top of `branch`, local
+    /// or remote. It stops on conflicts as `Merge` does, to settle, stage
+    /// and `Continue` (or `Abort`).
+    Rebase {
+        branch: String,
+    },
+    /// Tags HEAD, or the commit `sha`, with an annotated tag.
+    CreateTag {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha: Option<String>,
+    },
+    DeleteTag {
+        name: String,
+    },
+    /// Pushes a tag to the upstream's remote, or the first.
+    PushTag {
+        name: String,
+    },
     /// Makes the folder a repository.
     Init,
     /// Sets `user.name` and `user.email` for every repository of the user.
@@ -2065,9 +2104,9 @@ pub enum GitAction {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GitSide {
-    /// The branch checked out.
+    /// The branch checked out, or while rebasing, the branch's own commit.
     Ours,
-    /// The branch being merged in.
+    /// The branch being merged in, or rebased onto.
     Theirs,
 }
 
