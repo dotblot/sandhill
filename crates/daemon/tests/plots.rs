@@ -222,6 +222,7 @@ async fn redraw(
             width,
             height,
             dpi,
+            show: false,
         })
         .await
 }
@@ -277,7 +278,8 @@ async fn plots_are_drawn_again_at_a_new_size() {
                 asked,
                 PlotRedraw {
                     can: false,
-                    reason: Some("only Ark keeps R plots to draw them again".into())
+                    reason: Some("only Ark keeps R plots to draw them again".into()),
+                    png: None,
                 }
             );
             client.shutdown(&session).await.unwrap();
@@ -340,6 +342,33 @@ async fn plots_are_drawn_again_at_a_new_size() {
             std::fs::read(&pdf).unwrap().starts_with(b"%PDF"),
             "{kernel}"
         );
+        // Drawn to show at the Plots pane's size, on a Retina screen.
+        let shown: PlotRedraw = client
+            .call(Call::RedrawPlot {
+                session: session.clone(),
+                run: plots[0].run.clone(),
+                image: None,
+                index: 0,
+                file: None,
+                format: String::new(),
+                width: 5.0,
+                height: 3.0,
+                dpi: 192,
+                show: true,
+            })
+            .await
+            .unwrap();
+        let shown_png = dir.path().join(format!("{kernel}/shown.png"));
+        std::fs::write(
+            &shown_png,
+            base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                shown.png.unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(png_size(&shown_png), (960, 576), "{kernel}");
         // The drawing ran out of sight: the session shows no new plots.
         let after = client.session_plots(&session, None).await.unwrap().plots;
         assert_eq!(after.len(), 1, "{kernel}: {after:#?}");
