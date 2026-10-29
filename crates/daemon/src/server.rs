@@ -695,11 +695,47 @@ impl Daemon {
                 run,
                 image,
                 index,
+                file: _,
+                format: _,
+                width,
+                height,
+                dpi,
+                show,
+            } if show => {
+                // Drawn to a file of the daemon's, then sent back and removed.
+                let dir = self.state.root().join("redraw");
+                std::fs::create_dir_all(&dir)?;
+                let path = dir.join(format!("{}.png", uuid::Uuid::new_v4().simple()));
+                let file = path.to_string_lossy().into_owned();
+                let save = redraw::Save {
+                    file: &file,
+                    format: "png",
+                    width,
+                    height,
+                    dpi,
+                };
+                let drawn = self
+                    .redraw_plot(&session, &run, image.as_deref(), index, Some(save))
+                    .await;
+                let bytes = std::fs::read(&path);
+                let _ = std::fs::remove_file(&path);
+                let mut drawn = drawn?;
+                if drawn.can {
+                    drawn.png = Some(BASE64.encode(bytes?));
+                }
+                serde_json::to_value(drawn)?
+            }
+            Call::RedrawPlot {
+                session,
+                run,
+                image,
+                index,
                 file,
                 format,
                 width,
                 height,
                 dpi,
+                show: _,
             } => {
                 let save = file.as_deref().map(|file| redraw::Save {
                     file,
@@ -1306,6 +1342,7 @@ impl Daemon {
         let cannot = |reason: &str| PlotRedraw {
             can: false,
             reason: Some(reason.to_string()),
+            png: None,
         };
         let info = self.session_info(session)?;
         if self.live(session).is_err() {
@@ -1323,6 +1360,7 @@ impl Daemon {
             return Ok(PlotRedraw {
                 can: true,
                 reason: None,
+                png: None,
             });
         };
         if !redraw::FORMATS.contains(&save.format) {
@@ -1356,6 +1394,7 @@ impl Daemon {
         Ok(PlotRedraw {
             can: true,
             reason: None,
+            png: None,
         })
     }
 

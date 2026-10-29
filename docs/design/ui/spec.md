@@ -641,6 +641,9 @@ omp.
   commit box. Everything below its tab strip is **11px** and never bold.
 - Plots has a zoom dialog: set the size or pick a preset, then copy, or save as PNG, PDF
   or SVG. Plots stay white in dark mode.
+- When the Plots pane changes size, the plot is stretched at first, then drawn again at
+  the new size once resizing stops (a moment later), for Ark and matplotlib plots.
+  Others (IRkernel, plain images) stay stretched.
 - Viewer shares the bottom card with Plots, as a second tab. Its tab strip has Back,
   Forward, Reload, Open in browser, Stop (only while the app or preview in front
   runs) and Clear, then the pane buttons; under it, one

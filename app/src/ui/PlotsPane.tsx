@@ -31,6 +31,14 @@ import { copyPng, DPI, fit, naturalSize, plotFile, plotPng } from "./plotImage";
 const LOAD = 100;
 /** Where plots are saved unless the user saved somewhere else last. */
 const FOLDER = "figures";
+/** How long the pane's size holds still before the plot in front is drawn again for it. */
+const FIT_DELAY_MS = 400;
+/** CSS pixels in an inch, which sizes are given to the session in. */
+const CSS_DPI = 96;
+/** Rooms smaller than this (CSS pixels) aren't worth drawing for. */
+const MIN_FIT = 80;
+/** Redrawn plots kept to show again without drawing. */
+const FITS_KEPT = 12;
 
 type Size = { width: number; height: number };
 
@@ -219,6 +227,60 @@ export function PlotsPane(props: {
     return fit(drawn, room(), p.mime === "image/svg+xml");
   };
 
+  // Once the room stops changing, the session draws the plot in front again
+  // at that size, as RStudio does, so text and lines stay sharp instead of
+  // stretching. Plots it can't draw again (IRkernel's, plain images) and
+  // sessions busy with other code keep the image as drawn.
+  const [fitted, setFitted] = createSignal<{ plot: string; key: string; src: string; size: Size }>();
+  // Redrawn PNGs by plot and size, the latest few.
+  const fits = new Map<string, string>();
+  const cannot = new Set<string>();
+  createEffect(
+    on([item, room], ([p, box]) => {
+      if (!p || box.width < MIN_FIT || box.height < MIN_FIT || p.mime === "image/svg+xml" || cannot.has(p.key)) return;
+      const size = { width: Math.round(box.width), height: Math.round(box.height) };
+      const key = `${p.key}@${size.width}x${size.height}`;
+      const show = (png: string) => setFitted({ plot: p.key, key, src: `data:image/png;base64,${png}`, size });
+      if (fitted()?.key === key) return;
+      const known = fits.get(key);
+      if (known) return show(known);
+      // As drawn, near enough: nothing to gain.
+      const drawn = p.width && p.height ? { width: p.width, height: p.height } : natural();
+      if (fitted()?.plot !== p.key && drawn && Math.abs(drawn.width - size.width) < 8 && Math.abs(drawn.height - size.height) < 8) return;
+      const timer = setTimeout(() => {
+        const dpi = Math.round(CSS_DPI * Math.min(4, Math.max(1, window.devicePixelRatio || 1)));
+        ws.call<PlotRedraw>("redraw_plot", {
+          session: p.session,
+          run: p.run,
+          ...redrawTarget(p, shown()),
+          show: true,
+          width: size.width / CSS_DPI,
+          height: size.height / CSS_DPI,
+          dpi,
+        })
+          .then((answer) => {
+            if (!answer.can || !answer.png) {
+              cannot.add(p.key);
+              return;
+            }
+            fits.set(key, answer.png);
+            if (fits.size > FITS_KEPT) fits.delete(fits.keys().next().value!);
+            if (item()?.key === p.key) show(answer.png);
+          })
+          // Busy, or the session ended: the image as drawn stays.
+          .catch(() => {});
+      }, FIT_DELAY_MS);
+      onCleanup(() => clearTimeout(timer));
+    }),
+  );
+  /** The redrawn image of the plot in front, scaled to the room while it changes. */
+  const fittedNow = () => {
+    const f = fitted();
+    const p = item();
+    if (!f || !p || f.plot !== p.key || !room().width) return undefined;
+    return { src: f.src, size: f.key.endsWith(`@${Math.round(room().width)}x${Math.round(room().height)}`) ? f.size : fit(f.size, room(), true) };
+  };
+
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "ArrowRight") step(1);
@@ -277,15 +339,30 @@ export function PlotsPane(props: {
                 onDblClick={() => setZoomed(true)}
                 title="Double-click to zoom"
               >
-                <img
-                  ref={mainImg}
-                  class="plot-img"
-                  src={plotSrc(p(), blobUrl(p()))}
-                  alt={`Plot from ${source(p())}`}
-                  style={mainSize() ? { width: `${mainSize()!.width}px`, height: `${mainSize()!.height}px` } : { visibility: "hidden" }}
-                  onLoad={(e) => setNatural(naturalSize(e.currentTarget))}
-                  onError={() => setNatural(undefined)}
-                />
+                <Show
+                  when={fittedNow()}
+                  fallback={
+                    <img
+                      ref={mainImg}
+                      class="plot-img"
+                      src={plotSrc(p(), blobUrl(p()))}
+                      alt={`Plot from ${source(p())}`}
+                      style={mainSize() ? { width: `${mainSize()!.width}px`, height: `${mainSize()!.height}px` } : { visibility: "hidden" }}
+                      onLoad={(e) => setNatural(naturalSize(e.currentTarget))}
+                      onError={() => setNatural(undefined)}
+                    />
+                  }
+                >
+                  {(f) => (
+                    <img
+                      ref={mainImg}
+                      class="plot-img"
+                      src={f().src}
+                      alt={`Plot from ${source(p())}`}
+                      style={{ width: `${f().size.width}px`, height: `${f().size.height}px` }}
+                    />
+                  )}
+                </Show>
               </div>
               <div class="plot-meta">
                 <span class="plot-from" title={p().cell?.file ?? source(p())}>

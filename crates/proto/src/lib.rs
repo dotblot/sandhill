@@ -170,6 +170,10 @@ pub enum Call {
         height: f64,
         #[serde(default)]
         dpi: u32,
+        /// Draws a PNG to show instead of saving one: `file` is ignored, and
+        /// [`PlotRedraw::png`] holds the image.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        show: bool,
     },
     /// Lists a session's variables, or the parts of one: `path` is a
     /// variable's name, then the names of its parts as they were listed
@@ -1447,6 +1451,10 @@ pub struct PlotRedraw {
     pub can: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// With `show`: the PNG drawn, in base64. It isn't kept, so resizing
+    /// a pane leaves nothing behind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub png: Option<String>,
 }
 
 /// An image a run showed.

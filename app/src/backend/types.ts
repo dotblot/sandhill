@@ -285,6 +285,8 @@ export interface PreviewInfo {
 export interface PlotRedraw {
   can: boolean;
   reason?: string | null;
+  /** With `show`: the PNG drawn, in base64. */
+  png?: string | null;
 }
 
 /** A session's variable, or a part of one (`list_variables`). */

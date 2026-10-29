@@ -31,7 +31,7 @@ Responses can arrive out of order; match them by `id`.
 | `open_tunnel` | `tunnel`, `port` | `null` once connected to `127.0.0.1:port` on the daemon's machine |
 | `tunnel_write` | `tunnel`, `data` | not answered: bytes (base64) for the tunnel |
 | `close_tunnel` | `tunnel` | not answered |
-| `redraw_plot` | `session`, `run`, `image?`, `index?`, `file?`, `format?`, `width?`, `height?`, `dpi?` | `{can, reason?}`: whether the session can draw the plot again, or draws it into `file` |
+| `redraw_plot` | `session`, `run`, `image?`, `index?`, `file?`, `format?`, `width?`, `height?`, `dpi?`, `show?` | `{can, reason?, png?}`: whether the session can draw the plot again, or draws it into `file`, or with `show` answers a PNG |
 | `list_variables` | `session`, `path?` | `Variables` |
 | `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
 | `table_rows` | `session`, `path`, `offset?`, `limit?`, `sort?`, `filters?` | `TableRows`: a page of a data frame or matrix, for the Data Explorer |
@@ -197,7 +197,9 @@ reason}` says why, as in "only Ark keeps R plots to draw them again". Without
 (a path, or `~/...`; its folder is made) as `format` (`png`, `svg` or `pdf`),
 `width` × `height` inches (0.5 to 100) at `dpi` (36 to 2400, for PNG), out of
 sight, so nothing shows in the Console or the Plots pane. It fails while the
-session is busy.
+session is busy. With `show: true` it draws a PNG to show instead (`file` and
+`format` are ignored) and answers it in `png`, in base64, keeping nothing: the
+Plots pane asks for one at its own size.
 
 `list_variables` runs a quiet snippet in the session and returns `Variables`:
 `{session, path, variables: [{name, kind, class, size?, children, table,
