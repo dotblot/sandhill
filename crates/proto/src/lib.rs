@@ -210,8 +210,19 @@ pub enum Call {
         sort: Vec<TableSort>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filters: Vec<TableFilter>,
+        /// The first column to return cells of, from 0.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        column_offset: u32,
+        /// How many columns' cells, at most; 100 unless given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        column_limit: Option<u32>,
+        /// Leaves [`TableRows::columns`] empty: for more cells of a table
+        /// whose columns are known.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        cells_only: bool,
     },
-    /// Each column's summary over the rows that pass `filters`: missing
+    /// The summaries of the columns from `column_offset` (100 unless
+    /// `column_limit` says) over the rows that pass `filters`: missing
     /// values, distinct values, a histogram or the commonest values.
     /// Returns [`TableSummary`].
     TableSummary {
@@ -219,6 +230,10 @@ pub enum Call {
         path: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filters: Vec<TableFilter>,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        column_offset: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        column_limit: Option<u32>,
     },
     /// Writes the rows that pass `filters`, sorted, to a CSV file on the
     /// session's machine. Returns [`FileWritten`].
@@ -982,6 +997,10 @@ pub struct ProjectSettings {
     pub chat_history: ChatHistory,
 }
 
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 fn default_env_files() -> Vec<String> {
     vec![".env".into()]
 }
@@ -1557,8 +1576,13 @@ pub struct TableRows {
     /// frame.
     #[serde(default)]
     pub matrix: bool,
-    /// Its columns; the first 500 of a wider table.
+    /// All its columns, unless only cells were asked for.
+    #[serde(default)]
     pub columns: Vec<TableColumn>,
+    /// The column the cells in `values` start at: each row has the cells
+    /// of the columns asked for, from this one on.
+    #[serde(default)]
+    pub column_offset: u32,
     /// How many columns it has.
     pub width: u64,
     /// How many rows it has.

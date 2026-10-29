@@ -10,7 +10,7 @@ use std::time::Duration;
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    Call, CellRef, EVENT_RUN_FINISHED, RunStarted, TableFilter, TableRows, TableSort,
+    Call, CellRef, EVENT_RUN_FINISHED, RunStarted, TableFilter, TableRows, TableSort, TableSummary,
 };
 use serde_json::{Value, json};
 use tokio::net::UnixListener;
@@ -277,6 +277,48 @@ async fn check_meta(client: &Client, session: &str, code: &str, text: &[&str], t
     );
 }
 
+/// A table of 1,200 columns, `wide[i, j]` being `i * 1200 + j` from 0:
+/// every column is listed, and cells and summaries come a block of columns
+/// at a time.
+async fn check_wide(client: &Client, session: &str, last: &str) {
+    let read = |column_offset: u32, cells_only: bool| {
+        client.call::<TableRows>(Call::TableRows {
+            session: session.into(),
+            path: vec!["wide".into()],
+            offset: 0,
+            limit: None,
+            sort: vec![],
+            filters: vec![],
+            column_offset,
+            column_limit: None,
+            cells_only,
+        })
+    };
+    let first = read(0, false).await.unwrap();
+    assert_eq!((first.width, first.columns.len()), (1200, 1200));
+    assert_eq!(first.columns[1199].name, last);
+    assert_eq!(first.values[0].len(), 100);
+    let end = read(1150, true).await.unwrap();
+    assert!(end.columns.is_empty());
+    assert_eq!(end.column_offset, 1150);
+    let want: Vec<Value> = (1150..1200).map(|j| json!(2400 + j)).collect();
+    assert_eq!(end.values[2], want);
+    let summary: TableSummary = client
+        .call(Call::TableSummary {
+            session: session.into(),
+            path: vec!["wide".into()],
+            filters: vec![],
+            column_offset: 1190,
+            column_limit: None,
+        })
+        .await
+        .unwrap();
+    let at: Vec<u32> = summary.columns.iter().map(|c| c.column).collect();
+    assert_eq!(at, (1190..1200).collect::<Vec<_>>());
+    let last = summary.columns.last().unwrap();
+    assert_eq!((last.min, last.max), (Some(1199.0), Some(3599.0)));
+}
+
 async fn rows_error(client: &Client, session: &str, path: &[&str]) -> String {
     let path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     client
@@ -302,7 +344,7 @@ async fn r_tables_are_read_filtered_sorted_and_exported() {
     run(
         &mut client,
         &session,
-        "meta <- data.frame(cell = c('a', 'b\tB', 'c', 'd', 'e'), cluster = factor(c('0', '1', '0', '2', '1')), n_genes = c(812L, 1043L, 655L, NA, 990L), pct = c(1.5, 4.25, 0.5, 2, 7.75), row.names = paste0('AAAC-', 1:5))\nm <- matrix(1:6, 2)\nfit <- list(tab = data.frame(x = 1:3))",
+        "meta <- data.frame(cell = c('a', 'b\tB', 'c', 'd', 'e'), cluster = factor(c('0', '1', '0', '2', '1')), n_genes = c(812L, 1043L, 655L, NA, 990L), pct = c(1.5, 4.25, 0.5, 2, 7.75), row.names = paste0('AAAC-', 1:5))\nm <- matrix(1:6, 2)\nfit <- list(tab = data.frame(x = 1:3))\nwide <- as.data.frame(matrix(seq_len(3600) - 1L, 3, byrow = TRUE))",
         None,
         None,
     )
@@ -335,6 +377,7 @@ async fn r_tables_are_read_filtered_sorted_and_exported() {
             .await
             .contains("can't be shown as a table")
     );
+    check_wide(&client, &session, "V1200").await;
     client.shutdown(&session).await.unwrap();
 }
 
@@ -368,7 +411,7 @@ async fn python_tables_are_read_filtered_sorted_and_exported() {
     run(
         &mut client,
         &session,
-        "import numpy as np\nmeta = pd.DataFrame({'cell': ['a', 'b\\tB', 'c', 'd', 'e'], 'cluster': pd.Categorical(['0', '1', '0', '2', '1']), 'n_genes': pd.array([812, 1043, 655, None, 990], dtype='Int64'), 'pct': [1.5, 4.25, 0.5, 2, 7.75]}, index=[f'AAAC-{i}' for i in range(1, 6)])\nm = np.arange(1, 7).reshape(3, 2).T\nfit = {'tab': pd.DataFrame({'x': [1, 2, 3]})}",
+        "import numpy as np\nmeta = pd.DataFrame({'cell': ['a', 'b\\tB', 'c', 'd', 'e'], 'cluster': pd.Categorical(['0', '1', '0', '2', '1']), 'n_genes': pd.array([812, 1043, 655, None, 990], dtype='Int64'), 'pct': [1.5, 4.25, 0.5, 2, 7.75]}, index=[f'AAAC-{i}' for i in range(1, 6)])\nm = np.arange(1, 7).reshape(3, 2).T\nfit = {'tab': pd.DataFrame({'x': [1, 2, 3]})}\nwide = pd.DataFrame(np.arange(3600).reshape(3, 1200))",
         None,
         None,
     )
@@ -409,6 +452,7 @@ async fn python_tables_are_read_filtered_sorted_and_exported() {
             .await
             .contains("can't be shown as a table")
     );
+    check_wide(&client, &session, "1199").await;
     client.shutdown(&session).await.unwrap();
 }
 

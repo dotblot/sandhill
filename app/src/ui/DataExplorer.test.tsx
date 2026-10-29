@@ -66,7 +66,23 @@ function passes(row: (string | number | null)[], filters: TableFilter[]): boolea
   });
 }
 
-function fakeWorkspace(opts: { pending?: number } = {}) {
+/** A table of 2 rows and `width` number columns, `g0` on, read a block of columns at a time. */
+function wideRows(params: Record<string, unknown>, width: number): TableRows {
+  const from = params.column_offset as number;
+  const to = Math.min(width, from + (params.column_limit as number));
+  const columns = Array.from({ length: width }, (_, c) => ({ name: `g${c}`, kind: "number", type: "dbl" }));
+  const cells = (r: number) => Array.from({ length: Math.max(0, to - from) }, (_, j) => r * 1000 + from + j);
+  return { session: "s1", path: ["meta"], code: "wide", columns: params.cells_only ? [] : columns, column_offset: from, width, total: 2, rows: 2, offset: 0, labels: ["r0", "r1"], values: [cells(0), cells(1)] };
+}
+
+function wideSummary(params: Record<string, unknown>, width: number): TableSummary {
+  const from = params.column_offset as number;
+  const to = Math.min(width, from + (params.column_limit as number));
+  const columns = Array.from({ length: Math.max(0, to - from) }, (_, j) => ({ column: from + j, missing: 0, distinct: 2, min: from + j, max: 1000 + from + j, histogram: [1, 1], top: [] }));
+  return { session: "s1", path: ["meta"], rows: 2, columns };
+}
+
+function fakeWorkspace(opts: { pending?: number; wide?: number } = {}) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   /** Set to put a column in front, as code that changes the table would. */
   const shape = { extra: false };
@@ -82,6 +98,7 @@ function fakeWorkspace(opts: { pending?: number } = {}) {
         case "list_sessions":
           return [{ ...SESSION, pending_runs: opts.pending ?? 0 }] as T;
         case "table_rows": {
+          if (opts.wide) return wideRows(params, opts.wide) as T;
           const sort = ((params.sort as TableSort[]) ?? []).map((k) => ({ ...k, column: k.column - off }));
           const sorted = [...kept];
           for (const s of [...sort].reverse()) {
@@ -108,6 +125,7 @@ function fakeWorkspace(opts: { pending?: number } = {}) {
           return read as T;
         }
         case "table_summary":
+          if (opts.wide) return wideSummary(params, opts.wide) as T;
           return { ...SUMMARY, rows: kept.length } as T;
         case "stat_files":
           return (params.paths as string[]).map((path) => ({ path, size: 0 })) as T;
@@ -136,7 +154,7 @@ const settle = async () => {
   for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-async function mount(opts: { pending?: number } = {}) {
+async function mount(opts: { pending?: number; wide?: number } = {}) {
   const fake = fakeWorkspace(opts);
   await fake.ws.refreshSessions();
   const tab = tableTab(SESSION, ["meta"]);
@@ -167,8 +185,18 @@ afterEach(() => {
 describe("DataExplorer", () => {
   it("shows the table's columns, rows and the picked column's numbers", async () => {
     const { root, calls, tab, dispose } = await mount();
-    expect(reads(calls)[0].params).toEqual({ session: "s1", path: ["meta"], offset: 0, limit: 200, sort: [], filters: [] });
-    expect(calls.find((c) => c.method === "table_summary")?.params).toEqual({ session: "s1", path: ["meta"], filters: [] });
+    expect(reads(calls)[0].params).toEqual({
+      session: "s1",
+      path: ["meta"],
+      offset: 0,
+      limit: 200,
+      sort: [],
+      filters: [],
+      column_offset: 0,
+      column_limit: 100,
+      cells_only: false,
+    });
+    expect(calls.find((c) => c.method === "table_summary")?.params).toEqual({ session: "s1", path: ["meta"], filters: [], column_offset: 0, column_limit: 100 });
     expect(texts(root, ".de-col b")).toEqual(["cell", "cluster", "n_genes", "pct"]);
     expect(texts(root, ".de-col small")).toEqual(["chr · 5 values", "fct · 3 values", "int · 1 missing", "dbl"]);
     expect(texts(root, ".de-th .de-name")).toEqual(["cell", "cluster", "n_genes", "pct"]);
@@ -187,6 +215,23 @@ describe("DataExplorer", () => {
     expect(root.querySelector(".de-stats h4")?.textContent).toBe("n_genes");
     expect(texts(root, ".de-stats dt")).toEqual(["Min", "Median", "Mean", "Max", "Missing (NA)"]);
     expect(texts(root, ".de-stats dd")).toEqual(["655", "901", "875", "1,043", "1"]);
+    dispose();
+  });
+
+  it("reads a wide table's cells and stats a block of columns at a time", async () => {
+    const { root, calls, dispose } = await mount({ wide: 250 });
+    expect(root.querySelector(".de-bar .count")?.textContent).toBe("2 rows · 250 columns");
+    expect(reads(calls).map((c) => c.params.column_offset)).toEqual([0]);
+    expect(texts(root.querySelector(".de-rows .de-tr")!, ".de-td").slice(0, 3)).toEqual(["0", "1", "2"]);
+    // Scrolled to the right end, the last block's cells are read, and its stats.
+    const grid = root.querySelector(".de-grid") as HTMLElement;
+    grid.scrollLeft = 1e6;
+    grid.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settle();
+    expect(reads(calls).at(-1)?.params).toMatchObject({ column_offset: 200, cells_only: true });
+    expect(texts(root.querySelector(".de-rows .de-tr")!, ".de-td").at(-1)).toBe("249");
+    expect(calls.filter((c) => c.method === "table_summary").map((c) => c.params.column_offset)).toEqual([0, 200]);
     dispose();
   });
 

@@ -340,8 +340,10 @@ export interface TableRows {
   code: string;
   /** Whether it's a matrix (or, in Python, an array) rather than a data frame. */
   matrix?: boolean;
-  /** Its columns; the first 500 of a wider table. */
+  /** All its columns; empty when only cells were asked for (`cells_only`). */
   columns: TableColumn[];
+  /** The column each row's cells start at: they are the columns asked for, from this one on. */
+  column_offset?: number;
   /** How many columns it has. */
   width: number;
   /** How many rows it has. */
