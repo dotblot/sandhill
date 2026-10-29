@@ -210,6 +210,43 @@ fn an_agent_without_its_copy_starts_afresh_with_the_chat() {
     assert!(err.to_string().contains("running on mac-z"), "{err}");
 }
 
+#[test]
+fn a_conversation_removed_on_one_machine_goes_from_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = Machine::new(dir.path(), "mac-a");
+    let b = Machine::new(dir.path(), "mac-b");
+    let project = dir.path().join("Dropbox/rnaseq");
+    std::fs::create_dir_all(&project).unwrap();
+    conversation_on(&a, &project, dir.path());
+    a.sync();
+    chats::adopt(&b.terminals, &project);
+    assert!(!b.conversation().running);
+
+    // Removed on A: only a note that it was removed stays in the folder.
+    std::fs::remove_dir_all(a.terminals.dir(ID).unwrap()).unwrap();
+    chats::forget(&project, ID, a.name).unwrap();
+    let kept = project.join(chats::DIR).join(ID);
+    let names: Vec<_> = std::fs::read_dir(&kept)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["conversation.json"]);
+    let note = std::fs::read_to_string(kept.join("conversation.json")).unwrap();
+    assert!(
+        note.contains("removed_ms") && !note.contains("Marker genes"),
+        "{note}"
+    );
+
+    // B removes its copy instead of putting the chat back, and a machine
+    // opening the project later doesn't bring it back either.
+    b.sync();
+    assert!(b.terminals.info(ID).is_err());
+    assert!(!kept.join("chat.jsonl").exists());
+    let c = Machine::new(dir.path(), "mac-c");
+    chats::adopt(&c.terminals, &project);
+    assert!(c.terminals.list().is_empty());
+}
+
 /// Through the daemon: opening a project brings its conversations into
 /// the history, and keeping them on the machine moves them out of the
 /// folder.

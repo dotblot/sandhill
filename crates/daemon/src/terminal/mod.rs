@@ -675,6 +675,19 @@ impl Terminals {
         Ok(())
     }
 
+    /// Removes an ended terminal.
+    pub fn remove(&self, id: &str) -> Result<()> {
+        let paths = self.paths(id)?;
+        if self.info(id)?.running {
+            bail!("terminal {id} is running");
+        }
+        if let Ok(mut inputs) = self.inputs.try_lock() {
+            inputs.remove(id);
+        }
+        std::fs::remove_dir_all(paths.dir())?;
+        Ok(())
+    }
+
     /// Ends the program if it runs, waits for it, and removes the terminal.
     pub async fn close(&self, id: &str) -> Result<()> {
         let paths = self.paths(id)?;

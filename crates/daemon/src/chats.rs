@@ -18,6 +18,8 @@
 //! Both copies only grow, so the longer one is the newer: [`sync`] copies
 //! what one side has beyond the other. A conversation from another machine
 //! becomes an ended terminal here ([`adopt`]) when its project is opened.
+//! One removed on a machine leaves only its `conversation.json`, saying
+//! so, and the others remove theirs ([`forget`]).
 //! Before one goes on, [`prepare`] puts the agent's copy back where the
 //! agent looks for it; when that can't be done, the agent starts afresh and
 //! reads `earlier.md` first.
@@ -80,6 +82,9 @@ pub struct Conversation {
     /// While it runs there, when that machine last said so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub running_ms: Option<i64>,
+    /// When it was removed on `machine`, so the others remove it too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_ms: Option<i64>,
 }
 
 /// Where the agents keep their own conversations on this machine.
@@ -148,7 +153,15 @@ fn sync_one(
     let dir = root.join(DIR).join(&info.id);
     let local = chat::path(&terminals.dir(&info.id)?);
     let shared = dir.join(CHAT);
-    let theirs: Option<Conversation> = read_json(&dir.join(CONVERSATION));
+    let mut theirs: Option<Conversation> = read_json(&dir.join(CONVERSATION));
+    if theirs.as_ref().is_some_and(|t| t.removed_ms.is_some()) {
+        // Removed on another machine. One still running here stays, and
+        // goes back to the project.
+        if !info.running {
+            return terminals.remove(&info.id);
+        }
+        theirs = None;
+    }
     let (ours_len, theirs_len) = (len(&local), len(&shared));
     if theirs_len > ours_len {
         // It went on elsewhere: take what it said, unless it runs here too.
@@ -216,6 +229,7 @@ fn sync_one(
         session_file,
         machine: machine.to_string(),
         running_ms: info.running.then_some(now),
+        removed_ms: None,
     };
     // While it runs, say so once a heartbeat, not every time.
     if let Some(theirs) = &theirs
@@ -247,6 +261,12 @@ pub fn adopt(terminals: &Terminals, root: &Path) {
             continue;
         };
         if conversation.id != id || !agents::is_agent(&conversation.kind) {
+            continue;
+        }
+        if conversation.removed_ms.is_some() {
+            if terminals.info(&id).is_ok_and(|info| !info.running) {
+                let _ = terminals.remove(&id);
+            }
             continue;
         }
         if let Ok(info) = terminals.info(&id) {
@@ -298,15 +318,40 @@ pub fn move_out(terminals: &Terminals, root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Removes the project's copy of a conversation that was removed here.
-pub fn forget(root: &Path, id: &str) -> Result<()> {
+/// Removes the project's copy of a conversation that was removed here. Its
+/// `conversation.json` stays, with nothing of the chat but `removed_ms`, so
+/// the other machines remove theirs instead of bringing it back.
+pub fn forget(root: &Path, id: &str, machine: &str) -> Result<()> {
     let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Ok(());
     }
     let dir = root.join(DIR).join(id);
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)?;
+    let Some(conversation) = read_json::<Conversation>(&dir.join(CONVERSATION)) else {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        return Ok(());
+    };
+    let now = now_ms();
+    let removed = Conversation {
+        id: conversation.id,
+        kind: conversation.kind,
+        created_ms: conversation.created_ms,
+        updated_ms: now,
+        machine: machine.to_string(),
+        removed_ms: Some(now),
+        ..Conversation::default()
+    };
+    crate::files::write_atomic(
+        &dir.join(CONVERSATION),
+        &serde_json::to_vec_pretty(&removed)?,
+    )?;
+    for name in [CHAT, SESSION, EARLIER] {
+        match std::fs::remove_file(dir.join(name)) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err.into()),
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -338,6 +383,9 @@ pub fn prepare(info: &TerminalInfo, homes: &Homes, machine: &str) -> Result<Resu
     let Some(conversation) = read_json::<Conversation>(&dir.join(CONVERSATION)) else {
         return Ok(as_before);
     };
+    if conversation.removed_ms.is_some() {
+        bail!("This conversation was removed on {}.", conversation.machine);
+    }
     if runs_elsewhere(&conversation, machine, now_ms()) {
         bail!(
             "This conversation is running on {}. End it there first, or wait a few minutes if that machine is off.",
