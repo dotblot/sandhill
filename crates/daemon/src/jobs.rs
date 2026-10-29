@@ -5,7 +5,8 @@
 //! `PATH`, modules and conda setup apply. A script runs with the program for
 //! its kind; R and Python with those of the project's kernel for the
 //! language, with that kernel's environment first on `PATH`, so a job finds
-//! the packages the project's sessions do.
+//! the packages the project's sessions do. On a Mac, the Mac stays awake
+//! while a job runs.
 
 use std::path::{Path, PathBuf};
 
@@ -19,6 +20,34 @@ use crate::terminal::Launch;
 
 /// How long a command line can be as a job's title.
 const TITLE_CHARS: usize = 60;
+/// macOS's tool that keeps the Mac from sleeping while a process runs.
+const CAFFEINATE: &str = "/usr/bin/caffeinate";
+
+/// Keeps the Mac from going to sleep while the job whose program is `pid`
+/// runs: from sleeping when idle, and on power, from sleeping at all
+/// (`caffeinate -i -s -w`), as long as the job runs, whether the daemon
+/// does or not. Elsewhere, nothing.
+pub fn keep_awake(pid: u32) {
+    if !Path::new(CAFFEINATE).exists() {
+        return;
+    }
+    let child = tokio::process::Command::new(CAFFEINATE)
+        .args(["-i", "-s", "-w", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        // Not stopped with the daemon's process group.
+        .process_group(0)
+        .spawn();
+    match child {
+        Ok(mut child) => {
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
+        }
+        Err(err) => tracing::warn!("cannot keep the Mac awake for a job: {err}"),
+    }
+}
 
 /// The terminal to run `job` in. Without `cwd` it runs in the project
 /// folder, else the script's folder.

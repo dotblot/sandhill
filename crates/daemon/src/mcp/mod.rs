@@ -5,10 +5,12 @@
 //!
 //! The tools reach the user's live sessions, which is what plain file
 //! access can't: `list_sessions`, `list_variables`, `run_code` and
-//! `get_outputs`; and the user's documents as they work on them:
-//! `get_focus`, `add_cell` and `edit_cell`.
+//! `get_outputs`; the user's documents as they work on them: `get_focus`,
+//! `add_cell` and `edit_cell`; and the project's background jobs:
+//! `list_jobs` and `read_job_log`.
 
 mod documents;
+mod jobs;
 pub use documents::Prompt;
 pub mod text;
 
@@ -42,7 +44,9 @@ loaded and the outputs of their notebooks. Use list_variables and get_outputs to
 recomputing anything. Code the user asks for goes into their document with add_cell, below the \
 cell they are in, and runs there, so they see the code and its output together; fix a cell \
 that failed with edit_cell rather than adding another. Use run_code only for quick looks they \
-don't need to keep. get_focus tells you where the user is (\"this cell\", the selection).";
+don't need to keep. get_focus tells you where the user is (\"this cell\", the selection). \
+list_jobs and read_job_log show the scripts and pipelines the user runs in the background and \
+what they printed.";
 
 pub struct Tools {
     socket: PathBuf,
@@ -194,6 +198,8 @@ impl Tools {
                 self.get_outputs(file, text("cell")).await
             }
             "get_focus" => self.get_focus().await,
+            "list_jobs" => self.list_jobs().await,
+            "read_job_log" => self.read_job_log(text("job"), args["lines"].as_u64()).await,
             "add_cell" | "edit_cell" => {
                 let code = args["code"]
                     .as_str()
@@ -744,6 +750,23 @@ fn tool_list() -> Value {
                 "timeout_seconds": {"type": "number", "description": "How long to wait for it to finish (default 120)."},
             }},
             "annotations": {"readOnlyHint": false, "destructiveHint": true},
+        },
+        {
+            "name": "list_jobs",
+            "title": "List the project's jobs",
+            "description": "List the jobs of this project: scripts, pipelines (Nextflow, Snakemake) and command lines the user runs in the background in Sandhill, newest first, with what each runs, where, and whether it is running, finished or failed (with its exit code) and for how long.",
+            "inputSchema": {"type": "object", "properties": {}},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "read_job_log",
+            "title": "Read a job's log",
+            "description": "Read what a job printed, as plain text: the end of its log, with progress bars as they last showed. Use it to follow a long run or to see why one failed.",
+            "inputSchema": {"type": "object", "properties": {
+                "job": {"type": "string", "description": "The job's id (or its start) or name, from list_jobs; the newest job when left out."},
+                "lines": {"type": "number", "description": "How many lines from the end (default 200, at most 2000)."},
+            }},
+            "annotations": {"readOnlyHint": true},
         },
         {
             "name": "get_outputs",
