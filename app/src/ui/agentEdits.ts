@@ -50,7 +50,7 @@ export function reportPlace(
 /** Makes agents' edits to this project's open documents. */
 export function serveAgentEdits(ws: Workspace, project: string, open: (path: string) => Promise<Doc | undefined>) {
   ws.backend.onRequest((request) => {
-    if (request.project === project) void serve(ws, request, open);
+    if (request.project === project && (request.method === "add_cell" || request.method === "edit_cell")) void serve(ws, request, open);
   });
 }
 

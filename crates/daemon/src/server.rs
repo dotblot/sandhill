@@ -67,9 +67,21 @@ pub struct Daemon {
     /// Projects opened since the daemon started, whose conversations from
     /// other machines show in the history.
     opened: Mutex<HashSet<String>>,
+    /// Git actions under way, by their askpass token: where their prompts
+    /// for a password go.
+    askers: Mutex<HashMap<String, Asker>>,
     /// Ends `serve`, for `stop_daemon`.
     stop: Arc<Notify>,
 }
+
+/// The window a git action came from, on its connection.
+struct Asker {
+    out: mpsc::UnboundedSender<ServerMessage>,
+    project: String,
+}
+
+/// How long git waits for someone to type a password.
+const CREDENTIAL_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// How often conversations are copied to and from their projects.
 const CHAT_SYNC: std::time::Duration = std::time::Duration::from_secs(5);
@@ -128,6 +140,7 @@ impl Daemon {
             machine: hostname(),
             homes: chats::Homes::from_env(),
             opened: Mutex::default(),
+            askers: Mutex::default(),
             stop: Arc::default(),
         });
         for record in journal.sessions()? {
@@ -315,9 +328,61 @@ impl Daemon {
                 }
                 Ok(Value::Null)
             }
+            Call::GitRun { path, action } => self.git_run(path, action, &out).await,
             call => self.call(call).await,
         };
         let _ = out.send(response(id, result));
+    }
+
+    /// Runs a git action; prompts for a password go to the window that
+    /// asked, on `out`.
+    async fn git_run(
+        &self,
+        path: String,
+        action: sandhill_proto::GitAction,
+        out: &mpsc::UnboundedSender<ServerMessage>,
+    ) -> Result<Value> {
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let asker = Asker {
+            out: out.clone(),
+            project: path.clone(),
+        };
+        self.askers.lock().unwrap().insert(token.clone(), asker);
+        let askpass = crate::git::Askpass {
+            program: self.options.executable.clone(),
+            socket: self.options.socket.clone(),
+            token: token.clone(),
+        };
+        let done = crate::git::ASKPASS
+            .scope(askpass, crate::git::run_action(&path, action))
+            .await;
+        self.askers.lock().unwrap().remove(&token);
+        Ok(serde_json::to_value(done?)?)
+    }
+
+    /// What the user types for a git action's prompt, in its window.
+    async fn git_credential(&self, token: &str, prompt: String) -> Result<Value> {
+        let (out, project) = {
+            let askers = self.askers.lock().unwrap();
+            let asker = askers.get(token).context("that git action has finished")?;
+            (asker.out.clone(), asker.project.clone())
+        };
+        let secret =
+            !prompt.to_ascii_lowercase().starts_with("username") && !prompt.contains("(yes/no");
+        let params = json!({"prompt": prompt.trim_end(), "secret": secret});
+        match self
+            .windows
+            .ask_on(&out, project, "git_credential", params, CREDENTIAL_WAIT)
+            .await
+        {
+            Some(Ok(Value::String(text))) => Ok(Value::String(text)),
+            Some(Ok(_)) => bail!("the window's answer made no sense"),
+            Some(Err(crate::windows::Unanswered::Said(message))) => bail!("{message}"),
+            Some(Err(crate::windows::Unanswered::Late)) => bail!("no one answered"),
+            Some(Err(crate::windows::Unanswered::Closed)) | None => {
+                bail!("the Sandhill window closed")
+            }
+        }
     }
 
     async fn call(&self, call: Call) -> Result<Value> {
@@ -703,6 +768,7 @@ impl Daemon {
             Call::GitRun { path, action } => {
                 serde_json::to_value(crate::git::run_action(&path, action).await?)?
             }
+            Call::GitCredential { token, prompt } => self.git_credential(&token, prompt).await?,
             Call::GitWriteMessage { path, agent } => {
                 serde_json::to_value(crate::git::write_message(&path, agent.as_deref()).await?)?
             }

@@ -47,6 +47,7 @@ Responses can arrive out of order; match them by `id`.
 | `git_show` | `path`, `sha` | `GitCommitInfo`: a commit's whole message and the files it changed |
 | `git_diff` | `path`, `file`, `staged?`, `sha?` | `{file, text, truncated, binary}`: a file's unified diff |
 | `git_run` | `path`, `action` | `{output}` once git has done it: stage, commit, push and the rest |
+| `git_credential` | `token`, `prompt` | What the user typed for git's prompt; `sandhilld` calls it as git's askpass program |
 | `git_write_message` | `path`, `agent?` | `{summary, body, agent}`: a commit message an agent wrote for the staged changes |
 | `interrupt` | `session` | `null` |
 | `shutdown` | `session` | `null` |
@@ -318,13 +319,20 @@ minutes). Python's aren't checked yet.
 
 The `git_*` calls run the `git` program on the daemon's machine (a command
 line git, which on macOS is the Xcode one only when its tools are installed),
-in the root of the repository that `path` is in. Git never asks for a password
-there: a remote that needs one fails with git's message, so ssh keys or a
-credential helper must already work in a terminal. Reads time out after a
-minute, changes after five.
+in the root of the repository that `path` is in. Git runs without a
+terminal; when it (or ssh) needs a username, a password or token, or a key's
+passphrase that no credential helper or ssh agent has, it runs `sandhilld`
+as its askpass program (`GIT_ASKPASS`, and `SSH_ASKPASS` with
+`SSH_ASKPASS_REQUIRE=force`), which calls `git_credential` with the run's
+token and git's prompt. The daemon sends the window that called `git_run` a
+`git_credential` request, `{prompt, secret}` (`secret` unless it asks for a
+username or a yes/no), and gives git the text the window answers; an error
+answer, or none within five minutes, makes git give up. Nothing is kept: a
+credential helper the user has (the macOS keychain) stores what worked.
+Reads time out after a minute, changes after five.
 
 `git_status` returns `{repo, branch?, head?, upstream?, ahead, behind, files,
-more, stashes, state?, merge_message?, refs, branches, remote_branches,
+more, stashes, state?, merge_message?, refs, branches, remote_branches, tags,
 remotes, user_name, user_email}`; `repo` is empty when `path` isn't in a repository. `branch` is
 missing on a detached HEAD and `head` before the first commit. Files are
 `{path, from?, staged?, unstaged?, conflict, staged_lines?, lines?, size?}`:
@@ -335,8 +343,9 @@ is one entry ending in `/`. At most 2000 files are listed; `more` counts the
 rest. `state` is `rebasing`, `merging`, `cherry-picking` or `reverting` while
 git is stopped in one, and while merging `merge_message` is the message git
 has ready for the merge's commit (`MERGE_MSG` without its comments). `refs` changes whenever a branch, tag or HEAD moves, so
-a client reads the log again only then. `user_name` and `user_email` are what
-a commit would be signed with.
+a client reads the log again only then. `tags` are the newest 500 tags, the
+newest first. `user_name` and `user_email` are what a commit would be signed
+with.
 
 `git_log` lists the commits of every branch, remote branch and tag, and HEAD,
 in date order: `limit` of them (200 unless asked, at most 2000) after the
@@ -360,16 +369,24 @@ and `discard_lines` take a `file`, the `diff` text `git_diff` gave for it, and
 (`git apply` of a patch made from them, which git refuses if the file no
 longer is as that diff showed it); `commit` takes `message` and
 `amend`; `fetch` fetches every remote; `pull` merges unless `pull.rebase` or
-`pull.ff` says otherwise; `push` sets the branch's upstream the first time,
+`pull.ff` says otherwise, or with `rebase: true` rebases the branch's own
+commits onto what it pulled (stopping on conflicts as a rebase does); `push` sets the branch's upstream the first time,
 on `origin` or the only remote; `undo_commit` moves the branch back one commit
 and keeps its changes staged; `switch` takes a `branch` (a remote one makes or
 checks out the local branch that tracks it); `create_branch` takes a `name`
 and switches to it; `merge` takes a `branch`, local or remote, and merges it
 into the one checked out (`merge --no-edit`; stopping on conflicts isn't a
 failure: `state` becomes `merging` and the files show as conflicts);
-`resolve` takes a conflicted `file` and a `side`, `ours` or `theirs`, and
-stages that side's version of all of it (deleting the file when that side
-did); `stash` (with an optional `message`, new files included)
+`rebase` takes a `branch`, local or remote, and makes the branch checked
+out's own commits again on top of it (stopping on conflicts with `state`
+`rebasing`); `continue` goes on with a rebase, cherry-pick or revert once its
+conflicts are staged (with git's messages, no editor), or commits a merge;
+`resolve` takes a conflicted `file` and a `side`, `ours` (the branch checked
+out, or while rebasing the branch's own commit) or `theirs`, and stages that
+side's version of all of it (deleting the file when that side did);
+`create_tag` makes an annotated tag `name` (its message the name) on HEAD or
+the commit `sha`; `delete_tag` deletes the tag `name` here; `push_tag` pushes
+it to the upstream's remote, else `origin` or the only one; `stash` (with an optional `message`, new files included)
 and `stash_pop`; `abort` stops a merge, rebase, cherry-pick or revert; `init`
 makes `path` a repository; and `set_user` sets the global `user.name` and
 `user.email`. A failure's message is git's own.

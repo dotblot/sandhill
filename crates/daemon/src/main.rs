@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use sandhill_daemon::kernel::{pid_alive, send_signal};
 use sandhill_daemon::terminal::host::HostOptions;
 use sandhill_daemon::{Daemon, DaemonOptions, StateDir, build_id};
+use sandhill_proto::Call;
 use sandhill_proto::client::Client;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
@@ -117,6 +118,11 @@ enum Command {
 }
 
 fn main() -> Result<()> {
+    // Run by git or ssh as their askpass program, with the prompt as the
+    // only argument.
+    if let Some(token) = std::env::var_os(sandhill_daemon::git::ASKPASS_TOKEN) {
+        return askpass(token);
+    }
     let cli = Cli::parse();
     // The daemon serves many clients at once; the helpers it and the agents
     // start (one per terminal, one per hook call) need a single thread.
@@ -410,4 +416,26 @@ async fn wait_for_socket(socket: &Path) -> Result<UnixStream> {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     bail!("sandhilld did not start; see its log in the state directory")
+}
+
+/// Asks the daemon that ran git for what the user types for the prompt, and
+/// prints it for git. Failing (the user cancelled) makes git give up.
+fn askpass(token: std::ffi::OsString) -> Result<()> {
+    let prompt = std::env::args().nth(1).unwrap_or_default();
+    let socket =
+        std::env::var_os(sandhill_daemon::git::ASKPASS_SOCKET).context("no daemon to ask")?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let answer: String = runtime.block_on(async {
+        let client = Client::connect_unix(Path::new(&socket)).await?;
+        client
+            .call(Call::GitCredential {
+                token: token.to_string_lossy().into_owned(),
+                prompt,
+            })
+            .await
+    })?;
+    println!("{answer}");
+    Ok(())
 }

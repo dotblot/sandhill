@@ -504,6 +504,8 @@ export interface GitStatus {
   refs: string;
   branches: string[];
   remote_branches: string[];
+  /** Tags, the newest first. */
+  tags?: string[];
   remotes: string[];
   user_name: string;
   user_email: string;
@@ -582,8 +584,13 @@ export type GitAction =
   /** `lines` are places among the lines of `diff`, the text git_diff gave. */
   | { op: "stage_lines" | "unstage_lines" | "discard_lines"; file: string; diff: string; lines: number[] }
   | { op: "commit"; message: string; amend: boolean }
-  | { op: "fetch" | "pull" | "push" | "undo_commit" | "stash_pop" | "abort" | "init" }
-  | { op: "switch" | "merge"; branch: string }
+  | { op: "fetch" | "push" | "undo_commit" | "stash_pop" | "abort" | "continue" | "init" }
+  /** With `rebase`, the branch's own commits go on top of what's pulled. */
+  | { op: "pull"; rebase?: boolean }
+  | { op: "switch" | "merge" | "rebase"; branch: string }
+  /** An annotated tag on HEAD, or on `sha`. */
+  | { op: "create_tag"; name: string; sha?: string }
+  | { op: "delete_tag" | "push_tag"; name: string }
   /** Settles a conflicted file with one side's version of all of it. */
   | { op: "resolve"; file: string; side: "ours" | "theirs" }
   | { op: "create_branch"; name: string }
@@ -808,7 +815,7 @@ export interface Focus {
 export interface AppRequest {
   id: number;
   project: string;
-  method: "add_cell" | "edit_cell" | string;
+  method: "add_cell" | "edit_cell" | "git_credential" | string;
   params: {
     file: string;
     code: string;
@@ -816,6 +823,9 @@ export interface AppRequest {
     after?: string;
     cell_id?: string;
     run?: boolean;
+    /** git_credential: what git or ssh asks, and whether to hide what's typed. */
+    prompt?: string;
+    secret?: boolean;
   };
 }
 

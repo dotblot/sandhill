@@ -1,8 +1,10 @@
 //! Git for the Git pane: a project's status, history and changes. The daemon
 //! runs the `git` command on its own host, so the user's configuration,
 //! credentials and hooks apply, and it works the same locally and over ssh.
-//! Git never waits for a password: it runs without a terminal and with
-//! prompts off, so a push that needs one fails with git's own message.
+//! Git runs without a terminal. When it (or ssh) needs a password, a token
+//! or a passphrase that no credential helper has, it runs `sandhilld` as its
+//! askpass program, which asks the window that started it (see
+//! [`Askpass`]); without one, it fails with git's own message.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -39,6 +41,26 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(300);
 const PROMPT_FILE: usize = 4000;
 const PROMPT_TOTAL: usize = 40_000;
 const AGENT_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Set as git's and ssh's askpass program, `sandhilld` asks the daemon at
+/// [`ASKPASS_SOCKET`] for what the user types, for the run [`ASKPASS_TOKEN`]
+/// names.
+pub const ASKPASS_TOKEN: &str = "SANDHILL_ASKPASS_TOKEN";
+pub const ASKPASS_SOCKET: &str = "SANDHILL_ASKPASS_SOCKET";
+
+/// Where git's prompts go while an action runs: to `program` (`sandhilld`),
+/// which passes them to the daemon at `socket` with `token`.
+#[derive(Debug, Clone)]
+pub struct Askpass {
+    pub program: PathBuf,
+    pub socket: PathBuf,
+    pub token: String,
+}
+
+tokio::task_local! {
+    /// Set around an action that may need a password.
+    pub static ASKPASS: Askpass;
+}
 
 /// What git printed, and whether it succeeded.
 struct Output {
@@ -106,7 +128,7 @@ async fn run(dir: &Path, args: &[&str], input: Option<&str>, timeout: Duration) 
         .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
         .args(args)
         .current_dir(dir)
-        // Never ask for a password or passphrase: there is no one to answer.
+        // There is no terminal to ask on; prompts go to the askpass program.
         .env("GIT_TERMINAL_PROMPT", "0")
         // Reading the status mustn't take the index lock from the user's own git.
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -118,6 +140,15 @@ async fn run(dir: &Path, args: &[&str], input: Option<&str>, timeout: Duration) 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if let Ok(askpass) = ASKPASS.try_with(Askpass::clone) {
+        command
+            .env("GIT_ASKPASS", &askpass.program)
+            .env("SSH_ASKPASS", &askpass.program)
+            // OpenSSH 8.4 and later, even without a display.
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env(ASKPASS_TOKEN, &askpass.token)
+            .env(ASKPASS_SOCKET, &askpass.socket);
+    }
     // SAFETY: setsid is async-signal-safe, as code between fork and exec
     // must be. Without a controlling terminal, ssh can't ask for a passphrase.
     unsafe {
@@ -214,7 +245,7 @@ pub async fn status(path: &str) -> Result<GitStatus> {
         return Ok(GitStatus::default());
     };
     let dir = &repo.root;
-    let (status, staged, unstaged, refs, remotes, user, stashes) = tokio::join!(
+    let (status, staged, unstaged, refs, remotes, user, stashes, tags) = tokio::join!(
         git(
             dir,
             &[
@@ -250,6 +281,18 @@ pub async fn status(path: &str) -> Result<GitStatus> {
             READ_TIMEOUT
         ),
         run(dir, &["stash", "list", "--format=%h"], None, READ_TIMEOUT),
+        run(
+            dir,
+            &[
+                "for-each-ref",
+                "--sort=-creatordate",
+                "--count=500",
+                "--format=%(refname:strip=2)",
+                "refs/tags",
+            ],
+            None,
+            READ_TIMEOUT
+        ),
     );
     let mut status = parse_status(&status?);
     status.repo = repo.root.to_string_lossy().into_owned();
@@ -317,6 +360,10 @@ pub async fn status(path: &str) -> Result<GitStatus> {
     let stashes = stashes?;
     if stashes.ok() {
         status.stashes = stashes.stdout.lines().count() as u32;
+    }
+    let tags = tags?;
+    if tags.ok() {
+        status.tags = tags.stdout.lines().map(str::to_string).collect();
     }
     status.state = state(&repo.git_dir).map(str::to_string);
     if status.state.as_deref() == Some("merging") {
@@ -797,6 +844,34 @@ fn check_files(files: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Runs a merge, rebase or pull that may stop on conflicts: stopping leaves
+/// git merging or rebasing, which the pane shows, and isn't a failure.
+async fn stops(repo: &Repo, args: &[&str]) -> Result<String> {
+    let output = run(&repo.root, args, None, WRITE_TIMEOUT).await?;
+    if !output.ok() && state(&repo.git_dir).is_none() {
+        bail!("{}", output.error());
+    }
+    let mut said = output.stdout.trim().to_string();
+    let err = output.stderr.trim();
+    if !output.ok() && !err.is_empty() {
+        if !said.is_empty() {
+            said.push('\n');
+        }
+        said.push_str(err);
+    }
+    Ok(said)
+}
+
+async fn check_tag(dir: &Path, name: &str) -> Result<()> {
+    if name.is_empty() || name.starts_with('-') {
+        bail!("{name:?} can't be a tag name");
+    }
+    git(dir, &["check-ref-format", &format!("refs/tags/{name}")])
+        .await
+        .map(drop)
+        .map_err(|_| anyhow!("{name:?} can't be a tag name"))
+}
+
 fn check_branch(name: &str) -> Result<()> {
     if name.is_empty() || name.starts_with('-') || name.chars().any(char::is_whitespace) {
         bail!("{name:?} can't be a branch name");
@@ -917,7 +992,7 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
             change(dir, &args, Some(&message)).await?
         }
         GitAction::Fetch => change(dir, &["fetch", "--all", "--prune"], None).await?,
-        GitAction::Pull => {
+        GitAction::Pull { rebase } => {
             // Merge unless the user chose otherwise: without a choice, a
             // newer git refuses to pull branches that both moved.
             let chosen = run(
@@ -928,10 +1003,12 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
             )
             .await?;
             let mut args = vec!["pull"];
-            if chosen.stdout.trim().is_empty() {
+            if rebase {
+                args.push("--rebase");
+            } else if chosen.stdout.trim().is_empty() {
                 args.push("--no-rebase");
             }
-            change(dir, &args, None).await?
+            stops(&repo, &args).await?
         }
         GitAction::Push => {
             let status = status(path).await?;
@@ -1013,18 +1090,75 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
             if !status.branches.contains(&branch) && !status.remote_branches.contains(&branch) {
                 bail!("there is no branch {branch}");
             }
-            let output = run(dir, &["merge", "--no-edit", &branch], None, WRITE_TIMEOUT).await?;
-            // Stopping on conflicts leaves git merging, which the pane shows.
-            if !output.ok() && state(&repo.git_dir) != Some("merging") {
-                bail!("{}", output.error());
+            stops(&repo, &["merge", "--no-edit", &branch]).await?
+        }
+        GitAction::Rebase { branch } => {
+            check_branch(&branch)?;
+            let status = status(path).await?;
+            let Some(current) = status.branch else {
+                bail!("HEAD isn't on a branch; switch to one to rebase it");
+            };
+            if current == branch {
+                bail!("{branch} is the branch checked out");
             }
-            output.stdout.trim().to_string()
+            if !status.branches.contains(&branch) && !status.remote_branches.contains(&branch) {
+                bail!("there is no branch {branch}");
+            }
+            stops(&repo, &["rebase", &branch]).await?
+        }
+        GitAction::Continue => {
+            let args: &[&str] = match state(&repo.git_dir) {
+                Some("rebasing") => &["rebase", "--continue"],
+                Some("cherry-picking") => &["cherry-pick", "--continue"],
+                Some("reverting") => &["revert", "--continue"],
+                Some("merging") => &["commit", "--no-edit"],
+                _ => bail!("there is no merge or rebase to go on with"),
+            };
+            // With the message git has ready, rather than an editor.
+            let mut all = vec!["-c", "core.editor=true"];
+            all.extend_from_slice(args);
+            stops(&repo, &all).await?
+        }
+        GitAction::CreateTag { name, sha } => {
+            check_tag(dir, &name).await?;
+            let mut args = vec!["tag", "-a", &name, "-m", &name];
+            if let Some(sha) = sha.as_deref() {
+                if sha.starts_with('-') {
+                    bail!("{sha:?} isn't a commit");
+                }
+                args.push(sha);
+            }
+            change(dir, &args, None).await?
+        }
+        GitAction::DeleteTag { name } => {
+            check_tag(dir, &name).await?;
+            change(dir, &["tag", "-d", &name], None).await?
+        }
+        GitAction::PushTag { name } => {
+            check_tag(dir, &name).await?;
+            let status = status(path).await?;
+            let remote = status
+                .upstream
+                .as_deref()
+                .and_then(|u| {
+                    status
+                        .remotes
+                        .iter()
+                        .find(|r| u.starts_with(&format!("{r}/")))
+                })
+                .or(status.remotes.iter().find(|r| *r == "origin"))
+                .or(status.remotes.first())
+                .context("this repository has no remote to push to")?;
+            change(dir, &["push", remote, &format!("refs/tags/{name}")], None).await?
         }
         GitAction::Resolve { file, side } => {
             check_files(std::slice::from_ref(&file))?;
-            let flag = match side {
-                GitSide::Ours => "--ours",
-                GitSide::Theirs => "--theirs",
+            // While rebasing, git's "ours" is the branch rebased onto, and
+            // "theirs" the branch's own commit.
+            let rebasing = state(&repo.git_dir) == Some("rebasing");
+            let flag = match (side, rebasing) {
+                (GitSide::Ours, false) | (GitSide::Theirs, true) => "--ours",
+                (GitSide::Theirs, false) | (GitSide::Ours, true) => "--theirs",
             };
             let taken = run(dir, &["checkout", flag, "--", &file], None, WRITE_TIMEOUT).await?;
             if taken.ok() {
