@@ -440,6 +440,14 @@ export function stepView(step: Pick<Step, "tool" | "input" | "output" | "error">
         view.file = input.file;
         view.output = text;
         break;
+      case "list_jobs":
+        view.desc = "List the jobs";
+        view.output = text;
+        break;
+      case "read_job_log":
+        view.desc = input.job ? `Read the log of job ${input.job}` : "Read the latest job's log";
+        view.output = text;
+        break;
       default:
         view.desc = "";
         view.output = text;
@@ -740,6 +748,8 @@ export function askView(ask: Ask, linked?: string, agent = "Claude"): AskView {
     case "list_sessions":
     case "get_focus":
     case "get_outputs":
+    case "list_jobs":
+    case "read_job_log":
       return { title: view.desc ? `${view.desc}?` : `Allow ${view.name}?`, file: view.file, view };
     default:
       return { title: `Allow ${view.name}?`, detail: view.desc || undefined, view };

@@ -306,6 +306,8 @@ async fn the_mcp_server_speaks_json_rpc_on_stdio() {
             "get_focus",
             "add_cell",
             "edit_cell",
+            "list_jobs",
+            "read_job_log",
             "get_outputs"
         ]
     );
@@ -813,4 +815,56 @@ async fn agent_code_goes_to_the_console_when_the_user_says_so() {
     assert!(added.contains("Added"), "{added}");
     assert!(std::fs::read_to_string(&script).unwrap().contains("z = 1"));
     client.shutdown(&session.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn agents_read_the_projects_jobs_and_their_logs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let project = root.join("rnaseq");
+    std::fs::create_dir(&project).unwrap();
+    let daemon = TestDaemon::start(&root.join("state")).await;
+    let client = daemon.client().await;
+    let path = project.to_string_lossy().into_owned();
+    let tools = Tools::new(daemon.socket.clone(), Some(path.clone()));
+    assert_eq!(
+        call(&tools, "list_jobs", json!({})).await,
+        "This project has no jobs."
+    );
+
+    // A job with a progress bar, which fails.
+    let script = project.join("align.sh");
+    std::fs::write(
+        &script,
+        "echo aligning\nfor p in 10 50 100; do printf '\\r%s%%' $p; done\necho\necho 'error: no index' >&2\nexit 2\n",
+    )
+    .unwrap();
+    let spec = sandhill_proto::JobSpec {
+        path: Some(script.to_string_lossy().into_owned()),
+        command: None,
+    };
+    let job = client.start_job(spec, Some(&path)).await.unwrap();
+    for _ in 0..100 {
+        let list = client.list_terminals().await.unwrap();
+        if list.iter().any(|t| t.id == job.id && !t.running) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let listed = call(&tools, "list_jobs", json!({})).await;
+    assert!(
+        listed.contains(&format!("job {} \"align.sh\"", &job.id[..8])),
+        "{listed}"
+    );
+    assert!(listed.contains("failed with exit code 2"), "{listed}");
+    let log = call(&tools, "read_job_log", json!({"job": &job.id[..8]})).await;
+    assert!(
+        log.ends_with("Its log:\naligning\n100%\nerror: no index"),
+        "{log}"
+    );
+    let tail = call(&tools, "read_job_log", json!({"lines": 1})).await;
+    assert!(
+        tail.ends_with("The last line of its log:\nerror: no index"),
+        "{tail}"
+    );
 }

@@ -1127,7 +1127,9 @@ impl Daemon {
                 let launch =
                     blocking(move || crate::jobs::launch(&job, cwd.as_deref(), project.as_deref()))
                         .await?;
-                serde_json::to_value(self.terminals.start(launch).await?)?
+                let started = self.terminals.start(launch).await?;
+                self.keep_awake(&started.id);
+                serde_json::to_value(started)?
             }
             Call::StopTerminal { terminal } => {
                 self.terminals.stop(&terminal).await?;
@@ -1152,7 +1154,9 @@ impl Daemon {
                 let launch =
                     blocking(move || crate::jobs::launch(&job, Some(&cwd), project.as_deref()))
                         .await?;
-                serde_json::to_value(self.terminals.restart(&terminal, launch, &[]).await?)?
+                let started = self.terminals.restart(&terminal, launch, &[]).await?;
+                self.keep_awake(&started.id);
+                serde_json::to_value(started)?
             }
             Call::RestartTerminal {
                 terminal,
@@ -1370,6 +1374,13 @@ impl Daemon {
         answer["in_window"] = json!(true);
         let edited = serde_json::from_value(answer).context("the window's answer made no sense")?;
         Ok(Some(edited))
+    }
+
+    /// Keeps the Mac awake while a job runs.
+    fn keep_awake(&self, job: &str) {
+        if let Some(pid) = self.terminals.pid(job) {
+            crate::jobs::keep_awake(pid);
+        }
     }
 
     fn insert(&self, handle: SessionHandle) {

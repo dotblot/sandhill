@@ -104,6 +104,19 @@ async fn jobs_run_in_the_background() {
     assert_eq!(busy.title, "busy.sh");
     assert_eq!(busy.job, Some(spec));
     assert!(busy.running);
+    // On a Mac, the Mac stays awake while it runs.
+    if cfg!(target_os = "macos") {
+        let ps = std::process::Command::new("ps")
+            .args(["-ax", "-o", "command="])
+            .output()
+            .unwrap();
+        let ps = String::from_utf8_lossy(&ps.stdout);
+        assert!(
+            ps.lines()
+                .any(|l| l.starts_with("/usr/bin/caffeinate -i -s -w ")),
+            "{ps}"
+        );
+    }
 
     // Its CPU and memory, the CPU once it has been measured twice.
     let mut usage = None;

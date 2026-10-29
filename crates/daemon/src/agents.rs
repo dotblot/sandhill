@@ -377,8 +377,9 @@ pub fn instructions(options: &AgentOptions) -> String {
          write the code into their document with add_cell: it goes below the cell they are in \
          and runs in their session, so they see the code and the result together. If a cell \
          you added fails, fix it with edit_cell instead of adding another. Use run_code only \
-         for quick looks they don't need to keep. get_focus says where the user is. Files you \
-         edit show up in the user's open editor.",
+         for quick looks they don't need to keep. get_focus says where the user is. \
+         list_jobs and read_job_log show the scripts and pipelines running in the background \
+         and what they printed. Files you edit show up in the user's open editor.",
     );
     if let Some(pin) = &options.pin {
         text.push_str(&format!(
