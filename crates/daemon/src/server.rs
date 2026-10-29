@@ -1227,7 +1227,7 @@ impl Daemon {
                 let project = self.terminals.info(&terminal)?.project;
                 self.terminals.close(&terminal).await?;
                 if let Some(project) = project {
-                    chats::forget(Path::new(&project), &terminal)?;
+                    chats::forget(Path::new(&project), &terminal, &self.machine)?;
                 }
                 Value::Null
             }

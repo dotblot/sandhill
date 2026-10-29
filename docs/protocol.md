@@ -600,8 +600,13 @@ it. Without that copy (or for Antigravity, on another machine than it ran
 on) the agent starts afresh and its first message says to read
 `.sandhill/agents/<id>/earlier.md`, the chat as text. It fails while
 `conversation.json` says another machine runs the conversation.
-`close_terminal` removes the folder's copy too; removing a conversation on
-one machine doesn't remove it on another. Logins never move.
+`close_terminal` removes the folder's copy too, all but a
+`conversation.json` with `removed_ms` and the machine that removed it (no
+title or chat). The other machines then remove theirs at their next copy, and
+`open_project` doesn't bring it back; `restart_terminal` fails with "This
+conversation was removed on ...". One still running on another machine stays
+there and goes back to the folder, so nothing in use is lost. Logins never
+move.
 
 ### Jobs
 
