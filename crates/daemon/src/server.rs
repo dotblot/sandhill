@@ -494,6 +494,9 @@ impl Daemon {
                 limit,
                 sort,
                 filters,
+                column_offset,
+                column_limit,
+                cells_only,
             } => {
                 let ask = tables::Ask {
                     mode: tables::Mode::Rows,
@@ -502,6 +505,11 @@ impl Daemon {
                     filters: &filters,
                     offset,
                     limit: limit.unwrap_or(tables::ROWS).min(tables::MAX_ROWS),
+                    column_offset,
+                    column_limit: column_limit
+                        .unwrap_or(tables::COLUMNS)
+                        .min(tables::MAX_COLUMNS),
+                    headers: !cells_only,
                     file: "",
                 };
                 let printed = self
@@ -516,6 +524,7 @@ impl Daemon {
                     code: rows.code,
                     matrix: rows.matrix,
                     columns: rows.columns,
+                    column_offset,
                     width: rows.width,
                     total: rows.total,
                     rows: rows.rows,
@@ -528,6 +537,8 @@ impl Daemon {
                 session,
                 path,
                 filters,
+                column_offset,
+                column_limit,
             } => {
                 let ask = tables::Ask {
                     mode: tables::Mode::Summary,
@@ -536,6 +547,11 @@ impl Daemon {
                     filters: &filters,
                     offset: 0,
                     limit: 0,
+                    column_offset,
+                    column_limit: column_limit
+                        .unwrap_or(tables::COLUMNS)
+                        .min(tables::MAX_COLUMNS),
+                    headers: false,
                     file: "",
                 };
                 let printed = self
@@ -764,6 +780,9 @@ impl Daemon {
                     filters: &filters,
                     offset: 0,
                     limit: 0,
+                    column_offset: 0,
+                    column_limit: 0,
+                    headers: false,
                     file: &resolved,
                 };
                 let printed = self

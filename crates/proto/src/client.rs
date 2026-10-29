@@ -434,6 +434,9 @@ impl Client {
             limit,
             sort: sort.to_vec(),
             filters: filters.to_vec(),
+            column_offset: 0,
+            column_limit: None,
+            cells_only: false,
         })
         .await
     }
@@ -448,6 +451,8 @@ impl Client {
             session: session.into(),
             path: path.to_vec(),
             filters: filters.to_vec(),
+            column_offset: 0,
+            column_limit: None,
         })
         .await
     }

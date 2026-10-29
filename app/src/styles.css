@@ -1498,14 +1498,16 @@ button.sz.upd:hover:not(:disabled) { background: var(--accent-soft); }
 .de.noside .de-body { grid-template-columns: minmax(0, 1fr); }
 .de.noside .de-side { display: none; }
 .de-sidetoggle { margin-right: 4px; }
-.de-side { border-right: 1px solid var(--line); overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; min-height: 0; }
-.de-col { display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 6px; text-align: left; flex: none; }
+.de-side { border-right: 1px solid var(--line); overflow: hidden; padding: 6px; display: flex; flex-direction: column; min-height: 0; }
+.de-cols { flex: 0 1 auto; min-height: 0; overflow: auto; }
+.de-cols-in { display: flex; flex-direction: column; gap: 1px; }
+.de-col { display: grid; grid-template-columns: minmax(0, 1fr) 70px; gap: 6px; align-items: center; height: 38px; padding: 4px 6px; border-radius: 6px; text-align: left; flex: none; }
 .de-col:hover { background: var(--hover); }
 .de-col.on { background: var(--sel); }
 .de-col b { font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .de-col small { display: block; color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .de-spark { width: 70px; height: 22px; display: block; }
-.de-stats { margin: 8px 0 0; border-top: 1px solid var(--line); padding: 10px 6px 6px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; flex: none; }
+.de-stats { margin: 8px 0 0; border-top: 1px solid var(--line); padding: 10px 6px 6px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; flex: none; max-height: 60%; overflow: auto; }
 .de-stats h4 { grid-column: 1 / -1; margin: 0 0 4px; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .de-stats dt { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .de-stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }

@@ -12,6 +12,11 @@ use crate::variables::{PYTHON_WALK, R_WALK};
 /// Rows a page has unless asked otherwise, and at most.
 pub const ROWS: u32 = 200;
 pub const MAX_ROWS: u32 = 2000;
+/// Columns a page has cells of, or a summary covers, unless asked
+/// otherwise, and at most: a wide table is read a block of columns at a
+/// time, as it is a page of rows.
+pub const COLUMNS: u32 = 100;
+pub const MAX_COLUMNS: u32 = 1000;
 
 /// What the code is asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +44,11 @@ pub struct Ask<'a> {
     pub filters: &'a [TableFilter],
     pub offset: u64,
     pub limit: u32,
+    /// The columns to read cells of, or summarize.
+    pub column_offset: u32,
+    pub column_limit: u32,
+    /// Whether [`Mode::Rows`] lists every column, not only cells.
+    pub headers: bool,
     /// The CSV file to write, for [`Mode::Export`].
     pub file: &'a str,
 }
@@ -51,6 +61,9 @@ const R: &str = r#"local({
   .filters <- __FILTERS__
   .offset <- __OFFSET__
   .limit <- __LIMIT__
+  .col_offset <- __COL_OFFSET__
+  .col_limit <- __COL_LIMIT__
+  .headers <- __HEADERS__
   .file <- __FILE__
 __WALK__
   .found <- .find(.path)
@@ -63,6 +76,8 @@ __WALK__
   .names <- colnames(.x)
   if (is.null(.names)) .names <- paste0("[,", seq_len(.width), "]")
   .col <- function(j) if (.matrix) .x[, j] else .x[[j]]
+  # Rows i of column j, without copying a matrix's whole column.
+  .part <- function(j, i) if (.matrix) .x[i, j] else .x[[j]][i]
   .rn <- if (.matrix) rownames(.x) else if (.row_names_info(.x) > 0) rownames(.x) else NULL
   .esc <- function(s) {
     s <- gsub("\\", "\\\\", s, fixed = TRUE)
@@ -124,24 +139,30 @@ __WALK__
     })
     .idx <- .idx[do.call(order, c(.keys, list(na.last = TRUE)))]
   }
-  .cols <- seq_len(min(.width, 500))
+  .cols <- seq_len(max(0, min(.col_limit, .width - .col_offset))) + .col_offset
+  # Each column's kind and type: a matrix's are all its first column's.
+  .each <- function(f, js) {
+    if (!length(js)) return(character(0))
+    if (.matrix) rep(f(.x[0, 1]), length(js)) else vapply(js, function(j) f(.col(j)), "")
+  }
   if (.mode == "rows") {
     .line("SANDHILL_TABLE", .n, length(.idx), .width, .esc(.found$code), as.integer(.matrix))
-    for (.j in .cols) {
-      .v <- .col(.j)
-      .line("SANDHILL_COL", .esc(.names[[.j]]), .kind(.v), .type(.v))
+    if (.headers && .width) {
+      .all <- seq_len(.width)
+      writeLines(paste("SANDHILL_COL", .esc(.names), .each(.kind, .all), .each(.type, .all), sep = "\t"))
     }
+    .line("SANDHILL_KINDS", .each(.kind, .cols))
     .page <- .idx[seq_len(max(0, min(.limit, length(.idx) - .offset))) + .offset]
     if (length(.page)) {
       .labels <- if (is.null(.rn)) as.character(.page) else .esc(.rn[.page])
-      .out <- lapply(.cols, function(j) .cells(.col(j)[.page]))
+      .out <- lapply(.cols, function(j) .cells(.part(j, .page)))
       writeLines(do.call(paste, c(list("SANDHILL_ROW", .labels), .out, list(sep = "\t"))))
     }
   }
   if (.mode == "summary") {
     .line("SANDHILL_TABLE", .n, length(.idx), .width)
     for (.j in .cols) {
-      .v <- .col(.j)[.idx]
+      .v <- .part(.j, .idx)
       .k <- .kind(.v)
       .w <- .v[!is.na(.v)]
       .d <- tryCatch(length(unique(.w)), error = function(e) NA)
@@ -180,7 +201,7 @@ __WALK__
 })
 "#;
 
-const PYTHON: &str = r#"def _sandhill_table(path, mode, sort, filters, offset, limit, file):
+const PYTHON: &str = r#"def _sandhill_table(path, mode, sort, filters, offset, limit, col_offset, col_limit, headers, file):
     ip = globals().get("get_ipython", lambda: None)()
     ns = ip.user_ns if ip is not None else globals()
 __WALK__
@@ -191,7 +212,7 @@ __WALK__
     import pandas as pd
     t = v if type(v).__name__ == "DataFrame" else pd.DataFrame(v)
     n, width = t.shape
-    cols = range(min(width, 500))
+    cols = range(min(col_offset, width), min(width, col_offset + col_limit))
     types = pd.api.types
 
     def esc(s):
@@ -201,7 +222,9 @@ __WALK__
         print(*fields, sep="\t")
 
     def kind(s):
-        d = s.dtype
+        return kind_of(s.dtype)
+
+    def kind_of(d):
         if isinstance(d, pd.CategoricalDtype):
             return "category"
         if types.is_bool_dtype(d):
@@ -276,9 +299,10 @@ __WALK__
 
     if mode == "rows":
         line("SANDHILL_TABLE", n, len(idx), width, esc(code), int(t is not v))
-        for c in cols:
-            s = t.iloc[:, c]
-            line("SANDHILL_COL", esc(str(t.columns[c])), kind(s), str(s.dtype))
+        if headers:
+            for name, d in zip(t.columns, t.dtypes):
+                line("SANDHILL_COL", esc(str(name)), kind_of(d), str(d))
+        line("SANDHILL_KINDS", *[kind_of(t.dtypes.iloc[c]) for c in cols])
         page = idx[offset:offset + limit]
         if len(page):
             labels = [esc(str(x)) for x in t.index[page]]
@@ -320,7 +344,7 @@ __WALK__
         t.iloc[idx].to_csv(file, index=not isinstance(t.index, pd.RangeIndex))
         line("SANDHILL_WROTE", len(idx))
 
-_sandhill_table(__PATH__, __MODE__, __SORT__, __FILTERS__, __OFFSET__, __LIMIT__, __FILE__)
+_sandhill_table(__PATH__, __MODE__, __SORT__, __FILTERS__, __OFFSET__, __LIMIT__, __COL_OFFSET__, __COL_LIMIT__, __HEADERS__, __FILE__)
 del _sandhill_table
 "#;
 
@@ -365,6 +389,9 @@ fn r_code(ask: &Ask) -> String {
         .replace("__FILTERS__", &format!("list({})", filters.join(", ")))
         .replace("__OFFSET__", &ask.offset.to_string())
         .replace("__LIMIT__", &ask.limit.to_string())
+        .replace("__COL_OFFSET__", &ask.column_offset.to_string())
+        .replace("__COL_LIMIT__", &ask.column_limit.to_string())
+        .replace("__HEADERS__", if ask.headers { "TRUE" } else { "FALSE" })
         .replace("__FILE__", &literal(ask.file))
 }
 
@@ -400,6 +427,9 @@ fn python_code(ask: &Ask) -> String {
         .replace("__FILTERS__", &format!("[{}]", filters.join(", ")))
         .replace("__OFFSET__", &ask.offset.to_string())
         .replace("__LIMIT__", &ask.limit.to_string())
+        .replace("__COL_OFFSET__", &ask.column_offset.to_string())
+        .replace("__COL_LIMIT__", &ask.column_limit.to_string())
+        .replace("__HEADERS__", if ask.headers { "True" } else { "False" })
         .replace("__FILE__", &literal(ask.file))
 }
 
@@ -427,6 +457,8 @@ pub struct Rows {
     pub code: String,
     pub matrix: bool,
     pub columns: Vec<TableColumn>,
+    /// The kinds of the columns the cells are of.
+    pub kinds: Vec<String>,
     pub labels: Vec<String>,
     pub values: Vec<Vec<Value>>,
 }
@@ -456,12 +488,13 @@ pub fn parse_rows(stdout: &str) -> Rows {
                 kind: fields.next().unwrap_or("other").to_string(),
                 kind_detail: fields.next().unwrap_or("").to_string(),
             }),
+            Some("SANDHILL_KINDS") => parsed.kinds = fields.map(str::to_string).collect(),
             Some("SANDHILL_ROW") => {
                 parsed.labels.push(unescape(fields.next().unwrap_or("")));
                 let row = fields
                     .enumerate()
                     .map(|(i, text)| {
-                        let kind = parsed.columns.get(i).map_or("other", |c| c.kind.as_str());
+                        let kind = parsed.kinds.get(i).map_or("other", String::as_str);
                         cell(text, kind)
                     })
                     .collect();
@@ -593,6 +626,7 @@ mod tests {
                    SANDHILL_COL\tnCount_RNA\tnumber\tdbl\n\
                    SANDHILL_COL\tcell type\tcategory\tfct\n\
                    SANDHILL_COL\tnote\ttext\tchr\n\
+                   SANDHILL_KINDS\tnumber\tcategory\ttext\n\
                    SANDHILL_ROW\tAAAC-1\t2197\tCD14+ Mono\ta\\tb\\\\c\n\
                    SANDHILL_ROW\tAAAG-1\t0.25\t\\N\tInf\n";
         let rows = parse_rows(out);
@@ -667,6 +701,9 @@ mod tests {
             filters: &filters,
             offset: 200,
             limit: 100,
+            column_offset: 100,
+            column_limit: 50,
+            headers: false,
             file: "",
         };
         let r = code("R", &ask).unwrap();
@@ -675,9 +712,11 @@ mod tests {
         assert!(r.contains(".sort_desc <- c(TRUE)"));
         assert!(r.contains(r#".filters <- list(list(col = 1L, op = "<", values = as.character(c("5"))), list(col = 5L, op = "missing", values = as.character(c())))"#));
         assert!(r.contains(".offset <- 200") && r.contains(".limit <- 100"));
+        assert!(r.contains(".col_offset <- 100") && r.contains(".col_limit <- 50"));
+        assert!(r.contains(".headers <- FALSE"));
         assert!(r.contains(".find <- function(path)"));
         let py = code("python", &ask).unwrap();
-        assert!(py.contains(r#"_sandhill_table(["seu", "meta \"data\""], "rows", [(2, True)], [(0, "<", ["5"]), (4, "missing", [])], 200, 100, "")"#));
+        assert!(py.contains(r#"_sandhill_table(["seu", "meta \"data\""], "rows", [(2, True)], [(0, "<", ["5"]), (4, "missing", [])], 200, 100, 100, 50, False, "")"#));
         assert!(py.contains("    def walk(path):"));
         assert!(code("julia", &ask).is_none());
     }

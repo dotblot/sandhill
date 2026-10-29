@@ -34,8 +34,8 @@ Responses can arrive out of order; match them by `id`.
 | `redraw_plot` | `session`, `run`, `image?`, `index?`, `file?`, `format?`, `width?`, `height?`, `dpi?`, `show?` | `{can, reason?, png?}`: whether the session can draw the plot again, or draws it into `file`, or with `show` answers a PNG |
 | `list_variables` | `session`, `path?` | `Variables` |
 | `delete_variables` | `session`, `names` | `null` once they are gone and memory is collected |
-| `table_rows` | `session`, `path`, `offset?`, `limit?`, `sort?`, `filters?` | `TableRows`: a page of a data frame or matrix, for the Data Explorer |
-| `table_summary` | `session`, `path`, `filters?` | `TableSummary`: each column's counts, range and commonest values |
+| `table_rows` | `session`, `path`, `offset?`, `limit?`, `sort?`, `filters?`, `column_offset?`, `column_limit?`, `cells_only?` | `TableRows`: a page of a data frame or matrix, for the Data Explorer |
+| `table_summary` | `session`, `path`, `filters?`, `column_offset?`, `column_limit?` | `TableSummary`: each column's counts, range and commonest values |
 | `table_export` | `session`, `path`, `sort?`, `filters?`, `file` | `{path, mtime_ms}` once the CSV is written |
 | `help_topics` | `session`, `query?`, `package?`, `limit?` | `HelpTopics`: the help topics that match, for the Help pane |
 | `help_page` | `session`, `topic`, `package?` | `HelpPage`: R's page as HTML, or Python's signature, docstring and members |
@@ -228,19 +228,24 @@ take one value, `between` two, `in` and `not in` any number, `contains` one
 numbers for a number column; a row whose value is missing passes no filter
 but `missing`.
 
-`table_rows` returns `{session, path, code, matrix, columns, width, total,
-rows, offset, labels, values}`: `code` is the table as code in the session's
-language (`seu@meta.data`, `adata.obs`); `matrix` says it is a matrix (or a
-NumPy array) rather than a data frame; `columns` is `[{name, kind, type}]` for
-the first 500 columns of the `width`, `kind` being `number`, `text`,
-`category`, `logical`, `date` or `other` and `type` the language's own
-(`dbl`, `fct`, `float64`); `total` counts the table's rows and `rows` those
-that pass the filters. Then from `offset`, `limit` rows (200 unless asked, at
-most 2000): each row's name or index label in `labels`, and its cells in
-`values`, numbers in number columns, text otherwise, `null` where missing.
+`table_rows` returns `{session, path, code, matrix, columns, column_offset,
+width, total, rows, offset, labels, values}`: `code` is the table as code in
+the session's language (`seu@meta.data`, `adata.obs`); `matrix` says it is a
+matrix (or a NumPy array) rather than a data frame; `columns` is `[{name,
+kind, type}]` for all `width` columns (empty with `cells_only`), `kind` being
+`number`, `text`, `category`, `logical`, `date` or `other` and `type` the
+language's own (`dbl`, `fct`, `float64`); `total` counts the table's rows and
+`rows` those that pass the filters. Then from `offset`, `limit` rows (200
+unless asked, at most 2000): each row's name or index label in `labels`, and
+its cells in `values`, numbers in number columns, text otherwise, `null` where
+missing. A row's cells are those of `column_limit` columns (100 unless asked,
+at most 1000) from `column_offset`, so a wide table is read a block of
+columns at a time, as it is a page of rows; `cells_only` leaves out the
+`columns` of a table already known.
 
 `table_summary` returns `{session, path, rows, columns}` for the rows that
-pass the filters, a summary per column: `{column, missing, distinct?, min?,
+pass the filters, a summary per column, for `column_limit` columns (100 unless
+asked, at most 1000) from `column_offset`: `{column, missing, distinct?, min?,
 max?, mean?, median?, histogram, top}`, with a 20-bin `histogram` from `min` to
 `max` for numbers, and for other columns of at most 1000 distinct values the
 10 commonest as `top: [{value, count}]` (a factor's in level order when it has

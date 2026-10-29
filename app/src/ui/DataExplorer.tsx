@@ -33,8 +33,12 @@ const HEAD = 36;
  * WebKit can't lay out much past 33 million px, about 1.4 million rows.
  */
 const MAX_HEIGHT = 8_000_000;
-/** Pages of rows kept; farther ones are read again if scrolled back to. */
-const KEEP_PAGES = 10;
+/** Columns read at a time, for a page's cells or the columns' stats. */
+const BLOCK = 100;
+/** Blocks of cells kept; farther ones are read again if scrolled back to. */
+const KEEP_PAGES = 24;
+/** A row of the column list, in px, with the gap under it. */
+const SIDE_ROW = 39;
 /** How long scrolling rests before rows are read, and a run's end before the table is. */
 const WAIT_MS = 120;
 const REFRESH_MS = 250;
@@ -104,7 +108,9 @@ export function DataExplorer(props: {
   const [filters, setFilters] = createSignal<TableFilter[]>([]);
   /** The last rows read: the columns, counts and code; their cells are in `pages`. */
   const [head, setHead] = createSignal<TableRows>();
-  const [pages, setPages] = createSignal<ReadonlyMap<number, Page>>(new Map());
+  /** Cells read, by page of rows and block of columns (`page:block`). */
+  const [pages, setPages] = createSignal<ReadonlyMap<string, Page>>(new Map());
+  /** The column summaries read, a block at a time: `columns` is indexed by column, with holes. */
   const [summary, setSummary] = createSignal<TableSummary>();
   /** The summary with no filters on: every value a filter can pick from. */
   const [overall, setOverall] = createSignal<TableSummary>();
@@ -118,6 +124,7 @@ export function DataExplorer(props: {
   const [colors, setColors] = createSignal<ReadonlyMap<number, ReadonlyMap<string, string>>>(new Map());
   const [editing, setEditing] = createSignal<{ index?: number; filter: TableFilter; at: { left: number; top: number }; anchor: HTMLElement }>();
   const [working, setWorking] = createSignal(false);
+  const [sideShown, setSideShown] = createSignal(readSide());
 
   const session = () => ws.sessions().find((s) => s.id === tab.session);
   const ended = () => !session() || session()!.status === "ended";
@@ -135,12 +142,32 @@ export function DataExplorer(props: {
   });
 
   let generation = 0;
-  /** Pages being read for this generation. */
-  const reading = new Set<number>();
+  /** Blocks of cells and of stats being read for this generation. */
+  const reading = new Set<string>();
+  const summing = new Set<number>();
   /** Set when the table should be read again once it can be: shown, idle. */
   let stale = true;
-  const rowsAt = (page: number) =>
-    ws.call<TableRows>("table_rows", { session: tab.session, path: tab.path, offset: page * PAGE, limit: PAGE, sort: sort(), filters: filters() });
+  const rowsAt = (page: number, block: number, cellsOnly = true) =>
+    ws.call<TableRows>("table_rows", {
+      session: tab.session,
+      path: tab.path,
+      offset: page * PAGE,
+      limit: PAGE,
+      sort: sort(),
+      filters: filters(),
+      column_offset: block * BLOCK,
+      column_limit: BLOCK,
+      cells_only: cellsOnly,
+    });
+  const statsAt = (block: number) =>
+    ws.call<TableSummary>("table_summary", { session: tab.session, path: tab.path, filters: filters(), column_offset: block * BLOCK, column_limit: BLOCK });
+  /** The summaries read, as one indexed by column. */
+  const merged = (base: TableSummary | undefined, read: TableSummary[]): TableSummary | undefined => {
+    if (!read.length) return base;
+    const columns = base ? [...base.columns] : [];
+    for (const r of read) for (const c of r.columns) columns[c.column] = c;
+    return { ...read[0], columns };
+  };
 
   /**
    * Reads the table again: the pages on screen, and with `stats` the column
@@ -168,40 +195,38 @@ export function DataExplorer(props: {
       if (mine !== generation) return;
       if (bare) follow(untrack(columns), bare.columns);
     }
-    const wanted = opts.top ? [0] : untrack(visiblePages);
+    const wanted = (opts.top ? [0] : untrack(visiblePages)).flatMap((page) => untrack(visibleBlocks).map((block) => [page, block] as const));
     const stats = opts.stats || !untrack(summary);
+    const statBlocks = untrack(wantedStats);
+    summing.clear();
     try {
       const [read, summed] = await Promise.all([
-        Promise.all(wanted.map(rowsAt)),
-        stats
-          ? ws.call<TableSummary>("table_summary", { session: tab.session, path: tab.path, filters: filters() }).catch((err) => new Error(message(err)))
-          : undefined,
+        Promise.all(wanted.map(([page, block], i) => rowsAt(page, block, i > 0))),
+        stats ? Promise.all(statBlocks.map(statsAt)).catch((err) => new Error(message(err))) : undefined,
       ]);
       if (mine !== generation) return;
       batch(() => {
         const first = read[0];
         const sameColumns = sameNames(untrack(columns), first.columns);
         setHead(first);
-        setPages(new Map(read.map((r, i) => [wanted[i], { labels: r.labels, values: r.values }])));
+        setPages(new Map(read.map((r, i) => [`${wanted[i][0]}:${wanted[i][1]}`, { labels: r.labels, values: r.values }])));
+        const fresh = summed instanceof Error ? undefined : merged(undefined, summed ?? []);
         if (!sameColumns || !untrack(widths).length) {
-          // Sized for the first page, and for the smallest and largest numbers further down.
-          const ends = (i: number) => {
-            const s = summed instanceof Error ? undefined : summed?.columns[i];
-            return [s?.min, s?.max].filter((n): n is number => n !== undefined).map(formatNumber);
-          };
-          setWidths(first.columns.map((c, i) => columnWidth(c, [...first.values.map((row) => formatCell(row[i], tab.language)), ...ends(i)])));
-          const longest = Math.max(2, String(first.total).length, ...first.labels.map((l) => l.length));
-          setLabelWidth(Math.round(Math.max(40, Math.min(220, longest * 7.8 + 22))));
+          measured.clear();
+          setWidths(first.columns.map((c) => columnWidth(c, [])));
+          setLabelWidth(labelWidthFor(first));
           setColors(new Map());
           setOverall(undefined);
           if (untrack(picked) >= first.columns.length) setPicked(0);
         }
+        for (const [i, r] of read.entries()) fitBlock(wanted[i][1], r, fresh);
+        if (summed && !(summed instanceof Error)) statBlocks.forEach((b) => summing.add(b));
         if (summed instanceof Error) {
           if (!summed.message.includes(BUSY)) setSummary(undefined);
-        } else if (summed) {
-          setSummary(summed);
-          if (!untrack(filters).length) setOverall(summed);
-          setColors((all) => colorValues(all, first.columns, summed.columns));
+        } else if (fresh) {
+          setSummary(fresh);
+          if (!untrack(filters).length) setOverall(fresh);
+          setColors((all) => colorValues(all, first.columns, summed!.flatMap((s) => s.columns)));
         }
         setError(undefined);
       });
@@ -223,26 +248,73 @@ export function DataExplorer(props: {
     });
   }
 
-  /** Reads a page scrolled to. */
-  async function readPage(page: number) {
+  /** Blocks of columns whose widths were fitted to their cells, for this shape of table. */
+  const measured = new Set<number>();
+  /** Fits a block's columns to its first cells read, and to the smallest and largest numbers further down. */
+  function fitBlock(block: number, read: TableRows, stats: TableSummary | undefined) {
+    if (measured.has(block) || !read.labels.length) return;
+    measured.add(block);
+    const all = untrack(columns);
+    setWidths((now) => {
+      const next = [...now];
+      for (let j = 0; j < (read.values[0]?.length ?? 0); j++) {
+        const c = block * BLOCK + j;
+        if (!all[c]) continue;
+        const s = stats?.columns[c];
+        const ends = [s?.min, s?.max].filter((n): n is number => n !== undefined).map(formatNumber);
+        next[c] = columnWidth(all[c], [...read.values.map((row) => formatCell(row[j], tab.language)), ...ends]);
+      }
+      return next;
+    });
+  }
+
+  /** Reads a block of cells scrolled to. */
+  async function readPage(page: number, block: number) {
     const mine = generation;
-    if (reading.has(page) || busy()) return;
-    reading.add(page);
+    const key = `${page}:${block}`;
+    if (reading.has(key) || busy()) return;
+    reading.add(key);
     try {
-      const read = await rowsAt(page);
+      const read = await rowsAt(page, block);
       if (mine !== generation) return;
-      setPages((all) => {
-        const next = new Map(all);
-        next.set(page, { labels: read.labels, values: read.values });
-        // The farthest pages go.
-        const keys = [...next.keys()].sort((a, b) => Math.abs(b - page) - Math.abs(a - page));
-        for (const key of keys.slice(0, Math.max(0, next.size - KEEP_PAGES))) next.delete(key);
-        return next;
+      batch(() => {
+        fitBlock(block, read, untrack(summary));
+        setPages((all) => {
+          const next = new Map(all);
+          next.set(key, { labels: read.labels, values: read.values });
+          // The farthest blocks go.
+          const far = (k: string) => {
+            const [p, b] = k.split(":").map(Number);
+            return Math.abs(p - page) + Math.abs(b - block);
+          };
+          const keys = [...next.keys()].sort((a, b) => far(b) - far(a));
+          for (const k of keys.slice(0, Math.max(0, next.size - KEEP_PAGES))) next.delete(k);
+          return next;
+        });
       });
     } catch (err) {
       if (mine === generation && !message(err).includes(BUSY)) setError(message(err));
     } finally {
-      if (mine === generation) reading.delete(page);
+      if (mine === generation) reading.delete(key);
+    }
+  }
+
+  /** Reads the stats of a block of columns come into view. */
+  async function readStats(block: number) {
+    const mine = generation;
+    if (summing.has(block) || busy()) return;
+    summing.add(block);
+    try {
+      const read = await statsAt(block);
+      if (mine !== generation) return;
+      batch(() => {
+        setSummary((s) => merged(s, [read]));
+        if (!untrack(filters).length) setOverall((s) => merged(s, [read]));
+        setColors((all) => colorValues(all, untrack(columns), read.columns));
+      });
+    } catch {
+      // Busy, or the table changed: they're read with the table next time.
+      if (mine === generation) summing.delete(block);
     }
   }
 
@@ -268,13 +340,19 @@ export function DataExplorer(props: {
       { defer: true },
     ),
   );
-  // Pages scrolled to, once scrolling rests.
+  // Cells and stats scrolled to, once scrolling rests.
   let pageTimer: ReturnType<typeof setTimeout> | undefined;
   createEffect(() => {
-    const missing = visiblePages().filter((p) => !pages().has(p));
-    if (!missing.length || !head()) return;
+    if (!head()) return;
+    const missing = visiblePages().flatMap((p) => visibleBlocks().filter((b) => !pages().has(`${p}:${b}`)).map((b) => [p, b] as const));
+    const stats = summary();
+    const unsummed = stats ? wantedStats().filter((b) => !summing.has(b) && !hasStats(stats, b)) : [];
+    if (!missing.length && !unsummed.length) return;
     clearTimeout(pageTimer);
-    pageTimer = setTimeout(() => missing.forEach((p) => void readPage(p)), WAIT_MS);
+    pageTimer = setTimeout(() => {
+      missing.forEach(([p, b]) => void readPage(p, b));
+      unsummed.forEach((b) => void readStats(b));
+    }, WAIT_MS);
   });
   onCleanup(() => {
     unwatch();
@@ -344,11 +422,58 @@ export function DataExplorer(props: {
     const shown = columnIndexes();
     return (at[at.length - 1] ?? 0) - (at[(shown[shown.length - 1] ?? -1) + 1] ?? 0);
   };
+  const visibleBlocks = createMemo(
+    () => {
+      const shown = columnIndexes();
+      if (!shown.length) return [0];
+      const from = Math.floor(shown[0] / BLOCK);
+      const to = Math.floor(shown[shown.length - 1] / BLOCK);
+      return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+    },
+    [0],
+    { equals: (a, b) => a.length === b.length && a[0] === b[0] },
+  );
+  /** The row's label, once any of its cells are read. */
   const rowAt = (i: number) => {
-    const page = pages().get(Math.floor(i / PAGE));
     const at = i % PAGE;
-    return page && at < page.labels.length ? { label: page.labels[at], values: page.values[at] } : undefined;
+    for (const block of visibleBlocks()) {
+      const page = pages().get(`${Math.floor(i / PAGE)}:${block}`);
+      if (page && at < page.labels.length) return { label: page.labels[at] };
+    }
+    return undefined;
   };
+  /** A cell, or undefined while its block is read. */
+  const cellAt = (i: number, c: number) => pages().get(`${Math.floor(i / PAGE)}:${Math.floor(c / BLOCK)}`)?.values[i % PAGE]?.[c % BLOCK];
+  const hasCell = (i: number, c: number) => (pages().get(`${Math.floor(i / PAGE)}:${Math.floor(c / BLOCK)}`)?.labels.length ?? 0) > i % PAGE;
+
+  // The column list at the side: only the names in view are drawn.
+  let side: HTMLDivElement | undefined;
+  const [sideView, setSideView] = createSignal({ top: 0, height: 600 });
+  const measureSide = () => {
+    if (side) setSideView((v) => ({ top: side!.scrollTop, height: side!.clientHeight || v.height }));
+  };
+  const sideObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measureSide);
+  onCleanup(() => sideObserver?.disconnect());
+  const sideIndexes = createMemo(
+    () => {
+      const from = Math.max(0, Math.floor(sideView().top / SIDE_ROW) - OVERSCAN);
+      const to = Math.min(columns().length, Math.ceil((sideView().top + sideView().height) / SIDE_ROW) + OVERSCAN);
+      return Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
+    },
+    [],
+    { equals: (a, b) => a.length === b.length && a[0] === b[0] },
+  );
+  /** The blocks of columns whose stats show: in the list, in the grid, picked or filtered. */
+  const wantedStats = createMemo(
+    () => {
+      const shown = sideShown() ? sideIndexes() : [];
+      const blocks = new Set([...shown, picked(), ...filters().map((f) => f.column)].map((c) => Math.floor(c / BLOCK)));
+      for (const b of visibleBlocks()) blocks.add(b);
+      return [...blocks].sort((a, b) => a - b);
+    },
+    [0],
+    { equals: (a, b) => a.length === b.length && a.every((x, i) => x === b[i]) },
+  );
   const measure = () => {
     const el = grid;
     if (!el) return;
@@ -359,6 +484,11 @@ export function DataExplorer(props: {
   onCleanup(() => observer?.disconnect());
   const showColumn = (i: number) => {
     setPicked(i);
+    if (side) {
+      const top = i * SIDE_ROW;
+      if (top < side.scrollTop) side.scrollTop = top;
+      else if (top + SIDE_ROW > side.scrollTop + side.clientHeight) side.scrollTop = top + SIDE_ROW - side.clientHeight;
+    }
     if (!grid) return;
     const at = offsets();
     const start = at[i] ?? 0;
@@ -435,7 +565,6 @@ export function DataExplorer(props: {
     changeFilters(list.map((f, i) => (i === at ? { ...f, values: [...values, value] } : f)));
   };
 
-  const [sideShown, setSideShown] = createSignal(readSide());
   const showSide = (shown: boolean) => {
     setSideShown(shown);
     try {
@@ -480,17 +609,36 @@ export function DataExplorer(props: {
       </div>
       <div class="de-body">
         <div class="de-side" aria-label="Columns">
-          <For each={columns()}>
-            {(column, i) => (
-              <button class="de-col" classList={{ on: picked() === i() }} title={`${column.name} (${column.type})`} onClick={() => showColumn(i())}>
-                <span>
-                  <b>{column.name}</b>
-                  <small>{columnNote(column, summary()?.columns[i()])}</small>
-                </span>
-                <Spark column={column} summary={summary()?.columns[i()]} colors={colors().get(i())} />
-              </button>
-            )}
-          </For>
+          <div
+            class="de-cols"
+            ref={(el) => {
+              side = el;
+              sideObserver?.observe(el);
+              queueMicrotask(measureSide);
+            }}
+            onScroll={measureSide}
+          >
+            <div class="de-cols-in" style={{ height: `${columns().length * SIDE_ROW}px`, "padding-top": `${(sideIndexes()[0] ?? 0) * SIDE_ROW}px` }}>
+              <For each={sideIndexes()}>
+                {(i) => {
+                  const column = () => columns()[i];
+                  return (
+                    <Show when={column()}>
+                      {(c) => (
+                        <button class="de-col" classList={{ on: picked() === i }} title={`${c().name} (${c().type})`} onClick={() => showColumn(i)}>
+                          <span>
+                            <b>{c().name}</b>
+                            <small>{columnNote(c(), summary()?.columns[i])}</small>
+                          </span>
+                          <Spark column={c()} summary={summary()?.columns[i]} colors={colors().get(i)} />
+                        </button>
+                      )}
+                    </Show>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
           <Show when={columns()[picked()]}>
             {(column) => <Stats column={column()} summary={summary()?.columns[picked()]} colors={colors().get(picked())} language={tab.language} onValue={(v) => filterTo(picked(), v)} />}
           </Show>
@@ -518,7 +666,7 @@ export function DataExplorer(props: {
               {(h) => (
                 <span class="count">
                   {h().rows === h().total ? `${formatNumber(h().total)} rows` : `${formatNumber(h().rows)} of ${formatNumber(h().total)} rows`} ·{" "}
-                  {h().width > h().columns.length ? `${formatNumber(h().width)} columns, the first ${h().columns.length} shown` : `${h().width} ${h().width === 1 ? "column" : "columns"}`}
+                  {`${formatNumber(h().width)} ${h().width === 1 ? "column" : "columns"}`}
                 </span>
               )}
             </Show>
@@ -592,13 +740,13 @@ export function DataExplorer(props: {
                           <For each={columnIndexes()}>
                             {(c) => (
                               <Cell
-                                value={row()?.values[c]}
+                                value={cellAt(i, c)}
                                 column={columns()[c]}
                                 width={widths()[c]}
                                 language={tab.language}
                                 color={colors().get(c)}
                                 on={picked() === c}
-                                waiting={!row()}
+                                waiting={!hasCell(i, c)}
                                 onClick={() => setPicked(c)}
                               />
                             )}
@@ -912,6 +1060,17 @@ function colorValues(
     next.set(s.column, map);
   }
   return next;
+}
+
+/** Wide enough for the longest row label read, or the row count. */
+function labelWidthFor(read: TableRows): number {
+  const longest = Math.max(2, String(read.total).length, ...read.labels.map((l) => l.length));
+  return Math.round(Math.max(40, Math.min(220, longest * 7.8 + 22)));
+}
+
+/** Whether a block of columns' stats were read. */
+function hasStats(summary: TableSummary, block: number): boolean {
+  return summary.columns[block * BLOCK] !== undefined;
 }
 
 function sameNames(a: TableColumn[], b: TableColumn[]): boolean {
