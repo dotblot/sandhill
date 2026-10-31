@@ -273,18 +273,6 @@ async fn plots_are_drawn_again_at_a_new_size() {
         let asked = redraw(&mut client, &session, &plots[0], None, "png", (0.0, 0.0, 0))
             .await
             .unwrap();
-        if kernel == "ir" {
-            assert_eq!(
-                asked,
-                PlotRedraw {
-                    can: false,
-                    reason: Some("only Ark keeps R plots to draw them again".into()),
-                    png: None,
-                }
-            );
-            client.shutdown(&session).await.unwrap();
-            continue;
-        }
         assert!(asked.can, "{kernel}: {asked:?}");
 
         let png = dir.path().join(format!("{kernel}/figures/plot.png"));
