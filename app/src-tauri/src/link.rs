@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use base64::Engine;
 use sandhill_proto::client::{Client, ClientError};
 use sandhill_proto::{Blob, Call};
 use serde::Serialize;
