@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, type JSX, onCleanup, Show, untrack } from "solid-js";
-import type { FileText, GitAction, GitCommit, GitCommitInfo, GitFile, GitLog, GitMessage, GitRef, GitStatus } from "../backend/types";
+import type { FileText, GitAction, GitCommit, GitCommitInfo, GitFile, GitLog, GitMessage, GitOwnCommits, GitRef, GitRewrite, GitStatus } from "../backend/types";
 import {
   avatar,
   BIG_FILE,
@@ -21,6 +21,7 @@ import type { Workspace } from "../model/workspace";
 import { ask, askText, notify } from "./dialogs";
 import { FileIcon, Icon, type IconName } from "./icons";
 import { closeOnOutside } from "./popup";
+import { RewriteDialog } from "./RewriteDialog";
 
 /** How often the status is read while the pane shows. */
 const POLL_MS = 3000;
@@ -99,6 +100,8 @@ export function GitPane(props: {
   const [body, setBody] = createSignal("");
   const [amend, setAmend] = createSignal(false);
   const [menu, setMenu] = createSignal<{ kind: "branches" | "merge" | "rebase" | "stash" | "more" | "commit"; anchor: HTMLElement }>();
+  /** The branch's own commits, while the Squash and reorder dialog is open. */
+  const [own, setOwn] = createSignal<GitOwnCommits>();
   const [userName, setUserName] = createSignal("");
   const [userEmail, setUserEmail] = createSignal("");
   const [now, setNow] = createSignal(Date.now());
@@ -372,6 +375,28 @@ export function GitPane(props: {
     if (answer !== "Rebase") return;
     await act({ op: "rebase", branch }, `Could not rebase onto ${branch}`, (output) =>
       /CONFLICT|could not apply/i.test(output) ? undefined : /up to date/i.test(output) ? `${mine} is already on top of ${branch}` : `Rebased ${mine} onto ${branch}`,
+    );
+  }
+
+  /** Opens Squash and reorder with the branch's own commits, if there are two to change. */
+  async function squash() {
+    setMenu(undefined);
+    let found: GitOwnCommits;
+    try {
+      found = await ws.call<GitOwnCommits>("git_own_commits", { path: props.project });
+    } catch (err) {
+      return notify(`Could not read the commits: ${message(err)}`);
+    }
+    if (found.commits.length < 2) return notify(found.commits.length ? `Only the last commit isn't pushed yet. ${found.note ?? ""}`.trim() : (found.note ?? "There are no commits to change."), "info");
+    setOwn(found);
+  }
+
+  async function rewrite(found: GitOwnCommits, commits: GitRewrite[] | undefined) {
+    setOwn(undefined);
+    if (!commits) return;
+    const left = commits.filter((c) => !c.squash).length;
+    await act({ op: "rewrite", base: found.base, commits }, "Could not change the commits", (output) =>
+      /CONFLICT|could not apply/i.test(output) ? undefined : left < commits.length ? `Squashed into ${left} ${left === 1 ? "commit" : "commits"}` : "Reordered the commits",
     );
   }
 
@@ -779,6 +804,7 @@ export function GitPane(props: {
           </div>
         </Show>
       </Show>
+      <Show when={own()}>{(found) => <RewriteDialog own={found()} onDone={(commits) => void rewrite(found(), commits)} />}</Show>
       <Show when={menu()}>
         {(open) => (
           <GitMenu anchor={open().anchor} onClose={() => setMenu(undefined)}>
@@ -858,6 +884,7 @@ export function GitPane(props: {
                 disabled={!status()?.upstream || !!status()?.state}
                 run={() => act({ op: "pull", rebase: true }, "Could not pull", lastLine)}
               />
+              <MenuItem icon="sort" label="Squash or reorder commits…" disabled={!status()?.head || !status()?.branch || !!status()?.state} run={squash} />
               <div class="mm-sep" />
               <MenuItem icon="plus" label="Stage all" disabled={!unstaged().length} run={() => stage(unstaged(), true)} />
               <MenuItem icon="minus" label="Unstage all" disabled={!staged().length} run={() => act({ op: "unstage", files: [] }, "Could not unstage")} />

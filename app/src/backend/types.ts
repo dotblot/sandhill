@@ -559,6 +559,22 @@ export interface GitChange {
   lines?: GitLines;
 }
 
+/** The branch's own commits, oldest first, that can be squashed and reordered (`git_own_commits`). */
+export interface GitOwnCommits {
+  commits: { sha: string; time_ms: number; message: string }[];
+  /** The commit they're on top of; none from the first commit. */
+  base?: string;
+  /** Why older commits aren't among them, or why there are none. */
+  note?: string;
+}
+
+/** A commit's place in a rewrite: folded into the one before it, or with a new message. */
+export interface GitRewrite {
+  sha: string;
+  squash?: boolean;
+  message?: string;
+}
+
 export interface GitCommitInfo {
   sha: string;
   parents: string[];
@@ -595,7 +611,9 @@ export type GitAction =
   | { op: "resolve"; file: string; side: "ours" | "theirs" }
   | { op: "create_branch"; name: string }
   | { op: "stash"; message?: string }
-  | { op: "set_user"; name: string; email: string };
+  | { op: "set_user"; name: string; email: string }
+  /** The branch's own commits made again in this order, oldest first, on top of `base`. */
+  | { op: "rewrite"; base?: string; commits: GitRewrite[] };
 
 export interface GitMessage {
   summary: string;

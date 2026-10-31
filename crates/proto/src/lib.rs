@@ -315,6 +315,12 @@ pub enum Call {
         path: String,
         sha: String,
     },
+    /// The branch's own commits, which [`GitAction::Rewrite`] can squash,
+    /// reorder and reword: those on no remote branch, back to the last merge,
+    /// at most 50. Returns [`GitOwnCommits`].
+    GitOwnCommits {
+        path: String,
+    },
     /// One file's changes as a unified diff: in the working tree against the
     /// index, or with `staged` the index against HEAD, or with `sha` that
     /// commit against its first parent. `file` is relative to the
@@ -1941,6 +1947,40 @@ pub struct GitRef {
     pub name: String,
 }
 
+/// The commits [`Call::GitOwnCommits`] found, oldest first, on top of
+/// `base` (none: from the repository's first commit).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitOwnCommits {
+    pub commits: Vec<GitOwnCommit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    /// Why older commits aren't among them, or why there are none: pushed,
+    /// a merge, or more than 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitOwnCommit {
+    pub sha: String,
+    pub time_ms: i64,
+    /// The whole message.
+    pub message: String,
+}
+
+/// A commit's place in a [`GitAction::Rewrite`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct GitRewrite {
+    pub sha: String,
+    /// Folds it into the commit before it, as `git rebase -i`'s fixup does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub squash: bool,
+    /// The message of the commit it makes, with the ones squashed into it;
+    /// its own when none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 /// A commit's details, as [`Call::GitShow`] asked.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct GitCommitInfo {
@@ -2077,6 +2117,16 @@ pub enum GitAction {
     /// and `Continue` (or `Abort`).
     Rebase {
         branch: String,
+    },
+    /// Makes the branch's own commits ([`Call::GitOwnCommits`], on top of
+    /// `base`) again in the order of `commits`, oldest first, each folded
+    /// into the one before it or with a new message as it says: an
+    /// interactive rebase. Changes not committed are put aside and back. It
+    /// stops on conflicts as `Rebase` does.
+    Rewrite {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+        commits: Vec<GitRewrite>,
     },
     /// Tags HEAD, or the commit `sha`, with an annotated tag.
     CreateTag {
