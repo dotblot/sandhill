@@ -558,6 +558,12 @@ pub enum Call {
     /// The coding agents this machine can run, and whether their CLIs are
     /// installed. Returns `Vec<AgentInfo>`.
     ListAgents,
+    /// The models an agent offers before any conversation, as its model
+    /// menu lists them: `[{id, label, efforts?, effort?, default?}]`. Codex
+    /// and Antigravity only; Claude Code's are known.
+    AgentModels {
+        kind: String,
+    },
     /// Starts a program in a terminal that keeps running when clients
     /// disconnect and when the daemon restarts: a shell, or an agent CLI.
     /// Returns [`TerminalInfo`].

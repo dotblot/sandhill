@@ -625,6 +625,10 @@ impl Client {
         self.call(Call::ListAgents).await
     }
 
+    pub async fn agent_models(&self, kind: &str) -> Result<serde_json::Value> {
+        self.call(Call::AgentModels { kind: kind.into() }).await
+    }
+
     pub async fn start_terminal(
         &self,
         kind: &str,

@@ -601,3 +601,24 @@ async fn antigravity_works_through_the_chat() {
     assert_eq!(added, 1);
     terminals.close(&info.id).await.unwrap();
 }
+
+/// A new conversation's model menu lists agy's models before anything is
+/// sent.
+#[tokio::test]
+async fn agy_lists_its_models_before_a_conversation() {
+    use std::os::unix::fs::PermissionsExt;
+    if sandhill_daemon::agents::find("python3").is_none() {
+        eprintln!("skipping: python3 is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let agy = dir.path().join("agy");
+    std::fs::write(&agy, STANDIN).unwrap();
+    std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let models = sandhill_daemon::terminal::antigravity::list_models(&agy)
+        .await
+        .unwrap();
+    assert_eq!(models[0]["id"], "gemini-3.6-flash-high");
+    assert_eq!(models[0]["default"], true);
+    assert_eq!(models[1]["id"], "gemini-3.1-pro-low");
+}

@@ -41,7 +41,7 @@ import { browserOpener, fromRun as pagesOf, isHtmlFile, isPreviewable, localPort
 import { listProjectFiles } from "../model/projectFiles";
 import { viewPath } from "../model/table";
 import { fromNotebook, isScript } from "../model/runs";
-import { documentPath, modelLabel, planUsage, timeLeft } from "../model/agents";
+import { modelLabel, planUsage, timeLeft } from "../model/agents";
 import { TerminalStore } from "../model/terminals";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { reportPlace, serveAgentEdits } from "./agentEdits";
@@ -229,12 +229,8 @@ export function App(props: {
     store(AGENTS_KEY, agentsOn() ? "shown" : "hidden");
     if (!agentsOn() && maximized() === "agents") setMaximized(undefined);
   };
-  /** Shows an agent session, and brings the first document it is about to the front. */
-  const selectAgent = (id: string | undefined) => {
-    setAgentTab(id);
-    const doc = terminals.list().find((t) => t.id === id)?.options?.documents?.[0];
-    if (doc) void open(documentPath(props.project, doc));
-  };
+  /** Shows an agent session. Conversations are about the whole project, so no document comes to the front with it. */
+  const selectAgent = (id: string | undefined) => setAgentTab(id);
   /** Brings an agent session to the front, opening the pane if need be. */
   const showAgent = (id?: string) => {
     if (id) selectAgent(id);
@@ -1204,7 +1200,6 @@ export function App(props: {
               store={terminals}
               project={props.project}
               hostLabel={hostLabel}
-              docs={docs()}
               active={active()}
               selected={agentTab()}
               onSelect={selectAgent}

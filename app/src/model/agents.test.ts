@@ -9,7 +9,6 @@ import {
   effortLabel,
   effortName,
   favourites,
-  focusFile,
   liveOptions,
   MODES,
   modeFor,
@@ -62,7 +61,8 @@ describe("agents", () => {
       options: { model: "opus", effort: "medium", permission: "supervised", documents: ["qc.ipynb"] },
       agent: { mode: "plan", session_id: "s1", status: { model_id: "claude-opus-5-5[1m]", effort: "high" } },
     });
-    expect(liveOptions(changed)).toEqual({ model: "claude-opus-5-5[1m]", effort: "high", permission: "plan", documents: ["qc.ipynb"] });
+    // Conversations are about the whole project: the file it started about stays behind.
+    expect(liveOptions(changed)).toEqual({ model: "claude-opus-5-5[1m]", effort: "high", permission: "plan" });
     expect(liveOptions(terminal({ options: { model: "sonnet" } }))).toEqual({ model: "sonnet", effort: undefined, permission: "supervised" });
     expect(liveOptions(terminal({ agent: { mode: "default", guard: "ask" } })).permission).toBe("ask");
     // The message box's choices as the agent keeps them; the first message's chips are spent.
@@ -70,7 +70,7 @@ describe("agents", () => {
       terminal({ options: { pin: "a.qmd", web: false, refs: [{ kind: "file", name: "x" }] }, agent: { pin: null, web: true, context: false } }),
     );
     expect([chose.pin, chose.web, chose.context, chose.refs]).toEqual([undefined, undefined, false, undefined]);
-    expect(liveOptions(terminal({ options: { pin: "a.qmd", web: false } }))).toMatchObject({ pin: "a.qmd", web: false });
+    expect(liveOptions(terminal({ options: { pin: "a.qmd", web: false } }))).toMatchObject({ pin: undefined, web: false });
     expect(canResume(changed)).toBe(true);
     expect(canResume(terminal({ agent: { thread: "t1" } }))).toBe(false);
     expect(canResume(terminal({ kind: "codex", agent: { thread: "t1" } }))).toBe(true);
@@ -152,13 +152,6 @@ describe("agents", () => {
     expect(timeLeft((5 * 24 + 1) * 3_600_000, 0)).toBe("5d 1h");
     expect(tokens(200_000)).toBe("200K");
     expect(tokens(1_000_000)).toBe("1M");
-  });
-
-  it("works in the pinned file, else the one a working agent started in, else the editor's", () => {
-    expect(focusFile({ pin: "a.qmd", working: true, document: "b.qmd", front: "c.qmd" })).toBe("a.qmd");
-    expect(focusFile({ working: true, document: "b.qmd", front: "c.qmd" })).toBe("b.qmd");
-    expect(focusFile({ working: false, document: "b.qmd", front: "c.qmd" })).toBe("c.qmd");
-    expect(focusFile({ working: false, started: "d.qmd" })).toBe("d.qmd");
   });
 
   it("keeps starred models, with Opus starred to begin with", () => {

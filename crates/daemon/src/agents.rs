@@ -23,9 +23,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use sandhill_proto::{AgentInfo, AgentOptions, TERMINAL_SHELL};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::terminal::Launch;
 
@@ -117,6 +117,22 @@ pub async fn list() -> Vec<AgentInfo> {
         });
     }
     list
+}
+
+/// The models `kind` offers before any conversation, for a new one's model
+/// menu.
+pub async fn models(kind: &str) -> Result<Value> {
+    let agent = AGENTS
+        .iter()
+        .find(|a| a.kind == kind)
+        .with_context(|| format!("no agent {kind:?}"))?;
+    let program = find(agent.program)
+        .with_context(|| format!("{} is not installed: {}", agent.name, agent.install))?;
+    match kind {
+        CODEX => crate::terminal::codex::list_models(&program).await,
+        ANTIGRAVITY => crate::terminal::antigravity::list_models(&program).await,
+        _ => bail!("{} lists its models itself", agent.name),
+    }
 }
 
 /// What to run for a new terminal of `kind`.
@@ -391,6 +407,12 @@ pub fn instructions(options: &AgentOptions) -> String {
              front of them when they send a message, unless they pin one.",
             options.documents.join(", ")
         ));
+    } else {
+        text.push_str(
+            " This conversation is about the whole project, not one file. Files the user \
+             names with @ come with their message; add_cell writes into the document they \
+             named, else the one in front of them.",
+        );
     }
     text
 }

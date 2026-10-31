@@ -588,3 +588,60 @@ async fn codex_works_through_the_chat() {
 
     terminals.close(&info.id).await.unwrap();
 }
+
+/// A new conversation's model menu lists Codex's models before anything is
+/// sent: the daemon asks a Codex started only for that.
+#[tokio::test]
+async fn codex_lists_its_models_before_a_conversation() {
+    if agents::find("codex").is_none() {
+        eprintln!("skipping: codex is not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (port, _) = model(Vec::new()).await;
+    let home = dir.path().join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "model = \"gpt-5.5\"\nmodel_provider = \"standin\"\n\n[model_providers.standin]\nname = \"Stand-in\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\nwire_api = \"responses\"\n"
+        ),
+    )
+    .unwrap();
+    // Its own daemon, so Codex finds these settings.
+    let state = dir.path().join("state");
+    let _serve = tokio::process::Command::new(env!("CARGO_BIN_EXE_sandhilld"))
+        .arg("--state-dir")
+        .arg(&state)
+        .arg("serve")
+        .env("CODEX_HOME", &home)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut client = None;
+    for _ in 0..100 {
+        if let Ok(c) =
+            sandhill_proto::client::Client::connect_unix(&state.join("sandhilld.sock")).await
+        {
+            client = Some(c);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let client = client.expect("sandhilld did not start");
+    let models = client.agent_models("codex").await.unwrap();
+    let models = models.as_array().unwrap();
+    assert!(!models.is_empty(), "{models:?}");
+    assert!(
+        models
+            .iter()
+            .all(|m| m["id"].is_string() && m["label"].is_string()),
+        "{models:?}"
+    );
+    assert!(
+        client.agent_models("claude").await.is_err(),
+        "Claude Code's models are known"
+    );
+}

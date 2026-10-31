@@ -474,6 +474,11 @@ omp.
 - **Conversations belong to the project** on its machine. Start as many as you
   like; each has its own context, so unrelated tasks don't fill one context
   window, and two agents can work at once.
+- **A conversation is about the whole project, not one file** (Huan's call,
+  2026-10-31). No file is bound to it, and opening it doesn't change the
+  editor. To work on a file, name it with @ in the message: the code the agent
+  writes goes into the document named, else into the one in front of you, below
+  your active cell.
 - **Header** (the pane's tab strip):
   - The conversation's provider chip and its **title**. The agent writes the
     title from your first message: a few words, without file names, filler such
@@ -481,17 +486,8 @@ omp.
     conversation".
   - Double-click the title, or gear → Rename, to rename it in place: Enter keeps
     it, Esc cancels. A title you set is never replaced.
-  - The **focus file** sits in the message box's bottom row, before the context
-    ring: the language icon (14px), the name and a small ⌄.
-  - The agent sees the focus file, and the code it writes goes into it, below
-    your active cell.
-  - By default the focus file **follows the editor's active tab**.
-  - While the agent is working, it keeps the file it started in.
-  - Clicking the focus file opens a menu above it: Open the file, then "The agent works in": **Follow
-    the editor** (with the current file in grey), or **Pin to** one of the open
-    files.
-  - A pinned file shows a small orange pin after its name, and stays when you
-    switch editor tabs.
+  - There is no focus file or pin any more (until 2026-10-31 the bottom row
+    showed the file the agent worked in, and it could be pinned).
 - Then + (new conversation), a clock (history) and a gear (conversation
   settings), then minimize and maximize. The clock shows an orange dot when
   another conversation is waiting for you.
@@ -530,10 +526,9 @@ omp.
   turn's tokens, in 11px grey. No cost is shown, because plan sign-ins aren't
   billed per message.
 - **Message box**: rounded, with no paperclip (attaching is in the @ menu).
-  "Ask Claude… (@ to add files, chunks, variables or plots)" is the
-  placeholder, and a round orange send button that becomes a stop button while
+  "Ask Claude…" (the agent's name) is the placeholder, with no @ in it, and a round orange send button that becomes a stop button while
   the agent works. The grip on its top edge resizes it. Its bottom row:
-  - left: @ (mention), web search (globe), session context on or off (eye; off shows a
+  - left: web search (globe), session context on or off (eye; off shows a
     crossed-out eye) and the mode (hand). Any mode other than Normal shows its
     icon and name in orange.
   - right: the context ring and tokens used (opens the context breakdown above
@@ -547,11 +542,10 @@ omp.
   - Typing @ opens a menu above the message box with the project's files, the
     open document's chunks, variables and plots, grouped under those headings and
     filtered by what you type after the @.
-  - The @ button opens the same menu without typing anything into the message.
-    The menu then has its own search field at the top.
+  - There is no @ button (removed 2026-10-31): typing @ is the way in.
   - Enter or Tab picks the first match. Esc or a click elsewhere closes the menu.
-  - Either way, the "@" and the letters typed after it are removed, so no stray
-    "@" is left in your message.
+  - The "@" and the letters typed after it are removed, so no stray "@" is left
+    in your message.
   - The menu's last item, after a divider, is **Attach from this Mac…** (files,
     images, PDFs). It opens the Mac's file picker, and the file becomes a chip
     like the others. Files and images can also be pasted or dragged into the
@@ -573,11 +567,12 @@ omp.
   grouped as Needs you, Running, Today, Yesterday and Earlier, with a search box
   at the top. Each row shows the provider icon (with a dot when waiting or busy),
   the title, and the file it last worked in, model and time in 11px. Rename and
-  delete appear on hover. Opening a conversation also brings that file to the
-  front of the editor.
+  delete appear on hover. Opening a conversation leaves the editor as it is.
 - **New conversation** (+): there are no agent buttons. The note says it works
-  in the file in front of you (named) and sees your live sessions, that @ adds
-  more, and that the agent, model and effort come from the model button.
+  on the whole project (named) and sees your live sessions, that typing @ and
+  picking a file has it work on that file, and that the agent, model and effort
+  come from the model button. Codex's and Antigravity's real model lists are
+  there before the first message, read from their CLIs.
 - **The model menu** (the model button in the message box), from top to bottom:
   - **A tab row**: a star (favourites), then one tab per agent showing its chip
     (Claude Code, Codex, Antigravity, omp). Each tab is 32 × 30px, and the open

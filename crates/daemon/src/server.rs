@@ -1094,6 +1094,7 @@ impl Daemon {
                 serde_json::to_value(blocking(move || Ok(files::stat(&paths))).await?)?
             }
             Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
+            Call::AgentModels { kind } => crate::agents::models(&kind).await?,
             Call::StartTerminal {
                 kind,
                 cwd,

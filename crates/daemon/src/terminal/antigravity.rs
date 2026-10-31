@@ -978,6 +978,28 @@ fn denials(result: &Value, errors: &[String]) -> Option<String> {
     ))
 }
 
+/// The models agy offers, before any conversation (`agy models`), for a
+/// new conversation's model menu.
+pub async fn list_models(agy: &Path) -> Result<Value> {
+    let mut command = tokio::process::Command::new(agy);
+    command
+        .arg("models")
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    if let Some(path) = crate::agents::path_for(agy)? {
+        command.env("PATH", path);
+    }
+    let output = tokio::time::timeout(COMMAND_TIMEOUT, command.output())
+        .await
+        .context("`agy models` took too long")??;
+    let mut said = String::from_utf8_lossy(&output.stdout).into_owned();
+    said.push_str(&String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        bail!("`agy models` failed: {}", said.trim());
+    }
+    Ok(models(&said))
+}
+
 /// The models `agy models` lists, one slug at the start of each line:
 /// `{id, label, default}`.
 fn models(said: &str) -> Value {

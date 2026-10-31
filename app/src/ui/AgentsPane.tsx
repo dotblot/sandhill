@@ -1,6 +1,6 @@
-import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js";
 import { LOCAL_HOST } from "../backend";
-import type { AgentInfo, AgentOptions, AgentReport, FileStat, MessageRef, SessionPlots, TerminalInfo, Variables } from "../backend/types";
+import type { AgentInfo, AgentModel, AgentOptions, AgentReport, FileStat, MessageRef, SessionPlots, TerminalInfo, Variables } from "../backend/types";
 import type { Doc } from "../docs/doc";
 import {
   AGENT_KINDS,
@@ -14,7 +14,7 @@ import {
   drivesChat,
   effortLevel,
   effortName,
-  focusFile,
+  listedKind,
   liveOptions,
   type Mode,
   MODES,
@@ -68,7 +68,6 @@ export function AgentsPane(props: {
   store: TerminalStore;
   project: string;
   hostLabel: string;
-  docs: Doc[];
   active?: Doc;
   selected?: string;
   onSelect: (id: string | undefined) => void;
@@ -127,9 +126,6 @@ export function AgentsPane(props: {
     return agents.find((t) => t.id === props.selected) ?? agents[agents.length - 1];
   };
   const relative = (path: string) => (path.startsWith(`${props.project}/`) ? path.slice(props.project.length + 1) : path);
-  const activeFile = () => (props.active ? relative(props.active.path) : undefined);
-  /** The documents open in the editor, to pin a conversation to. */
-  const openFiles = () => props.docs.map((d) => relative(d.path));
   /** Conversations show as a chat; those started before chats existed keep their terminal. */
   const canChat = (t: TerminalInfo) =>
     (t.kind === "claude" || drivesChat(t.kind)) && (store.chat(t.id).length > 0 || (!t.outdated && t.running));
@@ -272,6 +268,32 @@ export function AgentsPane(props: {
       },
     ),
   );
+
+  // Codex and Antigravity list their models for a new conversation's
+  // menu: asked once as it first opens here, and taken from any
+  // conversation that reports them.
+  const askedModels = new Set<string>();
+  createEffect(() => {
+    if (!picking()) return;
+    for (const kind of AGENT_KINDS.filter((k) => drivesChat(k.kind)).map((k) => k.kind)) {
+      if (askedModels.has(kind)) continue;
+      askedModels.add(kind);
+      props.ws
+        .call<AgentModel[]>("agent_models", { kind })
+        .then((models) => {
+          if (Array.isArray(models) && models.length) setListedModels((all) => ({ ...all, [kind]: models }));
+        })
+        // Not installed, or a daemon from before the call: the CLI's default model it is.
+        .catch(() => {});
+    }
+  });
+  createEffect(() => {
+    for (const t of store.list()) {
+      const models = t.agent?.models;
+      if (!drivesChat(t.kind) || !models?.length) continue;
+      if (JSON.stringify(untrack(listedModels)[t.kind]) !== JSON.stringify(models)) setListedModels((all) => ({ ...all, [t.kind]: models }));
+    }
+  });
 
   function openNew() {
     setHistory(false);
@@ -523,13 +545,12 @@ export function AgentsPane(props: {
   /** The message box's choices for a conversation: as the agent keeps them, or as picked here while it has ended. */
   const choices = (t: TerminalInfo) => ({ ...liveOptions(t), ...boxChoice()[t.id] });
   /** Changes a choice: the agent takes it from its next message, or it waits for the conversation to start again. */
-  function choose(t: TerminalInfo, choice: Pick<AgentOptions, "pin" | "web" | "context">) {
+  function choose(t: TerminalInfo, choice: Pick<AgentOptions, "web" | "context">) {
     if (!t.running) {
       setBoxChoice((all) => ({ ...all, [t.id]: { ...all[t.id], ...choice } }));
       return;
     }
     const command: Record<string, unknown> = { kind: "set" };
-    if ("pin" in choice) command.pin = choice.pin ?? null;
     if ("web" in choice) command.web = choice.web !== false;
     if ("context" in choice) command.context = choice.context !== false;
     tell(t, command);
@@ -803,9 +824,6 @@ export function AgentsPane(props: {
             store={store}
             hostLabel={props.hostLabel}
             project={baseName(props.project)}
-            file={focusFile({ pin: newChoice.pin(), working: false, front: activeFile() })}
-            pinned={!!newChoice.pin()}
-            onOpen={openPath}
             onInstall={props.onInstall}
             choice={newChoice}
             onCancel={store.agents().length ? () => setPicking(false) : undefined}
@@ -903,12 +921,8 @@ export function AgentsPane(props: {
       <Show when={picking()}>
         <NewComposer
           choice={newChoice}
-          front={activeFile()}
-          openFiles={openFiles()}
-          project={baseName(props.project)}
           mentions={mentionList}
           onAttach={attachFile}
-          onOpenFile={openPath}
           ref={(el) => (input = el)}
           onSend={(kind, options, text) => {
             void start(kind, options, text);
@@ -925,16 +939,6 @@ export function AgentsPane(props: {
           const waiting = () => t().agent?.state === "waiting";
           /** Ended: what is picked here applies as the message starts it again. */
           const ended = () => !t().running;
-          const focus = () => {
-            const document = t().agent?.document;
-            return focusFile({
-              pin: choices(t()).pin,
-              working: working(t()),
-              document: document ? relative(document) : undefined,
-              front: activeFile(),
-              started: t().options?.documents?.[0],
-            });
-          };
           const modelNote = () => {
             if (ended()) return `Applies as ${agentName(t())} goes on with your next message.`;
             if (driven(t())) return working(t()) ? "Changes apply from your next message." : undefined;
@@ -964,13 +968,6 @@ export function AgentsPane(props: {
                 if (m.id === "yolo" && mode().id !== "yolo" && !canResume(t())) return "Start a new conversation in YOLO mode";
                 return undefined;
               }}
-              focus={focus()}
-              pinned={!!choices(t()).pin}
-              front={activeFile()}
-              openFiles={openFiles()}
-              project={baseName(props.project)}
-              onPin={(file) => choose(t(), { pin: file })}
-              onOpenFile={openPath}
               web={choices(t()).web !== false}
               onWeb={(on) => choose(t(), { web: on ? undefined : false })}
               context={choices(t()).context !== false}
@@ -1024,6 +1021,8 @@ export function AgentsPane(props: {
 /** What a new conversation will be: the agent, its model and effort, and its mode. */
 interface NewChoice {
   kind: () => AgentKind;
+  /** Every agent, with the models those that list theirs listed. */
+  kinds: () => AgentKind[];
   setKind: (kind: string) => void;
   model: () => ModelChoice;
   setModel: (model: ModelChoice) => void;
@@ -1033,8 +1032,6 @@ interface NewChoice {
   setMode: (mode: Mode) => void;
   code: () => CodeTo;
   setCode: (to: CodeTo) => void;
-  pin: () => string | undefined;
-  setPin: (file: string | undefined) => void;
   web: () => boolean;
   setWeb: (on: boolean) => void;
   context: () => boolean;
@@ -1043,17 +1040,20 @@ interface NewChoice {
 
 const [newKind, setNewKind] = createSignal("claude");
 const [newModel, setNewModel] = createSignal<Record<string, ModelChoice>>({});
+/** The models Codex and Antigravity listed, by agent: asked as a new conversation opens, or as a conversation reports them. */
+const [listedModels, setListedModels] = createSignal<Record<string, AgentModel[]>>({});
+const newKindOf = (kind: AgentKind) => listedKind(kind, listedModels()[kind.kind], newModel()[kind.kind]?.id);
 const [newEffort, setNewEffort] = createSignal<Record<string, string>>({});
 const [newMode, setNewMode] = createSignal<Mode>(MODES[0]);
 const [newCode, setNewCode] = createSignal<CodeTo>("file");
-const [newPin, setNewPin] = createSignal<string>();
 const [newWeb, setNewWeb] = createSignal(true);
 const [newContext, setNewContext] = createSignal(true);
 const newChoice: NewChoice = {
-  kind: () => agentKind(newKind()) ?? AGENT_KINDS[0],
+  kind: () => newKindOf(agentKind(newKind()) ?? AGENT_KINDS[0]),
+  kinds: () => AGENT_KINDS.map(newKindOf),
   setKind: setNewKind,
   model: () => {
-    const kind = agentKind(newKind()) ?? AGENT_KINDS[0];
+    const kind = newChoice.kind();
     return newModel()[newKind()] ?? kind.models[kind.start] ?? kind.models[0];
   },
   setModel: (model) => setNewModel((all) => ({ ...all, [newKind()]: model })),
@@ -1063,8 +1063,6 @@ const newChoice: NewChoice = {
   setMode: setNewMode,
   code: () => newCode(),
   setCode: setNewCode,
-  pin: newPin,
-  setPin: setNewPin,
   web: newWeb,
   setWeb: setNewWeb,
   context: newContext,
@@ -1076,11 +1074,7 @@ function NewConversation(props: {
   store: TerminalStore;
   hostLabel: string;
   project: string;
-  /** The file it will work in, relative to the project. */
-  file?: string;
-  pinned: boolean;
   choice: NewChoice;
-  onOpen: (path: string) => void;
   onInstall: (command: string) => void;
   onCancel?: () => void;
 }) {
@@ -1100,18 +1094,8 @@ function NewConversation(props: {
           </Show>
         </div>
         <p>
-          <Show when={props.file} fallback={<>It works in {props.project}</>}>
-            {(file) => (
-              <>
-                It works in {props.pinned ? "" : "the file in front of you ("}
-                <button class="flink" onClick={() => props.onOpen(file())}>
-                  {baseName(file())}
-                </button>
-                {props.pinned ? ", pinned" : " now)"}
-              </>
-            )}
-          </Show>{" "}
-          and sees your live sessions. Type @ to add other files, chunks, variables or plots.
+          It works on the whole {props.project} project and sees your live sessions. To have it work on a file, type @ and pick the file, or a
+          chunk, variable or plot.
         </p>
         <p class="nc-hint">
           Choose the agent, model and thinking effort from{" "}
@@ -1140,38 +1124,25 @@ function NewConversation(props: {
 
 function NewComposer(props: {
   choice: NewChoice;
-  /** The editor's front document, relative to the project. */
-  front?: string;
-  openFiles: string[];
-  project: string;
   mentions: () => Promise<Mention[]>;
   onAttach: (file: File) => Promise<MessageRef>;
-  onOpenFile: (file: string) => void;
   ref: (el: HTMLTextAreaElement) => void;
   onSend: (kind: AgentKind, options: AgentOptions, text: string) => boolean;
   fill?: { text: string; refs: MessageRef[] };
   onFilled: () => void;
 }) {
   const c = props.choice;
-  const focus = () => focusFile({ pin: c.pin(), working: false, front: props.front });
   return (
     <AgentComposer
       draftKey="new"
       fill={props.fill}
       onFilled={props.onFilled}
       kind={c.kind()}
-      kinds={AGENT_KINDS}
+      kinds={c.kinds()}
       model={c.model().label}
       isModel={(kind, m) => kind === c.kind().kind && m.id === c.model().id}
       effort={c.effort()}
       mode={modeFor(c.kind(), c.mode())}
-      focus={focus()}
-      pinned={!!c.pin()}
-      front={props.front}
-      openFiles={props.openFiles}
-      project={props.project}
-      onPin={c.setPin}
-      onOpenFile={props.onOpenFile}
       web={c.web()}
       onWeb={c.setWeb}
       context={c.context()}
@@ -1186,9 +1157,7 @@ function NewComposer(props: {
             model: c.model().id,
             effort: c.effort(),
             permission: modeFor(c.kind(), c.mode()).permission,
-            documents: focus() ? [focus()!] : undefined,
             code: c.code() === "console" ? "console" : undefined,
-            pin: c.pin(),
             web: c.web() ? undefined : false,
             context: c.context() ? undefined : false,
             refs: refs.length ? refs : undefined,

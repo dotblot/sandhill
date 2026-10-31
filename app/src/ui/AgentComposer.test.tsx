@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MessageRef, TerminalInfo } from "../backend/types";
@@ -23,10 +23,6 @@ function base(): ComposerProps {
     model: "Opus 5.5",
     isModel: () => false,
     mode: MODES[0]!,
-    openFiles: ["analysis.qmd", "R/theme.R"],
-    project: "pbmc",
-    onPin: () => {},
-    onOpenFile: () => {},
     web: true,
     onWeb: () => {},
     context: true,
@@ -121,8 +117,7 @@ describe("AgentComposer", () => {
   it("opens the @ menu as @ is typed, and a pick becomes a chip that goes with the message", async () => {
     const sent: [string, MessageRef[]][] = [];
     const t = mount(() => ({ onSend: (text: string, refs: MessageRef[]) => (sent.push([text, refs]), true) }));
-    expect(t.root.querySelector(".cbi.at")?.textContent).toBe("@");
-    expect(t.box.placeholder).toBe("Ask Claude… (@ to add files, chunks, variables or plots)");
+    expect(t.box.placeholder).toBe("Ask Claude…");
     t.type("What is in @");
     await settle();
     expect(t.items()).toEqual(["analysis.qmd", "data/raw/s1.csv", "analysis.qmd › markers", "seu", "Attach from this Mac…files, images, PDFs"]);
@@ -147,16 +142,14 @@ describe("AgentComposer", () => {
     t.dispose();
   });
 
-  it("opens the menu from the @ button with its own search field, and attaches from the Mac", async () => {
+  it("shows no @ of its own: typing @ finds a file, and files can be pasted", async () => {
     const t = mount(() => ({}));
-    (t.root.querySelector(".cbi.at") as HTMLButtonElement).click();
+    expect(t.root.querySelector(".cbi.at")).toBeNull();
+    expect(t.box.placeholder).not.toContain("@");
+    t.type("@raw");
     await settle();
-    const search = t.root.querySelector<HTMLInputElement>(".apop.mention .mq")!;
-    expect(search).not.toBeNull();
-    search.value = "raw";
-    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
     expect(t.items()).toEqual(["data/raw/s1.csv", "Attach from this Mac…files, images, PDFs"]);
-    search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    t.key("Enter");
     await settle();
     expect(t.chips()).toEqual(["data/raw/s1.csv"]);
     expect(t.box.value).toBe("");
@@ -174,22 +167,26 @@ describe("AgentComposer", () => {
     t.dispose();
   });
 
-  it("follows the editor or pins a file from the focus file's menu", () => {
-    const onPin = vi.fn();
-    const [pinned, setPinned] = createSignal<string>();
-    const t = mount(() => ({ focus: pinned() ?? "analysis.qmd", pinned: !!pinned(), front: "analysis.qmd", onPin }));
-    const chip = () => t.root.querySelector<HTMLButtonElement>(".atfile")!;
-    expect(chip().textContent).toBe("analysis.qmd");
-    expect(chip().title).toMatch(/^Follows the editor: analysis.qmd now/);
-    chip().click();
-    const labels = () => [...t.root.querySelectorAll(".apop.focus .mm-i span:nth-child(2)")].map((s) => s.textContent);
-    expect(labels()).toEqual(["Open analysis.qmd", "Follow the editor (analysis.qmd now)", "Pin to analysis.qmd", "Pin to theme.R"]);
-    (t.root.querySelectorAll<HTMLButtonElement>(".apop.focus .mm-i")[3]).click();
-    expect(onPin).toHaveBeenCalledWith("R/theme.R");
-    setPinned("R/theme.R");
-    expect(chip().querySelector(".pin")).not.toBeNull();
-    expect(chip().title).toMatch(/^Pinned to R\/theme.R/);
+  it("is about the whole project: no file to follow or pin", () => {
+    const t = mount(() => ({}));
+    expect(t.root.querySelector(".atfile")).toBeNull();
     t.dispose();
+  });
+
+  it("goes with its conversation without breaking the pane", async () => {
+    // As when + is clicked: the box for the conversation in front goes, and
+    // keeps its draft under that conversation.
+    const [shown, setShown] = createSignal<{ id: string } | undefined>({ id: "c9" });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <Show when={shown()}>{(t) => <AgentComposer {...base()} draftKey={t().id} />}</Show>, root);
+    const box = root.querySelector<HTMLTextAreaElement>(".ain")!;
+    box.value = "unsent";
+    box.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(() => setShown(undefined)).not.toThrow();
+    expect(root.querySelector(".ain")).toBeNull();
+    setShown({ id: "c9" });
+    expect(root.querySelector<HTMLTextAreaElement>(".ain")!.value).toBe("unsent");
+    dispose();
   });
 
   it("lists models by agent, with favourites, and dims other agents once a conversation started", () => {
