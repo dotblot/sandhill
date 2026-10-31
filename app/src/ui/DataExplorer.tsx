@@ -1,6 +1,6 @@
 import { type Accessor, batch, createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from "solid-js";
 import { Portal } from "solid-js/web";
-import type { ColumnSummary, FileStat, SessionInfo, TableColumn, TableFilter, TableRows, TableSort, TableSummary } from "../backend/types";
+import type { ColumnSummary, FileStat, SavedExtra, SessionInfo, TableColumn, TableFilter, TableRows, TableSort, TableSummary } from "../backend/types";
 import { documentPath } from "../model/agents";
 import { languageLabel, languageVersion } from "../model/machine";
 import {
@@ -60,11 +60,34 @@ export interface TableTab {
   /** "618 of 2,638 rows", for the status bar. */
   count: Accessor<string>;
   setCount: (count: string) => void;
+  /** How its rows are sorted and filtered, kept with the project's tabs. */
+  sort: Accessor<TableSort[]>;
+  setSort: (sort: TableSort[]) => void;
+  filters: Accessor<TableFilter[]>;
+  setFilters: (filters: TableFilter[]) => void;
+  /** The columns last read, to keep the names of those sorted and filtered on. */
+  columns: Accessor<{ name: string }[]>;
+  setColumns: (columns: { name: string }[]) => void;
+  /**
+   * For a tab brought back, the names of the columns its sorting and
+   * filters were on, by position, so they follow their columns if the
+   * table changed meanwhile.
+   */
+  named?: { name: string }[];
 }
 
-export function tableTab(session: Pick<SessionInfo, "id" | "language">, path: string[]): TableTab {
+/** A table tab as the project keeps it. */
+export type SavedTable = Extract<SavedExtra, { kind: "table" }>;
+
+export function tableTab(session: Pick<SessionInfo, "id" | "language">, path: string[], saved?: Pick<SavedTable, "sort" | "filters">): TableTab {
   const [code, setCode] = createSignal(path.join(normalizeLanguage(session.language) === "r" ? "$" : "."));
   const [count, setCount] = createSignal("");
+  const keys = (list: { column: number; name: string }[] | undefined) => (list ?? []).map(({ name: _, ...key }) => key);
+  const [sort, setSort] = createSignal<TableSort[]>(keys(saved?.sort));
+  const [filters, setFilters] = createSignal<TableFilter[]>(keys(saved?.filters) as TableFilter[]);
+  const [columns, setColumns] = createSignal<{ name: string }[]>([]);
+  let named: { name: string }[] | undefined;
+  for (const key of [...(saved?.sort ?? []), ...(saved?.filters ?? [])]) (named ??= [])[key.column] = { name: key.name };
   return {
     kind: "table",
     id: tableId(session.id, path),
@@ -75,7 +98,23 @@ export function tableTab(session: Pick<SessionInfo, "id" | "language">, path: st
     setCode,
     count,
     setCount,
+    sort,
+    setSort,
+    filters,
+    setFilters,
+    columns,
+    setColumns,
+    named,
   };
+}
+
+/** A table tab to keep with the project: its sorting and filters with their columns' names. */
+export function savedTable(tab: TableTab, session: string): SavedTable {
+  const name = (column: number) => tab.columns()[column]?.name ?? tab.named?.[column]?.name ?? "";
+  const saved: SavedTable = { kind: "table", session, language: tab.language, path: tab.path };
+  if (tab.sort().length) saved.sort = tab.sort().map((k) => ({ ...k, name: name(k.column) }));
+  if (tab.filters().length) saved.filters = tab.filters().map((f) => ({ ...f, name: name(f.column) }));
+  return saved;
 }
 
 export function tableId(session: string, path: string[]): string {
@@ -104,8 +143,10 @@ export function DataExplorer(props: {
 }) {
   const ws = props.ws;
   const tab = props.tab;
-  const [sort, setSort] = createSignal<TableSort[]>([]);
-  const [filters, setFilters] = createSignal<TableFilter[]>([]);
+  const { sort, filters } = tab;
+  const setSort = (next: TableSort[] | ((now: TableSort[]) => TableSort[])) => tab.setSort(typeof next === "function" ? next(untrack(sort)) : next);
+  const setFilters = (next: TableFilter[] | ((now: TableFilter[]) => TableFilter[])) =>
+    tab.setFilters(typeof next === "function" ? next(untrack(filters)) : next);
   /** The last rows read: the columns, counts and code; their cells are in `pages`. */
   const [head, setHead] = createSignal<TableRows>();
   /** Cells read, by page of rows and block of columns (`page:block`). */
@@ -126,9 +167,11 @@ export function DataExplorer(props: {
   const [working, setWorking] = createSignal(false);
   const [sideShown, setSideShown] = createSignal(readSide());
 
-  const session = () => ws.sessions().find((s) => s.id === tab.session);
+  /** The session the table is in: its own, or the one that replaced it after a restart. */
+  const sid = () => ws.current(tab.session);
+  const session = () => ws.sessions().find((s) => s.id === sid());
   const ended = () => !session() || session()!.status === "ended";
-  const busy = () => ws.isBusy(tab.session);
+  const busy = () => ws.isBusy(sid());
   const name = () => languageLabel(tab.language);
   const columns = () => head()?.columns ?? [];
   const rowCount = () => head()?.rows ?? 0;
@@ -149,7 +192,7 @@ export function DataExplorer(props: {
   let stale = true;
   const rowsAt = (page: number, block: number, cellsOnly = true) =>
     ws.call<TableRows>("table_rows", {
-      session: tab.session,
+      session: sid(),
       path: tab.path,
       offset: page * PAGE,
       limit: PAGE,
@@ -160,7 +203,7 @@ export function DataExplorer(props: {
       cells_only: cellsOnly,
     });
   const statsAt = (block: number) =>
-    ws.call<TableSummary>("table_summary", { session: tab.session, path: tab.path, filters: filters(), column_offset: block * BLOCK, column_limit: BLOCK });
+    ws.call<TableSummary>("table_summary", { session: sid(), path: tab.path, filters: filters(), column_offset: block * BLOCK, column_limit: BLOCK });
   /** The summaries read, as one indexed by column. */
   const merged = (base: TableSummary | undefined, read: TableSummary[]): TableSummary | undefined => {
     if (!read.length) return base;
@@ -188,12 +231,16 @@ export function DataExplorer(props: {
     }
     // The table may have changed shape since: filters and sorting follow
     // their columns by name, and go with them.
-    if (!opts.top && untrack(head) && (untrack(filters).length || untrack(sort).length)) {
+    const before = untrack(head)?.columns ?? tab.named;
+    if (!opts.top && before && (untrack(filters).length || untrack(sort).length)) {
       const bare = await ws
-        .call<TableRows>("table_rows", { session: tab.session, path: tab.path, offset: 0, limit: 0, sort: [], filters: [] })
+        .call<TableRows>("table_rows", { session: sid(), path: tab.path, offset: 0, limit: 0, sort: [], filters: [] })
         .catch(() => undefined);
       if (mine !== generation) return;
-      if (bare) follow(untrack(columns), bare.columns);
+      if (bare) {
+        follow(before, bare.columns);
+        tab.named = undefined;
+      }
     }
     const wanted = (opts.top ? [0] : untrack(visiblePages)).flatMap((page) => untrack(visibleBlocks).map((block) => [page, block] as const));
     const stats = opts.stats || !untrack(summary);
@@ -209,6 +256,7 @@ export function DataExplorer(props: {
         const first = read[0];
         const sameColumns = sameNames(untrack(columns), first.columns);
         setHead(first);
+        if (!sameColumns) tab.setColumns(first.columns);
         setPages(new Map(read.map((r, i) => [`${wanted[i][0]}:${wanted[i][1]}`, { labels: r.labels, values: r.values }])));
         const fresh = summed instanceof Error ? undefined : merged(undefined, summed ?? []);
         if (!sameColumns || !untrack(widths).length) {
@@ -238,8 +286,8 @@ export function DataExplorer(props: {
     }
   }
 
-  function follow(before: TableColumn[], now: TableColumn[]) {
-    if (sameNames(before, now)) return;
+  function follow(before: { name: string }[], now: TableColumn[]) {
+    if (before.length === now.length && before.every((c, i) => c?.name === now[i].name)) return;
     const at = (i: number) => now.findIndex((c) => c.name === before[i]?.name);
     batch(() => {
       setFilters((list) => list.map((f) => ({ ...f, column: at(f.column) })).filter((f) => f.column >= 0));
@@ -325,7 +373,7 @@ export function DataExplorer(props: {
   // After each run in the session.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const unwatch = ws.runs.watchAll((run) => {
-    if (run.session !== tab.session || run.quiet || run.phase !== "done") return;
+    if (run.session !== sid() || run.quiet || run.phase !== "done") return;
     stale = true;
     clearTimeout(timer);
     timer = setTimeout(() => void reload({ stats: true }), REFRESH_MS);
@@ -336,6 +384,17 @@ export function DataExplorer(props: {
       () => ws.connectedSince(),
       (since) => {
         if (since !== undefined) void reload({ stats: true });
+      },
+      { defer: true },
+    ),
+  );
+  // After a restart, from the session that replaced its own.
+  createEffect(
+    on(
+      sid,
+      () => {
+        stale = true;
+        void reload({ stats: true });
       },
       { defer: true },
     ),
@@ -521,7 +580,7 @@ export function DataExplorer(props: {
         const choice = await ask(`Replace ${shownName}?`, ["Replace", "Cancel"], "A file with this name is already there.");
         if (choice !== "Replace") return;
       }
-      await ws.call("table_export", { session: tab.session, path: tab.path, sort: sort(), filters: filters(), file });
+      await ws.call("table_export", { session: sid(), path: tab.path, sort: sort(), filters: filters(), file });
       const slash = typed.lastIndexOf("/");
       if (!typed.startsWith("/")) store(folderKey, slash > 0 ? typed.slice(0, slash) : "");
       notify(`Exported ${formatNumber(h.rows)} rows to ${shownName}.`, "info");

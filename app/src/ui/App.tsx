@@ -47,7 +47,7 @@ import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { reportPlace, serveAgentEdits } from "./agentEdits";
 import { AgentsPane } from "./AgentsPane";
 import { ConnectionItem, connState } from "./Connection";
-import { DataExplorer, type TableTab, tableId, tableTab } from "./DataExplorer";
+import { DataExplorer, savedTable, type TableTab, tableId, tableTab } from "./DataExplorer";
 import { type DiffTab, DiffView, diffTab, diffTitle } from "./DiffView";
 import { ask, notify } from "./dialogs";
 import { type DiffRequest, GitPane } from "./GitPane";
@@ -316,14 +316,20 @@ export function App(props: {
     })();
   });
 
-  /** Brings back the tables and diffs that were open; a table only while its session runs. */
+  /**
+   * Brings back the tables and diffs that were open. A table whose session
+   * has ended (restarted, say) opens in the project's session for its
+   * language, if there is just one; with none, it stays closed.
+   */
   async function restoreExtras(state: ProjectState) {
     if (!state.extras?.length) return;
     await ws.refreshSessions().catch(() => {});
     const live = new Set(ws.liveSessions().map((s) => s.id));
     const back = state.extras.flatMap((saved): ExtraTab[] => {
       if (saved.kind === "diff") return [diffTab(saved)];
-      return live.has(saved.session) ? [tableTab({ id: saved.session, language: saved.language }, saved.path)] : [];
+      const same = ws.projectSessions(saved.language);
+      const session = live.has(saved.session) ? saved.session : same.length === 1 ? same[0].id : undefined;
+      return session ? [tableTab({ id: session, language: saved.language }, saved.path, saved)] : [];
     });
     setExtras((open) => [...back.filter((t) => !open.some((o) => o.id === t.id)), ...open]);
     const front = extras().find((t) => t.id === state.activeExtra);
@@ -399,7 +405,7 @@ export function App(props: {
     const saved = extras().map(
       (tab): SavedExtra =>
         tab.kind === "table"
-          ? { kind: "table", session: tab.session, language: tab.language, path: tab.path }
+          ? savedTable(tab, ws.current(tab.session))
           : { kind: "diff", repo: tab.repo, file: tab.file, staged: tab.staged, sha: tab.sha },
     );
     return {
@@ -785,7 +791,8 @@ export function App(props: {
     const info = ws.sessions().find((s) => s.id === session);
     if (!info) return;
     const id = tableId(session, path);
-    let table = extras().find((t) => t.id === id);
+    // A tab may be on a session this one replaced.
+    let table = extras().find((t) => t.id === id || (t.kind === "table" && ws.current(t.session) === session && tableId(session, t.path) === id));
     if (!table) {
       table = tableTab(info, path);
       setExtras((list) => [...list, table!]);

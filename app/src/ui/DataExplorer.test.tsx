@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../backend";
 import type { DaemonEvent, SessionInfo, TableFilter, TableRows, TableSort, TableSummary } from "../backend/types";
 import { Workspace } from "../model/workspace";
-import { DataExplorer, tableTab } from "./DataExplorer";
+import { DataExplorer, type SavedTable, savedTable, tableTab } from "./DataExplorer";
 import { Dialogs } from "./dialogs";
 
 const PROJECT = "/home/huan/pbmc";
@@ -154,10 +154,11 @@ const settle = async () => {
   for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-async function mount(opts: { pending?: number; wide?: number } = {}) {
+async function mount(opts: { pending?: number; wide?: number; saved?: SavedTable; extra?: boolean } = {}) {
   const fake = fakeWorkspace(opts);
+  fake.shape.extra = !!opts.extra;
   await fake.ws.refreshSessions();
-  const tab = tableTab(SESSION, ["meta"]);
+  const tab = tableTab(SESSION, ["meta"], opts.saved);
   const root = document.body.appendChild(document.createElement("div"));
   const dispose = render(
     () => (
@@ -366,6 +367,25 @@ describe("DataExplorer", () => {
     expect(texts(root, ".chip-text")).toEqual(["cluster is one of 0"]);
     expect(texts(root, ".de-th .de-name")).toEqual(["score", "cell", "cluster", "n_genes▲", "pct"]);
     expect(texts(root, ".de-rows .de-rn")).toEqual(["AAAC-3", "AAAC-1"]);
+    dispose();
+  });
+
+  it("comes back with its filters and sorting, on their columns if the table changed", async () => {
+    const saved: SavedTable = {
+      kind: "table",
+      session: "s1",
+      language: "r",
+      path: ["meta"],
+      sort: [{ column: 2, descending: true, name: "n_genes" }],
+      filters: [{ column: 1, op: "in", values: ["0"], name: "cluster" }],
+    };
+    // Code put a column in front while the window was away.
+    const { root, calls, tab, dispose } = await mount({ saved, extra: true });
+    const last = reads(calls).at(-1)!.params;
+    expect([last.filters, last.sort]).toEqual([[{ column: 2, op: "in", values: ["0"] }], [{ column: 3, descending: true }]]);
+    expect(texts(root, ".chip-text")).toEqual(["cluster is one of 0"]);
+    expect(texts(root, ".de-rows .de-rn")).toEqual(["AAAC-1", "AAAC-3"]);
+    expect(savedTable(tab, "s1")).toEqual({ ...saved, sort: [{ column: 3, descending: true, name: "n_genes" }], filters: [{ column: 2, op: "in", values: ["0"], name: "cluster" }] });
     dispose();
   });
 
