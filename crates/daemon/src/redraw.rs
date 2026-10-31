@@ -1,8 +1,9 @@
 //! Drawing a plot again at another size, in the kernel that drew it, to save
 //! it. Ark keeps a recording of every plot it shows, named by the plot's
-//! display id; Python sessions keep their matplotlib figures (`PYTHON_KEEP`,
-//! run when a session starts, tags each figure's image with an id in its
-//! metadata). IRkernel's plots and plain images can't be drawn again.
+//! display id. IRkernel sessions keep the recordings of their last plots, and
+//! Python sessions their last matplotlib figures (`R_KEEP` and `PYTHON_KEEP`,
+//! run when a session starts, tag each plot's image with an id in its
+//! metadata). Plain images can't be drawn again.
 
 use serde_json::Value;
 
@@ -17,6 +18,42 @@ const TAG: &str = "sandhill_plot";
 
 /// What `print` says when the file is written.
 const SAVED: &str = "SANDHILL_SAVED";
+
+/// Keeps the recordings of the last plots an IRkernel session showed, so
+/// they can be drawn again: the kernel's `send_plot` is wrapped to keep each
+/// recording in `tools:sandhill` and add its id to the image's metadata.
+/// Ark keeps its own, and doesn't have IRkernel's display function.
+pub const R_KEEP: &str = r#"tryCatch(local({
+  .display <- getOption("jupyter.base_display_func")
+  .kernel <- if (is.function(.display)) environment(.display)
+  .self <- if (is.environment(.kernel)) get0(".self", envir = .kernel, inherits = FALSE)
+  if (!inherits(.self, "Executor")) return(invisible())
+  .send <- .self$send_plot
+  if (isTRUE(attr(.send, "sandhill"))) return(invisible())
+  tools <- if ("tools:sandhill" %in% search()) as.environment("tools:sandhill") else attach(NULL, name = "tools:sandhill", warn.conflicts = FALSE)
+  plots <- new.env(parent = emptyenv())
+  assign(".sandhill_plots", plots, envir = tools)
+  count <- 0L
+  send <- function(plotobj) {
+    count <<- count + 1L
+    name <- paste0("p", count)
+    assign(name, plotobj, envir = plots)
+    gone <- paste0("p", count - 10L)
+    if (exists(gone, envir = plots, inherits = FALSE)) rm(list = gone, envir = plots)
+    display <- getOption("jupyter.base_display_func")
+    was <- options(jupyter.base_display_func = function(data, metadata = NULL) {
+      if (is.null(metadata)) metadata <- list()
+      for (mime in setdiff(names(data), "text/plain")) metadata[[mime]]$sandhill_plot <- name
+      display(data, metadata)
+    })
+    on.exit(options(was))
+    .send(plotobj)
+  }
+  attr(send, "sandhill") <- TRUE
+  assign("send_plot", send, envir = .kernel)
+  invisible()
+}), error = function(e) invisible())
+"#;
 
 /// Keeps the last figures a Python session showed, so they can be drawn
 /// again: IPython's figure formatters are wrapped to remember each figure and
@@ -76,6 +113,9 @@ del _sandhill_keep_figures
 pub enum Plot {
     /// Ark's recording of it, by display id.
     Ark(String),
+    /// An IRkernel session's recording of it, by the id it tagged the image
+    /// with.
+    Kept(String),
     /// A Python session's figure, by the id it tagged the image with.
     Figure(String),
 }
@@ -109,10 +149,13 @@ pub fn find(
             .as_str()
             .map(|name| Plot::Figure(name.to_string()))
             .ok_or_else(|| "only matplotlib figures can be drawn again in Python".to_string()),
-        "r" => content["transient"]["display_id"]
-            .as_str()
-            .map(|id| Plot::Ark(id.to_string()))
-            .ok_or_else(|| "only Ark keeps R plots to draw them again".to_string()),
+        "r" => match content["transient"]["display_id"].as_str() {
+            Some(id) => Ok(Plot::Ark(id.to_string())),
+            None => content["metadata"][mime][TAG]
+                .as_str()
+                .map(|name| Plot::Kept(name.to_string()))
+                .ok_or_else(|| "only plots R drew can be drawn again".to_string()),
+        },
         other => Err(format!("plots can't be drawn again in {other}")),
     }
 }
@@ -143,7 +186,10 @@ pub struct Save<'a> {
 /// The code that draws the plot again into `save.file`.
 pub fn code(plot: &Plot, save: &Save) -> String {
     match plot {
-        Plot::Ark(id) => R.replace("__ID__", &literal(id)),
+        Plot::Ark(id) => R.replace("__FIND__", R_ARK).replace("__ID__", &literal(id)),
+        Plot::Kept(name) => R
+            .replace("__FIND__", R_KEPT)
+            .replace("__ID__", &literal(name)),
         Plot::Figure(name) => PYTHON.replace("__ID__", &literal(name)),
     }
     .replace("__FILE__", &literal(save.file))
@@ -158,13 +204,20 @@ pub fn saved(stdout: &str) -> bool {
     stdout.lines().any(|line| line.trim() == SAVED)
 }
 
-/// Replays Ark's recording on a device of the size asked for, then goes back
-/// to the device that was in use.
-const R: &str = r#"local({
-  .render <- get0(".ps.graphics.render_plot_from_recording", mode = "function")
+/// Finds Ark's recording of the plot.
+const R_ARK: &str = r#"  .render <- get0(".ps.graphics.render_plot_from_recording", mode = "function")
   .recording <- if (!is.null(.render)) get0("get_recording", envir = environment(.render), mode = "function")
   if (is.null(.recording)) stop("this R kernel doesn't keep its plots")
-  .plot <- .recording(__ID__)
+  .plot <- .recording(__ID__)"#;
+
+/// Finds the recording `R_KEEP` kept.
+const R_KEPT: &str = r#"  .plots <- if ("tools:sandhill" %in% search()) get0(".sandhill_plots", envir = as.environment("tools:sandhill"), inherits = FALSE)
+  .plot <- if (is.environment(.plots)) get0(__ID__, envir = .plots, inherits = FALSE)"#;
+
+/// Replays the plot's recording on a device of the size asked for, then goes
+/// back to the device that was in use.
+const R: &str = r#"local({
+__FIND__
   if (is.null(.plot)) stop("the session no longer has this plot")
   .file <- __FILE__
   .was <- grDevices::dev.cur()
@@ -238,8 +291,13 @@ mod tests {
         )];
         assert_eq!(
             find(&ir, "R", Some("a1"), 0),
-            Err("only Ark keeps R plots to draw them again".into())
+            Err("only plots R drew can be drawn again".into())
         );
+        let kept = vec![(
+            "display_data".to_string(),
+            json!({"data": {"image/png": {"sandhill_blob": "a1"}}, "metadata": {"image/png": {"sandhill_plot": "p2", "width": 504}}}),
+        )];
+        assert_eq!(find(&kept, "R", Some("a1"), 0), Ok(Plot::Kept("p2".into())));
         let py = vec![(
             "display_data".to_string(),
             json!({"data": {"image/png": {"sandhill_blob": "a1"}}, "metadata": {"image/png": {"sandhill_plot": "f3", "width": 400}}}),

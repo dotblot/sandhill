@@ -229,7 +229,7 @@ export function PlotsPane(props: {
 
   // Once the room stops changing, the session draws the plot in front again
   // at that size, as RStudio does, so text and lines stay sharp instead of
-  // stretching. Plots it can't draw again (IRkernel's, plain images) and
+  // stretching. Plain images, plots the session no longer keeps and
   // sessions busy with other code keep the image as drawn.
   const [fitted, setFitted] = createSignal<{ plot: string; key: string; src: string; size: Size }>();
   // Redrawn PNGs by plot and size, the latest few.

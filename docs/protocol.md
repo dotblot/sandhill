@@ -189,11 +189,12 @@ documents' other pages stay under their cells.
 `redraw_plot` draws one of a run's plots again, in the session that drew it,
 at another size. The plot is the image holding the blob `image`, else the
 `index`-th image the run showed. Ark keeps a recording of each plot it shows
-(named by the output's `transient.display_id`), and a Python session keeps its
-last 10 matplotlib figures: code run when the session starts tags each
-figure's image with `sandhill_plot` in the output's metadata. IRkernel's
-plots, plain images and ended sessions can't be drawn again; `{can: false,
-reason}` says why, as in "only Ark keeps R plots to draw them again". Without
+(named by the output's `transient.display_id`), and an IRkernel session keeps
+the recordings of its last 10 plots and a Python session its last 10
+matplotlib figures: code run when the session starts tags each plot's image
+with `sandhill_plot` in the output's metadata. Plain images, plots no longer
+kept and ended sessions can't be drawn again; `{can: false, reason}` says why,
+as in "only plots R drew can be drawn again". Without
 `file`, the call only asks. With it, the session draws the plot into `file`
 (a path, or `~/...`; its folder is made) as `format` (`png`, `svg` or `pdf`),
 `width` × `height` inches (0.5 to 100) at `dpi` (36 to 2400, for PNG), out of
