@@ -476,7 +476,7 @@ async fn serve_blob(links: &Links, uri: &str) -> Response<Vec<u8>> {
                 Err(err) => return text_response(StatusCode::NOT_FOUND, err.to_string()),
             };
             let bytes = if binary {
-                match base64::engine::general_purpose::STANDARD.decode(blob.data.trim()) {
+                match sandhill_proto::decode_base64(&blob.data) {
                     Ok(bytes) => bytes,
                     Err(err) => {
                         return text_response(StatusCode::UNPROCESSABLE_ENTITY, err.to_string());

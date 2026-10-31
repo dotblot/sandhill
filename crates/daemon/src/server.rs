@@ -941,8 +941,7 @@ impl Daemon {
                 create,
             } => {
                 let bytes = if base64 {
-                    BASE64
-                        .decode(text.trim())
+                    sandhill_proto::decode_base64(&text)
                         .context("the file's bytes are not valid base64")?
                 } else {
                     text.into_bytes()
