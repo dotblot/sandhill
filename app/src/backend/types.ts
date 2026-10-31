@@ -158,7 +158,15 @@ export interface ProjectSetup {
 
 /** A Data Explorer or diff tab, as kept for next time. */
 export type SavedExtra =
-  | { kind: "table"; session: string; language: string; path: string[] }
+  | {
+      kind: "table";
+      session: string;
+      language: string;
+      path: string[];
+      /** Its sorting and filters, each with its column's name, so they follow it if the table changed. */
+      sort?: (TableSort & { name: string })[];
+      filters?: (TableFilter & { name: string })[];
+    }
   | { kind: "diff"; repo: string; file: string; staged: boolean; sha?: string };
 
 export interface CellRef {
