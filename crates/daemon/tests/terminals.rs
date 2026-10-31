@@ -1002,8 +1002,11 @@ async fn the_message_boxs_choices_go_with_each_message() {
         String::from_utf8_lossy(out).contains("ready")
     })
     .await;
-    // The user adds a variable to the message with @, then sends it.
-    let refs = serde_json::json!([{"kind": "variable", "name": "seu", "session": "r-7f3a", "language": "r"}]);
+    // The user adds a variable and a document to the message with @, then sends it.
+    let refs = serde_json::json!([
+        {"kind": "variable", "name": "seu", "session": "r-7f3a", "language": "r"},
+        {"kind": "file", "name": "de.qmd", "path": "de.qmd"},
+    ]);
     terminals
         .send(
             &info.id,
@@ -1047,10 +1050,15 @@ async fn the_message_boxs_choices_go_with_each_message() {
         .iter()
         .find(|e| e.event["kind"] == "prompt")
         .unwrap();
-    assert_eq!(prompt.event["place"]["refs"], serde_json::json!(["seu"]));
-    // The message took the refs and works in the pinned file.
+    assert_eq!(
+        prompt.event["place"]["refs"],
+        serde_json::json!(["seu", "de.qmd"])
+    );
+    assert!(told.contains("the file de.qmd"), "{told}");
+    // The message took the refs and works in the document named with @,
+    // over the pinned one.
     tokio::time::timeout(TIMEOUT, async {
-        while report()["document"] != "fig3.qmd" {
+        while report()["document"] != "de.qmd" {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })

@@ -80,6 +80,7 @@ Responses can arrive out of order; match them by `id`.
 | `stop_daemon` | | `null`, then the daemon stops; kernels and terminals keep running for the next one |
 | `stat_files` | `paths` | `[{path, mtime_ms?, size}]`; no `mtime_ms` when a file is missing |
 | `list_agents` | | `[{kind, name, path?, version?, install}]` |
+| `agent_models` | `kind` | `[{id, label, default?, effort?, efforts?}]`: the models an agent offers, before any conversation (`codex` asks `codex app-server`'s `model/list`, `antigravity` runs `agy models`); an error for an agent that isn't installed or lists its models itself |
 | `start_terminal` | `kind`, `cwd?`, `project?`, `cols?`, `rows?`, `options?`, `prompt?` | `TerminalInfo` |
 | `restart_terminal` | `terminal`, `options?`, `cols?`, `rows?`, `prompt?` | `TerminalInfo` |
 | `start_job` | `path?`, `command?`, `cwd?`, `project?` | `TerminalInfo` |
@@ -692,11 +693,12 @@ The message box's choices are kept in `agent` too, from the options an
 agent starts with and `tell_terminal` `{kind: "set", pin?, web?, context?,
 refs?}` for either agent:
 
-- `pin` (a file, or null) is the document the conversation works in.
-  Unpinned, each message works in the document in front of the user, and
-  records it as `agent.document`, so a working agent keeps the file it
-  started in. `add_cell` writes into `agent.document`, else `pin`, else the
-  first of `documents`.
+- Each message works in a document: the first notebook or Quarto file it
+  names in `refs`, else `pin`, else the one in front of the user. It records
+  it as `agent.document`, so a working agent keeps the file it started in.
+  `add_cell` writes into `agent.document`, else `pin`, else the first of
+  `documents`. The app no longer sets `pin` or `documents`: conversations are
+  about the whole project, and the user names a file with @.
 - `web: false` turns web search off: each message says so, and for Claude
   Code the hook before each step blocks `WebSearch` and `WebFetch` (a
   `step_failed` entry). Codex is told only.

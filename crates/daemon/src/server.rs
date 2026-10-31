@@ -941,8 +941,7 @@ impl Daemon {
                 create,
             } => {
                 let bytes = if base64 {
-                    BASE64
-                        .decode(text.trim())
+                    sandhill_proto::decode_base64(&text)
                         .context("the file's bytes are not valid base64")?
                 } else {
                     text.into_bytes()
@@ -1095,6 +1094,7 @@ impl Daemon {
                 serde_json::to_value(blocking(move || Ok(files::stat(&paths))).await?)?
             }
             Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
+            Call::AgentModels { kind } => crate::agents::models(&kind).await?,
             Call::StartTerminal {
                 kind,
                 cwd,

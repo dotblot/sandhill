@@ -388,3 +388,101 @@ async fn plots_are_drawn_again_at_a_new_size() {
         client.shutdown(&session).await.unwrap();
     }
 }
+
+/// The output a notebook shows: the first type of the app's order
+/// (`app/src/render/outputs.ts`) the bundle holds.
+const SHOWN_ORDER: &[&str] = &[
+    "text/html",
+    "application/vnd.plotly.v1+json",
+    "image/svg+xml",
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "text/markdown",
+    "text/latex",
+    "application/json",
+    "text/plain",
+];
+
+/// An R plot shows as an image under its cell and in the Console, before
+/// and after the Plots pane draws it again at its own size.
+#[tokio::test]
+async fn r_plots_show_under_their_cell() {
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    for kernel in ["ark", "ir"] {
+        if !have_kernel(kernel).await {
+            continue;
+        }
+        let session = client.start_session(kernel, None).await.unwrap().id;
+        let file = dir.path().join(format!("{kernel}.qmd"));
+        let cell = CellRef {
+            file: file.to_string_lossy().into_owned(),
+            cell_id: "plot".into(),
+        };
+        let check = async |client: &mut Client, when: &str| {
+            let cells = client.file_outputs(&cell.file).await.unwrap().cells;
+            let runs = client.session_runs(&session, None).await.unwrap().runs;
+            let console = &runs.last().expect("no runs").outputs;
+            for outputs in [&cells[0].outputs, console] {
+                let images: Vec<_> = outputs
+                    .iter()
+                    .filter(|o| o["output_type"] == "display_data")
+                    .collect();
+                assert_eq!(images.len(), 1, "{kernel} {when}: {outputs:#?}");
+                let data = &images[0]["data"];
+                let shown = SHOWN_ORDER.iter().find(|m| !data[**m].is_null());
+                assert!(
+                    shown.is_some_and(|m| m.starts_with("image/")),
+                    "{kernel} {when}: shows {shown:?}: {outputs:#?}"
+                );
+                let mime = shown.unwrap();
+                let blob = match data[*mime][BLOB_KEY].as_str() {
+                    Some(hash) => client.get_blob(hash).await.unwrap().data,
+                    None => data[*mime].as_str().unwrap_or_default().to_string(),
+                };
+                if *mime == "image/svg+xml" {
+                    assert!(blob.contains("<svg"), "{kernel} {when}");
+                } else {
+                    let bytes = sandhill_proto::decode_base64(&blob)
+                        .unwrap_or_else(|e| panic!("{kernel} {when}: {e}"));
+                    assert!(
+                        bytes.starts_with(b"\x89PNG"),
+                        "{kernel} {when}: {mime} is {} bytes: {outputs:#?}",
+                        bytes.len()
+                    );
+                }
+            }
+        };
+        run(
+            &mut client,
+            &session,
+            "plot(1:10)",
+            Some(cell.clone()),
+            None,
+            false,
+        )
+        .await;
+        check(&mut client, "after running").await;
+        let plots = client.session_plots(&session, None).await.unwrap().plots;
+        let _: PlotRedraw = client
+            .call(Call::RedrawPlot {
+                session: session.clone(),
+                run: plots[0].run.clone(),
+                image: None,
+                index: 0,
+                file: None,
+                format: String::new(),
+                width: 5.0,
+                height: 3.0,
+                dpi: 192,
+                show: true,
+            })
+            .await
+            .unwrap();
+        check(&mut client, "after the Plots pane drew it").await;
+        client.shutdown(&session).await.unwrap();
+    }
+}

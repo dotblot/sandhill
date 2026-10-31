@@ -33,6 +33,19 @@ pub const ARK_PATH: &str = ".local/share/sandhill/bin/ark";
 /// blob store. The value becomes `{"sandhill_blob": "<sha256>", "size": n}`.
 pub const BLOB_KEY: &str = "sandhill_blob";
 
+/// Decodes base64 as kernels write it: IRkernel breaks it into lines of 72,
+/// and padding may be left off.
+pub fn decode_base64(text: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine;
+    use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+    const LENIENT: GeneralPurpose = GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    );
+    let text: Vec<u8> = text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    LENIENT.decode(text)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Request {
     pub id: u64,
@@ -545,6 +558,12 @@ pub enum Call {
     /// The coding agents this machine can run, and whether their CLIs are
     /// installed. Returns `Vec<AgentInfo>`.
     ListAgents,
+    /// The models an agent offers before any conversation, as its model
+    /// menu lists them: `[{id, label, efforts?, effort?, default?}]`. Codex
+    /// and Antigravity only; Claude Code's are known.
+    AgentModels {
+        kind: String,
+    },
     /// Starts a program in a terminal that keeps running when clients
     /// disconnect and when the daemon restarts: a shell, or an agent CLI.
     /// Returns [`TerminalInfo`].
@@ -2191,6 +2210,13 @@ pub struct RunFinished {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn base64_in_lines_or_without_padding_decodes() {
+        assert_eq!(decode_base64("aGVs\nbG8=\n").unwrap(), b"hello");
+        assert_eq!(decode_base64("aGVsbG8").unwrap(), b"hello");
+        assert!(decode_base64("not base64!").is_err());
+    }
 
     #[test]
     fn unit_call_round_trips() {

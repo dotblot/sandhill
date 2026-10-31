@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from "solid-js";
 import type { SessionInfo, SystemStats, Variable, Variables } from "../backend/types";
 import { formatBytes, languageLabel } from "../model/machine";
 import { groupVariables, pathKey, removedText, sizeOf } from "../model/variables";
@@ -10,6 +10,9 @@ import { SessionPicker } from "./KernelBar";
 
 /** How long after a run finishes the list is read again, so a burst of runs reads it once. */
 const REFRESH_MS = 250;
+/** How long to wait before reading again when the session was running other code, at first and at most. */
+const RETRY_MS = 500;
+const MAX_RETRY_MS = 5000;
 /** What the daemon says when the session runs other code. */
 const BUSY = "the session is busy running code";
 
@@ -46,7 +49,8 @@ export function VariablesPane(props: {
   const [picked, setPicked] = createSignal<ReadonlySet<string>>(new Set());
   const [removed, setRemoved] = createSignal<string>();
   const [memory, setMemory] = createSignal<number>();
-  const id = () => props.session?.id;
+  /** A memo: the session list changes often, and only another session should start the list again. */
+  const id = createMemo(() => props.session?.id);
   const busy = () => {
     const session = id();
     return !!session && ws.isBusy(session);
@@ -56,15 +60,34 @@ export function VariablesPane(props: {
   let generation = 0;
   const list = (session: string, path: string[] = []) => ws.call<Variables>("list_variables", { session, path });
 
+  /** A read put off while the session was busy, to do once it is idle, even after code the user didn't write. */
+  let pending = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryMs = RETRY_MS;
+  /** Reads again a little later, waiting longer each time, while the session stays in front. */
+  const retry = (session: string) => {
+    pending = true;
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => session === id() && void refresh(), retryMs);
+    retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
+  };
+
   async function refresh() {
     const session = id();
-    if (!session || !props.shown || ws.isBusy(session)) return;
+    if (!session || !props.shown) return;
+    if (ws.isBusy(session)) {
+      pending = true;
+      return;
+    }
+    pending = false;
+    clearTimeout(retryTimer);
     const mine = ++generation;
     try {
       const all = await list(session);
       if (mine !== generation) return;
       setListed(all);
       setError(undefined);
+      retryMs = RETRY_MS;
       // Open parts are read again too, as long as their variable is still there.
       const names = new Set(all.variables.map((v) => v.name));
       const next: Record<string, Variables | string> = {};
@@ -75,17 +98,30 @@ export function VariablesPane(props: {
       }
       if (mine === generation) setParts(next);
     } catch (err) {
-      // Code started meanwhile: the list is read again when it finishes.
-      if (mine === generation && !String(err).includes(BUSY)) setError(String(err));
+      // Code started meanwhile, perhaps another pane's quiet reading: read
+      // again soon, and when the user's code finishes.
+      if (String(err).includes(BUSY)) {
+        if (mine === generation) retry(session);
+      } else if (mine === generation) setError(String(err));
     }
     const stats = await ws.call<SystemStats>("system_stats", {}).catch(() => undefined);
     if (mine === generation) setMemory(stats?.sessions.find((m) => m.session === session)?.rss);
   }
 
-  // A new session starts from scratch.
-  createEffect(
-    on(id, () => {
+  // A new session starts from scratch, then is read. One effect, so the
+  // fresh start always comes before the read: as two, Solid may run them
+  // in either order, and a read before the start was thrown away.
+  let shownSession: string | undefined;
+  createEffect(() => {
+    const session = id();
+    props.refreshKey;
+    const shown = props.shown;
+    if (session !== shownSession) {
+      shownSession = session;
       generation++;
+      pending = false;
+      clearTimeout(retryTimer);
+      retryMs = RETRY_MS;
       setListed(undefined);
       setError(undefined);
       setOpen(new Set<string>());
@@ -93,18 +129,24 @@ export function VariablesPane(props: {
       setPicked(new Set<string>());
       setRemoved(undefined);
       setMemory(undefined);
-    }),
-  );
-  createEffect(() => {
-    id();
-    props.refreshKey;
+    }
     // Untracked: what refresh() reads (whether the session is busy) mustn't start it again.
-    if (props.shown) untrack(() => void refresh());
+    if (shown) untrack(() => void refresh());
   });
+  // A read put off while the session list said it was busy, once it says not.
+  createEffect(
+    on(
+      busy,
+      (now, before) => {
+        if (before && !now && pending) untrack(() => void refresh());
+      },
+      { defer: true },
+    ),
+  );
   // After each run in the session, once it is idle.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const unwatch = ws.runs.watchAll((run) => {
-    if (run.session !== id() || run.quiet || run.phase !== "done") return;
+    if (run.session !== id() || (run.quiet && !pending) || run.phase !== "done") return;
     setRemoved(undefined);
     clearTimeout(timer);
     timer = setTimeout(() => void refresh(), REFRESH_MS);
@@ -112,6 +154,7 @@ export function VariablesPane(props: {
   onCleanup(() => {
     unwatch();
     clearTimeout(timer);
+    clearTimeout(retryTimer);
   });
 
   const toggleOpen = async (path: string[]) => {

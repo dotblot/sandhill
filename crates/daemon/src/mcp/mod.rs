@@ -649,7 +649,11 @@ async fn images(client: &Client, rendered: &Rendered) -> Vec<Value> {
                 None => None,
             },
         };
-        let Some(data) = data.map(|d| d.split_whitespace().collect::<String>()) else {
+        // As agents' APIs want it: in one line, padded (Ark leaves padding off).
+        let Some(data) = data
+            .and_then(|d| sandhill_proto::decode_base64(&d).ok())
+            .map(|bytes| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes))
+        else {
             continue;
         };
         if data.len() > MAX_IMAGE {

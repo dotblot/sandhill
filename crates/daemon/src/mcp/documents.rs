@@ -61,7 +61,7 @@ impl Tools {
         };
         if let Some(linked) = linked {
             text.push_str(&format!(
-                "\nThis conversation is about {}; add_cell writes there unless told otherwise.",
+                "\nThis conversation last worked in {}; add_cell writes there unless told otherwise.",
                 self.shown(&linked)
             ));
         }
@@ -119,9 +119,20 @@ impl Tools {
             }
             lines.push(text);
         }
-        // The file this message works in: the pinned one, else the one in
-        // front, kept while the agent works on it.
-        let document = choices.pin.as_deref().map(|p| self.path(p)).or(front);
+        // The file this message works in: a document the user named with @,
+        // else the pinned one, else the one in front, kept while the agent
+        // works on it. Conversations are about the whole project, so the
+        // message says which document, not the conversation.
+        let named = choices
+            .refs
+            .iter()
+            .filter(|r| r.kind == "file" || r.kind == "chunk")
+            .filter_map(|r| r.path.as_deref())
+            .map(|p| self.path(p))
+            .find(|p| cells::kind(Path::new(p)).is_some());
+        let document = named
+            .or_else(|| choices.pin.as_deref().map(|p| self.path(p)))
+            .or(front);
         if let Some(pin) = &choices.pin {
             lines.push(format!(
                 "Sandhill: the user pinned this conversation to {}; add_cell writes there.",

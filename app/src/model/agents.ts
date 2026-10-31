@@ -98,6 +98,24 @@ export function withModels(kind: AgentKind, terminal: TerminalInfo): AgentKind {
   };
 }
 
+/**
+ * An agent kind with the models it listed before any conversation (Codex
+ * and Antigravity list theirs; see `agent_models`), starting on its default
+ * one, with the efforts of the one `chosen`.
+ */
+export function listedKind(kind: AgentKind, models: AgentModel[] | undefined, chosen?: string): AgentKind {
+  if (!models?.length) return kind;
+  const start = Math.max(0, models.findIndex((m) => m.default));
+  const model = models.find((m) => m.id === chosen) ?? models[start];
+  return {
+    ...kind,
+    models: models.map((m) => ({ id: m.id, label: m.label })),
+    start,
+    efforts: model.efforts?.length ? model.efforts : kind.efforts,
+    recommended: model.effort ?? kind.recommended,
+  };
+}
+
 function currentAgentModel(models: AgentModel[], terminal: TerminalInfo): AgentModel | undefined {
   const id = terminal.agent?.status?.model_id ?? terminal.options?.model;
   return models.find((m) => m.id === id) ?? models.find((m) => m.default);
@@ -211,7 +229,9 @@ export function canResume(terminal: TerminalInfo): boolean {
 
 /**
  * What the agent runs with now, as it last reported: its model, effort and
- * mode can change while it runs. What it starts again with.
+ * mode can change while it runs. What it starts again with. Conversations
+ * are about the whole project, so one started about a file, or pinned to
+ * one, before they were starts again without it.
  */
 export function liveOptions(terminal: TerminalInfo): AgentOptions {
   const options = terminal.options ?? {};
@@ -222,27 +242,13 @@ export function liveOptions(terminal: TerminalInfo): AgentOptions {
     effort: effortLevel(terminal),
     permission: currentMode(terminal).permission,
     code: codeTo(terminal) === "console" ? "console" : undefined,
-    pin: pinnedFile(terminal),
+    documents: undefined,
+    pin: undefined,
     web: (agent?.web ?? options.web) === false ? false : undefined,
     context: (agent?.context ?? options.context) === false ? false : undefined,
     // Taken by the first message.
     refs: undefined,
   };
-}
-
-/** The file the conversation is pinned to, if it is. */
-export function pinnedFile(terminal: TerminalInfo): string | undefined {
-  const pin = terminal.agent && "pin" in terminal.agent ? terminal.agent.pin : terminal.options?.pin;
-  return pin || undefined;
-}
-
-/**
- * The file a conversation works in (its focus file, draft 30): the pinned
- * one, else while the agent works the one its message started in, else the
- * editor's front document, else the one it started in.
- */
-export function focusFile(at: { pin?: string; working: boolean; document?: string; front?: string; started?: string }): string | undefined {
-  return at.pin || (at.working && at.document) || at.front || at.started;
 }
 
 /** "Opus" for "Opus 5.5": the chip in the message box leaves the version out. */

@@ -147,6 +147,68 @@ pub async fn run(options: Options) -> Result<i32> {
     }
 }
 
+/// How long asking a Codex with no conversation for its models may take.
+const LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The models Codex offers, before any conversation: `codex app-server`
+/// started only to ask (`model/list`), for a new conversation's model menu.
+pub async fn list_models(codex: &std::path::Path) -> Result<Value> {
+    let mut command = tokio::process::Command::new(codex);
+    command
+        .arg("app-server")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    if let Some(path) = crate::agents::path_for(codex)? {
+        command.env("PATH", path);
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("cannot start {}", codex.display()))?;
+    let mut stdin = child.stdin.take().context("no stdin")?;
+    let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
+    let ask = async {
+        let mut send = async |message: Value| -> Result<()> {
+            let mut line = serde_json::to_vec(&message)?;
+            line.push(b'\n');
+            stdin.write_all(&line).await?;
+            Ok(stdin.flush().await?)
+        };
+        let clients =
+            json!({"name": "sandhill", "title": "Sandhill", "version": env!("CARGO_PKG_VERSION")});
+        send(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": clients}})).await?;
+        let mut asked = false;
+        while let Some(line) = lines.next_line().await? {
+            let Ok(message) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if let Some(error) = message.get("error") {
+                anyhow::bail!(
+                    "Codex said: {}",
+                    error["message"].as_str().unwrap_or("an error")
+                );
+            }
+            match message["id"].as_i64() {
+                Some(1) if !asked => {
+                    send(json!({"jsonrpc": "2.0", "method": "initialized"})).await?;
+                    send(json!({"jsonrpc": "2.0", "id": 2, "method": "model/list", "params": {}}))
+                        .await?;
+                    asked = true;
+                }
+                Some(2) => return Ok(items::models(&message["result"])),
+                _ => {}
+            }
+        }
+        anyhow::bail!("Codex stopped before listing its models")
+    };
+    let models = tokio::time::timeout(LIST_TIMEOUT, ask)
+        .await
+        .context("Codex took too long to list its models")?;
+    let _ = child.start_kill();
+    models
+}
+
 /// The connection to the terminal host: entries and reports go out on it.
 struct Host(tokio::sync::Mutex<OwnedWriteHalf>);
 

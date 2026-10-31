@@ -1,8 +1,9 @@
 // The message box under an agent's chat (drafts 18 and 30–35): chips for
 // what was added with @, the text, and a round send button that becomes a
-// stop button while the agent works. Under it, on the left: @, web search,
-// session context and the mode (a hand); on the right: the focus file, the
-// context ring and the model with its thinking effort.
+// stop button while the agent works. Under it, on the left: web search,
+// session context and the mode (a hand); on the right: the context ring and
+// the model with its thinking effort. Conversations are about the whole
+// project: files are added with @, which shows no button of its own.
 
 import { createEffect, createSignal, For, type JSX, on, onCleanup, Show } from "solid-js";
 import type { AgentStatus, MessageRef } from "../backend/types";
@@ -35,7 +36,7 @@ const CODE_TO: [CodeTo, string, string][] = [
 /** Unsent text and chips, by conversation, so they stay when the pane redraws or another conversation is shown. */
 const drafts = new Map<string, { text: string; refs: MessageRef[] }>();
 
-type Popover = "model" | "mode" | "context" | "focus" | "mention";
+type Popover = "model" | "mode" | "context" | "mention";
 
 export interface ComposerProps {
   /** The conversation the box is for ("new" for a new one): its draft is kept under this. */
@@ -53,18 +54,6 @@ export interface ComposerProps {
   mode: Mode;
   /** Why a mode can't be picked here, if it can't. */
   modeNote?: (mode: Mode) => string | undefined;
-  /** The focus file, relative to the project: what the agent sees and writes into. */
-  focus?: string;
-  /** The focus file is pinned, rather than following the editor. */
-  pinned?: boolean;
-  /** The editor's front document now, for "Follow the editor". */
-  front?: string;
-  /** Documents open in the editor, to pin to. */
-  openFiles: string[];
-  /** The project's name, shown when there is no focus file. */
-  project: string;
-  onPin: (file: string | undefined) => void;
-  onOpenFile: (file: string) => void;
   web: boolean;
   onWeb: (on: boolean) => void;
   /** Session context: where the user is goes with every message. */
@@ -102,20 +91,25 @@ export function AgentComposer(props: ComposerProps) {
   const [text, setText] = createSignal("");
   const [refs, setRefs] = createSignal<MessageRef[]>([]);
   const [popover, setPopover] = createSignal<Popover>();
-  /** How the @ menu was opened: by typing @, or with the @ button (which gives it a search field). */
-  const [fromButton, setFromButton] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
   const [mentions, setMentions] = createSignal<Mention[]>();
   let input!: HTMLTextAreaElement;
   let files!: HTMLInputElement;
-  let search: HTMLInputElement | undefined;
 
+  /**
+   * The draft's key as last read. Kept here for the cleanup: the box goes
+   * when its conversation does, and reading the prop then reads a
+   * conversation that is gone, which Solid refuses with an error that
+   * left the whole pane stuck.
+   */
+  let draftKey: string | undefined;
   // Each conversation keeps its own unsent text and chips.
   createEffect(
     on(
       () => props.draftKey,
       (key, previous) => {
+        draftKey = key;
         if (key === previous) return;
         if (previous !== undefined) keep(previous);
         const draft = drafts.get(key);
@@ -143,7 +137,7 @@ export function AgentComposer(props: ComposerProps) {
       },
     ),
   );
-  onCleanup(() => keep(props.draftKey));
+  onCleanup(() => draftKey !== undefined && keep(draftKey));
   function keep(key: string) {
     if (input.value || refs().length) drafts.set(key, { text: input.value, refs: refs() });
     else drafts.delete(key);
@@ -185,7 +179,7 @@ export function AgentComposer(props: ComposerProps) {
   // The @ menu.
   const groups = () => filterMentions(mentions() ?? [], query());
   const shown = () => groups().flatMap(([, list]) => list);
-  function openMention(button: boolean) {
+  function openMention() {
     if (popover() !== "mention") {
       setPopover(undefined);
       setMentions(undefined);
@@ -194,13 +188,11 @@ export function AgentComposer(props: ComposerProps) {
         .then(setMentions)
         .catch(() => setMentions([]));
     }
-    setFromButton(button);
     setActive(0);
     setPopover("mention");
   }
   /** The "@" typed to call the menu, and the letters after it, go when it closes. */
   function dropTyped() {
-    if (fromButton()) return;
     const caret = input.selectionStart ?? input.value.length;
     const typed = typedMention(input.value, caret);
     if (!typed) return;
@@ -258,9 +250,9 @@ export function AgentComposer(props: ComposerProps) {
     setText(input.value);
     const typed = typedMention(input.value, input.selectionStart ?? input.value.length);
     if (typed) {
-      openMention(false);
+      openMention();
       setQuery(typed.query);
-    } else if (popover() === "mention" && !fromButton()) {
+    } else if (popover() === "mention") {
       setPopover(undefined);
       setQuery("");
     }
@@ -305,7 +297,6 @@ export function AgentComposer(props: ComposerProps) {
     if (status?.context === undefined) return undefined;
     return status.context_size ? tokens(Math.round((status.context_size * status.context) / 100)) : `${Math.round(status.context)}%`;
   };
-  const pinList = () => [...new Set([...(props.pinned && props.focus ? [props.focus] : []), ...props.openFiles])];
 
   return (
     <div class="composer2">
@@ -346,7 +337,7 @@ export function AgentComposer(props: ComposerProps) {
             class="ain"
             rows={1}
             style={{ height: `${height()}px` }}
-            placeholder={`${props.kind.placeholder} (@ to add files, chunks, variables or plots)`}
+            placeholder={props.kind.placeholder}
             aria-label="Message"
             onInput={onInput}
             onPaste={(e) => {
@@ -356,7 +347,7 @@ export function AgentComposer(props: ComposerProps) {
               void attach(list);
             }}
             onKeyDown={(e) => {
-              if (!fromButton() && menuKey(e)) return;
+              if (menuKey(e)) return;
               // Backspace at the start takes the last chip away.
               if (e.key === "Backspace" && input.selectionStart === 0 && input.selectionEnd === 0 && refs().length) {
                 e.preventDefault();
@@ -384,19 +375,6 @@ export function AgentComposer(props: ComposerProps) {
           </Show>
         </div>
         <div class="cb-bot">
-          <button
-            class="cbi at"
-            title="Add a file, chunk, variable or plot (@)"
-            aria-expanded={popover() === "mention" && fromButton()}
-            onClick={() => {
-              if (popover() === "mention" && fromButton()) return closeMention();
-              setQuery("");
-              openMention(true);
-              queueMicrotask(() => search?.focus());
-            }}
-          >
-            @
-          </button>
           <button
             class="cbi"
             classList={{ on: props.web }}
@@ -426,39 +404,6 @@ export function AgentComposer(props: ComposerProps) {
             </Show>
           </button>
           <span class="spacer" />
-          <button
-            class="atfile"
-            aria-expanded={popover() === "focus"}
-            title={
-              props.focus
-                ? `${props.pinned ? `Pinned to ${props.focus}` : `Follows the editor: ${props.focus} now`}. The agent sees this file, and its code goes in here, below your active cell`
-                : `No file open: the agent works in ${props.project}`
-            }
-            onClick={() => toggle("focus")}
-          >
-            <Show
-              when={props.focus}
-              fallback={
-                <>
-                  <Icon name="folder" />
-                  <span class="atl">{props.project}</span>
-                </>
-              }
-            >
-              {(file) => (
-                <>
-                  <FileIcon name={baseName(file())} />
-                  <span class="atl">{baseName(file())}</span>
-                  <Show when={props.pinned}>
-                    <span class="pin" aria-label="Pinned">
-                      <Icon name="pin" />
-                    </span>
-                  </Show>
-                </>
-              )}
-            </Show>
-            <Icon name="chevron" small />
-          </button>
           <Show when={used()}>
             <button class="cchip tok" title={`Context: ${Math.round(props.status?.context ?? 0)}% used. Click for details`} onClick={() => toggle("context")}>
               <ContextRing percent={props.status?.context ?? 0} />
@@ -496,23 +441,6 @@ export function AgentComposer(props: ComposerProps) {
       />
       <Show when={popover() === "mention"}>
         <div class="apop mention" role="menu" aria-label="Add to the message">
-          <Show when={fromButton()}>
-            <label class="mq-wrap">
-              <Icon name="search" />
-              <input
-                ref={search}
-                class="mq"
-                placeholder="Search files, chunks, variables, plots"
-                spellcheck={false}
-                value={query()}
-                onInput={(e) => {
-                  setQuery(e.currentTarget.value);
-                  setActive(0);
-                }}
-                onKeyDown={(e) => menuKey(e)}
-              />
-            </label>
-          </Show>
           <Show when={mentions()} fallback={<div class="mm-h">Loading…</div>}>
             <Show when={groups().length} fallback={<div class="mm-h">{query() ? `Nothing matches “${query()}”` : "Nothing to add yet"}</div>}>
               <For each={groups()}>
@@ -553,71 +481,6 @@ export function AgentComposer(props: ComposerProps) {
             <span>Attach from this Mac…</span>
             <kbd>files, images, PDFs</kbd>
           </button>
-        </div>
-      </Show>
-      <Show when={popover() === "focus"}>
-        <div class="apop focus" role="menu" aria-label="The file the agent works in">
-          <Show when={props.focus}>
-            {(file) => (
-              <>
-                <button
-                  class="mm-i"
-                  role="menuitem"
-                  onClick={() => {
-                    const open = file();
-                    setPopover(undefined);
-                    props.onOpenFile(open);
-                  }}
-                >
-                  <Icon name="files" />
-                  <span>Open {baseName(file())}</span>
-                  <kbd />
-                </button>
-                <div class="mm-sep" />
-              </>
-            )}
-          </Show>
-          <div class="mm-h">The agent works in</div>
-          <button
-            class="mm-i"
-            role="menuitemradio"
-            aria-checked={!props.pinned}
-            onClick={() => {
-              setPopover(undefined);
-              if (props.pinned) props.onPin(undefined);
-            }}
-          >
-            <Show when={!props.pinned} fallback={<span />}>
-              <Icon name="check" />
-            </Show>
-            <span>
-              Follow the editor
-              <Show when={props.front}>
-                {(front) => <small> ({baseName(front())} now)</small>}
-              </Show>
-            </span>
-            <kbd />
-          </button>
-          <For each={pinList()}>
-            {(file) => (
-              <button
-                class="mm-i"
-                role="menuitemradio"
-                aria-checked={props.pinned && props.focus === file}
-                title={file}
-                onClick={() => {
-                  setPopover(undefined);
-                  if (!(props.pinned && props.focus === file)) props.onPin(file);
-                }}
-              >
-                <Show when={props.pinned && props.focus === file} fallback={<span />}>
-                  <Icon name="check" />
-                </Show>
-                <span>Pin to {baseName(file)}</span>
-                <kbd />
-              </button>
-            )}
-          </For>
         </div>
       </Show>
       <Show when={popover() === "mode"}>
