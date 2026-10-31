@@ -14,11 +14,11 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
     FileStat, FileText, FileWritten, Focus, GitAction, GitCommitInfo, GitDiff, GitDone, GitLog,
-    GitMessage, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, JobSpec, KernelspecInfo,
-    Outcome, PackageUpdates, Packages, PageUrl, PingReply, PreviewInfo, ProjectInfo, Request,
-    RunStarted, ServerMessage, SessionInfo, SessionPlots, SessionRuns, Subscribed, SystemStats,
-    TableFilter, TableRows, TableSort, TableSummary, TerminalEvent, TerminalInfo,
-    TerminalSubscribed, Variables,
+    GitMessage, GitOwnCommits, GitStatus, HelpPage, HelpSource, HelpTopics, HistoryPage, JobSpec,
+    KernelspecInfo, Outcome, PackageUpdates, Packages, PageUrl, PingReply, PreviewInfo,
+    ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, SessionPlots, SessionRuns,
+    Subscribed, SystemStats, TableFilter, TableRows, TableSort, TableSummary, TerminalEvent,
+    TerminalInfo, TerminalSubscribed, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -544,6 +544,10 @@ impl Client {
             limit,
         })
         .await
+    }
+
+    pub async fn git_own_commits(&self, path: &str) -> Result<GitOwnCommits> {
+        self.call(Call::GitOwnCommits { path: path.into() }).await
     }
 
     pub async fn git_show(&self, path: &str, sha: &str) -> Result<GitCommitInfo> {

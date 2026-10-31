@@ -45,6 +45,7 @@ Responses can arrive out of order; match them by `id`.
 | `git_status` | `path` | `GitStatus`: the branch, the changed files and the refs of the repository `path` is in |
 | `git_log` | `path`, `skip?`, `limit?` | `{commits, more}`: a page of every branch's commits, newest first |
 | `git_show` | `path`, `sha` | `GitCommitInfo`: a commit's whole message and the files it changed |
+| `git_own_commits` | `path` | `{commits, base?, note?}`: the branch's own commits that `rewrite` can squash and reorder |
 | `git_diff` | `path`, `file`, `staged?`, `sha?` | `{file, text, truncated, binary}`: a file's unified diff |
 | `git_run` | `path`, `action` | `{output}` once git has done it: stage, commit, push and the rest |
 | `git_credential` | `token`, `prompt` | What the user typed for git's prompt; `sandhilld` calls it as git's askpass program |
@@ -382,6 +383,15 @@ failure: `state` becomes `merging` and the files show as conflicts);
 out's own commits again on top of it (stopping on conflicts with `state`
 `rebasing`); `continue` goes on with a rebase, cherry-pick or revert once its
 conflicts are staged (with git's messages, no editor), or commits a merge;
+`rewrite` takes the commits `git_own_commits` gave (each `{sha, time_ms,
+message}`, oldest first: those on no remote branch, back to the last merge, at
+most 50, on top of `base`) as `{sha, squash?, message?}` in a new order, oldest
+first, with that `base`, and makes them again so: `squash` folds a commit into
+the one before it, and `message` gives the commit it makes (with those folded
+into it) that message. It is an interactive rebase (`--autostash`, so changes
+not committed are put aside and back) whose list of commits the daemon writes;
+it fails when the commits changed since they were listed, and stops on
+conflicts as `rebase` does. `note` says why older commits aren't offered;
 `resolve` takes a conflicted `file` and a `side`, `ours` (the branch checked
 out, or while rebasing the branch's own commit) or `theirs`, and stages that
 side's version of all of it (deleting the file when that side did);

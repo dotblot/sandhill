@@ -1569,6 +1569,19 @@ button.sz.upd:hover:not(:disabled) { background: var(--accent-soft); }
 .df-acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
 /* Project settings: a label column, then a select or field with notes under it. */
 .modal.projdlg { width: min(560px, calc(100vw - 32px)); }
+/* Git's Squash and reorder: the branch's own commits, newest at the top. */
+.modal.rwdlg { width: min(560px, calc(100vw - 32px)); }
+.rw-list { list-style: none; margin: 0; padding: 4px; max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
+.rw-row { padding: 2px 4px; border-radius: var(--r); }
+.rw-row.dragging { opacity: 0.5; }
+.rw-row.folded { padding-left: 18px; color: var(--muted); }
+.rw-line { display: flex; align-items: center; gap: 6px; min-height: 26px; }
+.rw-grip { cursor: grab; color: var(--faint); letter-spacing: -2px; flex: none; }
+.rw-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rw-sha { font-family: var(--font-mono); color: var(--faint); flex: none; }
+.rw-down svg { transform: rotate(180deg); }
+.rw-squash { display: flex; align-items: center; gap: 4px; flex: none; color: var(--muted); }
+.rw-message { display: block; width: 100%; margin: 4px 0 6px; resize: vertical; font: inherit; font-family: var(--font-mono); }
 .ps-grid { display: grid; grid-template-columns: max-content 1fr; gap: 10px 12px; align-items: start; }
 .ps-label { padding-top: 4px; color: var(--muted); }
 .ps-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }

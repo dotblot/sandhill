@@ -643,11 +643,18 @@ omp.
   dialog with git's prompt as its title ("Password for 'https://huan@github.com'"),
   a hidden field, and **Sign in** / Cancel; under a GitHub or GitLab prompt, a line
   says to use a personal access token.
+- Git's Squash and reorder dialog (More ▸ "Squash or reorder commits…") lists the
+  commits not pushed, newest at the top: a grip to drag, the subject, the short
+  hash, up and down arrows and a **Squash** box (into the commit below; the bottom
+  one has none). A squashed commit is indented and muted, and the commit it folds
+  into gets a monospace box with the joined messages to edit. The main button says
+  "Squash into N commits" or "Reorder".
 - Plots has a zoom dialog: set the size or pick a preset, then copy, or save as PNG, PDF
   or SVG. Plots stay white in dark mode.
 - When the Plots pane changes size, the plot is stretched at first, then drawn again at
-  the new size once resizing stops (a moment later), for Ark and matplotlib plots.
-  Others (IRkernel, plain images) stay stretched.
+  the new size once resizing stops (a moment later), for Ark, IRkernel and matplotlib
+  plots. Plain images and older plots the session no longer keeps show as drawn,
+  never larger and never out of shape.
 - Viewer shares the bottom card with Plots, as a second tab. Its tab strip has Back,
   Forward, Reload, Open in browser, Stop (only while the app or preview in front
   runs) and Clear, then the pane buttons; under it, one

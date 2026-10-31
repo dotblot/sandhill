@@ -757,6 +757,9 @@ impl Daemon {
             Call::GitShow { path, sha } => {
                 serde_json::to_value(crate::git::show(&path, &sha).await?)?
             }
+            Call::GitOwnCommits { path } => {
+                serde_json::to_value(crate::git::own_commits(&path).await?)?
+            }
             Call::GitDiff {
                 path,
                 file,

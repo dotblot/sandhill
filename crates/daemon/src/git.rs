@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use sandhill_proto::{
     GitAction, GitChange, GitCommit, GitCommitInfo, GitDiff, GitDone, GitFile, GitLines, GitLog,
-    GitMessage, GitRef, GitSide, GitStatus,
+    GitMessage, GitOwnCommit, GitOwnCommits, GitRef, GitRewrite, GitSide, GitStatus,
 };
 use tokio::io::AsyncWriteExt;
 
@@ -35,6 +35,8 @@ const MAX_DIFF: usize = 2 * 1024 * 1024;
 const COUNT_MAX: u64 = 4 * 1024 * 1024;
 /// How long git may take to read, and to change things (hooks run then) or
 /// talk to a remote.
+/// How many of the branch's own commits can be squashed and reordered.
+const MAX_OWN: usize = 50;
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(300);
 /// What an agent sees of the staged changes when writing a message.
@@ -539,6 +541,7 @@ fn count_lines(path: &Path) -> Option<GitLines> {
 /// The field and record separators in the log's format.
 const FIELD: char = '\x1f';
 const TRAILER: char = '\x1d';
+const RECORD: char = '\x1e';
 
 pub async fn log(path: &str, skip: u32, limit: Option<u32>) -> Result<GitLog> {
     let repo = need_repo(path).await?;
@@ -650,6 +653,84 @@ fn check_sha(sha: &str) -> Result<()> {
     } else {
         bail!("{sha} is not a commit")
     }
+}
+
+pub async fn own_commits(path: &str) -> Result<GitOwnCommits> {
+    own(&need_repo(path).await?).await
+}
+
+/// The branch's own commits: on no remote branch, back to the last merge
+/// (a rebase would flatten it), at most [`MAX_OWN`].
+async fn own(repo: &Repo) -> Result<GitOwnCommits> {
+    let dir = &repo.root;
+    let born = run(
+        dir,
+        &["rev-parse", "-q", "--verify", "HEAD"],
+        None,
+        READ_TIMEOUT,
+    )
+    .await?
+    .ok();
+    if !born {
+        return Ok(GitOwnCommits {
+            note: Some("There are no commits yet.".into()),
+            ..GitOwnCommits::default()
+        });
+    }
+    let format = format!("--format=%H{FIELD}%P{FIELD}%at{FIELD}%B{RECORD}");
+    let count = format!("-n{}", MAX_OWN + 1);
+    let args = [
+        "log",
+        "--first-parent",
+        &format,
+        &count,
+        "HEAD",
+        "--not",
+        "--remotes",
+    ];
+    let text = git(dir, &args).await?;
+    let mut commits = Vec::new();
+    let mut base = None;
+    let mut note = None;
+    for record in text.split(RECORD) {
+        let fields: Vec<&str> = record.trim_start_matches('\n').splitn(4, FIELD).collect();
+        let [sha, parents, time, message] = fields.as_slice() else {
+            continue;
+        };
+        let parents: Vec<&str> = parents.split_whitespace().collect();
+        if parents.len() > 1 {
+            note = Some("Older commits come before a merge, which can't be squashed or moved.");
+            base = Some(sha.to_string());
+            break;
+        }
+        if commits.len() == MAX_OWN {
+            note = Some("Only the newest 50 commits can be changed here.");
+            base = Some(sha.to_string());
+            break;
+        }
+        commits.push(GitOwnCommit {
+            sha: sha.to_string(),
+            time_ms: time.parse::<i64>().unwrap_or(0) * 1000,
+            message: message.trim_end().to_string(),
+        });
+        base = parents.first().map(|p| p.to_string());
+    }
+    if commits.is_empty() && note.is_none() {
+        base = Some(git(dir, &["rev-parse", "HEAD"]).await?.trim().to_string());
+        note = Some(
+            "Every commit is on the remote already, so changing them would mean a forced push.",
+        );
+    } else if note.is_none() && base.is_some() {
+        note = Some(
+            "Older commits are on the remote already, so changing them would mean a forced push.",
+        );
+    }
+    commits.reverse();
+    Ok(GitOwnCommits {
+        commits,
+        base,
+        note: note.map(str::to_string),
+    })
 }
 
 pub async fn show(path: &str, sha: &str) -> Result<GitCommitInfo> {
@@ -1106,6 +1187,7 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
             }
             stops(&repo, &["rebase", &branch]).await?
         }
+        GitAction::Rewrite { base, commits } => rewrite(&repo, base, &commits).await?,
         GitAction::Continue => {
             let args: &[&str] = match state(&repo.git_dir) {
                 Some("rebasing") => &["rebase", "--continue"],
@@ -1182,6 +1264,110 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
         }
     };
     Ok(GitDone { output })
+}
+
+/// Makes the branch's own commits again as `steps` says, with an interactive
+/// rebase whose list of commits is written for it: `pick`, `fixup` for one
+/// squashed into the one before, and after a commit given a new message, an
+/// `exec` that amends it with that message.
+async fn rewrite(repo: &Repo, base: Option<String>, steps: &[GitRewrite]) -> Result<String> {
+    let dir = &repo.root;
+    if state(&repo.git_dir).is_some() {
+        bail!("finish or stop the merge or rebase under way first");
+    }
+    if !run(dir, &["symbolic-ref", "-q", "HEAD"], None, READ_TIMEOUT)
+        .await?
+        .ok()
+    {
+        bail!("HEAD isn't on a branch; switch to one first");
+    }
+    let own = own(repo).await?;
+    let mut want: Vec<&str> = own.commits.iter().map(|c| c.sha.as_str()).collect();
+    let mut got: Vec<&str> = steps.iter().map(|s| s.sha.as_str()).collect();
+    want.sort_unstable();
+    got.sort_unstable();
+    if own.base != base || want != got {
+        bail!("the branch's commits changed since they were listed; look again");
+    }
+    if steps.first().is_some_and(|s| s.squash) {
+        bail!("the first commit has nothing before it to squash into");
+    }
+    let messages: HashMap<&str, &str> = own
+        .commits
+        .iter()
+        .map(|c| (c.sha.as_str(), c.message.as_str()))
+        .collect();
+    fn changed<'a>(step: &'a GitRewrite, messages: &HashMap<&str, &str>) -> Option<&'a str> {
+        step.message
+            .as_deref()
+            .map(str::trim_end)
+            .filter(|m| Some(m) != messages.get(step.sha.as_str()))
+    }
+    let new_message = |step| changed(step, &messages);
+    let same_order = got.len() == steps.len()
+        && steps
+            .iter()
+            .map(|s| s.sha.as_str())
+            .eq(own.commits.iter().map(|c| c.sha.as_str()));
+    if same_order && steps.iter().all(|s| !s.squash && new_message(s).is_none()) {
+        return Ok(String::new());
+    }
+
+    let work = repo.git_dir.join("sandhill-rewrite");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work)?;
+    let program = program()?;
+    let mut todo = String::new();
+    for (i, step) in steps.iter().enumerate() {
+        todo.push_str(&format!(
+            "{} {}\n",
+            if step.squash { "fixup" } else { "pick" },
+            step.sha
+        ));
+        // A message goes on once the commits squashed into it are in.
+        let start = steps[..=i].iter().rposition(|s| !s.squash).unwrap_or(0);
+        let ends = steps.get(i + 1).is_none_or(|next| !next.squash);
+        if let Some(message) = new_message(&steps[start]).filter(|_| ends) {
+            if message.trim().is_empty() {
+                bail!("a commit needs a message");
+            }
+            let file = work.join(format!("message-{i}.txt"));
+            std::fs::write(&file, format!("{message}\n"))?;
+            todo.push_str(&format!(
+                "exec {} commit --amend --no-verify --allow-empty -q -F {}\n",
+                shell_quote(&program.to_string_lossy()),
+                shell_quote(&file.to_string_lossy())
+            ));
+        }
+    }
+    let list = work.join("todo");
+    std::fs::write(&list, todo)?;
+    // Git runs the sequence editor with the list's file after it.
+    let editor = format!(
+        "sequence.editor=cp {}",
+        shell_quote(&list.to_string_lossy())
+    );
+    let onto = base.as_deref().unwrap_or("--root");
+    let args = [
+        "-c",
+        "core.editor=true",
+        "-c",
+        &editor,
+        "rebase",
+        "-i",
+        "--autostash",
+        onto,
+    ];
+    let said = stops(repo, &args).await?;
+    if state(&repo.git_dir).is_none() {
+        let _ = std::fs::remove_dir_all(&work);
+    }
+    Ok(said)
+}
+
+/// `text` as one word to a POSIX shell.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 /// What the agent is asked; the staged changes follow on its input.
