@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Backend } from "../backend";
@@ -29,8 +30,9 @@ const LISTED: Variables = {
   more: 0,
 };
 
-function fakeWorkspace() {
+function fakeWorkspace(busyFor = 0) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
+  let busy = busyFor;
   let emit: (event: DaemonEvent) => void = () => {};
   const backend: Backend = {
     host: "local",
@@ -40,6 +42,9 @@ function fakeWorkspace() {
         case "list_sessions":
           return [SESSION] as T;
         case "list_variables":
+          if (params.session === "s2" && busy-- > 0) throw new Error("the session is busy running code; try again once it is idle");
+          if (params.session === "s2" && !(params.path as string[]).length)
+            return { session: "s2", path: [], variables: [{ name: "srt", kind: "data", class: "Seurat", children: true, summary: "2,700 cells" }], more: 0 } as T;
           return (params.path as string[]).length
             ? ({ session: "s1", path: params.path, variables: [{ name: "obs", kind: "data", class: "DataFrame", children: true, table: true, summary: "2,700 × 4" }], more: 0 } as T)
             : (LISTED as T);
@@ -134,6 +139,42 @@ describe("VariablesPane", () => {
     expect(viewed).toEqual([["adata", "obs"]]);
     // The click doesn't also close the row.
     expect(root.querySelector(".var.child")).not.toBeNull();
+    dispose();
+  });
+
+  it("lists the session in front each time it changes, as when switching notebooks", async () => {
+    const { ws } = fakeWorkspace();
+    await ws.refreshSessions();
+    const other: SessionInfo = { ...SESSION, id: "s2", kernel: "ark", language: "r" };
+    const [session, setSession] = createSignal(SESSION);
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <VariablesPane ws={ws} session={session()} sessions={[SESSION, other]} onSession={() => {}} shown />, root);
+    const names = () => [...root.querySelectorAll(".var .nm")].map((e) => e.textContent);
+    for (const [next, expected] of [
+      [other, ["srt"]],
+      [SESSION, ["adata", "n"]],
+      [other, ["srt"]],
+      [SESSION, ["adata", "n"]],
+    ] as const) {
+      setSession(next);
+      await settle();
+      await settle();
+      expect(names()).toEqual(expected);
+    }
+    dispose();
+  });
+
+  it("reads again when another pane's quiet code had the session busy", async () => {
+    const { ws } = fakeWorkspace(2);
+    await ws.refreshSessions();
+    const other: SessionInfo = { ...SESSION, id: "s2", kernel: "ark", language: "r" };
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <VariablesPane ws={ws} session={other} sessions={[SESSION, other]} onSession={() => {}} shown />, root);
+    await settle();
+    expect(root.querySelector(".var")).toBeNull();
+    expect(root.querySelector(".err")).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect([...root.querySelectorAll(".var .nm")].map((e) => e.textContent)).toEqual(["srt"]);
     dispose();
   });
 });
