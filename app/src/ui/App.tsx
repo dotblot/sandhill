@@ -178,7 +178,7 @@ export function App(props: {
   // line runs in it, and Plots when code outside notebooks draws a plot.
   const [minimized, setMinimized] = createSignal<Pane[]>(["console", "plots"]);
   const [maximized, setMaximized] = createSignal<Pane>();
-  const [rightOn, setRightOn] = createSignal(stored(RIGHT_KEY) === "shown");
+  const [rightOn, setRightOn] = createSignal(stored(RIGHT_KEY) !== "hidden");
   const [rightWidth, setRightWidth] = createSignal(clampRight(Number(stored(RIGHT_WIDTH_KEY)) || RIGHT_WIDTH));
   /** The Variables pane's height in px, over Plots; 0 until dragged, for half the column. */
   const [variablesHeight, setVariablesHeight] = createSignal(Number(stored(VARIABLES_HEIGHT_KEY)) || 0);
@@ -194,7 +194,7 @@ export function App(props: {
   const [viewerAsk, setViewerAsk] = createSignal<ViewerRequest & { n: number }>();
   /** A topic for the Help pane to show; `n` changes each time. */
   const [helpAsk, setHelpAsk] = createSignal<HelpRequest & { n: number }>();
-  const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) === "shown");
+  const [agentsOn, setAgentsOn] = createSignal(stored(AGENTS_KEY) !== "hidden");
   const [agentsWidth, setAgentsWidth] = createSignal(clampAgents(Number(stored(AGENTS_WIDTH_KEY)) || AGENTS_WIDTH));
   /** The agent session in front in the Agents pane. */
   const [agentTab, setAgentTab] = createSignal<string>();

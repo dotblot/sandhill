@@ -137,10 +137,12 @@ The mockup is the reference. Where this spec and the mockup differ, the mockup w
 - Top to bottom: the title bar (31px), the panes, the status bar (26px).
 - Pane order from left to right:
   - left pane: file tree, Kernels and Resources;
-  - Agents, which only shows when toggled on;
+  - Agents;
   - the editor column, with the editor above and the Console below;
   - the right pane, with two groups: Variables / Help / Packages / Git on top,
     and Plots / Viewer below.
+- Every pane shows at first, Agents and the right pane too (Huan's call,
+  October 2026); one the user hides stays hidden on that Mac.
 - The gap is **3px**: between panes, from the panes to the title bar and to the
   right window edge, and to the left edge when the left pane is hidden. The left
   pane reaches the left edge. The panes sit directly on the status bar, with no
