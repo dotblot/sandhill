@@ -21,7 +21,12 @@ sandhill-daemon = { path = "../crates/daemon" }
 alacritty_terminal = "0.26"
 anyhow = "1"
 base64 = "0.22"
-gpui-kit = { version = "=0.8.1", features = ["tree-sitter-python", "tree-sitter-markdown"] }
+# GPUI Fast, gpui-kit's newer drawing engine, lets the web view be clipped
+# by the notebook it scrolls in; both crates must have it.
+gpui-kit = { version = "=0.8.1", features = ["tree-sitter-python", "tree-sitter-markdown", "gpui-fast"] }
+gpui-webview = { version = "=0.8.1", features = ["gpui-fast"] }
+# The web engine behind gpui-webview (WebKit on the Mac, WebKitGTK on Linux).
+wry = { package = "lb-wry", version = "0.53.3" }
 serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

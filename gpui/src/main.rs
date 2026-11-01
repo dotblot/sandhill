@@ -6,7 +6,9 @@
 //! `local` (the default) or an ssh destination such as `lab`.
 
 mod daemon;
+mod explorer;
 mod notebook;
+mod pages;
 mod shown;
 mod terminal;
 mod view;

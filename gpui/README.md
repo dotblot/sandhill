@@ -57,6 +57,28 @@ come from `gpui-kit` (Apache-2.0); nothing is taken from Zed's GPL editor.
   `sandhill-link` code as the Tauri app. The start screen lists recent
   projects on that machine and takes a folder path.
 
+## Milestone 4: web pages and the Data Explorer
+
+- Web pages in outputs (htmlwidgets, plotly figures, anything with a
+  script, large HTML kept as a blob) are drawn under their cells in a web
+  view from `gpui-webview` (the system's WebKit, put into the window).
+  Simple HTML such as a pandas table still shows as text.
+- Pages shown from the Console go to a **Viewer** tab, with ◀ ▶ to go
+  through them; it opens by itself when one arrives.
+- The mouse wheel over a page scrolls the notebook unless the page uses
+  it (a small script in each page sends the unused turns back).
+- The app runs on GPUI Fast (`gpui-fast`), gpui-kit's newer drawing
+  engine: on the older one a web view can't be clipped, so a page scrolled
+  half out of the notebook covered the bars around it.
+- **View** next to a data frame or matrix in Variables opens the Data
+  Explorer in the middle: a table that draws only the rows in view and
+  fetches them from the kernel 200 at a time as it scrolls. Clicking a
+  column's name sorts by it (in the kernel). Tried with 1,000,000 rows.
+- Known gaps: pages from files or addresses on another machine over ssh
+  (they need a tunnel); filters in the Data Explorer; on Linux, keys go to
+  the web view after a click elsewhere (a gpui-webview bug there); a page
+  run again with the same HTML isn't reloaded.
+
 ## Running it
 
 ```sh
@@ -65,8 +87,9 @@ cd gpui
 cargo run -- /path/to/project         # the folder is optional
 ```
 
-On Linux GPUI also needs `libxkbcommon-dev libxkbcommon-x11-dev` and a
-Vulkan driver (`mesa-vulkan-drivers` works, even without a GPU).
+On Linux GPUI also needs `libxkbcommon-dev libxkbcommon-x11-dev`,
+`libwebkit2gtk-4.1-dev` for the web view, a Vulkan driver
+(`mesa-vulkan-drivers` works, even without a GPU) and X11 (not Wayland).
 
 `cargo test` here includes a test that runs a cell in a real Python kernel; it
 skips when sandhilld isn't built or no Python kernel is installed.

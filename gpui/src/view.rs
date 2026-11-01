@@ -1,5 +1,6 @@
-//! Drawing the window: the top bar, files, the notebook, and on the right
-//! the Console or Terminal above Variables.
+//! Drawing the window: the top bar, files, the notebook (or the Data
+//! Explorer), and on the right the Console, Terminal or Viewer above
+//! Variables.
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Editor, Input};
@@ -10,9 +11,10 @@ use sandhill_link::Target;
 use sandhill_proto::Variable;
 use serde_json::Value;
 
+use crate::explorer::Explorer;
 use crate::notebook::{self, CellKind};
 use crate::shown::{Shown, show};
-use crate::workbench::{Link, Open, Plot, RightTab, Run, Session, Workbench, plot_key};
+use crate::workbench::{Link, Open, Plot, RightTab, Run, Session, Workbench, is_script, plot_key};
 use crate::{Interrupt, RunAll, RunCell, Save};
 
 /// Height of one line in an editor, and its padding.
@@ -21,9 +23,12 @@ const EDITOR_PADDING: f32 = 20.;
 const PLOT_MAX_WIDTH: f32 = 720.;
 const RIGHT_WIDTH: f32 = 460.;
 const VARIABLES_HEIGHT: f32 = 250.;
+/// Height of a web page under a cell.
+const PAGE_HEIGHT: f32 = 420.;
 
 impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_pages(window, cx);
         let theme = cx.theme();
         v_flex()
             .size_full()
@@ -189,6 +194,9 @@ impl Workbench {
 
     fn render_notebook(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
+        if let Some(explorer) = &self.explorer {
+            return self.render_explorer(explorer, cx);
+        }
         let Some(open) = &self.open else {
             return self.render_start(cx);
         };
@@ -216,10 +224,50 @@ impl Workbench {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.notebook_scroll)
                     .child(v_flex().p_4().gap_3().children(cells)),
             )
             .border_r_1()
             .border_color(theme.border)
+            .into_any_element()
+    }
+
+    fn render_explorer(&self, explorer: &Entity<Explorer>, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let name = explorer.read(cx).name();
+        let reload = explorer.clone();
+        v_flex()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .border_r_1()
+            .border_color(theme.border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_4()
+                    .py_2()
+                    .gap_2()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(div().text_color(theme.muted_foreground).child("Data"))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
+                    .child(
+                        Button::new("explorer-refresh")
+                            .xsmall()
+                            .ghost()
+                            .label("Refresh")
+                            .on_click(move |_, _, cx| reload.update(cx, |e, cx| e.reload(cx))),
+                    )
+                    .child(
+                        Button::new("explorer-close")
+                            .xsmall()
+                            .ghost()
+                            .label("Close")
+                            .on_click(cx.listener(|this, _, _, cx| this.close_explorer(cx))),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(explorer.clone()))
             .into_any_element()
     }
 
@@ -422,7 +470,7 @@ impl Workbench {
         };
         let outputs: Vec<AnyElement> = outputs
             .iter()
-            .map(|o| self.render_output(show(o), PLOT_MAX_WIDTH, cx))
+            .map(|o| self.render_output(show(o), PLOT_MAX_WIDTH, true, cx))
             .collect();
         let failed = run.and_then(failed_status);
         v_flex()
@@ -488,7 +536,9 @@ impl Workbench {
             .into_any_element()
     }
 
-    fn render_output(&self, shown: Shown, max_width: f32, cx: &App) -> AnyElement {
+    /// `pages` says web pages are drawn here; the Console leaves them to
+    /// the Viewer.
+    fn render_output(&self, shown: Shown, max_width: f32, pages: bool, cx: &App) -> AnyElement {
         let theme = cx.theme();
         let mono = theme.mono_font_family.clone();
         let text = |s: String| {
@@ -510,6 +560,15 @@ impl Workbench {
             Shown::Warning(s) => text(s).text_color(theme.warning).into_any_element(),
             Shown::Error(s) => text(s).text_color(theme.danger).into_any_element(),
             Shown::Note(s) => note(s),
+            Shown::Page(_) if !pages => note("A web page: see the Viewer.".into()),
+            Shown::Page(page) => match self.pages.get(&page.key()) {
+                Some(view) => div()
+                    .w_full()
+                    .h(px(PAGE_HEIGHT))
+                    .child(view.clone())
+                    .into_any_element(),
+                None => note("Loading the page…".into()),
+            },
             Shown::Plot { value, .. } => match self.plots.get(&plot_key(&value)) {
                 Some(Plot::Ready(image)) => div()
                     .child(img(image.clone()).max_w(px(max_width)))
@@ -536,6 +595,7 @@ impl Workbench {
         let top: AnyElement = match self.right_tab {
             RightTab::Console => self.render_console(cx),
             RightTab::Terminal => self.render_terminal(cx),
+            RightTab::Viewer => self.render_viewer(cx),
         };
         v_flex()
             .w(px(RIGHT_WIDTH))
@@ -549,7 +609,8 @@ impl Workbench {
                     .border_b_1()
                     .border_color(theme.border)
                     .child(tab("tab-console", "Console", RightTab::Console, cx))
-                    .child(tab("tab-terminal", "Terminal", RightTab::Terminal, cx)),
+                    .child(tab("tab-terminal", "Terminal", RightTab::Terminal, cx))
+                    .child(tab("tab-viewer", "Viewer", RightTab::Viewer, cx)),
             )
             .child(div().flex_1().min_h_0().child(top))
             .child(self.render_variables(cx))
@@ -591,11 +652,17 @@ impl Workbench {
                                     .child(run.code.trim_end().to_string()),
                             ),
                     )
-                    .children(
-                        run.outputs
-                            .iter()
-                            .map(|o| self.render_output(show(o), RIGHT_WIDTH - 40., cx)),
-                    )
+                    .children(run.outputs.iter().map(|o| match show(o) {
+                        Shown::Page(_) if run.cell.as_ref().is_some_and(|(f, _)| !is_script(f)) => {
+                            self.render_output(
+                                Shown::Note("A web page: shown under its cell.".into()),
+                                0.,
+                                false,
+                                cx,
+                            )
+                        }
+                        shown => self.render_output(shown, RIGHT_WIDTH - 40., false, cx),
+                    }))
                     .when_some(failed, |d, s| {
                         d.child(
                             div()
@@ -717,6 +784,65 @@ impl Workbench {
         }
     }
 
+    fn render_viewer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let Some((page, title, ix, count)) = self.viewer_page() else {
+            return div()
+                .p_2()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child("Web pages shown from the Console (plotly, DT, leaflet…) appear here.")
+                .into_any_element();
+        };
+        let body = match self.pages.get(&page.key()) {
+            Some(view) => view.clone().into_any_element(),
+            None => div().child("Loading the page…").into_any_element(),
+        };
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .gap_1()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(
+                        Button::new("viewer-back")
+                            .xsmall()
+                            .ghost()
+                            .label("◀")
+                            .disabled(ix == 0)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.show_viewer_page(ix.saturating_sub(1), cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("viewer-next")
+                            .xsmall()
+                            .ghost()
+                            .label("▶")
+                            .disabled(ix + 1 >= count)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.show_viewer_page(ix + 1, cx)
+                                }),
+                            ),
+                    )
+                    .child(format!("{} of {count}", ix + 1))
+                    .child(
+                        div()
+                            .pl_2()
+                            .text_color(theme.foreground)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(title),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(body))
+            .into_any_element()
+    }
+
     fn render_variables(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let mut rows = Vec::new();
@@ -787,6 +913,7 @@ impl Workbench {
             path.push(variable.name.clone());
             let open = self.vars.expanded.contains(&path);
             let toggle_path = path.clone();
+            let table_path = path.clone();
             rows.push(
                 h_flex()
                     .id(SharedString::from(format!("var-{}", path.join("\u{1f}"))))
@@ -830,6 +957,23 @@ impl Workbench {
                             .text_ellipsis()
                             .child(variable.summary.clone()),
                     )
+                    .when(variable.table, |d| {
+                        d.child(
+                            Button::new(SharedString::from(format!(
+                                "view-{}",
+                                path.join("\u{1f}")
+                            )))
+                            .xsmall()
+                            .ghost()
+                            .label("View")
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.open_explorer(table_path.clone(), cx)
+                                },
+                            )),
+                        )
+                    })
                     .into_any_element(),
             );
             if open && let Some(children) = self.vars.children.get(&path) {
@@ -853,7 +997,7 @@ impl Workbench {
                 theme.muted_foreground
             })
             .child(self.problem.clone().unwrap_or_else(|| {
-                "GPUI trial · milestone 3 · Shift+Enter runs a cell, ⌘S saves".into()
+                "GPUI trial · milestone 4 · Shift+Enter runs a cell, ⌘S saves".into()
             }))
     }
 }

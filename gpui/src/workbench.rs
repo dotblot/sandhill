@@ -21,11 +21,15 @@ use serde_json::Value;
 use tokio::runtime::Runtime;
 
 use crate::daemon::{Daemon, Streams};
+use crate::explorer::Explorer;
 use crate::notebook::{self, CellKind, Format, Notebook};
-use crate::shown::{Shown, show};
+use crate::pages::PageView;
+use crate::shown::{Page, Shown, page_title, show};
 use crate::terminal::TerminalView;
 
 const MAX_FILES: u32 = 5000;
+/// Web pages kept hidden for drawing again.
+const PARKED_PAGES: usize = 24;
 /// Runs the Console keeps.
 const CONSOLE_RUNS: usize = 200;
 
@@ -107,6 +111,7 @@ impl Open {
 pub(crate) enum RightTab {
     Console,
     Terminal,
+    Viewer,
 }
 
 /// The Variables pane: the active kernel's variables, and the parts of
@@ -152,6 +157,18 @@ pub struct Workbench {
     terminal_starting: bool,
     /// Plots by blob hash (or by a hash of an inline value).
     pub(crate) plots: HashMap<String, Plot>,
+    /// The web views drawn now, by page key (see `sync_pages`).
+    pub(crate) pages: HashMap<String, Entity<PageView>>,
+    /// Pages not drawn now, hidden, oldest first.
+    parked: Vec<(String, Entity<PageView>)>,
+    /// The Viewer's page, counting from the oldest; the latest when none.
+    pub(crate) viewer_index: Option<usize>,
+    /// The notebook's scrolling, and where pages under its cells send the
+    /// wheel's turns they don't use.
+    pub(crate) notebook_scroll: ScrollHandle,
+    page_wheel: tokio::sync::mpsc::UnboundedSender<f32>,
+    /// The Data Explorer, shown in the middle instead of the notebook.
+    pub(crate) explorer: Option<Entity<Explorer>>,
     /// The latest problem, shown at the bottom.
     pub(crate) problem: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -222,6 +239,23 @@ impl Workbench {
                 },
             ),
         ];
+        let (page_wheel, mut wheel) = tokio::sync::mpsc::unbounded_channel::<f32>();
+        cx.spawn(async move |this, cx| {
+            while let Some(px) = wheel.recv().await {
+                let scrolled = this.update(cx, |this, cx| {
+                    let scroll = &this.notebook_scroll;
+                    let mut offset = scroll.offset();
+                    let max = scroll.max_offset().y;
+                    offset.y = (offset.y - gpui_kit::px(px)).clamp(-max, gpui_kit::px(0.));
+                    scroll.set_offset(offset);
+                    cx.notify();
+                });
+                if scrolled.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         let mut this = Workbench {
             rt,
             generation: 0,
@@ -248,6 +282,12 @@ impl Workbench {
             terminal_problem: None,
             terminal_starting: false,
             plots: HashMap::new(),
+            pages: HashMap::new(),
+            parked: Vec::new(),
+            viewer_index: None,
+            notebook_scroll: ScrollHandle::new(),
+            page_wheel,
+            explorer: None,
             problem: None,
             _subscriptions: subscriptions,
         };
@@ -777,6 +817,14 @@ impl Workbench {
         self.console_session = active.clone();
         self.console.clear();
         self.vars = Vars::default();
+        self.viewer_index = None;
+        if self
+            .explorer
+            .as_ref()
+            .is_some_and(|e| Some(e.read(cx).session()) != active.as_deref())
+        {
+            self.explorer = None;
+        }
         let (Some(daemon), Some(session)) = (self.daemon(), active) else {
             cx.notify();
             return;
@@ -1142,7 +1190,13 @@ impl Workbench {
                 }
                 run.outputs = builder.finish();
                 if is_plot {
+                    let for_viewer = run.cell.as_ref().is_none_or(|(file, _)| is_script(file));
                     let outputs = run.outputs.clone();
+                    let page = outputs.iter().any(|o| matches!(show(o), Shown::Page(_)));
+                    if page && for_viewer && active {
+                        self.right_tab = RightTab::Viewer;
+                        self.viewer_index = None;
+                    }
                     self.fetch_plots(&outputs, cx);
                 }
             }
@@ -1242,6 +1296,135 @@ impl Workbench {
                 window.focus(&focus, cx);
             }
         }
+        cx.notify();
+    }
+
+    /// The Viewer's pages: those the Console's runs (and scripts') showed,
+    /// oldest first, with their titles. A notebook's pages stay under its
+    /// cells.
+    pub(crate) fn viewer_pages(&self) -> Vec<(Page, String)> {
+        self.console
+            .iter()
+            .filter_map(|id| self.runs.get(id))
+            .filter(|run| run.cell.as_ref().is_none_or(|(file, _)| is_script(file)))
+            .flat_map(|run| run.outputs.iter())
+            .filter_map(|output| match show(output) {
+                Shown::Page(page) => Some((page, page_title(output))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The Viewer's page now, with its place and how many there are.
+    pub(crate) fn viewer_page(&self) -> Option<(Page, String, usize, usize)> {
+        let pages = self.viewer_pages();
+        let count = pages.len();
+        let ix = self
+            .viewer_index
+            .unwrap_or(count.checked_sub(1)?)
+            .min(count - 1);
+        let (page, title) = pages.into_iter().nth(ix)?;
+        Some((page, title, ix, count))
+    }
+
+    /// Keeps a web view for each page about to be drawn, and drops the rest:
+    /// a web view is a native view over the window, so one left over would
+    /// stay on screen.
+    pub(crate) fn sync_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut wanted: Vec<Page> = Vec::new();
+        if self.explorer.is_none()
+            && let Some(open) = &self.open
+        {
+            for (ix, cell) in open.notebook.cells.iter().enumerate() {
+                if cell.kind != CellKind::Code {
+                    continue;
+                }
+                let run = open
+                    .cell_runs
+                    .get(&cell.id)
+                    .and_then(|id| self.runs.get(id));
+                let outputs = run.map_or(&open.notebook.cells[ix].outputs, |r| &r.outputs);
+                wanted.extend(outputs.iter().filter_map(|o| match show(o) {
+                    Shown::Page(page) => Some(page),
+                    _ => None,
+                }));
+            }
+        }
+        if self.right_tab == RightTab::Viewer
+            && let Some((page, ..)) = self.viewer_page()
+        {
+            wanted.push(page);
+        }
+        let keys: HashSet<String> = wanted.iter().map(Page::key).collect();
+        // Pages no longer drawn are parked, hidden, and come back when they
+        // are drawn again (a cell run again with the same output). Dropping
+        // a web view soon after it was drawn can end the app in X11
+        // (BadWindow), so only the oldest parked ones go, a while later.
+        let gone: Vec<(String, Entity<PageView>)> = self
+            .pages
+            .extract_if(|key, _| !keys.contains(key))
+            .collect();
+        for (key, view) in gone {
+            view.update(cx, |page, cx| page.hide(cx));
+            self.parked.push((key, view));
+        }
+        for key in &keys {
+            if self.pages.contains_key(key) {
+                continue;
+            }
+            if let Some(ix) = self.parked.iter().position(|(k, _)| k == key) {
+                let (key, view) = self.parked.remove(ix);
+                view.update(cx, |page, cx| page.show(cx));
+                self.pages.insert(key, view);
+            }
+        }
+        if self.parked.len() > PARKED_PAGES {
+            let old: Vec<_> = self
+                .parked
+                .drain(..self.parked.len() - PARKED_PAGES)
+                .collect();
+            cx.spawn(async move |_, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(5))
+                    .await;
+                drop(old);
+            })
+            .detach();
+        }
+        let remote = self.target != Target::Local;
+        let near = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let in_notebook = wanted.len()
+            - usize::from(self.right_tab == RightTab::Viewer && self.viewer_page().is_some());
+        for (ix, page) in wanted.into_iter().enumerate() {
+            let key = page.key();
+            if self.pages.contains_key(&key) {
+                continue;
+            }
+            let daemon = self.daemon();
+            let near = near.clone();
+            let wheel = (ix < in_notebook).then(|| self.page_wheel.clone());
+            let view = cx.new(|cx| PageView::new(page, daemon, remote, near, wheel, window, cx));
+            self.pages.insert(key, view);
+        }
+    }
+
+    pub(crate) fn show_viewer_page(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.viewer_index = Some(ix);
+        cx.notify();
+    }
+
+    /// Opens a data frame or matrix from the Variables pane in the Data
+    /// Explorer.
+    pub(crate) fn open_explorer(&mut self, path: Vec<String>, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(session)) = (self.daemon(), self.vars.session.clone()) else {
+            return;
+        };
+        self.explorer = Some(cx.new(|cx| Explorer::new(daemon, session, path, cx)));
+        cx.notify();
+    }
+
+    pub(crate) fn close_explorer(&mut self, cx: &mut Context<Self>) {
+        self.explorer = None;
         cx.notify();
     }
 
@@ -1429,4 +1612,10 @@ pub(crate) fn plot_key(value: &Value) -> String {
             format!("inline-{:x}", hasher.finish())
         }
     }
+}
+
+/// A script's file (`.R`, `.py`), whose runs are the Console's.
+pub(crate) fn is_script(file: &str) -> bool {
+    let lower = file.to_ascii_lowercase();
+    lower.ends_with(".r") || lower.ends_with(".py")
 }
