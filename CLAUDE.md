@@ -4,7 +4,11 @@ Sandhill is a Mac-native IDE for R/Python bioinformatics. Read `docs/design.md`
 before making architectural changes; it records the decisions and why.
 
 ## Decisions that are settled
-- Mac app: Tauri 2 with a TypeScript UI (SolidJS, CodeMirror 6). No Electron.
+- Mac app: moving from Tauri 2 (TypeScript UI in `app/`) to GPUI (Rust, in
+  `gpui/`), decided 2026-11-01 after a trial. New features go into `gpui/`;
+  `app/` gets fixes only until the GPUI app does everything it does, then it
+  is deleted. The GPUI app keeps the Tauri app's look, with every font size
+  2px larger. No Electron.
 - The app reaches the daemon only through the wire protocol, by running
   `sandhilld attach --start` (later through ssh). It never opens notebooks
   or kernels itself, so local and remote work the same way.
@@ -21,6 +25,11 @@ before making architectural changes; it records the decisions and why.
   Ark and Air are MIT and may be used.
 
 ## Conventions
+- `gpui/` is its own Cargo project (`[workspace]` of its own, own
+  `Cargo.lock`, pinned `gpui-kit`/`gpui-webview` versions), so a root
+  `cargo build` doesn't build it. Check it with `cargo fmt`, `cargo clippy
+  --all-targets -- -D warnings` and `cargo test` inside `gpui/`. On Linux it
+  needs `libxkbcommon-dev libxkbcommon-x11-dev libwebkit2gtk-4.1-dev` and X11.
 - Rust workspace at the repo root; crates live in `crates/`. The exception is
   the Tauri app crate, `app/src-tauri`, which sits next to the UI in `app/src`
   as Tauri expects. A plain `cargo build` skips it (it needs WebKitGTK on
