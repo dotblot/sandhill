@@ -205,6 +205,21 @@ impl Agents {
         }
     }
 
+    /// Opens a file the agent named in the editor, if it is in the project.
+    pub(crate) fn open_path(&mut self, path: &str, cx: &mut Context<Self>) {
+        let root = format!("{}/", self.project.trim_end_matches('/'));
+        let rel = path.strip_prefix(&root).unwrap_or(path);
+        if rel.starts_with('/') {
+            self.problem = Some(format!("{path} is outside the project"));
+            cx.notify();
+            return;
+        }
+        let rel = rel.to_string();
+        if let Some(w) = self.workbench.upgrade() {
+            w.update(cx, |w, cx| w.open_file(rel, cx));
+        }
+    }
+
     /// The open @ or # menu's groups, as shown.
     pub(crate) fn mention_groups(&self) -> Vec<(String, Vec<Mention>)> {
         let Some(Menu::Mention {

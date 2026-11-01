@@ -4,14 +4,15 @@
 //! history or a new conversation, and the message box.
 
 use chrono::{Local, TimeZone};
+use gpui_kit::component::input::Input;
 use gpui_kit::component::text::{TextView, TextViewStyle};
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::TerminalInfo;
 use serde_json::{Value, json};
 
-use crate::agents::{Agents, KINDS, Show, kind_of, model_label};
+use crate::agents::{Agents, KINDS, Show, kind_of, model_label, question_key};
 use crate::chat::{self, Ask, Item, Step, StepStatus};
 use crate::look::{self, Palette, RADIUS, icon, icon_button, pane, picture};
 use crate::workbench::Workbench;
@@ -27,6 +28,7 @@ impl Render for Agents {
             self.composer
                 .update(cx, |c, cx| c.set_placeholder(hint, window, cx));
         }
+        self.question_fields(window, cx);
         let current = self.current().cloned();
         let body: AnyElement = match (self.show, &current) {
             (Show::History, _) => self.render_history(cx),
@@ -687,12 +689,34 @@ impl Agents {
             .when(open, |d| d.bg(p.ink(6.)))
             .child(row)
             .when(open, |d| {
+                let file = view
+                    .file
+                    .clone()
+                    .filter(|f| crate::notebook::format_of(f).is_some());
                 d.child(
-                    div()
+                    v_flex()
+                        .gap(px(4.))
                         .pl(px(29.))
                         .pr(px(6.))
                         .pb(px(8.))
-                        .child(step_card(&view, &p)),
+                        .child(step_card(&view, &p))
+                        .when_some(file, |d, file| {
+                            let name = file.rsplit('/').next().unwrap_or(&file).to_string();
+                            d.child(
+                                div()
+                                    .id(SharedString::from(format!("open-{key}")))
+                                    .text_size(px(look::SMALL))
+                                    .text_color(p.accent)
+                                    .cursor_pointer()
+                                    .hover(|d| d.underline())
+                                    .child(format!("Open {name}"))
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.open_path(&file, cx)
+                                        }),
+                                    ),
+                            )
+                        }),
                 )
             })
             .when_some(waiting.cloned(), |d, ask| {
@@ -724,10 +748,12 @@ impl Agents {
                     .items_start()
                     .gap(px(8.))
                     .child(
-                        icon(if view.questions.is_empty() {
-                            "ask"
-                        } else {
+                        icon(if !view.questions.is_empty() {
                             "help"
+                        } else if view.plan.is_some() {
+                            "plan"
+                        } else {
+                            "ask"
                         })
                         .size(px(18.))
                         .text_color(p.accent),
@@ -778,10 +804,26 @@ impl Agents {
         }
         if !pending {
             let answer = ask.answer.as_ref().and_then(|a| a["behavior"].as_str());
-            let text = match answer {
-                Some("allow") => "Allowed",
-                Some("deny") => "Denied",
-                _ => "No longer waiting",
+            let answers = ask
+                .answer
+                .as_ref()
+                .and_then(|a| a["answers"].as_object())
+                .map(|all| {
+                    // In the order they were asked.
+                    view.questions
+                        .iter()
+                        .filter_map(|q| all.get(&q.question).and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                });
+            let text = match (answers, answer) {
+                (Some(answers), _) => answers,
+                (None, Some("allow")) if view.plan.is_some() => "Carried out".into(),
+                (None, Some("allow")) => "Allowed".into(),
+                (None, Some("deny")) if !view.questions.is_empty() => "Skipped".into(),
+                (None, Some("deny")) if view.plan.is_some() => "Kept planning".into(),
+                (None, Some("deny")) => "Denied".into(),
+                _ => "No longer waiting".to_string(),
             };
             return card
                 .child(
@@ -792,14 +834,22 @@ impl Agents {
                 )
                 .into_any_element();
         }
+        let mut ready = true;
+        let mut answers = serde_json::Map::new();
         for (qi, question) in view.questions.iter().enumerate() {
+            let key = question_key(&ask.id, &question.question);
+            let answer = self.answer_of(&key, cx);
+            ready &= !answer.is_empty();
+            answers.insert(question.question.clone(), Value::String(answer));
+            let picked = self.picks.get(&key).cloned().unwrap_or_default();
+            let multi = question.multi_select;
             let options = question
                 .options
                 .iter()
                 .enumerate()
                 .map(|(oi, (label, desc))| {
-                    let id = ask.id.clone();
-                    let q = question.question.clone();
+                    let on = picked.contains(label);
+                    let key = key.clone();
                     let label_owned = label.clone();
                     let hover = p.faint;
                     v_flex()
@@ -808,10 +858,15 @@ impl Agents {
                         .py(px(5.))
                         .rounded(px(RADIUS))
                         .border_1()
-                        .border_color(p.line)
                         .bg(p.bg)
                         .cursor_pointer()
-                        .hover(move |d| d.border_color(hover))
+                        .map(|d| {
+                            if on {
+                                d.border_color(p.accent).bg(p.accent_soft)
+                            } else {
+                                d.border_color(p.line).hover(move |d| d.border_color(hover))
+                            }
+                        })
                         .child(div().font_weight(FontWeight::MEDIUM).child(label.clone()))
                         .when_some(desc.clone(), |d, desc| {
                             d.child(
@@ -822,16 +877,96 @@ impl Agents {
                             )
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            let mut answers = serde_json::Map::new();
-                            answers.insert(q.clone(), Value::String(label_owned.clone()));
-                            this.answer(&id, json!({"behavior": "allow", "answers": answers}), cx);
+                            this.pick_option(key.clone(), label_owned.clone(), multi, cx)
                         }))
                 });
+            let other = self.others.get(&key).cloned();
             card = card.child(
                 v_flex()
                     .gap(px(6.))
-                    .child(div().child(question.question.clone()))
-                    .child(v_flex().gap(px(4.)).pl(px(26.)).children(options)),
+                    .child(
+                        h_flex()
+                            .gap(px(6.))
+                            .items_start()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(question.question.clone()),
+                            )
+                            .when_some(question.header.clone(), |d, h| {
+                                d.child(
+                                    div()
+                                        .px(px(6.))
+                                        .rounded(px(5.))
+                                        .bg(p.ink(7.))
+                                        .text_size(px(look::SMALL))
+                                        .text_color(p.muted)
+                                        .child(h),
+                                )
+                            }),
+                    )
+                    .when(multi, |d| {
+                        d.child(
+                            div()
+                                .text_size(px(look::SMALL))
+                                .text_color(p.faint)
+                                .child("Pick any that apply"),
+                        )
+                    })
+                    .child(
+                        v_flex()
+                            .gap(px(4.))
+                            .children(options)
+                            .when_some(other, |d, other| d.child(Input::new(&other).small())),
+                    ),
+            );
+        }
+        if !view.questions.is_empty() {
+            let id = ask.id.clone();
+            let send = json!({"behavior": "allow", "answers": answers});
+            card = card.child(
+                h_flex()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .id("q-answer")
+                            .h(px(28.))
+                            .px(px(12.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(RADIUS))
+                            .bg(p.accent)
+                            .text_color(p.accent_text)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(look::SMALL + 1.))
+                            .cursor_pointer()
+                            .child("Answer")
+                            .when(!ready || sent, |d| d.opacity(0.5))
+                            .when(ready && !sent, |d| d.on_click(Self::reply(id.clone(), send, cx))),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id("q-skip")
+                            .h(px(28.))
+                            .px(px(10.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(RADIUS))
+                            .border_1()
+                            .border_color(p.line)
+                            .bg(p.bg)
+                            .text_size(px(look::SMALL + 1.))
+                            .cursor_pointer()
+                            .child("Skip")
+                            .on_click(Self::reply(
+                                id,
+                                json!({"behavior": "deny", "message": "The user skipped your questions in Sandhill. Ask them in the chat instead."}),
+                                cx,
+                            )),
+                    ),
             );
         }
         if view.questions.is_empty() {
@@ -872,7 +1007,11 @@ impl Agents {
             buttons = buttons.child(
                 button(
                     "allow",
-                    if plan { "Carry it out" } else { "Allow once" },
+                    if plan {
+                        "Yes, carry it out"
+                    } else {
+                        "Allow once"
+                    },
                     true,
                     false,
                 )
@@ -882,6 +1021,17 @@ impl Agents {
                     cx,
                 )),
             );
+            if plan && !ask.remember.is_empty() {
+                buttons = buttons.child(
+                    button("allow-edits", "Yes, and allow edits", false, false).on_click(
+                        Self::reply(
+                            id.clone(),
+                            json!({"behavior": "allow", "scope": "chat"}),
+                            cx,
+                        ),
+                    ),
+                );
+            }
             if !plan && can("chat") {
                 buttons = buttons.child(
                     button("allow-chat", "For this chat", false, false).on_click(Self::reply(
@@ -907,9 +1057,17 @@ impl Agents {
                     "deny",
                     if plan { "Keep planning" } else { "Deny" },
                     false,
-                    true,
+                    !plan,
                 )
-                .on_click(Self::reply(id.clone(), json!({"behavior": "deny"}), cx)),
+                .on_click(Self::reply(
+                    id.clone(),
+                    if plan {
+                        json!({"behavior": "deny", "message": "The user wants to keep planning. Ask them what to change in the plan."})
+                    } else {
+                        json!({"behavior": "deny"})
+                    },
+                    cx,
+                )),
             );
             card = card.child(buttons);
             if !ask.remember.is_empty() && !plan {

@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::input::{EditorState, InputEvent};
+use gpui_kit::component::input::{EditorState, InputEvent, InputState};
 use gpui_kit::*;
 use sandhill_proto::{
     AgentInfo, AgentOptions, Call, TERMINAL_JOB, TERMINAL_SHELL, TerminalEvent, TerminalInfo,
@@ -162,7 +162,16 @@ pub struct Agents {
     /// Effort changes settle before they go (the slider can be dragged).
     pub(crate) effort_generation: u64,
     pub(crate) workbench: WeakEntity<Workbench>,
+    /// Options picked for the agent's questions, by `question_key`.
+    pub(crate) picks: HashMap<String, Vec<String>>,
+    /// The "Other…" answer to each question.
+    pub(crate) others: HashMap<String, Entity<InputState>>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// A question of a request, as `picks` and `others` keep it.
+pub(crate) fn question_key(ask: &str, question: &str) -> String {
+    format!("{ask}\u{0}{question}")
 }
 
 impl Agents {
@@ -221,6 +230,8 @@ impl Agents {
             held: None,
             effort_generation: 0,
             workbench,
+            picks: HashMap::new(),
+            others: HashMap::new(),
             _subscriptions: subscriptions,
         };
         agents.refresh(cx);
@@ -686,6 +697,57 @@ impl Agents {
         cx.notify();
     }
 
+    /// Gives each question waiting in the conversation shown an "Other…"
+    /// field.
+    pub(crate) fn question_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(t) = self.current().cloned() else {
+            return;
+        };
+        for ask in self.chat(&t).waiting {
+            for q in chat::ask_view(&ask, None, &t.kind).questions {
+                let key = question_key(&ask.id, &q.question);
+                if self.others.contains_key(&key) {
+                    continue;
+                }
+                let input = cx.new(|cx| InputState::new(window, cx).placeholder("Other…"));
+                self._subscriptions
+                    .push(cx.subscribe(&input, |_, _, _: &InputEvent, cx| cx.notify()));
+                self.others.insert(key, input);
+            }
+        }
+    }
+
+    /// Picks an option of a question, or (with several allowed) toggles it.
+    pub(crate) fn pick_option(
+        &mut self,
+        key: String,
+        label: String,
+        multi: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let picked = self.picks.entry(key).or_default();
+        if !multi {
+            *picked = vec![label];
+        } else if let Some(at) = picked.iter().position(|l| *l == label) {
+            picked.remove(at);
+        } else {
+            picked.push(label);
+        }
+        cx.notify();
+    }
+
+    /// A question's answer: the options picked and the words typed.
+    pub(crate) fn answer_of(&self, key: &str, cx: &App) -> String {
+        let mut parts = self.picks.get(key).cloned().unwrap_or_default();
+        if let Some(other) = self.others.get(key) {
+            let text = other.read(cx).value().trim().to_string();
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+        parts.join(", ")
+    }
+
     pub(crate) fn toggle_step(&mut self, key: &str, cx: &mut Context<Self>) {
         if !self.open_steps.remove(key) {
             self.open_steps.insert(key.to_string());
@@ -705,7 +767,9 @@ fn is_agent(t: &TerminalInfo) -> bool {
 
 /// The model the agent last reported, shortened: "Opus 5.5".
 pub(crate) fn model_label(t: &TerminalInfo) -> Option<String> {
-    let status = &t.agent.as_ref()?["status"];
-    let model = status["model"].as_str().or(t.options.model.as_deref())?;
-    Some(model.trim_start_matches("Claude ").to_string())
+    let reported = t
+        .agent
+        .as_ref()
+        .is_some_and(|a| a["status"]["model"].is_string());
+    (reported || t.options.model.is_some()).then(|| crate::composer::model_label(t))
 }
