@@ -150,6 +150,26 @@ describe("DocKernels", () => {
     expect(ws.sessions().find((s) => s.id === r)?.kernel).toBe("ark");
   });
 
+  it("runs the kernel picked for a document, the project's until then, and remembers it", async () => {
+    const setup = projectSetup({ python: "conda-env-omicverse-py" }, { python: "conda-env-omicverse-py" });
+    const { ws } = await workspace([running("base", "python3")], setup);
+    const notebook = doc(ws);
+    expect(notebook.kernelFor("python")).toBe("conda-env-omicverse-py");
+    const first = await notebook.ensure("python");
+    expect(ws.sessions().find((s) => s.id === first)?.kernel).toBe("conda-env-omicverse-py");
+    // Picked: it joins the session of that kernel already running here.
+    expect(await notebook.choose("python", "python3")).toBe("base");
+    expect(notebook.session("python")).toBe("base");
+    expect(notebook.kernelFor("python")).toBe("python3");
+    expect(notebook.chosen()).toEqual({ python: "python3" });
+    // Opened again later, it goes back to the kernel picked, not the project's.
+    const again = doc(ws);
+    again.restoreChoices(notebook.chosen());
+    expect(await again.ensure("python")).toBe("base");
+    // Another document still runs the project's.
+    expect(await doc(ws).ensure("python")).toBe(first);
+  });
+
   it("runs documents in the project's folder when the project says so", async () => {
     const { ws } = await workspace([], projectSetup({ documents: "project" }));
     expect(ws.documentFolder("/p/analysis")).toBe("/p");

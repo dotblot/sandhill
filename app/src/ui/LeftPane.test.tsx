@@ -77,7 +77,7 @@ describe("KernelRows", () => {
       { aaaaaa1: ["a.qmd", "b.py"] },
       stats({ sessions: [{ session: "bbbbbb2", rss: 2.1 * GB }] }),
     );
-    expect(t.rows().map((r) => r.querySelector(".kn")?.textContent)).toEqual(["3.12a.qmd, b.py", "4.4.1not used by an open file"]);
+    expect(t.rows().map((r) => r.querySelector(".kn")?.textContent)).toEqual(["3.12 (omicverse)a.qmd, b.py", "4.4.1not used by an open file"]);
     expect(t.rows()[1].title).toBe("R 4.4.1 · idle. Click for details");
     expect(t.rows().map((r) => r.querySelector(".km")?.textContent)).toEqual(["", "2.1 GB"]);
     expect(t.rows()[1].classList.contains("unused")).toBe(true);
@@ -88,7 +88,7 @@ describe("KernelRows", () => {
     const t = setup([session("aaaaaa1"), session("bbbbbb2")], { aaaaaa1: ["a.qmd"], bbbbbb2: ["b.qmd"] });
     await t.click(t.rows()[0].querySelector(".kx"));
     expect(t.rows()[0].classList.contains("ask")).toBe(true);
-    expect(t.rows()[0].textContent).toContain("Shut down Python 3.12?");
+    expect(t.rows()[0].textContent).toContain("Shut down Python 3.12 (omicverse)?");
     await t.click(t.button("Cancel"));
     expect(t.stopped).toEqual([]);
     expect(t.root.querySelector(".krow.ask")).toBeNull();
@@ -124,7 +124,7 @@ describe("KernelRows", () => {
     const t = setup([session("aaaaaa1"), session("bbbbbb2")], { aaaaaa1: ["a.qmd"] }, stats({ sessions: [{ session: "aaaaaa1", rss: GB }] }));
     await t.click(t.rows()[0]);
     const pop = () => document.querySelector(".kpop");
-    expect(pop()?.querySelector(".kp-h")?.textContent).toBe("Python 3.12idle");
+    expect(pop()?.querySelector(".kp-h")?.textContent).toBe("Python 3.12 (omicverse)idle");
     const details = () => [...pop()!.querySelectorAll("dt")].map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`);
     expect(details()).toEqual([
       "Kernel: Python 3 (ipykernel)",
@@ -137,7 +137,7 @@ describe("KernelRows", () => {
     // Shut down… asks in the row, as the trash button does.
     await t.click([...pop()!.querySelectorAll("button")].find((b) => b.textContent === "Shut down…"));
     expect(pop()).toBeNull();
-    expect(t.rows()[0].textContent).toContain("Shut down Python 3.12?");
+    expect(t.rows()[0].textContent).toContain("Shut down Python 3.12 (omicverse)?");
     // The trash button asks without opening the details.
     await t.click(t.rows()[1].querySelector(".kx"));
     expect(pop()).toBeNull();

@@ -131,7 +131,7 @@ impl Search {
                 .unwrap_or_default(),
             user_dir,
             system_dirs,
-            path: var("PATH"),
+            path: crate::paths::program_path(),
             conda_lists: in_home(".conda/environments.txt").into_iter().collect(),
             conda_roots,
             version_dirs: pyenv.map(|p| p.join("versions")).into_iter().collect(),

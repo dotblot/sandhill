@@ -87,10 +87,6 @@ impl Tools {
         .ok()
         .flatten()
         .filter(|f| now_ms() - f.ts_ms <= STALE_FOCUS_MS);
-        let front = focus
-            .as_ref()
-            .and_then(|f| f.file.clone())
-            .filter(|f| cells::kind(Path::new(f)).is_some());
         let mut lines = Vec::new();
         let mut place = json!({});
         if let Some(focus) = focus.as_ref().filter(|_| choices.context)
@@ -120,9 +116,10 @@ impl Tools {
             lines.push(text);
         }
         // The file this message works in: a document the user named with @,
-        // else the pinned one, else the one in front, kept while the agent
-        // works on it. Conversations are about the whole project, so the
-        // message says which document, not the conversation.
+        // else the pinned one, kept while the agent works on it. Only that:
+        // conversations are about the whole project, and a file is worked on
+        // when the user names it, in the message that names it (Huan's call,
+        // 2026-11-01), not because it is in front or was named before.
         let named = choices
             .refs
             .iter()
@@ -130,9 +127,7 @@ impl Tools {
             .filter_map(|r| r.path.as_deref())
             .map(|p| self.path(p))
             .find(|p| cells::kind(Path::new(p)).is_some());
-        let document = named
-            .or_else(|| choices.pin.as_deref().map(|p| self.path(p)))
-            .or(front);
+        let document = named.or_else(|| choices.pin.as_deref().map(|p| self.path(p)));
         if let Some(pin) = &choices.pin {
             lines.push(format!(
                 "Sandhill: the user pinned this conversation to {}; add_cell writes there.",
@@ -146,10 +141,8 @@ impl Tools {
         if !choices.web {
             lines.push(crate::terminal::choices::WEB_OFF_NOTE.to_string());
         }
-        let mut report = json!({});
-        if let Some(document) = document {
-            report["document"] = json!(document);
-        }
+        // Null when the message names none, so the last one doesn't stay.
+        let mut report = json!({"document": document});
         if !choices.refs.is_empty() {
             report["refs"] = Value::Null;
         }
@@ -169,8 +162,13 @@ impl Tools {
             return self.add_to_console(edit).await;
         }
         let mut client = self.client().await?;
+        // With no document named, the code runs in the Console: a file is
+        // written to only when the user names it.
+        let Ok(file) = self.target(&client, edit.file).await else {
+            drop(client);
+            return self.add_to_console(edit).await;
+        };
         let focus = self.focus(&client).await;
-        let file = self.target(&client, edit.file, focus.as_ref()).await?;
         // Below the user's current cell, when they are in this document.
         let mut after = edit.cell.map(str::to_string).or_else(|| {
             focus
@@ -216,13 +214,21 @@ impl Tools {
     async fn add_to_console(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
         let mut client = self.client().await?;
         let focus = self.focus(&client).await;
-        let file = self.target(&client, edit.file, focus.as_ref()).await.ok();
+        let file = self.target(&client, edit.file).await.ok();
         let language = match edit.language {
             Some(language) => normalize_language(language),
-            None => self
+            None => match self
                 .language_of(&client, file.as_deref(), focus.as_ref())
                 .await
-                .context("say which language with `language` (r or python)")?,
+            {
+                Some(language) => language,
+                // With no document, the project's sessions, when they are all one language.
+                None => self
+                    .pick(&client, None, None)
+                    .await?
+                    .map(|s| normalize_language(&s.language))
+                    .context("say which language with `language` (r or python)")?,
+            },
         };
         let session = match &file {
             Some(file) => {
@@ -295,8 +301,7 @@ impl Tools {
     pub(super) async fn edit_cell(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
         let mut client = self.client().await?;
         let cell = edit.cell.context("`cell` is required")?;
-        let focus = self.focus(&client).await;
-        let file = self.target(&client, edit.file, focus.as_ref()).await?;
+        let file = self.target(&client, edit.file).await?;
         let since = now_ms();
         let edited: CellEdited = client
             .call(Call::EditCell {
@@ -413,28 +418,18 @@ impl Tools {
         Some(self.path(&doc))
     }
 
-    /// The document to edit: the one named, else the one this conversation
-    /// is about, else the one in front.
-    async fn target(
-        &self,
-        client: &Client,
-        file: Option<&str>,
-        focus: Option<&Focus>,
-    ) -> Result<String> {
+    /// The document to edit: the one named, else the one the user's message
+    /// named with @. Not the one in front: a file is worked on only when
+    /// the user names it.
+    async fn target(&self, client: &Client, file: Option<&str>) -> Result<String> {
         if let Some(file) = file {
             return Ok(self.path(file));
         }
         if let Some(linked) = self.linked_document(client).await {
             return Ok(linked);
         }
-        if let Some(front) = focus
-            .and_then(|f| f.file.as_deref())
-            .filter(|f| cells::kind(Path::new(f)).is_some())
-        {
-            return Ok(front.to_string());
-        }
         bail!(
-            "say which document with `file`: no document is linked to this conversation, and the user has none in front"
+            "say which document with `file`: the user's message names none (they name a file with @ when they want it worked on)"
         )
     }
 

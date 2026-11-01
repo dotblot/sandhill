@@ -230,7 +230,7 @@ export class SessionConsole {
     const home = this.ws.host()?.home;
     const cwd = info?.cwd && home && info.cwd.startsWith(home) ? `~${info.cwd.slice(home.length)}` : info?.cwd;
     const parts = [
-      info ? sessionLabel(info) : this.python ? "Python" : "R",
+      info ? sessionLabel(info, this.ws.kernelspecs()) : this.python ? "Python" : "R",
       spec?.display_name ?? info?.kernel,
       cwd,
       this.ended ? "session ended" : undefined,

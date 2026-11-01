@@ -64,6 +64,14 @@ pub async fn launch(
             vars.entry(key.clone()).or_insert_with(|| value.clone());
         }
     }
+    // The kernel's program is looked for on this PATH too (Rust's Command
+    // searches the child's PATH when one is set).
+    if let Some(path) = crate::paths::program_path() {
+        let vars = spec.kernelspec.env.get_or_insert_with(Default::default);
+        vars.entry("PATH".into())
+            .or_insert_with(|| path.to_string_lossy().into_owned());
+    }
+    let program = spec.kernelspec.argv.first().cloned().unwrap_or_default();
     let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let (ports, listeners) = jupyter_zmq_client::peek_ports_with_listeners(ip, 5).await?;
     let connection_info = ConnectionInfo {
@@ -95,9 +103,20 @@ pub async fn launch(
         Some(Stdio::from(log)),
     )?;
     command.current_dir(cwd).process_group(0);
-    let child = command
-        .spawn()
-        .context("failed to start the kernel process")?;
+    let child = command.spawn().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            let place = if program.contains('/') {
+                ""
+            } else {
+                " on PATH"
+            };
+            anyhow::anyhow!(
+                "cannot start the kernel: its program `{program}` wasn't found{place}. Is it installed? Project settings can pick another kernel"
+            )
+        } else {
+            anyhow::Error::new(err).context(format!("cannot start the kernel's program `{program}`"))
+        }
+    })?;
     // The kernel binds these ports as soon as it starts; release them now.
     drop(listeners);
     let pid = child.id().context("kernel exited immediately")?;
@@ -266,4 +285,22 @@ pub fn kill_process_group(pid: u32) {
     unsafe {
         libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
     }
+}
+
+/// The last lines a kernel printed, from its log, to say why it stopped:
+/// at most `lines` lines and 2 KB.
+pub fn log_tail(log: &Path, lines: usize) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const MAX: u64 = 2048;
+    let mut file = std::fs::File::open(log).ok()?;
+    let size = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(size.saturating_sub(MAX))).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let all: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    // A cut first line is dropped, unless it is all there is.
+    let from = usize::from(size > MAX && all.len() > 1);
+    let kept = &all[from.max(all.len().saturating_sub(lines))..];
+    (!kept.is_empty()).then(|| kept.join("\n"))
 }

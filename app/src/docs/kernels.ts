@@ -3,7 +3,10 @@
 // running in the same folder (as RStudio's scripts share one console), or
 // starts one there. A document that names its kernel, like a notebook, only
 // joins sessions of that kernel. "New …" in the kernel bar starts a separate
-// session for one document.
+// session for one document. Picking a kernel in the kernel bar's menu
+// runs the language in that kernel for this document from then on; until
+// then it is the project's (Project settings), else the one the document
+// names.
 
 import { createSignal, type Setter } from "solid-js";
 import type { KernelspecInfo } from "../backend/types";
@@ -16,6 +19,9 @@ export class DocKernels {
   /** Languages with a kernel starting, as a signal for the kernel bar. */
   private startingNow: () => string[];
   private setStartingNow: Setter<string[]>;
+  /** The kernels the user picked for this document, by language. */
+  readonly chosen: () => Record<string, string>;
+  private setChosen: Setter<Record<string, string>>;
 
   constructor(
     private ws: Workspace,
@@ -26,6 +32,35 @@ export class DocKernels {
   ) {
     [this.assigned, this.setAssigned] = createSignal<Record<string, string>>({});
     [this.startingNow, this.setStartingNow] = createSignal<string[]>([]);
+    [this.chosen, this.setChosen] = createSignal<Record<string, string>>({});
+  }
+
+  /** Brings back the kernels picked for this document before. */
+  restoreChoices(choices: Record<string, string>) {
+    this.setChosen({ ...choices });
+  }
+
+  /** The kernel `language` runs in for this document: the one picked, else the project's or the document's, else the usual one. */
+  kernelFor(language: string): string | undefined {
+    const lang = normalizeLanguage(language);
+    return this.chosen()[lang] ?? this.namedKernel(lang) ?? this.ws.pick(lang, this.preferred(lang))?.name;
+  }
+
+  /**
+   * Runs `language` in `kernel` for this document from now on: in a session
+   * of that kernel in the document's folder if one runs, else a new one.
+   */
+  choose(language: string, kernel: string): Promise<string> {
+    const lang = normalizeLanguage(language);
+    this.setChosen((c) => ({ ...c, [lang]: kernel }));
+    const current = this.session(lang);
+    if (current && this.ws.sessions().find((s) => s.id === current)?.kernel === kernel) return Promise.resolve(current);
+    const join = this.ws.sessionToJoin(lang, this.cwd(), kernel);
+    if (join) {
+      this.assign(lang, join.id);
+      return Promise.resolve(join.id);
+    }
+    return this.track(lang, this.start(lang, kernel, true));
   }
 
   session(language: string): string | undefined {
@@ -52,12 +87,13 @@ export class DocKernels {
     if (existing) return Promise.resolve(existing);
     const pending = this.starting.get(lang);
     if (pending) return pending;
-    const join = this.ws.sessionToJoin(lang, this.cwd(), this.namedKernel(lang));
+    const picked = this.chosen()[lang];
+    const join = this.ws.sessionToJoin(lang, this.cwd(), picked ?? this.namedKernel(lang));
     if (join) {
       this.assign(lang, join.id);
       return Promise.resolve(join.id);
     }
-    return this.track(lang, this.start(lang, undefined, true));
+    return this.track(lang, this.start(lang, picked, true));
   }
 
   isStarting(language: string): boolean {

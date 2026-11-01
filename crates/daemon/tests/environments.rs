@@ -153,3 +153,74 @@ async fn run(client: &mut Client, kernel: &str) -> String {
     client.shutdown(&session).await.unwrap();
     stdout
 }
+
+/// A kernel that can't start says why: its program is missing, or what it
+/// printed before it stopped (Ark that can't find R, say).
+#[tokio::test]
+async fn a_kernel_that_cannot_start_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let jupyter = home.join("jupyter");
+    let kernel = |name: &str, argv: serde_json::Value| {
+        let dir = jupyter.join("kernels").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let spec = serde_json::json!({"argv": argv, "display_name": name, "language": "R"});
+        std::fs::write(dir.join("kernel.json"), spec.to_string()).unwrap();
+    };
+    kernel(
+        "gone",
+        serde_json::json!(["/nowhere/bin/R", "{connection_file}"]),
+    );
+    kernel(
+        "noisy",
+        serde_json::json!([
+            "/bin/sh",
+            "-c",
+            "echo 'Error: cannot find R; set R_HOME' >&2; exit 3",
+            "{connection_file}"
+        ]),
+    );
+    let state = home.join("state");
+    let mut command = Command::new(DAEMON);
+    command
+        .arg("--state-dir")
+        .arg(&state)
+        .arg("serve")
+        .env("HOME", &home)
+        .env("JUPYTER_DATA_DIR", &jupyter)
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    for var in ["JUPYTER_PATH", "XDG_DATA_HOME", "CONDA_EXE", "CONDA_PREFIX"] {
+        command.env_remove(var);
+    }
+    let _serve = command.spawn().unwrap();
+    let socket = state.join("sandhilld.sock");
+    let mut client = None;
+    for _ in 0..100 {
+        if let Ok(c) = Client::connect_unix(&socket).await {
+            client = Some(c);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let client = client.expect("sandhilld did not start");
+
+    let gone = client
+        .start_session("gone", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(gone.contains("`/nowhere/bin/R` wasn't found"), "{gone}");
+    let noisy = client
+        .start_session("noisy", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(noisy.contains("exited during startup"), "{noisy}");
+    assert!(
+        noisy.contains("Error: cannot find R; set R_HOME"),
+        "{noisy}"
+    );
+}

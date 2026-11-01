@@ -410,8 +410,9 @@ pub fn instructions(options: &AgentOptions) -> String {
     } else {
         text.push_str(
             " This conversation is about the whole project, not one file. Files the user \
-             names with @ come with their message; add_cell writes into the document they \
-             named, else the one in front of them.",
+             names with @ (and notebook cells, with #) come with their message: work on a \
+             file only when the user names it. add_cell writes into the document the \
+             message names; when it names none, add_cell runs the code in the Console.",
         );
     }
     text

@@ -110,6 +110,8 @@ export interface ProjectState {
   activeExtra?: string;
   /** Project settings were offered once (saved or not), so they aren't again. */
   setupAsked?: boolean;
+  /** Per document, the kernel picked for each language in its kernel bar. */
+  kernels?: Record<string, Record<string, string>>;
 }
 
 /** Where a project's notebooks and Quarto documents run: their own folder, or the project's. */
