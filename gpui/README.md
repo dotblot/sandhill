@@ -79,6 +79,60 @@ come from `gpui-kit` (Apache-2.0); nothing is taken from Zed's GPL editor.
   the web view after a click elsewhere (a gpui-webview bug there); a page
   run again with the same HTML isn't reloaded.
 
+## Step 1a: the Tauri app's look
+
+From here on the work follows the porting plan (step 1: look and layout).
+
+- `src/look.rs` holds the Tauri app's colour tokens (`app/src/styles.css`),
+  light and dark, and builds gpui-kit's theme from them, so they are
+  written once. It follows the system's appearance; `SANDHILL_APPEARANCE=dark`
+  (or `light`) picks one, for trying it.
+- Every text size is the Tauri app's plus 2px: window text 15px, code 15px
+  in Maple Mono NF, small rows 13px. Maple Mono is bundled as gzipped TTF in
+  `assets/fonts` (GPUI reads TrueType, not the web fonts); `make.py` there
+  makes them from `app/src/fonts`.
+- Icons come from `docs/design/ui/icons` (drawn by its `build.py`), put
+  into the binary and served as `sandhill/…`; file and folder icons are
+  picked by the rules in its `registry.json`, as in the Tauri app.
+- The window is glass panes 3px apart on the warm wall under a 31px title
+  bar of capsules (on a Mac the title bar is Sandhill's own, with the
+  window buttons at its left), the files pane directly on the wall, a
+  26px status bar. Cells have the Tauri gutter (#3, run count, Run under
+  the pointer), code in a rounded box and outputs behind a line coloured
+  by how the run went.
+- Run All now runs cells in order: each run's request waits for the one
+  before it (they used to race, so a cell could run before the one that
+  defines what it uses).
+
+## Step 1b: tabs, a file tree, panes that resize
+
+- The files pane is a tree: each folder is read from the daemon
+  (`list_dir`) the first time it is opened, folders first, with guide
+  lines and the folder icons. `.git`, `.DS_Store`, `.ipynb_checkpoints` and
+  `.Rproj.user` are left out, as in the Tauri app.
+- Notebooks open in tabs. A notebook in a tab not shown keeps its kernel,
+  runs and edits; runs started there keep arriving while another tab is
+  shown. The Data Explorer is a tab too.
+- The gaps between panes can be dragged (files | middle | right, and above
+  Variables); an accent line shows under the pointer. The title bar's first
+  two buttons hide and show the files pane and the right column.
+
+## Step 1c: scripts and formatted Markdown
+
+- `.R` and `.py` files open as scripts: one editor with line numbers.
+  **⌘↵** (Ctrl+Enter on Linux), or **Run line**, runs the selection, or the
+  statement at the cursor, and moves to the next statement, as in RStudio:
+  a call over several lines, a pipe chain, a function or a Python block
+  is one statement (`src/statements.rs`, the rules of the Tauri app's
+  `statements.ts`). **Run file** (⇧⌘↵) runs it all. The runs show in the
+  Console, journaled under the script (`console-0` to `console-99` in turn,
+  as in the Tauri app), so reopening it carries on in the same kernel.
+  Scripts run in the project folder and only in a kernel for their language.
+- A notebook's Markdown cells show formatted (headings at the Tauri app's
+  sizes); a double click edits one, and Shift+Enter or clicking away shows it
+  formatted again. A Quarto document's prose stays text, as in the Tauri app.
+- In a notebook, ⌘↵ runs the cell and stays on it.
+
 ## Running it
 
 ```sh

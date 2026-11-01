@@ -18,11 +18,15 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::look::Palette;
+
 /// A screen line: its text and how each stretch of it looks.
 type Row = (String, Vec<(std::ops::Range<usize>, HighlightStyle)>);
 
-pub const FONT_SIZE: f32 = 12.5;
-pub const LINE_HEIGHT: f32 = 17.;
+/// The Tauri app's 13px, 2px larger; lines as tall as the font's own, so
+/// box-drawing lines join up.
+pub const FONT_SIZE: f32 = crate::look::CODE;
+pub const LINE_HEIGHT: f32 = 18.;
 
 /// Replies the terminal owes the program (to "where is the cursor?" and
 /// the like), sent back as input.
@@ -242,8 +246,10 @@ fn cell_width(window: &mut Window, cx: &App) -> f32 {
         .unwrap_or(FONT_SIZE * 0.6)
 }
 
-/// xterm's colours, with the theme's foreground and background.
-fn rgb_of(color: Color, term: &Term<Replies>, fg: Hsla, bg: Hsla) -> Hsla {
+/// The palette's terminal colours, then xterm's 256, with the palette's
+/// foreground and background.
+fn rgb_of(color: Color, term: &Term<Replies>, p: &Palette) -> Hsla {
+    let (fg, bg) = (p.text, p.term);
     let named = |n: NamedColor| -> Hsla {
         match n {
             NamedColor::Foreground | NamedColor::BrightForeground | NamedColor::Cursor => fg,
@@ -258,7 +264,10 @@ fn rgb_of(color: Color, term: &Term<Replies>, fg: Hsla, bg: Hsla) -> Hsla {
                 } else {
                     index
                 };
-                indexed(index as u8)
+                p.ansi
+                    .get(index)
+                    .copied()
+                    .unwrap_or_else(|| indexed(index as u8))
             }
         }
     };
@@ -270,7 +279,11 @@ fn rgb_of(color: Color, term: &Term<Replies>, fg: Hsla, bg: Hsla) -> Hsla {
         Color::Spec(rgb) => to_hsla(rgb),
         Color::Indexed(i) => match term.colors()[i as usize] {
             Some(rgb) => to_hsla(rgb),
-            None => indexed(i),
+            None => p
+                .ansi
+                .get(i as usize)
+                .copied()
+                .unwrap_or_else(|| indexed(i)),
         },
     }
 }
@@ -301,9 +314,9 @@ fn to_hsla(c: Rgb) -> Hsla {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (fg, bg) = (theme.foreground, theme.background);
-        let mono = theme.mono_font_family.clone();
+        let p = *Palette::get(cx);
+        let bg = p.term;
+        let mono = cx.theme().mono_font_family.clone();
         let focused = self.focus.is_focused(window);
         let content = self.term.renderable_content();
         let cursor = content.cursor.point;
@@ -318,8 +331,8 @@ impl Render for TerminalView {
             if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                 continue;
             }
-            let mut cell_fg = rgb_of(cell.fg, &self.term, fg, bg);
-            let mut cell_bg = rgb_of(cell.bg, &self.term, fg, bg);
+            let mut cell_fg = rgb_of(cell.fg, &self.term, &p);
+            let mut cell_bg = rgb_of(cell.bg, &self.term, &p);
             if cell.flags.contains(Flags::INVERSE) {
                 std::mem::swap(&mut cell_fg, &mut cell_bg);
             }
@@ -327,8 +340,8 @@ impl Render for TerminalView {
             if at_cursor && focused && self.exited.is_none() {
                 std::mem::swap(&mut cell_fg, &mut cell_bg);
                 if cell_bg == bg {
-                    cell_bg = fg;
-                    cell_fg = bg;
+                    cell_bg = p.accent;
+                    cell_fg = p.bg;
                 }
             }
             let start = text.len();
