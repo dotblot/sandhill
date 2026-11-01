@@ -18,6 +18,7 @@ sandhill-proto = { path = "../crates/proto" }
 sandhill-link = { path = "../crates/link" }
 # For the output and Quarto chunk rules the daemon and the web UI share.
 sandhill-daemon = { path = "../crates/daemon" }
+alacritty_terminal = "0.26"
 anyhow = "1"
 base64 = "0.22"
 gpui-kit = { version = "=0.8.1", features = ["tree-sitter-python", "tree-sitter-markdown"] }

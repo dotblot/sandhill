@@ -39,6 +39,24 @@ come from `gpui-kit` (Apache-2.0); nothing is taken from Zed's GPL editor.
   text replaced. A file changed on disk since it was read isn't overwritten.
   Switching to another notebook saves the edited one first.
 
+## Milestone 3: Console, Variables, Terminal, ssh
+
+- The right side has **Console** and **Terminal** tabs over a **Variables**
+  pane.
+- The Console follows the open notebook's kernel and shows its history,
+  each run labelled with the cell (or agent) that sent it. Code typed below
+  runs in the same kernel (Shift+Enter). With no notebook open, **Start**
+  gives the Console a kernel of its own; **Stop** shuts it down.
+- Variables lists the kernel's variables after each run; lists, data frames
+  and other containers open with the arrow.
+- Terminal is a real shell from the daemon (in the project folder), drawn
+  with `alacritty_terminal`: colours, full-screen programs like `top`,
+  Ctrl+C, paste. It keeps running when the app closes and is picked up again.
+- The **Machine** box at the top connects to another computer over ssh
+  (`--host HOST` on the command line does the same), using the same
+  `sandhill-link` code as the Tauri app. The start screen lists recent
+  projects on that machine and takes a folder path.
+
 ## Running it
 
 ```sh

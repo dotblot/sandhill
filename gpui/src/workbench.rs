@@ -1,45 +1,42 @@
-//! The window: a project's files on the left, the open notebook in the
-//! middle, with an editor and a Run button on each cell.
+//! The window's state and what it does: the connection, the project, the
+//! open notebook, the kernel's runs, the Console, Variables and Terminal.
+//! Drawing is in `view.rs`.
 
 use std::collections::{HashMap, HashSet};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use base64::Engine;
-use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Editor, EditorState, InputEvent};
-use gpui_kit::component::{ActiveTheme, Disableable, Sizable, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::component::input::{EditorState, InputEvent, InputState};
 use gpui_kit::*;
 use sandhill_daemon::outputs::OutputBuilder;
 use sandhill_link::Target;
 use sandhill_proto::{
-    BLOB_KEY, Blob, CONFLICT_ERROR, Call, CellRef, EVENT_RUN_FINISHED, EVENT_SESSION_ENDED, Event,
-    FileOutputs, FileText, FileWritten, KernelspecInfo, PingReply, ProjectInfo, RunStarted,
-    SessionInfo, SessionStatus, Subscribed,
+    BLOB_KEY, Blob, CONFLICT_ERROR, Call, CellRef, EVENT_RUN_FINISHED, EVENT_RUN_STARTED,
+    EVENT_SESSION_ENDED, Event, FileOutputs, FileText, FileWritten, KernelspecInfo, PingReply,
+    ProjectInfo, RunStarted, SessionInfo, SessionRuns, SessionStatus, Subscribed, TERMINAL_SHELL,
+    TerminalEvent, TerminalInfo, TerminalSubscribed, Variable, Variables,
 };
 use serde_json::Value;
+use tokio::runtime::Runtime;
 
-use crate::daemon::Daemon;
+use crate::daemon::{Daemon, Streams};
 use crate::notebook::{self, CellKind, Format, Notebook};
 use crate::shown::{Shown, show};
-use crate::{RunAll, RunCell, Save};
+use crate::terminal::TerminalView;
 
 const MAX_FILES: u32 = 5000;
-/// Height of one line in a cell's editor, and its padding.
-const LINE_HEIGHT: f32 = 20.;
-const EDITOR_PADDING: f32 = 20.;
-const PLOT_MAX_WIDTH: f32 = 720.;
+/// Runs the Console keeps.
+const CONSOLE_RUNS: usize = 200;
 
-enum Link {
+pub(crate) enum Link {
     Connecting,
     Failed(String),
     Ready(Rc<Daemon>),
 }
 
 #[derive(Default)]
-enum Session {
+pub(crate) enum Session {
     #[default]
     None,
     Starting,
@@ -47,133 +44,317 @@ enum Session {
     Failed(String),
 }
 
-/// A run's events as they arrive, and the outputs built from them.
-#[derive(Default)]
-struct Run {
-    events: Vec<(String, Value)>,
-    outputs: Vec<Value>,
-    finished: bool,
-    status: Option<String>,
-    execution_count: Option<u64>,
+impl Session {
+    pub(crate) fn id(&self) -> Option<&str> {
+        match self {
+            Session::Ready(id) => Some(id),
+            _ => None,
+        }
+    }
 }
 
-enum Plot {
+/// One piece of code a kernel ran, from a cell, the Console or an agent.
+#[derive(Default)]
+pub(crate) struct Run {
+    pub code: String,
+    /// The notebook cell it came from: (file, cell id).
+    pub cell: Option<(String, String)>,
+    /// Who ran it when it wasn't the user (an agent).
+    pub by: Option<String>,
+    /// Code a tool ran to look around (Variables); not shown.
+    pub quiet: bool,
+    events: Vec<(String, Value)>,
+    pub outputs: Vec<Value>,
+    pub finished: bool,
+    pub status: Option<String>,
+    pub execution_count: Option<u64>,
+}
+
+pub(crate) enum Plot {
     Loading,
     Ready(Arc<Image>),
     Failed(String),
 }
 
-struct Open {
-    notebook: Notebook,
+pub(crate) struct Open {
+    pub notebook: Notebook,
     /// One editor per cell, text cells included.
-    editors: Vec<Entity<EditorState>>,
+    pub editors: Vec<Entity<EditorState>>,
     /// Edited since the last save.
-    dirty: bool,
+    pub dirty: bool,
     mtime_ms: i64,
-    kernel: Option<String>,
-    session: Session,
+    pub kernel: Option<String>,
+    pub session: Session,
     /// Cells waiting for the kernel to start.
-    waiting: Vec<usize>,
+    pub waiting: Vec<usize>,
     /// Cells sent to the daemon whose run id hasn't come back yet.
-    sending: HashSet<String>,
+    pub sending: HashSet<String>,
     /// Each cell's latest run.
-    cell_runs: HashMap<String, String>,
-    runs: HashMap<String, Run>,
+    pub cell_runs: HashMap<String, String>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Open {
-    fn session_id(&self) -> Option<&str> {
-        match &self.session {
-            Session::Ready(id) => Some(id),
-            _ => None,
-        }
-    }
-
     fn sources(&self, cx: &App) -> Vec<String> {
         self.editors
             .iter()
             .map(|e| e.read(cx).value().to_string())
             .collect()
     }
+}
 
-    /// Forgets the kernel, for a switch to another.
-    fn reset_session(&mut self) {
-        self.session = Session::None;
-        self.waiting.clear();
-        self.sending.clear();
-    }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RightTab {
+    Console,
+    Terminal,
+}
+
+/// The Variables pane: the active kernel's variables, and the parts of
+/// those opened.
+#[derive(Default)]
+pub(crate) struct Vars {
+    pub session: Option<String>,
+    pub list: Vec<Variable>,
+    pub children: HashMap<Vec<String>, Vec<Variable>>,
+    pub expanded: HashSet<Vec<String>>,
+    pub loading: bool,
+    pub error: Option<String>,
 }
 
 pub struct Workbench {
-    link: Link,
-    about: Option<PingReply>,
-    kernels: Vec<KernelspecInfo>,
-    project: Option<String>,
-    files: Vec<String>,
-    open: Option<Open>,
+    rt: Arc<Runtime>,
+    /// Counts connections, so a late reply for an old one is dropped.
+    generation: u64,
+    pub(crate) target: Target,
+    pub(crate) link: Link,
+    pub(crate) about: Option<PingReply>,
+    pub(crate) host_input: Entity<InputState>,
+    pub(crate) path_input: Entity<InputState>,
+    pub(crate) kernels: Vec<KernelspecInfo>,
+    pub(crate) recent: Vec<ProjectInfo>,
+    pub(crate) project: Option<String>,
+    pub(crate) files: Vec<String>,
+    pub(crate) open: Option<Open>,
+    /// The Console's kernel when no notebook is open.
+    pub(crate) loose: Session,
+    pub(crate) loose_kernel: Option<String>,
+    /// Every run seen, by id.
+    pub(crate) runs: HashMap<String, Run>,
+    /// The Console: the active kernel's runs, oldest first.
+    pub(crate) console: Vec<String>,
+    console_session: Option<String>,
+    pub(crate) console_input: Entity<EditorState>,
+    pub(crate) console_scroll: ScrollHandle,
+    pub(crate) vars: Vars,
+    pub(crate) right_tab: RightTab,
+    pub(crate) terminal: Option<Entity<TerminalView>>,
+    pub(crate) terminal_problem: Option<String>,
+    terminal_starting: bool,
     /// Plots by blob hash (or by a hash of an inline value).
-    plots: HashMap<String, Plot>,
+    pub(crate) plots: HashMap<String, Plot>,
     /// The latest problem, shown at the bottom.
-    problem: Option<String>,
+    pub(crate) problem: Option<String>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Workbench {
     pub fn new(
-        rt: Arc<tokio::runtime::Runtime>,
+        rt: Arc<Runtime>,
+        target: Target,
         project: Option<String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let connect = Daemon::connect(rt, Target::Local);
-        cx.spawn(async move |this, cx| {
-            let result = connect.await;
-            let events = this
-                .update(cx, |this, cx| {
-                    let events = this.connected(result, project, cx);
-                    cx.notify();
-                    events
-                })
-                .ok()
-                .flatten();
-            let Some(mut events) = events else {
-                return;
-            };
-            while let Some(event) = events.recv().await {
-                if this
-                    .update(cx, |this, cx| this.on_event(event, cx))
-                    .is_err()
-                {
-                    break;
+        let host = match &target {
+            Target::Local => sandhill_link::LOCAL.to_string(),
+            Target::Ssh(destination) => destination.to_string(),
+        };
+        let host_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("local, or an ssh host")
+                .default_value(host)
+        });
+        let path_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("A folder on that machine, like ~/analysis")
+        });
+        let console_input = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("python")
+                .line_number(false)
+                .folding(false)
+                .scroll_beyond_last_line(Some(0))
+                .soft_wrap(false)
+                .submit_on_enter(true)
+                .placeholder("Type code; Enter runs it")
+        });
+        let subscriptions = vec![
+            cx.subscribe(&host_input, |this, input, event: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    let host = input.read(cx).value().trim().to_string();
+                    match Target::parse(if host.is_empty() { "local" } else { &host }) {
+                        Ok(target) => this.connect(target, None, cx),
+                        Err(err) => {
+                            this.problem = Some(err.to_string());
+                            cx.notify();
+                        }
+                    }
                 }
-            }
-        })
-        .detach();
-        Workbench {
+            }),
+            cx.subscribe(&path_input, |this, input, event: &InputEvent, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    let path = input.read(cx).value().trim().to_string();
+                    if !path.is_empty() {
+                        this.open_project(path, cx);
+                    }
+                }
+            }),
+            cx.subscribe_in(
+                &console_input,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter {
+                        secondary: false,
+                        shift: false,
+                    } = event
+                    {
+                        this.run_console(window, cx);
+                    }
+                },
+            ),
+        ];
+        let mut this = Workbench {
+            rt,
+            generation: 0,
+            target: target.clone(),
             link: Link::Connecting,
             about: None,
+            host_input,
+            path_input,
             kernels: Vec::new(),
+            recent: Vec::new(),
             project: None,
             files: Vec::new(),
             open: None,
+            loose: Session::None,
+            loose_kernel: None,
+            runs: HashMap::new(),
+            console: Vec::new(),
+            console_session: None,
+            console_input,
+            console_scroll: ScrollHandle::new(),
+            vars: Vars::default(),
+            right_tab: RightTab::Console,
+            terminal: None,
+            terminal_problem: None,
+            terminal_starting: false,
             plots: HashMap::new(),
             problem: None,
-        }
+            _subscriptions: subscriptions,
+        };
+        this.connect(target, project, cx);
+        this
     }
 
-    fn daemon(&self) -> Option<Rc<Daemon>> {
+    pub(crate) fn daemon(&self) -> Option<Rc<Daemon>> {
         match &self.link {
             Link::Ready(daemon) => Some(daemon.clone()),
             _ => None,
         }
     }
 
-    fn connected(
+    /// Connects to the daemon on `target`, leaving any earlier one.
+    pub(crate) fn connect(
         &mut self,
-        result: anyhow::Result<(Daemon, tokio::sync::mpsc::UnboundedReceiver<Event>)>,
+        target: Target,
         project: Option<String>,
         cx: &mut Context<Self>,
-    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<Event>> {
-        let (daemon, events) = match result {
+    ) {
+        if self.open.as_ref().is_some_and(|o| o.dirty) {
+            self.save(cx);
+        }
+        self.generation += 1;
+        let generation = self.generation;
+        self.target = target.clone();
+        self.link = Link::Connecting;
+        self.about = None;
+        self.kernels.clear();
+        self.recent.clear();
+        self.project = None;
+        self.files.clear();
+        self.open = None;
+        self.loose = Session::None;
+        self.runs.clear();
+        self.console.clear();
+        self.console_session = None;
+        self.vars = Vars::default();
+        self.terminal = None;
+        self.terminal_problem = None;
+        self.terminal_starting = false;
+        self.problem = None;
+        let connect = Daemon::connect(self.rt.clone(), target);
+        cx.spawn(async move |this, cx| {
+            let result = connect.await;
+            let streams = this
+                .update(cx, |this, cx| {
+                    if this.generation != generation {
+                        return None;
+                    }
+                    let streams = this.connected(result, project, cx);
+                    cx.notify();
+                    streams
+                })
+                .ok()
+                .flatten();
+            let Some(Streams {
+                mut events,
+                mut terminals,
+            }) = streams
+            else {
+                return;
+            };
+            let terminal_this = this.clone();
+            cx.spawn(async move |cx| {
+                while let Some(event) = terminals.recv().await {
+                    let alive = terminal_this.update(cx, |this, cx| {
+                        if this.generation == generation {
+                            this.on_terminal_event(event, cx)
+                        }
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+            while let Some(event) = events.recv().await {
+                let alive = this.update(cx, |this, cx| {
+                    if this.generation == generation {
+                        this.on_event(event, cx)
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+            this.update(cx, |this, cx| {
+                if this.generation == generation {
+                    this.link = Link::Failed("The connection to sandhilld ended".into());
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn connected(
+        &mut self,
+        result: anyhow::Result<(Daemon, Streams)>,
+        project: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<Streams> {
+        let (daemon, streams) = match result {
             Ok(ok) => ok,
             Err(err) => {
                 self.link = Link::Failed(format!("{err:#}"));
@@ -184,9 +365,11 @@ impl Workbench {
         self.link = Link::Ready(daemon.clone());
         let ping = daemon.call::<PingReply>(Call::Ping);
         let kernels = daemon.call::<Vec<KernelspecInfo>>(Call::ListKernelspecs);
+        let recent = daemon.call::<Vec<ProjectInfo>>(Call::ListRecentProjects);
         cx.spawn(async move |this, cx| {
             let ping = ping.await;
             let kernels = kernels.await;
+            let recent = recent.await;
             this.update(cx, |this, cx| {
                 match ping {
                     Ok(ping) => this.about = Some(ping),
@@ -196,6 +379,7 @@ impl Workbench {
                     Ok(kernels) => this.kernels = kernels,
                     Err(err) => this.problem = Some(format!("Listing kernels failed: {err:#}")),
                 }
+                this.recent = recent.unwrap_or_default();
                 cx.notify();
             })
             .ok();
@@ -204,10 +388,10 @@ impl Workbench {
         if let Some(project) = project {
             self.open_project(project, cx);
         }
-        Some(events)
+        Some(streams)
     }
 
-    fn choose_project(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn choose_project(&mut self, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -237,9 +421,16 @@ impl Workbench {
         .detach();
     }
 
-    fn open_project(&mut self, path: String, cx: &mut Context<Self>) {
+    pub(crate) fn open_project(&mut self, path: String, cx: &mut Context<Self>) {
         let Some(daemon) = self.daemon() else {
             return;
+        };
+        // A folder typed for a server can start with ~.
+        let path = match (path.strip_prefix('~'), &self.about) {
+            (Some(rest), Some(about)) if rest.is_empty() || rest.starts_with('/') => {
+                format!("{}{rest}", about.home)
+            }
+            _ => path,
         };
         let opened = daemon.call::<ProjectInfo>(Call::OpenProject { path: path.clone() });
         let files = daemon.call::<Vec<String>>(Call::ListFiles {
@@ -251,13 +442,20 @@ impl Workbench {
             let files = files.await;
             this.update(cx, |this, cx| {
                 match opened {
+                    Ok(project) if !project.exists => {
+                        this.problem = Some(format!("{} doesn't exist", project.path))
+                    }
                     Ok(project) => {
                         this.close_notebook(cx);
+                        this.terminal = None;
                         this.project = Some(project.path);
                         let mut files = files.unwrap_or_default();
                         files.sort();
                         this.files = files;
                         this.problem = None;
+                        if this.right_tab == RightTab::Terminal {
+                            this.ensure_terminal(cx);
+                        }
                     }
                     Err(err) => this.problem = Some(format!("Opening the project failed: {err:#}")),
                 }
@@ -268,7 +466,28 @@ impl Workbench {
         .detach();
     }
 
-    fn open_file(&mut self, rel: String, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_files(&mut self, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
+            return;
+        };
+        let files = daemon.call::<Vec<String>>(Call::ListFiles {
+            path: project,
+            limit: Some(MAX_FILES),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(mut files) = files.await {
+                files.sort();
+                this.update(cx, |this, cx| {
+                    this.files = files;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn open_file(&mut self, rel: String, cx: &mut Context<Self>) {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
@@ -307,6 +526,7 @@ impl Workbench {
                                     Some(format!("Reading saved outputs failed: {err:#}"))
                             }
                         }
+                        this.session_changed(cx);
                     }
                     Err(err) => this.problem = Some(format!("Opening {rel} failed: {err:#}")),
                 }
@@ -325,11 +545,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let kernel = notebook::pick_kernel(&nb, &self.kernels);
-        let code_language = match nb.language.as_deref() {
-            Some("python") => "python",
-            Some("r") => "r",
-            _ => "text",
-        };
+        let code_language = editor_language(nb.language.as_deref());
         let mut subscriptions = Vec::new();
         let editors = nb
             .cells
@@ -345,8 +561,10 @@ impl Workbench {
                         .language(language)
                         .line_number(false)
                         .folding(false)
-                        // The notebook scrolls, not the cell.
+                        // The notebook scrolls, not the cell, and a cell is as
+                        // tall as its lines.
                         .scroll_beyond_last_line(Some(0))
+                        .soft_wrap(false)
                         .default_value(source)
                 });
                 subscriptions.push(cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
@@ -371,7 +589,6 @@ impl Workbench {
             waiting: Vec::new(),
             sending: HashSet::new(),
             cell_runs: HashMap::new(),
-            runs: HashMap::new(),
             _subscriptions: subscriptions,
         });
         self.problem = None;
@@ -397,14 +614,16 @@ impl Workbench {
                 continue;
             }
             outputs.extend(cell.outputs.iter().cloned());
-            open.runs.insert(
+            self.runs.insert(
                 cell.run.clone(),
                 Run {
-                    events: Vec::new(),
+                    code: cell.code,
+                    cell: Some((saved.file.clone(), cell.cell_id.clone())),
                     outputs: cell.outputs,
                     finished: cell.finished_ms.is_some(),
                     status: cell.status,
                     execution_count: cell.execution_count,
+                    ..Default::default()
                 },
             );
             open.cell_runs.insert(cell.cell_id, cell.run);
@@ -439,15 +658,16 @@ impl Workbench {
 
     /// Closes the open notebook, saving it first if it was edited. Its
     /// kernel keeps running, so reopening carries on where it left off.
-    fn close_notebook(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_notebook(&mut self, cx: &mut Context<Self>) {
         if self.open.as_ref().is_some_and(|o| o.dirty) {
             self.save(cx);
         }
         self.open = None;
+        self.session_changed(cx);
         cx.notify();
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
         let (Some(daemon), Some(open)) = (self.daemon(), self.open.as_ref()) else {
             return;
         };
@@ -515,31 +735,131 @@ impl Workbench {
         .detach();
     }
 
-    fn choose_kernel(&mut self, name: String, cx: &mut Context<Self>) {
-        let daemon = self.daemon();
-        let Some(open) = self.open.as_mut() else {
+    /// The kernel the Console and Variables follow: the open notebook's,
+    /// else the Console's own.
+    pub(crate) fn active_session(&self) -> Option<&str> {
+        match &self.open {
+            Some(open) => open.session.id(),
+            None => self.loose.id(),
+        }
+    }
+
+    pub(crate) fn active_kernel(&self) -> Option<&str> {
+        match &self.open {
+            Some(open) => open.kernel.as_deref(),
+            None => self.loose_kernel.as_deref(),
+        }
+    }
+
+    pub(crate) fn active_state(&self) -> &Session {
+        match &self.open {
+            Some(open) => &open.session,
+            None => &self.loose,
+        }
+    }
+
+    /// Follows a change of the active kernel: the Console shows its runs
+    /// and Variables its variables.
+    fn session_changed(&mut self, cx: &mut Context<Self>) {
+        let active = self.active_session().map(str::to_string);
+        let language = self
+            .active_kernel()
+            .and_then(|k| self.kernels.iter().find(|s| s.name == k))
+            .map(|s| s.language.to_ascii_lowercase());
+        let language = editor_language(language.as_deref());
+        if self.console_input.read(cx).language_name() != language {
+            self.console_input
+                .update(cx, |input, cx| input.set_highlighter(language, cx));
+        }
+        if active == self.console_session {
+            return;
+        }
+        self.console_session = active.clone();
+        self.console.clear();
+        self.vars = Vars::default();
+        let (Some(daemon), Some(session)) = (self.daemon(), active) else {
+            cx.notify();
             return;
         };
-        if open.kernel.as_deref() == Some(&name) {
-            return;
-        }
-        if let (Some(daemon), Some(session)) = (daemon, open.session_id()) {
-            let stop = daemon.call::<Value>(Call::Shutdown {
-                session: session.to_string(),
-            });
-            cx.background_spawn(async move {
-                if let Err(err) = stop.await {
-                    tracing::warn!("stopping a kernel failed: {err:#}");
+        let history = daemon.call::<SessionRuns>(Call::SessionRuns {
+            session: session.clone(),
+            limit: Some(50),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(history) = history.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if this.console_session.as_deref() != Some(&session) {
+                    return;
                 }
+                let mut ids = Vec::new();
+                let mut outputs = Vec::new();
+                for run in history.runs {
+                    ids.push(run.run.clone());
+                    outputs.extend(run.outputs.iter().cloned());
+                    this.runs.entry(run.run).or_insert_with(|| Run {
+                        code: run.code,
+                        cell: run.cell.map(|c| (c.file, c.cell_id)),
+                        by: run.by,
+                        outputs: run.outputs,
+                        finished: run.finished_ms.is_some(),
+                        status: run.status,
+                        execution_count: run.execution_count,
+                        ..Default::default()
+                    });
+                }
+                // Runs that started while the history was on its way stay.
+                ids.retain(|id| !this.console.contains(id));
+                ids.append(&mut this.console);
+                this.console = ids;
+                this.console_scroll.scroll_to_bottom();
+                this.fetch_plots(&outputs, cx);
+                this.refresh_variables(cx);
+                cx.notify();
             })
-            .detach();
-        }
-        open.reset_session();
-        open.kernel = Some(name);
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
-    fn run_cell(&mut self, index: usize, cx: &mut Context<Self>) {
+    pub(crate) fn choose_kernel(&mut self, name: String, cx: &mut Context<Self>) {
+        let daemon = self.daemon();
+        let (kernel, session) = match self.open.as_mut() {
+            Some(open) => (&mut open.kernel, &mut open.session),
+            None => (&mut self.loose_kernel, &mut self.loose),
+        };
+        if kernel.as_deref() == Some(&name) {
+            return;
+        }
+        if let (Some(daemon), Some(id)) = (daemon, session.id()) {
+            daemon.fire(Call::Shutdown {
+                session: id.to_string(),
+            });
+        }
+        *session = Session::None;
+        *kernel = Some(name);
+        if let Some(open) = self.open.as_mut() {
+            open.waiting.clear();
+            open.sending.clear();
+        }
+        self.session_changed(cx);
+        cx.notify();
+    }
+
+    /// Starts the Console's own kernel (when no notebook is open).
+    pub(crate) fn start_console_kernel(&mut self, cx: &mut Context<Self>) {
+        if self.open.is_some() {
+            return;
+        }
+        if self.loose_kernel.is_none() {
+            self.loose_kernel = self.kernels.first().map(|k| k.name.clone());
+        }
+        self.start_session(cx);
+    }
+
+    pub(crate) fn run_cell(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(open) = self.open.as_mut() else {
             return;
         };
@@ -557,7 +877,7 @@ impl Workbench {
         cx.notify();
     }
 
-    fn run_all(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn run_all(&mut self, cx: &mut Context<Self>) {
         let count = self.open.as_ref().map_or(0, |o| o.notebook.cells.len());
         for index in 0..count {
             self.run_cell(index, cx);
@@ -566,7 +886,12 @@ impl Workbench {
 
     /// Runs the cell whose editor has focus, then moves to the next code
     /// cell, as Shift+Enter does in Jupyter.
-    fn run_and_advance(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn run_and_advance(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.run_cell(index, cx);
         let Some(open) = self.open.as_ref() else {
             return;
@@ -578,23 +903,32 @@ impl Workbench {
         }
     }
 
+    /// Starts the active kernel: the notebook's (in its folder) or the
+    /// Console's (in the project folder).
     fn start_session(&mut self, cx: &mut Context<Self>) {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
-        let Some(open) = self.open.as_mut() else {
+        let notebook_path = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let (kernel, session, cwd) = match self.open.as_mut() {
+            Some(open) => (
+                open.kernel.clone(),
+                &mut open.session,
+                open.notebook.folder().to_string(),
+            ),
+            None => (self.loose_kernel.clone(), &mut self.loose, project.clone()),
+        };
+        let Some(kernel) = kernel else {
+            *session = Session::Failed("No kernel is installed".into());
+            if let Some(open) = self.open.as_mut() {
+                open.waiting.clear();
+            }
             return;
         };
-        let Some(kernel) = open.kernel.clone() else {
-            open.session = Session::Failed("No kernel is installed".into());
-            open.waiting.clear();
-            return;
-        };
-        open.session = Session::Starting;
-        let path = open.notebook.path.clone();
+        *session = Session::Starting;
         let started = daemon.call::<SessionInfo>(Call::StartSession {
             kernel,
-            cwd: Some(open.notebook.folder().to_string()),
+            cwd: Some(cwd),
             project: Some(project),
         });
         cx.spawn(async move |this, cx| {
@@ -610,19 +944,32 @@ impl Workbench {
                 Err(err) => Err(err),
             };
             this.update(cx, |this, cx| {
-                let Some(open) = this.open.as_mut().filter(|o| o.notebook.path == path) else {
+                let here = this.open.as_ref().map(|o| o.notebook.path.clone());
+                if here != notebook_path {
                     return;
+                }
+                let slot = match this.open.as_mut() {
+                    Some(open) => &mut open.session,
+                    None => &mut this.loose,
                 };
                 match session {
                     Ok(id) => {
-                        open.session = Session::Ready(id);
-                        for index in std::mem::take(&mut open.waiting) {
+                        *slot = Session::Ready(id);
+                        let waiting = this
+                            .open
+                            .as_mut()
+                            .map(|o| std::mem::take(&mut o.waiting))
+                            .unwrap_or_default();
+                        for index in waiting {
                             this.execute(index, cx);
                         }
+                        this.session_changed(cx);
                     }
                     Err(err) => {
-                        open.session = Session::Failed(format!("{err:#}"));
-                        open.waiting.clear();
+                        *slot = Session::Failed(format!("{err:#}"));
+                        if let Some(open) = this.open.as_mut() {
+                            open.waiting.clear();
+                        }
                     }
                 }
                 cx.notify();
@@ -640,7 +987,7 @@ impl Workbench {
             return;
         };
         let (Some(session), Some(cell), Some(editor)) = (
-            open.session_id(),
+            open.session.id(),
             open.notebook.cells.get(index),
             open.editors.get(index),
         ) else {
@@ -668,7 +1015,7 @@ impl Workbench {
                 open.sending.remove(&cell_id);
                 match started {
                     Ok(run) => {
-                        open.runs.entry(run.run.clone()).or_default();
+                        this.runs.entry(run.run.clone()).or_default();
                         open.cell_runs.insert(cell_id, run.run);
                     }
                     Err(err) => this.problem = Some(format!("Running the cell failed: {err:#}")),
@@ -680,19 +1027,69 @@ impl Workbench {
         .detach();
     }
 
-    fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
-        let Some(open) = self.open.as_mut() else {
-            return;
-        };
-        if open.session_id() != Some(event.session.as_str()) {
+    /// Runs what is typed in the Console in the active kernel.
+    pub(crate) fn run_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let code = self.console_input.read(cx).value().to_string();
+        if code.trim().is_empty() {
             return;
         }
+        let (Some(daemon), Some(session)) =
+            (self.daemon(), self.active_session().map(str::to_string))
+        else {
+            self.problem = Some("Start a kernel first (the buttons above the Console).".into());
+            cx.notify();
+            return;
+        };
+        self.console_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        let started = daemon.call::<RunStarted>(Call::Execute {
+            session,
+            code,
+            cell: None,
+            quiet: false,
+            by: None,
+        });
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = started.await {
+                this.update(cx, |this, cx| {
+                    this.problem = Some(format!("Running the code failed: {err:#}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        self.problem = None;
+    }
+
+    pub(crate) fn interrupt(&mut self) {
+        if let (Some(daemon), Some(session)) = (self.daemon(), self.active_session()) {
+            daemon.fire(Call::Interrupt {
+                session: session.to_string(),
+            });
+        }
+    }
+
+    fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        let notebook_session = self.open.as_ref().and_then(|o| o.session.id());
+        let ours = notebook_session == Some(event.session.as_str())
+            || self.loose.id() == Some(event.session.as_str());
+        if !ours {
+            return;
+        }
+        let active = self.active_session() == Some(event.session.as_str());
         if event.msg_type == EVENT_SESSION_ENDED {
-            for run in open.runs.values_mut().filter(|r| !r.finished) {
+            for run in self.runs.values_mut().filter(|r| !r.finished) {
                 run.finished = true;
                 run.status = Some("the kernel stopped".into());
             }
-            open.session = Session::Failed("The kernel stopped".into());
+            let ended = Session::Failed("The kernel stopped".into());
+            match self.open.as_mut() {
+                Some(open) if open.session.id() == Some(event.session.as_str()) => {
+                    open.session = ended
+                }
+                _ => self.loose = ended,
+            }
             cx.notify();
             return;
         }
@@ -700,28 +1097,259 @@ impl Workbench {
         let Some(run_id) = event.run else {
             return;
         };
-        let run = open.runs.entry(run_id).or_default();
-        if event.msg_type == EVENT_RUN_FINISHED {
-            run.finished = true;
-            run.status = event.content["status"].as_str().map(str::to_string);
-            run.execution_count = event.content["execution_count"].as_u64();
-        } else {
-            let is_plot = matches!(
-                event.msg_type.as_str(),
-                "display_data" | "execute_result" | "update_display_data"
-            );
-            run.events.push((event.msg_type, event.content));
-            let mut builder = OutputBuilder::new();
-            for (msg_type, content) in &run.events {
-                builder.push(msg_type, content);
+        if active && !event.msg_type.starts_with("status") {
+            self.console_scroll.scroll_to_bottom();
+        }
+        let run = self.runs.entry(run_id.clone()).or_default();
+        match event.msg_type.as_str() {
+            EVENT_RUN_STARTED => {
+                let content = &event.content;
+                run.code = content["code"].as_str().unwrap_or_default().to_string();
+                run.quiet = content["quiet"].as_bool().unwrap_or(false);
+                run.by = content["by"].as_str().map(str::to_string);
+                run.cell = match (
+                    content["cell"]["file"].as_str(),
+                    content["cell"]["cell_id"].as_str(),
+                ) {
+                    (Some(file), Some(id)) => Some((file.to_string(), id.to_string())),
+                    _ => None,
+                };
+                if !run.quiet && active && !self.console.contains(&run_id) {
+                    self.console.push(run_id);
+                    if self.console.len() > CONSOLE_RUNS {
+                        self.console.remove(0);
+                    }
+                }
             }
-            run.outputs = builder.finish();
-            if is_plot {
-                let outputs = run.outputs.clone();
-                self.fetch_plots(&outputs, cx);
+            EVENT_RUN_FINISHED => {
+                run.finished = true;
+                run.status = event.content["status"].as_str().map(str::to_string);
+                run.execution_count = event.content["execution_count"].as_u64();
+                if !run.quiet && active {
+                    self.refresh_variables(cx);
+                }
+            }
+            _ if run.quiet => {}
+            msg_type => {
+                let is_plot = matches!(
+                    msg_type,
+                    "display_data" | "execute_result" | "update_display_data"
+                );
+                run.events.push((event.msg_type, event.content));
+                let mut builder = OutputBuilder::new();
+                for (msg_type, content) in &run.events {
+                    builder.push(msg_type, content);
+                }
+                run.outputs = builder.finish();
+                if is_plot {
+                    let outputs = run.outputs.clone();
+                    self.fetch_plots(&outputs, cx);
+                }
             }
         }
         cx.notify();
+    }
+
+    /// Lists the active kernel's variables again, and the parts open.
+    pub(crate) fn refresh_variables(&mut self, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(session)) =
+            (self.daemon(), self.active_session().map(str::to_string))
+        else {
+            return;
+        };
+        self.vars.session = Some(session.clone());
+        self.vars.loading = true;
+        let mut paths = vec![Vec::new()];
+        paths.extend(self.vars.expanded.iter().cloned());
+        for path in paths {
+            let listed = daemon.call::<Variables>(Call::ListVariables {
+                session: session.clone(),
+                path: path.clone(),
+            });
+            let session = session.clone();
+            cx.spawn(async move |this, cx| {
+                let listed = listed.await;
+                this.update(cx, |this, cx| {
+                    if this.vars.session.as_deref() != Some(&session) {
+                        return;
+                    }
+                    match listed {
+                        Ok(listed) if path.is_empty() => {
+                            this.vars.list = listed.variables;
+                            this.vars.loading = false;
+                            this.vars.error = None;
+                        }
+                        Ok(listed) => {
+                            this.vars.children.insert(path, listed.variables);
+                        }
+                        // Busy with other code: the list updates when it ends.
+                        Err(err) if path.is_empty() => {
+                            this.vars.loading = false;
+                            if !format!("{err:#}").contains("busy") {
+                                this.vars.error = Some(format!("{err:#}"));
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_variable(&mut self, path: Vec<String>, cx: &mut Context<Self>) {
+        if self.vars.expanded.remove(&path) {
+            cx.notify();
+            return;
+        }
+        let (Some(daemon), Some(session)) = (self.daemon(), self.vars.session.clone()) else {
+            return;
+        };
+        self.vars.expanded.insert(path.clone());
+        let listed = daemon.call::<Variables>(Call::ListVariables {
+            session,
+            path: path.clone(),
+        });
+        cx.spawn(async move |this, cx| {
+            let listed = listed.await;
+            this.update(cx, |this, cx| {
+                match listed {
+                    Ok(listed) => {
+                        this.vars.children.insert(path, listed.variables);
+                    }
+                    Err(err) => {
+                        this.vars.expanded.remove(&path);
+                        this.problem = Some(format!("Listing its parts failed: {err:#}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(crate) fn show_tab(&mut self, tab: RightTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.right_tab = tab;
+        if tab == RightTab::Terminal {
+            self.ensure_terminal(cx);
+            if let Some(terminal) = &self.terminal {
+                let focus = terminal.read(cx).focus_handle();
+                window.focus(&focus, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Finds the project's shell terminal, or starts one, and follows it.
+    fn ensure_terminal(&mut self, cx: &mut Context<Self>) {
+        if self.terminal.is_some() || self.terminal_starting {
+            return;
+        }
+        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
+            return;
+        };
+        self.terminal_starting = true;
+        self.terminal_problem = None;
+        let listed = daemon.call::<Vec<TerminalInfo>>(Call::ListTerminals);
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let existing = listed
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+                .find(|t| {
+                    t.kind == TERMINAL_SHELL && t.running && t.project.as_deref() == Some(&project)
+                });
+            let info = match existing {
+                Some(info) => Ok(info),
+                None => {
+                    daemon
+                        .call::<TerminalInfo>(Call::StartTerminal {
+                            kind: TERMINAL_SHELL.into(),
+                            cwd: Some(project.clone()),
+                            project: Some(project),
+                            cols: Some(80),
+                            rows: Some(24),
+                            options: Default::default(),
+                            prompt: None,
+                        })
+                        .await
+                }
+            };
+            let subscribed = match &info {
+                Ok(info) => daemon
+                    .call::<TerminalSubscribed>(Call::SubscribeTerminal {
+                        terminal: info.id.clone(),
+                        from: None,
+                        chat_from: None,
+                    })
+                    .await
+                    .map(|_| ()),
+                Err(_) => Ok(()),
+            };
+            this.update_in(cx, |this, window, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                this.terminal_starting = false;
+                match info.and_then(|info| subscribed.map(|_| info)) {
+                    Ok(info) => {
+                        let id = info.id.clone();
+                        let input = daemon.ordered({
+                            let id = id.clone();
+                            move |data| Call::TerminalInput {
+                                terminal: id.clone(),
+                                data,
+                            }
+                        });
+                        let resize = {
+                            let daemon = daemon.clone();
+                            let id = id.clone();
+                            Box::new(move |cols, rows| {
+                                daemon.fire(Call::ResizeTerminal {
+                                    terminal: id.clone(),
+                                    cols,
+                                    rows,
+                                })
+                            })
+                        };
+                        let view = cx.new(|cx| TerminalView::new(id, input, resize, cx));
+                        if this.right_tab == RightTab::Terminal {
+                            let focus = view.read(cx).focus_handle();
+                            window.focus(&focus, cx);
+                        }
+                        this.terminal = Some(view);
+                    }
+                    Err(err) => this.terminal_problem = Some(format!("{err:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn on_terminal_event(&mut self, event: TerminalEvent, cx: &mut Context<Self>) {
+        let Some(view) = self.terminal.clone() else {
+            return;
+        };
+        if view.read(cx).id != event.terminal {
+            return;
+        }
+        view.update(cx, |view, cx| {
+            if let Some(data) = &event.data {
+                view.feed(data, cx);
+            }
+            if let Some(exit) = &event.exit {
+                view.exited(format!("ended: {exit:?}"), cx);
+            }
+        });
     }
 
     /// Starts loading the plots in `outputs` that aren't loaded yet.
@@ -773,6 +1401,15 @@ impl Workbench {
     }
 }
 
+/// The highlighter for a kernel language.
+fn editor_language(language: Option<&str>) -> &'static str {
+    match language {
+        Some("python") => "python",
+        Some("r") => "r",
+        _ => "text",
+    }
+}
+
 /// The plot's bytes: base64 for bitmaps, the text itself for SVG.
 fn decode(format: ImageFormat, text: String) -> anyhow::Result<Vec<u8>> {
     if format == ImageFormat::Svg {
@@ -782,7 +1419,8 @@ fn decode(format: ImageFormat, text: String) -> anyhow::Result<Vec<u8>> {
     Ok(base64::engine::general_purpose::STANDARD.decode(clean)?)
 }
 
-fn plot_key(value: &Value) -> String {
+pub(crate) fn plot_key(value: &Value) -> String {
+    use std::hash::{DefaultHasher, Hash, Hasher};
     match value[BLOB_KEY].as_str() {
         Some(hash) => hash.to_string(),
         None => {
@@ -790,403 +1428,5 @@ fn plot_key(value: &Value) -> String {
             value.to_string().hash(&mut hasher);
             format!("inline-{:x}", hasher.finish())
         }
-    }
-}
-
-impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        v_flex()
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .text_sm()
-            .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
-            .on_action(cx.listener(|this, _: &RunAll, _, cx| this.run_all(cx)))
-            .child(self.render_top_bar(cx))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .items_start()
-                    .child(self.render_files(cx))
-                    .child(self.render_notebook(cx)),
-            )
-            .child(self.render_status(cx))
-    }
-}
-
-impl Workbench {
-    fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let project = self
-            .project
-            .as_deref()
-            .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
-            .unwrap_or_else(|| "No project".into());
-        h_flex()
-            .w_full()
-            .h(px(40.))
-            .px_3()
-            .gap_3()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Sandhill"))
-            .child(div().text_color(theme.muted_foreground).child(project))
-            .child(
-                Button::new("open-project")
-                    .small()
-                    .label("Open Project…")
-                    .disabled(self.daemon().is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.choose_project(cx))),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(self.connection_text()),
-            )
-    }
-
-    fn connection_text(&self) -> String {
-        match (&self.link, &self.about) {
-            (Link::Connecting, _) => "Starting sandhilld…".into(),
-            (Link::Failed(_), _) => "Not connected".into(),
-            (Link::Ready(_), Some(about)) => {
-                format!("{} · sandhilld {}", about.hostname, about.daemon_version)
-            }
-            (Link::Ready(_), None) => "Connected".into(),
-        }
-    }
-
-    fn render_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let open_path = self.open.as_ref().map(|o| o.notebook.path.clone());
-        let project = self.project.clone().unwrap_or_default();
-        let list = uniform_list(
-            "files",
-            self.files.len(),
-            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                let theme = cx.theme();
-                range
-                    .map(|ix| {
-                        let rel = this.files[ix].clone();
-                        let is_notebook = notebook::format_of(&rel).is_some();
-                        let is_open = open_path.as_deref() == Some(&format!("{project}/{rel}"));
-                        div()
-                            .id(("file", ix))
-                            .w_full()
-                            .h(px(24.))
-                            .px_3()
-                            .flex()
-                            .items_center()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .when(!is_notebook, |d| d.text_color(theme.muted_foreground))
-                            .when(is_open, |d| d.bg(theme.list_active))
-                            .hover(|d| d.bg(theme.list_hover))
-                            .cursor_pointer()
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.open_file(rel.clone(), cx)),
-                            )
-                            .child(this.files[ix].clone())
-                    })
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .size_full();
-        v_flex()
-            .w(px(260.))
-            .h_full()
-            .flex_none()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(theme.sidebar)
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(if self.project.is_some() {
-                        format!("Files ({})", self.files.len())
-                    } else {
-                        "Files".into()
-                    }),
-            )
-            .child(div().flex_1().min_h_0().child(list))
-    }
-
-    fn render_notebook(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let Some(open) = &self.open else {
-            let hint = match &self.link {
-                Link::Failed(err) => format!("Could not start sandhilld: {err}"),
-                _ if self.project.is_none() => "Open a project folder to begin.".into(),
-                _ => "Pick a notebook (.ipynb, .qmd or .Rmd) on the left.".into(),
-            };
-            return div()
-                .flex_1()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(theme.muted_foreground)
-                .child(hint)
-                .into_any_element();
-        };
-        let cells = open
-            .notebook
-            .cells
-            .iter()
-            .enumerate()
-            .map(|(ix, cell)| match cell.kind {
-                CellKind::Text => div()
-                    .px_2()
-                    .child(self.render_editor(open, ix, cx))
-                    .into_any_element(),
-                CellKind::Code => self.render_code_cell(open, ix, cx),
-            })
-            .collect::<Vec<_>>();
-        v_flex()
-            .flex_1()
-            .h_full()
-            .min_w_0()
-            .child(self.render_notebook_bar(open, cx))
-            .child(
-                div()
-                    .id("cells")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(v_flex().p_4().gap_3().children(cells)),
-            )
-            .into_any_element()
-    }
-
-    fn render_notebook_bar(&self, open: &Open, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let session = match &open.session {
-            Session::None => "Kernel not started".to_string(),
-            Session::Starting => "Starting kernel…".to_string(),
-            Session::Ready(_) => "Kernel ready".to_string(),
-            Session::Failed(err) => format!("Kernel: {err}"),
-        };
-        let kernels = self.kernels.iter().enumerate().map(|(ix, spec)| {
-            let name = spec.name.clone();
-            let chosen = open.kernel.as_deref() == Some(&spec.name);
-            let button = Button::new(("kernel", ix))
-                .xsmall()
-                .label(spec.display_name.clone())
-                .on_click(cx.listener(move |this, _, _, cx| this.choose_kernel(name.clone(), cx)));
-            if chosen {
-                button.primary()
-            } else {
-                button.ghost()
-            }
-        });
-        let name = if open.dirty {
-            format!("{} •", open.notebook.name())
-        } else {
-            open.notebook.name().to_string()
-        };
-        h_flex()
-            .w_full()
-            .px_4()
-            .py_2()
-            .gap_2()
-            .flex_wrap()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
-            .child(
-                Button::new("save")
-                    .xsmall()
-                    .ghost()
-                    .label("Save")
-                    .disabled(!open.dirty)
-                    .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
-            )
-            .child(
-                Button::new("run-all")
-                    .xsmall()
-                    .ghost()
-                    .label("Run All")
-                    .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
-            )
-            .child(div().w(px(12.)))
-            .children(kernels)
-            .child(div().flex_1())
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(session),
-            )
-    }
-
-    /// A cell's editor, as tall as its text, so the notebook scrolls and
-    /// the cell doesn't.
-    fn render_editor(&self, open: &Open, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let editor = &open.editors[ix];
-        let lines = editor.read(cx).value().split('\n').count().max(1);
-        div()
-            .w_full()
-            .on_action(cx.listener(move |this, _: &RunCell, window, cx| {
-                this.run_and_advance(ix, window, cx)
-            }))
-            .child(
-                Editor::new(editor)
-                    .bordered(false)
-                    .h(px(lines as f32 * LINE_HEIGHT + EDITOR_PADDING)),
-            )
-            .into_any_element()
-    }
-
-    fn render_code_cell(&self, open: &Open, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let cell = &open.notebook.cells[ix];
-        let run = open
-            .cell_runs
-            .get(&cell.id)
-            .and_then(|id| open.runs.get(id));
-        let busy = open.sending.contains(&cell.id)
-            || open.waiting.contains(&ix)
-            || run.is_some_and(|r| !r.finished);
-        let count = match run {
-            Some(run) => run.execution_count,
-            None => cell.execution_count,
-        };
-        let label = match count {
-            _ if busy => "[*]".to_string(),
-            Some(n) => format!("[{n}]"),
-            None => "[ ]".into(),
-        };
-        let outputs: &[Value] = match run {
-            Some(run) => &run.outputs,
-            None => &cell.outputs,
-        };
-        let outputs: Vec<AnyElement> = outputs
-            .iter()
-            .map(|o| self.render_output(show(o), cx))
-            .collect();
-        let failed = run
-            .and_then(|r| r.status.as_deref())
-            .filter(|s| *s != "ok" && *s != "error")
-            .map(|s| s.to_string());
-        v_flex()
-            .w_full()
-            .border_1()
-            .border_color(theme.border)
-            .rounded_md()
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap_2()
-                    .p_1()
-                    .bg(theme.secondary)
-                    .rounded_t_md()
-                    .child(
-                        v_flex()
-                            .w(px(44.))
-                            .pt_1()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                Button::new(("run", ix))
-                                    .xsmall()
-                                    .ghost()
-                                    .label("Run")
-                                    .loading(busy)
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| this.run_cell(ix, cx)),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(label),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.render_editor(open, ix, cx)),
-                    ),
-            )
-            .when(!outputs.is_empty() || failed.is_some(), |d| {
-                d.child(
-                    v_flex()
-                        .p_2()
-                        .gap_1()
-                        .border_t_1()
-                        .border_color(theme.border)
-                        .children(outputs)
-                        .when_some(failed, |d, s| {
-                            d.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.danger)
-                                    .child(format!("Run ended: {s}")),
-                            )
-                        }),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn render_output(&self, shown: Shown, cx: &App) -> AnyElement {
-        let theme = cx.theme();
-        let mono = theme.mono_font_family.clone();
-        let text = |s: String| {
-            div()
-                .font_family(mono.clone())
-                .text_size(px(12.5))
-                .child(s.trim_end_matches('\n').to_string())
-        };
-        let note = |s: String| {
-            div()
-                .text_xs()
-                .italic()
-                .text_color(theme.muted_foreground)
-                .child(s)
-                .into_any_element()
-        };
-        match shown {
-            Shown::Text(s) => text(s).into_any_element(),
-            Shown::Warning(s) => text(s).text_color(theme.warning).into_any_element(),
-            Shown::Error(s) => text(s).text_color(theme.danger).into_any_element(),
-            Shown::Note(s) => note(s),
-            Shown::Plot { value, .. } => match self.plots.get(&plot_key(&value)) {
-                Some(Plot::Ready(image)) => div()
-                    .child(img(image.clone()).max_w(px(PLOT_MAX_WIDTH)))
-                    .into_any_element(),
-                Some(Plot::Failed(err)) => note(format!("The plot could not be shown: {err}")),
-                _ => note("Loading the plot…".into()),
-            },
-        }
-    }
-
-    fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        h_flex()
-            .w_full()
-            .h(px(24.))
-            .px_3()
-            .border_t_1()
-            .border_color(theme.border)
-            .text_xs()
-            .text_color(if self.problem.is_some() {
-                theme.danger
-            } else {
-                theme.muted_foreground
-            })
-            .child(self.problem.clone().unwrap_or_else(|| {
-                "GPUI trial · milestone 2 · Shift+Enter runs a cell, ⌘S saves".into()
-            }))
     }
 }

@@ -2,11 +2,14 @@
 //! view. It reaches sandhilld exactly as the Tauri app does, so kernels,
 //! saved outputs and servers behave the same.
 //!
-//! Usage: `sandhill-gpui [PROJECT_FOLDER]`
+//! Usage: `sandhill-gpui [--host HOST] [PROJECT_FOLDER]`, where HOST is
+//! `local` (the default) or an ssh destination such as `lab`.
 
 mod daemon;
 mod notebook;
 mod shown;
+mod terminal;
+mod view;
 mod workbench;
 
 use std::sync::Arc;
@@ -16,7 +19,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::workbench::Workbench;
 
-actions!(sandhill, [Quit, Save, RunCell, RunAll]);
+actions!(sandhill, [Quit, Save, RunCell, RunAll, Interrupt]);
 
 /// Highlighting for R, with Posit's tree-sitter grammar (MIT).
 fn register_r() {
@@ -39,10 +42,22 @@ fn main() -> anyhow::Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let project = std::env::args().nth(1).map(|p| {
-        std::fs::canonicalize(&p)
+    let mut args = std::env::args().skip(1);
+    let mut host = sandhill_link::LOCAL.to_string();
+    let mut project = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--host" => host = args.next().unwrap_or(host),
+            _ => project = Some(arg),
+        }
+    }
+    let target = sandhill_link::Target::parse(&host)?;
+    // A folder on this machine can be given relative to here.
+    let project = project.map(|p| match target {
+        sandhill_link::Target::Local => std::fs::canonicalize(&p)
             .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or(p)
+            .unwrap_or(p),
+        _ => p,
     });
     let rt = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
@@ -57,10 +72,10 @@ fn main() -> anyhow::Result<()> {
             gpui_kit::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             register_r();
-            let (save, run_all) = if cfg!(target_os = "macos") {
-                ("cmd-s", "cmd-shift-enter")
+            let (save, run_all, interrupt) = if cfg!(target_os = "macos") {
+                ("cmd-s", "cmd-shift-enter", "cmd-.")
             } else {
-                ("ctrl-s", "ctrl-shift-enter")
+                ("ctrl-s", "ctrl-shift-enter", "ctrl-.")
             };
             cx.bind_keys([
                 KeyBinding::new("cmd-q", Quit, None),
@@ -69,6 +84,7 @@ fn main() -> anyhow::Result<()> {
                 // adding a line, as in Jupyter.
                 KeyBinding::new("shift-enter", RunCell, Some("Input")),
                 KeyBinding::new(run_all, RunAll, None),
+                KeyBinding::new(interrupt, Interrupt, None),
             ]);
             cx.set_menus(vec![Menu {
                 name: "Sandhill".into(),
@@ -86,8 +102,8 @@ fn main() -> anyhow::Result<()> {
                 }),
                 ..Default::default()
             };
-            gpui_kit::open_window(options, cx, |_, cx| {
-                cx.new(|cx| Workbench::new(rt.clone(), project.clone(), cx))
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| Workbench::new(rt.clone(), target.clone(), project.clone(), window, cx))
             })
             .expect("could not open the window");
             cx.activate(true);

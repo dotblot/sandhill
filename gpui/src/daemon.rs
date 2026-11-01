@@ -12,13 +12,17 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use sandhill_link::{Options, Target};
 use sandhill_proto::client::Client;
-use sandhill_proto::{Call, Event};
+use sandhill_proto::{Call, Event, TerminalEvent};
 use serde::de::DeserializeOwned;
-#[cfg(test)]
-use serde_json::Value;
 use tokio::process::Child;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+/// What a connection streams: session events and terminal output.
+pub struct Streams {
+    pub events: UnboundedReceiver<Event>,
+    pub terminals: UnboundedReceiver<TerminalEvent>,
+}
 
 pub struct Daemon {
     rt: Arc<Runtime>,
@@ -33,22 +37,26 @@ impl Daemon {
     pub fn connect(
         rt: Arc<Runtime>,
         target: Target,
-    ) -> impl Future<Output = Result<(Daemon, UnboundedReceiver<Event>)>> + 'static {
+    ) -> impl Future<Output = Result<(Daemon, Streams)>> + 'static {
         let task = rt.spawn(async move {
             let progress = |message: &str| tracing::info!("{message}");
             let mut conn = sandhill_link::connect(&target, &Options::default(), &progress).await?;
             let events = conn.client.take_events().context("no event stream")?;
-            anyhow::Ok((conn, events))
+            let terminals = conn
+                .client
+                .take_terminal_events()
+                .context("no terminal stream")?;
+            anyhow::Ok((conn, Streams { events, terminals }))
         });
         async move {
-            let (conn, events) = task.await??;
+            let (conn, streams) = task.await??;
             Ok((
                 Daemon {
                     rt,
                     client: Arc::new(conn.client),
                     _child: conn.child,
                 },
-                events,
+                streams,
             ))
         }
     }
@@ -61,6 +69,34 @@ impl Daemon {
         let client = self.client.clone();
         let task = self.rt.spawn(async move { client.call::<T>(call).await });
         async move { Ok(task.await??) }
+    }
+
+    /// Sends calls one after another, in order, without waiting for
+    /// replies: for keys typed into a terminal.
+    pub fn ordered(
+        &self,
+        make: impl Fn(String) -> Call + Send + 'static,
+    ) -> UnboundedSender<String> {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let client = self.client.clone();
+        self.rt.spawn(async move {
+            while let Some(text) = rx.recv().await {
+                if let Err(err) = client.call::<serde_json::Value>(make(text)).await {
+                    tracing::warn!("{err}");
+                }
+            }
+        });
+        tx
+    }
+
+    /// Sends a call and only logs a failure.
+    pub fn fire(&self, call: Call) {
+        let client = self.client.clone();
+        self.rt.spawn(async move {
+            if let Err(err) = client.call::<serde_json::Value>(call).await {
+                tracing::warn!("{err}");
+            }
+        });
     }
 }
 
@@ -124,7 +160,7 @@ mod tests {
             std::env::set_var("SANDHILL_DAEMON", &exe);
             std::env::set_var("SANDHILL_SOCKET", &socket);
         }
-        let (daemon, mut events) = rt
+        let (daemon, streams) = rt
             .block_on(Daemon::connect(rt.clone(), Target::Local))
             .unwrap();
 
@@ -172,6 +208,7 @@ mod tests {
         let mut builder = OutputBuilder::new();
         rt.block_on(async {
             tokio::time::timeout(Duration::from_secs(60), async {
+                let mut events = streams.events;
                 while let Some(event) = events.recv().await {
                     if event.run.as_deref() != Some(&run.run) {
                         continue;
@@ -191,7 +228,7 @@ mod tests {
             shown,
             [Shown::Text("hello\n".into()), Shown::Text("42".into())]
         );
-        let _: Value = rt
+        let _: serde_json::Value = rt
             .block_on(daemon.call(Call::Shutdown {
                 session: session.id,
             }))
