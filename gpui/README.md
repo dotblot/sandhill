@@ -104,6 +104,19 @@ From here on the work follows the porting plan (step 1: look and layout).
   before it (they used to race, so a cell could run before the one that
   defines what it uses).
 
+## Step 1b: tabs, a file tree, panes that resize
+
+- The files pane is a tree: each folder is read from the daemon
+  (`list_dir`) the first time it is opened, folders first, with guide
+  lines and the folder icons. `.git`, `.DS_Store`, `.ipynb_checkpoints` and
+  `.Rproj.user` are left out, as in the Tauri app.
+- Notebooks open in tabs. A notebook in a tab not shown keeps its kernel,
+  runs and edits; runs started there keep arriving while another tab is
+  shown. The Data Explorer is a tab too.
+- The gaps between panes can be dragged (files | middle | right, and above
+  Variables); an accent line shows under the pointer. The title bar's first
+  two buttons hide and show the files pane and the right column.
+
 ## Running it
 
 ```sh

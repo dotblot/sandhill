@@ -18,7 +18,9 @@ use crate::look::{
 };
 use crate::notebook::{self, CellKind};
 use crate::shown::{Shown, show};
-use crate::workbench::{Link, Open, Plot, RightTab, Run, Session, Workbench, is_script, plot_key};
+use crate::workbench::{
+    Link, Open, Plot, RightTab, Run, Session, Split, Workbench, is_script, plot_key,
+};
 use crate::{Interrupt, RunAll, RunCell, Save};
 
 /// Height of one line of code (15px Maple Mono at 1.3), and an editor's
@@ -26,11 +28,8 @@ use crate::{Interrupt, RunAll, RunCell, Save};
 const LINE_HEIGHT: f32 = 20.;
 const EDITOR_PADDING: f32 = 20.;
 const PLOT_MAX_WIDTH: f32 = 720.;
-const RIGHT_WIDTH: f32 = 460.;
-const FILES_WIDTH: f32 = 240.;
 /// The notebook's gutter, with each cell's number.
 const GUTTER: f32 = 52.;
-const VARIABLES_HEIGHT: f32 = 250.;
 /// Height of a web page under a cell.
 const PAGE_HEIGHT: f32 = 420.;
 
@@ -48,6 +47,24 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, _: &RunAll, _, cx| this.run_all(cx)))
             .on_action(cx.listener(|this, _: &Interrupt, _, _| this.interrupt()))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                if let Some(split) = this.dragging {
+                    this.drag_split(split, event.position, window.viewport_size(), cx);
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.dragging.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
+            .map(|d| match self.dragging {
+                Some(Split::Variables) => d.cursor(CursorStyle::ResizeUpDown),
+                Some(_) => d.cursor(CursorStyle::ResizeLeftRight),
+                None => d,
+            })
             .child(self.render_top_bar(window, cx))
             .child(
                 h_flex()
@@ -57,10 +74,15 @@ impl Render for Workbench {
                     .pt(px(GAP))
                     .pr(px(GAP))
                     .when(!self.show_files, |d| d.pl(px(GAP)))
-                    .gap(px(GAP))
-                    .when(self.show_files, |d| d.child(self.render_files(cx)))
+                    .when(self.show_files, |d| {
+                        d.child(self.render_files(cx))
+                            .child(self.splitter(Split::Files, cx))
+                    })
                     .child(self.render_notebook(window, cx))
-                    .child(self.render_right(cx)),
+                    .when(self.show_right, |d| {
+                        d.child(self.splitter(Split::Right, cx))
+                            .child(self.render_right(cx))
+                    }),
             )
             .child(self.render_status(cx))
     }
@@ -71,6 +93,90 @@ impl Render for Workbench {
 const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
 
 impl Workbench {
+    /// A gap between panes that can be dragged; an accent line shows under
+    /// the pointer.
+    fn splitter(&self, split: Split, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        let across = split == Split::Variables;
+        let dragging = self.dragging == Some(split);
+        let id: SharedString = format!("split-{split:?}").into();
+        let line = div()
+            .absolute()
+            .rounded(px(1.))
+            .bg(p.accent)
+            .map(|d| {
+                if across {
+                    d.top(px(0.5))
+                        .h(px(2.))
+                        .left(relative(0.3))
+                        .right(relative(0.3))
+                } else {
+                    d.left(px(0.5))
+                        .w(px(2.))
+                        .top(relative(0.3))
+                        .bottom(relative(0.3))
+                }
+            })
+            .opacity(if dragging { 0.8 } else { 0. });
+        let group: SharedString = format!("{id}-group").into();
+        div()
+            .id(id)
+            .group(group.clone())
+            .relative()
+            .flex_none()
+            .map(|d| {
+                if across {
+                    d.h(px(GAP)).w_full().cursor(CursorStyle::ResizeUpDown)
+                } else {
+                    d.w(px(GAP)).h_full().cursor(CursorStyle::ResizeLeftRight)
+                }
+            })
+            .child(line.group_hover(group, |d| d.opacity(0.8)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.dragging = Some(split);
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            )
+    }
+
+    /// Resizes the panes beside a gap being dragged to the pointer.
+    fn drag_split(
+        &mut self,
+        split: Split,
+        at: Point<Pixels>,
+        window: Size<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let (x, y) = (f32::from(at.x), f32::from(at.y));
+        let (width, height) = (f32::from(window.width), f32::from(window.height));
+        // The middle keeps at least this much room.
+        let middle = 360.;
+        match split {
+            Split::Files => {
+                let most = (width - self.right_width - middle).max(160.);
+                self.files_width = x.clamp(160., most.min(560.));
+            }
+            Split::Right => {
+                let files = if self.show_files {
+                    self.files_width
+                } else {
+                    0.
+                };
+                let most = (width - files - middle).max(280.);
+                self.right_width = (width - x - GAP).clamp(280., most);
+            }
+            Split::Variables => {
+                let bottom = height - look::STATUS_BAR;
+                let most = (bottom - look::TITLE_BAR - 160.).max(80.);
+                self.variables_height = (bottom - y).clamp(80., most);
+            }
+        }
+        cx.notify();
+    }
+
     /// The title bar: a capsule of window buttons after the Mac's own, the
     /// machine's tab in the middle, and the edit capsule at the right.
     fn render_top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -175,6 +281,15 @@ impl Workbench {
                                     })),
                             )
                             .child(
+                                icon_button("toggle-right", "sidebar.right", &p, true)
+                                    .when(self.show_right, |d| d.text_color(p.text))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_right = !this.show_right;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(capsule_divider(&p))
+                            .child(
                                 icon_button("open-project", "folder", &p, true)
                                     .when(self.daemon().is_none() || !local, |d| d.opacity(0.32))
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -184,15 +299,11 @@ impl Workbench {
                                     })),
                             )
                             .when(self.project.is_some(), |d| {
-                                d.child(icon_button("close-project", "close", &p, true).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.close_notebook(cx);
-                                        this.project = None;
-                                        this.files.clear();
-                                        this.terminal = None;
-                                        cx.notify();
-                                    }),
-                                ))
+                                d.child(
+                                    icon_button("close-project", "close", &p, true).on_click(
+                                        cx.listener(|this, _, _, cx| this.close_project(cx)),
+                                    ),
+                                )
                             }),
                     )
                     .child(div().flex_1())
@@ -247,45 +358,90 @@ impl Workbench {
     }
 
     /// The left pane, directly on the wall: the project's name, then its
-    /// files.
+    /// folders and files as a tree.
     fn render_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let open_path = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let count = self.tree.rows().len();
         let project = self.project.clone().unwrap_or_default();
+        let open_path = self.open.as_ref().map(|o| o.notebook.path.clone());
         let list = uniform_list(
             "files",
-            self.files.len(),
+            count,
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                let rows = this.tree.rows();
                 range
-                    .map(|ix| {
-                        let rel = this.files[ix].clone();
-                        let is_notebook = notebook::format_of(&rel).is_some();
-                        let is_open = open_path.as_deref() == Some(&format!("{project}/{rel}"));
+                    .filter_map(|ix| rows.get(ix).map(|row| (ix, row)))
+                    .map(|(ix, row)| {
+                        let indent = 8. + 16. * row.depth as f32;
                         let hover = p.ink(7.);
-                        h_flex()
+                        let line = h_flex()
                             .id(("file", ix))
+                            .relative()
                             .w_full()
                             .h(px(22.))
-                            .px(px(8.))
+                            .pl(px(indent))
+                            .pr(px(8.))
                             .gap(px(6.))
                             .rounded(px(RADIUS))
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .when(!is_notebook, |d| d.text_color(p.muted))
+                            // A line down from each folder above, as a guide.
+                            .children((0..row.depth).map(|level| {
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .bottom_0()
+                                    .left(px(8. + 16. * level as f32 + 6.5))
+                                    .w(px(1.))
+                                    .bg(p.ink(12.))
+                            }));
+                        if let Some(note) = &row.note {
+                            return line
+                                .pl(px(indent + 20.))
+                                .text_color(p.faint)
+                                .child(note.clone())
+                                .into_any_element();
+                        }
+                        let rel = row.rel.clone();
+                        let name = div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(row.name.clone());
+                        if row.dir {
+                            return line
+                                .cursor_pointer()
+                                .hover(move |d| d.bg(hover))
+                                .child(
+                                    div().w(px(14.)).flex_none().text_color(p.faint).child(
+                                        icon(if row.open {
+                                            "chevron.down"
+                                        } else {
+                                            "chevron.right"
+                                        })
+                                        .size(px(13.)),
+                                    ),
+                                )
+                                .child(picture(&look::folder_icon(&row.name)))
+                                .child(name)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_folder(rel.clone(), cx)
+                                }))
+                                .into_any_element();
+                        }
+                        let openable = notebook::format_of(&row.name).is_some();
+                        let is_open = open_path.as_deref() == Some(&format!("{project}/{rel}"));
+                        line.pl(px(indent + 20.))
+                            .when(!openable, |d| d.text_color(p.muted))
                             .when(is_open, |d| d.bg(p.accent.opacity(0.2)))
                             .when(!is_open, |d| d.hover(move |d| d.bg(hover)))
                             .cursor_pointer()
-                            .child(picture(&look::file_icon(&rel)))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .child(rel.clone()),
-                            )
+                            .child(picture(&look::file_icon(&row.name)))
+                            .child(name)
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.open_file(rel.clone(), cx)),
                             )
+                            .into_any_element()
                     })
                     .collect::<Vec<_>>()
             }),
@@ -296,7 +452,7 @@ impl Workbench {
             .as_deref()
             .map(|p| p.rsplit('/').next().unwrap_or(p).to_string());
         v_flex()
-            .w(px(FILES_WIDTH))
+            .w(px(self.files_width))
             .h_full()
             .flex_none()
             .child(
@@ -316,13 +472,13 @@ impl Workbench {
                             .text_ellipsis()
                             .child(name.clone().unwrap_or_else(|| "No project".into())),
                     )
-                    .when(name.is_some(), |d| {
+                    .when_some(self.tree.top_count(), |d, n| {
                         d.child(
                             div()
                                 .font_weight(FontWeight::NORMAL)
                                 .text_color(p.faint)
                                 .text_size(px(look::SMALL))
-                                .child(self.files.len().to_string()),
+                                .child(n.to_string()),
                         )
                     })
                     .child(div().flex_1())
@@ -380,7 +536,11 @@ impl Workbench {
 
     fn render_notebook(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        if let Some(explorer) = &self.explorer {
+        if let Some(explorer) = self
+            .explorer
+            .as_ref()
+            .filter(|_| self.explorer_shown || self.open.is_none())
+        {
             return self.render_explorer(explorer, cx);
         }
         let Some(open) = &self.open else {
@@ -405,32 +565,10 @@ impl Workbench {
                 CellKind::Code => self.render_code_cell(open, ix, window, cx),
             })
             .collect::<Vec<_>>();
-        let path = open.notebook.path.clone();
         pane(&p)
             .flex_1()
             .h_full()
-            .child(
-                Self::strip(&p).child(
-                    capsule(&p, 22.).child(
-                        Self::tab(
-                            "notebook-tab",
-                            Some(
-                                picture(&look::file_icon(&path))
-                                    .size(px(14.))
-                                    .into_any_element(),
-                            ),
-                            open.notebook.name().to_string(),
-                            true,
-                            &p,
-                        )
-                        .child(self.close_button(
-                            "close-notebook",
-                            open.dirty,
-                            cx,
-                        )),
-                    ),
-                ),
-            )
+            .child(self.render_tabs(cx))
             .child(self.render_notebook_bar(open, cx))
             .child(
                 div()
@@ -453,20 +591,90 @@ impl Workbench {
             .into_any_element()
     }
 
+    /// The middle pane's tabs: the open notebooks, in the order they were
+    /// opened, then the Data Explorer.
+    fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
+        let p = *Palette::get(cx);
+        let shown = match (&self.open, self.explorer_shown) {
+            (_, true) => None,
+            (Some(open), false) => Some(open.notebook.path.clone()),
+            (None, false) => None,
+        };
+        let mut tabs: Vec<AnyElement> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(ix, path)| {
+                let name = path.rsplit('/').next().unwrap_or(path).to_string();
+                let show = path.clone();
+                Self::tab(
+                    ("file-tab", ix),
+                    Some(
+                        picture(&look::file_icon(path))
+                            .size(px(14.))
+                            .into_any_element(),
+                    ),
+                    name,
+                    shown.as_deref() == Some(path),
+                    &p,
+                )
+                .child(self.close_button(ix, path.clone(), self.tab_dirty(path), cx))
+                .on_click(cx.listener(move |this, _, _, cx| this.show_file_tab(&show, cx)))
+                .into_any_element()
+            })
+            .collect();
+        if let Some(explorer) = &self.explorer {
+            let hover = p.ink(8.);
+            let text = p.text;
+            tabs.push(
+                Self::tab(
+                    "explorer-tab",
+                    Some(icon("table").size(px(14.)).into_any_element()),
+                    explorer.read(cx).name(),
+                    self.explorer_shown,
+                    &p,
+                )
+                .child(
+                    div()
+                        .id("explorer-close")
+                        .size(px(16.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .text_color(p.faint)
+                        .hover(move |d| d.bg(hover).text_color(text))
+                        .child(icon("close").size(px(12.)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_explorer(cx)
+                        })),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.explorer_shown = true;
+                    cx.notify();
+                }))
+                .into_any_element(),
+            );
+        }
+        Self::strip(&p).child(capsule(&p, 22.).gap(px(1.)).min_w_0().children(tabs))
+    }
+
     /// A tab's close button; unsaved, a dot that turns into it under the
     /// pointer.
     fn close_button(
         &self,
-        id: &'static str,
+        ix: usize,
+        path: String,
         dirty: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = *Palette::get(cx);
         let hover = p.ink(8.);
         let text = p.text;
-        let group: SharedString = format!("{id}-group").into();
+        let group: SharedString = format!("close-tab-{ix}").into();
         div()
-            .id(id)
+            .id(("close-tab", ix))
             .group(group.clone())
             .size(px(16.))
             .flex()
@@ -475,9 +683,9 @@ impl Workbench {
             .rounded_full()
             .text_color(p.faint)
             .hover(move |d| d.bg(hover).text_color(text))
-            .on_click(cx.listener(|this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                this.close_notebook(cx)
+                this.close_tab(&path, cx)
             }))
             .map(|d| {
                 if dirty {
@@ -500,36 +708,15 @@ impl Workbench {
 
     fn render_explorer(&self, explorer: &Entity<Explorer>, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let name = explorer.read(cx).name();
         let reload = explorer.clone();
         pane(&p)
             .flex_1()
             .h_full()
             .child(
-                Self::strip(&p)
-                    .child(
-                        capsule(&p, 22.).child(
-                            Self::tab(
-                                "explorer-tab",
-                                Some(icon("table").size(px(14.)).into_any_element()),
-                                name,
-                                true,
-                                &p,
-                            )
-                            .child(
-                                icon_button("explorer-close", "close", &p, false)
-                                    .size(px(16.))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.close_explorer(cx)),
-                                    ),
-                            ),
-                        ),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        bar_button("explorer-refresh", "Refresh", Some("refresh"), &p)
-                            .on_click(move |_, _, cx| reload.update(cx, |e, cx| e.reload(cx))),
-                    ),
+                self.render_tabs(cx).child(div().flex_1()).child(
+                    bar_button("explorer-refresh", "Refresh", Some("refresh"), &p)
+                        .on_click(move |_, _, cx| reload.update(cx, |e, cx| e.reload(cx))),
+                ),
             )
             .child(div().flex_1().min_h_0().child(explorer.clone()))
             .into_any_element()
@@ -924,10 +1111,9 @@ impl Workbench {
             RightTab::Viewer => self.render_viewer(cx),
         };
         v_flex()
-            .w(px(RIGHT_WIDTH))
+            .w(px(self.right_width))
             .h_full()
             .flex_none()
-            .gap(px(GAP))
             .child(
                 pane(&p)
                     .flex_1()
@@ -942,6 +1128,7 @@ impl Workbench {
                     )
                     .child(div().flex_1().min_h_0().child(top)),
             )
+            .child(self.splitter(Split::Variables, cx))
             .child(self.render_variables(cx))
     }
 
@@ -997,7 +1184,7 @@ impl Workbench {
                                 cx,
                             )
                         }
-                        shown => self.render_output(shown, RIGHT_WIDTH - 40., false, cx),
+                        shown => self.render_output(shown, self.right_width - 40., false, cx),
                     }))
                     .when_some(failed, |d, s| {
                         d.child(div().text_color(p.err).child(format!("Run ended: {s}")))
@@ -1202,7 +1389,7 @@ impl Workbench {
             None
         };
         pane(&p)
-            .h(px(VARIABLES_HEIGHT))
+            .h(px(self.variables_height))
             .flex_none()
             .child(
                 Self::strip(&p)

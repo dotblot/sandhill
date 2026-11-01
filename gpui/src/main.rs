@@ -15,6 +15,7 @@ mod notebook;
 mod pages;
 mod shown;
 mod terminal;
+mod tree;
 mod view;
 mod workbench;
 

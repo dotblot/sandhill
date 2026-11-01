@@ -12,7 +12,7 @@ use gpui_kit::*;
 use sandhill_daemon::outputs::OutputBuilder;
 use sandhill_link::Target;
 use sandhill_proto::{
-    BLOB_KEY, Blob, CONFLICT_ERROR, Call, CellRef, EVENT_RUN_FINISHED, EVENT_RUN_STARTED,
+    BLOB_KEY, Blob, CONFLICT_ERROR, Call, CellRef, DirEntry, EVENT_RUN_FINISHED, EVENT_RUN_STARTED,
     EVENT_SESSION_ENDED, Event, FileOutputs, FileText, FileWritten, KernelspecInfo, PingReply,
     ProjectInfo, RunStarted, SessionInfo, SessionRuns, SessionStatus, Subscribed, TERMINAL_SHELL,
     TerminalEvent, TerminalInfo, TerminalSubscribed, Variable, Variables,
@@ -26,8 +26,8 @@ use crate::notebook::{self, CellKind, Format, Notebook};
 use crate::pages::PageView;
 use crate::shown::{Page, Shown, page_title, show};
 use crate::terminal::TerminalView;
+use crate::tree::{self, Folder, Tree};
 
-const MAX_FILES: u32 = 5000;
 /// Web pages kept hidden for drawing again.
 const PARKED_PAGES: usize = 24;
 /// Runs the Console keeps.
@@ -95,6 +95,8 @@ pub(crate) struct Open {
     pub sending: HashSet<String>,
     /// Each cell's latest run.
     pub cell_runs: HashMap<String, String>,
+    /// Where the notebook was scrolled to while another tab was shown.
+    scroll: Point<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -105,6 +107,17 @@ impl Open {
             .map(|e| e.read(cx).value().to_string())
             .collect()
     }
+}
+
+/// A gap between panes that can be dragged to resize them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Split {
+    /// Between the files pane and the middle.
+    Files,
+    /// Between the middle and the right column.
+    Right,
+    /// Above Variables.
+    Variables,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -138,8 +151,14 @@ pub struct Workbench {
     pub(crate) kernels: Vec<KernelspecInfo>,
     pub(crate) recent: Vec<ProjectInfo>,
     pub(crate) project: Option<String>,
-    pub(crate) files: Vec<String>,
+    /// The project's folders, read as they are opened.
+    pub(crate) tree: Tree,
+    /// The notebook shown.
     pub(crate) open: Option<Open>,
+    /// Notebooks open in other tabs.
+    others: Vec<Open>,
+    /// The tabs' files, in the order they were opened.
+    pub(crate) tabs: Vec<String>,
     /// The Console's kernel when no notebook is open.
     pub(crate) loose: Session,
     pub(crate) loose_kernel: Option<String>,
@@ -167,12 +186,22 @@ pub struct Workbench {
     /// wheel's turns they don't use.
     pub(crate) notebook_scroll: ScrollHandle,
     page_wheel: tokio::sync::mpsc::UnboundedSender<f32>,
-    /// The Data Explorer, shown in the middle instead of the notebook.
+    /// The Data Explorer, a tab of its own in the middle.
     pub(crate) explorer: Option<Entity<Explorer>>,
+    /// The Data Explorer's tab is the one shown.
+    pub(crate) explorer_shown: bool,
     /// The latest problem, shown at the bottom.
     pub(crate) problem: Option<String>,
     /// The files pane is shown (the title bar's first button).
     pub(crate) show_files: bool,
+    /// The right column is shown.
+    pub(crate) show_right: bool,
+    /// Pane sizes, set by dragging the gaps between them.
+    pub(crate) files_width: f32,
+    pub(crate) right_width: f32,
+    pub(crate) variables_height: f32,
+    /// The gap being dragged.
+    pub(crate) dragging: Option<Split>,
     /// The machine box replaces the machine's tab in the title bar.
     pub(crate) editing_host: bool,
     _subscriptions: Vec<Subscription>,
@@ -279,8 +308,10 @@ impl Workbench {
             kernels: Vec::new(),
             recent: Vec::new(),
             project: None,
-            files: Vec::new(),
+            tree: Tree::default(),
             open: None,
+            others: Vec::new(),
+            tabs: Vec::new(),
             loose: Session::None,
             loose_kernel: None,
             runs: HashMap::new(),
@@ -300,8 +331,14 @@ impl Workbench {
             notebook_scroll: ScrollHandle::new(),
             page_wheel,
             explorer: None,
+            explorer_shown: false,
             problem: None,
             show_files: true,
+            show_right: true,
+            files_width: 240.,
+            right_width: 460.,
+            variables_height: 250.,
+            dragging: None,
             editing_host: false,
             _subscriptions: subscriptions,
         };
@@ -334,8 +371,10 @@ impl Workbench {
         self.kernels.clear();
         self.recent.clear();
         self.project = None;
-        self.files.clear();
+        self.tree = Tree::default();
         self.open = None;
+        self.others.clear();
+        self.tabs.clear();
         self.loose = Session::None;
         self.runs.clear();
         self.console.clear();
@@ -487,25 +526,17 @@ impl Workbench {
             _ => path,
         };
         let opened = daemon.call::<ProjectInfo>(Call::OpenProject { path: path.clone() });
-        let files = daemon.call::<Vec<String>>(Call::ListFiles {
-            path,
-            limit: Some(MAX_FILES),
-        });
         cx.spawn(async move |this, cx| {
             let opened = opened.await;
-            let files = files.await;
             this.update(cx, |this, cx| {
                 match opened {
                     Ok(project) if !project.exists => {
                         this.problem = Some(format!("{} doesn't exist", project.path))
                     }
                     Ok(project) => {
-                        this.close_notebook(cx);
-                        this.terminal = None;
+                        this.close_project(cx);
                         this.project = Some(project.path);
-                        let mut files = files.unwrap_or_default();
-                        files.sort();
-                        this.files = files;
+                        this.read_folder(String::new(), cx);
                         this.problem = None;
                         if this.right_tab == RightTab::Terminal {
                             this.ensure_terminal(cx);
@@ -520,25 +551,116 @@ impl Workbench {
         .detach();
     }
 
+    /// Reads the folders shown in the files pane again.
     pub(crate) fn refresh_files(&mut self, cx: &mut Context<Self>) {
+        for dir in self.tree.loaded() {
+            self.read_folder(dir, cx);
+        }
+    }
+
+    /// Reads one of the project's folders ("" for the project itself) into
+    /// the tree.
+    fn read_folder(&mut self, dir: String, cx: &mut Context<Self>) {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
-        let files = daemon.call::<Vec<String>>(Call::ListFiles {
-            path: project,
-            limit: Some(MAX_FILES),
+        self.tree
+            .folders
+            .entry(dir.clone())
+            .or_insert(Folder::Loading);
+        let listed = daemon.call::<Vec<DirEntry>>(Call::ListDir {
+            path: tree::join(&project, &dir),
+            sizes: false,
         });
         cx.spawn(async move |this, cx| {
-            if let Ok(mut files) = files.await {
-                files.sort();
-                this.update(cx, |this, cx| {
-                    this.files = files;
-                    cx.notify();
-                })
-                .ok();
-            }
+            let listed = listed.await;
+            this.update(cx, |this, cx| {
+                if this.project.as_deref() != Some(&project) {
+                    return;
+                }
+                let folder = match listed {
+                    Ok(entries) => Folder::Ready(entries),
+                    Err(err) => Folder::Failed(format!("{err:#}")),
+                };
+                this.tree.folders.insert(dir, folder);
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
+    }
+
+    /// Opens or closes a folder in the files pane.
+    pub(crate) fn toggle_folder(&mut self, rel: String, cx: &mut Context<Self>) {
+        if !self.tree.open.remove(&rel) {
+            self.tree.open.insert(rel.clone());
+            if !matches!(self.tree.folders.get(&rel), Some(Folder::Ready(_))) {
+                self.read_folder(rel, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Leaves the project: its notebooks are saved and closed (their
+    /// kernels keep running), and its terminal is let go.
+    pub(crate) fn close_project(&mut self, cx: &mut Context<Self>) {
+        while self.open.is_some() {
+            self.close_notebook(cx);
+        }
+        self.explorer = None;
+        self.explorer_shown = false;
+        self.project = None;
+        self.tree = Tree::default();
+        self.terminal = None;
+        cx.notify();
+    }
+
+    /// The open notebook with this path, shown or in another tab.
+    fn open_at(&mut self, path: &str) -> Option<&mut Open> {
+        if self.open.as_ref().is_some_and(|o| o.notebook.path == path) {
+            return self.open.as_mut();
+        }
+        self.others.iter_mut().find(|o| o.notebook.path == path)
+    }
+
+    /// Shows the notebook open in another tab.
+    pub(crate) fn show_file_tab(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.explorer_shown = false;
+        if self.open.as_ref().is_some_and(|o| o.notebook.path == path) {
+            cx.notify();
+            return;
+        }
+        let Some(ix) = self.others.iter().position(|o| o.notebook.path == path) else {
+            return;
+        };
+        let next = self.others.remove(ix);
+        self.put_away();
+        self.notebook_scroll.set_offset(next.scroll);
+        self.open = Some(next);
+        self.session_changed(cx);
+        cx.notify();
+    }
+
+    /// Whether the notebook in this tab has edits not saved.
+    pub(crate) fn tab_dirty(&self, path: &str) -> bool {
+        self.open
+            .iter()
+            .chain(&self.others)
+            .any(|o| o.notebook.path == path && o.dirty)
+    }
+
+    /// Moves the shown notebook to the other tabs.
+    fn put_away(&mut self) {
+        if let Some(mut open) = self.open.take() {
+            open.scroll = self.notebook_scroll.offset();
+            self.others.push(open);
+        }
+    }
+
+    /// Closes a tab, saving its notebook first if it was edited.
+    pub(crate) fn close_tab(&mut self, path: &str, cx: &mut Context<Self>) {
+        self.show_file_tab(path, cx);
+        self.close_notebook(cx);
     }
 
     pub(crate) fn open_file(&mut self, rel: String, cx: &mut Context<Self>) {
@@ -546,6 +668,10 @@ impl Workbench {
             return;
         };
         let path = format!("{project}/{rel}");
+        if self.open_at(&path).is_some() {
+            self.show_file_tab(&path, cx);
+            return;
+        }
         let Some(format) = notebook::format_of(&path) else {
             self.problem = Some(format!(
                 "{rel}: the trial opens only notebooks and Quarto documents"
@@ -571,7 +697,13 @@ impl Workbench {
                     .and_then(|file| Ok((notebook::parse(&file.path, &file.text)?, file.mtime_ms)))
                 {
                     Ok((nb, mtime_ms)) => {
-                        this.close_notebook(cx);
+                        if this.open_at(&nb.path).is_some() {
+                            return;
+                        }
+                        this.put_away();
+                        this.explorer_shown = false;
+                        this.tabs.push(nb.path.clone());
+                        this.notebook_scroll.set_offset(Point::default());
                         this.show_notebook(nb, mtime_ms, window, cx);
                         match saved {
                             Ok(saved) => this.show_saved_outputs(saved, &sessions, cx),
@@ -601,6 +733,7 @@ impl Workbench {
         let kernel = notebook::pick_kernel(&nb, &self.kernels);
         let code_language = editor_language(nb.language.as_deref());
         let mut subscriptions = Vec::new();
+        let path = nb.path.clone();
         let editors = nb
             .cells
             .iter()
@@ -621,14 +754,18 @@ impl Workbench {
                         .soft_wrap(false)
                         .default_value(source)
                 });
-                subscriptions.push(cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
-                    if let InputEvent::Change = event
-                        && let Some(open) = this.open.as_mut()
-                    {
-                        open.dirty = true;
-                        cx.notify();
-                    }
-                }));
+                let path = path.clone();
+                subscriptions.push(cx.subscribe(
+                    &editor,
+                    move |this, _, event: &InputEvent, cx| {
+                        if let InputEvent::Change = event
+                            && let Some(open) = this.open_at(&path)
+                        {
+                            open.dirty = true;
+                            cx.notify();
+                        }
+                    },
+                ));
                 editor
             })
             .collect();
@@ -643,6 +780,7 @@ impl Workbench {
             waiting: Vec::new(),
             sending: HashSet::new(),
             cell_runs: HashMap::new(),
+            scroll: Point::default(),
             _subscriptions: subscriptions,
         });
         self.problem = None;
@@ -716,7 +854,21 @@ impl Workbench {
         if self.open.as_ref().is_some_and(|o| o.dirty) {
             self.save(cx);
         }
-        self.open = None;
+        if let Some(closed) = self.open.take() {
+            let ix = self.tabs.iter().position(|p| *p == closed.notebook.path);
+            self.tabs.retain(|p| *p != closed.notebook.path);
+            // The tab that was next to it, as browsers do.
+            let next = ix
+                .and_then(|ix| self.tabs.get(ix.min(self.tabs.len().saturating_sub(1))))
+                .cloned();
+            if let Some(next) = next
+                && let Some(i) = self.others.iter().position(|o| o.notebook.path == next)
+            {
+                let next = self.others.remove(i);
+                self.notebook_scroll.set_offset(next.scroll);
+                self.open = Some(next);
+            }
+        }
         self.session_changed(cx);
         cx.notify();
     }
@@ -756,8 +908,7 @@ impl Workbench {
             this.update(cx, |this, cx| {
                 match written {
                     Ok(written) => {
-                        if let Some(open) = this.open.as_mut().filter(|o| o.notebook.path == path)
-                        {
+                        if let Some(open) = this.open_at(&path) {
                             open.mtime_ms = written.mtime_ms;
                             open.dirty = open.sources(cx) != sources;
                             // Later saves start from what is on disk now.
@@ -838,6 +989,7 @@ impl Workbench {
             .is_some_and(|e| Some(e.read(cx).session()) != active.as_deref())
         {
             self.explorer = None;
+            self.explorer_shown = false;
         }
         let (Some(daemon), Some(session)) = (self.daemon(), active) else {
             cx.notify();
@@ -929,7 +1081,10 @@ impl Workbench {
             return;
         }
         match &open.session {
-            Session::Ready(_) => self.execute(index, cx),
+            Session::Ready(_) => {
+                let path = open.notebook.path.clone();
+                self.execute(&path, index, cx)
+            }
             Session::Starting => open.waiting.push(index),
             Session::None | Session::Failed(_) => {
                 open.waiting.push(index);
@@ -1006,30 +1161,31 @@ impl Workbench {
                 Err(err) => Err(err),
             };
             this.update(cx, |this, cx| {
-                let here = this.open.as_ref().map(|o| o.notebook.path.clone());
-                if here != notebook_path {
-                    return;
-                }
-                let slot = match this.open.as_mut() {
-                    Some(open) => &mut open.session,
+                // The notebook may be in another tab by now.
+                let slot = match &notebook_path {
+                    Some(path) => match this.open_at(path) {
+                        Some(open) => &mut open.session,
+                        None => return,
+                    },
                     None => &mut this.loose,
                 };
                 match session {
                     Ok(id) => {
                         *slot = Session::Ready(id);
-                        let waiting = this
-                            .open
-                            .as_mut()
-                            .map(|o| std::mem::take(&mut o.waiting))
-                            .unwrap_or_default();
-                        for index in waiting {
-                            this.execute(index, cx);
+                        if let Some(path) = &notebook_path {
+                            let waiting = this
+                                .open_at(path)
+                                .map(|o| std::mem::take(&mut o.waiting))
+                                .unwrap_or_default();
+                            for index in waiting {
+                                this.execute(path, index, cx);
+                            }
                         }
                         this.session_changed(cx);
                     }
                     Err(err) => {
                         *slot = Session::Failed(format!("{err:#}"));
-                        if let Some(open) = this.open.as_mut() {
+                        if let Some(open) = notebook_path.as_deref().and_then(|p| this.open_at(p)) {
                             open.waiting.clear();
                         }
                     }
@@ -1041,11 +1197,12 @@ impl Workbench {
         .detach();
     }
 
-    fn execute(&mut self, index: usize, cx: &mut Context<Self>) {
+    /// Runs a cell of the notebook with this path, shown or not.
+    fn execute(&mut self, path: &str, index: usize, cx: &mut Context<Self>) {
         let Some(daemon) = self.daemon() else {
             return;
         };
-        let Some(open) = self.open.as_mut() else {
+        let Some(open) = self.open_at(path) else {
             return;
         };
         let (Some(session), Some(cell), Some(editor)) = (
@@ -1071,14 +1228,14 @@ impl Workbench {
         cx.spawn(async move |this, cx| {
             let started = started.await;
             this.update(cx, |this, cx| {
-                let Some(open) = this.open.as_mut().filter(|o| o.notebook.path == path) else {
+                let Some(open) = this.open_at(&path) else {
                     return;
                 };
                 open.sending.remove(&cell_id);
                 match started {
                     Ok(run) => {
-                        this.runs.entry(run.run.clone()).or_default();
-                        open.cell_runs.insert(cell_id, run.run);
+                        open.cell_runs.insert(cell_id, run.run.clone());
+                        this.runs.entry(run.run).or_default();
                     }
                     Err(err) => this.problem = Some(format!("Running the cell failed: {err:#}")),
                 }
@@ -1133,8 +1290,13 @@ impl Workbench {
     }
 
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
-        let notebook_session = self.open.as_ref().and_then(|o| o.session.id());
-        let ours = notebook_session == Some(event.session.as_str())
+        // Any open notebook's kernel, shown or in another tab, or the
+        // Console's own.
+        let ours = self
+            .open
+            .iter()
+            .chain(&self.others)
+            .any(|o| o.session.id() == Some(event.session.as_str()))
             || self.loose.id() == Some(event.session.as_str());
         if !ours {
             return;
@@ -1145,12 +1307,14 @@ impl Workbench {
                 run.finished = true;
                 run.status = Some("the kernel stopped".into());
             }
-            let ended = Session::Failed("The kernel stopped".into());
-            match self.open.as_mut() {
-                Some(open) if open.session.id() == Some(event.session.as_str()) => {
-                    open.session = ended
+            let ended = || Session::Failed("The kernel stopped".into());
+            for open in self.open.iter_mut().chain(&mut self.others) {
+                if open.session.id() == Some(event.session.as_str()) {
+                    open.session = ended();
                 }
-                _ => self.loose = ended,
+            }
+            if self.loose.id() == Some(event.session.as_str()) {
+                self.loose = ended();
             }
             cx.notify();
             return;
@@ -1434,11 +1598,13 @@ impl Workbench {
             return;
         };
         self.explorer = Some(cx.new(|cx| Explorer::new(daemon, session, path, cx)));
+        self.explorer_shown = true;
         cx.notify();
     }
 
     pub(crate) fn close_explorer(&mut self, cx: &mut Context<Self>) {
         self.explorer = None;
+        self.explorer_shown = false;
         cx.notify();
     }
 
