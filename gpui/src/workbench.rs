@@ -171,6 +171,10 @@ pub struct Workbench {
     pub(crate) explorer: Option<Entity<Explorer>>,
     /// The latest problem, shown at the bottom.
     pub(crate) problem: Option<String>,
+    /// The files pane is shown (the title bar's first button).
+    pub(crate) show_files: bool,
+    /// The machine box replaces the machine's tab in the title bar.
+    pub(crate) editing_host: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -206,10 +210,18 @@ impl Workbench {
         });
         let subscriptions = vec![
             cx.subscribe(&host_input, |this, input, event: &InputEvent, cx| {
+                // Clicking away puts the machine's tab back.
+                if let InputEvent::Blur = event {
+                    this.editing_host = false;
+                    cx.notify();
+                }
                 if let InputEvent::PressEnter { .. } = event {
                     let host = input.read(cx).value().trim().to_string();
                     match Target::parse(if host.is_empty() { "local" } else { &host }) {
-                        Ok(target) => this.connect(target, None, cx),
+                        Ok(target) => {
+                            this.editing_host = false;
+                            this.connect(target, None, cx)
+                        }
                         Err(err) => {
                             this.problem = Some(err.to_string());
                             cx.notify();
@@ -289,6 +301,8 @@ impl Workbench {
             page_wheel,
             explorer: None,
             problem: None,
+            show_files: true,
+            editing_host: false,
             _subscriptions: subscriptions,
         };
         this.connect(target, project, cx);
@@ -1042,7 +1056,7 @@ impl Workbench {
             return;
         };
         let cell_id = cell.id.clone();
-        let started = daemon.call::<RunStarted>(Call::Execute {
+        let started = daemon.call_in_order::<RunStarted>(Call::Execute {
             session: session.to_string(),
             code: editor.read(cx).value().to_string(),
             cell: Some(CellRef {
@@ -1090,7 +1104,7 @@ impl Workbench {
         };
         self.console_input
             .update(cx, |input, cx| input.set_value("", window, cx));
-        let started = daemon.call::<RunStarted>(Call::Execute {
+        let started = daemon.call_in_order::<RunStarted>(Call::Execute {
             session,
             code,
             cell: None,

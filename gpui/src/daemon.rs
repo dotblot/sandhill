@@ -24,9 +24,17 @@ pub struct Streams {
     pub terminals: UnboundedReceiver<TerminalEvent>,
 }
 
+/// A call waiting its turn, and where its reply goes.
+type Queued = (
+    Call,
+    tokio::sync::oneshot::Sender<Result<serde_json::Value>>,
+);
+
 pub struct Daemon {
     rt: Arc<Runtime>,
     client: Arc<Client>,
+    /// Calls that must reach the daemon in the order they were made.
+    queue: UnboundedSender<Queued>,
     /// The `sandhilld attach` process; the connection ends with it.
     _child: Child,
 }
@@ -50,10 +58,24 @@ impl Daemon {
         });
         async move {
             let (conn, streams) = task.await??;
+            let client = Arc::new(conn.client);
+            let (queue, mut queued) = tokio::sync::mpsc::unbounded_channel::<Queued>();
+            let sender = client.clone();
+            rt.spawn(async move {
+                while let Some((call, reply)) = queued.recv().await {
+                    let _ = reply.send(
+                        sender
+                            .call::<serde_json::Value>(call)
+                            .await
+                            .map_err(Into::into),
+                    );
+                }
+            });
             Ok((
                 Daemon {
                     rt,
-                    client: Arc::new(conn.client),
+                    client,
+                    queue,
                     _child: conn.child,
                 },
                 streams,
@@ -69,6 +91,25 @@ impl Daemon {
         let client = self.client.clone();
         let task = self.rt.spawn(async move { client.call::<T>(call).await });
         async move { Ok(task.await??) }
+    }
+
+    /// Sends one request after those made before it with this method have
+    /// been answered: runs, so that Run All runs the cells in order. (Calls
+    /// made with `call` go out on tasks of their own and can pass each
+    /// other.)
+    pub fn call_in_order<T>(&self, call: Call) -> impl Future<Output = Result<T>> + 'static
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        let sent = self.queue.send((call, reply));
+        async move {
+            sent.map_err(|_| anyhow::anyhow!("the connection has closed"))?;
+            let value = answer
+                .await
+                .map_err(|_| anyhow::anyhow!("the connection has closed"))??;
+            Ok(serde_json::from_value(value)?)
+        }
     }
 
     /// Sends calls one after another, in order, without waiting for

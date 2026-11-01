@@ -1,6 +1,6 @@
 [package]
 name = "sandhill-gpui"
-description = "A trial Sandhill app drawn with GPUI instead of a web view"
+description = "Sandhill drawn with GPUI"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -21,12 +21,16 @@ sandhill-daemon = { path = "../crates/daemon" }
 alacritty_terminal = "0.26"
 anyhow = "1"
 base64 = "0.22"
+# Unpacks the bundled Maple Mono fonts (assets/fonts).
+flate2 = "1"
 # GPUI Fast, gpui-kit's newer drawing engine, lets the web view be clipped
 # by the notebook it scrolls in; both crates must have it.
 gpui-kit = { version = "=0.8.1", features = ["tree-sitter-python", "tree-sitter-markdown", "gpui-fast"] }
 gpui-webview = { version = "=0.8.1", features = ["gpui-fast"] }
 # The web engine behind gpui-webview (WebKit on the Mac, WebKitGTK on Linux).
 wry = { package = "lb-wry", version = "0.53.3" }
+# The icons drawn in docs/design/ui/icons, put into the binary.
+rust-embed = { version = "8", features = ["include-exclude"] }
 serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

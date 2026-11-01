@@ -6,20 +6,23 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, TableColumn, TableRows, TableSort};
 use serde_json::Value;
 
 use crate::daemon::Daemon;
+use crate::look::{self, Palette};
 
 /// Rows fetched at a time.
 const BLOCK: u64 = 200;
 /// Columns fetched; wider tables show their first ones.
 const COLUMNS: u32 = 200;
-const ROW_HEIGHT: f32 = 24.;
-const COLUMN_WIDTH: f32 = 130.;
+/// The Tauri app's sizes, a little taller for its text 2px larger.
+const ROW_HEIGHT: f32 = 26.;
+const HEADER_HEIGHT: f32 = 40.;
+const COLUMN_WIDTH: f32 = 140.;
 const LABEL_WIDTH: f32 = 90.;
 
 /// What the table's first answer said about it.
@@ -178,11 +181,11 @@ impl Explorer {
 
 impl Render for Explorer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
+        let theme = *Palette::get(cx);
         let Some(shape) = &self.shape else {
             return div()
                 .p_4()
-                .text_color(theme.muted_foreground)
+                .text_color(theme.muted)
                 .child(match &self.error {
                     Some(err) => format!("The table could not be read: {err}"),
                     None => "Reading the table…".into(),
@@ -191,6 +194,7 @@ impl Render for Explorer {
         };
         let shown_columns = shape.columns.len().min(COLUMNS as usize);
         let numbers: Vec<bool> = shape.columns.iter().map(|c| c.kind == "number").collect();
+        let numbers_head = numbers.clone();
         let width = LABEL_WIDTH + COLUMN_WIDTH * shown_columns as f32;
         let summary = format!(
             "{} · {} rows × {} columns{}{}",
@@ -210,66 +214,86 @@ impl Render for Explorer {
         );
         let header =
             h_flex()
-                .h(px(ROW_HEIGHT + 8.))
+                .h(px(HEADER_HEIGHT))
                 .border_b_1()
-                .border_color(theme.border)
-                .bg(theme.secondary)
-                .text_xs()
-                .child(div().w(px(LABEL_WIDTH)).flex_none())
+                .border_color(theme.line)
+                .bg(theme.panel)
+                .child(
+                    div()
+                        .w(px(LABEL_WIDTH))
+                        .h_full()
+                        .flex_none()
+                        .border_r_1()
+                        .border_color(theme.line),
+                )
                 .children(shape.columns.iter().take(shown_columns).enumerate().map(
                     |(ix, column)| {
                         let arrow = match &self.sort {
-                            Some(s) if s.column == ix as u32 && s.descending => " ▼",
-                            Some(s) if s.column == ix as u32 => " ▲",
+                            Some(s) if s.column == ix as u32 && s.descending => "▼",
+                            Some(s) if s.column == ix as u32 => "▲",
                             _ => "",
                         };
                         v_flex()
                             .id(("column", ix))
                             .w(px(COLUMN_WIDTH))
                             .flex_none()
-                            .px_2()
+                            .h_full()
+                            .px(px(10.))
+                            .pt(px(4.))
+                            .border_r_1()
+                            .border_color(theme.line)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .cursor_pointer()
-                            .hover(|d| d.bg(theme.list_hover))
+                            .hover(|d| d.bg(theme.hover))
+                            .when(numbers_head.get(ix).copied().unwrap_or(false), |d| {
+                                d.items_end()
+                            })
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.sort_by(ix as u32, cx)),
                             )
                             .child(
-                                div()
+                                h_flex()
+                                    .gap(px(4.))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_ellipsis()
-                                    .child(format!("{}{arrow}", column.name)),
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .child(column.name.clone()),
+                                    )
+                                    .when(!arrow.is_empty(), |d| {
+                                        d.child(
+                                            div().flex_none().text_color(theme.accent).child(arrow),
+                                        )
+                                    }),
                             )
                             .child(
                                 div()
-                                    .text_color(theme.muted_foreground)
+                                    .text_size(px(look::SMALL))
+                                    .text_color(theme.faint)
                                     .child(column.kind_detail.clone()),
                             )
                     },
                 ));
-        let mono = theme.mono_font_family.clone();
         let list = uniform_list(
             "table-rows",
             shape.rows as usize,
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                let theme = cx.theme().clone();
+                let theme = *Palette::get(cx);
+                let cell_line = theme.line.opacity(0.55);
                 range
                     .map(|ix| {
                         let row = this.row(ix, cx);
-                        let line = h_flex()
-                            .h(px(ROW_HEIGHT))
-                            .border_b_1()
-                            .border_color(theme.border.opacity(0.5))
-                            .font_family(mono.clone())
-                            .text_size(px(12.));
+                        let line = h_flex().h(px(ROW_HEIGHT)).hover(|d| d.bg(theme.hover));
                         let Some((label, cells)) = row else {
                             return line
                                 .child(
                                     div()
                                         .w(px(LABEL_WIDTH))
                                         .px_2()
-                                        .text_color(theme.muted_foreground)
+                                        .text_color(theme.faint)
                                         .child("…"),
                                 )
                                 .into_any_element();
@@ -277,12 +301,20 @@ impl Render for Explorer {
                         line.child(
                             div()
                                 .w(px(LABEL_WIDTH))
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_end()
                                 .flex_none()
-                                .px_2()
+                                .px(px(8.))
+                                .bg(theme.panel)
+                                .border_r_1()
+                                .border_b_1()
+                                .border_color(cell_line)
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .text_color(theme.muted_foreground)
+                                .text_color(theme.faint)
                                 .child(label),
                         )
                         .children(cells.iter().take(shown_columns).enumerate().map(
@@ -290,15 +322,21 @@ impl Render for Explorer {
                                 let (text, missing) = cell_text(value);
                                 div()
                                     .w(px(COLUMN_WIDTH))
+                                    .h_full()
+                                    .flex()
+                                    .items_center()
                                     .flex_none()
-                                    .px_2()
+                                    .px(px(10.))
+                                    .border_r_1()
+                                    .border_b_1()
+                                    .border_color(cell_line)
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
                                     .when(numbers.get(col).copied().unwrap_or(false), |d| {
                                         d.flex().justify_end()
                                     })
-                                    .when(missing, |d| d.text_color(theme.muted_foreground))
+                                    .when(missing, |d| d.text_color(theme.faint))
                                     .child(text)
                             },
                         ))
@@ -313,13 +351,12 @@ impl Render for Explorer {
             .size_full()
             .child(
                 div()
-                    .px_4()
-                    .py_1()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
+                    .px(px(10.))
+                    .py(px(4.))
+                    .text_color(theme.faint)
                     .child(summary)
                     .when_some(self.error.clone(), |d, err| {
-                        d.child(div().text_color(theme.danger).child(err))
+                        d.child(div().text_color(theme.err).child(err))
                     }),
             )
             .child(
