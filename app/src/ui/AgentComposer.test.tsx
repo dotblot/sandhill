@@ -121,7 +121,7 @@ describe("AgentComposer", () => {
     t.type("What is in @");
     await settle();
     expect(t.items()).toEqual(["analysis.qmd", "data/raw/s1.csv", "analysis.qmd › markers", "seu", "Attach from this Mac…files, images, PDFs"]);
-    expect([...t.root.querySelectorAll(".apop.mention .mm-h")].map((h) => h.textContent)).toEqual(["Files", "Chunks", "Variables"]);
+    expect([...t.root.querySelectorAll(".apop.mention .mm-h")].map((h) => h.textContent)).toEqual(["Files", "Cells", "Variables"]);
     // What follows the @ filters; Enter picks the first, and the "@se" goes.
     t.type("What is in @se");
     expect(t.items()[0]).toBe("seu");
@@ -139,6 +139,41 @@ describe("AgentComposer", () => {
     t.key("Enter");
     expect(sent).toEqual([["What is in seu?", [{ kind: "variable", name: "seu", session: "r1", language: "r" }]]]);
     expect(t.chips()).toEqual([]);
+    t.dispose();
+  });
+
+  it("picks a cell of a notebook named with @ by typing # and its number", async () => {
+    const asked: string[][] = [];
+    const cells = async (paths: string[]) => {
+      asked.push(paths);
+      return paths.flatMap((path) => [
+        { ref: { kind: "chunk" as const, name: `${path} › cell 2`, path, cell: "load" }, label: "cell 2", detail: "adata = sc.read('x')" },
+        { ref: { kind: "chunk" as const, name: `${path} › cell 3`, path, cell: "umap" }, label: "cell 3", detail: "sc.pl.umap(adata)" },
+      ]);
+    };
+    const t = mount(() => ({ draftKey: "cells", cells, mentions: async () => [{ ref: { kind: "file" as const, name: "de.ipynb", path: "de.ipynb" } }] }));
+    // With no notebook named yet, # says how.
+    t.type("fix #");
+    await settle();
+    expect(t.root.querySelector(".apop.mention")?.textContent).toContain("Add a notebook with @ first");
+    t.key("Escape");
+    t.type("fix @de");
+    await settle();
+    t.key("Enter");
+    await settle();
+    expect(t.chips()).toEqual(["de.ipynb"]);
+    // # lists its cells under its name; the number picks one.
+    t.type("fix #");
+    await settle();
+    expect(asked).toEqual([["de.ipynb"]]);
+    expect([...t.root.querySelectorAll(".apop.mention .mm-h")].map((h) => h.textContent)).toEqual(["de.ipynb"]);
+    expect(t.items()).toEqual(["cell 2adata = sc.read('x')", "cell 3sc.pl.umap(adata)"]);
+    t.type("fix #3");
+    expect(t.items()).toEqual(["cell 3sc.pl.umap(adata)"]);
+    t.key("Enter");
+    await settle();
+    expect(t.box.value).toBe("fix ");
+    expect(t.chips()).toEqual(["de.ipynb", "de.ipynb › cell 3"]);
     t.dispose();
   });
 

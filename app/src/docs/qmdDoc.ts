@@ -87,7 +87,7 @@ export class QmdDoc extends Doc {
   }
 
   override codeCells() {
-    return this.chunks().map((c) => ({ id: c.cellId, name: c.label ?? `chunk ${c.index + 1}` }));
+    return this.chunks().map((c) => ({ id: c.cellId, name: c.label ?? `chunk ${c.index + 1}`, code: c.code }));
   }
 
   mount(parent: HTMLElement) {

@@ -694,11 +694,14 @@ agent starts with and `tell_terminal` `{kind: "set", pin?, web?, context?,
 refs?}` for either agent:
 
 - Each message works in a document: the first notebook or Quarto file it
-  names in `refs`, else `pin`, else the one in front of the user. It records
-  it as `agent.document`, so a working agent keeps the file it started in.
-  `add_cell` writes into `agent.document`, else `pin`, else the first of
-  `documents`. The app no longer sets `pin` or `documents`: conversations are
-  about the whole project, and the user names a file with @.
+  names in `refs`, else `pin`; none otherwise, not the one in front of the
+  user. It records it as `agent.document` (null when there is none), so a
+  working agent keeps the file it started in and the next message starts
+  over. `add_cell` writes into the `file` it is given, else
+  `agent.document`, else `pin`, else the first of `documents`; with none of
+  them it runs the code in the Console. The app no longer sets `pin` or
+  `documents`: conversations are about the whole project, and the user names
+  a file with @ (and a notebook's cell with #, a `chunk` ref).
 - `web: false` turns web search off: each message says so, and for Claude
   Code the hook before each step blocks `WebSearch` and `WebFetch` (a
   `step_failed` entry). Codex is told only.

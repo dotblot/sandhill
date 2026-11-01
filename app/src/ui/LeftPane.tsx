@@ -6,7 +6,7 @@
 import { createResource, createSignal, For, type JSX, onCleanup, Show } from "solid-js";
 import { LOCAL_HOST, type Nav } from "../backend";
 import type { ProjectInfo, SessionInfo, SystemStats } from "../backend/types";
-import { formatBytes, languageLabel, languageVersion, percentOf, sessionLabel, watchMachine } from "../model/machine";
+import { formatBytes, percentOf, sessionLabel, versionLabel, watchMachine } from "../model/machine";
 import { baseName, SORTS } from "../model/files";
 import { shortPath } from "../model/places";
 import type { Workspace } from "../model/workspace";
@@ -226,7 +226,7 @@ export function KernelRows(props: {
                   role="button"
                   tabindex="0"
                   aria-haspopup="menu"
-                  title={`${sessionLabel(s)} · ${props.ws.isBusy(s.id) ? "busy" : "idle"}. Click for details`}
+                  title={`${sessionLabel(s, props.ws.kernelspecs())} · ${props.ws.isBusy(s.id) ? "busy" : "idle"}. Click for details`}
                   onClick={(e) => setDetails(details()?.session.id === s.id ? undefined : { session: s, row: e.currentTarget })}
                   onKeyDown={(e) => {
                     if (e.key !== "Enter" && e.key !== " ") return;
@@ -239,7 +239,7 @@ export function KernelRows(props: {
                   </span>
                   {/* The icon says the language; the row names only the version. */}
                   <span class="kn">
-                    {languageVersion(s) || languageLabel(s.language)}
+                    {versionLabel(s, props.ws.kernelspecs())}
                     <small>{props.describe(s)}</small>
                   </span>
                   <span class="km">{memory(s.id) === undefined ? "" : formatBytes(memory(s.id)!)}</span>
@@ -261,7 +261,7 @@ export function KernelRows(props: {
                 <span class="krow-icon">
                   <LangIcon language={s.language} />
                 </span>
-                <span class="kn">Shut down {sessionLabel(s)}?</span>
+                <span class="kn">Shut down {sessionLabel(s, props.ws.kernelspecs())}?</span>
                 <button class="kbtn" onClick={() => setAsking(undefined)}>
                   Cancel
                 </button>

@@ -34,7 +34,10 @@ function fakeDoc(
       session: (language: string) => (language === "python" ? sessionId() : undefined),
       isStarting: () => false,
       assign: (language: string, id: string) => assigned.push([language, id]),
+      kernelFor: () => "python3",
+      choose: async (language: string, kernel: string) => assigned.push([language, kernel]),
     },
+    name: "qc.ipynb",
   } as unknown as Doc;
 }
 
@@ -43,7 +46,12 @@ function fakeWorkspace(sessions: SessionInfo[]): Workspace {
     backend: { host: "local" },
     call: async () => ({ sessions: [] }),
     sessions: () => sessions,
-    kernelspecs: () => [{ name: "python3", display_name: "Python 3 (ipykernel)", language: "python" }],
+    kernelspecs: () => [
+      { name: "python3", display_name: "Python 3 (ipykernel)", language: "python" },
+      { name: "conda-env-omicverse-py", display_name: "Python (omicverse)", language: "python", env: "omicverse" },
+    ],
+    pick: () => ({ name: "python3" }),
+    projectKernel: () => undefined,
     liveSessions: () => sessions,
     projectSessions: () => sessions,
     isBusy: () => false,
@@ -124,6 +132,24 @@ describe("KernelBar", () => {
     use!.click();
     expect(assigned).toEqual([["python", "bbbbbb222"]]);
     expect(view.root.querySelector(".kpop")).toBeNull();
+    view.done();
+  });
+
+  it("picks the document's kernel from the installed ones, marking the one in use and the default", async () => {
+    const ws = fakeWorkspace([session("aaaaaa111")]);
+    const assigned: [string, string][] = [];
+    const view = mount(() => <KernelBar ws={ws} doc={fakeDoc(() => "aaaaaa111", ["python"], () => [], assigned)} onError={() => {}} />);
+    view.picker().click();
+    const kernels = [...view.root.querySelectorAll<HTMLButtonElement>(".kpop .mm-i[role=menuitemradio]")];
+
+    expect(view.root.querySelector(".kpop")?.textContent).toContain("Kernel for qc.ipynb");
+    expect(kernels.map((k) => [k.textContent, k.getAttribute("aria-checked")])).toEqual([
+      ["Python 3 (ipykernel)default", "true"],
+      ["Python (omicverse)", "false"],
+    ]);
+    kernels[1].click();
+    await Promise.resolve();
+    expect(assigned).toEqual([["python", "conda-env-omicverse-py"]]);
     view.done();
   });
 

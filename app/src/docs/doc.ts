@@ -4,6 +4,7 @@ import { Annotation, type Extension, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { createSignal } from "solid-js";
 import type { FileText } from "../backend/types";
+import type { DocCell } from "../model/mentions";
 import type { KernelWanted, Workspace } from "../model/workspace";
 import type { RenderContext } from "../render/outputs";
 import { DocKernels } from "./kernels";
@@ -145,8 +146,8 @@ export abstract class Doc {
   runCurrent?(): boolean;
   /** Where the user is in the document, for agents. */
   abstract place(): Place;
-  /** Its code cells, for the Agents pane's @ menu: the cell id and how to name it. */
-  codeCells(): { id: string; name: string }[] {
+  /** Its code cells, for the Agents pane's # menu: the cell id, how to name it, and its code. */
+  codeCells(): DocCell[] {
     return [];
   }
   /**

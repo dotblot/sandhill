@@ -3,7 +3,8 @@
 // stop button while the agent works. Under it, on the left: web search,
 // session context and the mode (a hand); on the right: the context ring and
 // the model with its thinking effort. Conversations are about the whole
-// project: files are added with @, which shows no button of its own.
+// project: files are added with @, which shows no button of its own, and
+// a notebook's cells after it with #.
 
 import { createEffect, createSignal, For, type JSX, on, onCleanup, Show } from "solid-js";
 import type { AgentStatus, MessageRef } from "../backend/types";
@@ -21,7 +22,7 @@ import {
   shortModel,
   tokens,
 } from "../model/agents";
-import { filterMentions, type Mention, sameRef, typedMention } from "../model/mentions";
+import { cellDocuments, filterCells, filterMentions, type Mention, sameRef, typedMention } from "../model/mentions";
 import { notify } from "./dialogs";
 import { EffortControl } from "./EffortControl";
 import { FileIcon, Icon, ProviderIcon } from "./icons";
@@ -61,6 +62,8 @@ export interface ComposerProps {
   onContext: (on: boolean) => void;
   /** What the @ menu offers, read as it opens. */
   mentions: () => Promise<Mention[]>;
+  /** What the # menu offers: the cells of these documents (named with @), read as it opens. */
+  cells?: (paths: string[]) => Promise<Mention[]>;
   /** Saves a file from this Mac (picked, pasted or dragged) where the agent can read it. */
   onAttach: (file: File) => Promise<MessageRef>;
   status?: AgentStatus;
@@ -94,6 +97,8 @@ export function AgentComposer(props: ComposerProps) {
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
   const [mentions, setMentions] = createSignal<Mention[]>();
+  /** Which menu is open: @ (files, variables, plots) or # (cells of the documents named with @). */
+  const [sign, setSign] = createSignal<"@" | "#">("@");
   let input!: HTMLTextAreaElement;
   let files!: HTMLInputElement;
 
@@ -176,17 +181,18 @@ export function AgentComposer(props: ComposerProps) {
   onCleanup(() => document.removeEventListener("mousedown", closeOutside));
   const toggle = (which: Popover) => (popover() === which ? close() : (close(), setPopover(which)));
 
-  // The @ menu.
-  const groups = () => filterMentions(mentions() ?? [], query());
+  // The @ menu, and the # menu.
+  const cellDocs = () => cellDocuments(refs());
+  const groups = () => (sign() === "#" ? filterCells(mentions() ?? [], query()) : filterMentions(mentions() ?? [], query()));
   const shown = () => groups().flatMap(([, list]) => list);
-  function openMention() {
-    if (popover() !== "mention") {
+  function openMention(which: "@" | "#" = "@") {
+    if (popover() !== "mention" || sign() !== which) {
       setPopover(undefined);
+      setSign(which);
       setMentions(undefined);
-      props
-        .mentions()
-        .then(setMentions)
-        .catch(() => setMentions([]));
+      const paths = cellDocs();
+      const read = which === "#" ? (paths.length && props.cells ? props.cells(paths) : Promise.resolve([])) : props.mentions();
+      read.then((list) => sign() === which && setMentions(list)).catch(() => setMentions([]));
     }
     setActive(0);
     setPopover("mention");
@@ -250,7 +256,7 @@ export function AgentComposer(props: ComposerProps) {
     setText(input.value);
     const typed = typedMention(input.value, input.selectionStart ?? input.value.length);
     if (typed) {
-      openMention();
+      openMention(typed.sign);
       setQuery(typed.query);
     } else if (popover() === "mention") {
       setPopover(undefined);
@@ -440,9 +446,22 @@ export function AgentComposer(props: ComposerProps) {
         }}
       />
       <Show when={popover() === "mention"}>
-        <div class="apop mention" role="menu" aria-label="Add to the message">
+        <div class="apop mention" role="menu" aria-label={sign() === "#" ? "Add a cell to the message" : "Add to the message"}>
           <Show when={mentions()} fallback={<div class="mm-h">Loading…</div>}>
-            <Show when={groups().length} fallback={<div class="mm-h">{query() ? `Nothing matches “${query()}”` : "Nothing to add yet"}</div>}>
+            <Show
+              when={groups().length}
+              fallback={
+                <div class="mm-h">
+                  {sign() === "#" && !cellDocs().length
+                    ? "Add a notebook with @ first; then # picks one of its cells"
+                    : query()
+                      ? `Nothing matches “${query()}”`
+                      : sign() === "#"
+                        ? "No code cells in it yet"
+                        : "Nothing to add yet"}
+                </div>
+              }
+            >
               <For each={groups()}>
                 {([label, list]) => (
                   <>
@@ -458,8 +477,8 @@ export function AgentComposer(props: ComposerProps) {
                           onClick={() => void pick(mention)}
                         >
                           <RefIcon item={mention.ref} />
-                          <span>{mention.ref.name}</span>
-                          <kbd />
+                          <span>{mention.label ?? mention.ref.name}</span>
+                          <kbd>{mention.detail ?? ""}</kbd>
                         </button>
                       )}
                     </For>
@@ -468,19 +487,21 @@ export function AgentComposer(props: ComposerProps) {
               </For>
             </Show>
           </Show>
-          <div class="mm-sep" />
-          <button
-            class="mm-i"
-            role="menuitem"
-            onClick={() => {
-              closeMention();
-              files.click();
-            }}
-          >
-            <Icon name="upload" />
-            <span>Attach from this Mac…</span>
-            <kbd>files, images, PDFs</kbd>
-          </button>
+          <Show when={sign() === "@"}>
+            <div class="mm-sep" />
+            <button
+              class="mm-i"
+              role="menuitem"
+              onClick={() => {
+                closeMention();
+                files.click();
+              }}
+            >
+              <Icon name="upload" />
+              <span>Attach from this Mac…</span>
+              <kbd>files, images, PDFs</kbd>
+            </button>
+          </Show>
         </div>
       </Show>
       <Show when={popover() === "mode"}>

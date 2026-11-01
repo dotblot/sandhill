@@ -2,7 +2,7 @@ import { createResource, createSignal, For, Show } from "solid-js";
 import { LOCAL_HOST } from "../backend";
 import type { SessionInfo, SystemStats } from "../backend/types";
 import type { Doc } from "../docs/doc";
-import { formatBytes, languageLabel, languageVersion, sessionLabel } from "../model/machine";
+import { formatBytes, languageLabel, sessionLabel, versionLabel } from "../model/machine";
 import { normalizeLanguage, type Workspace } from "../model/workspace";
 import { notify } from "./dialogs";
 import { Icon, LangIcon } from "./icons";
@@ -94,7 +94,7 @@ function KernelControl(props: {
   const info = () => props.ws.sessions().find((s) => s.id === session());
   const state = () => kernelState(props.ws, props.doc, props.language);
   const label = () => languageLabel(props.language);
-  const version = () => (info() ? languageVersion(info()!) : "");
+  const version = () => (info() ? versionLabel(info()!, props.ws.kernelspecs()) : "");
   const guard = (p: Promise<unknown>) => p.catch((e) => props.onError(String(e)));
   let button!: HTMLButtonElement;
 
@@ -112,10 +112,10 @@ function KernelControl(props: {
         class="kernel-pick"
         aria-haspopup="menu"
         aria-expanded={!!open()}
-        title={`${[label(), version()].filter(Boolean).join(" ")} · ${STATE_TEXT[state()]}. Click for details`}
+        title={`${info() ? sessionLabel(info()!, props.ws.kernelspecs()) : label()} · ${STATE_TEXT[state()]}. Click for details`}
         onClick={toggle}
       >
-        <span classList={{ "kernel-off": !info() }}>{info() ? version() || label() : state() === "starting" ? "starting…" : "not started"}</span>
+        <span classList={{ "kernel-off": !info() }}>{info() ? version() : state() === "starting" ? "starting…" : "not started"}</span>
         <Icon name="chevron" small />
       </button>
       <button
@@ -199,11 +199,11 @@ export function SessionMenu(props: {
   queueMicrotask(() => setTop(Math.max(8, Math.min(box.top - 6, window.innerHeight - menu.offsetHeight - 8))));
   const interrupt = () => {
     props.onClose();
-    props.ws.interrupt(props.session.id).catch((e) => notify(`Could not interrupt ${sessionLabel(props.session)}: ${String(e)}`));
+    props.ws.interrupt(props.session.id).catch((e) => notify(`Could not interrupt ${sessionLabel(props.session, ws.kernelspecs())}: ${String(e)}`));
   };
   return (
     <div ref={menu} class="kpop" role="menu" style={{ left: `${box.right + 8}px`, top: `${top()}px` }}>
-      <KernelHead language={props.session.language} name={sessionLabel(props.session)} state={state()} rows={rows()} />
+      <KernelHead language={props.session.language} name={sessionLabel(props.session, ws.kernelspecs())} state={state()} rows={rows()} />
       <div class="mm-sep" />
       <div class="mm-h">Session</div>
       <button class="mm-i" role="menuitem" disabled={state() !== "busy"} onClick={interrupt}>
@@ -253,10 +253,10 @@ export function SessionPicker(props: {
               class="kernel-pick"
               aria-haspopup="menu"
               aria-expanded={open()}
-              title={`${sessionLabel(s())} · ${STATE_TEXT[state()]}. Click for details`}
+              title={`${sessionLabel(s(), props.ws.kernelspecs())} · ${STATE_TEXT[state()]}. Click for details`}
               onClick={() => setOpen(!open())}
             >
-              <span>{languageVersion(s()) || languageLabel(s().language)}</span>
+              <span>{versionLabel(s(), props.ws.kernelspecs())}</span>
               <Icon name="chevron" small />
             </button>
           </>
@@ -305,7 +305,7 @@ function SessionPickMenu(props: {
       role="menu"
       style={{ left: `${Math.max(8, Math.min(box.left - 4, window.innerWidth - 278))}px`, top: `${box.bottom + 4}px` }}
     >
-      <KernelHead language={props.session.language} name={sessionLabel(props.session)} state={state()} rows={rows()} />
+      <KernelHead language={props.session.language} name={sessionLabel(props.session, ws.kernelspecs())} state={state()} rows={rows()} />
       <div class="mm-sep" />
       <div class="mm-h">Sessions</div>
       <For each={props.sessions}>
@@ -313,7 +313,7 @@ function SessionPickMenu(props: {
           <button class="mm-i" role="menuitem" onClick={() => props.onPick(s.id)}>
             {s.id === props.session.id ? <Icon name="check" small /> : <span class="ico sm" />}
             <span>
-              {sessionLabel(s)} · {s.id.slice(0, 8)}
+              {sessionLabel(s, ws.kernelspecs())} · {s.id.slice(0, 8)}
             </span>
             <kbd>{ws.isBusy(s.id) ? "busy" : ""}</kbd>
           </button>
@@ -387,6 +387,10 @@ function KernelMenu(props: {
   const state = () => kernelState(ws, props.doc, props.language);
   const specs = () => ws.kernelspecs().filter((k) => normalizeLanguage(k.language) === props.language);
   const others = () => ws.projectSessions(props.language).filter((s) => s.id !== session());
+  /** The kernel the document runs in now, else the one it will start. */
+  const inUse = () => info()?.kernel ?? props.doc.kernels.kernelFor(props.language);
+  /** What documents run unless one is picked: the project's kernel, else the usual one. */
+  const projectDefault = () => ws.pick(props.language)?.name;
   const memory = sessionMemory(ws, session);
   const rows = () => (info() ? sessionRows(ws, info()!, props.usedBy?.(info()!.id) ?? [], memory()) : []);
   const run = (action: () => unknown) => {
@@ -400,7 +404,7 @@ function KernelMenu(props: {
     <div ref={menu} class="kpop" role="menu" style={{ left: `${props.at.left}px`, top: `${props.at.top}px` }}>
       <KernelHead
         language={props.language}
-        name={info() ? sessionLabel(info()!) : languageLabel(props.language)}
+        name={info() ? sessionLabel(info()!, ws.kernelspecs()) : languageLabel(props.language)}
         state={state()}
         rows={rows()}
       />
@@ -420,27 +424,40 @@ function KernelMenu(props: {
           <button class="mm-i" role="menuitem" onClick={() => run(() => props.doc.kernels.assign(props.language, s.id))}>
             <span class="ico sm" />
             <span>
-              Use {sessionLabel(s)} · {s.id.slice(0, 8)}
+              Use {sessionLabel(s, ws.kernelspecs())} · {s.id.slice(0, 8)}
             </span>
             <kbd>{ws.isBusy(s.id) ? "busy" : ""}</kbd>
           </button>
         )}
       </For>
-      <For each={specs()}>
-        {(k) => (
-          <button class="mm-i" role="menuitem" onClick={() => run(() => props.doc.kernels.startNew(props.language, k.name))}>
-            {k.name === info()?.kernel || (!info() && k === specs()[0]) ? <Icon name="plus" small /> : <span class="ico sm" />}
-            <span>
-              {k.name === info()?.kernel
-                ? `New ${sessionLabel(info()!)} session`
-                : info()
-                  ? `Switch to ${k.display_name}`
-                  : `Start ${k.display_name}`}
-            </span>
+      <Show when={info()}>
+        {(s) => (
+          <button class="mm-i" role="menuitem" onClick={() => run(() => props.doc.kernels.startNew(props.language, s().kernel))}>
+            <Icon name="plus" small />
+            <span>New {sessionLabel(s(), ws.kernelspecs())} session</span>
             <kbd />
           </button>
         )}
-      </For>
+      </Show>
+      <Show when={specs().length}>
+        <div class="mm-sep" />
+        <div class="mm-h">Kernel for {props.doc.name}</div>
+        <For each={specs()}>
+          {(k) => (
+            <button
+              class="mm-i"
+              role="menuitemradio"
+              aria-checked={k.name === inUse()}
+              title={k.name === inUse() ? `${props.doc.name} runs ${k.display_name}` : `Run ${props.doc.name} in ${k.display_name} from now on`}
+              onClick={() => run(() => props.doc.kernels.choose(props.language, k.name))}
+            >
+              {k.name === inUse() ? <Icon name="check" small /> : <span class="ico sm" />}
+              <span>{k.display_name}</span>
+              <kbd>{k.name === projectDefault() ? (ws.projectKernel(props.language) ? "project" : "default") : ""}</kbd>
+            </button>
+          )}
+        </For>
+      </Show>
     </div>
   );
 }

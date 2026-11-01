@@ -73,11 +73,27 @@ export function languageLabel(language: string): string {
 /**
  * A session as people name it: "R 4.4.1", "Python 3.12". Python shows its
  * minor version, as people say it; other languages the version the kernel gives.
+ * Given the kernels, a session in an environment names it too: "Python 3.12 (omicverse)".
  */
-export function sessionLabel(session: Pick<SessionInfo, "language" | "language_version">): string {
+export function sessionLabel(session: Pick<SessionInfo, "language" | "language_version"> & { kernel?: string }, specs?: KernelspecInfo[]): string {
   const name = languageLabel(session.language);
   const version = languageVersion(session);
-  return version ? `${name} ${version}` : name;
+  return withEnv(version ? `${name} ${version}` : name, session, specs);
+}
+
+/** "3.12 (omicverse)": the version, and the environment the session's kernel runs in, if any (Huan's call, 2026-11-01). */
+export function versionLabel(session: Pick<SessionInfo, "language" | "language_version" | "kernel">, specs: KernelspecInfo[]): string {
+  return withEnv(languageVersion(session) || languageLabel(session.language), session, specs);
+}
+
+/** The environment a session's kernel runs in, like "omicverse", if it runs in one. */
+export function sessionEnv(session: { kernel?: string }, specs?: KernelspecInfo[]): string | undefined {
+  return (session.kernel && specs?.find((k) => k.name === session.kernel)?.env) || undefined;
+}
+
+function withEnv(text: string, session: { kernel?: string }, specs?: KernelspecInfo[]): string {
+  const env = sessionEnv(session, specs);
+  return env ? `${text} (${env})` : text;
 }
 
 /**

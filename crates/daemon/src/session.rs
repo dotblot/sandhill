@@ -128,14 +128,18 @@ impl SessionHandle {
         let started = async {
             // The kernel binds its ports a moment after it starts, and
             // connecting earlier fails, so retry until it is listening.
+            // A kernel that exits stops the wait at once: connecting to
+            // ports nobody listens on can take a long time to fail.
             let mut conn = loop {
-                match kernel::connect(&launched.connection_info, &client_session, tx.clone()).await
-                {
+                let attempt =
+                    kernel::connect(&launched.connection_info, &client_session, tx.clone());
+                let connected = tokio::select! {
+                    connected = attempt => connected,
+                    status = child.wait() => bail!("kernel exited during startup ({})", status?),
+                };
+                match connected {
                     Ok(conn) => break conn,
                     Err(err) => {
-                        if let Ok(Some(status)) = child.try_wait() {
-                            bail!("kernel exited during startup ({status})");
-                        }
                         tracing::debug!("kernel not listening yet: {err}");
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
@@ -161,7 +165,14 @@ impl SessionHandle {
                     Ok(Err(err)) => err.to_string(),
                     _ => "kernel did not respond in time".to_string(),
                 };
-                bail!("{reason} (kernel log: {})", log.display());
+                // What the kernel printed says why, more often than not.
+                match kernel::log_tail(&log, 12) {
+                    Some(said) => bail!(
+                        "{reason}. The kernel said:\n{said}\n(kernel log: {})",
+                        log.display()
+                    ),
+                    None => bail!("{reason} (kernel log: {})", log.display()),
+                }
             }
         };
         journal.set_session_status(&id, SessionStatus::Running)?;

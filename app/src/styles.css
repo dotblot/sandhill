@@ -596,8 +596,11 @@ pre.out { font: var(--fs-code)/1.25 var(--font-mono); white-space: pre-wrap; wor
 .console-sessions .pill[data-state="running"] > .lang { animation: connpulse 0.8s ease-in-out infinite alternate; }
 
 /* Notebooks */
-.notebook { max-width: 1100px; padding: 10px 24px 40vh 6px; }
-.nb-cell { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; position: relative; padding: 4px 0; }
+.notebook { max-width: 1100px; padding: 10px 24px 40vh 6px; counter-reset: nbcell; }
+.nb-cell { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; position: relative; padding: 4px 0; counter-increment: nbcell; }
+/* Each cell's number, as # in the Agents pane names it (cell 3 is #3). A
+   counter, so it follows cells as they are added, moved and deleted. */
+.nb-gutter::before { content: "#" counter(nbcell); color: var(--faint); opacity: 0.8; }
 .nb-gutter { text-align: right; padding: 5px 10px 0 0; color: var(--faint); font: var(--fs-chrome) var(--font-mono); display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .nb-run { color: var(--accent); padding: 0 2px; font-size: var(--fs-chrome); opacity: 0; }
 .nb-cell:hover .nb-run, .nb-cell:focus-within .nb-run { opacity: 1; }
@@ -942,7 +945,7 @@ pre.diff { padding: 6px 0; }
 .apop.mention .mm-i.on { background: var(--hover); }
 .apop.mention .mm-i:hover { background: var(--accent); color: var(--accent-text); }
 .apop.mention .mm-i .fi { width: 14px; height: 14px; }
-.apop.mention .mm-i kbd { color: var(--faint); }
+.apop.mention .mm-i kbd { color: var(--faint); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .apop.mention .mm-i:hover kbd { color: inherit; }
 .mq-wrap { display: flex; align-items: center; gap: 6px; height: 26px; margin: 2px 2px 4px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); color: var(--faint); }
 .mq-wrap .ico { width: 13px; height: 13px; }

@@ -36,7 +36,7 @@ import { type HelpRequest, nameAt } from "../model/help";
 import { type NewKind, template, within } from "../model/files";
 import { isJobScript, jobNote, jobState } from "../model/jobs";
 import { newNotebook, serializeNotebook } from "../model/ipynb";
-import { languageLabel, languageVersion, sessionLabel } from "../model/machine";
+import { languageLabel, sessionLabel, versionLabel } from "../model/machine";
 import { browserOpener, fromRun as pagesOf, isHtmlFile, isPreviewable, localPort } from "../model/pages";
 import { listProjectFiles } from "../model/projectFiles";
 import { viewPath } from "../model/table";
@@ -164,6 +164,8 @@ export function App(props: {
   const [settingsDialog, setSettingsDialog] = createSignal<"first" | "menu">();
   /** Shown outputs of documents that are not open, as the project state keeps them. */
   let shownOutputs: Record<string, string[]> = {};
+  /** Per document, the kernels picked in its kernel bar, kept for when it opens again. */
+  let pickedKernels: Record<string, Record<string, string>> = {};
 
   // The layout: which panes show, and their sizes.
   const [left, setLeft] = createSignal(stored(LEFT_KEY) !== "hidden");
@@ -304,6 +306,7 @@ export function App(props: {
       const state = project.state ?? takeLegacyState(props.project);
       setSetupAsked(!!state.setupAsked);
       shownOutputs = state.outputs ?? {};
+      pickedKernels = state.kernels ?? {};
       for (const path of state.tabs ?? []) await open(path, true);
       const last = docs().find((d) => d.path === state.active);
       if (last && !openedWhileRestoring) setActive(last);
@@ -398,6 +401,9 @@ export function App(props: {
     const outputs = { ...shownOutputs };
     for (const doc of docs()) outputs[doc.path] = doc.shownOutputs();
     for (const [path, ids] of Object.entries(outputs)) if (!ids.length) delete outputs[path];
+    const kernels = { ...pickedKernels };
+    for (const doc of docs()) kernels[doc.path] = doc.kernels.chosen();
+    for (const [path, picked] of Object.entries(kernels)) if (!Object.keys(picked).length) delete kernels[path];
     const saved = extras().map(
       (tab): SavedExtra =>
         tab.kind === "table"
@@ -408,6 +414,7 @@ export function App(props: {
       tabs: docs().map((d) => d.path),
       active: active()?.path,
       outputs,
+      kernels: Object.keys(kernels).length ? kernels : undefined,
       extras: saved,
       activeExtra: activeExtra()?.id,
       setupAsked: setupAsked() || undefined,
@@ -652,6 +659,7 @@ export function App(props: {
               : kind === "script"
                 ? await ScriptDoc.open(ws, path, shown)
                 : await QmdDoc.open(ws, path, shown);
+          doc.kernels.restoreChoices(pickedKernels[path] ?? {});
           setDocs((d) => [...d, doc]);
           return doc;
         } catch (err) {
@@ -771,6 +779,7 @@ export function App(props: {
       if (choice === "Save" && !(await saveDoc(doc))) return false;
     }
     shownOutputs[doc.path] = doc.shownOutputs();
+    pickedKernels[doc.path] = doc.kernels.chosen();
     const list = docs();
     const index = list.indexOf(doc);
     const rest = list.filter((d) => d !== doc);
@@ -1201,6 +1210,7 @@ export function App(props: {
               project={props.project}
               hostLabel={hostLabel}
               active={active()}
+              docs={docs()}
               selected={agentTab()}
               onSelect={selectAgent}
               onOpen={open}
@@ -1666,7 +1676,7 @@ function ConsoleSessions(props: {
   const tip = (s: SessionInfo) => {
     const users = props.usedBy(s.id);
     const state = s.status === "starting" ? "starting" : props.ws.isBusy(s.id) ? "running" : "idle";
-    return [`${sessionLabel(s)} · ${state}`, s.cwd, users.length ? `Used by ${users.join(", ")}` : ""].filter(Boolean).join("\n");
+    return [`${sessionLabel(s, props.ws.kernelspecs())} · ${state}`, s.cwd, users.length ? `Used by ${users.join(", ")}` : ""].filter(Boolean).join("\n");
   };
   return (
     <>
@@ -1681,7 +1691,7 @@ function ConsoleSessions(props: {
               onClick={() => props.onPick(s.id)}
             >
               <LangIcon language={normalizeLanguage(s.language)} />
-              {languageVersion(s) || languageLabel(s.language)}
+              {versionLabel(s, props.ws.kernelspecs())}
             </button>
           )}
         </For>

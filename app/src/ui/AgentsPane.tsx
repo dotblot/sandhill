@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js";
 import { LOCAL_HOST } from "../backend";
-import type { AgentInfo, AgentModel, AgentOptions, AgentReport, FileStat, MessageRef, SessionPlots, TerminalInfo, Variables } from "../backend/types";
+import type { AgentInfo, AgentModel, AgentOptions, AgentReport, FileStat, FileText, MessageRef, SessionPlots, TerminalInfo, Variables } from "../backend/types";
 import type { Doc } from "../docs/doc";
 import {
   AGENT_KINDS,
@@ -28,7 +28,7 @@ import {
 } from "../model/agents";
 import { type Answer, type Ask, buildChat, chatTitle, lastActive } from "../model/chat";
 import { EXPORT_FORMATS, type ExportFormat, exportConversation, exportName } from "../model/export";
-import { ATTACHMENTS, attachmentName, type Mention } from "../model/mentions";
+import { ATTACHMENTS, attachmentName, cellMentions, documentCells, type Mention } from "../model/mentions";
 import { fromJournal, type PlotItem } from "../model/plots";
 import type { TerminalStore } from "../model/terminals";
 import type { Workspace } from "../model/workspace";
@@ -69,6 +69,8 @@ export function AgentsPane(props: {
   project: string;
   hostLabel: string;
   active?: Doc;
+  /** The open documents, whose cells (as edited) the # menu lists. */
+  docs?: Doc[];
   selected?: string;
   onSelect: (id: string | undefined) => void;
   width: number;
@@ -556,7 +558,7 @@ export function AgentsPane(props: {
     tell(t, command);
   }
 
-  /** What the @ menu offers: the project's files, the front document's chunks, the sessions' variables and recent plots. */
+  /** What the @ menu offers: the project's files, the sessions' variables and recent plots. A document's cells come with # instead. */
   async function mentionList(): Promise<Mention[]> {
     const sessions = props.ws.projectSessions().filter((s) => s.status === "running");
     const [files, variables, plots] = await Promise.all([
@@ -578,23 +580,37 @@ export function AgentsPane(props: {
         ),
       ),
     ]);
-    const doc = props.active;
-    const chunks: Mention[] = doc
-      ? doc.codeCells().map((cell) => ({ ref: { kind: "chunk", name: `${doc.name} › ${cell.name}`, path: relative(doc.path), cell: cell.id } }))
-      : [];
     const recent = plots
       .flat()
       .sort((a, b) => b.tsMs - a.tsMs)
       .slice(0, PLOTS_OFFERED);
     return [
       ...files.map((file): Mention => ({ ref: { kind: "file", name: file, path: file } })),
-      ...chunks,
       ...variables.flat(),
       ...recent.map((plot): Mention => {
         const name = plotName(plot, relative);
         return { ref: { kind: "plot", name }, make: () => savePlot(plot, name) };
       }),
     ];
+  }
+
+  /** What the # menu offers: the cells of the documents the message names, as their open editor has them, else as saved. */
+  async function cellList(paths: string[]): Promise<Mention[]> {
+    const lists = await Promise.all(
+      paths.map(async (path) => {
+        const full = documentPath(props.project, path);
+        const name = path.split("/").pop() ?? path;
+        const open = props.docs?.find((d) => d.path === full);
+        if (open) return cellMentions(path, name, open.codeCells());
+        try {
+          const file = await props.ws.call<FileText>("read_file", { path: full });
+          return cellMentions(path, name, documentCells(path, file.text));
+        } catch {
+          return [];
+        }
+      }),
+    );
+    return lists.flat();
   }
 
   /** Saves a plot where the agent can look at it, in the project's attachments folder. */
@@ -922,6 +938,7 @@ export function AgentsPane(props: {
         <NewComposer
           choice={newChoice}
           mentions={mentionList}
+          cells={cellList}
           onAttach={attachFile}
           ref={(el) => (input = el)}
           onSend={(kind, options, text) => {
@@ -973,6 +990,7 @@ export function AgentsPane(props: {
               context={choices(t()).context !== false}
               onContext={(on) => choose(t(), { context: on ? undefined : false })}
               mentions={mentionList}
+              cells={cellList}
               onAttach={attachFile}
               status={t().agent?.status}
               busy={working(t())}
@@ -1125,6 +1143,7 @@ function NewConversation(props: {
 function NewComposer(props: {
   choice: NewChoice;
   mentions: () => Promise<Mention[]>;
+  cells: (paths: string[]) => Promise<Mention[]>;
   onAttach: (file: File) => Promise<MessageRef>;
   ref: (el: HTMLTextAreaElement) => void;
   onSend: (kind: AgentKind, options: AgentOptions, text: string) => boolean;
@@ -1148,6 +1167,7 @@ function NewComposer(props: {
       context={c.context()}
       onContext={c.setContext}
       mentions={props.mentions}
+      cells={props.cells}
       onAttach={props.onAttach}
       ref={props.ref}
       onSend={(text, refs) =>

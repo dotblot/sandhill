@@ -814,6 +814,27 @@ async fn agent_code_goes_to_the_console_when_the_user_says_so() {
     .await;
     assert!(added.contains("Added"), "{added}");
     assert!(std::fs::read_to_string(&script).unwrap().contains("z = 1"));
+
+    // With no file named, the code runs in the Console, even with the
+    // script in front: a file is written to only when the user names it.
+    let shown = script.to_string_lossy().into_owned();
+    let window = daemon.client().await;
+    window
+        .set_focus(
+            &project.to_string_lossy(),
+            Focus {
+                file: Some(shown.clone()),
+                line: Some(1),
+                open: vec![shown],
+                ..Focus::default()
+            },
+        )
+        .await
+        .unwrap();
+    let added = call(&tools, "add_cell", json!({"code": "w = 2\nprint(w * 21)"})).await;
+    assert!(added.contains("Ran it in the Console"), "{added}");
+    assert!(added.contains("42"), "{added}");
+    assert!(!std::fs::read_to_string(&script).unwrap().contains("w = 2"));
     client.shutdown(&session.id).await.unwrap();
 }
 

@@ -424,12 +424,24 @@ and remote work are never shown together.
 ## Editor
 - The document bar has one kernel picker per language. It shows only the language
   icon (R, Python) and the version, for example the R icon followed by "4.4.1",
-  with no status dot, language name, kernel or session ID. The icon is 14px and
-  the picker's left padding is 3px, so the icon sits evenly inside the rounded end.
+  with no status dot, language name, kernel or session ID. A kernel in an
+  environment adds its name: "3.12 (omicverse)" (Huan's call, 2026-11-01; the
+  Console's session switch, the left pane's kernel rows and the pop-ups name it
+  too). The icon is 14px and the picker's left padding is 3px, so the icon sits
+  evenly inside the rounded end.
 - Clicking a picker opens its drop-down: language, version and state, then the
   kernel, library or environment, machine, the documents using it and memory, then
-  the session list (the current session's ID, New session, and another installed
-  version to switch to). Session IDs appear only there.
+  the session list (the current session's ID, other sessions to use, New
+  session). Session IDs appear only there.
+- Under them, **Kernel for <document>** lists every installed kernel for the
+  language, with a check by the one the document runs and "project" (or
+  "default") by the one Project settings name. Picking one runs the document in
+  it from then on, joining a session of that kernel already running in its
+  folder, else starting one; the project keeps the pick for next time. Until a
+  kernel is picked, the document runs the project's (Huan's call, 2026-11-01).
+- A notebook shows each cell's number at the top of its gutter, "#3" in faint
+  grey above the run count, as # in the Agents pane names it. Numbers count every
+  cell, text cells too, and follow cells as they move.
 - Run all shows no keyboard shortcut; ⌥⌘R is in its tooltip.
 - A `.qmd` or `.Rmd` document's bar has **Preview** (an eye) after Run all, with
   ⇧⌘K in its tooltip. It shows the document in the Viewer, whose line reads
@@ -477,8 +489,9 @@ omp.
 - **A conversation is about the whole project, not one file** (Huan's call,
   2026-10-31). No file is bound to it, and opening it doesn't change the
   editor. To work on a file, name it with @ in the message: the code the agent
-  writes goes into the document named, else into the one in front of you, below
-  your active cell.
+  writes goes into that document, below your active cell. A file named with @
+  counts for that message only, and with no file named the agent's code runs
+  in the Console (Huan's call, 2026-11-01).
 - **Header** (the pane's tab strip):
   - The conversation's provider chip and its **title**. The agent writes the
     title from your first message: a few words, without file names, filler such
@@ -539,9 +552,15 @@ omp.
     pop-up. The bar is inset 4px at each end, and its filled part ends exactly
     under the knob's centre.
 - **@ mentions**:
-  - Typing @ opens a menu above the message box with the project's files, the
-    open document's chunks, variables and plots, grouped under those headings and
-    filtered by what you type after the @.
+  - Typing @ opens a menu above the message box with the project's files,
+    variables and plots, grouped under those headings and filtered by what you
+    type after the @.
+  - **#** picks a cell (Huan's call, 2026-11-01): once a notebook, Quarto or R
+    Markdown file is a chip, typing # lists its code cells under the file's name,
+    each as "cell 3" with its first line of code in grey. Typing a number picks
+    that cell ("#3"), words find a cell by its code. The pick is a chip
+    ("de.ipynb › cell 3"). With no such file added yet, the menu says to add one
+    with @ first.
   - There is no @ button (removed 2026-10-31): typing @ is the way in.
   - Enter or Tab picks the first match. Esc or a click elsewhere closes the menu.
   - The "@" and the letters typed after it are removed, so no stray "@" is left
