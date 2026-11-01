@@ -1,9 +1,9 @@
-# Sandhill in GPUI (trial)
+# Sandhill in GPUI
 
-A trial of drawing Sandhill with [GPUI](https://gpui.rs), Zed's UI toolkit,
-instead of a web view. The plan and milestones are in the project's
-`design/gpui-plan.md`. This folder lives only on the `gpui-experiment` branch;
-`main` and the Tauri app in `app/` are untouched.
+Sandhill drawn with [GPUI](https://gpui.rs), Zed's UI toolkit, instead of a
+web view. It started as a trial (milestones 1 to 4 below); on 2026-11-01 it
+was chosen to replace the Tauri app in `app/`, which it will do step by step
+(see `CLAUDE.md`). It keeps the Tauri app's look, with fonts 2px larger.
 
 It reaches `sandhilld` the same way the Tauri app does, through
 `sandhill-link` and `sandhill-proto`, and it borrows the daemon's own rules for

@@ -93,6 +93,16 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 
 ## 3. Mac app choice: why Tauri over the alternatives
 
+> **Update 2026-11-01: moving to GPUI.** A trial GPUI app (`gpui/`, built
+> with gpui-kit and gpui-webview for HTML outputs) started in 0.4 s against
+> the Tauri app's 0.8 s and used about a third of the memory with a 400-cell
+> notebook open. After trying a Mac build, Huan chose to move Sandhill to it.
+> The HTML problem below is handled by gpui-webview (the system's WebKit as a
+> native view, clipped with gpui-kit's GPUI Fast engine). The port follows
+> the plan "Sandhill on GPUI": look and layout, agents, the right-side panes,
+> Git, the remaining hard parts, then the switch, when `app/` is deleted. The
+> table below is the original choice, kept for its reasons.
+
 | Option | Verdict |
 |---|---|
 | **Tauri 2** (recommended) | Rust backend, system WKWebView, small binaries. One codebase for the editor, notebook cells and outputs. Downside: WKWebView is Safari's engine, so test plotly and htmlwidgets there. That is fine in practice. |
