@@ -16,7 +16,21 @@ use tracing_subscriber::EnvFilter;
 
 use crate::workbench::Workbench;
 
-actions!(sandhill, [Quit]);
+actions!(sandhill, [Quit, Save, RunCell, RunAll]);
+
+/// Highlighting for R, with Posit's tree-sitter grammar (MIT).
+fn register_r() {
+    use gpui_kit::component::highlighter::{LanguageConfig, LanguageRegistry};
+    let config = LanguageConfig::new(
+        "r",
+        tree_sitter_r::LANGUAGE.into(),
+        vec![],
+        tree_sitter_r::HIGHLIGHTS_QUERY,
+        "",
+        tree_sitter_r::LOCALS_QUERY,
+    );
+    LanguageRegistry::singleton().register("r", &config);
+}
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -42,7 +56,20 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+            register_r();
+            let (save, run_all) = if cfg!(target_os = "macos") {
+                ("cmd-s", "cmd-shift-enter")
+            } else {
+                ("ctrl-s", "ctrl-shift-enter")
+            };
+            cx.bind_keys([
+                KeyBinding::new("cmd-q", Quit, None),
+                KeyBinding::new(save, Save, None),
+                // In a cell's editor, Shift+Enter runs the cell instead of
+                // adding a line, as in Jupyter.
+                KeyBinding::new("shift-enter", RunCell, Some("Input")),
+                KeyBinding::new(run_all, RunAll, None),
+            ]);
             cx.set_menus(vec![Menu {
                 name: "Sandhill".into(),
                 items: vec![MenuItem::action("Quit Sandhill", Quit)],

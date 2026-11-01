@@ -20,8 +20,24 @@ come from `gpui-kit` (Apache-2.0); nothing is taken from Zed's GPL editor.
   the document names, else the first for its language; the buttons above the
   cells switch it.
 - **Run** on a code cell starts the kernel if needed and shows text output,
-  warnings and errors. Plots and HTML show a note naming the milestone that
-  draws them.
+  warnings and errors. HTML shows a note until the web view (milestone 4).
+
+## Milestone 2: edit cells and see plots
+
+- Every cell is an editor (gpui-component's), with Python and Markdown
+  colours built in and R from Posit's tree-sitter grammar (MIT).
+- **Shift+Enter** runs the cell and moves to the next; **Run All**
+  (⌘⇧Enter) runs them all in order.
+- PNG, JPEG, GIF and SVG plots appear under cells, fetched from the
+  daemon's blob store.
+- Reopening a notebook shows each cell's latest run from the daemon's
+  journal (or the outputs saved in an `.ipynb`), and carries on in the
+  kernel that ran them if it is still running. Switching notebooks leaves
+  kernels running; choosing another kernel stops the old one.
+- **Save** (⌘S) writes the file back: an `.ipynb` in nbformat's layout,
+  giving old cells ids (nbformat 4.5); a Quarto document with only the cells'
+  text replaced. A file changed on disk since it was read isn't overwritten.
+  Switching to another notebook saves the edited one first.
 
 ## Running it
 

@@ -1,5 +1,5 @@
-//! What milestone 1 shows for each output: text. Plots and HTML get a note
-//! saying which milestone draws them.
+//! What each output shows as: text, a plot, or a note for what the trial
+//! can't draw yet (HTML waits for the web view in milestone 4).
 
 use serde_json::Value;
 
@@ -12,6 +12,12 @@ pub enum Shown {
     /// stderr.
     Warning(String),
     Error(String),
+    /// An image: its MIME type and its value, a string (base64, or SVG
+    /// text) or a blob reference (`{"sandhill_blob": hash}`).
+    Plot {
+        mime: String,
+        value: Value,
+    },
     /// Something this milestone can't draw yet.
     Note(String),
 }
@@ -51,8 +57,14 @@ pub fn show(output: &Value) -> Shown {
             let Some(mimes) = data.as_object() else {
                 return Shown::Note("Empty output".into());
             };
-            if let Some(mime) = mimes.keys().find(|m| m.starts_with("image/")) {
-                Shown::Note(format!("Plot ({mime}): drawn from milestone 2"))
+            let plot = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"]
+                .into_iter()
+                .find(|m| mimes.contains_key(*m));
+            if let Some(mime) = plot {
+                Shown::Plot {
+                    mime: mime.to_string(),
+                    value: data[mime].clone(),
+                }
             } else if mimes.contains_key("text/plain") {
                 Shown::Text(strip_ansi(&multiline(&data["text/plain"])))
             } else if mimes.contains_key("text/html") {
@@ -107,10 +119,16 @@ mod tests {
     }
 
     #[test]
-    fn notes_plots_and_html() {
+    fn shows_plots_and_notes_html() {
         let out = json!({"output_type": "display_data",
-            "data": {"image/png": "...", "text/plain": "<Figure>"}});
-        assert!(matches!(show(&out), Shown::Note(n) if n.contains("Plot")));
+            "data": {"image/png": {"sandhill_blob": "ab"}, "text/plain": "<Figure>"}});
+        assert_eq!(
+            show(&out),
+            Shown::Plot {
+                mime: "image/png".into(),
+                value: json!({"sandhill_blob": "ab"})
+            }
+        );
         let out = json!({"output_type": "display_data", "data": {"text/html": "<b>"}});
         assert!(matches!(show(&out), Shown::Note(n) if n.contains("HTML")));
     }
