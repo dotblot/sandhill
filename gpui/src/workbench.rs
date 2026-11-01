@@ -20,6 +20,7 @@ use sandhill_proto::{
 use serde_json::Value;
 use tokio::runtime::Runtime;
 
+use crate::agents::Agents;
 use crate::daemon::{Daemon, Streams};
 use crate::explorer::Explorer;
 use crate::notebook::{self, CellKind, Format, Notebook};
@@ -129,6 +130,8 @@ pub(crate) enum Split {
     Right,
     /// Above Variables.
     Variables,
+    /// Between the AI pane and the middle.
+    Agents,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -207,6 +210,10 @@ pub struct Workbench {
     pub(crate) show_files: bool,
     /// The right column is shown.
     pub(crate) show_right: bool,
+    /// The AI pane, between the files and the middle.
+    pub(crate) show_agents: bool,
+    pub(crate) agents: Option<Entity<Agents>>,
+    pub(crate) agents_width: f32,
     /// Pane sizes, set by dragging the gaps between them.
     pub(crate) files_width: f32,
     pub(crate) right_width: f32,
@@ -346,6 +353,9 @@ impl Workbench {
             problem: None,
             show_files: true,
             show_right: true,
+            show_agents: true,
+            agents: None,
+            agents_width: 420.,
             files_width: 240.,
             right_width: 460.,
             variables_height: 250.,
@@ -382,6 +392,7 @@ impl Workbench {
         self.kernels.clear();
         self.recent.clear();
         self.project = None;
+        self.agents = None;
         self.tree = Tree::default();
         self.open = None;
         self.others.clear();
@@ -539,13 +550,16 @@ impl Workbench {
         let opened = daemon.call::<ProjectInfo>(Call::OpenProject { path: path.clone() });
         cx.spawn(async move |this, cx| {
             let opened = opened.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match opened {
                     Ok(project) if !project.exists => {
                         this.problem = Some(format!("{} doesn't exist", project.path))
                     }
                     Ok(project) => {
                         this.close_project(cx);
+                        let daemon = daemon.clone();
+                        let path = project.path.clone();
+                        this.agents = Some(cx.new(|cx| Agents::new(daemon, path, window, cx)));
                         this.project = Some(project.path);
                         this.read_folder(String::new(), cx);
                         this.problem = None;
@@ -621,6 +635,7 @@ impl Workbench {
         self.explorer = None;
         self.explorer_shown = false;
         self.project = None;
+        self.agents = None;
         self.tree = Tree::default();
         self.terminal = None;
         cx.notify();
@@ -1871,6 +1886,14 @@ impl Workbench {
     }
 
     fn on_terminal_event(&mut self, event: TerminalEvent, cx: &mut Context<Self>) {
+        if let Some(agents) = self.agents.clone()
+            && agents.read(cx).owns(&event.terminal)
+        {
+            agents.update(cx, |agents, cx| agents.on_terminal_event(event, cx));
+            // The title bar's dot shows an agent waiting.
+            cx.notify();
+            return;
+        }
         let Some(view) = self.terminal.clone() else {
             return;
         };

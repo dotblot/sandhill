@@ -6998,6 +6998,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "base64 0.22.1",
+ "chrono",
  "flate2",
  "gpui-kit",
  "gpui-webview",

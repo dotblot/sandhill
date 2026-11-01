@@ -8,6 +8,9 @@
 // The theme in `look` is one large `json!`.
 #![recursion_limit = "512"]
 
+mod agents;
+mod agents_view;
+mod chat;
 mod daemon;
 mod explorer;
 mod look;
