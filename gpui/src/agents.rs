@@ -18,15 +18,17 @@ use sandhill_proto::{
 use serde_json::{Value, json};
 
 use crate::chat::{self, Chat, Entry};
+use crate::composer::{Mention, ModelChoice};
 use crate::daemon::Daemon;
 use crate::terminal::TerminalView;
+use crate::workbench::Workbench;
 
 /// What Claude Code needs between a pasted message and the Enter that sends
 /// it, as in the Tauri app.
-const SUBMIT_DELAY: Duration = Duration::from_millis(60);
+pub(crate) const SUBMIT_DELAY: Duration = Duration::from_millis(60);
 /// A new agent's terminal size, until its view has one.
-const START_COLUMNS: u16 = 100;
-const START_ROWS: u16 = 30;
+pub(crate) const START_COLUMNS: u16 = 100;
+pub(crate) const START_ROWS: u16 = 30;
 
 /// An agent the pane offers, as the Tauri app's `AGENT_KINDS` describes it.
 pub(crate) struct Kind {
@@ -72,6 +74,35 @@ pub(crate) fn drives_chat(kind: &str) -> bool {
     kind == "codex" || kind == "antigravity"
 }
 
+/// A menu open over the message box.
+#[derive(Clone, PartialEq)]
+pub(crate) enum Menu {
+    /// The @ menu (files, variables) or the # menu (cells of the notebooks
+    /// named with @); `items` is `None` while it loads.
+    Mention {
+        sign: char,
+        query: String,
+        items: Option<Vec<Mention>>,
+        active: usize,
+    },
+    Model,
+    Mode,
+    Context,
+}
+
+/// Choices in the message box that aren't the agent's yet: for a new
+/// conversation, or picked while one has ended (they apply as it goes on),
+/// or sent and not yet reported back.
+#[derive(Clone, Default)]
+pub(crate) struct Choice {
+    pub model: Option<ModelChoice>,
+    pub effort: Option<String>,
+    pub mode: Option<&'static str>,
+    pub console: Option<bool>,
+    pub web: Option<bool>,
+    pub context: Option<bool>,
+}
+
 /// What the pane shows.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Show {
@@ -110,6 +141,27 @@ pub struct Agents {
     /// A conversation starting: its agent's name.
     pub(crate) starting: Option<&'static str>,
     pub(crate) problem: Option<String>,
+    /// What was added to the message with @ and #, shown as chips.
+    pub(crate) refs: Vec<Value>,
+    pub(crate) menu: Option<Menu>,
+    /// The model menu's tab: an agent's kind, or "fav".
+    pub(crate) model_tab: Option<String>,
+    pub(crate) favourites: Vec<String>,
+    /// What a new conversation starts with.
+    pub(crate) new_choice: Choice,
+    /// What each conversation's box shows until the agent reports it.
+    pub(crate) picked: HashMap<String, Choice>,
+    /// The models Codex and Antigravity list before a conversation.
+    pub(crate) listed: HashMap<String, Vec<Value>>,
+    /// Unsent text and chips, by conversation ("new" for a new one).
+    pub(crate) drafts: HashMap<String, (String, Vec<Value>)>,
+    pub(crate) draft_key: String,
+    /// A command typed while the agent waits for an answer, which it would
+    /// answer: it goes once the agent stops waiting.
+    pub(crate) held: Option<(String, String)>,
+    /// Effort changes settle before they go (the slider can be dragged).
+    pub(crate) effort_generation: u64,
+    pub(crate) workbench: WeakEntity<Workbench>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -117,6 +169,7 @@ impl Agents {
     pub fn new(
         daemon: Rc<Daemon>,
         project: String,
+        workbench: WeakEntity<Workbench>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -132,10 +185,10 @@ impl Agents {
         let subscriptions = vec![cx.subscribe_in(
             &composer,
             window,
-            |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { shift: false, .. } = event {
-                    this.submit(window, cx);
-                }
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter { shift: false, .. } => this.submit(window, cx),
+                InputEvent::Change => this.composer_changed(window, cx),
+                _ => {}
             },
         )];
         let mut agents = Agents {
@@ -156,6 +209,18 @@ impl Agents {
             stopped: HashSet::new(),
             starting: None,
             problem: None,
+            refs: Vec::new(),
+            menu: None,
+            model_tab: None,
+            favourites: crate::prefs::favourites(),
+            new_choice: Choice::default(),
+            picked: HashMap::new(),
+            listed: HashMap::new(),
+            drafts: HashMap::new(),
+            draft_key: "new".into(),
+            held: None,
+            effort_generation: 0,
+            workbench,
             _subscriptions: subscriptions,
         };
         agents.refresh(cx);
@@ -171,6 +236,11 @@ impl Agents {
             let installed = installed.await.unwrap_or_default();
             let listed = listed.await;
             this.update(cx, |this, cx| {
+                for agent in &installed {
+                    if agent.path.is_some() && drives_chat(&agent.kind) {
+                        this.list_models(agent.kind.clone(), cx);
+                    }
+                }
                 this.installed = installed;
                 match listed {
                     Ok(all) => {
@@ -196,7 +266,11 @@ impl Agents {
                         }
                         if this.terminals.is_empty() {
                             this.show = Show::New;
+                        } else if this.selected.is_none() {
+                            // None running: the earlier ones.
+                            this.show = Show::History;
                         }
+                        this.draft_key = this.wanted_draft();
                     }
                     Err(err) => {
                         this.problem = Some(format!("Listing conversations failed: {err:#}"))
@@ -287,12 +361,20 @@ impl Agents {
                 }
             }
         }
+        if let Some(agent) = &event.agent
+            && agent.get("state").is_some_and(|s| s != "waiting")
+            && self.held.as_ref().is_some_and(|(t, _)| *t == id)
+            && let Some((_, command)) = self.held.take()
+        {
+            self.type_command(&id, command, cx);
+        }
         if let Some(agent) = event.agent
             && let Some(t) = self.terminals.iter_mut().find(|t| t.id == id)
         {
             if agent["state"] == "idle" {
                 self.stopped.remove(&id);
             }
+
             // Reports carry what changed; keep the rest.
             let mut merged = t.agent.take().unwrap_or(json!({}));
             if let (Some(old), Some(new)) = (merged.as_object_mut(), agent.as_object()) {
@@ -366,15 +448,18 @@ impl Agents {
         chat::last_active(self.entries(&t.id)).unwrap_or(t.started_ms.max(t.created_ms))
     }
 
-    pub(crate) fn select(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(crate) fn select(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = Some(id);
         self.show = Show::Chat;
         self.chat_scroll.scroll_to_bottom();
+        self.swap_draft(window, cx);
         cx.notify();
     }
 
     pub(crate) fn show(&mut self, show: Show, window: &mut Window, cx: &mut Context<Self>) {
         self.show = show;
+        self.menu = None;
+        self.swap_draft(window, cx);
         match show {
             Show::Terminal => {
                 if let Some(view) = self.selected.as_ref().and_then(|id| self.views.get(id)) {
@@ -391,6 +476,9 @@ impl Agents {
     }
 
     pub(crate) fn choose_new_kind(&mut self, kind: &'static str, cx: &mut Context<Self>) {
+        if self.new_kind != kind {
+            self.new_choice.model = None;
+        }
         self.new_kind = kind;
         cx.notify();
     }
@@ -412,19 +500,34 @@ impl Agents {
         if text.is_empty() {
             return;
         }
+        if matches!(self.menu, Some(Menu::Mention { .. })) {
+            return self.pick_mention(None, window, cx);
+        }
+        let refs = std::mem::take(&mut self.refs);
         let sent = match self.show {
             Show::New => {
-                self.start(self.new_kind, Some(text), cx);
+                let options = self.new_options(refs.clone());
+                self.start(self.new_kind, Some(text), options, window, cx);
                 true
             }
             _ => match self.current().cloned() {
-                Some(t) if t.running => self.send(&t, &text, cx),
-                _ => false,
+                Some(t) if t.running => self.send(&t, &text, &refs, cx),
+                Some(t) => {
+                    let mut options = self.resume_options(&t);
+                    options.refs = refs.clone();
+                    self.restart(&t, options, Some(text), cx);
+                    true
+                }
+                None => false,
             },
         };
         if sent {
+            self.menu = None;
+            self.drafts.remove(&self.draft_key);
             self.composer
                 .update(cx, |c, cx| c.set_value("", window, cx));
+        } else {
+            self.refs = refs;
         }
     }
 
@@ -434,6 +537,8 @@ impl Agents {
         &mut self,
         kind: &'static str,
         prompt: Option<String>,
+        options: AgentOptions,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let name = kind_of(kind).map_or(kind, |k| k.name);
@@ -455,20 +560,21 @@ impl Agents {
             project: Some(self.project.clone()),
             cols: Some(START_COLUMNS),
             rows: Some(START_ROWS),
-            options: AgentOptions::default(),
+            options,
             prompt,
         });
         cx.notify();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let started = started.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.starting = None;
                 match started {
                     Ok(info) => {
                         this.follow(&info, cx);
                         let id = info.id.clone();
                         this.terminals.push(info);
-                        this.select(id, cx);
+                        this.new_choice = Choice::default();
+                        this.select(id, window, cx);
                     }
                     Err(err) => this.problem = Some(format!("Could not start {name}: {err:#}")),
                 }
@@ -482,7 +588,13 @@ impl Agents {
     /// Sends a message: to the bridge of an agent Sandhill drives, or as if
     /// typed into the agent's terminal (one paste, so line breaks don't
     /// send it early, then Enter).
-    fn send(&mut self, t: &TerminalInfo, text: &str, cx: &mut Context<Self>) -> bool {
+    fn send(
+        &mut self,
+        t: &TerminalInfo,
+        text: &str,
+        refs: &[Value],
+        cx: &mut Context<Self>,
+    ) -> bool {
         if !self.chat(t).waiting.is_empty() {
             let who = kind_of(&t.kind).map_or("the agent", |k| k.short);
             self.problem = Some(format!("Answer {who}'s question above first."));
@@ -491,8 +603,16 @@ impl Agents {
         }
         self.stopped.remove(&t.id);
         if drives_chat(&t.kind) {
-            self.tell(t, json!({"kind": "say", "text": text}));
+            if refs.is_empty() {
+                self.tell(t, json!({"kind": "say", "text": text}));
+            } else {
+                self.tell(t, json!({"kind": "say", "text": text, "refs": refs}));
+            }
         } else {
+            // The chips go first, so Claude Code's prompt hook finds them.
+            if !refs.is_empty() {
+                self.tell(t, json!({"kind": "set", "refs": refs}));
+            }
             let paste = format!("\x1b[200~{}\x1b[201~", text.replace('\n', "\r"));
             let enter = Call::TerminalInput {
                 terminal: t.id.clone(),
@@ -533,7 +653,7 @@ impl Agents {
         cx.notify();
     }
 
-    fn tell(&self, t: &TerminalInfo, command: Value) {
+    pub(crate) fn tell(&self, t: &TerminalInfo, command: Value) {
         self.daemon.fire(Call::TellTerminal {
             terminal: t.id.clone(),
             command,

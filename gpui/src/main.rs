@@ -9,13 +9,17 @@
 #![recursion_limit = "512"]
 
 mod agents;
+mod agents_box;
 mod agents_view;
 mod chat;
+mod composer;
+mod composer_view;
 mod daemon;
 mod explorer;
 mod look;
 mod notebook;
 mod pages;
+mod prefs;
 mod shown;
 mod statements;
 mod terminal;

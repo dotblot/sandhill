@@ -109,6 +109,31 @@ pub(crate) struct Open {
 }
 
 impl Open {
+    /// The code cells as the # menu names them, with their text as edited.
+    pub(crate) fn code_cells(&self, cx: &App) -> Vec<crate::composer::DocCell> {
+        let mut chunks = 0;
+        self.notebook
+            .cells
+            .iter()
+            .zip(&self.editors)
+            .enumerate()
+            .filter(|(_, (cell, _))| cell.kind == CellKind::Code)
+            .map(|(i, (cell, editor))| {
+                chunks += 1;
+                let name = match self.notebook.format {
+                    Format::Ipynb => format!("cell {}", i + 1),
+                    _ if cell.id.starts_with("chunk-") => format!("chunk {chunks}"),
+                    _ => cell.id.clone(),
+                };
+                crate::composer::DocCell {
+                    id: cell.id.clone(),
+                    name,
+                    code: editor.read(cx).value().to_string(),
+                }
+            })
+            .collect()
+    }
+
     pub(crate) fn is_script(&self) -> bool {
         self.notebook.format == Format::Script
     }
@@ -506,6 +531,15 @@ impl Workbench {
         Some(streams)
     }
 
+    /// The code cells of a document open in a tab, as edited there.
+    pub(crate) fn open_cells(&self, path: &str, cx: &App) -> Option<Vec<crate::composer::DocCell>> {
+        self.open
+            .iter()
+            .chain(&self.others)
+            .find(|o| o.notebook.path == path)
+            .map(|o| o.code_cells(cx))
+    }
+
     pub(crate) fn choose_project(&mut self, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -559,7 +593,9 @@ impl Workbench {
                         this.close_project(cx);
                         let daemon = daemon.clone();
                         let path = project.path.clone();
-                        this.agents = Some(cx.new(|cx| Agents::new(daemon, path, window, cx)));
+                        let workbench = cx.entity().downgrade();
+                        this.agents =
+                            Some(cx.new(|cx| Agents::new(daemon, path, workbench, window, cx)));
                         this.project = Some(project.path);
                         this.read_folder(String::new(), cx);
                         this.problem = None;

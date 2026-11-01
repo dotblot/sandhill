@@ -4,7 +4,6 @@
 //! history or a new conversation, and the message box.
 
 use chrono::{Local, TimeZone};
-use gpui_kit::component::input::Editor;
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -12,15 +11,10 @@ use gpui_kit::*;
 use sandhill_proto::TerminalInfo;
 use serde_json::{Value, json};
 
-use crate::RunCell;
 use crate::agents::{Agents, KINDS, Show, kind_of, model_label};
 use crate::chat::{self, Ask, Item, Step, StepStatus};
 use crate::look::{self, Palette, RADIUS, icon, icon_button, pane, picture};
 use crate::workbench::Workbench;
-
-const LINE: f32 = 20.;
-/// The message box grows to this many lines, then scrolls.
-const COMPOSER_LINES: usize = 8;
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -47,7 +41,7 @@ impl Render for Agents {
         };
         let composer = match (self.show, &current) {
             (Show::New, _) => true,
-            (Show::Chat, Some(t)) => t.running,
+            (Show::Chat, Some(t)) => t.running || crate::composer::can_resume(t),
             _ => false,
         };
         pane(&p)
@@ -399,7 +393,7 @@ impl Agents {
                             .child(sub),
                     ),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx)))
+            .on_click(cx.listener(move |this, _, window, cx| this.select(id.clone(), window, cx)))
             .into_any_element()
     }
 
@@ -941,123 +935,6 @@ impl Agents {
                 })
                 .ok();
         })
-    }
-
-    /// The message box: grows with its text, Enter sends, Shift+Enter
-    /// adds a line; the round button sends, or stops a working agent.
-    fn render_composer(
-        &self,
-        current: Option<&TerminalInfo>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let p = *Palette::get(cx);
-        let lines = self
-            .composer
-            .read(cx)
-            .value()
-            .split('\n')
-            .count()
-            .clamp(2, COMPOSER_LINES);
-        let working = current.is_some_and(|t| self.working(t)) && self.show != Show::New;
-        let kind = match self.show {
-            Show::New => self.new_kind,
-            _ => current.map_or(self.new_kind, |t| t.kind.as_str()),
-        };
-        let name = kind_of(kind).map_or(kind, |k| k.name);
-        let model = current
-            .filter(|_| self.show != Show::New)
-            .and_then(model_label);
-        let focused = self
-            .composer
-            .read(cx)
-            .focus_handle(cx)
-            .contains_focused(window, cx);
-        let edge = if focused {
-            p.accent.opacity(0.6)
-        } else {
-            p.line
-        };
-        div()
-            .flex_none()
-            .px(px(8.))
-            .pt(px(6.))
-            .pb(px(8.))
-            .on_action(cx.listener(|this, _: &RunCell, window, cx| {
-                // Shift+Enter adds a line.
-                this.composer.update(cx, |c, cx| c.insert("\n", window, cx));
-            }))
-            .child(
-                v_flex()
-                    .gap(px(4.))
-                    .px(px(6.))
-                    .pt(px(6.))
-                    .pb(px(4.))
-                    .rounded(px(RADIUS))
-                    .border_1()
-                    .border_color(edge)
-                    .bg(p.bg)
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .gap(px(4.))
-                            .child(
-                                div().flex_1().min_w_0().child(
-                                    Editor::new(&self.composer)
-                                        .bordered(false)
-                                        .appearance(false)
-                                        .font_family(".SystemUIFont")
-                                        .text_size(px(look::CHROME))
-                                        .line_height(px(LINE))
-                                        .h(px(lines as f32 * LINE + 8.)),
-                                ),
-                            )
-                            .child(
-                                div()
-                                    .id("agent-send")
-                                    .flex_none()
-                                    .size(px(26.))
-                                    .rounded_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
-                                    .map(|d| {
-                                        if working {
-                                            d.bg(p.text)
-                                                .child(div().size(px(9.)).rounded(px(2.)).bg(p.bg))
-                                        } else {
-                                            d.bg(p.accent).child(
-                                                icon("arrow.up")
-                                                    .size(px(15.))
-                                                    .text_color(p.accent_text),
-                                            )
-                                        }
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        if working {
-                                            this.stop(cx)
-                                        } else {
-                                            this.submit(window, cx)
-                                        }
-                                    })),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(px(5.))
-                            .h(px(24.))
-                            .px(px(4.))
-                            .text_size(px(look::SMALL + 1.))
-                            .text_color(p.muted)
-                            .child(div().flex_1())
-                            .child(provider(kind).size(px(13.)))
-                            .child(div().text_color(p.text).child(match model {
-                                Some(model) => format!("{name} · {model}"),
-                                None => name.to_string(),
-                            })),
-                    ),
-            )
     }
 }
 
