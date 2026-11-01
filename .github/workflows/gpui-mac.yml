@@ -1,0 +1,87 @@
+name: GPUI trial (Mac build)
+
+# Only on the GPUI trial branch: builds "Sandhill GPUI.app" from gpui/ for
+# trying it on a Mac. The Tauri app's CI (ci.yml) is unchanged.
+on:
+  push:
+    branches: [gpui-experiment]
+    paths: ["gpui/**", "crates/**", ".github/workflows/gpui-mac.yml"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS (Apple silicon, GPUI app bundle)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            gpui -> target
+      - name: Build sandhilld
+        run: cargo build --release -p sandhill-daemon
+      - name: Build the GPUI app
+        working-directory: gpui
+        run: cargo build --release
+      - name: Make Sandhill GPUI.app
+        run: |
+          app="Sandhill GPUI.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp gpui/target/release/sandhill-gpui "$app/Contents/MacOS/"
+          # The app finds sandhilld next to itself, as the Tauri app's bundle does.
+          cp target/release/sandhilld "$app/Contents/MacOS/"
+          cp app/src-tauri/icons/icon.icns "$app/Contents/Resources/"
+          cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Sandhill GPUI</string>
+            <key>CFBundleDisplayName</key><string>Sandhill GPUI</string>
+            <key>CFBundleIdentifier</key><string>dev.sandhill.gpui-trial</string>
+            <key>CFBundleExecutable</key><string>sandhill-gpui</string>
+            <key>CFBundleIconFile</key><string>icon.icns</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>0.1.0</string>
+            <key>CFBundleVersion</key><string>${GITHUB_SHA::7}</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+          sed -i '' 's/^          //' "$app/Contents/Info.plist"
+          plutil -lint "$app/Contents/Info.plist"
+          # Ad-hoc signature, as unsigned builds of the Tauri app have.
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --keepParent "$app" Sandhill-GPUI-macos-arm64.zip
+      - name: Check that the zipped app opens
+        run: |
+          dir=$(cd "$(mktemp -d)" && pwd -P)
+          ditto -x -k Sandhill-GPUI-macos-arm64.zip "$dir"
+          app="$dir/Sandhill GPUI.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          open "$app"
+          for _ in $(seq 30); do
+            pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null && break
+            sleep 1
+          done
+          pgrep -fl "$app/Contents/MacOS/" || { echo "Sandhill GPUI.app did not start"; exit 1; }
+          sleep 8
+          pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null || { echo "Sandhill GPUI.app quit soon after starting"; exit 1; }
+          screencapture -x start-window.png || echo "could not take a screenshot"
+          pkill -f "$app/Contents/MacOS/" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sandhill-GPUI-macos-arm64
+          path: Sandhill-GPUI-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gpui-start-window-screenshot
+          path: start-window.png
+          if-no-files-found: ignore
