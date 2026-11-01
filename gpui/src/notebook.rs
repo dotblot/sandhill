@@ -1,6 +1,7 @@
-//! A notebook as the trial app shows it: its cells, in order, read from a
+//! A notebook as the app shows it: its cells, in order, read from a
 //! Jupyter `.ipynb` or a Quarto `.qmd`/`.Rmd` document, and written back
-//! with the cells' new text.
+//! with the cells' new text. An R or Python script is a document of one
+//! code cell, the whole file.
 
 use std::ops::Range;
 
@@ -13,6 +14,8 @@ use serde_json::{Map, Value};
 pub enum Format {
     Ipynb,
     Quarto,
+    /// An `.R` or `.py` file.
+    Script,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +128,7 @@ pub fn format_of(path: &str) -> Option<Format> {
     match ext.as_str() {
         "ipynb" => Some(Format::Ipynb),
         "qmd" | "rmd" => Some(Format::Quarto),
+        "r" | "py" => Some(Format::Script),
         _ => None,
     }
 }
@@ -133,6 +137,7 @@ pub fn parse(path: &str, text: &str) -> Result<Notebook> {
     match format_of(path).context("not a notebook or Quarto document")? {
         Format::Ipynb => parse_ipynb(path, text),
         Format::Quarto => Ok(parse_quarto(path, text)),
+        Format::Script => Ok(parse_script(path, text)),
     }
 }
 
@@ -234,6 +239,33 @@ fn parse_quarto(path: &str, text: &str) -> Notebook {
     }
 }
 
+/// The cell id a script's one cell has. (Its runs are journaled under
+/// `console-<n>`, as the Tauri app does.)
+pub const SCRIPT_CELL: &str = "script";
+
+fn parse_script(path: &str, text: &str) -> Notebook {
+    let language = match path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) {
+        Some(ext) if ext == "py" => "python",
+        _ => "r",
+    };
+    Notebook {
+        path: path.to_string(),
+        format: Format::Script,
+        cells: vec![Cell {
+            id: SCRIPT_CELL.into(),
+            kind: CellKind::Code,
+            source: text.to_string(),
+            outputs: Vec::new(),
+            execution_count: None,
+            span: 0..text.len(),
+            new_id: false,
+        }],
+        language: Some(language.into()),
+        kernel: None,
+        original: Original::Text(text.to_string()),
+    }
+}
+
 /// The kernel to run a notebook in: the one it names if installed, else the
 /// first for its language, else the first there is.
 pub fn pick_kernel(notebook: &Notebook, specs: &[KernelspecInfo]) -> Option<String> {
@@ -248,6 +280,10 @@ pub fn pick_kernel(notebook: &Notebook, specs: &[KernelspecInfo]) -> Option<Stri
             .find(|s| s.language.eq_ignore_ascii_case(language))
     {
         return Some(spec.name.clone());
+    }
+    // A script runs only in a kernel for its language.
+    if notebook.format == Format::Script {
+        return None;
     }
     specs.first().map(|s| s.name.clone())
 }
@@ -417,7 +453,29 @@ mod tests {
     fn knows_which_files_are_notebooks() {
         assert_eq!(format_of("a/b.ipynb"), Some(Format::Ipynb));
         assert_eq!(format_of("b.Rmd"), Some(Format::Quarto));
-        assert_eq!(format_of("b.R"), None);
+        assert_eq!(format_of("b.R"), Some(Format::Script));
         assert_eq!(format_of("Makefile"), None);
+    }
+
+    #[test]
+    fn reads_and_writes_scripts_whole() {
+        let nb = parse("/p/qc.py", "import os\nprint(1)\n").unwrap();
+        assert_eq!(nb.format, Format::Script);
+        assert_eq!(nb.language.as_deref(), Some("python"));
+        assert_eq!(sources(&nb), ["import os\nprint(1)\n"]);
+        assert_eq!(nb.render(&["x <- 1".into()]).unwrap(), "x <- 1");
+        let r = parse("/p/qc.R", "").unwrap();
+        assert_eq!(r.language.as_deref(), Some("r"));
+        let python = KernelspecInfo {
+            name: "python3".into(),
+            display_name: "Python 3".into(),
+            language: "python".into(),
+            env: None,
+        };
+        assert_eq!(
+            pick_kernel(&nb, std::slice::from_ref(&python)).as_deref(),
+            Some("python3")
+        );
+        assert_eq!(pick_kernel(&r, &[python]), None);
     }
 }

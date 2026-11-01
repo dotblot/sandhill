@@ -14,6 +14,7 @@ mod look;
 mod notebook;
 mod pages;
 mod shown;
+mod statements;
 mod terminal;
 mod tree;
 mod view;
@@ -26,7 +27,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::workbench::Workbench;
 
-actions!(sandhill, [Quit, Save, RunCell, RunAll, Interrupt]);
+actions!(sandhill, [Quit, Save, RunCell, RunLine, RunAll, Interrupt]);
 
 /// Highlighting for R, with Posit's tree-sitter grammar (MIT).
 fn register_r() {
@@ -80,10 +81,10 @@ fn main() -> anyhow::Result<()> {
             look::install(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             register_r();
-            let (save, run_all, interrupt) = if cfg!(target_os = "macos") {
-                ("cmd-s", "cmd-shift-enter", "cmd-.")
+            let (save, run_line, run_all, interrupt) = if cfg!(target_os = "macos") {
+                ("cmd-s", "cmd-enter", "cmd-shift-enter", "cmd-.")
             } else {
-                ("ctrl-s", "ctrl-shift-enter", "ctrl-.")
+                ("ctrl-s", "ctrl-enter", "ctrl-shift-enter", "ctrl-.")
             };
             cx.bind_keys([
                 KeyBinding::new("cmd-q", Quit, None),
@@ -91,6 +92,9 @@ fn main() -> anyhow::Result<()> {
                 // In a cell's editor, Shift+Enter runs the cell instead of
                 // adding a line, as in Jupyter.
                 KeyBinding::new("shift-enter", RunCell, Some("Input")),
+                // ⌘↵ runs the line or statement in a script, and the cell
+                // (staying on it) in a notebook.
+                KeyBinding::new(run_line, RunLine, Some("Input")),
                 KeyBinding::new(run_all, RunAll, None),
                 KeyBinding::new(interrupt, Interrupt, None),
             ]);

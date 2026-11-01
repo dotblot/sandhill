@@ -117,6 +117,22 @@ From here on the work follows the porting plan (step 1: look and layout).
   Variables); an accent line shows under the pointer. The title bar's first
   two buttons hide and show the files pane and the right column.
 
+## Step 1c: scripts and formatted Markdown
+
+- `.R` and `.py` files open as scripts: one editor with line numbers.
+  **⌘↵** (Ctrl+Enter on Linux), or **Run line**, runs the selection, or the
+  statement at the cursor, and moves to the next statement, as in RStudio:
+  a call over several lines, a pipe chain, a function or a Python block
+  is one statement (`src/statements.rs`, the rules of the Tauri app's
+  `statements.ts`). **Run file** (⇧⌘↵) runs it all. The runs show in the
+  Console, journaled under the script (`console-0` to `console-99` in turn,
+  as in the Tauri app), so reopening it carries on in the same kernel.
+  Scripts run in the project folder and only in a kernel for their language.
+- A notebook's Markdown cells show formatted (headings at the Tauri app's
+  sizes); a double click edits one, and Shift+Enter or clicking away shows it
+  formatted again. A Quarto document's prose stays text, as in the Tauri app.
+- In a notebook, ⌘↵ runs the cell and stays on it.
+
 ## Running it
 
 ```sh

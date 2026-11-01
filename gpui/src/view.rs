@@ -4,6 +4,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{self, Editor, Input};
+use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -21,7 +22,7 @@ use crate::shown::{Shown, show};
 use crate::workbench::{
     Link, Open, Plot, RightTab, Run, Session, Split, Workbench, is_script, plot_key,
 };
-use crate::{Interrupt, RunAll, RunCell, Save};
+use crate::{Interrupt, RunAll, RunCell, RunLine, Save};
 
 /// Height of one line of code (15px Maple Mono at 1.3), and an editor's
 /// padding.
@@ -546,6 +547,15 @@ impl Workbench {
         let Some(open) = &self.open else {
             return self.render_start(cx);
         };
+        if open.is_script() {
+            return pane(&p)
+                .flex_1()
+                .h_full()
+                .child(self.render_tabs(cx))
+                .child(self.render_notebook_bar(open, cx))
+                .child(self.render_script(open, cx))
+                .into_any_element();
+        }
         let cells = open
             .notebook
             .cells
@@ -555,12 +565,18 @@ impl Workbench {
                 CellKind::Text => h_flex()
                     .items_start()
                     .child(div().w(px(GUTTER)).flex_none())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.render_cell_editor(open, ix, false, window, cx)),
-                    )
+                    .child(div().flex_1().min_w_0().child(
+                        // As in the Tauri app, a notebook's Markdown shows
+                        // formatted; a Quarto document's prose stays text.
+                        if open.notebook.format != notebook::Format::Ipynb
+                            || open.editing.contains(&ix)
+                            || cell_text(open, ix, cx).trim().is_empty()
+                        {
+                            self.render_cell_editor(open, ix, false, window, cx)
+                        } else {
+                            self.render_markdown(open, ix, cx)
+                        },
+                    ))
                     .into_any_element(),
                 CellKind::Code => self.render_code_cell(open, ix, window, cx),
             })
@@ -741,7 +757,7 @@ impl Workbench {
                 ))
                 .into_any_element(),
             Link::Ready(_) if self.project.is_some() => div()
-                .child("Pick a notebook (.ipynb, .qmd or .Rmd) on the left, or use the Console.")
+                .child("Pick a notebook (.ipynb, .qmd, .Rmd) or a script (.R, .py) on the left, or use the Console.")
                 .into_any_element(),
             Link::Ready(_) => {
                 let hover = p.ink(7.);
@@ -815,9 +831,19 @@ impl Workbench {
     fn kernel_buttons(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let p = *Palette::get(cx);
         let chosen = self.active_kernel().map(str::to_string);
+        // A script offers only kernels for its language.
+        let only = self
+            .open
+            .as_ref()
+            .filter(|o| o.is_script())
+            .and_then(|o| o.notebook.language.clone());
         self.kernels
             .iter()
             .enumerate()
+            .filter(|(_, spec)| {
+                only.as_ref()
+                    .is_none_or(|l| spec.language.eq_ignore_ascii_case(l))
+            })
             .map(|(ix, spec)| {
                 let name = spec.name.clone();
                 let picked = chosen.as_deref() == Some(&spec.name);
@@ -875,6 +901,68 @@ impl Workbench {
         })
     }
 
+    /// A script: one editor with line numbers, filling the pane. ⌘↵ runs
+    /// the line or statement; the runs show in the Console.
+    fn render_script(&self, open: &Open, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex_1()
+            .min_h_0()
+            .pt(px(6.))
+            .on_action(cx.listener(|this, _: &RunLine, window, cx| this.run_statement(window, cx)))
+            // Shift+Enter does the same, as in the Tauri app's scripts.
+            .on_action(cx.listener(|this, _: &RunCell, window, cx| this.run_statement(window, cx)))
+            .child(
+                Editor::new(&open.editors[0])
+                    .bordered(false)
+                    .appearance(false)
+                    .line_height(px(LINE_HEIGHT))
+                    .h_full(),
+            )
+    }
+
+    /// A notebook's Markdown cell shown formatted, as in the Tauri app; a
+    /// double click edits it, and Shift+Enter or leaving it shows it formatted
+    /// again.
+    fn render_markdown(&self, open: &Open, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let source = cell_text(open, ix, cx);
+        let editor = open.editors[ix].clone();
+        let path = open.notebook.path.clone();
+        div()
+            .id(("markdown", ix))
+            .w_full()
+            .px(px(8.))
+            .py(px(2.))
+            .text_size(px(look::CHROME))
+            .line_height(relative(1.4))
+            .cursor_text()
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() < 2 {
+                    return;
+                }
+                if let Some(open) = this.open.as_mut().filter(|o| o.notebook.path == path) {
+                    open.editing.insert(ix);
+                    editor.update(cx, |editor, cx| editor.focus(window, cx));
+                    cx.notify();
+                }
+            }))
+            .child(
+                TextView::markdown(("md", ix), source).style(
+                    TextViewStyle::default()
+                        .paragraph_gap(rems(0.5))
+                        .heading_font_size(|level, _| {
+                            px(look::CHROME
+                                * match level {
+                                    1 => 1.6,
+                                    2 => 1.35,
+                                    3 => 1.15,
+                                    _ => 1.0,
+                                })
+                        }),
+                ),
+            )
+            .into_any_element()
+    }
+
     /// The bar under the notebook's tab: the kernels, then actions.
     fn render_notebook_bar(&self, open: &Open, cx: &mut Context<Self>) -> impl IntoElement {
         let kernels = self.kernel_buttons(cx);
@@ -890,9 +978,25 @@ impl Workbench {
             .overflow_hidden()
             .children(kernels)
             .child(div().w(px(8.)))
+            .when(open.is_script(), |bar| {
+                bar.child(
+                    bar_button("run-line", "Run line", Some("run"), &p).on_click(
+                        cx.listener(|this, _, window, cx| this.run_statement(window, cx)),
+                    ),
+                )
+            })
             .child(
-                bar_button("run-all", "Run All", Some("run"), &p)
-                    .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
+                bar_button(
+                    "run-all",
+                    if open.is_script() {
+                        "Run file"
+                    } else {
+                        "Run All"
+                    },
+                    Some("run"),
+                    &p,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
             )
             .child(
                 bar_button("save", "Save", Some("doc.save"), &p)
@@ -940,6 +1044,7 @@ impl Workbench {
             .on_action(cx.listener(move |this, _: &RunCell, window, cx| {
                 this.run_and_advance(ix, window, cx)
             }))
+            .on_action(cx.listener(move |this, _: &RunLine, _, cx| this.run_cell(ix, cx)))
             .child(
                 Editor::new(editor)
                     .bordered(false)
@@ -1140,6 +1245,10 @@ impl Workbench {
             .filter_map(|id| self.runs.get(id).map(|run| (id, run)))
             .map(|(_, run)| {
                 let source = match (&run.cell, &run.by) {
+                    // A script's runs are labelled with the script alone.
+                    (Some((file, _)), _) if is_script(file) => {
+                        Some(file.rsplit('/').next().unwrap_or(file).to_string())
+                    }
                     (Some((file, cell)), _) => Some(format!(
                         "{} · {cell}",
                         file.rsplit('/').next().unwrap_or(file)
@@ -1546,11 +1655,13 @@ impl Workbench {
                     .overflow_hidden()
                     .text_ellipsis()
                     .when(self.problem.is_some(), |d| d.text_color(p.err))
-                    .child(
-                        self.problem
-                            .clone()
-                            .unwrap_or_else(|| "Shift+Enter runs a cell · ⌘S saves".into()),
-                    ),
+                    .child(self.problem.clone().unwrap_or_else(|| {
+                        if self.open.as_ref().is_some_and(|o| o.is_script()) {
+                            "⌘↵ runs the line · ⇧⌘↵ runs the file · ⌘S saves".into()
+                        } else {
+                            "Shift+Enter runs a cell · ⌘↵ runs it in place · ⌘S saves".into()
+                        }
+                    })),
             )
     }
 }
@@ -1562,4 +1673,8 @@ fn failed_status(run: &Run) -> Option<String> {
         .as_deref()
         .filter(|s| *s != "ok" && *s != "error")
         .map(str::to_string)
+}
+
+fn cell_text(open: &Open, ix: usize, cx: &App) -> String {
+    open.editors[ix].read(cx).value().to_string()
 }

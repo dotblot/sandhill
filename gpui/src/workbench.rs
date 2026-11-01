@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use base64::Engine;
-use gpui_kit::component::input::{EditorState, InputEvent, InputState};
+use gpui_kit::component::input::{EditorState, InputEvent, InputState, Position};
 use gpui_kit::*;
 use sandhill_daemon::outputs::OutputBuilder;
 use sandhill_link::Target;
@@ -25,6 +25,7 @@ use crate::explorer::Explorer;
 use crate::notebook::{self, CellKind, Format, Notebook};
 use crate::pages::PageView;
 use crate::shown::{Page, Shown, page_title, show};
+use crate::statements;
 use crate::terminal::TerminalView;
 use crate::tree::{self, Folder, Tree};
 
@@ -97,10 +98,20 @@ pub(crate) struct Open {
     pub cell_runs: HashMap<String, String>,
     /// Where the notebook was scrolled to while another tab was shown.
     scroll: Point<Pixels>,
+    /// Text cells being edited; the others show their Markdown formatted.
+    pub editing: HashSet<usize>,
+    /// A script's next journal slot (`console-<n>`).
+    next_slot: usize,
+    /// A script's code waiting for the kernel to start.
+    queued: Vec<String>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Open {
+    pub(crate) fn is_script(&self) -> bool {
+        self.notebook.format == Format::Script
+    }
+
     fn sources(&self, cx: &App) -> Vec<String> {
         self.editors
             .iter()
@@ -674,7 +685,7 @@ impl Workbench {
         }
         let Some(format) = notebook::format_of(&path) else {
             self.problem = Some(format!(
-                "{rel}: the trial opens only notebooks and Quarto documents"
+                "{rel}: only notebooks, Quarto documents and R or Python scripts open here so far"
             ));
             cx.notify();
             return;
@@ -683,7 +694,7 @@ impl Workbench {
         // notebook travels light.
         let read = match format {
             Format::Ipynb => Call::ReadNotebook { path: path.clone() },
-            Format::Quarto => Call::ReadFile { path: path.clone() },
+            Format::Quarto | Format::Script => Call::ReadFile { path: path.clone() },
         };
         let read = daemon.call::<FileText>(read);
         let saved = daemon.call::<FileOutputs>(Call::FileOutputs { file: path });
@@ -734,36 +745,50 @@ impl Workbench {
         let code_language = editor_language(nb.language.as_deref());
         let mut subscriptions = Vec::new();
         let path = nb.path.clone();
+        let script = nb.format == Format::Script;
         let editors = nb
             .cells
             .iter()
-            .map(|cell| {
+            .enumerate()
+            .map(|(ix, cell)| {
                 let language = match cell.kind {
                     CellKind::Code => code_language,
                     CellKind::Text => "markdown",
                 };
                 let source = cell.source.clone();
                 let editor = cx.new(|cx| {
-                    EditorState::new(window, cx)
+                    let editor = EditorState::new(window, cx)
                         .language(language)
-                        .line_number(false)
                         .folding(false)
+                        .soft_wrap(false);
+                    if script {
+                        // A script is one editor that scrolls itself.
+                        editor.line_number(true).default_value(source)
+                    } else {
                         // The notebook scrolls, not the cell, and a cell is as
                         // tall as its lines.
-                        .scroll_beyond_last_line(Some(0))
-                        .soft_wrap(false)
-                        .default_value(source)
+                        editor
+                            .line_number(false)
+                            .scroll_beyond_last_line(Some(0))
+                            .default_value(source)
+                    }
                 });
                 let path = path.clone();
                 subscriptions.push(cx.subscribe(
                     &editor,
                     move |this, _, event: &InputEvent, cx| {
-                        if let InputEvent::Change = event
-                            && let Some(open) = this.open_at(&path)
-                        {
-                            open.dirty = true;
-                            cx.notify();
+                        let Some(open) = this.open_at(&path) else {
+                            return;
+                        };
+                        match event {
+                            InputEvent::Change => open.dirty = true,
+                            // A text cell shows formatted again.
+                            InputEvent::Blur => {
+                                open.editing.remove(&ix);
+                            }
+                            _ => return,
                         }
+                        cx.notify();
                     },
                 ));
                 editor
@@ -781,6 +806,9 @@ impl Workbench {
             sending: HashSet::new(),
             cell_runs: HashMap::new(),
             scroll: Point::default(),
+            editing: HashSet::new(),
+            next_slot: 0,
+            queued: Vec::new(),
             _subscriptions: subscriptions,
         });
         self.problem = None;
@@ -801,6 +829,16 @@ impl Workbench {
         };
         let mut outputs = Vec::new();
         let latest = saved.cells.iter().max_by_key(|c| c.started_ms).cloned();
+        // A script carries on after the slot its last run used.
+        if let Some(n) = saved
+            .cells
+            .iter()
+            .filter_map(|c| Some((c.started_ms, script_slot(&c.cell_id)?)))
+            .max()
+            .map(|(_, n)| n)
+        {
+            open.next_slot = (n + 1) % SCRIPT_SLOTS;
+        }
         for cell in saved.cells {
             if !open.notebook.cells.iter().any(|c| c.id == cell.cell_id) {
                 continue;
@@ -894,7 +932,7 @@ impl Workbench {
                 text: text.clone(),
                 expected_mtime_ms,
             },
-            Format::Quarto => Call::WriteFile {
+            Format::Quarto | Format::Script => Call::WriteFile {
                 path: path.clone(),
                 text: text.clone(),
                 expected_mtime_ms,
@@ -1057,6 +1095,7 @@ impl Workbench {
         if let Some(open) = self.open.as_mut() {
             open.waiting.clear();
             open.sending.clear();
+            open.queued.clear();
         }
         self.session_changed(cx);
         cx.notify();
@@ -1077,7 +1116,20 @@ impl Workbench {
         let Some(open) = self.open.as_mut() else {
             return;
         };
-        if open.notebook.cells.get(index).map(|c| c.kind) != Some(CellKind::Code) {
+        match open.notebook.cells.get(index).map(|c| c.kind) {
+            Some(CellKind::Code) => {}
+            // Running a Markdown cell shows it formatted, as in Jupyter.
+            Some(CellKind::Text) => {
+                if open.editing.remove(&index) {
+                    cx.notify();
+                }
+                return;
+            }
+            None => return,
+        }
+        if open.is_script() {
+            let code = open.editors[index].read(cx).value().to_string();
+            self.run_script(code, cx);
             return;
         }
         match &open.session {
@@ -1120,6 +1172,106 @@ impl Workbench {
         }
     }
 
+    /// In a script, runs the selection, or the statement at the cursor and
+    /// moves the cursor to the next statement, as RStudio does.
+    pub(crate) fn run_statement(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.open.as_ref().filter(|o| o.is_script()) else {
+            return;
+        };
+        let language = open.notebook.language.clone().unwrap_or_default();
+        let editor = open.editors[0].clone();
+        let (text, selected, line) = {
+            let editor = editor.read(cx);
+            (
+                editor.value().to_string(),
+                editor.selected_value().to_string(),
+                editor.cursor_position().line as usize,
+            )
+        };
+        if !selected.is_empty() {
+            if !selected.trim().is_empty() {
+                self.run_script(selected, cx);
+            }
+            return;
+        }
+        let all = statements::statements(&text, &language);
+        let here = all.iter().find(|s| s.from <= line && line <= s.to);
+        if let Some(here) = here {
+            let code: Vec<&str> = text
+                .split('\n')
+                .skip(here.from)
+                .take(here.to - here.from + 1)
+                .collect();
+            self.run_script(code.join("\n"), cx);
+        }
+        let after = here.map_or(line, |s| s.to);
+        let lines = text.split('\n').count();
+        let target = all
+            .iter()
+            .find(|s| s.from > after)
+            .map_or((after + 1).min(lines.saturating_sub(1)), |s| s.from);
+        editor.update(cx, |editor, cx| {
+            editor.set_cursor_position(Position::new(target as u32, 0), window, cx)
+        });
+    }
+
+    /// Runs code from the shown script in its kernel, starting it if needed.
+    /// The runs show in the Console.
+    fn run_script(&mut self, code: String, cx: &mut Context<Self>) {
+        let Some(open) = self.open.as_mut() else {
+            return;
+        };
+        self.right_tab = RightTab::Console;
+        match &open.session {
+            Session::Ready(_) => {
+                let path = open.notebook.path.clone();
+                self.send_script_run(&path, code, cx);
+            }
+            Session::Starting => open.queued.push(code),
+            Session::None | Session::Failed(_) => {
+                open.queued.push(code);
+                self.start_session(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Sends a script's code to its kernel, journaled under the script and
+    /// its next slot, so reopening the script finds the kernel again.
+    fn send_script_run(&mut self, path: &str, code: String, cx: &mut Context<Self>) {
+        let Some(daemon) = self.daemon() else {
+            return;
+        };
+        let Some(open) = self.open_at(path) else {
+            return;
+        };
+        let Some(session) = open.session.id().map(str::to_string) else {
+            return;
+        };
+        let slot = format!("console-{}", open.next_slot);
+        open.next_slot = (open.next_slot + 1) % SCRIPT_SLOTS;
+        let started = daemon.call_in_order::<RunStarted>(Call::Execute {
+            session,
+            code,
+            cell: Some(CellRef {
+                file: path.to_string(),
+                cell_id: slot,
+            }),
+            quiet: false,
+            by: None,
+        });
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = started.await {
+                this.update(cx, |this, cx| {
+                    this.problem = Some(format!("Running the script failed: {err:#}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Starts the active kernel: the notebook's (in its folder) or the
     /// Console's (in the project folder).
     fn start_session(&mut self, cx: &mut Context<Self>) {
@@ -1127,7 +1279,18 @@ impl Workbench {
             return;
         };
         let notebook_path = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let missing = match self.open.as_ref().filter(|o| o.is_script()) {
+            Some(open) if open.notebook.language.as_deref() == Some("python") => {
+                "No Python kernel is installed"
+            }
+            Some(_) => "No R kernel is installed",
+            None => "No kernel is installed",
+        };
         let (kernel, session, cwd) = match self.open.as_mut() {
+            // Scripts run in the project's folder, as in RStudio.
+            Some(open) if open.is_script() => {
+                (open.kernel.clone(), &mut open.session, project.clone())
+            }
             Some(open) => (
                 open.kernel.clone(),
                 &mut open.session,
@@ -1136,9 +1299,10 @@ impl Workbench {
             None => (self.loose_kernel.clone(), &mut self.loose, project.clone()),
         };
         let Some(kernel) = kernel else {
-            *session = Session::Failed("No kernel is installed".into());
+            *session = Session::Failed(missing.into());
             if let Some(open) = self.open.as_mut() {
                 open.waiting.clear();
+                open.queued.clear();
             }
             return;
         };
@@ -1180,6 +1344,13 @@ impl Workbench {
                             for index in waiting {
                                 this.execute(path, index, cx);
                             }
+                            let queued = this
+                                .open_at(path)
+                                .map(|o| std::mem::take(&mut o.queued))
+                                .unwrap_or_default();
+                            for code in queued {
+                                this.send_script_run(path, code, cx);
+                            }
                         }
                         this.session_changed(cx);
                     }
@@ -1187,6 +1358,7 @@ impl Workbench {
                         *slot = Session::Failed(format!("{err:#}"));
                         if let Some(open) = notebook_path.as_deref().and_then(|p| this.open_at(p)) {
                             open.waiting.clear();
+                            open.queued.clear();
                         }
                     }
                 }
@@ -1792,6 +1964,14 @@ pub(crate) fn plot_key(value: &Value) -> String {
             format!("inline-{:x}", hasher.finish())
         }
     }
+}
+
+/// A script's runs are journaled under `console-0` to `console-99` in turn
+/// (as in the Tauri app), so the daemon keeps at most this many.
+const SCRIPT_SLOTS: usize = 100;
+
+fn script_slot(cell_id: &str) -> Option<usize> {
+    cell_id.strip_prefix("console-")?.parse().ok()
 }
 
 /// A script's file (`.R`, `.py`), whose runs are the Console's.
