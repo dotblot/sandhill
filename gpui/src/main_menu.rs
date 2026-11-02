@@ -13,8 +13,8 @@ use crate::tree_actions::{menu_item, separator};
 use crate::workbench::Workbench;
 use crate::{
     About, CloseTab, CloseWindow, ConnectServer, HideOthers, HideSandhill, Minimize, NewFile,
-    NewFolder, OpenProject, Quit, RunAll, Save, SaveAll, ShowAll, ToggleAgents, ToggleConsole,
-    ToggleFiles, ToggleFullScreen, TogglePalette, ToggleRight, Zoom,
+    NewFolder, NewProject, NewWindow, OpenProject, Quit, RunAll, Save, SaveAll, ShowAll,
+    ToggleAgents, ToggleConsole, ToggleFiles, ToggleFullScreen, TogglePalette, ToggleRight, Zoom,
 };
 
 /// The menu bar. Shortcuts show beside the items from the key bindings.
@@ -34,6 +34,7 @@ pub fn app_menus() -> Vec<Menu> {
         Menu::new("File").items([
             MenuItem::action("New File…", NewFile),
             MenuItem::action("New Folder…", NewFolder),
+            MenuItem::action("New Project…", NewProject),
             MenuItem::separator(),
             MenuItem::action("Open Project…", OpenProject),
             MenuItem::action("Connect to Server…", ConnectServer),
@@ -66,6 +67,8 @@ pub fn app_menus() -> Vec<Menu> {
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
+            MenuItem::separator(),
+            MenuItem::action("New Window", NewWindow),
         ]),
     ]
 }
@@ -78,7 +81,8 @@ pub fn install_app_actions(cx: &mut App) {
 }
 
 impl Workbench {
-    /// The window's own menu-bar items, on the root element.
+    /// The menu bar's items for the project, on the root element; the
+    /// window's own (closing it, zooming) are the window's.
     pub(crate) fn window_actions(&self, d: Div, cx: &mut Context<Self>) -> Div {
         d.on_action(cx.listener(|this, _: &SaveAll, w, cx| this.run_command(Cmd::SaveAll, w, cx)))
             .on_action(
@@ -115,20 +119,11 @@ impl Workbench {
             .on_action(
                 cx.listener(|this, _: &crate::HelpAtCursor, w, cx| this.help_at_cursor(w, cx)),
             )
-            .on_action(cx.listener(|this, _: &CloseWindow, w, cx| this.save_and_close(w, cx)))
-            .on_action(cx.listener(|_, _: &Minimize, w, _| w.minimize_window()))
-            .on_action(cx.listener(|_, _: &Zoom, w, _| w.zoom_window()))
-            .on_action(cx.listener(|_, _: &ToggleFullScreen, w, _| w.toggle_fullscreen()))
-            .on_action(cx.listener(|_, _: &About, w, cx| {
-                let detail = format!(
-                    "Version {}{}",
-                    env!("CARGO_PKG_VERSION"),
-                    option_env!("SANDHILL_COMMIT")
-                        .map(|c| format!(", build {c}"))
-                        .unwrap_or_default()
-                );
-                drop(w.prompt(PromptLevel::Info, "Sandhill", Some(&detail), &["OK"], cx));
-            }))
+            .on_action(
+                cx.listener(|this, _: &NewProject, w, cx| {
+                    this.run_command(Cmd::OpenProject, w, cx)
+                }),
+            )
     }
 
     /// The ☰ menu, under its button in the title bar.

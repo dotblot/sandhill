@@ -211,8 +211,6 @@ pub struct Workbench {
     pub(crate) target: Target,
     pub(crate) link: Link,
     pub(crate) about: Option<PingReply>,
-    pub(crate) host_input: Entity<InputState>,
-    pub(crate) path_input: Entity<InputState>,
     pub(crate) kernels: Vec<KernelspecInfo>,
     pub(crate) recent: Vec<ProjectInfo>,
     pub(crate) project: Option<String>,
@@ -294,8 +292,6 @@ pub struct Workbench {
     pub(crate) variables_height: f32,
     /// The gap being dragged.
     pub(crate) dragging: Option<Split>,
-    /// The machine box replaces the machine's tab in the title bar.
-    pub(crate) editing_host: bool,
     /// Notebooks' runs show in the Console, and their plots in Plots (☰).
     pub(crate) notebook_console: bool,
     pub(crate) notebook_plots: bool,
@@ -310,6 +306,8 @@ pub struct Workbench {
     /// The window's own focus, so its shortcuts work before anything
     /// else is clicked.
     pub(crate) focus: FocusHandle,
+    /// The window, with its machine tabs and Start screen.
+    pub(crate) shell: WeakEntity<crate::app_window::AppWindow>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -318,21 +316,10 @@ impl Workbench {
         rt: Arc<Runtime>,
         target: Target,
         project: Option<String>,
+        shell: WeakEntity<crate::app_window::AppWindow>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let host = match &target {
-            Target::Local => sandhill_link::LOCAL.to_string(),
-            Target::Ssh(destination) => destination.to_string(),
-        };
-        let host_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("local, or an ssh host")
-                .default_value(host)
-        });
-        let path_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("A folder on that machine, like ~/analysis")
-        });
         let console_input = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("python")
@@ -353,49 +340,19 @@ impl Workbench {
         let (name_input, name_subscription) = crate::tree_actions::new_name_input(window, cx);
         let (palette_input, palette_subscription) =
             crate::command_palette::new_palette_input(window, cx);
-        let mut subscriptions = vec![
-            cx.subscribe(&host_input, |this, input, event: &InputEvent, cx| {
-                // Clicking away puts the machine's tab back.
-                if let InputEvent::Blur = event {
-                    this.editing_host = false;
-                    cx.notify();
+        let mut subscriptions = vec![cx.subscribe_in(
+            &console_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter {
+                    secondary: false,
+                    shift: false,
+                } = event
+                {
+                    this.run_console(window, cx);
                 }
-                if let InputEvent::PressEnter { .. } = event {
-                    let host = input.read(cx).value().trim().to_string();
-                    match Target::parse(if host.is_empty() { "local" } else { &host }) {
-                        Ok(target) => {
-                            this.editing_host = false;
-                            this.connect(target, None, cx)
-                        }
-                        Err(err) => {
-                            this.problem = Some(err.to_string());
-                            cx.notify();
-                        }
-                    }
-                }
-            }),
-            cx.subscribe(&path_input, |this, input, event: &InputEvent, cx| {
-                if let InputEvent::PressEnter { .. } = event {
-                    let path = input.read(cx).value().trim().to_string();
-                    if !path.is_empty() {
-                        this.open_project(path, cx);
-                    }
-                }
-            }),
-            cx.subscribe_in(
-                &console_input,
-                window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter {
-                        secondary: false,
-                        shift: false,
-                    } = event
-                    {
-                        this.run_console(window, cx);
-                    }
-                },
-            ),
-        ];
+            },
+        )];
         subscriptions.extend(help_subscriptions);
         subscriptions.extend(package_subscriptions);
         subscriptions.extend(job_subscriptions);
@@ -439,8 +396,6 @@ impl Workbench {
             target: target.clone(),
             link: Link::Connecting,
             about: None,
-            host_input,
-            path_input,
             kernels: Vec::new(),
             recent: Vec::new(),
             project: None,
@@ -495,7 +450,6 @@ impl Workbench {
             right_width: 460.,
             variables_height: 250.,
             dragging: None,
-            editing_host: false,
             notebook_console: crate::prefs::notebook_console(),
             notebook_plots: crate::prefs::notebook_plots(),
             files_ui: Default::default(),
@@ -504,38 +458,47 @@ impl Workbench {
             palette_input,
             main_menu: false,
             focus: cx.focus_handle(),
+            shell,
             _subscriptions: subscriptions,
         };
-        // Closing the window saves what was edited first, then closes it.
-        let entity = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |window, cx| {
-            let Some(entity) = entity.upgrade() else {
-                return true;
-            };
-            if !entity.read(cx).any_dirty() {
-                return true;
-            }
-            entity.update(cx, |this, cx| this.save_and_close(window, cx));
-            false
-        });
         this.connect(target, project, cx);
         this
     }
 
-    /// Saves every edited document, then closes the window (⇧⌘W).
-    pub(crate) fn save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let tasks = self.save_all_tasks(cx);
-        cx.spawn_in(window, async move |this, cx| {
-            for task in tasks {
-                task.await;
-            }
-            // Closes even if a save failed only when nothing is left unsaved.
-            let saved = this.update(cx, |this, _| !this.any_dirty()).unwrap_or(true);
-            if saved {
-                cx.update(|window, _| window.remove_window()).ok();
-            }
-        })
-        .detach();
+    /// This tab's machine, as the window names it.
+    pub(crate) fn host(&self) -> String {
+        match &self.target {
+            Target::Local => sandhill_link::LOCAL.to_string(),
+            Target::Ssh(destination) => destination.to_string(),
+        }
+    }
+
+    /// Does something to the window, after this event: the window may be
+    /// about to change this workbench too.
+    pub(crate) fn with_shell(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(
+            &mut crate::app_window::AppWindow,
+            &mut Window,
+            &mut Context<crate::app_window::AppWindow>,
+        ) + 'static,
+    ) {
+        let shell = self.shell.clone();
+        window.defer(cx, move |window, cx| {
+            shell.update(cx, |shell, cx| f(shell, window, cx)).ok();
+        });
+    }
+
+    /// Hides the web pages drawn, while another tab is shown: they are
+    /// native views over the window. Drawing the tab again shows them.
+    pub(crate) fn park_pages(&mut self, cx: &mut Context<Self>) {
+        let drawn: Vec<(String, Entity<PageView>)> = self.pages.drain().collect();
+        for (key, view) in drawn {
+            view.update(cx, |page, cx| page.hide(cx));
+            self.parked.push((key, view));
+        }
     }
 
     pub(crate) fn daemon(&self) -> Option<Rc<Daemon>> {
@@ -709,36 +672,6 @@ impl Workbench {
             .chain(&self.others)
             .find(|o| o.notebook.path == path)
             .map(|o| o.code_cells(cx))
-    }
-
-    pub(crate) fn choose_project(&mut self, cx: &mut Context<Self>) {
-        let picked = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Open Project".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let path = match picked.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                Ok(Err(err)) => {
-                    this.update(cx, |this, cx| {
-                        this.problem = Some(format!("The folder picker failed: {err:#}"));
-                        cx.notify();
-                    })
-                    .ok();
-                    None
-                }
-                _ => None,
-            };
-            if let Some(path) = path {
-                this.update(cx, |this, cx| {
-                    this.open_project(path.to_string_lossy().into_owned(), cx)
-                })
-                .ok();
-            }
-        })
-        .detach();
     }
 
     pub(crate) fn open_project(&mut self, path: String, cx: &mut Context<Self>) {

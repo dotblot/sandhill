@@ -3,12 +3,11 @@
 //! and on the right the Console, Terminal or Viewer above Variables.
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{self, Editor, Input};
+use gpui_kit::component::input::{self, Editor};
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_link::Target;
 use sandhill_proto::Variable;
 use serde_json::Value;
 
@@ -251,60 +250,14 @@ impl Workbench {
         cx.notify();
     }
 
-    /// The title bar: a capsule of window buttons after the Mac's own, the
-    /// machine's tab in the middle, and the edit capsule at the right.
+    /// The title bar: a capsule of window buttons after the Mac's own and
+    /// the edit capsule at the right; the window draws the machine tabs
+    /// between them.
     fn render_top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let (machine, device) = match &self.target {
-            Target::Local => ("Local".to_string(), "device.laptop"),
-            Target::Ssh(destination) => (destination.to_string(), "device.server"),
-        };
-        let link_color = match &self.link {
-            Link::Connecting => p.busy,
-            Link::Failed(_) => p.err,
-            Link::Ready(_) => p.ok,
-        };
-        let path = self.project.clone().unwrap_or_else(|| "No project".into());
         let edit = |id: &'static str, name: &str, action: Box<dyn Action>| {
             icon_button(id, name, &p, true)
                 .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
-        };
-        let machine_tab: AnyElement = if self.editing_host {
-            div()
-                .w(px(300.))
-                .child(Input::new(&self.host_input).xsmall())
-                .into_any_element()
-        } else {
-            raised(
-                h_flex()
-                    .id("machine-tab")
-                    .gap(px(6.))
-                    .h(px(21.))
-                    .max_w(px(420.))
-                    .px(px(12.))
-                    .rounded_full()
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.editing_host = true;
-                        let input = this.host_input.clone();
-                        input.update(cx, |input, cx| input.focus(window, cx));
-                        cx.notify();
-                    })),
-                &p,
-            )
-            .child(icon(device).size(px(14.)).text_color(p.muted))
-            .child(div().font_weight(FontWeight::MEDIUM).child(machine))
-            .child(
-                div()
-                    .text_color(p.faint)
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .min_w_0()
-                    .child(path),
-            )
-            .child(dot(link_color).size(px(6.)))
-            .into_any_element()
         };
         div()
             .relative()
@@ -432,33 +385,6 @@ impl Workbench {
                                 edit("save-all", "doc.save-all", Box::new(crate::SaveAll))
                                     .when(!self.any_dirty(), |d| d.opacity(0.4)),
                             ),
-                    ),
-            )
-            .child(
-                // The machine's tab, centred in the window.
-                h_flex()
-                    .absolute()
-                    .top(px(6.))
-                    .left_0()
-                    .right_0()
-                    .h(px(25.))
-                    .justify_center()
-                    .child(
-                        capsule(&p, 25.)
-                            .child(machine_tab)
-                            .when(!self.editing_host, |d| {
-                                d.child(icon_button("new-machine", "add", &p, true).on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.editing_host = true;
-                                        let input = this.host_input.clone();
-                                        input.update(cx, |input, cx| {
-                                            input.set_value("", window, cx);
-                                            input.focus(window, cx)
-                                        });
-                                        cx.notify();
-                                    }),
-                                ))
-                            }),
                     ),
             )
     }
@@ -908,67 +834,26 @@ impl Workbench {
                         .child(format!("Could not reach sandhilld: {err}")),
                 )
                 .child(div().child(
-                    "Click the machine's name at the top to type another machine, and press Enter.",
+                    "Right-click the machine's tab at the top to close it, then connect again from the Start screen.",
                 ))
                 .into_any_element(),
             Link::Ready(_) if self.project.is_some() => div()
                 .child("Pick a notebook (.ipynb, .qmd, .Rmd) or a script (.R, .py) on the left, or use the Console.")
                 .into_any_element(),
-            Link::Ready(_) => {
-                let hover = p.ink(7.);
-                let recent = self
-                    .recent
-                    .iter()
-                    .filter(|p| p.exists)
-                    .take(8)
-                    .enumerate()
-                    .map(|(ix, project)| {
-                        let path = project.path.clone();
-                        h_flex()
-                            .id(("recent", ix))
-                            .gap(px(8.))
-                            .px(px(10.))
-                            .py(px(5.))
-                            .rounded(px(RADIUS))
-                            .cursor_pointer()
-                            .hover(move |d| d.bg(hover))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_project(path.clone(), cx)
-                            }))
-                            .child(picture(&look::folder_icon(&project.name)))
-                            .child(
-                                v_flex()
-                                    .min_w_0()
-                                    .child(div().text_color(p.text).child(project.name.clone()))
-                                    .child(
-                                        div()
-                                            .text_color(p.faint)
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .child(project.path.clone()),
-                                    ),
-                            )
-                    });
-                v_flex()
-                    .gap_3()
-                    .w(px(480.))
-                    .child(div().text_color(p.text).font_weight(FontWeight::SEMIBOLD).child("Open a project"))
-                    .child(Input::new(&self.path_input))
-                    .child(div().child(
-                        "Type a folder and press Enter. On this Mac, the folder button at the top picks one.",
-                    ))
-                    .when(!self.recent.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .pt_2()
-                                .text_color(p.text)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Recent"),
-                        )
-                        .child(v_flex().children(recent))
-                    })
-                    .into_any_element()
-            }
+            Link::Ready(_) => v_flex()
+                .gap_3()
+                .items_center()
+                .child("No project is open on this machine.")
+                .child(
+                    Button::new("open-folder")
+                        .small()
+                        .primary()
+                        .label("Open Folder…")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.run_command(Cmd::OpenProject, window, cx)
+                        })),
+                )
+                .into_any_element(),
         };
         pane(&p)
             .flex_1()

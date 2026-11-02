@@ -12,6 +12,7 @@ mod agent_edits;
 mod agents;
 mod agents_box;
 mod agents_view;
+mod app_window;
 mod chat;
 mod command_palette;
 mod composer;
@@ -37,6 +38,7 @@ mod plots;
 mod prefs;
 mod project_settings;
 mod shown;
+mod start_screen;
 mod statements;
 mod table;
 mod terminal;
@@ -50,8 +52,6 @@ use std::sync::Arc;
 
 use gpui_kit::*;
 use tracing_subscriber::EnvFilter;
-
-use crate::workbench::Workbench;
 
 actions!(
     sandhill,
@@ -82,7 +82,9 @@ actions!(
         ShowAll,
         Minimize,
         Zoom,
-        ToggleFullScreen
+        ToggleFullScreen,
+        NewProject,
+        NewWindow
     ]
 );
 
@@ -136,7 +138,11 @@ fn main() -> anyhow::Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             look::install(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.on_action(|_: &Quit, cx| app_window::quit(cx));
+            // With no window open, a new one.
+            cx.on_action(|_: &NewWindow, cx| {
+                app_window::open_window(app_window::Places::default(), cx)
+            });
             register_r();
             main_menu::install_app_actions(cx);
             // The Tauri app's shortcuts: ⌘ on a Mac, Ctrl elsewhere.
@@ -164,6 +170,7 @@ fn main() -> anyhow::Result<()> {
                 KeyBinding::new(k("alt-mod-n"), NewFolder, g),
                 KeyBinding::new(k("mod-o"), OpenProject, g),
                 KeyBinding::new(k("shift-mod-o"), ConnectServer, g),
+                KeyBinding::new(k("shift-mod-n"), NewProject, g),
                 // In a cell's editor, Shift+Enter runs the cell instead of
                 // adding a line, as in Jupyter.
                 KeyBinding::new("shift-enter", RunCell, Some("Input")),
@@ -187,30 +194,26 @@ fn main() -> anyhow::Result<()> {
             }
             cx.bind_keys(keys);
             cx.set_menus(main_menu::app_menus());
-            cx.on_window_closed(|cx, _| cx.quit()).detach();
-
-            let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                // On a Mac the title bar is Sandhill's own row of capsules,
-                // with the window buttons at its left, as in the Tauri app.
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Sandhill".into()),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(12.), px(10.))),
-                }),
-                ..Default::default()
+            // The project named on the command line opens in a window of
+            // its own; otherwise the windows open when the app last quit.
+            let places = match project.clone() {
+                Some(path) => vec![app_window::Places {
+                    tabs: vec![app_window::Place {
+                        host: host.clone(),
+                        path,
+                    }],
+                    current: Some(host.clone()),
+                }],
+                None if host != sandhill_link::LOCAL => vec![app_window::Places {
+                    tabs: vec![app_window::Place {
+                        host: host.clone(),
+                        path: String::new(),
+                    }],
+                    current: Some(host.clone()),
+                }],
+                None => prefs::windows(),
             };
-            gpui_kit::open_window(options, cx, |window, cx| {
-                look::set_appearance(window.appearance(), cx);
-                window
-                    .observe_window_appearance(|window, cx| {
-                        look::set_appearance(window.appearance(), cx)
-                    })
-                    .detach();
-                cx.new(|cx| Workbench::new(rt.clone(), target.clone(), project.clone(), window, cx))
-            })
-            .expect("could not open the window");
+            app_window::start(rt.clone(), places, cx);
             cx.activate(true);
         });
     Ok(())
