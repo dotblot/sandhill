@@ -25,6 +25,8 @@ registry lists under `v31` so code can look either up.
 | `i-minw` | `window.minimize` | window | Minimise pane |
 | `i-maxw` | `window.maximize` | window | Maximise pane |
 | `i-restw` | `window.restore` | window | Restore pane |
+| — | `theme.light` | window | Switch to the light theme (new in V32.2) |
+| — | `theme.dark` | window | Switch to the dark theme (new in V32.2) |
 | `i-undo` | `edit.undo` | edit | Undo |
 | `i-redo` | `edit.redo` | edit | Redo |
 | `i-cut` | `edit.cut` | edit | Cut |

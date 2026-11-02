@@ -173,6 +173,7 @@ pub(crate) enum ConsoleTab {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TopTab {
     Variables,
+    Kernels,
     Help,
     Packages,
 }
@@ -284,8 +285,8 @@ pub struct Workbench {
     /// The AI pane, the right panel.
     pub(crate) show_agents: bool,
     pub(crate) agents: Option<Entity<Agents>>,
-    /// The left and right panels' shares of the window's width (1/5 and
-    /// 2/5; the middle takes the rest), set by dragging the gaps.
+    /// The left and right panels' shares of the window's width (a quarter
+    /// each; the middle takes the rest), set by dragging the gaps.
     pub(crate) left_share: f32,
     pub(crate) agents_share: f32,
     /// Their widths now, from their shares and the window's width.
@@ -467,8 +468,8 @@ impl Workbench {
             show_files: true,
             show_agents: true,
             agents: None,
-            left_share: 0.2,
-            agents_share: 0.4,
+            left_share: 0.25,
+            agents_share: 0.25,
             files_width: 280.,
             agents_width: 560.,
             variables_height: 250.,

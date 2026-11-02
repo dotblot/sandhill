@@ -175,6 +175,20 @@
     "i-restw"
    ]
   },
+  "theme.light": {
+   "file": "system/theme.light.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Switch to the light theme",
+   "v31": []
+  },
+  "theme.dark": {
+   "file": "system/theme.dark.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Switch to the dark theme",
+   "v31": []
+  },
   "edit.undo": {
    "file": "system/edit.undo.svg",
    "kind": "system",

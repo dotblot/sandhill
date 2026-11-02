@@ -118,12 +118,20 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 
 ### Layout (decided 2026-11-02, Huan)
 
-Three panels across the window. The left panel takes a fifth of the width
-and holds, top to bottom: Variables, Help and Packages (one tab group);
-Files, Git, Plots and the Viewer (another); Kernels; Resources. The middle,
-two fifths, has the editor with the Console, Terminal and Jobs under it. The
-AI pane is the right panel, the other two fifths. The descriptions of panes
-below predate this and place them where they used to be.
+Three panels across the window, 1:2:1, with 10 px between them and the
+window's left and right edges. The left panel holds, top to bottom:
+Variables, Kernels, Help and Packages (one tab group); Files, Git, Plots and
+the Viewer (another). The middle has the editor with the Console, Terminal
+and Jobs under it. The AI pane is the right panel. The machine's resources
+(CPU, memory, GPUs, disk) sit at the right of the status bar, and the title
+bar has a light/dark theme button. (Revised the same day: the first version
+was 1/5, 2/5, 2/5 with Kernels and Resources as sections of the left panel.)
+The descriptions of panes below predate this and place them where they used
+to be.
+
+In notebooks, a cell shows its number (#3) but not its run count; Run is in
+its top right corner. Output text can be selected and copied, and a plot
+under a cell can be saved (the same dialog as the Plots pane's) or copied.
 
 ### The look (added 2026-10-11)
 

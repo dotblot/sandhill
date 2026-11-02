@@ -48,6 +48,8 @@ SYSTEM = [
     ("window.minimize", ["i-minw"], "window", "Minimise pane"),
     ("window.maximize", ["i-maxw"], "window", "Maximise pane"),
     ("window.restore", ["i-restw"], "window", "Restore pane"),
+    ("theme.light", [], "window", "Switch to the light theme"),
+    ("theme.dark", [], "window", "Switch to the dark theme"),
     # edit and document
     ("edit.undo", ["i-undo"], "edit", "Undo"),
     ("edit.redo", ["i-redo"], "edit", "Redo"),
@@ -132,6 +134,8 @@ SYSTEM = [
 NEW_SYSTEM = {
     "interrupt": '<rect x="4.5" y="3.5" width="2.2" height="9" rx=".6" fill="currentColor" stroke="none"/><rect x="9.3" y="3.5" width="2.2" height="9" rx=".6" fill="currentColor" stroke="none"/>',
     "power": '<path d="M8 2.2v5.3"/><path d="M5.1 4.4a5 5 0 1 0 5.8 0"/>',
+    "theme.light": '<circle cx="8" cy="8" r="2.8"/><path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1.05 1.05M11.45 11.45l1.05 1.05M3.5 12.5l1.05-1.05M11.45 4.55l1.05-1.05"/>',
+    "theme.dark": '<path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/>',
     "warning": '<path d="M8 2.4 14 13H2z"/><path d="M8 6.6v3M8 11.4v.01"/>',
 }
 # old ids that are not system icons: they become agent chips (see AGENTS)

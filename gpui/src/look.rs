@@ -27,8 +27,10 @@ pub const CODE: f32 = 15.;
 pub const SMALL: f32 = 13.;
 /// One corner radius for every rounded thing in the window.
 pub const RADIUS: f32 = 12.;
-/// The gap between panes, and between them and the window's edges.
+/// The gap between panes, and between them and the window's top.
 pub const GAP: f32 = 3.;
+/// The room between the side panels and the window's left and right edges.
+pub const EDGE: f32 = 10.;
 pub const TITLE_BAR: f32 = 31.;
 pub const STATUS_BAR: f32 = 26.;
 /// A pane's tab strip.
@@ -458,11 +460,15 @@ pub fn install(cx: &mut App) {
 }
 
 /// Switches the theme and the palette to the window's appearance, or to
-/// `SANDHILL_APPEARANCE` (`light` or `dark`) when that is set.
+/// `SANDHILL_APPEARANCE` (`light` or `dark`) when that is set, or to the
+/// theme picked with the title bar's button.
 pub fn set_appearance(appearance: WindowAppearance, cx: &mut App) {
-    let dark = match std::env::var("SANDHILL_APPEARANCE").as_deref() {
-        Ok("dark") => true,
-        Ok("light") => false,
+    let picked = std::env::var("SANDHILL_APPEARANCE")
+        .ok()
+        .or_else(crate::prefs::appearance);
+    let dark = match picked.as_deref() {
+        Some("dark") => true,
+        Some("light") => false,
         _ => matches!(
             appearance,
             WindowAppearance::Dark | WindowAppearance::VibrantDark
@@ -482,6 +488,15 @@ pub fn set_appearance(appearance: WindowAppearance, cx: &mut App) {
         None,
         cx,
     );
+}
+
+/// The title bar's theme button: light to dark and back, kept for next
+/// time.
+pub fn toggle_appearance(window: &Window, cx: &mut App) {
+    let dark = Palette::get(cx).dark;
+    crate::prefs::save_appearance(if dark { "light" } else { "dark" });
+    set_appearance(window.appearance(), cx);
+    cx.refresh_windows();
 }
 
 const FONTS: [&[u8]; 4] = [

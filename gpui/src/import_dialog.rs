@@ -92,7 +92,10 @@ impl Workbench {
             Some(l) if ready => format!("Import a dataset into {}", language_name(&l)),
             _ => "Start R or Python to import a dataset".into(),
         };
-        bar_button("import", "Import", Some("table"), &p)
+        // An icon only, beside the Variables filter.
+        bar_button("import", "", Some("table"), &p)
+            .px(px(5.))
+            .gap(px(2.))
             .child(icon("chevron.down").size(px(11.)))
             .when(!ready, |d| d.opacity(0.4))
             .tooltip(move |w, cx| {
@@ -174,7 +177,8 @@ impl Workbench {
         Some(
             div()
                 .absolute()
-                .top(px(34.))
+                // Under the Import button, in the row at the top of Variables.
+                .top(px(62.))
                 .right(px(8.))
                 .child(deferred(body).with_priority(3))
                 .into_any_element(),
