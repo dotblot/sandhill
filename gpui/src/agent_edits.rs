@@ -101,6 +101,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.project.as_deref() == Some(&request.project) && request.method == "git_credential" {
+            return self.on_git_credential(request.id, &request.params, window, cx);
+        }
         if self.project.as_deref() != Some(&request.project)
             || !matches!(request.method.as_str(), "add_cell" | "edit_cell")
         {
