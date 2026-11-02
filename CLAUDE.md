@@ -29,6 +29,11 @@ before making architectural changes; it records the decisions and why.
   `cargo build` doesn't build it. Check it with `cargo fmt`, `cargo clippy
   --all-targets -- -D warnings` and `cargo test` inside `gpui/`. On Linux it
   needs `libxkbcommon-dev libxkbcommon-x11-dev libwebkit2gtk-4.1-dev` and X11.
+  The terminal links Ghostty's libghostty-vt, built from source by
+  `ghostty-vt-sys`: it needs Zig 0.17 (`ZIG=...` or `zig` on PATH) and
+  access to tip.files.ghostty.org, deps.files.ghostty.org and codeberg.org.
+  Where those hosts are blocked, `DOCS_RS=1 cargo clippy` still checks the
+  code (it skips building the library, so nothing links).
 - Rust workspace at the repo root; crates live in `crates/`. The app is not
   part of it (see `gpui/` above).
 - Keep crates small and focused; prefer adding a module over growing `main.rs`.

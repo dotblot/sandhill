@@ -119,9 +119,15 @@ pub fn open_window(places: Places, cx: &mut App) {
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
         look::set_appearance(window.appearance(), cx);
-        window
-            .observe_window_appearance(|window, cx| look::set_appearance(window.appearance(), cx))
-            .detach();
+        // After the window's root is built, so this runs after gpui-cn's
+        // own appearance observer and Sandhill's theme is the one left.
+        window.defer(cx, |window, _| {
+            window
+                .observe_window_appearance(|window, cx| {
+                    look::set_appearance(window.appearance(), cx)
+                })
+                .detach();
+        });
         cx.new(|cx| AppWindow::new(rt, places, window, cx))
     });
     if let Err(err) = opened {
