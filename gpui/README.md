@@ -276,12 +276,24 @@ preview and R's imports weren't seen.
   the Tauri app does (`$SANDHILL_DAEMON_BUILDS` points elsewhere). About
   Sandhill shows the build.
 
+## Step 7: filling the gaps
+
+- **7a** (`app_window.rs`, `start_screen.rs`): a window holds a tab per
+  machine in the title bar, each its own connection with one project open;
+  a project keeps running while another tab is shown. Opening a project on
+  a machine that has a tab replaces the project there. Right-click closes
+  a tab, after asking. The windows and their tabs open again at the next
+  launch (`gpui-windows.json` next to `gpui.json`); closing the last
+  window with projects shows a fresh Start window instead of quitting. The
+  Start screen has a card for each server and this Mac with its recent
+  projects (opened when, or kernels running; × forgets one), Open Folder…
+  (a folder picker that browses any of them through its sandhilld) and
+  Connect to Server…. ⌘O, ⇧⌘O, ⇧⌘N (New Project) and the title bar's +
+  show it. The list of servers is the Tauri app's own file, so both apps
+  share it. Window ▸ New Window opens another window.
+
 ### What the Tauri app still does that this doesn't
 
-- Several windows, a tab per machine in one window, and windows reopening
-  as they were at the next launch.
-- The Start screen's cards for each server and this Mac, removing recent
-  projects, browsing a server's folders, and New project.
 - The left pane's project switcher, its list of running sessions with Shut
   down (one, or all no file uses), and the machine's CPU and memory.
 - The connection pop-up: Reconnect, Disconnect, Restart sandhilld, and its

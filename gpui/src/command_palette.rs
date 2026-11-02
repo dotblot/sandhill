@@ -10,6 +10,7 @@ use sandhill_proto::{Call, DirEntry, EntryKind};
 
 use crate::files::{MAX_DIRS, MAX_FILES, NewKind, SKIP, match_score};
 use crate::look::{self, Palette, icon, picture};
+use crate::start_screen::StartMode;
 use crate::workbench::{ConsoleTab, Workbench};
 
 /// How many matches show at most.
@@ -231,34 +232,24 @@ impl Workbench {
             Cmd::OpenTerminal => self.show_tab(ConsoleTab::Terminal, window, cx),
             Cmd::ShowJobs => self.show_tab(ConsoleTab::Jobs, window, cx),
             Cmd::RefreshFiles => self.refresh_files(cx),
-            Cmd::OpenProject => self.open_project_prompt(window, cx),
-            Cmd::Connect => {
-                self.editing_host = true;
-                let input = self.host_input.clone();
-                input.update(cx, |input, cx| {
-                    input.set_value("", window, cx);
-                    input.focus(window, cx)
+            Cmd::OpenProject => {
+                let host = self.host();
+                self.with_shell(window, cx, move |shell, window, cx| {
+                    shell.show_start(StartMode::Picking(host), window, cx)
                 });
             }
+            Cmd::Connect => self.with_shell(window, cx, |shell, window, cx| {
+                shell.show_start(StartMode::Adding, window, cx)
+            }),
             Cmd::ProjectSettings => self.show_project_settings(window, cx),
-            Cmd::CloseProject => self.close_project(cx),
+            Cmd::CloseProject => {
+                let host = self.host();
+                self.with_shell(window, cx, move |shell, window, cx| {
+                    shell.close_tab(host, window, cx)
+                });
+            }
         }
         cx.notify();
-    }
-
-    /// Open Project: the folder picker on this machine; on a server, the
-    /// start screen's folder box.
-    pub(crate) fn open_project_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.daemon().is_none() {
-            return;
-        }
-        if self.target == sandhill_link::Target::Local {
-            self.choose_project(cx);
-        } else {
-            self.close_project(cx);
-            let input = self.path_input.clone();
-            input.update(cx, |input, cx| input.focus(window, cx));
-        }
     }
 
     pub(crate) fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {

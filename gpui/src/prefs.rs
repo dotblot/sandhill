@@ -112,3 +112,65 @@ pub fn notebook_plots() -> bool {
 pub fn save_notebook_plots(on: bool) {
     write("notebookPlots", json!(on));
 }
+
+/// The Tauri app's data folder, where it keeps the list of servers; the
+/// GPUI app reads and writes the same list, so a server added in one shows
+/// in the other.
+fn tauri_data_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let base = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local/share"))
+    };
+    Some(base.join("dev.sandhill.ide"))
+}
+
+/// The servers the Start screen offers next to this Mac: ssh destinations.
+pub fn servers() -> Vec<String> {
+    tauri_data_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join("servers.json")).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_servers(list: &[String]) -> Result<(), String> {
+    let dir = tauri_data_dir().ok_or("no home folder")?;
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let bytes = serde_json::to_vec_pretty(list).map_err(|err| err.to_string())?;
+    std::fs::write(dir.join("servers.json"), bytes)
+        .map_err(|err| format!("cannot save the list of servers: {err}"))
+}
+
+/// The windows open when the app last quit, and the tabs in each, saved
+/// next to this file's own settings.
+fn windows_file() -> Option<PathBuf> {
+    file().map(|f| f.with_file_name("gpui-windows.json"))
+}
+
+pub fn windows() -> Vec<crate::app_window::Places> {
+    windows_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|v| serde_json::from_value(v["windows"].clone()).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_windows(windows: &[crate::app_window::Places]) {
+    let Some(path) = windows_file() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, json!({ "windows": windows }).to_string());
+}
+
+/// The machine the Start screen's folder picker last opened a project on.
+pub fn start_host() -> Option<String> {
+    read()["startHost"].as_str().map(str::to_string)
+}
+
+pub fn save_start_host(host: &str) {
+    write("startHost", json!(host));
+}
