@@ -2,6 +2,7 @@
 //! files on the wall, the notebook (or the Data Explorer) in a glass pane,
 //! and on the right the Console, Terminal or Viewer above Variables.
 
+use gpui_kit::base::SelectableText;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{self, Editor};
 use gpui_kit::component::text::{TextView, TextViewStyle};
@@ -14,8 +15,8 @@ use serde_json::Value;
 use crate::command_palette::Cmd;
 use crate::explorer::Explorer;
 use crate::look::{
-    self, GAP, Palette, RADIUS, bar_button, capsule, capsule_divider, dot, icon, icon_button, pane,
-    picture, raised, wall,
+    self, EDGE, GAP, Palette, RADIUS, bar_button, capsule, capsule_divider, dot, icon, icon_button,
+    pane, picture, raised, wall,
 };
 use crate::notebook::{self, CellKind};
 use crate::shown::{Shown, show};
@@ -112,8 +113,7 @@ impl Render for Workbench {
                     .min_h_0()
                     .items_stretch()
                     .pt(px(GAP))
-                    .pr(px(GAP))
-                    .when(!self.show_files, |d| d.pl(px(GAP)))
+                    .px(px(EDGE))
                     .when(self.show_files, |d| {
                         d.child(self.render_left(cx))
                             .child(self.splitter(Split::Files, cx))
@@ -150,6 +150,7 @@ impl Render for Workbench {
                     ),
             )
             .child(self.render_status(cx))
+            .children(self.render_resource_popup(cx))
             .children(self.render_zoom(cx))
             .children(self.render_settings_dialog(cx))
             .children(self.render_import_dialog(cx))
@@ -166,15 +167,15 @@ impl Render for Workbench {
 /// come first.
 pub(crate) const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
 
-/// The width the three panels share: the window's, less the gaps around
-/// and between them.
+/// The width the three panels share: the window's, less the room at its
+/// edges and the gaps between them.
 fn panel_room(width: f32) -> f32 {
-    (width - 4. * GAP).max(0.)
+    (width - 2. * EDGE - 2. * GAP).max(0.)
 }
 
 impl Workbench {
     /// The left and AI panels' widths from their shares of the window: a
-    /// fifth and two fifths at first, the middle taking what is left.
+    /// quarter each at first (1:2:1), the middle taking what is left.
     fn size_panels(&mut self, window: &Window) {
         let room = panel_room(f32::from(window.viewport_size().width));
         self.files_width = (room * self.left_share).max(220.);
@@ -256,11 +257,11 @@ impl Workbench {
         match split {
             Split::Files => {
                 let most = (width - agents - middle).max(220.);
-                self.left_share = (x - GAP).clamp(220., most) / room;
+                self.left_share = (x - EDGE).clamp(220., most) / room;
             }
             Split::Agents => {
                 let most = (width - files - middle).max(300.);
-                self.agents_share = (width - x - GAP).clamp(300., most) / room;
+                self.agents_share = (width - x - EDGE).clamp(300., most) / room;
             }
             Split::Variables => {
                 // The top pane's height, from the top of the column.
@@ -277,8 +278,8 @@ impl Workbench {
         cx.notify();
     }
 
-    /// The title bar: a capsule of window buttons after the Mac's own and
-    /// the edit capsule at the right; the window draws the machine tabs
+    /// The title bar: a capsule of window buttons after the Mac's own, and
+    /// the theme button and the edit capsule at the right; the window draws the machine tabs
     /// between them.
     fn render_top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
@@ -385,6 +386,25 @@ impl Workbench {
                             ),
                     )
                     .child(div().flex_1())
+                    .child(
+                        capsule(&p, 25.).child(
+                            icon_button(
+                                "theme",
+                                if p.dark { "theme.light" } else { "theme.dark" },
+                                &p,
+                                true,
+                            )
+                            .tooltip(move |w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(if p.dark {
+                                    "Switch to the light theme"
+                                } else {
+                                    "Switch to the dark theme"
+                                })
+                                .build(w, cx)
+                            })
+                            .on_click(|_, window, cx| look::toggle_appearance(window, cx)),
+                        ),
+                    )
                     .child(
                         capsule(&p, 25.)
                             .child(edit("undo", "edit.undo", Box::new(input::Undo)))
@@ -1220,22 +1240,17 @@ impl Workbench {
         let busy = open.sending.contains(&cell.id)
             || open.waiting.contains(&ix)
             || run.is_some_and(|r| !r.finished);
-        let count = match run {
-            Some(run) => run.execution_count,
-            None => cell.execution_count,
-        };
-        let label = match count {
-            _ if busy => "[*]".to_string(),
-            Some(n) => format!("[{n}]"),
-            None => String::new(),
-        };
         let outputs: &[Value] = match run {
             Some(run) => &run.outputs,
             None => &cell.outputs,
         };
         let outputs: Vec<AnyElement> = outputs
             .iter()
-            .map(|o| self.render_output(show(o), PLOT_MAX_WIDTH, true, cx))
+            .enumerate()
+            .map(|(n, o)| {
+                let id = SharedString::from(format!("out-{}-{n}", cell.id));
+                self.render_output(show(o), id, PLOT_MAX_WIDTH, Some(ix), cx)
+            })
             .collect();
         let failed = run.and_then(failed_status);
         let errored = run.and_then(|r| r.status.as_deref()) == Some("error");
@@ -1248,38 +1263,51 @@ impl Workbench {
             .w_full()
             .child(
                 // The gutter: the cell's number (#3, as the Agents pane names
-                // it), its run count, and Run under the pointer.
-                v_flex()
+                // it).
+                div()
                     .w(px(GUTTER))
                     .flex_none()
-                    .items_end()
+                    .flex()
+                    .justify_end()
                     .pt(px(5.))
                     .pr(px(10.))
-                    .gap(px(2.))
                     .font_family(look::MONO)
                     .text_color(p.faint)
-                    .child(div().opacity(0.8).child(format!("#{number}")))
-                    .when(!label.is_empty(), |d| {
-                        d.child(div().when(busy, |d| d.text_color(p.busy)).child(label))
-                    })
-                    .child(
-                        div()
-                            .id(("run", ix))
-                            .px(px(2.))
-                            .rounded(px(RADIUS))
-                            .text_color(p.accent)
-                            .cursor_pointer()
-                            .invisible()
-                            .group_hover(group, |d| d.visible())
-                            .child(icon("run").size(px(15.)))
-                            .on_click(cx.listener(move |this, _, _, cx| this.run_cell(ix, cx))),
-                    ),
+                    .child(div().opacity(0.8).child(format!("#{number}"))),
             )
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .child(self.render_cell_editor(open, ix, true, window, cx))
+                    .child(
+                        // Run sits in the cell's top right corner; it turns
+                        // the busy colour while the cell runs.
+                        div()
+                            .relative()
+                            .w_full()
+                            .child(self.render_cell_editor(open, ix, true, window, cx))
+                            .child(
+                                div()
+                                    .id(("run", ix))
+                                    .absolute()
+                                    .top(px(4.))
+                                    .right(px(6.))
+                                    .p(px(3.))
+                                    .rounded(px(6.))
+                                    .bg(p.chunk)
+                                    .cursor_pointer()
+                                    .text_color(if busy { p.busy } else { p.faint })
+                                    .hover(|d| d.text_color(p.accent))
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new("Run this cell")
+                                            .build(w, cx)
+                                    })
+                                    .child(icon("run").size(px(14.)))
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| this.run_cell(ix, cx)),
+                                    ),
+                            ),
+                    )
                     .when(!outputs.is_empty() || failed.is_some() || busy, |d| {
                         d.child(
                             v_flex()
@@ -1308,16 +1336,30 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// `pages` says web pages are drawn here; the Console leaves them to
-    /// the Viewer.
-    fn render_output(&self, shown: Shown, max_width: f32, pages: bool, cx: &App) -> AnyElement {
+    /// One output. `cell` is the notebook cell it is under: web pages are
+    /// drawn there (the Console leaves them to the Viewer), and its plots
+    /// can be saved. Text can be selected and copied.
+    fn render_output(
+        &self,
+        shown: Shown,
+        id: SharedString,
+        max_width: f32,
+        cell: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = *Palette::get(cx);
-        let text = |s: String| {
+        let pages = cell.is_some();
+        let text_id = id.clone();
+        let text = move |s: String| {
             div()
+                .w_full()
                 .font_family(look::MONO)
                 .text_size(px(look::CODE))
                 .line_height(px(LINE_HEIGHT))
-                .child(s.trim_end_matches('\n').to_string())
+                .child(SelectableText::new(
+                    text_id.clone(),
+                    s.trim_end_matches('\n').to_string(),
+                ))
         };
         let note = |s: String| div().text_color(p.faint).child(s).into_any_element();
         match shown {
@@ -1337,9 +1379,70 @@ impl Workbench {
                 None => note("Loading the page…".into()),
             },
             Shown::Plot { value, .. } => match self.plots.get(&plot_key(&value)) {
-                Some(Plot::Ready(image)) => div()
-                    .child(img(image.clone()).max_w(px(max_width)))
-                    .into_any_element(),
+                Some(Plot::Ready(image)) => {
+                    let key = plot_key(&value);
+                    let group: SharedString = format!("{id}-plot").into();
+                    let copied = image.clone();
+                    let tools = cell.map(|ix| {
+                        h_flex()
+                            .absolute()
+                            .top(px(6.))
+                            .right(px(6.))
+                            .gap(px(2.))
+                            .p(px(2.))
+                            .rounded(px(8.))
+                            .bg(p.bg)
+                            .border_1()
+                            .border_color(p.line)
+                            .invisible()
+                            .group_hover(group.clone(), |d| d.visible())
+                            .child(
+                                icon_button(
+                                    SharedString::from(format!("{id}-save")),
+                                    "doc.save",
+                                    &p,
+                                    false,
+                                )
+                                .tooltip(|w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("Save the plot…")
+                                        .build(w, cx)
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.open_cell_plot(ix, &key, window, cx)
+                                    },
+                                )),
+                            )
+                            .child(
+                                icon_button(
+                                    SharedString::from(format!("{id}-copy")),
+                                    "edit.copy",
+                                    &p,
+                                    false,
+                                )
+                                .tooltip(|w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("Copy the plot")
+                                        .build(w, cx)
+                                })
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.copy_image(&copied, cx)),
+                                ),
+                            )
+                    });
+                    div()
+                        .id(SharedString::from(format!("{id}-box")))
+                        .group(group)
+                        .relative()
+                        .max_w(px(max_width))
+                        // No wider than the notebook, however wide drawn.
+                        .child(
+                            img(image.clone())
+                                .max_w(relative(1.))
+                                .object_fit(ObjectFit::Contain),
+                        )
+                        .children(tools)
+                        .into_any_element()
+                }
                 Some(Plot::Failed(err)) => note(format!("The plot could not be shown: {err}")),
                 _ => note("Loading the plot…".into()),
             },
@@ -1353,7 +1456,7 @@ impl Workbench {
             .iter()
             .filter_map(|id| self.runs.get(id).map(|run| (id, run)))
             .filter(|(_, run)| self.notebook_console || !crate::plots::from_notebook(&run.cell))
-            .map(|(_, run)| {
+            .map(|(run_id, run)| {
                 let source = match (&run.cell, &run.by) {
                     // A script's runs are labelled with the script alone.
                     (Some((file, _)), _) if is_script(file) => {
@@ -1394,16 +1497,24 @@ impl Workbench {
                                     .child(run.code.trim_end().to_string()),
                             ),
                     )
-                    .children(run.outputs.iter().map(|o| match show(o) {
-                        Shown::Page(_) if run.cell.as_ref().is_some_and(|(f, _)| !is_script(f)) => {
-                            self.render_output(
-                                Shown::Note("A web page: shown under its cell.".into()),
-                                0.,
-                                false,
-                                cx,
-                            )
+                    .children(run.outputs.iter().enumerate().map(|(n, o)| {
+                        let id = SharedString::from(format!("cout-{run_id}-{n}"));
+                        match show(o) {
+                            Shown::Page(_)
+                                if run.cell.as_ref().is_some_and(|(f, _)| !is_script(f)) =>
+                            {
+                                self.render_output(
+                                    Shown::Note("A web page: shown under its cell.".into()),
+                                    id,
+                                    0.,
+                                    None,
+                                    cx,
+                                )
+                            }
+                            shown => {
+                                self.render_output(shown, id, self.files_width - 40., None, cx)
+                            }
                         }
-                        shown => self.render_output(shown, self.files_width - 40., false, cx),
                     }))
                     .when_some(failed, |d, s| {
                         d.child(div().text_color(p.err).child(format!("Run ended: {s}")))
@@ -1662,13 +1773,26 @@ impl Workbench {
             .size_full()
             .flex()
             .flex_col()
-            .when(!self.vars.list.is_empty() || !filter.is_empty(), |d| {
+            // The filter, Import and refresh, while a kernel runs.
+            .when(self.active_session().is_some(), |d| {
                 d.child(
-                    div()
+                    h_flex()
                         .flex_none()
-                        .px(px(10.))
+                        .gap(px(4.))
+                        .pl(px(10.))
+                        .pr(px(6.))
                         .pt(px(6.))
-                        .child(input::Input::new(&self.vars_filter).small()),
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(input::Input::new(&self.vars_filter).small()),
+                        )
+                        .child(self.import_button(cx))
+                        .child(
+                            icon_button("refresh-variables", "refresh", &p, false)
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh_variables(cx))),
+                        ),
                 )
             })
             .child(
@@ -1772,7 +1896,8 @@ impl Workbench {
         }
     }
 
-    /// The status bar: the connection, then the latest problem or a hint.
+    /// The status bar: the connection, then the latest problem or a hint,
+    /// and the machine's resources at the right.
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         h_flex()
@@ -1806,6 +1931,8 @@ impl Workbench {
                             }),
                     ),
             )
+            .child(div().flex_1())
+            .children(self.render_resources(cx))
     }
 }
 

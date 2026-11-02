@@ -296,11 +296,11 @@ preview and R's imports weren't seen.
 
 - **7b** (`machine.rs`, `connection.rs`): the project's name in the left
   pane lists the machine's projects (with their running kernels) and
-  switches to one. Under the files, Kernels lists the project's running
+  switches to one. The Kernels tab lists the project's running
   sessions with what uses each and its memory; the trash button, and
   "Shut down N unused sessions", ask first. Resources shows the machine's
-  CPU, memory, GPUs and disk as bars; clicking one shows its details. Both
-  sections fold. The status bar's connection opens a pop-up with what the
+  CPU, memory, GPUs and disk as bars (now in the status bar); clicking one
+  shows its details. The status bar's connection opens a pop-up with what the
   connection is, Reconnect (the project and its documents open again),
   Disconnect, Connect, or Restart sandhilld on this machine, and the
   daemon's log. A document's kernel has Restart and Shut down beside its
@@ -327,11 +327,17 @@ preview and R's imports weren't seen.
 - **Retired the Tauri app** (2026-11-02): this is Sandhill.app now, with
   the Tauri app's bundle id (`dev.sandhill.ide`), so it replaces it on the
   Mac. The app icon's sources and its script moved to `assets/icon/`.
-- **New layout** (2026-11-02, Huan's): the left panel (a fifth of the
-  window) holds Variables, Help and Packages over Files, Git, Plots and the
-  Viewer, then Kernels and Resources; the middle (two fifths) has the editor
-  with the Console, Terminal and Jobs under it; the AI pane is the right
-  panel (two fifths). Dragging the gaps changes the shares (`panes.rs`).
+- **New layout** (2026-11-02, Huan's): the left panel holds Variables,
+  Kernels, Help and Packages over Files, Git, Plots and the Viewer; the
+  middle has the editor with the Console, Terminal and Jobs under it; the AI
+  pane is the right panel; widths 1:2:1, 10 px from the window's sides.
+  Dragging the gaps changes the shares (`panes.rs`). Resources are at the
+  right of the status bar (`machine.rs`); the title bar's sun/moon button
+  switches the theme and is remembered (`look::toggle_appearance`).
+  Notebook cells drop the run count, have Run at their top right, and
+  their output text is selectable (`SelectableText`); a plot under a cell
+  can be saved or copied from the buttons over it (`plots.rs`,
+  `open_cell_plot`).
 
 ## Running it
 

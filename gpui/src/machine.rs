@@ -29,7 +29,7 @@ pub(crate) struct MachineUi {
     pub project_menu: Option<Vec<ProjectInfo>>,
     /// The kernel row (a session id, or UNUSED) asking to shut down.
     pub asking: Option<String>,
-    /// The resource whose details show beside the pane.
+    /// The resource whose details show above the status bar.
     pub resource: Option<&'static str>,
 }
 
@@ -570,14 +570,25 @@ impl Workbench {
         )
     }
 
-    /// The project's kernels, under the files: one row each, with its
+    /// The project's kernels, the Kernels tab: one row each, with its
     /// memory and a button that asks before shutting it down.
-    pub(crate) fn render_kernels(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !matches!(self.link, Link::Ready(_)) || self.project.is_none() {
-            return None;
-        }
+    pub(crate) fn render_kernels(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let open = !crate::prefs::section_collapsed("kernels");
+        let note = |text: &'static str| {
+            h_flex()
+                .h(px(28.))
+                .px(px(14.))
+                .text_size(px(look::SMALL))
+                .text_color(p.faint)
+                .child(text)
+                .into_any_element()
+        };
+        if !matches!(self.link, Link::Ready(_)) {
+            return note("Not connected");
+        }
+        if self.project.is_none() {
+            return note("Open a project to see its kernels");
+        }
         let sessions = self.project_sessions();
         let memory = |id: &str| {
             self.machine
@@ -587,26 +598,9 @@ impl Workbench {
                 .map(|m| format_bytes(m.rss))
                 .unwrap_or_default()
         };
-        let mut list = v_flex().child(section_head(
-            "kernels",
-            "Kernels",
-            (!sessions.is_empty()).then(|| sessions.len().to_string()),
-            open,
-            &p,
-            cx,
-        ));
-        if !open {
-            return Some(list.into_any_element());
-        }
+        let mut list = v_flex().pt(px(4.));
         if sessions.is_empty() {
-            list = list.child(
-                h_flex()
-                    .h(px(24.))
-                    .px(px(14.))
-                    .text_size(px(look::SMALL))
-                    .text_color(p.faint)
-                    .child("No kernels running"),
-            );
+            list = list.child(note("No kernels running"));
         }
         let hover = p.ink(7.);
         for (ix, s) in sessions.iter().enumerate() {
@@ -740,11 +734,16 @@ impl Workbench {
                 );
             }
         }
-        Some(list.px(px(6.)).into_any_element())
+        div()
+            .id("kernels")
+            .size_full()
+            .overflow_y_scroll()
+            .child(list.px(px(6.)))
+            .into_any_element()
     }
 
-    /// The machine's CPU, memory, GPUs and disk: a bar each, two to a row;
-    /// clicking one shows its details beside the pane.
+    /// The machine's CPU, memory, GPUs and disk at the right of the status
+    /// bar: a short bar each; clicking one shows its details above it.
     pub(crate) fn render_resources(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let stats = self.machine.stats.as_ref()?;
         if !matches!(self.link, Link::Ready(_)) {
@@ -752,24 +751,6 @@ impl Workbench {
         }
         let p = *Palette::get(cx);
         let rows = resource_rows(stats, &self.machine.sessions, &self.kernels);
-        let open = !crate::prefs::section_collapsed("resources");
-        let hot: Vec<&str> = rows
-            .iter()
-            .filter(|r| r.percent >= 80)
-            .map(|r| r.label)
-            .collect();
-        let summary = (!hot.is_empty()).then(|| format!("{} high", hot.join(", ")));
-        let mut pane = v_flex().px(px(6.)).pb(px(6.)).child(section_head(
-            "resources",
-            "Resources",
-            summary,
-            open,
-            &p,
-            cx,
-        ));
-        if !open {
-            return Some(pane.into_any_element());
-        }
         let hover = p.ink(7.);
         let items: Vec<AnyElement> = rows
             .iter()
@@ -778,19 +759,20 @@ impl Workbench {
                 let picked = self.machine.resource == Some(key);
                 h_flex()
                     .id(SharedString::from(format!("res-{key}")))
-                    .w(px((self.files_width - 24.) / 2.))
-                    .h(px(22.))
-                    .px(px(8.))
-                    .gap(px(6.))
-                    .rounded(px(look::RADIUS - 4.))
+                    .flex_none()
+                    .h(px(20.))
+                    .px(px(6.))
+                    .gap(px(5.))
+                    .rounded(px(6.))
                     .text_size(px(look::SMALL))
-                    .text_color(p.muted)
+                    .text_color(if r.percent >= 80 { p.err } else { p.muted })
                     .cursor_pointer()
                     .when(picked, |d| d.bg(hover))
                     .hover(move |d| d.bg(hover))
-                    .child(icon(r.icon).size(px(13.)))
-                    .child(div().w(px(34.)).flex_none().child(r.label))
-                    .child(bar(r.percent, &p))
+                    .child(icon(r.icon).size(px(12.)))
+                    .child(r.label)
+                    .child(div().w(px(36.)).flex().child(bar(r.percent, &p)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.machine.resource = if this.machine.resource == Some(key) {
                             None
@@ -802,50 +784,64 @@ impl Workbench {
                     .into_any_element()
             })
             .collect();
-        pane = pane.child(h_flex().flex_wrap().children(items));
-        if let Some(r) = rows.iter().find(|r| Some(r.key) == self.machine.resource) {
-            let body = crate::composer_view::popup(&p)
-                .id("res-pop")
-                .occlude()
-                .w(px(260.))
-                .p(px(10.))
-                .gap(px(6.))
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(r.name.clone()),
-                        )
-                        .child(div().text_color(p.faint).child(host_name(&self.host()))),
-                )
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .text_size(px(20.))
-                                .font_weight(FontWeight::BOLD)
-                                .child(format!("{}%", r.percent)),
-                        )
-                        .child(bar(r.percent, &p)),
-                )
-                .child(div().child(r.main.clone()))
-                .child(div().text_color(p.muted).child(r.detail.clone()))
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.machine.resource = None;
-                    cx.notify();
-                }));
-            pane = pane.child(
-                div()
-                    .absolute()
-                    .bottom(px(8.))
-                    .left(px(self.files_width + 8.))
-                    .child(deferred(body).with_priority(3)),
-            );
-        }
-        Some(pane.relative().into_any_element())
+        Some(
+            h_flex()
+                .flex_none()
+                .gap(px(2.))
+                .children(items)
+                .into_any_element(),
+        )
+    }
+
+    /// The details of the resource picked in the status bar, above it at
+    /// the window's right.
+    pub(crate) fn render_resource_popup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let stats = self.machine.stats.as_ref()?;
+        let picked = self.machine.resource?;
+        let p = *Palette::get(cx);
+        let rows = resource_rows(stats, &self.machine.sessions, &self.kernels);
+        let r = rows.iter().find(|r| r.key == picked)?;
+        let body = crate::composer_view::popup(&p)
+            .id("res-pop")
+            .occlude()
+            .w(px(260.))
+            .p(px(10.))
+            .gap(px(6.))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(r.name.clone()),
+                    )
+                    .child(div().text_color(p.faint).child(host_name(&self.host()))),
+            )
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .font_weight(FontWeight::BOLD)
+                            .child(format!("{}%", r.percent)),
+                    )
+                    .child(bar(r.percent, &p)),
+            )
+            .child(div().child(r.main.clone()))
+            .child(div().text_color(p.muted).child(r.detail.clone()))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.machine.resource = None;
+                cx.notify();
+            }));
+        Some(
+            div()
+                .absolute()
+                .bottom(px(look::STATUS_BAR + 2.))
+                .right(px(look::EDGE))
+                .child(deferred(body).with_priority(3))
+                .into_any_element(),
+        )
     }
 }
 
@@ -860,49 +856,6 @@ fn when_opened(ms: i64) -> String {
     } else {
         at.format("%b %-d").to_string()
     }
-}
-
-/// A section's head: click to collapse or expand it; collapsed, it shows
-/// `summary`.
-fn section_head(
-    key: &'static str,
-    name: &'static str,
-    summary: Option<String>,
-    open: bool,
-    p: &Palette,
-    cx: &mut Context<Workbench>,
-) -> impl IntoElement {
-    h_flex()
-        .id(SharedString::from(format!("sec-{key}")))
-        .h(px(26.))
-        .px(px(8.))
-        .gap(px(4.))
-        .text_size(px(look::SMALL))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(p.muted)
-        .cursor_pointer()
-        .child(
-            icon(if open {
-                "chevron.down"
-            } else {
-                "chevron.right"
-            })
-            .size(px(11.))
-            .text_color(p.faint),
-        )
-        .child(name)
-        .when_some(summary.filter(|_| !open), |d, s| {
-            d.child(
-                div()
-                    .font_weight(FontWeight::NORMAL)
-                    .text_color(p.faint)
-                    .child(s),
-            )
-        })
-        .on_click(cx.listener(move |_, _, _, cx| {
-            crate::prefs::toggle_section(key);
-            cx.notify();
-        }))
 }
 
 fn bar(percent: u32, p: &Palette) -> impl IntoElement {

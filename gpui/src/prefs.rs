@@ -174,24 +174,14 @@ pub fn save_start_host(host: &str) {
     write("startHost", json!(host));
 }
 
-/// Whether a section of the left pane (Kernels, Resources) is collapsed.
-pub fn section_collapsed(section: &str) -> bool {
-    read()["collapsedSections"]
-        .as_array()
-        .is_some_and(|list| list.iter().any(|s| s.as_str() == Some(section)))
+/// The theme picked with the title bar's button, "light" or "dark"; none
+/// follows the system.
+pub fn appearance() -> Option<String> {
+    read()["appearance"].as_str().map(str::to_string)
 }
 
-pub fn toggle_section(section: &str) {
-    let mut list: Vec<Value> = read()["collapsedSections"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if let Some(ix) = list.iter().position(|s| s.as_str() == Some(section)) {
-        list.remove(ix);
-    } else {
-        list.push(json!(section));
-    }
-    write("collapsedSections", Value::Array(list));
+pub fn save_appearance(theme: &str) {
+    write("appearance", json!(theme));
 }
 
 /// How the files pane sorts: "name", "size" or "modified".

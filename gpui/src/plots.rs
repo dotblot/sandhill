@@ -72,6 +72,9 @@ pub(crate) struct Zoom {
     /// A path that is there already; saving again replaces it.
     pub replace: Option<String>,
     pub working: bool,
+    /// Opened from under a notebook cell: that cell's plots, and the one
+    /// shown; otherwise the view steps through the Plots pane's.
+    pub only: Option<(Vec<PlotItem>, usize)>,
 }
 
 #[derive(Default)]
@@ -434,7 +437,12 @@ impl Workbench {
         let Some(image) = at.and_then(|at| self.plot_image(list[at])) else {
             return;
         };
-        match clipboard_image(&image) {
+        self.copy_image(&image, cx);
+    }
+
+    /// Copies a plot, as drawn, to the clipboard.
+    pub(crate) fn copy_image(&mut self, image: &Image, cx: &mut Context<Self>) {
+        match clipboard_image(image) {
             Ok(image) => {
                 cx.write_to_clipboard(ClipboardItem::new_image(&image));
                 self.problem = None;
@@ -745,21 +753,122 @@ impl Workbench {
         .inset_0()
     }
 
+    /// The plots the large view steps through, and the one it shows.
+    fn zoom_plots(&self) -> (Vec<&PlotItem>, Option<usize>) {
+        match self
+            .plot_history
+            .zoom
+            .as_ref()
+            .and_then(|z| z.only.as_ref())
+        {
+            Some((items, at)) => (items.iter().collect(), Some(*at)),
+            None => self.plots_now(),
+        }
+    }
+
+    /// The plots under notebook cell `ix`, as `PlotItem`s: of its latest
+    /// run, else as saved in the file.
+    fn cell_plots(&self, ix: usize) -> Vec<PlotItem> {
+        let Some(open) = self.open.as_ref() else {
+            return Vec::new();
+        };
+        let Some(cell) = open.notebook.cells.get(ix) else {
+            return Vec::new();
+        };
+        let run = open
+            .cell_runs
+            .get(&cell.id)
+            .and_then(|id| self.runs.get(id).map(|run| (id, run)));
+        let (outputs, run_id, session) = match run {
+            Some((id, run)) => (
+                &run.outputs,
+                id.clone(),
+                open.session.id().unwrap_or_default().to_string(),
+            ),
+            None => (&cell.outputs, format!("saved-{}", cell.id), String::new()),
+        };
+        let place = Some((open.notebook.path.clone(), cell.id.clone()));
+        outputs
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o["output_type"].as_str(),
+                    Some("display_data" | "execute_result")
+                )
+            })
+            .filter_map(|o| {
+                plot_item(
+                    &run_id,
+                    &session,
+                    now_ms(),
+                    false,
+                    place.clone(),
+                    None,
+                    &o["data"],
+                )
+            })
+            .collect()
+    }
+
+    /// Opens a plot under notebook cell `ix` large, to save it.
+    pub(crate) fn open_cell_plot(
+        &mut self,
+        ix: usize,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let items = self.cell_plots(ix);
+        let Some(at) = items.iter().position(|p| plot_key(&p.value) == key) else {
+            return;
+        };
+        self.open_zoom_on(Some((items, at)), window, cx);
+    }
+
+    /// The large view's previous or next plot.
+    fn step_zoom(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
+        match self.plot_history.zoom.as_mut().and_then(|z| z.only.take()) {
+            Some((items, at)) => {
+                let to = (at as isize + by).clamp(0, items.len() as isize - 1) as usize;
+                self.open_zoom_on(Some((items, to)), window, cx);
+            }
+            None => {
+                self.step_plot(by, cx);
+                self.open_zoom(window, cx);
+            }
+        }
+    }
+
     /// Opens the plot in front large, asking its session whether it can
     /// draw it again at any size.
     pub(crate) fn open_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (list, at) = self.plots_now();
-        let Some(at) = at else {
-            return;
+        self.open_zoom_on(None, window, cx);
+    }
+
+    fn open_zoom_on(
+        &mut self,
+        only: Option<(Vec<PlotItem>, usize)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (item, image, index, name) = {
+            let (list, at) = match &only {
+                Some((items, at)) => (items.iter().collect::<Vec<_>>(), Some(*at)),
+                None => self.plots_now(),
+            };
+            let Some(at) = at else {
+                return;
+            };
+            let item = list[at].clone();
+            let (image, index) = redraw_target(&item, &list);
+            let name = plot_name(&item, &list);
+            (item, image, index, name)
         };
-        let item = list[at].clone();
-        let (image, index) = redraw_target(&item, &list);
         let folder = self
             .plot_history
             .folder
             .clone()
             .unwrap_or_else(|| FOLDER.to_string());
-        let name = plot_name(&item, &list);
         let format = plain_formats(&item.mime)[0];
         let path = if folder.is_empty() {
             format!("{name}.{}", extension(format))
@@ -778,6 +887,7 @@ impl Workbench {
             note: None,
             replace: None,
             working: false,
+            only,
         });
         let Some(daemon) = self.daemon() else {
             return;
@@ -802,7 +912,7 @@ impl Workbench {
                 png: None,
             });
             this.update(cx, |this, cx| {
-                let (list, at) = this.plots_now();
+                let (list, at) = this.zoom_plots();
                 if at.map(|a| list[a].key.as_str()) != Some(key.as_str()) {
                     return;
                 }
@@ -846,7 +956,7 @@ impl Workbench {
     /// Saves the plot in the project's folder: drawn again by its session
     /// at the size asked when it can, else as it was drawn.
     fn save_plot(&mut self, cx: &mut Context<Self>) {
-        let (list, at) = self.plots_now();
+        let (list, at) = self.zoom_plots();
         let (Some(at), Some(daemon), Some(project)) = (at, self.daemon(), self.project.clone())
         else {
             return;
@@ -991,7 +1101,7 @@ impl Workbench {
     pub(crate) fn render_zoom(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let zoom = self.plot_history.zoom.as_ref()?;
         let p = *Palette::get(cx);
-        let (list, at) = self.plots_now();
+        let (list, at) = self.zoom_plots();
         let item = list.get(at?)?;
         let at = at?;
         let redrawn = zoom.redraw.as_ref().is_some_and(|r| r.can);
@@ -1079,18 +1189,16 @@ impl Workbench {
                     .child(
                         icon_button("zoom-back", "previous", &p, false)
                             .when(!back, |d| d.opacity(0.35))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.step_plot(-1, cx);
-                                this.open_zoom(window, cx);
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.step_zoom(-1, window, cx)),
+                            ),
                     )
                     .child(
                         icon_button("zoom-next", "next", &p, false)
                             .when(!on, |d| d.opacity(0.35))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.step_plot(1, cx);
-                                this.open_zoom(window, cx);
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.step_zoom(1, window, cx)),
+                            ),
                     )
                     .child(
                         icon_button("zoom-close", "close", &p, false).on_click(cx.listener(

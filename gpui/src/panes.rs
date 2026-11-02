@@ -1,8 +1,8 @@
-//! Where the panes sit: the left panel (a fifth of the window) holds
-//! Variables, Help and Packages over Files, Git, Plots and the Viewer, then
-//! the project's kernels and the machine's resources; the middle has the
-//! editor with the Console, Terminal and Jobs under it; the AI pane is the
-//! right panel. The middle and the AI pane take two fifths each.
+//! Where the panes sit: the left panel (a quarter of the window) holds
+//! Variables, Kernels, Help and Packages over Files, Git, Plots and the
+//! Viewer; the middle (half) has the editor with the Console, Terminal and
+//! Jobs under it; the AI pane is the right panel (a quarter). The machine's
+//! resources are at the right of the status bar.
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -51,18 +51,20 @@ impl Workbench {
             .child(div().flex_1().min_h_0().child(body))
     }
 
-    /// The left panel: Variables, Help and Packages over Files, Git, Plots
-    /// and the Viewer, then Kernels and Resources.
+    /// The left panel: Variables, Kernels, Help and Packages over Files,
+    /// Git, Plots and the Viewer.
     pub(crate) fn render_left(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let top_tab =
             |id: &'static str, label: &'static str, which: TopTab, cx: &mut Context<Self>| {
-                Self::tab(id, None, label, self.top_tab == which, &p).on_click(cx.listener(
-                    move |this, _, _, cx| {
+                // Four tabs share a narrow panel: a little tighter.
+                Self::tab(id, None, label, self.top_tab == which, &p)
+                    .pl(px(6.))
+                    .pr(px(5.))
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.top_tab = which;
                         cx.notify();
-                    },
-                ))
+                    }))
             };
         let bottom_tab =
             |id: &'static str, label: &'static str, which: BottomTab, cx: &mut Context<Self>| {
@@ -74,16 +76,10 @@ impl Workbench {
                 ))
             };
         let (top, refresh): (AnyElement, Vec<AnyElement>) = match self.top_tab {
-            TopTab::Variables => (
-                self.render_variables(cx),
-                vec![
-                    self.import_button(cx),
-                    icon_button("refresh-variables", "refresh", &p, false)
-                        .when(self.active_session().is_none(), |d| d.opacity(0.35))
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_variables(cx)))
-                        .into_any_element(),
-                ],
-            ),
+            // Its Import and refresh buttons are beside its filter, leaving
+            // the strip to the four tabs.
+            TopTab::Variables => (self.render_variables(cx), Vec::new()),
+            TopTab::Kernels => (self.render_kernels(cx), Vec::new()),
             TopTab::Help => (self.render_help(cx), Vec::new()),
             TopTab::Packages => (self.render_packages(cx), self.package_tools(cx)),
         };
@@ -108,7 +104,12 @@ impl Workbench {
                     .child(
                         Self::strip(&p)
                             .child(
+                                // Clipped, not pushing the tools out, when the
+                                // panel is too narrow for every tab.
                                 capsule(&p, 22.)
+                                    .min_w_0()
+                                    .flex_shrink(1.)
+                                    .overflow_hidden()
                                     .gap(px(1.))
                                     .child(top_tab(
                                         "tab-variables",
@@ -116,6 +117,7 @@ impl Workbench {
                                         TopTab::Variables,
                                         cx,
                                     ))
+                                    .child(top_tab("tab-kernels", "Kernels", TopTab::Kernels, cx))
                                     .child(top_tab("tab-help", "Help", TopTab::Help, cx))
                                     .child(top_tab(
                                         "tab-packages",
@@ -137,7 +139,7 @@ impl Workbench {
                                 },
                             )
                             .child(div().flex_1())
-                            .child(h_flex().gap(px(1.)).children(refresh)),
+                            .child(h_flex().flex_none().gap(px(1.)).children(refresh)),
                     )
                     .child(div().flex_1().min_h_0().child(top))
                     .when(self.top_tab == TopTab::Variables, |d| {
@@ -170,7 +172,5 @@ impl Workbench {
                     )
                     .child(div().flex_1().min_h_0().child(bottom)),
             )
-            .children(self.render_kernels(cx))
-            .children(self.render_resources(cx))
     }
 }
