@@ -196,8 +196,8 @@ impl Workbench {
                     self.close_explorer(cx)
                 } else if self.diff_shown {
                     self.close_diff(cx)
-                } else if self.open.is_some() {
-                    self.close_notebook(cx)
+                } else if let Some(path) = self.open.as_ref().map(|o| o.notebook.path.clone()) {
+                    self.ask_close(path, window, cx)
                 }
             }
             Cmd::RunAll => self.run_all(cx),

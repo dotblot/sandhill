@@ -174,3 +174,23 @@ pub fn start_host() -> Option<String> {
 pub fn save_start_host(host: &str) {
     write("startHost", json!(host));
 }
+
+/// Whether a section of the left pane (Kernels, Resources) is collapsed.
+pub fn section_collapsed(section: &str) -> bool {
+    read()["collapsedSections"]
+        .as_array()
+        .is_some_and(|list| list.iter().any(|s| s.as_str() == Some(section)))
+}
+
+pub fn toggle_section(section: &str) {
+    let mut list: Vec<Value> = read()["collapsedSections"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(ix) = list.iter().position(|s| s.as_str() == Some(section)) {
+        list.remove(ix);
+    } else {
+        list.push(json!(section));
+    }
+    write("collapsedSections", Value::Array(list));
+}

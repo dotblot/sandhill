@@ -136,6 +136,8 @@ impl Render for Workbench {
             .children(self.render_settings_dialog(cx))
             .children(self.render_import_dialog(cx))
             .children(self.render_main_menu(cx))
+            .children(self.render_connection_menu(cx))
+            .children(self.render_log_dialog(cx))
             .children(self.render_tree_menu(cx))
             .children(self.render_palette(cx))
     }
@@ -389,7 +391,7 @@ impl Workbench {
             )
     }
 
-    fn connection_text(&self) -> String {
+    pub(crate) fn connection_text(&self) -> String {
         match (&self.link, &self.about) {
             (Link::Connecting, _) => "Connecting…".into(),
             (Link::Failed(_), _) => "Not connected".into(),
@@ -514,10 +516,6 @@ impl Workbench {
             }),
         )
         .size_full();
-        let name = self
-            .project
-            .as_deref()
-            .map(|p| p.rsplit('/').next().unwrap_or(p).to_string());
         v_flex()
             .relative()
             .w(px(self.files_width))
@@ -532,14 +530,7 @@ impl Workbench {
                     .gap(px(6.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .whitespace_nowrap()
-                    .child(icon("folder").size(px(15.)).text_color(p.muted))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(name.clone().unwrap_or_else(|| "No project".into())),
-                    )
+                    .child(self.render_project_button(cx))
                     .when_some(self.tree.top_count(), |d, n| {
                         d.child(
                             div()
@@ -572,7 +563,10 @@ impl Workbench {
             )
             .children(self.render_name_error(cx))
             .child(div().flex_1().min_h_0().px(px(6.)).pb(px(10.)).child(list))
+            .children(self.render_kernels(cx))
+            .children(self.render_resources(cx))
             .children(self.render_new_menu(cx))
+            .children(self.render_project_menu(cx))
     }
 
     /// A pane's tab strip: its tabs in a capsule, then anything else.
@@ -786,9 +780,9 @@ impl Workbench {
             .rounded_full()
             .text_color(p.faint)
             .hover(move |d| d.bg(hover).text_color(text))
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.close_tab(&path, cx)
+                this.ask_close(path.clone(), window, cx)
             }))
             .map(|d| {
                 if dirty {
@@ -921,6 +915,38 @@ impl Workbench {
                     .into_any_element()
             })
             .collect()
+    }
+
+    /// Restart and Shut down for the shown document's kernel, while it runs.
+    fn session_buttons(&self, running: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !running {
+            return None;
+        }
+        let p = *Palette::get(cx);
+        Some(
+            h_flex()
+                .child(
+                    icon_button("session-restart", "refresh", &p, false)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(
+                                "Restart: a new kernel, with nothing defined",
+                            )
+                            .build(w, cx)
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| this.restart_session(cx))),
+                )
+                .child(
+                    icon_button("session-stop", "power", &p, false)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(
+                                "Shut down: the next run starts a new kernel",
+                            )
+                            .build(w, cx)
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| this.shut_down_session(cx))),
+                )
+                .into_any_element(),
+        )
     }
 
     fn session_text(session: &Session) -> String {
@@ -1076,7 +1102,8 @@ impl Workbench {
                     .text_size(px(look::SMALL))
                     .text_color(p.muted)
                     .child(Self::session_dot(&open.session, &p))
-                    .child(Self::session_text(&open.session)),
+                    .child(Self::session_text(&open.session))
+                    .children(self.session_buttons(open.session.id().is_some(), cx)),
             )
     }
 
@@ -1373,7 +1400,8 @@ impl Workbench {
                     .gap(px(6.))
                     .text_size(px(look::SMALL))
                     .child(Self::session_dot(state, &p))
-                    .child(Self::session_text(state)),
+                    .child(Self::session_text(state))
+                    .children(self.session_buttons(state.id().is_some(), cx)),
             )
             .when(self.active_session().is_some(), |d| {
                 d.child(
@@ -1661,11 +1689,6 @@ impl Workbench {
     /// The status bar: the connection, then the latest problem or a hint.
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let link_color = match &self.link {
-            Link::Connecting => p.busy,
-            Link::Failed(_) => p.err,
-            Link::Ready(_) => p.ok,
-        };
         h_flex()
             .flex_none()
             .w_full()
@@ -1676,12 +1699,7 @@ impl Workbench {
             .whitespace_nowrap()
             .overflow_hidden()
             .text_color(p.muted)
-            .child(
-                h_flex()
-                    .gap(px(6.))
-                    .child(dot(link_color))
-                    .child(self.connection_text()),
-            )
+            .child(self.render_connection_item(cx))
             .child(
                 div()
                     .min_w_0()

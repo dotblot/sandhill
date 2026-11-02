@@ -202,7 +202,7 @@ pub(crate) struct Vars {
 pub struct Workbench {
     rt: Arc<Runtime>,
     /// Counts connections, so a late reply for an old one is dropped.
-    generation: u64,
+    pub(crate) generation: u64,
     /// This window, for agents' edits that arrive from the daemon.
     pub(crate) window_handle: AnyWindowHandle,
     /// Where the user is, as last told the daemon (see `agent_edits`).
@@ -308,6 +308,17 @@ pub struct Workbench {
     pub(crate) focus: FocusHandle,
     /// The window, with its machine tabs and Start screen.
     pub(crate) shell: WeakEntity<crate::app_window::AppWindow>,
+    /// The machine's kernels and resources, and the left pane's menus.
+    pub(crate) machine: crate::machine::MachineUi,
+    /// The connection's pop-up is open, and the daemon's log dialog.
+    pub(crate) connection_menu: bool,
+    pub(crate) log: Option<crate::connection::LogView>,
+    /// When the connection was made.
+    pub(crate) connected_ms: Option<i64>,
+    /// The project, kept while disconnected, and the documents to open
+    /// again once connected.
+    pub(crate) last_project: Option<String>,
+    pub(crate) reopen: Vec<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -459,6 +470,12 @@ impl Workbench {
             main_menu: false,
             focus: cx.focus_handle(),
             shell,
+            machine: Default::default(),
+            connection_menu: false,
+            log: None,
+            connected_ms: None,
+            last_project: None,
+            reopen: Vec::new(),
             _subscriptions: subscriptions,
         };
         this.connect(target, project, cx);
@@ -508,20 +525,20 @@ impl Workbench {
         }
     }
 
-    /// Connects to the daemon on `target`, leaving any earlier one.
-    pub(crate) fn connect(
-        &mut self,
-        target: Target,
-        project: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.open.as_ref().is_some_and(|o| o.dirty) {
-            self.save(cx);
+    /// Leaves the daemon: what was edited is saved, and everything read
+    /// from it is let go. Replies still on their way are dropped.
+    pub(crate) fn forget_connection(&mut self, cx: &mut Context<Self>) {
+        if self.project.is_some() {
+            self.last_project = self.project.clone();
+        }
+        for path in self.tabs.clone() {
+            if self.open_at(&path).is_some_and(|o| o.dirty)
+                && let Some(task) = self.save_file(&path, cx)
+            {
+                task.detach();
+            }
         }
         self.generation += 1;
-        let generation = self.generation;
-        self.target = target.clone();
-        self.link = Link::Connecting;
         self.about = None;
         self.kernels.clear();
         self.recent.clear();
@@ -544,6 +561,28 @@ impl Workbench {
         self.terminal_problem = None;
         self.terminal_starting = false;
         self.problem = None;
+        self.explorer = None;
+        self.explorer_shown = false;
+        self.diff = None;
+        self.diff_shown = false;
+        self.machine = Default::default();
+        self.connection_menu = false;
+        self.log = None;
+        self.connected_ms = None;
+        self.focus_sent = None;
+    }
+
+    /// Connects to the daemon on `target`, leaving any earlier one.
+    pub(crate) fn connect(
+        &mut self,
+        target: Target,
+        project: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.forget_connection(cx);
+        let generation = self.generation;
+        self.target = target.clone();
+        self.link = Link::Connecting;
         let connect = Daemon::connect(self.rt.clone(), target);
         let window_handle = self.window_handle;
         self.focus_sent = None;
@@ -637,6 +676,8 @@ impl Workbench {
         };
         let daemon = Rc::new(daemon);
         self.link = Link::Ready(daemon.clone());
+        self.connected_ms = Some(chrono::Utc::now().timestamp_millis());
+        self.watch_machine(self.generation, cx);
         let ping = daemon.call::<PingReply>(Call::Ping);
         let kernels = daemon.call::<Vec<KernelspecInfo>>(Call::ListKernelspecs);
         let recent = daemon.call::<Vec<ProjectInfo>>(Call::ListRecentProjects);
@@ -700,8 +741,13 @@ impl Workbench {
                         let workbench = cx.entity().downgrade();
                         this.agents =
                             Some(cx.new(|cx| Agents::new(daemon, path, workbench, window, cx)));
+                        this.last_project = Some(project.path.clone());
                         this.project = Some(project.path);
                         this.read_folder(String::new(), cx);
+                        // After a reconnect, the documents open before.
+                        for rel in std::mem::take(&mut this.reopen) {
+                            this.open_file(rel, cx);
+                        }
                         this.read_setup(true, window, cx);
                         this.problem = None;
                         if this.console_tab == ConsoleTab::Terminal {
@@ -1698,6 +1744,69 @@ impl Workbench {
         })
         .detach();
         self.problem = None;
+    }
+
+    /// Stops the shown document's kernel (or the Console's) for good; the
+    /// next run starts a new one.
+    pub(crate) fn shut_down_session(&mut self, cx: &mut Context<Self>) {
+        let daemon = self.daemon();
+        let slot = match self.open.as_mut() {
+            Some(open) => &mut open.session,
+            None => &mut self.loose,
+        };
+        if let (Some(daemon), Some(id)) = (daemon, slot.id()) {
+            let id = id.to_string();
+            self.machine.sessions.retain(|s| s.id != id);
+            daemon.fire(Call::Shutdown { session: id });
+        }
+        *slot = Session::None;
+        self.session_changed(cx);
+        cx.notify();
+    }
+
+    /// Restarts the shown document's kernel: a new one of the same kind,
+    /// with nothing defined.
+    pub(crate) fn restart_session(&mut self, cx: &mut Context<Self>) {
+        if self.active_session().is_none() {
+            return;
+        }
+        self.shut_down_session(cx);
+        self.start_session(cx);
+        cx.notify();
+    }
+
+    /// Closes a document's tab, asking first when it has unsaved changes.
+    pub(crate) fn ask_close(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.open_at(&path) else {
+            return;
+        };
+        if !open.dirty {
+            self.close_tab(&path, cx);
+            return;
+        }
+        let name = crate::files::base_name(&path).to_string();
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Save changes to {name}?"),
+            Some("Running code keeps running either way."),
+            &["Save", "Don't save", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            let answer = answer.await;
+            this.update(cx, |this, cx| match answer {
+                Ok(0) => this.close_tab(&path, cx),
+                Ok(1) => {
+                    if let Some(open) = this.open_at(&path) {
+                        open.dirty = false;
+                    }
+                    this.close_tab(&path, cx);
+                }
+                _ => {}
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(crate) fn interrupt(&mut self) {
