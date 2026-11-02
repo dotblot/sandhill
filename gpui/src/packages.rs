@@ -350,7 +350,7 @@ impl Workbench {
         }
         if self.packages.stale
             && !self.packages.loading
-            && self.show_right
+            && self.show_files
             && self.top_tab == TopTab::Packages
         {
             self.refresh_packages(cx);

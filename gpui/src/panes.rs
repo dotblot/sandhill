@@ -1,6 +1,8 @@
-//! Where the panes sit, as in the Tauri app (`App.tsx`): the Console,
-//! Terminal and Jobs under the editor; the right column's top tabs
-//! (Variables, Help, Packages) over its bottom ones (Plots, Viewer).
+//! Where the panes sit: the left panel (a fifth of the window) holds
+//! Variables, Help and Packages over Files, Git, Plots and the Viewer, then
+//! the project's kernels and the machine's resources; the middle has the
+//! editor with the Console, Terminal and Jobs under it; the AI pane is the
+//! right panel. The middle and the AI pane take two fifths each.
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -49,9 +51,9 @@ impl Workbench {
             .child(div().flex_1().min_h_0().child(body))
     }
 
-    /// The right column: Variables, Help and Packages over Plots and the
-    /// Viewer.
-    pub(crate) fn render_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The left panel: Variables, Help and Packages over Files, Git, Plots
+    /// and the Viewer, then Kernels and Resources.
+    pub(crate) fn render_left(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let top_tab =
             |id: &'static str, label: &'static str, which: TopTab, cx: &mut Context<Self>| {
@@ -84,18 +86,20 @@ impl Workbench {
             ),
             TopTab::Help => (self.render_help(cx), Vec::new()),
             TopTab::Packages => (self.render_packages(cx), self.package_tools(cx)),
-            TopTab::Git => (self.render_git(cx), self.git_tools(cx)),
         };
         let (bottom, tools): (AnyElement, Vec<AnyElement>) = match self.bottom_tab {
+            BottomTab::Files => (self.render_files(cx).into_any_element(), Vec::new()),
+            BottomTab::Git => (self.render_git(cx), self.git_tools(cx)),
             BottomTab::Plots => (self.render_plots(cx), self.plot_tools(cx)),
             BottomTab::Viewer => (self.render_viewer(cx), Vec::new()),
         };
         v_flex()
-            .w(px(self.right_width))
+            .relative()
+            .w(px(self.files_width))
             .h_full()
             // Gives way to the middle in a narrow window.
             .flex_shrink(1.)
-            .min_w(px(280.))
+            .min_w(px(220.))
             .child(
                 pane(&p)
                     .relative()
@@ -118,8 +122,7 @@ impl Workbench {
                                         "Packages",
                                         TopTab::Packages,
                                         cx,
-                                    ))
-                                    .child(top_tab("tab-git", "Git", TopTab::Git, cx)),
+                                    )),
                             )
                             .when(
                                 self.top_tab == TopTab::Variables && self.vars.loading,
@@ -144,6 +147,7 @@ impl Workbench {
             .child(self.splitter(Split::Variables, cx))
             .child(
                 pane(&p)
+                    .relative()
                     .flex_1()
                     .min_h(px(120.))
                     .child(
@@ -151,6 +155,8 @@ impl Workbench {
                             .child(
                                 capsule(&p, 22.)
                                     .gap(px(1.))
+                                    .child(bottom_tab("tab-files", "Files", BottomTab::Files, cx))
+                                    .child(bottom_tab("tab-git", "Git", BottomTab::Git, cx))
                                     .child(bottom_tab("tab-plots", "Plots", BottomTab::Plots, cx))
                                     .child(bottom_tab(
                                         "tab-viewer",
@@ -164,5 +170,7 @@ impl Workbench {
                     )
                     .child(div().flex_1().min_h_0().child(bottom)),
             )
+            .children(self.render_kernels(cx))
+            .children(self.render_resources(cx))
     }
 }

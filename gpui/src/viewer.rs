@@ -60,7 +60,7 @@ impl Workbench {
         self.viewer_extra.push(extra);
         self.viewer_index = None;
         self.bottom_tab = BottomTab::Viewer;
-        self.show_right = true;
+        self.show_files = true;
     }
 
     /// Previews a Quarto document in the Viewer. Asking again starts a

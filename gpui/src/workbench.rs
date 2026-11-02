@@ -151,13 +151,11 @@ impl Open {
 /// A gap between panes that can be dragged to resize them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Split {
-    /// Between the files pane and the middle.
+    /// Between the left panel and the middle.
     Files,
-    /// Between the middle and the right column.
-    Right,
-    /// Above Variables.
+    /// Under Variables, in the left panel.
     Variables,
-    /// Between the AI pane and the middle.
+    /// Between the middle and the AI pane.
     Agents,
     /// Above the Console, under the editor.
     Console,
@@ -171,18 +169,19 @@ pub(crate) enum ConsoleTab {
     Jobs,
 }
 
-/// The right column's top tabs.
+/// The left panel's top tabs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TopTab {
     Variables,
     Help,
     Packages,
-    Git,
 }
 
-/// The right column's bottom tabs.
+/// The left panel's second tabs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BottomTab {
+    Files,
+    Git,
     Plots,
     Viewer,
 }
@@ -280,17 +279,19 @@ pub struct Workbench {
     /// Variables' Import menu and dialog.
     pub(crate) import: crate::import_dialog::Import,
     pub(crate) import_name: Entity<InputState>,
-    /// The files pane is shown (the title bar's first button).
+    /// The left panel is shown (the title bar's first button).
     pub(crate) show_files: bool,
-    /// The right column is shown.
-    pub(crate) show_right: bool,
-    /// The AI pane, between the files and the middle.
+    /// The AI pane, the right panel.
     pub(crate) show_agents: bool,
     pub(crate) agents: Option<Entity<Agents>>,
-    pub(crate) agents_width: f32,
-    /// Pane sizes, set by dragging the gaps between them.
+    /// The left and right panels' shares of the window's width (1/5 and
+    /// 2/5; the middle takes the rest), set by dragging the gaps.
+    pub(crate) left_share: f32,
+    pub(crate) agents_share: f32,
+    /// Their widths now, from their shares and the window's width.
     pub(crate) files_width: f32,
-    pub(crate) right_width: f32,
+    pub(crate) agents_width: f32,
+    /// The left panel's top pane, set by dragging the gap under it.
     pub(crate) variables_height: f32,
     /// The gap being dragged.
     pub(crate) dragging: Option<Split>,
@@ -434,7 +435,7 @@ impl Workbench {
             vars: Vars::default(),
             console_tab: ConsoleTab::Console,
             top_tab: TopTab::Variables,
-            bottom_tab: BottomTab::Plots,
+            bottom_tab: BottomTab::Files,
             show_console: true,
             console_height: 260.,
             plot_history: Default::default(),
@@ -464,12 +465,12 @@ impl Workbench {
             import: Default::default(),
             import_name,
             show_files: true,
-            show_right: true,
             show_agents: true,
             agents: None,
-            agents_width: 420.,
-            files_width: 240.,
-            right_width: 460.,
+            left_share: 0.2,
+            agents_share: 0.4,
+            files_width: 280.,
+            agents_width: 560.,
             variables_height: 250.,
             dragging: None,
             notebook_console: crate::prefs::notebook_console(),
@@ -2096,7 +2097,7 @@ impl Workbench {
                 }));
             }
         }
-        let viewer_page = (self.show_right && self.bottom_tab == BottomTab::Viewer)
+        let viewer_page = (self.show_files && self.bottom_tab == BottomTab::Viewer)
             .then(|| self.viewer_page())
             .flatten()
             .and_then(|(item, ..)| item.page);

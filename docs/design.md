@@ -116,6 +116,15 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 | Fork **Zed** (Rust/GPUI) | The fastest editor available, with ACP agents, SSH remote and a REPL already built. But GPUI has no HTML engine, so htmlwidgets, plotly and interactive tables are hard. Its upstream also moves very fast. Worth studying, not forking. |
 | Electron / VS Code fork | Excluded by you. It is also what Positron, Cursor and Erdos are. |
 
+### Layout (decided 2026-11-02, Huan)
+
+Three panels across the window. The left panel takes a fifth of the width
+and holds, top to bottom: Variables, Help and Packages (one tab group);
+Files, Git, Plots and the Viewer (another); Kernels; Resources. The middle,
+two fifths, has the editor with the Console, Terminal and Jobs under it. The
+AI pane is the right panel, the other two fifths. The descriptions of panes
+below predate this and place them where they used to be.
+
 ### The look (added 2026-10-11)
 
 The app follows the UI mockup, the agreed final layout, kept in

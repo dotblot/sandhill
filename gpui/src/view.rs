@@ -44,6 +44,7 @@ impl Render for Workbench {
         self.sync_jobs(cx);
         self.sync_git(cx);
         self.fetch_plot_images(cx);
+        self.size_panels(window);
         let p = *Palette::get(cx);
         wall(&p)
             .relative()
@@ -114,23 +115,9 @@ impl Render for Workbench {
                     .pr(px(GAP))
                     .when(!self.show_files, |d| d.pl(px(GAP)))
                     .when(self.show_files, |d| {
-                        d.child(self.render_files(cx))
+                        d.child(self.render_left(cx))
                             .child(self.splitter(Split::Files, cx))
                     })
-                    .when_some(
-                        self.agents.clone().filter(|_| self.show_agents),
-                        |d, agents| {
-                            d.child(
-                                div()
-                                    .w(px(self.agents_width))
-                                    .flex_shrink(1.)
-                                    .min_w(px(300.))
-                                    .h_full()
-                                    .child(agents),
-                            )
-                            .child(self.splitter(Split::Agents, cx))
-                        },
-                    )
                     .child(
                         v_flex()
                             .flex_1()
@@ -148,10 +135,19 @@ impl Render for Workbench {
                                     .child(self.render_console_pane(cx))
                             }),
                     )
-                    .when(self.show_right, |d| {
-                        d.child(self.splitter(Split::Right, cx))
-                            .child(self.render_right(cx))
-                    }),
+                    .when_some(
+                        self.agents.clone().filter(|_| self.show_agents),
+                        |d, agents| {
+                            d.child(self.splitter(Split::Agents, cx)).child(
+                                div()
+                                    .w(px(self.agents_width))
+                                    .flex_shrink(1.)
+                                    .min_w(px(300.))
+                                    .h_full()
+                                    .child(agents),
+                            )
+                        },
+                    ),
             )
             .child(self.render_status(cx))
             .children(self.render_zoom(cx))
@@ -170,7 +166,21 @@ impl Render for Workbench {
 /// come first.
 pub(crate) const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
 
+/// The width the three panels share: the window's, less the gaps around
+/// and between them.
+fn panel_room(width: f32) -> f32 {
+    (width - 4. * GAP).max(0.)
+}
+
 impl Workbench {
+    /// The left and AI panels' widths from their shares of the window: a
+    /// fifth and two fifths at first, the middle taking what is left.
+    fn size_panels(&mut self, window: &Window) {
+        let room = panel_room(f32::from(window.viewport_size().width));
+        self.files_width = (room * self.left_share).max(220.);
+        self.agents_width = (room * self.agents_share).max(300.);
+    }
+
     /// A gap between panes that can be dragged; an accent line shows under
     /// the pointer.
     pub(crate) fn splitter(&self, split: Split, cx: &mut Context<Self>) -> impl IntoElement {
@@ -232,6 +242,7 @@ impl Workbench {
         let (width, height) = (f32::from(window.width), f32::from(window.height));
         // The middle keeps at least this much room.
         let middle = 360.;
+        let room = panel_room(width);
         let agents = if self.show_agents && self.agents.is_some() {
             self.agents_width
         } else {
@@ -242,23 +253,14 @@ impl Workbench {
         } else {
             0.
         };
-        let right = if self.show_right {
-            self.right_width
-        } else {
-            0.
-        };
         match split {
             Split::Files => {
-                let most = (width - right - agents - middle).max(160.);
-                self.files_width = x.clamp(160., most.min(560.));
+                let most = (width - agents - middle).max(220.);
+                self.left_share = (x - GAP).clamp(220., most) / room;
             }
             Split::Agents => {
-                let most = (width - files - right - middle).max(300.);
-                self.agents_width = (x - files - GAP).clamp(300., most.min(900.));
-            }
-            Split::Right => {
-                let most = (width - files - agents - middle).max(280.);
-                self.right_width = (width - x - GAP).clamp(280., most);
+                let most = (width - files - middle).max(300.);
+                self.agents_share = (width - x - GAP).clamp(300., most) / room;
             }
             Split::Variables => {
                 // The top pane's height, from the top of the column.
@@ -353,14 +355,6 @@ impl Workbench {
                                         cx.notify();
                                     }))
                             })
-                            .child(
-                                icon_button("toggle-right", "sidebar.right", &p, true)
-                                    .when(self.show_right, |d| d.text_color(p.text))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_right = !this.show_right;
-                                        cx.notify();
-                                    })),
-                            )
                             .child(capsule_divider(&p))
                             .child(
                                 icon_button("palette", "search", &p, true)
@@ -425,9 +419,9 @@ impl Workbench {
         }
     }
 
-    /// The left pane, directly on the wall: the project's name, then its
-    /// folders and files as a tree.
-    fn render_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The Files tab: the project's name, then its folders and files as a
+    /// tree.
+    pub(crate) fn render_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let count = self.file_lines().len();
         let project = self.project.clone().unwrap_or_default();
@@ -562,9 +556,7 @@ impl Workbench {
         .size_full();
         v_flex()
             .relative()
-            .w(px(self.files_width))
-            .h_full()
-            .flex_none()
+            .size_full()
             .child(
                 h_flex()
                     .h(px(30.))
@@ -626,8 +618,6 @@ impl Workbench {
             )
             .children(self.render_name_error(cx))
             .child(div().flex_1().min_h_0().px(px(6.)).pb(px(10.)).child(list))
-            .children(self.render_kernels(cx))
-            .children(self.render_resources(cx))
             .children(self.render_new_menu(cx))
             .children(self.render_sort_menu(cx))
             .children(self.render_project_menu(cx))
@@ -1413,7 +1403,7 @@ impl Workbench {
                                 cx,
                             )
                         }
-                        shown => self.render_output(shown, self.right_width - 40., false, cx),
+                        shown => self.render_output(shown, self.files_width - 40., false, cx),
                     }))
                     .when_some(failed, |d, s| {
                         d.child(div().text_color(p.err).child(format!("Run ended: {s}")))
