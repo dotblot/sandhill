@@ -5,7 +5,13 @@
 //! thumbnails go back through them; the magnifier opens one large, to save
 //! it as a file.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Duration;
+
+use base64::Engine;
 
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
@@ -27,6 +33,15 @@ const MAX_PLOTS: usize = 300;
 const FOLDER: &str = "figures";
 /// Pixels in an inch for saved PNGs.
 const DPI: u32 = 300;
+/// How long the pane's size holds still before the plot in front is drawn
+/// again for it.
+const FIT_DELAY: Duration = Duration::from_millis(400);
+/// Points in an inch, which sizes are given to the session in.
+const POINTS: f32 = 96.;
+/// Rooms smaller than this aren't worth drawing for.
+const MIN_FIT: f32 = 80.;
+/// Redrawn plots kept to show again without drawing.
+const FITS_KEPT: usize = 12;
 
 /// A plot in the history.
 #[derive(Clone)]
@@ -73,6 +88,45 @@ pub(crate) struct History {
     pub zoom: Option<Zoom>,
     /// The folder plots were saved in last.
     folder: Option<String>,
+    /// The plot in front and the room it has, as last drawn
+    /// (`key@WxH`): a change asks for it to be drawn again.
+    room: Rc<RefCell<String>>,
+    /// Plots drawn again for the pane, by `key@WxH`, newest last.
+    fits: Vec<(String, Arc<Image>)>,
+    /// Plots their session can't draw again.
+    cannot: HashSet<String>,
+    /// Waits for the room to hold still, then asks.
+    fitting: Option<Task<()>>,
+}
+
+/// A plot's key with the room it is drawn for.
+fn fit_key(plot: &str, width: u32, height: u32) -> String {
+    format!("{plot}@{width}x{height}")
+}
+
+/// A plot as the clipboard takes it: as drawn, except an SVG, which is
+/// drawn on white at twice its size so it stays sharp.
+pub(crate) fn clipboard_image(image: &Image) -> anyhow::Result<Image> {
+    if image.format() != ImageFormat::Svg {
+        return Ok(Image::from_bytes(image.format(), image.bytes().to_vec()));
+    }
+    let mut options = resvg::usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let tree = resvg::usvg::Tree::from_data(image.bytes(), &options)?;
+    let size = tree
+        .size()
+        .to_int_size()
+        .scale_by(2.)
+        .unwrap_or(tree.size().to_int_size());
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
+        .ok_or_else(|| anyhow::anyhow!("the plot has no size"))?;
+    pixmap.fill(resvg::tiny_skia::Color::WHITE);
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(2., 2.),
+        &mut pixmap.as_mut(),
+    );
+    Ok(Image::from_bytes(ImageFormat::Png, pixmap.encode_png()?))
 }
 
 impl History {
@@ -374,6 +428,123 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Copies the plot in front, as drawn, to the clipboard.
+    fn copy_plot(&mut self, cx: &mut Context<Self>) {
+        let (list, at) = self.plots_now();
+        let Some(image) = at.and_then(|at| self.plot_image(list[at])) else {
+            return;
+        };
+        match clipboard_image(&image) {
+            Ok(image) => {
+                cx.write_to_clipboard(ClipboardItem::new_image(&image));
+                self.problem = None;
+                self.notice = Some("Copied the plot.".into());
+            }
+            Err(err) => self.problem = Some(format!("Could not copy the plot: {err:#}")),
+        }
+        cx.notify();
+    }
+
+    /// The pane's room or the plot in front changed: once the room holds
+    /// still, the plot's session draws it again at that size, as RStudio
+    /// does, so text and lines stay sharp instead of stretching. Plain
+    /// images, plots the session no longer keeps and sessions busy with
+    /// other code keep the image as drawn.
+    fn fit_plot(
+        &mut self,
+        key: String,
+        width: f32,
+        height: f32,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.plot_history.fitting = None;
+        let (list, at) = self.plots_now();
+        let Some(item) = at.map(|at| list[at]) else {
+            return;
+        };
+        if item.key != key
+            || width < MIN_FIT
+            || height < MIN_FIT
+            || item.mime == "image/svg+xml"
+            || self.plot_history.cannot.contains(&item.key)
+        {
+            return;
+        }
+        let wanted = fit_key(&item.key, width.round() as u32, height.round() as u32);
+        if self.plot_history.fits.iter().any(|(k, _)| *k == wanted) {
+            cx.notify();
+            return;
+        }
+        let Some(daemon) = self.daemon() else {
+            return;
+        };
+        let (image, index) = redraw_target(item, &list);
+        let call = Call::RedrawPlot {
+            session: item.session.clone(),
+            run: item.run.clone(),
+            image,
+            index,
+            file: None,
+            format: String::new(),
+            width: f64::from(width / POINTS),
+            height: f64::from(height / POINTS),
+            dpi: (POINTS * scale.clamp(1., 4.)).round() as u32,
+            show: true,
+        };
+        self.plot_history.fitting = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(FIT_DELAY).await;
+            let asked = daemon.call::<PlotRedraw>(call).await;
+            this.update(cx, |this, cx| {
+                match asked {
+                    Ok(PlotRedraw {
+                        can: true,
+                        png: Some(png),
+                        ..
+                    }) => {
+                        let Ok(bytes) =
+                            base64::engine::general_purpose::STANDARD.decode(png.trim())
+                        else {
+                            return;
+                        };
+                        let fits = &mut this.plot_history.fits;
+                        fits.push((wanted, Arc::new(Image::from_bytes(ImageFormat::Png, bytes))));
+                        if fits.len() > FITS_KEPT {
+                            fits.remove(0);
+                        }
+                    }
+                    Ok(_) => {
+                        this.plot_history.cannot.insert(key);
+                    }
+                    // Busy, or the session ended: the image as drawn stays.
+                    Err(_) => {}
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// The plot in front drawn again for the room it has, if it was.
+    fn fitted_image(&self, item: &PlotItem) -> Option<Arc<Image>> {
+        let room = self.plot_history.room.borrow();
+        let prefix = format!("{}@", item.key);
+        // The size asked for, or the newest one while the room changes.
+        self.plot_history
+            .fits
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == *room)
+            .or_else(|| {
+                self.plot_history
+                    .fits
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| k.starts_with(&prefix))
+            })
+            .map(|(_, image)| image.clone())
+    }
+
     fn clear_plots(&mut self, cx: &mut Context<Self>) {
         let (list, _) = self.plots_now();
         if let Some(last) = list.iter().map(|p| p.ts_ms).max() {
@@ -403,6 +574,13 @@ impl Workbench {
             icon_button("plot-zoom", "zoom", &p, false)
                 .when(!has, |d| d.opacity(0.35))
                 .on_click(cx.listener(|this, _, window, cx| this.open_zoom(window, cx)))
+                .into_any_element(),
+            icon_button("plot-copy", "edit.copy", &p, false)
+                .when(!has, |d| d.opacity(0.35))
+                .tooltip(|w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("Copy as PNG").build(w, cx)
+                })
+                .on_click(cx.listener(|this, _, _, cx| this.copy_plot(cx)))
                 .into_any_element(),
             icon_button("plot-save", "doc.save", &p, false)
                 .when(!has, |d| d.opacity(0.35))
@@ -451,7 +629,8 @@ impl Workbench {
                 .into_any_element();
         };
         let item = list[at];
-        let main: AnyElement = match self.plot_image(item) {
+        let shown = self.fitted_image(item).or_else(|| self.plot_image(item));
+        let main: AnyElement = match shown {
             Some(image) => img(image)
                 .absolute()
                 .inset_0()
@@ -508,6 +687,7 @@ impl Workbench {
                     .relative()
                     .overflow_hidden()
                     .child(main)
+                    .child(self.room_watcher(item.key.clone(), cx))
                     .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                         if event.click_count() == 2 {
                             this.open_zoom(window, cx);
@@ -536,6 +716,33 @@ impl Workbench {
             )
             .children(thumbs)
             .into_any_element()
+    }
+
+    /// Draws nothing, but sees the room the plot has each frame and, when
+    /// it or the plot in front changed, asks for the plot to fit it.
+    fn room_watcher(&self, plot: String, cx: &mut Context<Self>) -> impl IntoElement {
+        let room = self.plot_history.room.clone();
+        let this = cx.weak_entity();
+        canvas(
+            move |bounds, window, cx| {
+                let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                let key = fit_key(&plot, width.round() as u32, height.round() as u32);
+                if *room.borrow() == key {
+                    return;
+                }
+                *room.borrow_mut() = key;
+                let scale = window.scale_factor();
+                let plot = plot.clone();
+                let this = this.clone();
+                cx.defer(move |cx| {
+                    this.update(cx, |this, cx| this.fit_plot(plot, width, height, scale, cx))
+                        .ok();
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
     }
 
     /// Opens the plot in front large, asking its session whether it can

@@ -7003,6 +7003,7 @@ dependencies = [
  "gpui-kit",
  "gpui-webview",
  "lb-wry",
+ "resvg 0.46.0",
  "rust-embed",
  "sandhill-daemon",
  "sandhill-link",
