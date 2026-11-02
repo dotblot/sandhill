@@ -137,7 +137,7 @@ impl Workbench {
         }
         let show = |on: bool, what: &str| format!("{} {what}", if on { "Hide" } else { "Show" });
         list.push(c(
-            &show(self.show_files, "left pane"),
+            &show(self.show_files, "left panel"),
             "⌘B",
             Cmd::ToggleFiles,
         ));
@@ -165,14 +165,9 @@ impl Workbench {
             Cmd::NotebookPlots,
         ));
         list.push(c(
-            &show(self.show_agents, "agents"),
+            &show(self.show_agents, "AI panel"),
             "⌘I",
             Cmd::ToggleAgents,
-        ));
-        list.push(c(
-            &show(self.show_right, "right pane"),
-            "⌥⌘B",
-            Cmd::ToggleRight,
         ));
         list.push(c("Open terminal", "", Cmd::OpenTerminal));
         list.push(c("Show jobs", "", Cmd::ShowJobs));
@@ -228,7 +223,9 @@ impl Workbench {
                 self.plot_history = Default::default();
             }
             Cmd::ToggleAgents => self.show_agents = !self.show_agents,
-            Cmd::ToggleRight => self.show_right = !self.show_right,
+            // ⌥⌘B, which showed the right column, now shows the AI pane
+            // that took its place.
+            Cmd::ToggleRight => self.show_agents = !self.show_agents,
             Cmd::OpenTerminal => self.show_tab(ConsoleTab::Terminal, window, cx),
             Cmd::ShowJobs => self.show_tab(ConsoleTab::Jobs, window, cx),
             Cmd::RefreshFiles => self.refresh_files(cx),

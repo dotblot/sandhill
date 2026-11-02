@@ -508,7 +508,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.top_tab = TopTab::Help;
-        self.show_right = true;
+        self.show_files = true;
         if asked.search || asked.topic.is_empty() {
             let package = asked.package.clone().unwrap_or_default();
             let topic = asked.topic.clone();

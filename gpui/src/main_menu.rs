@@ -57,9 +57,8 @@ pub fn app_menus() -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Go to File or Command…", TogglePalette),
             MenuItem::separator(),
-            MenuItem::action("Left Pane", ToggleFiles),
-            MenuItem::action("Agents", ToggleAgents),
-            MenuItem::action("Right Pane", ToggleRight),
+            MenuItem::action("Left Panel", ToggleFiles),
+            MenuItem::action("AI Panel", ToggleAgents),
             MenuItem::action("Console", ToggleConsole),
         ]),
         Menu::new("Run").items([MenuItem::action("Run All", RunAll)]),

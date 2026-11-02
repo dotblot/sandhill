@@ -21,7 +21,7 @@ use crate::git::{
     split_message, split_path, staged_files, too_big, unstaged_files,
 };
 use crate::look::{self, Palette, RADIUS, icon, icon_button, picture};
-use crate::workbench::{TopTab, Workbench};
+use crate::workbench::{BottomTab, Workbench};
 
 /// How often the status is read while the pane shows.
 const POLL: Duration = Duration::from_secs(3);
@@ -203,7 +203,7 @@ fn last_line(output: &str) -> Option<String> {
 
 impl Workbench {
     pub(crate) fn git_shown(&self) -> bool {
-        self.show_right && self.top_tab == TopTab::Git
+        self.show_files && self.bottom_tab == BottomTab::Git
     }
 
     /// Reads the status when the pane first shows, and keeps reading it
@@ -883,8 +883,8 @@ impl Workbench {
             .trim_end_matches(':')
             .to_string();
         let secret = params["secret"].as_bool().unwrap_or(false);
-        self.show_right = true;
-        self.top_tab = TopTab::Git;
+        self.show_files = true;
+        self.bottom_tab = BottomTab::Git;
         self.ask_git_text(GitPrompt::Credential { id, prompt, secret }, window, cx);
     }
 

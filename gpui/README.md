@@ -327,6 +327,11 @@ preview and R's imports weren't seen.
 - **Retired the Tauri app** (2026-11-02): this is Sandhill.app now, with
   the Tauri app's bundle id (`dev.sandhill.ide`), so it replaces it on the
   Mac. The app icon's sources and its script moved to `assets/icon/`.
+- **New layout** (2026-11-02, Huan's): the left panel (a fifth of the
+  window) holds Variables, Help and Packages over Files, Git, Plots and the
+  Viewer, then Kernels and Resources; the middle (two fifths) has the editor
+  with the Console, Terminal and Jobs under it; the AI pane is the right
+  panel (two fifths). Dragging the gaps changes the shares (`panes.rs`).
 
 ## Running it
 
