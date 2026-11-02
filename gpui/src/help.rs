@@ -4,7 +4,9 @@
 //! followed here, with Back and Forward and the function's source a click
 //! away. Help runs in the session, quietly, so it fails while the session
 //! runs other code. Help asked for at the Console (`?lm`, `np.mean?`) opens
-//! here instead of running.
+//! here instead of running. R's vignettes a search finds open in the
+//! Viewer, as their package built them (HTML or PDF), with their R code a
+//! click away.
 
 use std::time::Duration;
 
@@ -13,7 +15,7 @@ use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::{Call, HelpPage, HelpSource, HelpTopics};
+use sandhill_proto::{Call, FileText, HelpPage, HelpSource, HelpTopics, HelpVignette};
 
 use crate::look::{self, Palette, RADIUS, icon, icon_button};
 use crate::workbench::{TopTab, Workbench};
@@ -851,10 +853,115 @@ impl Workbench {
                         })),
                 )
             })
-            .when(found.topics.is_empty(), |d| {
+            .when(found.topics.is_empty() && found.vignettes.is_empty(), |d| {
                 d.child(note("No help topics match.".into(), p.muted, &p))
             })
+            .when(!found.vignettes.is_empty(), |d| {
+                d.child(note("Vignettes".into(), p.faint, &p))
+                    .children(self.render_vignettes(&found.vignettes, cx))
+            })
             .into_any_element()
+    }
+
+    fn render_vignettes(
+        &self,
+        vignettes: &[HelpVignette],
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let p = *Palette::get(cx);
+        let hover = p.ink(7.);
+        vignettes
+            .iter()
+            .enumerate()
+            .map(|(ix, v)| {
+                let open = v.clone();
+                let code = v.clone();
+                let title = if v.title.is_empty() {
+                    &v.name
+                } else {
+                    &v.title
+                };
+                h_flex()
+                    .id(("help-vignette", ix))
+                    .gap(px(8.))
+                    .px(px(10.))
+                    .py(px(3.))
+                    .mx(px(4.))
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .hover(move |d| d.bg(hover))
+                    .tooltip({
+                        let tip = format!("{title} · vignette(\"{}\")", v.name);
+                        move |w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                        }
+                    })
+                    .child(div().flex_none().child(icon("help").size(px(13.))))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(title.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(p.faint)
+                            .text_size(px(look::SMALL))
+                            .child(v.package.clone()),
+                    )
+                    .when(v.code.is_some(), |d| {
+                        d.child(
+                            div()
+                                .id(("help-vignette-code", ix))
+                                .flex_none()
+                                .px(px(4.))
+                                .rounded(px(4.))
+                                .text_size(px(look::SMALL))
+                                .text_color(p.accent)
+                                .hover(|d| d.underline())
+                                .child("R code")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.open_vignette_code(&code, cx);
+                                })),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let title = if open.title.is_empty() {
+                            &open.name
+                        } else {
+                            &open.title
+                        };
+                        this.open_html(open.file.clone(), format!("{title} · vignette"), cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    /// Shows a vignette's R code in the Viewer, as text.
+    fn open_vignette_code(&mut self, vignette: &HelpVignette, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(path)) = (self.daemon(), vignette.code.clone()) else {
+            return;
+        };
+        let title = format!("{} · R code", vignette.name);
+        let key = format!("code:{path}");
+        cx.spawn(async move |this, cx| {
+            let read = daemon.call::<FileText>(Call::ReadFile { path }).await;
+            this.update(cx, |this, cx| match read {
+                Ok(file) => this.show_text(key, title, &file.text, cx),
+                Err(err) => {
+                    this.problem = Some(format!("Could not read the vignette's code: {err:#}"));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn render_page(&self, page: &HelpPage, cx: &mut Context<Self>) -> AnyElement {

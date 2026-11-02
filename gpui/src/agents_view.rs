@@ -244,6 +244,17 @@ impl Agents {
                 row("gear-rename", "edit.rename", "Rename".into())
                     .on_click(cx.listener(|this, _, window, cx| this.start_rename(window, cx))),
             )
+            .when(!self.entries(&t.id).is_empty(), |d| {
+                d.child(div().h(px(1.)).mx(px(4.)).my(px(3.)).bg(p.line))
+                    .children(crate::export::Format::ALL.map(|format| {
+                        row(
+                            format.ext(),
+                            "share",
+                            format!("Export as {}", format.label()),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.export_chat(format, cx)))
+                    }))
+            })
             .child(div().h(px(1.)).mx(px(4.)).my(px(3.)).bg(p.line))
             .child(
                 row("gear-end", "delete", end)

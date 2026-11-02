@@ -554,10 +554,16 @@ impl AssetSource for Assets {
 /// (unless given one): `name` as the registry calls it, such as `run` or
 /// `chevron.right`.
 pub fn icon(name: &str) -> Icon {
+    // The registry draws arrows up only; down is the same turned over.
+    let (name, turned) = match name {
+        "arrow.down" => ("arrow.up", true),
+        name => (name, false),
+    };
     Icon {
         path: format!("{PREFIX}system/{name}.svg").into(),
         size: px(16.),
         color: None,
+        turned,
     }
 }
 
@@ -566,6 +572,7 @@ pub struct Icon {
     path: SharedString,
     size: Pixels,
     color: Option<Hsla>,
+    turned: bool,
 }
 
 impl Icon {
@@ -587,6 +594,9 @@ impl RenderOnce for Icon {
             .size(self.size)
             .flex_none()
             .text_color(self.color.unwrap_or_else(|| window.text_style().color))
+            .when(self.turned, |s| {
+                s.with_transformation(Transformation::rotate(radians(std::f32::consts::PI)))
+            })
     }
 }
 

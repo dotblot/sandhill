@@ -312,12 +312,19 @@ preview and R's imports weren't seen.
   The Viewer has Reload and Open in browser beside Back and Forward.
   Plots can be copied as a PNG, are drawn again by their session to fit
   the pane once it stops changing size, and Esc closes the large plot.
+  The Data Explorer keeps each table's filters and sorting per project
+  (`explorer.rs`), following a column that moved. Git's More menu has
+  Squash or reorder commits (`git_rewrite.rs`) for commits not yet pushed.
+  In the AI pane, ⌥1–9 picks a model while the model menu is open, images
+  and files can be pasted or dragged into the message, `@` offers the
+  sessions' newest plots, and the gear menu exports the conversation as
+  Markdown, HTML or JSON into the project (`export.rs`, the same as the
+  Tauri app's). Help's search lists R vignettes, which open in the Viewer
+  as their package built them, with their R code a click away.
 
 ### What the Tauri app still does that this doesn't
 
-- The Data Explorer remembering filters and sorting per project, Git's
-  squash and reorder, the agents' ⌥1–9, `@` plots, pasting files and
-  exporting a conversation, and R vignettes in Help (all coming in 7c).
+- Nothing in the plan. The Tauri app is retired once Huan says so.
 
 ## Running it
 

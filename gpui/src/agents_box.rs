@@ -10,7 +10,8 @@ use base64::Engine;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
 use sandhill_proto::{
-    AgentOptions, Call, FileText, SessionInfo, SessionStatus, TerminalInfo, Variables,
+    AgentOptions, BLOB_KEY, Blob, Call, FileText, SessionInfo, SessionPlots, SessionStatus,
+    TerminalInfo, Variables,
 };
 use serde_json::{Value, json};
 
@@ -21,6 +22,41 @@ use crate::composer::{
     self, ATTACHMENTS, Mention, Mode, ModelChoice, Models, cell_documents, cell_mentions,
     document_cells, filter_cells, filter_mentions, same_ref, typed_mention,
 };
+
+/// How long the @ menu waits for a session's variables and plots.
+const ASK_LIMIT: Duration = Duration::from_secs(4);
+/// Plots the @ menu offers, newest first.
+const PLOTS_OFFERED: usize = 12;
+/// The image types a plot can be attached as, best first.
+const PLOT_MIMES: [&str; 4] = ["image/png", "image/svg+xml", "image/jpeg", "image/gif"];
+
+/// "umap · analysis.qmd" for a cell's plot, "Console plot · 14:31" for one
+/// from the Console.
+pub(crate) fn plot_name(cell: Option<(&str, &str)>, by: Option<&str>, ts_ms: i64) -> String {
+    use chrono::TimeZone;
+    if let Some((file, cell)) = cell {
+        return format!("{cell} · {file}");
+    }
+    let time = chrono::Local
+        .timestamp_millis_opt(ts_ms)
+        .single()
+        .map(|t| t.format("%H:%M").to_string())
+        .unwrap_or_default();
+    match by {
+        Some(by) => format!("{by}'s plot · {time}"),
+        None => format!("Console plot · {time}"),
+    }
+}
+
+/// A file name for a pasted image with none: "Pasted image 2026-11-02 at
+/// 14.31.05.png", as the Mac names screenshots.
+pub(crate) fn pasted_name(now: chrono::DateTime<chrono::Local>, extension: &str) -> String {
+    format!(
+        "Pasted image {} at {}.{extension}",
+        now.format("%Y-%m-%d"),
+        now.format("%H.%M.%S")
+    )
+}
 
 /// Effort changes wait this long for the next one (the slider can be dragged).
 const EFFORT_SETTLE: Duration = Duration::from_millis(600);
@@ -136,13 +172,64 @@ impl Agents {
                 .map(|f| Mention::file(f))
                 .collect();
             let sessions = sessions.await.unwrap_or_default();
-            for s in sessions.iter().filter(|s| {
-                s.status == SessionStatus::Running && s.project.as_deref() == Some(&project)
-            }) {
-                let listed = daemon.call::<Variables>(Call::ListVariables {
-                    session: s.id.clone(),
-                    path: Vec::new(),
-                });
+            let mut plots: Vec<(i64, Mention)> = Vec::new();
+            let root = format!("{}/", project.trim_end_matches('/'));
+            // Every session is asked at once; one that doesn't answer (busy,
+            // or its kernel gone) is left out rather than holding the menu.
+            let asked: Vec<_> = sessions
+                .iter()
+                .filter(|s| {
+                    s.status == SessionStatus::Running && s.project.as_deref() == Some(&project)
+                })
+                .map(|s| {
+                    let plots = daemon.call_within::<SessionPlots>(
+                        Call::SessionPlots {
+                            session: s.id.clone(),
+                            limit: Some(PLOTS_OFFERED as u32),
+                        },
+                        ASK_LIMIT,
+                    );
+                    let vars = daemon.call_within::<Variables>(
+                        Call::ListVariables {
+                            session: s.id.clone(),
+                            path: Vec::new(),
+                        },
+                        ASK_LIMIT,
+                    );
+                    (s.clone(), plots, vars)
+                })
+                .collect();
+            for (s, read, listed) in asked {
+                if let Ok(read) = read.await {
+                    for plot in read.plots {
+                        let Some(mime) =
+                            PLOT_MIMES.into_iter().find(|m| plot.data.get(*m).is_some())
+                        else {
+                            continue;
+                        };
+                        let file = plot
+                            .cell
+                            .as_ref()
+                            .map(|c| c.file.strip_prefix(&root).unwrap_or(&c.file).to_string());
+                        let name = plot_name(
+                            file.as_deref()
+                                .zip(plot.cell.as_ref().map(|c| c.cell_id.as_str())),
+                            plot.by.as_deref(),
+                            plot.ts_ms,
+                        );
+                        let source =
+                            json!({"run": plot.run, "mime": mime, "value": plot.data[mime]});
+                        plots.push((
+                            plot.ts_ms,
+                            Mention {
+                                item: json!({"kind": "plot", "name": name}),
+                                source: Some(source),
+                                label: None,
+                                detail: None,
+                            },
+                        ));
+                    }
+                }
                 if let Ok(vars) = listed.await {
                     list.extend(vars.variables.iter().map(|v| Mention {
                         item: json!({
@@ -151,14 +238,154 @@ impl Agents {
                             "session": s.id,
                             "language": s.language,
                         }),
+                        source: None,
                         label: None,
                         detail: None,
                     }));
                 }
             }
+            plots.sort_by_key(|(ts, _)| std::cmp::Reverse(*ts));
+            list.extend(plots.into_iter().take(PLOTS_OFFERED).map(|(_, m)| m));
             this.update(cx, |this, cx| this.loaded('@', list, cx)).ok();
         })
         .detach();
+    }
+
+    /// Saves a plot picked with @ in the attachments folder, where the
+    /// agent can look at it, then adds it as a chip.
+    fn attach_plot(&mut self, name: String, source: Value, cx: &mut Context<Self>) {
+        let daemon = self.daemon.clone();
+        let folder = self.full_path(ATTACHMENTS);
+        cx.spawn(async move |this, cx| {
+            let result = async {
+                let mime = source["mime"].as_str().unwrap_or("image/png");
+                let svg = mime == "image/svg+xml";
+                let value = &source["value"];
+                let data = match value.as_str() {
+                    Some(text) => text.to_string(),
+                    None => {
+                        let hash = value[BLOB_KEY].as_str().unwrap_or_default().to_string();
+                        daemon
+                            .call::<Blob>(Call::GetBlob { hash, near: None })
+                            .await?
+                            .data
+                    }
+                };
+                let run: String = source["run"]
+                    .as_str()
+                    .unwrap_or("plot")
+                    .chars()
+                    .take(8)
+                    .collect();
+                let extension = match mime {
+                    "image/svg+xml" => "svg",
+                    "image/jpeg" => "jpg",
+                    "image/gif" => "gif",
+                    _ => "png",
+                };
+                let file = format!("plot-{run}.{extension}");
+                save_attachment(&daemon, &folder, &file, data, !svg).await?;
+                anyhow::Ok(
+                    json!({"kind": "plot", "name": name, "path": format!("{ATTACHMENTS}/{file}")}),
+                )
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(item) => this.add_ref(item),
+                    Err(err) => this.problem = Some(format!("Could not add the plot: {err:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Files dropped on the message box, or pasted: saved in the
+    /// attachments folder for the agent to read.
+    pub(crate) fn attach_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let daemon = self.daemon.clone();
+        let folder = self.full_path(ATTACHMENTS);
+        cx.spawn(async move |this, cx| {
+            for path in paths {
+                let result = attach_file(&daemon, &folder, &path).await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(item) => this.add_ref(item),
+                        Err(err) => {
+                            this.problem =
+                                Some(format!("Could not attach {}: {err:#}", path.display()))
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Pasting an image (a screenshot) or files copied in Finder attaches
+    /// them; says whether the clipboard held any, so text pastes as usual.
+    pub(crate) fn paste_attachments(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(item) = cx.read_from_clipboard() else {
+            return false;
+        };
+        let mut images = Vec::new();
+        let mut paths = Vec::new();
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::Image(image) => images.push(image.clone()),
+                ClipboardEntry::ExternalPaths(list) => paths.extend(list.paths().iter().cloned()),
+                _ => {}
+            }
+        }
+        if images.is_empty() && paths.is_empty() {
+            return false;
+        }
+        if !paths.is_empty() {
+            self.attach_paths(paths, cx);
+        }
+        let daemon = self.daemon.clone();
+        let folder = self.full_path(ATTACHMENTS);
+        for (i, image) in images.into_iter().enumerate() {
+            let extension = match image.format() {
+                ImageFormat::Jpeg => "jpg",
+                ImageFormat::Gif => "gif",
+                ImageFormat::Svg => "svg",
+                ImageFormat::Webp => "webp",
+                ImageFormat::Tiff => "tiff",
+                ImageFormat::Bmp => "bmp",
+                _ => "png",
+            };
+            let mut name = pasted_name(chrono::Local::now(), extension);
+            if i > 0 {
+                name = name.replace(&format!(".{extension}"), &format!(" {}.{extension}", i + 1));
+            }
+            let data = base64::engine::general_purpose::STANDARD.encode(image.bytes());
+            let daemon = daemon.clone();
+            let folder = folder.clone();
+            cx.spawn(async move |this, cx| {
+                let result = save_attachment(&daemon, &folder, &name, data, true).await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(()) => this.add_ref(json!({
+                            "kind": "attach",
+                            "name": name,
+                            "path": format!("{ATTACHMENTS}/{name}"),
+                        })),
+                        Err(err) => {
+                            this.problem = Some(format!("Could not attach the image: {err:#}"))
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+        true
     }
 
     /// The cells of the documents named with @: as edited in their tab,
@@ -283,7 +510,13 @@ impl Agents {
             .nth(index.unwrap_or(active));
         self.close_menu(window, cx);
         if let Some(m) = picked {
-            self.add_ref(m.item);
+            match m.source {
+                Some(source) => {
+                    let name = composer::ref_name(&m.item).to_string();
+                    self.attach_plot(name, source, cx);
+                }
+                None => self.add_ref(m.item),
+            }
         }
         cx.notify();
     }
@@ -1033,12 +1266,25 @@ async fn attach_file(
         .file_name()
         .map(|n| n.to_string_lossy().replace([':', '\\'], "-"))
         .unwrap_or_else(|| "attachment".into());
+    let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+    save_attachment(daemon, folder, &name, data, true).await?;
+    Ok(json!({"kind": "attach", "name": name, "path": format!("{ATTACHMENTS}/{name}")}))
+}
+
+/// Writes a file into the attachments folder, which keeps itself out of git.
+async fn save_attachment(
+    daemon: &crate::daemon::Daemon,
+    folder: &str,
+    name: &str,
+    text: String,
+    base64: bool,
+) -> anyhow::Result<()> {
     daemon
         .call::<Value>(Call::WriteFile {
             path: format!("{folder}/{name}"),
-            text: base64::engine::general_purpose::STANDARD.encode(bytes),
+            text,
             expected_mtime_ms: None,
-            base64: true,
+            base64,
             create: false,
         })
         .await?;
@@ -1051,5 +1297,5 @@ async fn attach_file(
             create: false,
         })
         .await?;
-    Ok(json!({"kind": "attach", "name": name, "path": format!("{ATTACHMENTS}/{name}")}))
+    Ok(())
 }

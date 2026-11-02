@@ -114,6 +114,32 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Shows text (a vignette's R code) in the Viewer, as written.
+    pub(crate) fn show_text(
+        &mut self,
+        key: String,
+        title: String,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let escaped = text
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        let html = format!(
+            "<!doctype html><meta charset=\"utf-8\"><style>body{{margin:0;padding:12px 16px;\
+             font:13px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}}\
+             @media (prefers-color-scheme: dark){{body{{background:#1d1c1a;color:#e8e4dc}}}}</style>{escaped}"
+        );
+        self.add_extra(Extra {
+            key,
+            title,
+            state: ExtraState::Ready(Page::Html(html)),
+            terminal: None,
+        });
+        cx.notify();
+    }
+
     /// Closes one of the Viewer's own pages, ending its preview.
     pub(crate) fn close_extra(&mut self, key: &str, cx: &mut Context<Self>) {
         let Some(ix) = self.viewer_extra.iter().position(|e| e.key == key) else {

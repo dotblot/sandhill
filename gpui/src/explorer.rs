@@ -40,6 +40,86 @@ const SPARK_HEIGHT: f32 = 22.;
 const BUSY: &str = "the session is busy running code";
 
 /// What the table's first answer said about it.
+/// A table's sorting and filters as a project keeps them between launches,
+/// each with its column's name, so they follow their columns if the table
+/// changed meanwhile.
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+struct SavedView {
+    #[serde(default)]
+    sort: Vec<Named<TableSort>>,
+    #[serde(default)]
+    filters: Vec<Named<TableFilter>>,
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Named<T> {
+    name: String,
+    #[serde(flatten)]
+    key: T,
+}
+
+impl SavedView {
+    fn of(sort: &[TableSort], filters: &[TableFilter], columns: &[TableColumn]) -> SavedView {
+        let name = |column: u32| {
+            columns
+                .get(column as usize)
+                .map(|c| c.name.clone())
+                .unwrap_or_default()
+        };
+        SavedView {
+            sort: sort
+                .iter()
+                .map(|k| Named {
+                    name: name(k.column),
+                    key: k.clone(),
+                })
+                .collect(),
+            filters: filters
+                .iter()
+                .map(|f| Named {
+                    name: name(f.column),
+                    key: f.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The sorting and filters on the table's columns now: each moved to
+    /// where its column is, and dropped if its column is gone.
+    fn on(&self, columns: &[TableColumn]) -> (Vec<TableSort>, Vec<TableFilter>) {
+        let place = |name: &str, was: u32| {
+            if columns.get(was as usize).is_some_and(|c| c.name == name) {
+                return Some(was);
+            }
+            columns
+                .iter()
+                .position(|c| c.name == name)
+                .map(|i| i as u32)
+        };
+        let sort = self
+            .sort
+            .iter()
+            .filter_map(|k| {
+                place(&k.name, k.key.column).map(|column| TableSort {
+                    column,
+                    ..k.key.clone()
+                })
+            })
+            .collect();
+        let filters = self
+            .filters
+            .iter()
+            .filter_map(|f| {
+                place(&f.name, f.key.column).map(|column| TableFilter {
+                    column,
+                    ..f.key.clone()
+                })
+            })
+            .collect();
+        (sort, filters)
+    }
+}
+
 struct Shape {
     code: String,
     matrix: bool,
@@ -88,6 +168,9 @@ pub struct Explorer {
     note: Option<(String, bool)>,
     sort: Vec<TableSort>,
     filters: Vec<TableFilter>,
+    /// The sorting and filters kept from last time, until the table's
+    /// columns are known and they are moved onto them.
+    saved: Option<SavedView>,
     blocks: HashMap<u64, Block>,
     widths: Vec<f32>,
     label_width: f32,
@@ -153,6 +236,19 @@ impl Explorer {
                 },
             ),
         ];
+        let saved: Option<SavedView> = project
+            .as_deref()
+            .and_then(|p| crate::prefs::table_view(p, &view_key(&language, &path)))
+            .and_then(|v| serde_json::from_value(v).ok());
+        let (sort, filters) = saved
+            .as_ref()
+            .map(|v| {
+                (
+                    v.sort.iter().map(|k| k.key.clone()).collect(),
+                    v.filters.iter().map(|f| f.key.clone()).collect(),
+                )
+            })
+            .unwrap_or_default();
         let mut this = Self {
             daemon,
             session,
@@ -162,8 +258,9 @@ impl Explorer {
             shape: None,
             error: None,
             note: None,
-            sort: Vec::new(),
-            filters: Vec::new(),
+            sort,
+            filters,
+            saved,
             blocks: HashMap::new(),
             widths: Vec::new(),
             label_width: 60.,
@@ -255,8 +352,10 @@ impl Explorer {
                 }
                 match rows {
                     Ok(rows) => {
-                        if first {
-                            this.took_shape(&rows);
+                        if first && this.took_shape(&rows) {
+                            // The kept filters moved to other columns.
+                            this.reload(cx);
+                            return;
                         }
                         let cells = rows.labels.into_iter().zip(rows.values).collect();
                         this.blocks.insert(block, Block::Ready(cells));
@@ -281,8 +380,10 @@ impl Explorer {
     }
 
     /// The first rows of a read: its columns, counts and code. A table of
-    /// new columns gets new widths, colours and a picked column.
-    fn took_shape(&mut self, rows: &TableRows) {
+    /// new columns gets new widths, colours and a picked column. Says
+    /// whether the sorting and filters kept from last time had to be moved
+    /// to other columns, so the rows must be read again.
+    fn took_shape(&mut self, rows: &TableRows) -> bool {
         let same = self.shape.as_ref().is_some_and(|s| {
             s.columns.len() == rows.columns.len()
                 && s.columns
@@ -328,6 +429,30 @@ impl Explorer {
             total: rows.total,
             rows: rows.rows,
         });
+        let Some(saved) = self.saved.take() else {
+            return false;
+        };
+        let (sort, filters) = saved.on(&rows.columns);
+        if sort == self.sort && filters == self.filters {
+            return false;
+        }
+        self.sort = sort;
+        self.filters = filters;
+        self.save_view();
+        true
+    }
+
+    /// Keeps the sorting and filters for the next time this table opens in
+    /// the project.
+    fn save_view(&self) {
+        let (Some(project), Some(shape)) = (self.project.as_deref(), self.shape.as_ref()) else {
+            return;
+        };
+        let key = view_key(&self.language, &self.path);
+        let view = (!self.sort.is_empty() || !self.filters.is_empty())
+            .then(|| SavedView::of(&self.sort, &self.filters, &shape.columns))
+            .and_then(|v| serde_json::to_value(v).ok());
+        crate::prefs::save_table_view(project, &key, view);
     }
 
     /// Reads the columns' summaries, with the filters on.
@@ -401,6 +526,8 @@ impl Explorer {
 
     fn change_sort(&mut self, sort: Vec<TableSort>, cx: &mut Context<Self>) {
         self.sort = sort;
+        self.saved = None;
+        self.save_view();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.generation += 1;
         self.blocks.clear();
@@ -411,6 +538,8 @@ impl Explorer {
 
     fn change_filters(&mut self, filters: Vec<TableFilter>, cx: &mut Context<Self>) {
         self.filters = filters;
+        self.saved = None;
+        self.save_view();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.reload(cx);
     }
@@ -1777,6 +1906,11 @@ impl Explorer {
     }
 }
 
+/// A table's name among those a project keeps: its language and path.
+fn view_key(language: &str, path: &[String]) -> String {
+    format!("{}:{}", language.to_lowercase(), path.join("\u{1f}"))
+}
+
 /// A category value's colour, as a small square.
 fn swatch(color: u32) -> Div {
     div()
@@ -1784,4 +1918,50 @@ fn swatch(color: u32) -> Div {
         .flex_none()
         .rounded(px(2.))
         .bg(rgb(color))
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::SavedView;
+    use sandhill_proto::{TableColumn, TableFilter, TableSort};
+
+    fn columns(names: &[&str]) -> Vec<TableColumn> {
+        names
+            .iter()
+            .map(|n| {
+                serde_json::from_value(
+                    serde_json::json!({"name": n, "kind": "number", "type": "dbl"}),
+                )
+                .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn kept_views_follow_their_columns() {
+        let sort = vec![TableSort {
+            column: 1,
+            descending: true,
+        }];
+        let filters = vec![TableFilter {
+            column: 2,
+            op: ">".into(),
+            values: vec!["200".into()],
+        }];
+        let saved = SavedView::of(&sort, &filters, &columns(&["cell", "n_genes", "pct_mt"]));
+        let json = serde_json::to_value(&saved).unwrap();
+        assert_eq!(json["sort"][0]["name"], "n_genes");
+        assert_eq!(json["filters"][0]["op"], ">");
+        let back: SavedView = serde_json::from_value(json).unwrap();
+        assert_eq!(back, saved);
+        // Same table: as it was.
+        assert_eq!(
+            back.on(&columns(&["cell", "n_genes", "pct_mt"])),
+            (sort.clone(), filters.clone())
+        );
+        // A column added at the front: they move along; one gone: dropped.
+        let (s, f) = back.on(&columns(&["batch", "cell", "n_genes"]));
+        assert_eq!(s[0].column, 2);
+        assert!(f.is_empty());
+    }
 }
