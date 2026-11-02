@@ -6,6 +6,7 @@
 //! that GPUI can await. tokio's channels and join handles work from any
 //! executor.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -37,8 +38,21 @@ pub struct Daemon {
     client: Arc<Client>,
     /// Calls that must reach the daemon in the order they were made.
     queue: UnboundedSender<Queued>,
+    /// Ports on the daemon's machine reached from here (see
+    /// `forward_port`): port there -> port here.
+    ports: Arc<std::sync::Mutex<HashMap<u16, u16>>>,
+    /// The tasks carrying them, which end with the connection.
+    forwards: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// The `sandhilld attach` process; the connection ends with it.
     _child: Child,
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        for task in self.forwards.lock().unwrap().drain(..) {
+            task.abort();
+        }
+    }
 }
 
 impl Daemon {
@@ -86,6 +100,8 @@ impl Daemon {
                     rt,
                     client,
                     queue,
+                    ports: Default::default(),
+                    forwards: Default::default(),
                     _child: conn.child,
                 },
                 streams,
@@ -138,6 +154,52 @@ impl Daemon {
             }
         });
         tx
+    }
+
+    /// The port on this machine that reaches `port` on the daemon's, for a
+    /// server's Shiny app, Quarto preview or page server: a listener on
+    /// 127.0.0.1 whose connections are carried over the daemon's
+    /// connection, as `ssh -L` would (`sandhill_link::forward`). Each port
+    /// is forwarded once per connection.
+    pub fn forward_port(&self, port: u16) -> impl Future<Output = Result<u16>> + 'static {
+        let known = self.ports.lock().unwrap().get(&port).copied();
+        let ports = self.ports.clone();
+        let client = self.client.clone();
+        let rt = self.rt.clone();
+        let opened = known.is_none().then(|| {
+            self.rt.spawn(async move {
+                let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                    .await
+                    .context("cannot open a port on this machine")?;
+                let here = listener.local_addr()?.port();
+                anyhow::Ok((listener, here))
+            })
+        });
+        // Only the connection holds the tasks' list: once it has gone, a
+        // port opened meanwhile isn't wanted.
+        let forwards = Arc::downgrade(&self.forwards);
+        async move {
+            if let Some(here) = known {
+                return Ok(here);
+            }
+            let (listener, here) = opened.expect("opened when not known").await??;
+            let Some(forwards) = forwards.upgrade() else {
+                anyhow::bail!("the connection has closed");
+            };
+            {
+                let mut ports = ports.lock().unwrap();
+                // Asked twice at once: the first one stands.
+                if let Some(&first) = ports.get(&port) {
+                    return Ok(first);
+                }
+                ports.insert(port, here);
+            }
+            let task = rt.spawn(sandhill_link::forward::forward(listener, port, move || {
+                Some(client.clone())
+            }));
+            forwards.lock().unwrap().push(task);
+            Ok(here)
+        }
     }
 
     /// Sends a call and only logs a failure.
@@ -214,6 +276,40 @@ mod tests {
         let (daemon, streams) = rt
             .block_on(Daemon::connect(rt.clone(), Target::Local))
             .unwrap();
+
+        // A port on the daemon's machine, reached through its connection as
+        // a server's Shiny app or Quarto preview is.
+        {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let echo = rt
+                .block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))
+                .unwrap();
+            let there = echo.local_addr().unwrap().port();
+            rt.spawn(async move {
+                let (mut stream, _) = echo.accept().await.unwrap();
+                let mut buf = [0u8; 5];
+                stream.read_exact(&mut buf).await.unwrap();
+                stream.write_all(&buf).await.unwrap();
+            });
+            let here = rt.block_on(daemon.forward_port(there)).unwrap();
+            assert_ne!(here, there);
+            assert_eq!(rt.block_on(daemon.forward_port(there)).unwrap(), here);
+            let echoed = rt
+                .block_on(async {
+                    tokio::time::timeout(Duration::from_secs(10), async {
+                        let mut stream =
+                            tokio::net::TcpStream::connect(("127.0.0.1", here)).await?;
+                        stream.write_all(b"hello").await?;
+                        let mut buf = [0u8; 5];
+                        stream.read_exact(&mut buf).await?;
+                        anyhow::Ok(buf)
+                    })
+                    .await
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(&echoed, b"hello");
+        }
 
         let kernels: Vec<KernelspecInfo> = rt.block_on(daemon.call(Call::ListKernelspecs)).unwrap();
         let project = dir.path().join("project");

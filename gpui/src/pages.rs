@@ -118,21 +118,53 @@ fn content(page: Page, daemon: Option<Rc<Daemon>>, remote: bool, near: Option<St
                 Ok(Content::Html(plotly_page(&figure)))
             })
         }
-        Page::File(_) | Page::Url(_) if remote => ready(Err(anyhow!(
-            "pages served from the other machine need a tunnel, which the trial doesn't have yet"
-        ))),
         Page::File(path) => {
             let served = daemon.call::<PageUrl>(Call::ServePage { path });
             Box::pin(async move {
                 let url = served.await?;
-                Ok(Content::Url(format!(
-                    "http://127.0.0.1:{}{}",
-                    url.port, url.path
-                )))
+                let port = reach(&daemon, remote, url.port).await?;
+                Ok(Content::Url(format!("http://127.0.0.1:{port}{}", url.path)))
             })
         }
-        Page::Url(url) => ready(Ok(Content::Url(url))),
+        Page::Url(url) => match local_port(&url) {
+            Some(port) if remote => Box::pin(async move {
+                let here = daemon.forward_port(port).await?;
+                Ok(Content::Url(at_port(&url, here)))
+            }),
+            _ => ready(Ok(Content::Url(url))),
+        },
     }
+}
+
+/// The port here that reaches `port` on the daemon's machine: itself when
+/// the daemon is on this one, else one carried over its connection.
+async fn reach(daemon: &Daemon, remote: bool, port: u16) -> Result<u16> {
+    if remote {
+        daemon.forward_port(port).await
+    } else {
+        Ok(port)
+    }
+}
+
+/// The port of an address on the machine it was made on (`localhost`,
+/// `127.0.0.1`), which another machine reaches only through a tunnel.
+pub fn local_port(url: &str) -> Option<u16> {
+    let rest = url.strip_prefix("http://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !port.contains(']') => (host, port.parse().ok()?),
+        _ => (authority, 80),
+    };
+    ["localhost", "127.0.0.1", "[::1]", "0.0.0.0"]
+        .contains(&host)
+        .then_some(port)
+}
+
+/// The same address at `port` on 127.0.0.1.
+pub fn at_port(url: &str, port: u16) -> String {
+    let rest = url.strip_prefix("http://").unwrap_or(url);
+    let path = rest.find(['/', '?', '#']).map_or("/", |i| &rest[i..]);
+    format!("http://127.0.0.1:{port}{path}")
 }
 
 /// Sends the wheel's turns up to the window when nothing in the page
@@ -199,5 +231,27 @@ impl Render for PageView {
             State::Ready(view) => view.clone().into_any_element(),
         };
         div().size_full().child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{at_port, local_port};
+
+    #[test]
+    fn finds_and_moves_local_ports() {
+        assert_eq!(local_port("http://127.0.0.1:4321/"), Some(4321));
+        assert_eq!(local_port("http://localhost:8080/app?x=1"), Some(8080));
+        assert_eq!(local_port("http://localhost/"), Some(80));
+        assert_eq!(local_port("https://example.org/"), None);
+        assert_eq!(local_port("http://example.org:8080/"), None);
+        assert_eq!(
+            at_port("http://localhost:8080/app?x=1", 5000),
+            "http://127.0.0.1:5000/app?x=1"
+        );
+        assert_eq!(
+            at_port("http://0.0.0.0:3838", 5000),
+            "http://127.0.0.1:5000/"
+        );
     }
 }

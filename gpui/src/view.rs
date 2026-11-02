@@ -53,6 +53,16 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, _: &RunAll, _, cx| this.run_all(cx)))
             .on_action(cx.listener(|this, _: &Interrupt, _, _| this.interrupt()))
+            .on_action(cx.listener(|this, _: &crate::Preview, _, cx| {
+                if let Some(path) = this
+                    .open
+                    .as_ref()
+                    .map(|o| o.notebook.path.clone())
+                    .filter(|p| crate::viewer::is_previewable(p))
+                {
+                    this.preview_document(path, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &ToggleConsole, _, cx| {
                 this.show_console = !this.show_console;
                 cx.notify();
@@ -126,6 +136,8 @@ impl Render for Workbench {
             )
             .child(self.render_status(cx))
             .children(self.render_zoom(cx))
+            .children(self.render_settings_dialog(cx))
+            .children(self.render_import_dialog(cx))
     }
 }
 
@@ -383,6 +395,18 @@ impl Workbench {
                             )
                             .when(self.project.is_some(), |d| {
                                 d.child(
+                                    icon_button("project-settings", "settings", &p, true)
+                                        .tooltip(|w, cx| {
+                                            gpui_kit::component::tooltip::Tooltip::new(
+                                                "Project settings",
+                                            )
+                                            .build(w, cx)
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.show_project_settings(window, cx)
+                                        })),
+                                )
+                                .child(
                                     icon_button("close-project", "close", &p, true).on_click(
                                         cx.listener(|this, _, _, cx| this.close_project(cx)),
                                     ),
@@ -811,16 +835,10 @@ impl Workbench {
 
     fn render_explorer(&self, explorer: &Entity<Explorer>, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let reload = explorer.clone();
         pane(&p)
             .flex_1()
             .h_full()
-            .child(
-                self.render_tabs(cx).child(div().flex_1()).child(
-                    bar_button("explorer-refresh", "Refresh", Some("refresh"), &p)
-                        .on_click(move |_, _, cx| reload.update(cx, |e, cx| e.reload(cx))),
-                ),
-            )
+            .child(self.render_tabs(cx).child(div().flex_1()))
             .child(div().flex_1().min_h_0().child(explorer.clone()))
             .into_any_element()
     }
@@ -1085,6 +1103,25 @@ impl Workbench {
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
             )
+            .when(crate::viewer::is_previewable(&open.notebook.path), |bar| {
+                let path = open.notebook.path.clone();
+                bar.child(
+                    bar_button("preview", "Preview", Some("globe"), &p)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(
+                                if cfg!(target_os = "macos") {
+                                    "Preview with Quarto in the Viewer (⇧⌘K)"
+                                } else {
+                                    "Preview with Quarto in the Viewer (Ctrl+Shift+K)"
+                                },
+                            )
+                            .build(w, cx)
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.preview_document(path.clone(), cx)
+                        })),
+                )
+            })
             .when(crate::jobs::is_job_script(&open.notebook.path), |bar| {
                 bar.child(
                     bar_button("run-job", "Run as job", Some("terminal"), &p)
@@ -1482,18 +1519,29 @@ impl Workbench {
 
     pub(crate) fn render_viewer(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let Some((page, title, ix, count)) = self.viewer_page() else {
+        let Some((item, ix, count)) = self.viewer_page() else {
             return div()
                 .px(px(14.))
                 .py(px(6.))
                 .text_color(p.muted)
-                .child("Web pages shown from the Console (plotly, DT, leaflet…) appear here.")
+                .child("Web pages shown from the Console (plotly, DT, leaflet, Shiny…), Quarto previews and HTML files appear here.")
                 .into_any_element();
         };
-        let body = match self.pages.get(&page.key()) {
-            Some(view) => view.clone().into_any_element(),
-            None => div().child("Loading the page…").into_any_element(),
+        let body = match (&item.page, &item.note) {
+            (_, Some(note)) => div()
+                .px(px(14.))
+                .py(px(10.))
+                .text_color(p.muted)
+                .whitespace_normal()
+                .child(note.clone())
+                .into_any_element(),
+            (Some(page), None) => match self.pages.get(&page.key()) {
+                Some(view) => view.clone().into_any_element(),
+                None => div().child("Loading the page…").into_any_element(),
+            },
+            (None, None) => div().into_any_element(),
         };
+        let extra = item.extra.clone();
         v_flex()
             .size_full()
             .child(
@@ -1528,13 +1576,28 @@ impl Workbench {
                     )
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .pl_2()
                             .text_color(p.text)
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .child(title),
-                    ),
+                            .child(item.title.clone()),
+                    )
+                    .when_some(extra, |d, key| {
+                        d.child(
+                            bar_button(
+                                "viewer-close",
+                                if item.stoppable { "Stop" } else { "Close" },
+                                Some(if item.stoppable { "stop" } else { "close" }),
+                                &p,
+                            )
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.close_extra(&key, cx)),
+                            ),
+                        )
+                    }),
             )
             .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
@@ -1644,9 +1707,9 @@ impl Workbench {
                                 false,
                             )
                             .on_click(cx.listener(
-                                move |this, _, _, cx| {
+                                move |this, _, window, cx| {
                                     cx.stop_propagation();
-                                    this.open_explorer(table_path.clone(), cx)
+                                    this.open_explorer(table_path.clone(), window, cx)
                                 },
                             )),
                         )
@@ -1689,13 +1752,19 @@ impl Workbench {
                     .overflow_hidden()
                     .text_ellipsis()
                     .when(self.problem.is_some(), |d| d.text_color(p.err))
-                    .child(self.problem.clone().unwrap_or_else(|| {
-                        if self.open.as_ref().is_some_and(|o| o.is_script()) {
-                            "⌘↵ runs the line · ⇧⌘↵ runs the file · ⌘S saves".into()
-                        } else {
-                            "Shift+Enter runs a cell · ⌘↵ runs it in place · ⌘S saves".into()
-                        }
-                    })),
+                    .child(
+                        self.problem
+                            .clone()
+                            .or_else(|| self.notice.clone())
+                            .unwrap_or_else(|| {
+                                if self.open.as_ref().is_some_and(|o| o.is_script()) {
+                                    "⌘↵ runs the line · ⇧⌘↵ runs the file · ⌘S saves".into()
+                                } else {
+                                    "Shift+Enter runs a cell · ⌘↵ runs it in place · ⌘S saves"
+                                        .into()
+                                }
+                            }),
+                    ),
             )
     }
 }

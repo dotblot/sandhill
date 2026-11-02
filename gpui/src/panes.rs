@@ -75,6 +75,7 @@ impl Workbench {
             TopTab::Variables => (
                 self.render_variables(cx),
                 vec![
+                    self.import_button(cx),
                     icon_button("refresh-variables", "refresh", &p, false)
                         .when(self.active_session().is_none(), |d| d.opacity(0.35))
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_variables(cx)))
@@ -97,6 +98,7 @@ impl Workbench {
             .min_w(px(280.))
             .child(
                 pane(&p)
+                    .relative()
                     .h(px(self.variables_height))
                     .flex_none()
                     .child(
@@ -134,7 +136,10 @@ impl Workbench {
                             .child(div().flex_1())
                             .child(h_flex().gap(px(1.)).children(refresh)),
                     )
-                    .child(div().flex_1().min_h_0().child(top)),
+                    .child(div().flex_1().min_h_0().child(top))
+                    .when(self.top_tab == TopTab::Variables, |d| {
+                        d.children(self.render_import_menu(cx))
+                    }),
             )
             .child(self.splitter(Split::Variables, cx))
             .child(
