@@ -1,7 +1,8 @@
 name: GPUI app
 
 # Checks the GPUI app in gpui/ and builds "Sandhill GPUI.app" for trying it
-# on a Mac. The Tauri app's CI (ci.yml) is separate.
+# on a Mac, with sandhilld for this Mac and Linux builds of it (and Ark) to
+# install on servers. The Tauri app's CI (ci.yml) is separate.
 on:
   push:
     branches: [main]
@@ -23,12 +24,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          # Static Linux builds of sandhilld, which the app installs on servers.
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install the Python kernel, for the test that runs a cell
+      - name: Install the Python kernel, and zig for cross-building
+        # cargo-zigbuild runs zig as `python3 -m ziglang`.
         run: |
-          python -m pip install ipykernel
+          python -m pip install ipykernel ziglang==0.17.0
           python -m ipykernel install --user
       - uses: Swatinem/rust-cache@v2
         with:
@@ -45,7 +52,40 @@ jobs:
           SANDHILL_DAEMON="$GITHUB_WORKSPACE/target/release/sandhilld" cargo test
       - name: Build the GPUI app
         working-directory: gpui
+        env:
+          # The build About Sandhill shows: the branch's own commit rather
+          # than the merge commit a pull request's checkout is.
+          SANDHILL_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo build --release
+      - name: Build sandhilld for servers, and fetch Ark
+        # Into the app's Resources/daemons, from where it installs them on
+        # servers over ssh, as the Tauri app's bundle does (app/scripts/bundle.mjs).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p daemons
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            cargo zigbuild --release -p sandhill-daemon --target "$target"
+            cp "target/$target/release/sandhilld" "daemons/sandhilld-$target"
+          done
+          # Ark, Posit's R kernel (MIT), so R runs on servers with no setup.
+          # Its Linux builds link to glibc, so they are named for gnu triples.
+          # Ark marks no release as "latest", so take the newest one, as ci.yml does.
+          tag=$(gh api 'repos/posit-dev/ark/releases?per_page=30' \
+            --jq '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + .)[0].tag_name')
+          echo "Ark $tag"
+          for pair in x64:x86_64-unknown-linux-gnu arm64:aarch64-unknown-linux-gnu; do
+            arch=${pair%%:*}; triple=${pair#*:}
+            work=$(mktemp -d)
+            if gh release download "$tag" --repo posit-dev/ark --pattern "ark-$tag-linux-$arch.zip" --dir "$work"; then
+              unzip -q -o "$work"/*.zip -d "$work"
+              cp "$(find "$work" -type f -name ark | head -1)" "daemons/ark-$triple"
+              chmod 755 "daemons/ark-$triple"
+            elif [ "$arch" = x64 ]; then
+              echo "Ark $tag has no linux-x64 build"; exit 1
+            fi
+          done
+          ls -l daemons
       - name: Make Sandhill GPUI.app
         run: |
           app="Sandhill GPUI.app"
@@ -54,6 +94,7 @@ jobs:
           # The app finds sandhilld next to itself, as the Tauri app's bundle does.
           cp target/release/sandhilld "$app/Contents/MacOS/"
           cp app/src-tauri/icons/icon.icns "$app/Contents/Resources/"
+          cp -R daemons "$app/Contents/Resources/daemons"
           cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

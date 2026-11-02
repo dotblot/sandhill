@@ -55,6 +55,28 @@ impl Drop for Daemon {
     }
 }
 
+/// How to reach servers: the builds of sandhilld (and Ark) to install on
+/// them, from `Contents/Resources/daemons` in the Mac app or
+/// `$SANDHILL_DAEMON_BUILDS`, as the Tauri app has it. `$SANDHILL_SSH`
+/// replaces the ssh program.
+fn link_options() -> Options {
+    let builds = std::env::var_os("SANDHILL_DAEMON_BUILDS")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let exe = std::env::current_exe().ok()?;
+            let dir = exe.parent()?.parent()?.join("Resources/daemons");
+            dir.is_dir().then_some(dir)
+        });
+    match &builds {
+        Some(dir) => tracing::info!("builds of sandhilld for servers: {}", dir.display()),
+        None => tracing::info!("no builds of sandhilld for servers in this app"),
+    }
+    Options {
+        builds,
+        ssh: std::env::var_os("SANDHILL_SSH").map(Into::into),
+    }
+}
+
 impl Daemon {
     /// Connects to the daemon on `target`, starting it if needed. Also
     /// returns the stream of session events.
@@ -64,7 +86,7 @@ impl Daemon {
     ) -> impl Future<Output = Result<(Daemon, Streams)>> + 'static {
         let task = rt.spawn(async move {
             let progress = |message: &str| tracing::info!("{message}");
-            let mut conn = sandhill_link::connect(&target, &Options::default(), &progress).await?;
+            let mut conn = sandhill_link::connect(&target, &link_options(), &progress).await?;
             let events = conn.client.take_events().context("no event stream")?;
             let terminals = conn
                 .client

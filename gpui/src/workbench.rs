@@ -296,6 +296,20 @@ pub struct Workbench {
     pub(crate) dragging: Option<Split>,
     /// The machine box replaces the machine's tab in the title bar.
     pub(crate) editing_host: bool,
+    /// Notebooks' runs show in the Console, and their plots in Plots (☰).
+    pub(crate) notebook_console: bool,
+    pub(crate) notebook_plots: bool,
+    /// The files pane's New, Rename and right-click menu.
+    pub(crate) files_ui: crate::tree_actions::FilesUi,
+    pub(crate) name_input: Entity<InputState>,
+    /// ⌘K.
+    pub(crate) palette: crate::command_palette::CommandPalette,
+    pub(crate) palette_input: Entity<InputState>,
+    /// The ☰ menu is open.
+    pub(crate) main_menu: bool,
+    /// The window's own focus, so its shortcuts work before anything
+    /// else is clicked.
+    pub(crate) focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -336,6 +350,9 @@ impl Workbench {
         let (settings_env, settings_subscription) =
             crate::project_settings::new_env_input(window, cx);
         let (import_name, import_subscription) = crate::import_dialog::new_import_input(window, cx);
+        let (name_input, name_subscription) = crate::tree_actions::new_name_input(window, cx);
+        let (palette_input, palette_subscription) =
+            crate::command_palette::new_palette_input(window, cx);
         let mut subscriptions = vec![
             cx.subscribe(&host_input, |this, input, event: &InputEvent, cx| {
                 // Clicking away puts the machine's tab back.
@@ -385,6 +402,17 @@ impl Workbench {
         subscriptions.extend(git_subscriptions);
         subscriptions.push(settings_subscription);
         subscriptions.push(import_subscription);
+        subscriptions.push(name_subscription);
+        subscriptions.push(palette_subscription);
+        // Quitting saves what was edited first, as closing a tab does.
+        subscriptions.push(cx.on_app_quit(|this, cx| {
+            let tasks = this.save_all_tasks(cx);
+            async move {
+                for task in tasks {
+                    task.await;
+                }
+            }
+        }));
         let (page_wheel, mut wheel) = tokio::sync::mpsc::unbounded_channel::<f32>();
         cx.spawn(async move |this, cx| {
             while let Some(px) = wheel.recv().await {
@@ -468,10 +496,46 @@ impl Workbench {
             variables_height: 250.,
             dragging: None,
             editing_host: false,
+            notebook_console: crate::prefs::notebook_console(),
+            notebook_plots: crate::prefs::notebook_plots(),
+            files_ui: Default::default(),
+            name_input,
+            palette: Default::default(),
+            palette_input,
+            main_menu: false,
+            focus: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
+        // Closing the window saves what was edited first, then closes it.
+        let entity = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(entity) = entity.upgrade() else {
+                return true;
+            };
+            if !entity.read(cx).any_dirty() {
+                return true;
+            }
+            entity.update(cx, |this, cx| this.save_and_close(window, cx));
+            false
+        });
         this.connect(target, project, cx);
         this
+    }
+
+    /// Saves every edited document, then closes the window (⇧⌘W).
+    pub(crate) fn save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let tasks = self.save_all_tasks(cx);
+        cx.spawn_in(window, async move |this, cx| {
+            for task in tasks {
+                task.await;
+            }
+            // Closes even if a save failed only when nothing is left unsaved.
+            let saved = this.update(cx, |this, _| !this.any_dirty()).unwrap_or(true);
+            if saved {
+                cx.update(|window, _| window.remove_window()).ok();
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn daemon(&self) -> Option<Rc<Daemon>> {
@@ -729,7 +793,7 @@ impl Workbench {
 
     /// Reads one of the project's folders ("" for the project itself) into
     /// the tree.
-    fn read_folder(&mut self, dir: String, cx: &mut Context<Self>) {
+    pub(crate) fn read_folder(&mut self, dir: String, cx: &mut Context<Self>) {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
@@ -786,6 +850,8 @@ impl Workbench {
         self.forget_git();
         self.viewer_extra.clear();
         self.setup = Default::default();
+        self.files_ui = Default::default();
+        self.palette.shown = false;
         cx.notify();
     }
 
@@ -1103,8 +1169,50 @@ impl Workbench {
     }
 
     pub(crate) fn save(&mut self, cx: &mut Context<Self>) {
-        let (Some(daemon), Some(open)) = (self.daemon(), self.open.as_ref()) else {
-            return;
+        if let Some(path) = self.open.as_ref().map(|o| o.notebook.path.clone())
+            && let Some(task) = self.save_file(&path, cx)
+        {
+            task.detach();
+        }
+    }
+
+    /// Saves every open document with unsaved changes (⌥⌘S).
+    pub(crate) fn save_all(&mut self, cx: &mut Context<Self>) {
+        for task in self.save_all_tasks(cx) {
+            task.detach();
+        }
+    }
+
+    /// Saves every edited document; the tasks end when they are written.
+    pub(crate) fn save_all_tasks(&mut self, cx: &mut Context<Self>) -> Vec<Task<()>> {
+        let dirty: Vec<String> = self
+            .open
+            .iter()
+            .chain(&self.others)
+            .filter(|o| o.dirty)
+            .map(|o| o.notebook.path.clone())
+            .collect();
+        dirty
+            .iter()
+            .filter_map(|path| self.save_file(path, cx))
+            .collect()
+    }
+
+    /// Whether any open document has unsaved changes.
+    pub(crate) fn any_dirty(&self) -> bool {
+        self.open.iter().chain(&self.others).any(|o| o.dirty)
+    }
+
+    /// Writes one open document; the task ends when it is written.
+    fn save_file(&mut self, path: &str, cx: &mut Context<Self>) -> Option<Task<()>> {
+        let daemon = self.daemon();
+        let open = self
+            .open
+            .iter()
+            .chain(&self.others)
+            .find(|o| o.notebook.path == path);
+        let (Some(daemon), Some(open)) = (daemon, open) else {
+            return None;
         };
         let sources = open.sources(cx);
         let text = match open.notebook.render(&sources) {
@@ -1112,7 +1220,7 @@ impl Workbench {
             Err(err) => {
                 self.problem = Some(format!("Saving failed: {err:#}"));
                 cx.notify();
-                return;
+                return None;
             }
         };
         let path = open.notebook.path.clone();
@@ -1132,7 +1240,7 @@ impl Workbench {
             },
         };
         let written = daemon.call::<FileWritten>(write);
-        cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             let written = written.await;
             this.update(cx, |this, cx| {
                 match written {
@@ -1165,8 +1273,8 @@ impl Workbench {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        });
+        Some(task)
     }
 
     /// The kernel the Console and Variables follow: the open notebook's,

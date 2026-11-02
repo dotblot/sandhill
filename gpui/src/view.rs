@@ -12,6 +12,7 @@ use sandhill_link::Target;
 use sandhill_proto::Variable;
 use serde_json::Value;
 
+use crate::command_palette::Cmd;
 use crate::explorer::Explorer;
 use crate::look::{
     self, GAP, Palette, RADIUS, bar_button, capsule, capsule_divider, dot, icon, icon_button, pane,
@@ -35,6 +36,9 @@ const PAGE_HEIGHT: f32 = 420.;
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.report_focus(window, cx);
+        if window.focused(cx).is_none() {
+            window.focus(&self.focus, cx);
+        }
         self.sync_pages(window, cx);
         self.sync_plots(cx);
         self.sync_packages(cx);
@@ -44,6 +48,7 @@ impl Render for Workbench {
         let p = *Palette::get(cx);
         wall(&p)
             .relative()
+            .track_focus(&self.focus)
             .flex()
             .flex_col()
             .size_full()
@@ -53,20 +58,13 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, _: &RunAll, _, cx| this.run_all(cx)))
             .on_action(cx.listener(|this, _: &Interrupt, _, _| this.interrupt()))
-            .on_action(cx.listener(|this, _: &crate::Preview, _, cx| {
-                if let Some(path) = this
-                    .open
-                    .as_ref()
-                    .map(|o| o.notebook.path.clone())
-                    .filter(|p| crate::viewer::is_previewable(p))
-                {
-                    this.preview_document(path, cx);
-                }
+            .on_action(cx.listener(|this, _: &crate::Preview, window, cx| {
+                this.run_command(Cmd::Preview, window, cx)
             }))
-            .on_action(cx.listener(|this, _: &ToggleConsole, _, cx| {
-                this.show_console = !this.show_console;
-                cx.notify();
+            .on_action(cx.listener(|this, _: &ToggleConsole, window, cx| {
+                this.run_command(Cmd::ToggleConsole, window, cx)
             }))
+            .map(|d| self.window_actions(d, cx))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 if let Some(split) = this.dragging {
                     this.drag_split(split, event.position, window.viewport_size(), cx);
@@ -138,12 +136,15 @@ impl Render for Workbench {
             .children(self.render_zoom(cx))
             .children(self.render_settings_dialog(cx))
             .children(self.render_import_dialog(cx))
+            .children(self.render_main_menu(cx))
+            .children(self.render_tree_menu(cx))
+            .children(self.render_palette(cx))
     }
 }
 
 /// Where the title bar's first capsule starts; on a Mac the window buttons
 /// come first.
-const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
+pub(crate) const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
 
 impl Workbench {
     /// A gap between panes that can be dragged; an accent line shows under
@@ -254,7 +255,6 @@ impl Workbench {
     /// machine's tab in the middle, and the edit capsule at the right.
     fn render_top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let local = self.target == Target::Local;
         let (machine, device) = match &self.target {
             Target::Local => ("Local".to_string(), "device.laptop"),
             Target::Ssh(destination) => (destination.to_string(), "device.server"),
@@ -385,33 +385,32 @@ impl Workbench {
                             )
                             .child(capsule_divider(&p))
                             .child(
-                                icon_button("open-project", "folder", &p, true)
-                                    .when(self.daemon().is_none() || !local, |d| d.opacity(0.32))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if this.daemon().is_some() && this.target == Target::Local {
-                                            this.choose_project(cx)
-                                        }
+                                icon_button("palette", "search", &p, true)
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(
+                                            "Go to a file or run a command ⌘K",
+                                        )
+                                        .build(w, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_palette(window, cx)
                                     })),
                             )
-                            .when(self.project.is_some(), |d| {
-                                d.child(
-                                    icon_button("project-settings", "settings", &p, true)
-                                        .tooltip(|w, cx| {
-                                            gpui_kit::component::tooltip::Tooltip::new(
-                                                "Project settings",
-                                            )
+                            .child(
+                                icon_button("main-menu", "menu", &p, true)
+                                    .when(self.main_menu, |d| d.text_color(p.text))
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new("Menu")
                                             .build(w, cx)
-                                        })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.show_project_settings(window, cx)
-                                        })),
-                                )
-                                .child(
-                                    icon_button("close-project", "close", &p, true).on_click(
-                                        cx.listener(|this, _, _, cx| this.close_project(cx)),
-                                    ),
-                                )
-                            }),
+                                    })
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.main_menu = !this.main_menu;
+                                        cx.notify();
+                                    })),
+                            ),
                     )
                     .child(div().flex_1())
                     .child(
@@ -421,7 +420,18 @@ impl Workbench {
                             .child(capsule_divider(&p))
                             .child(edit("cut", "edit.cut", Box::new(input::Cut)))
                             .child(edit("copy", "edit.copy", Box::new(input::Copy)))
-                            .child(edit("paste", "edit.paste", Box::new(input::Paste))),
+                            .child(edit("paste", "edit.paste", Box::new(input::Paste)))
+                            .child(capsule_divider(&p))
+                            .child(
+                                edit("save", "doc.save", Box::new(Save))
+                                    .when(!self.open.as_ref().is_some_and(|o| o.dirty), |d| {
+                                        d.opacity(0.4)
+                                    }),
+                            )
+                            .child(
+                                edit("save-all", "doc.save-all", Box::new(crate::SaveAll))
+                                    .when(!self.any_dirty(), |d| d.opacity(0.4)),
+                            ),
                     ),
             )
             .child(
@@ -468,17 +478,24 @@ impl Workbench {
     /// folders and files as a tree.
     fn render_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let count = self.tree.rows().len();
+        let count = self.file_lines().len();
         let project = self.project.clone().unwrap_or_default();
         let open_path = self.open.as_ref().map(|o| o.notebook.path.clone());
         let list = uniform_list(
             "files",
             count,
             cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                let rows = this.tree.rows();
+                let lines = this.file_lines();
+                let selected = this.files_ui.selected.as_ref().map(|(r, _)| r.clone());
                 range
-                    .filter_map(|ix| rows.get(ix).map(|row| (ix, row)))
-                    .map(|(ix, row)| {
+                    .filter_map(|ix| lines.get(ix).map(|line| (ix, line)))
+                    .map(|(ix, line)| {
+                        let row = match line {
+                            crate::tree_actions::Line::Field { depth } => {
+                                return this.render_name_field(*depth, cx);
+                            }
+                            crate::tree_actions::Line::Row(row) => row,
+                        };
                         let indent = 8. + 16. * row.depth as f32;
                         let hover = p.ink(7.);
                         let line = h_flex()
@@ -510,6 +527,15 @@ impl Workbench {
                                 .into_any_element();
                         }
                         let rel = row.rel.clone();
+                        let is_selected = selected.as_deref() == Some(row.rel.as_str());
+                        let menu_rel = row.rel.clone();
+                        let menu_dir = row.dir;
+                        let line = line.on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                this.tree_menu(menu_rel.clone(), menu_dir, event.position, cx)
+                            }),
+                        );
                         let name = div()
                             .min_w_0()
                             .overflow_hidden()
@@ -531,7 +557,9 @@ impl Workbench {
                                 )
                                 .child(picture(&look::folder_icon(&row.name)))
                                 .child(name)
+                                .when(is_selected, |d| d.bg(p.ink(9.)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.files_ui.selected = Some((rel.clone(), true));
                                     this.toggle_folder(rel.clone(), cx)
                                 }))
                                 .into_any_element();
@@ -541,13 +569,19 @@ impl Workbench {
                         line.pl(px(indent + 20.))
                             .when(!openable, |d| d.text_color(p.muted))
                             .when(is_open, |d| d.bg(p.accent.opacity(0.2)))
+                            .when(!is_open && is_selected, |d| d.bg(p.ink(9.)))
                             .when(!is_open, |d| d.hover(move |d| d.bg(hover)))
                             .cursor_pointer()
                             .child(picture(&look::file_icon(&row.name)))
                             .child(name)
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.open_file(rel.clone(), cx)),
-                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.files_ui.selected = Some((rel.clone(), false));
+                                if openable || crate::viewer::is_html(&rel) {
+                                    this.open_file(rel.clone(), cx)
+                                } else {
+                                    cx.notify()
+                                }
+                            }))
                             .into_any_element()
                     })
                     .collect::<Vec<_>>()
@@ -559,6 +593,7 @@ impl Workbench {
             .as_deref()
             .map(|p| p.rsplit('/').next().unwrap_or(p).to_string());
         v_flex()
+            .relative()
             .w(px(self.files_width))
             .h_full()
             .flex_none()
@@ -591,12 +626,27 @@ impl Workbench {
                     .child(div().flex_1())
                     .when(self.project.is_some(), |d| {
                         d.child(
+                            icon_button("new-item", "add", &p, false)
+                                .when(self.files_ui.new_menu, |d| d.text_color(p.text))
+                                .tooltip(|w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("New file or folder")
+                                        .build(w, cx)
+                                })
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.files_ui.new_menu = !this.files_ui.new_menu;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
                             icon_button("refresh-files", "refresh", &p, false)
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh_files(cx))),
                         )
                     }),
             )
+            .children(self.render_name_error(cx))
             .child(div().flex_1().min_h_0().px(px(6.)).pb(px(10.)).child(list))
+            .children(self.render_new_menu(cx))
     }
 
     /// A pane's tab strip: its tabs in a capsule, then anything else.
@@ -1336,6 +1386,7 @@ impl Workbench {
             .console
             .iter()
             .filter_map(|id| self.runs.get(id).map(|run| (id, run)))
+            .filter(|(_, run)| self.notebook_console || !crate::plots::from_notebook(&run.cell))
             .map(|(_, run)| {
                 let source = match (&run.cell, &run.by) {
                     // A script's runs are labelled with the script alone.
