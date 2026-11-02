@@ -1,11 +1,13 @@
-# Sandhill in GPUI
+# Sandhill's Mac app
 
-Sandhill drawn with [GPUI](https://gpui.rs), Zed's UI toolkit, instead of a
-web view. It started as a trial (milestones 1 to 4 below); on 2026-11-01 it
-was chosen to replace the Tauri app in `app/`, which it will do step by step
-(see `CLAUDE.md`). It keeps the Tauri app's look, with fonts 2px larger.
+Sandhill.app, drawn with [GPUI](https://gpui.rs), Zed's UI toolkit. It
+started as a trial (milestones 1 to 4 below); on 2026-11-01 it was chosen to
+replace the first app, built with Tauri in `app/`, and on 2026-11-02, once it
+did everything that app did, the Tauri app was deleted (it is in the git
+history, last in commit d3ff9f6). It keeps the Tauri app's look, with fonts
+2px larger. "The Tauri app" in comments here means that app.
 
-It reaches `sandhilld` the same way the Tauri app does, through
+It reaches `sandhilld` through
 `sandhill-link` and `sandhill-proto`, and it borrows the daemon's own rules for
 building outputs and finding Quarto chunks (`sandhill-daemon`'s `outputs` and
 `qmd`). It is a separate Cargo project (its own `[workspace]`), so its many
@@ -83,14 +85,14 @@ come from `gpui-kit` (Apache-2.0); nothing is taken from Zed's GPL editor.
 
 From here on the work follows the porting plan (step 1: look and layout).
 
-- `src/look.rs` holds the Tauri app's colour tokens (`app/src/styles.css`),
+- `src/look.rs` holds the Tauri app's colour tokens (its `styles.css`),
   light and dark, and builds gpui-kit's theme from them, so they are
   written once. It follows the system's appearance; `SANDHILL_APPEARANCE=dark`
   (or `light`) picks one, for trying it.
 - Every text size is the Tauri app's plus 2px: window text 15px, code 15px
   in Maple Mono NF, small rows 13px. Maple Mono is bundled as gzipped TTF in
   `assets/fonts` (GPUI reads TrueType, not the web fonts); `make.py` there
-  makes them from `app/src/fonts`.
+  makes them from the WOFF2 web fonts.
 - Icons come from `docs/design/ui/icons` (drawn by its `build.py`), put
   into the binary and served as `sandhill/…`; file and folder icons are
   picked by the rules in its `registry.json`, as in the Tauri app.
@@ -322,9 +324,9 @@ preview and R's imports weren't seen.
   Tauri app's). Help's search lists R vignettes, which open in the Viewer
   as their package built them, with their R code a click away.
 
-### What the Tauri app still does that this doesn't
-
-- Nothing in the plan. The Tauri app is retired once Huan says so.
+- **Retired the Tauri app** (2026-11-02): this is Sandhill.app now, with
+  the Tauri app's bundle id (`dev.sandhill.ide`), so it replaces it on the
+  Mac. The app icon's sources and its script moved to `assets/icon/`.
 
 ## Running it
 

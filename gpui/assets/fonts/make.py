@@ -1,19 +1,21 @@
-"""Makes the Maple Mono NF fonts the GPUI app bundles, from the web fonts the
-Tauri app uses (app/src/fonts). GPUI's text systems read TrueType, not WOFF2,
-so they are stored as gzipped TTF and unpacked when the app starts.
+"""Makes the Maple Mono NF fonts the app bundles from Maple Mono's WOFF2 web
+fonts (the retired Tauri app kept them in app/src/fonts; they are also in
+Maple Mono's NF releases). GPUI's text systems read TrueType, not WOFF2, so
+they are stored as gzipped TTF and unpacked when the app starts.
 
 Needs fontTools and brotli: pip install fonttools brotli
-Run from anywhere: python3 gpui/assets/fonts/make.py
+Run from anywhere: python3 gpui/assets/fonts/make.py [folder with the .woff2 files]
 """
 
 import gzip
 import io
+import sys
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
 HERE = Path(__file__).resolve().parent
-SOURCE = HERE.parents[2] / "app" / "src" / "fonts"
+SOURCE = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE
 WEIGHTS = ["Regular", "Italic", "SemiBold", "Bold"]
 
 for weight in WEIGHTS:

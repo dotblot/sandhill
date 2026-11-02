@@ -1310,7 +1310,7 @@ mod tests {
 
     fn recorded() -> Vec<Entry> {
         let all: Vec<Value> =
-            serde_json::from_str(include_str!("../../app/src/model/chat.recorded.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/fixtures/chat.recorded.json")).unwrap();
         all.into_iter()
             .map(|e| Entry {
                 seq: e["seq"].as_u64().unwrap(),

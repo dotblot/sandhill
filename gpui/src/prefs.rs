@@ -1,6 +1,6 @@
-//! The app's own settings on this Mac (or Linux machine): what the Tauri
-//! app kept in the web view's local storage, such as starred models. A
-//! small JSON file; reading or writing it failing is never an error.
+//! The app's own settings on this Mac (or Linux machine), such as starred
+//! models. A small JSON file; reading or writing it failing is never an
+//! error.
 
 use std::path::PathBuf;
 
@@ -113,10 +113,9 @@ pub fn save_notebook_plots(on: bool) {
     write("notebookPlots", json!(on));
 }
 
-/// The Tauri app's data folder, where it keeps the list of servers; the
-/// GPUI app reads and writes the same list, so a server added in one shows
-/// in the other.
-fn tauri_data_dir() -> Option<PathBuf> {
+/// The app's data folder, named for its bundle id, where the list of
+/// servers is kept (where the earlier, Tauri app kept it too).
+fn data_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let base = if cfg!(target_os = "macos") {
         home.join("Library/Application Support")
@@ -130,14 +129,14 @@ fn tauri_data_dir() -> Option<PathBuf> {
 
 /// The servers the Start screen offers next to this Mac: ssh destinations.
 pub fn servers() -> Vec<String> {
-    tauri_data_dir()
+    data_dir()
         .and_then(|dir| std::fs::read_to_string(dir.join("servers.json")).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
 }
 
 pub fn save_servers(list: &[String]) -> Result<(), String> {
-    let dir = tauri_data_dir().ok_or("no home folder")?;
+    let dir = data_dir().ok_or("no home folder")?;
     std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     let bytes = serde_json::to_vec_pretty(list).map_err(|err| err.to_string())?;
     std::fs::write(dir.join("servers.json"), bytes)

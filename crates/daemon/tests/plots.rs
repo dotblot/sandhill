@@ -389,8 +389,8 @@ async fn plots_are_drawn_again_at_a_new_size() {
     }
 }
 
-/// The output a notebook shows: the first type of the app's order
-/// (`app/src/render/outputs.ts`) the bundle holds.
+/// The output a notebook shows: the first type of the app's order the
+/// bundle holds.
 const SHOWN_ORDER: &[&str] = &[
     "text/html",
     "application/vnd.plotly.v1+json",

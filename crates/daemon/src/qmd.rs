@@ -1,8 +1,8 @@
 //! The executable chunks of a Quarto (`.qmd`) or R Markdown (`.Rmd`)
 //! document: fenced blocks whose info string is in braces, like ```` ```{r} ````.
-//! The app finds them too (`app/src/model/qmd.ts`), and both must give a
-//! chunk the same id, since outputs are saved under it;
-//! `tests/fixtures/chunks.json` keeps the two in step.
+//! The app (`gpui/`) uses this module to find them too, so a chunk gets the
+//! same id in both, as outputs are saved under it; `tests/fixtures/chunks.json`
+//! holds the cases.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {

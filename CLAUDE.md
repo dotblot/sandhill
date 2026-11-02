@@ -4,11 +4,10 @@ Sandhill is a Mac-native IDE for R/Python bioinformatics. Read `docs/design.md`
 before making architectural changes; it records the decisions and why.
 
 ## Decisions that are settled
-- Mac app: moving from Tauri 2 (TypeScript UI in `app/`) to GPUI (Rust, in
-  `gpui/`), decided 2026-11-01 after a trial. New features go into `gpui/`;
-  `app/` gets fixes only until the GPUI app does everything it does, then it
-  is deleted. The GPUI app keeps the Tauri app's look, with every font size
-  2px larger. No Electron.
+- Mac app: GPUI (Rust, in `gpui/`), Sandhill.app with bundle id
+  `dev.sandhill.ide`. It replaced the Tauri 2 app (TypeScript UI in `app/`,
+  decided 2026-11-01, retired 2026-11-02; it is in the git history). It keeps
+  the Tauri app's look, with every font size 2px larger. No Electron.
 - The app reaches the daemon only through the wire protocol, by running
   `sandhilld attach --start` (later through ssh). It never opens notebooks
   or kernels itself, so local and remote work the same way.
@@ -30,23 +29,20 @@ before making architectural changes; it records the decisions and why.
   `cargo build` doesn't build it. Check it with `cargo fmt`, `cargo clippy
   --all-targets -- -D warnings` and `cargo test` inside `gpui/`. On Linux it
   needs `libxkbcommon-dev libxkbcommon-x11-dev libwebkit2gtk-4.1-dev` and X11.
-- Rust workspace at the repo root; crates live in `crates/`. The exception is
-  the Tauri app crate, `app/src-tauri`, which sits next to the UI in `app/src`
-  as Tauri expects. A plain `cargo build` skips it (it needs WebKitGTK on
-  Linux); `--workspace` includes it.
+- Rust workspace at the repo root; crates live in `crates/`. The app is not
+  part of it (see `gpui/` above).
 - Keep crates small and focused; prefer adding a module over growing `main.rs`.
 - Errors: `anyhow` in binaries, `thiserror` in libraries.
 - Every daemon feature gets an integration test that uses a real kernel.
   Tests skip (with a message) when a kernel isn't installed.
-- Output building exists twice, in the daemon (`crates/daemon/src/outputs.rs`)
-  and the UI (`app/src/model/outputs.ts`). Change both together, with a case
-  in `tests/fixtures/outputs.json`, which both test suites read. Finding
-  Quarto chunks and their ids does too (`crates/daemon/src/qmd.rs`,
-  `app/src/model/qmd.ts`, `tests/fixtures/chunks.json`).
+- Output building (`crates/daemon/src/outputs.rs`) and finding Quarto chunks
+  and their ids (`crates/daemon/src/qmd.rs`) live in the daemon crate, and
+  the app uses them from there. A change gets a case in
+  `tests/fixtures/outputs.json` or `tests/fixtures/chunks.json`.
 - Icons are drawn once, in `docs/design/ui/icons/build.py`, which writes the
-  SVGs and registry, the mockup's icon block and `app/src/ui/icons32.ts`. The
+  SVGs and registry (the app embeds them) and the mockup's icon block. The
   crane and the app icon sources come from `docs/design/ui/brand/build.py`;
-  then `npm run icon` in `app/`.
+  then `node gpui/assets/icon/make.mjs`.
 - Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` and
-  `cargo test --workspace` before committing, and `npm test` and
-  `npm run build` in `app/` when the UI changed.
+  `cargo test --workspace` before committing, and the `gpui/` checks above
+  when the app changed.

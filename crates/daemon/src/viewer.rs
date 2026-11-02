@@ -175,8 +175,7 @@ fn labelled(plain: &Value) -> Option<String> {
 }
 
 /// Whether a web address is on this machine (`localhost`, `127.0.0.1`), as
-/// an app's is, for the Viewer. `localPort` in `app/src/model/pages.ts`
-/// says the same.
+/// an app's is, for the Viewer.
 pub fn is_local(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("http://") else {
         return false;
