@@ -159,12 +159,27 @@ pub(crate) enum Split {
     Variables,
     /// Between the AI pane and the middle.
     Agents,
+    /// Above the Console, under the editor.
+    Console,
 }
 
+/// The tabs of the pane under the editor, as in the Tauri app.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RightTab {
+pub(crate) enum ConsoleTab {
     Console,
     Terminal,
+}
+
+/// The right column's top tabs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopTab {
+    Variables,
+}
+
+/// The right column's bottom tabs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BottomTab {
+    Plots,
     Viewer,
 }
 
@@ -202,7 +217,7 @@ pub struct Workbench {
     /// The notebook shown.
     pub(crate) open: Option<Open>,
     /// Notebooks open in other tabs.
-    others: Vec<Open>,
+    pub(crate) others: Vec<Open>,
     /// The tabs' files, in the order they were opened.
     pub(crate) tabs: Vec<String>,
     /// The Console's kernel when no notebook is open.
@@ -216,7 +231,14 @@ pub struct Workbench {
     pub(crate) console_input: Entity<EditorState>,
     pub(crate) console_scroll: ScrollHandle,
     pub(crate) vars: Vars,
-    pub(crate) right_tab: RightTab,
+    pub(crate) console_tab: ConsoleTab,
+    pub(crate) top_tab: TopTab,
+    pub(crate) bottom_tab: BottomTab,
+    /// The pane under the editor is shown (⌘J).
+    pub(crate) show_console: bool,
+    pub(crate) console_height: f32,
+    /// The Plots pane's history.
+    pub(crate) plot_history: crate::plots::History,
     pub(crate) terminal: Option<Entity<TerminalView>>,
     pub(crate) terminal_problem: Option<String>,
     terminal_starting: bool,
@@ -373,7 +395,12 @@ impl Workbench {
             console_input,
             console_scroll: ScrollHandle::new(),
             vars: Vars::default(),
-            right_tab: RightTab::Console,
+            console_tab: ConsoleTab::Console,
+            top_tab: TopTab::Variables,
+            bottom_tab: BottomTab::Plots,
+            show_console: true,
+            console_height: 260.,
+            plot_history: Default::default(),
             terminal: None,
             terminal_problem: None,
             terminal_starting: false,
@@ -630,7 +657,7 @@ impl Workbench {
                         this.project = Some(project.path);
                         this.read_folder(String::new(), cx);
                         this.problem = None;
-                        if this.right_tab == RightTab::Terminal {
+                        if this.console_tab == ConsoleTab::Terminal {
                             this.ensure_terminal(cx);
                         }
                     }
@@ -1315,7 +1342,8 @@ impl Workbench {
         let Some(open) = self.open.as_mut() else {
             return;
         };
-        self.right_tab = RightTab::Console;
+        self.console_tab = ConsoleTab::Console;
+        self.show_console = true;
         match &open.session {
             Session::Ready(_) => {
                 let path = open.notebook.path.clone();
@@ -1614,6 +1642,8 @@ impl Workbench {
                 }
             }
             EVENT_RUN_FINISHED => {
+                self.plots_run_finished(&event.session, &run_id, cx);
+                let run = self.runs.entry(run_id.clone()).or_default();
                 run.finished = true;
                 run.status = event.content["status"].as_str().map(str::to_string);
                 run.execution_count = event.content["execution_count"].as_u64();
@@ -1638,10 +1668,11 @@ impl Workbench {
                     let outputs = run.outputs.clone();
                     let page = outputs.iter().any(|o| matches!(show(o), Shown::Page(_)));
                     if page && for_viewer && active {
-                        self.right_tab = RightTab::Viewer;
+                        self.bottom_tab = BottomTab::Viewer;
                         self.viewer_index = None;
                     }
                     self.fetch_plots(&outputs, cx);
+                    self.plots_from_run(&event.session, &run_id, cx);
                 }
             }
         }
@@ -1731,9 +1762,15 @@ impl Workbench {
         cx.notify();
     }
 
-    pub(crate) fn show_tab(&mut self, tab: RightTab, window: &mut Window, cx: &mut Context<Self>) {
-        self.right_tab = tab;
-        if tab == RightTab::Terminal {
+    pub(crate) fn show_tab(
+        &mut self,
+        tab: ConsoleTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.console_tab = tab;
+        self.show_console = true;
+        if tab == ConsoleTab::Terminal {
             self.ensure_terminal(cx);
             if let Some(terminal) = &self.terminal {
                 let focus = terminal.read(cx).focus_handle();
@@ -1794,7 +1831,8 @@ impl Workbench {
                 }));
             }
         }
-        if self.right_tab == RightTab::Viewer
+        if self.show_right
+            && self.bottom_tab == BottomTab::Viewer
             && let Some((page, ..)) = self.viewer_page()
         {
             wanted.push(page);
@@ -1838,7 +1876,11 @@ impl Workbench {
         let remote = self.target != Target::Local;
         let near = self.open.as_ref().map(|o| o.notebook.path.clone());
         let in_notebook = wanted.len()
-            - usize::from(self.right_tab == RightTab::Viewer && self.viewer_page().is_some());
+            - usize::from(
+                self.show_right
+                    && self.bottom_tab == BottomTab::Viewer
+                    && self.viewer_page().is_some(),
+            );
         for (ix, page) in wanted.into_iter().enumerate() {
             let key = page.key();
             if self.pages.contains_key(&key) {
@@ -1949,7 +1991,7 @@ impl Workbench {
                             })
                         };
                         let view = cx.new(|cx| TerminalView::new(id, input, resize, cx));
-                        if this.right_tab == RightTab::Terminal {
+                        if this.console_tab == ConsoleTab::Terminal {
                             let focus = view.read(cx).focus_handle();
                             window.focus(&focus, cx);
                         }
@@ -1991,50 +2033,55 @@ impl Workbench {
 
     /// Starts loading the plots in `outputs` that aren't loaded yet.
     fn fetch_plots(&mut self, outputs: &[Value], cx: &mut Context<Self>) {
-        let near = self.open.as_ref().map(|o| o.notebook.path.clone());
         for output in outputs {
-            let Shown::Plot { mime, value } = show(output) else {
-                continue;
-            };
-            let key = plot_key(&value);
-            if self.plots.contains_key(&key) {
-                continue;
+            if let Shown::Plot { mime, value } = show(output) {
+                self.fetch_image(&mime, &value, cx);
             }
-            let format = match mime.as_str() {
-                "image/png" => ImageFormat::Png,
-                "image/jpeg" => ImageFormat::Jpeg,
-                "image/gif" => ImageFormat::Gif,
-                _ => ImageFormat::Svg,
-            };
-            let text = match (&value, self.daemon()) {
-                (Value::String(text), _) => {
-                    let text = text.clone();
-                    Box::pin(async move { anyhow::Ok(text) })
-                        as std::pin::Pin<Box<dyn Future<Output = anyhow::Result<String>>>>
-                }
-                (blob, Some(daemon)) if blob[BLOB_KEY].is_string() => {
-                    let fetch = daemon.call::<Blob>(Call::GetBlob {
-                        hash: blob[BLOB_KEY].as_str().unwrap_or_default().to_string(),
-                        near: near.clone(),
-                    });
-                    Box::pin(async move { Ok(fetch.await?.data) })
-                }
-                _ => continue,
-            };
-            self.plots.insert(key.clone(), Plot::Loading);
-            cx.spawn(async move |this, cx| {
-                let plot = match text.await.and_then(|text| decode(format, text)) {
-                    Ok(bytes) => Plot::Ready(Arc::new(Image::from_bytes(format, bytes))),
-                    Err(err) => Plot::Failed(format!("{err:#}")),
-                };
-                this.update(cx, |this, cx| {
-                    this.plots.insert(key, plot);
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
         }
+    }
+
+    /// Reads an image (inline, or a blob from the daemon) into the plot
+    /// cache, under [`plot_key`], unless it is there.
+    pub(crate) fn fetch_image(&mut self, mime: &str, value: &Value, cx: &mut Context<Self>) {
+        let near = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let key = plot_key(value);
+        if self.plots.contains_key(&key) {
+            return;
+        }
+        let format = match mime {
+            "image/png" => ImageFormat::Png,
+            "image/jpeg" => ImageFormat::Jpeg,
+            "image/gif" => ImageFormat::Gif,
+            _ => ImageFormat::Svg,
+        };
+        let text = match (value, self.daemon()) {
+            (Value::String(text), _) => {
+                let text = text.clone();
+                Box::pin(async move { anyhow::Ok(text) })
+                    as std::pin::Pin<Box<dyn Future<Output = anyhow::Result<String>>>>
+            }
+            (blob, Some(daemon)) if blob[BLOB_KEY].is_string() => {
+                let fetch = daemon.call::<Blob>(Call::GetBlob {
+                    hash: blob[BLOB_KEY].as_str().unwrap_or_default().to_string(),
+                    near,
+                });
+                Box::pin(async move { Ok(fetch.await?.data) })
+            }
+            _ => return,
+        };
+        self.plots.insert(key.clone(), Plot::Loading);
+        cx.spawn(async move |this, cx| {
+            let plot = match text.await.and_then(|text| decode(format, text)) {
+                Ok(bytes) => Plot::Ready(Arc::new(Image::from_bytes(format, bytes))),
+                Err(err) => Plot::Failed(format!("{err:#}")),
+            };
+            this.update(cx, |this, cx| {
+                this.plots.insert(key, plot);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 

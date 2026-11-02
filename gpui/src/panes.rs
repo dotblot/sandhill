@@ -1,0 +1,146 @@
+//! Where the panes sit, as in the Tauri app (`App.tsx`): the Console,
+//! Terminal and Jobs under the editor; the right column's top tabs
+//! (Variables, Help, Packages) over its bottom ones (Plots, Viewer).
+
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
+
+use crate::look::{Palette, capsule, icon_button, pane};
+use crate::workbench::{BottomTab, ConsoleTab, Split, TopTab, Workbench};
+
+impl Workbench {
+    /// The pane under the editor: the Console or the Terminal.
+    pub(crate) fn render_console_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        let tab =
+            |id: &'static str, label: &'static str, which: ConsoleTab, cx: &mut Context<Self>| {
+                Self::tab(id, None, label, self.console_tab == which, &p).on_click(
+                    cx.listener(move |this, _, window, cx| this.show_tab(which, window, cx)),
+                )
+            };
+        let body: AnyElement = match self.console_tab {
+            ConsoleTab::Console => self.render_console(cx),
+            ConsoleTab::Terminal => self.render_terminal(cx),
+        };
+        pane(&p)
+            .h(px(self.console_height))
+            .flex_none()
+            .child(
+                Self::strip(&p)
+                    .child(
+                        capsule(&p, 22.)
+                            .gap(px(1.))
+                            .child(tab("tab-console", "Console", ConsoleTab::Console, cx))
+                            .child(tab("tab-terminal", "Terminal", ConsoleTab::Terminal, cx)),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        icon_button("hide-console", "close", &p, false).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.show_console = false;
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(body))
+    }
+
+    /// The right column: Variables (and later Help, Packages) over Plots
+    /// and the Viewer.
+    pub(crate) fn render_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        let top_tab =
+            |id: &'static str, label: &'static str, which: TopTab, cx: &mut Context<Self>| {
+                Self::tab(id, None, label, self.top_tab == which, &p).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.top_tab = which;
+                        cx.notify();
+                    },
+                ))
+            };
+        let bottom_tab =
+            |id: &'static str, label: &'static str, which: BottomTab, cx: &mut Context<Self>| {
+                Self::tab(id, None, label, self.bottom_tab == which, &p).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.bottom_tab = which;
+                        cx.notify();
+                    },
+                ))
+            };
+        let (top, refresh): (AnyElement, Option<AnyElement>) = match self.top_tab {
+            TopTab::Variables => (
+                self.render_variables(cx),
+                Some(
+                    icon_button("refresh-variables", "refresh", &p, false)
+                        .when(self.active_session().is_none(), |d| d.opacity(0.35))
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh_variables(cx)))
+                        .into_any_element(),
+                ),
+            ),
+        };
+        let (bottom, tools): (AnyElement, Vec<AnyElement>) = match self.bottom_tab {
+            BottomTab::Plots => (self.render_plots(cx), self.plot_tools(cx)),
+            BottomTab::Viewer => (self.render_viewer(cx), Vec::new()),
+        };
+        v_flex()
+            .w(px(self.right_width))
+            .h_full()
+            // Gives way to the middle in a narrow window.
+            .flex_shrink(1.)
+            .min_w(px(280.))
+            .child(
+                pane(&p)
+                    .h(px(self.variables_height))
+                    .flex_none()
+                    .child(
+                        Self::strip(&p)
+                            .child(capsule(&p, 22.).gap(px(1.)).child(top_tab(
+                                "tab-variables",
+                                "Variables",
+                                TopTab::Variables,
+                                cx,
+                            )))
+                            .when(
+                                self.top_tab == TopTab::Variables && self.vars.loading,
+                                |d| {
+                                    d.child(
+                                        div()
+                                            .pl_1()
+                                            .text_size(px(crate::look::SMALL))
+                                            .text_color(p.faint)
+                                            .child("updating…"),
+                                    )
+                                },
+                            )
+                            .child(div().flex_1())
+                            .children(refresh),
+                    )
+                    .child(div().flex_1().min_h_0().child(top)),
+            )
+            .child(self.splitter(Split::Variables, cx))
+            .child(
+                pane(&p)
+                    .flex_1()
+                    .min_h(px(120.))
+                    .child(
+                        Self::strip(&p)
+                            .child(
+                                capsule(&p, 22.)
+                                    .gap(px(1.))
+                                    .child(bottom_tab("tab-plots", "Plots", BottomTab::Plots, cx))
+                                    .child(bottom_tab(
+                                        "tab-viewer",
+                                        "Viewer",
+                                        BottomTab::Viewer,
+                                        cx,
+                                    )),
+                            )
+                            .child(div().flex_1())
+                            .child(h_flex().gap(px(1.)).children(tools)),
+                    )
+                    .child(div().flex_1().min_h_0().child(bottom)),
+            )
+    }
+}
