@@ -22,6 +22,8 @@ mod git_diff;
 mod git_log;
 mod git_pane;
 mod help;
+mod import_dialog;
+mod imports;
 mod jobs;
 mod look;
 mod notebook;
@@ -30,11 +32,14 @@ mod pages;
 mod panes;
 mod plots;
 mod prefs;
+mod project_settings;
 mod shown;
 mod statements;
+mod table;
 mod terminal;
 mod tree;
 mod view;
+mod viewer;
 mod workbench;
 
 use std::sync::Arc;
@@ -53,7 +58,8 @@ actions!(
         RunLine,
         RunAll,
         Interrupt,
-        ToggleConsole
+        ToggleConsole,
+        Preview
     ]
 );
 
@@ -109,17 +115,26 @@ fn main() -> anyhow::Result<()> {
             look::install(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             register_r();
-            let (save, run_line, run_all, interrupt, console) = if cfg!(target_os = "macos") {
-                ("cmd-s", "cmd-enter", "cmd-shift-enter", "cmd-.", "cmd-j")
-            } else {
-                (
-                    "ctrl-s",
-                    "ctrl-enter",
-                    "ctrl-shift-enter",
-                    "ctrl-.",
-                    "ctrl-j",
-                )
-            };
+            let (save, run_line, run_all, interrupt, console, preview) =
+                if cfg!(target_os = "macos") {
+                    (
+                        "cmd-s",
+                        "cmd-enter",
+                        "cmd-shift-enter",
+                        "cmd-.",
+                        "cmd-j",
+                        "cmd-shift-k",
+                    )
+                } else {
+                    (
+                        "ctrl-s",
+                        "ctrl-enter",
+                        "ctrl-shift-enter",
+                        "ctrl-.",
+                        "ctrl-j",
+                        "ctrl-shift-k",
+                    )
+                };
             cx.bind_keys([
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new(save, Save, None),
@@ -132,6 +147,7 @@ fn main() -> anyhow::Result<()> {
                 KeyBinding::new(run_all, RunAll, None),
                 KeyBinding::new(interrupt, Interrupt, None),
                 KeyBinding::new(console, ToggleConsole, None),
+                KeyBinding::new(preview, Preview, None),
             ]);
             cx.set_menus(vec![Menu {
                 name: "Sandhill".into(),

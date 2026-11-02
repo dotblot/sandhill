@@ -260,6 +260,8 @@ pub struct Workbench {
     parked: Vec<(String, Entity<PageView>)>,
     /// The Viewer's page, counting from the oldest; the latest when none.
     pub(crate) viewer_index: Option<usize>,
+    /// The Viewer's own pages: previews and HTML files.
+    pub(crate) viewer_extra: Vec<crate::viewer::Extra>,
     /// The notebook's scrolling, and where pages under its cells send the
     /// wheel's turns they don't use.
     pub(crate) notebook_scroll: ScrollHandle,
@@ -270,6 +272,14 @@ pub struct Workbench {
     pub(crate) explorer_shown: bool,
     /// The latest problem, shown at the bottom.
     pub(crate) problem: Option<String>,
+    /// A short note in the status bar, such as "Saved in …".
+    pub(crate) notice: Option<String>,
+    /// The project's settings (`.sandhill/project.toml`) and their dialog.
+    pub(crate) setup: crate::project_settings::Setup,
+    pub(crate) settings_env: Entity<InputState>,
+    /// Variables' Import menu and dialog.
+    pub(crate) import: crate::import_dialog::Import,
+    pub(crate) import_name: Entity<InputState>,
     /// The files pane is shown (the title bar's first button).
     pub(crate) show_files: bool,
     /// The right column is shown.
@@ -323,6 +333,9 @@ impl Workbench {
         let (packages, package_subscriptions) = crate::packages::new_packages(window, cx);
         let (jobs, job_subscriptions) = crate::jobs::new_jobs(window, cx);
         let (git, git_subscriptions) = crate::git_pane::new_git(window, cx);
+        let (settings_env, settings_subscription) =
+            crate::project_settings::new_env_input(window, cx);
+        let (import_name, import_subscription) = crate::import_dialog::new_import_input(window, cx);
         let mut subscriptions = vec![
             cx.subscribe(&host_input, |this, input, event: &InputEvent, cx| {
                 // Clicking away puts the machine's tab back.
@@ -370,6 +383,8 @@ impl Workbench {
         subscriptions.extend(package_subscriptions);
         subscriptions.extend(job_subscriptions);
         subscriptions.extend(git_subscriptions);
+        subscriptions.push(settings_subscription);
+        subscriptions.push(import_subscription);
         let (page_wheel, mut wheel) = tokio::sync::mpsc::unbounded_channel::<f32>();
         cx.spawn(async move |this, cx| {
             while let Some(px) = wheel.recv().await {
@@ -432,11 +447,17 @@ impl Workbench {
             pages: HashMap::new(),
             parked: Vec::new(),
             viewer_index: None,
+            viewer_extra: Vec::new(),
             notebook_scroll: ScrollHandle::new(),
             page_wheel,
             explorer: None,
             explorer_shown: false,
             problem: None,
+            notice: None,
+            setup: Default::default(),
+            settings_env,
+            import: Default::default(),
+            import_name,
             show_files: true,
             show_right: true,
             show_agents: true,
@@ -490,6 +511,8 @@ impl Workbench {
         self.vars = Vars::default();
         self.forget_jobs();
         self.forget_git();
+        self.viewer_extra.clear();
+        self.setup = Default::default();
         self.terminal = None;
         self.terminal_problem = None;
         self.terminal_starting = false;
@@ -682,6 +705,7 @@ impl Workbench {
                             Some(cx.new(|cx| Agents::new(daemon, path, workbench, window, cx)));
                         this.project = Some(project.path);
                         this.read_folder(String::new(), cx);
+                        this.read_setup(true, window, cx);
                         this.problem = None;
                         if this.console_tab == ConsoleTab::Terminal {
                             this.ensure_terminal(cx);
@@ -760,6 +784,8 @@ impl Workbench {
         self.terminal = None;
         self.forget_jobs();
         self.forget_git();
+        self.viewer_extra.clear();
+        self.setup = Default::default();
         cx.notify();
     }
 
@@ -819,6 +845,10 @@ impl Workbench {
         let path = format!("{project}/{rel}");
         if self.open_at(&path).is_some() {
             self.show_file_tab(&path, cx);
+            return;
+        }
+        if crate::viewer::is_html(&path) {
+            self.open_html(path, rel, cx);
             return;
         }
         let Some(format) = notebook::format_of(&path) else {
@@ -942,7 +972,17 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let kernel = notebook::pick_kernel(&nb, &self.kernels);
+        // The project's kernel for the document's language comes first, as
+        // in the Tauri app; then the one the document names.
+        let kernel = self
+            .project_kernel(nb.language.as_deref())
+            .filter(|k| {
+                self.kernels
+                    .iter()
+                    .chain(&self.setup.kernels)
+                    .any(|s| &s.name == k)
+            })
+            .or_else(|| notebook::pick_kernel(&nb, &self.kernels));
         let (editors, subscriptions) = self.cell_editors(&nb, window, cx);
         let file_outputs: Vec<Value> = nb.cells.iter().flat_map(|c| c.outputs.clone()).collect();
         self.open = Some(Open {
@@ -1438,9 +1478,13 @@ impl Workbench {
             Some(_) => "No R kernel is installed",
             None => "No kernel is installed",
         };
+        let documents_in_project = self.documents_in_project();
         let (kernel, session, cwd) = match self.open.as_mut() {
             // Scripts run in the project's folder, as in RStudio.
             Some(open) if open.is_script() => {
+                (open.kernel.clone(), &mut open.session, project.clone())
+            }
+            Some(open) if documents_in_project => {
                 (open.kernel.clone(), &mut open.session, project.clone())
             }
             Some(open) => (
@@ -1660,6 +1704,15 @@ impl Workbench {
         if active && !event.msg_type.starts_with("status") {
             self.console_scroll.scroll_to_bottom();
         }
+        match event.msg_type.as_str() {
+            EVENT_RUN_STARTED if !event.content["quiet"].as_bool().unwrap_or(false) => {
+                self.explorer_run(&event.session, true, cx)
+            }
+            EVENT_RUN_FINISHED if !self.runs.get(&run_id).is_some_and(|r| r.quiet) => {
+                self.explorer_run(&event.session, false, cx)
+            }
+            _ => {}
+        }
         let run = self.runs.entry(run_id.clone()).or_default();
         match event.msg_type.as_str() {
             EVENT_RUN_STARTED => {
@@ -1821,32 +1874,25 @@ impl Workbench {
         cx.notify();
     }
 
-    /// The Viewer's pages: those the Console's runs (and scripts') showed,
-    /// oldest first, with their titles. A notebook's pages stay under its
-    /// cells.
-    pub(crate) fn viewer_pages(&self) -> Vec<(Page, String)> {
+    /// The pages the Console's runs (and scripts') showed, oldest first,
+    /// with their titles.
+    pub(crate) fn run_pages(&self) -> Vec<crate::viewer::ViewerItem> {
         self.console
             .iter()
             .filter_map(|id| self.runs.get(id))
             .filter(|run| run.cell.as_ref().is_none_or(|(file, _)| is_script(file)))
             .flat_map(|run| run.outputs.iter())
             .filter_map(|output| match show(output) {
-                Shown::Page(page) => Some((page, page_title(output))),
+                Shown::Page(page) => Some(crate::viewer::ViewerItem {
+                    page: Some(page),
+                    title: page_title(output),
+                    note: None,
+                    extra: None,
+                    stoppable: false,
+                }),
                 _ => None,
             })
             .collect()
-    }
-
-    /// The Viewer's page now, with its place and how many there are.
-    pub(crate) fn viewer_page(&self) -> Option<(Page, String, usize, usize)> {
-        let pages = self.viewer_pages();
-        let count = pages.len();
-        let ix = self
-            .viewer_index
-            .unwrap_or(count.checked_sub(1)?)
-            .min(count - 1);
-        let (page, title) = pages.into_iter().nth(ix)?;
-        Some((page, title, ix, count))
     }
 
     /// Keeps a web view for each page about to be drawn, and drops the rest:
@@ -1872,12 +1918,12 @@ impl Workbench {
                 }));
             }
         }
-        if self.show_right
-            && self.bottom_tab == BottomTab::Viewer
-            && let Some((page, ..)) = self.viewer_page()
-        {
-            wanted.push(page);
-        }
+        let viewer_page = (self.show_right && self.bottom_tab == BottomTab::Viewer)
+            .then(|| self.viewer_page())
+            .flatten()
+            .and_then(|(item, ..)| item.page);
+        let viewer_shown = viewer_page.is_some();
+        wanted.extend(viewer_page);
         let keys: HashSet<String> = wanted.iter().map(Page::key).collect();
         // Pages no longer drawn are parked, hidden, and come back when they
         // are drawn again (a cell run again with the same output). Dropping
@@ -1916,12 +1962,7 @@ impl Workbench {
         }
         let remote = self.target != Target::Local;
         let near = self.open.as_ref().map(|o| o.notebook.path.clone());
-        let in_notebook = wanted.len()
-            - usize::from(
-                self.show_right
-                    && self.bottom_tab == BottomTab::Viewer
-                    && self.viewer_page().is_some(),
-            );
+        let in_notebook = wanted.len() - usize::from(viewer_shown);
         for (ix, page) in wanted.into_iter().enumerate() {
             let key = page.key();
             if self.pages.contains_key(&key) {
@@ -1942,14 +1983,35 @@ impl Workbench {
 
     /// Opens a data frame or matrix from the Variables pane in the Data
     /// Explorer.
-    pub(crate) fn open_explorer(&mut self, path: Vec<String>, cx: &mut Context<Self>) {
+    pub(crate) fn open_explorer(
+        &mut self,
+        path: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(daemon), Some(session)) = (self.daemon(), self.vars.session.clone()) else {
             return;
         };
-        self.explorer = Some(cx.new(|cx| Explorer::new(daemon, session, path, cx)));
+        let language = self
+            .active_kernel()
+            .and_then(|k| self.kernels.iter().find(|s| s.name == k))
+            .map_or_else(|| "python".to_string(), |s| s.language.to_ascii_lowercase());
+        let project = self.project.clone();
+        self.explorer =
+            Some(cx.new(|cx| Explorer::new(daemon, session, language, path, project, window, cx)));
         self.explorer_shown = true;
         self.diff_shown = false;
         cx.notify();
+    }
+
+    /// Code starts or ends in a session: the Data Explorer waits for it,
+    /// then reads its table again.
+    fn explorer_run(&mut self, session: &str, busy: bool, cx: &mut Context<Self>) {
+        if let Some(explorer) = &self.explorer
+            && explorer.read(cx).session() == session
+        {
+            explorer.update(cx, |e, cx| e.set_busy(busy, cx));
+        }
     }
 
     pub(crate) fn close_explorer(&mut self, cx: &mut Context<Self>) {

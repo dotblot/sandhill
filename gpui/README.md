@@ -223,6 +223,37 @@ Not yet: more than one diff tab at a time, dragging to pick lines, the
 squash and reorder (rewrite) dialog, and pushing or pulling with a password
 wasn't tried here (no remote that asks for one).
 
+## Step 5: the hard parts
+
+- **5a** (`explorer.rs`, `table.rs`): the Data Explorer as in the Tauri
+  app. The columns are listed at the side with a small histogram or bar
+  chart each, and the picked column's range, middle, commonest values and
+  missing count under them; clicking a value filters to it. Filters (Add
+  filter: a column, a condition, its values, or ticks for a category's
+  values) show as chips to change or remove. Shift-click sorts by another
+  column too. Copy as code writes the R or Python that does what the view
+  does; Export CSV saves the rows shown, asking before it replaces a file.
+  The table waits while code runs in its session and is read again after.
+- **5b** (`daemon.rs`, `pages.rs`, `viewer.rs`): pages on a server's ports
+  (Shiny apps, Quarto previews, the daemon's page server) come through the
+  daemon's own connection, as `ssh -L` would, with no second login. Preview
+  (⇧⌘K) above a `.qmd` or `.Rmd` runs `quarto preview` on the daemon's
+  machine and shows it in the Viewer, rendered again on each save; Stop
+  ends it. HTML files open in the Viewer from the file tree.
+- **5c** (`project_settings.rs`, `import_dialog.rs`, `imports.rs`): the
+  gear in the title bar opens Project settings (the R and Python the
+  project runs in, where notebooks run, env files, where agent
+  conversations are kept), saved in `.sandhill/project.toml`; a project
+  without saved settings asks once. New notebooks follow the project's
+  kernel and folder. Variables' Import menu reads a dataset into the
+  session (text, Excel, SPSS/SAS/Stata, R data, Parquet, AnnData, 10x
+  output) after showing the code it will run.
+
+Not yet: keeping a table's filters and sorting with the project for next
+time, and the Tauri app's ☰ menu (the gear stands in for it until step 6). Tried here without a server (the tunnel is checked against the
+local daemon in `cargo test`) and without Quarto or R installed, so a real
+preview and R's imports weren't seen.
+
 ## Running it
 
 ```sh
