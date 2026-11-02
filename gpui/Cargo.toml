@@ -31,6 +31,8 @@ gpui-webview = { version = "=0.8.1", features = ["gpui-fast"] }
 wry = { package = "lb-wry", version = "0.53.3" }
 # The icons drawn in docs/design/ui/icons, put into the binary.
 rust-embed = { version = "8", features = ["include-exclude"] }
+# Times in the AI pane's history, in local time.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

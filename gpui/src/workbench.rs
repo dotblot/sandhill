@@ -20,6 +20,7 @@ use sandhill_proto::{
 use serde_json::Value;
 use tokio::runtime::Runtime;
 
+use crate::agents::Agents;
 use crate::daemon::{Daemon, Streams};
 use crate::explorer::Explorer;
 use crate::notebook::{self, CellKind, Format, Notebook};
@@ -104,10 +105,37 @@ pub(crate) struct Open {
     next_slot: usize,
     /// A script's code waiting for the kernel to start.
     queued: Vec<String>,
-    _subscriptions: Vec<Subscription>,
+    /// The cell last edited or clicked into: where the user is.
+    pub current: Option<usize>,
+    pub(crate) _subscriptions: Vec<Subscription>,
 }
 
 impl Open {
+    /// The code cells as the # menu names them, with their text as edited.
+    pub(crate) fn code_cells(&self, cx: &App) -> Vec<crate::composer::DocCell> {
+        let mut chunks = 0;
+        self.notebook
+            .cells
+            .iter()
+            .zip(&self.editors)
+            .enumerate()
+            .filter(|(_, (cell, _))| cell.kind == CellKind::Code)
+            .map(|(i, (cell, editor))| {
+                chunks += 1;
+                let name = match self.notebook.format {
+                    Format::Ipynb => format!("cell {}", i + 1),
+                    _ if cell.id.starts_with("chunk-") => format!("chunk {chunks}"),
+                    _ => cell.id.clone(),
+                };
+                crate::composer::DocCell {
+                    id: cell.id.clone(),
+                    name,
+                    code: editor.read(cx).value().to_string(),
+                }
+            })
+            .collect()
+    }
+
     pub(crate) fn is_script(&self) -> bool {
         self.notebook.format == Format::Script
     }
@@ -129,6 +157,8 @@ pub(crate) enum Split {
     Right,
     /// Above Variables.
     Variables,
+    /// Between the AI pane and the middle.
+    Agents,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -154,6 +184,11 @@ pub struct Workbench {
     rt: Arc<Runtime>,
     /// Counts connections, so a late reply for an old one is dropped.
     generation: u64,
+    /// This window, for agents' edits that arrive from the daemon.
+    window_handle: AnyWindowHandle,
+    /// Where the user is, as last told the daemon (see `agent_edits`).
+    pub(crate) focus_sent: Option<sandhill_proto::Focus>,
+    pub(crate) focus_generation: u64,
     pub(crate) target: Target,
     pub(crate) link: Link,
     pub(crate) about: Option<PingReply>,
@@ -207,6 +242,10 @@ pub struct Workbench {
     pub(crate) show_files: bool,
     /// The right column is shown.
     pub(crate) show_right: bool,
+    /// The AI pane, between the files and the middle.
+    pub(crate) show_agents: bool,
+    pub(crate) agents: Option<Entity<Agents>>,
+    pub(crate) agents_width: f32,
     /// Pane sizes, set by dragging the gaps between them.
     pub(crate) files_width: f32,
     pub(crate) right_width: f32,
@@ -311,6 +350,9 @@ impl Workbench {
         let mut this = Workbench {
             rt,
             generation: 0,
+            window_handle: window.window_handle(),
+            focus_sent: None,
+            focus_generation: 0,
             target: target.clone(),
             link: Link::Connecting,
             about: None,
@@ -346,6 +388,9 @@ impl Workbench {
             problem: None,
             show_files: true,
             show_right: true,
+            show_agents: true,
+            agents: None,
+            agents_width: 420.,
             files_width: 240.,
             right_width: 460.,
             variables_height: 250.,
@@ -382,6 +427,7 @@ impl Workbench {
         self.kernels.clear();
         self.recent.clear();
         self.project = None;
+        self.agents = None;
         self.tree = Tree::default();
         self.open = None;
         self.others.clear();
@@ -396,6 +442,8 @@ impl Workbench {
         self.terminal_starting = false;
         self.problem = None;
         let connect = Daemon::connect(self.rt.clone(), target);
+        let window_handle = self.window_handle;
+        self.focus_sent = None;
         cx.spawn(async move |this, cx| {
             let result = connect.await;
             let streams = this
@@ -412,10 +460,29 @@ impl Workbench {
             let Some(Streams {
                 mut events,
                 mut terminals,
+                mut requests,
             }) = streams
             else {
                 return;
             };
+            let request_this = this.clone();
+            let handle = window_handle;
+            cx.spawn(async move |cx| {
+                while let Some(request) = requests.recv().await {
+                    let this = request_this.clone();
+                    let alive = cx.update_window(handle, |_, window, cx| {
+                        this.update(cx, |this, cx| {
+                            if this.generation == generation {
+                                this.on_request(request, window, cx)
+                            }
+                        })
+                    });
+                    if !matches!(alive, Ok(Ok(()))) {
+                        break;
+                    }
+                }
+            })
+            .detach();
             let terminal_this = this.clone();
             cx.spawn(async move |cx| {
                 while let Some(event) = terminals.recv().await {
@@ -495,6 +562,15 @@ impl Workbench {
         Some(streams)
     }
 
+    /// The code cells of a document open in a tab, as edited there.
+    pub(crate) fn open_cells(&self, path: &str, cx: &App) -> Option<Vec<crate::composer::DocCell>> {
+        self.open
+            .iter()
+            .chain(&self.others)
+            .find(|o| o.notebook.path == path)
+            .map(|o| o.code_cells(cx))
+    }
+
     pub(crate) fn choose_project(&mut self, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -539,13 +615,18 @@ impl Workbench {
         let opened = daemon.call::<ProjectInfo>(Call::OpenProject { path: path.clone() });
         cx.spawn(async move |this, cx| {
             let opened = opened.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match opened {
                     Ok(project) if !project.exists => {
                         this.problem = Some(format!("{} doesn't exist", project.path))
                     }
                     Ok(project) => {
                         this.close_project(cx);
+                        let daemon = daemon.clone();
+                        let path = project.path.clone();
+                        let workbench = cx.entity().downgrade();
+                        this.agents =
+                            Some(cx.new(|cx| Agents::new(daemon, path, workbench, window, cx)));
                         this.project = Some(project.path);
                         this.read_folder(String::new(), cx);
                         this.problem = None;
@@ -621,6 +702,7 @@ impl Workbench {
         self.explorer = None;
         self.explorer_shown = false;
         self.project = None;
+        self.agents = None;
         self.tree = Tree::default();
         self.terminal = None;
         cx.notify();
@@ -734,19 +816,18 @@ impl Workbench {
         .detach();
     }
 
-    fn show_notebook(
+    /// An editor for each cell of a document, and what follows their edits.
+    pub(crate) fn cell_editors(
         &mut self,
-        nb: Notebook,
-        mtime_ms: i64,
+        nb: &Notebook,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let kernel = notebook::pick_kernel(&nb, &self.kernels);
+    ) -> (Vec<Entity<EditorState>>, Vec<Subscription>) {
         let code_language = editor_language(nb.language.as_deref());
         let mut subscriptions = Vec::new();
         let path = nb.path.clone();
         let script = nb.format == Format::Script;
-        let editors = nb
+        let editors: Vec<Entity<EditorState>> = nb
             .cells
             .iter()
             .enumerate()
@@ -794,6 +875,18 @@ impl Workbench {
                 editor
             })
             .collect();
+        (editors, subscriptions)
+    }
+
+    fn show_notebook(
+        &mut self,
+        nb: Notebook,
+        mtime_ms: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kernel = notebook::pick_kernel(&nb, &self.kernels);
+        let (editors, subscriptions) = self.cell_editors(&nb, window, cx);
         let file_outputs: Vec<Value> = nb.cells.iter().flat_map(|c| c.outputs.clone()).collect();
         self.open = Some(Open {
             notebook: nb,
@@ -809,6 +902,7 @@ impl Workbench {
             editing: HashSet::new(),
             next_slot: 0,
             queued: Vec::new(),
+            current: None,
             _subscriptions: subscriptions,
         });
         self.problem = None;
@@ -1217,7 +1311,7 @@ impl Workbench {
 
     /// Runs code from the shown script in its kernel, starting it if needed.
     /// The runs show in the Console.
-    fn run_script(&mut self, code: String, cx: &mut Context<Self>) {
+    pub(crate) fn run_script(&mut self, code: String, cx: &mut Context<Self>) {
         let Some(open) = self.open.as_mut() else {
             return;
         };
@@ -1871,6 +1965,14 @@ impl Workbench {
     }
 
     fn on_terminal_event(&mut self, event: TerminalEvent, cx: &mut Context<Self>) {
+        if let Some(agents) = self.agents.clone()
+            && agents.read(cx).owns(&event.terminal)
+        {
+            agents.update(cx, |agents, cx| agents.on_terminal_event(event, cx));
+            // The title bar's dot shows an agent waiting.
+            cx.notify();
+            return;
+        }
         let Some(view) = self.terminal.clone() else {
             return;
         };

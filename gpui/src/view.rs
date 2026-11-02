@@ -36,6 +36,7 @@ const PAGE_HEIGHT: f32 = 420.;
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.report_focus(window, cx);
         self.sync_pages(window, cx);
         let p = *Palette::get(cx);
         wall(&p)
@@ -79,7 +80,28 @@ impl Render for Workbench {
                         d.child(self.render_files(cx))
                             .child(self.splitter(Split::Files, cx))
                     })
-                    .child(self.render_notebook(window, cx))
+                    .when_some(
+                        self.agents.clone().filter(|_| self.show_agents),
+                        |d, agents| {
+                            d.child(
+                                div()
+                                    .w(px(self.agents_width))
+                                    .flex_shrink(1.)
+                                    .min_w(px(300.))
+                                    .h_full()
+                                    .child(agents),
+                            )
+                            .child(self.splitter(Split::Agents, cx))
+                        },
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(320.))
+                            .h_full()
+                            .flex()
+                            .child(self.render_notebook(window, cx)),
+                    )
                     .when(self.show_right, |d| {
                         d.child(self.splitter(Split::Right, cx))
                             .child(self.render_right(cx))
@@ -155,18 +177,32 @@ impl Workbench {
         let (width, height) = (f32::from(window.width), f32::from(window.height));
         // The middle keeps at least this much room.
         let middle = 360.;
+        let agents = if self.show_agents && self.agents.is_some() {
+            self.agents_width
+        } else {
+            0.
+        };
+        let files = if self.show_files {
+            self.files_width
+        } else {
+            0.
+        };
+        let right = if self.show_right {
+            self.right_width
+        } else {
+            0.
+        };
         match split {
             Split::Files => {
-                let most = (width - self.right_width - middle).max(160.);
+                let most = (width - right - agents - middle).max(160.);
                 self.files_width = x.clamp(160., most.min(560.));
             }
+            Split::Agents => {
+                let most = (width - files - right - middle).max(300.);
+                self.agents_width = (x - files - GAP).clamp(300., most.min(900.));
+            }
             Split::Right => {
-                let files = if self.show_files {
-                    self.files_width
-                } else {
-                    0.
-                };
-                let most = (width - files - middle).max(280.);
+                let most = (width - files - agents - middle).max(280.);
                 self.right_width = (width - x - GAP).clamp(280., most);
             }
             Split::Variables => {
@@ -281,6 +317,28 @@ impl Workbench {
                                         cx.notify();
                                     })),
                             )
+                            .child({
+                                let waiting = self
+                                    .agents
+                                    .as_ref()
+                                    .is_some_and(|a| a.read(cx).any_waiting());
+                                icon_button("toggle-agents", "chat", &p, true)
+                                    .relative()
+                                    .when(self.show_agents, |d| d.text_color(p.text))
+                                    .when(waiting, |d| {
+                                        d.child(
+                                            dot(p.accent)
+                                                .size(px(6.))
+                                                .absolute()
+                                                .top(px(2.))
+                                                .right(px(5.)),
+                                        )
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_agents = !this.show_agents;
+                                        cx.notify();
+                                    }))
+                            })
                             .child(
                                 icon_button("toggle-right", "sidebar.right", &p, true)
                                     .when(self.show_right, |d| d.text_color(p.text))
@@ -494,7 +552,7 @@ impl Workbench {
     }
 
     /// A pane's tab strip: its tabs in a capsule, then anything else.
-    fn strip(p: &Palette) -> Div {
+    pub(crate) fn strip(p: &Palette) -> Div {
         h_flex()
             .flex_none()
             .h(px(look::STRIP))
@@ -506,7 +564,7 @@ impl Workbench {
     }
 
     /// One tab in a strip's capsule.
-    fn tab(
+    pub(crate) fn tab(
         id: impl Into<ElementId>,
         leading: Option<AnyElement>,
         label: impl Into<SharedString>,
@@ -1218,7 +1276,9 @@ impl Workbench {
         v_flex()
             .w(px(self.right_width))
             .h_full()
-            .flex_none()
+            // Gives way to the middle in a narrow window.
+            .flex_shrink(1.)
+            .min_w(px(280.))
             .child(
                 pane(&p)
                     .flex_1()

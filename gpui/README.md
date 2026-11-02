@@ -133,6 +133,37 @@ From here on the work follows the porting plan (step 1: look and layout).
   formatted again. A Quarto document's prose stays text, as in the Tauri app.
 - In a notebook, ⌘↵ runs the cell and stays on it.
 
+## Step 2: Agents
+
+The AI pane, as the Tauri app has it (`AgentsPane.tsx`, `AgentChat.tsx`,
+`AgentComposer.tsx`, `agentEdits.ts`), text 2px larger.
+
+- **2a** (`agents.rs`, `agents_view.rs`, `chat.rs`): conversations are the
+  project's, not a file's. The chat shows your messages, the agent's
+  replies, its steps (read, edit with a diff, bash) and what it asks; the
+  terminal button shows the agent's own terminal. History lists past
+  conversations by day; New picks Claude Code, Codex or Antigravity.
+- **2b** (`composer.rs`, `composer_view.rs`, `agents_box.rs`): the message
+  box. `@` adds files and variables of the project's running sessions, `#`
+  adds cells of open notebooks, each as a chip that goes with that message
+  only; files from this computer can be attached. Menus for the model
+  (favourites, each agent's models, thinking effort), the mode (Posit's
+  names) and where agent code goes, and the context ring with Compact now.
+  Each conversation keeps its own unsent text.
+- **2c**: an agent's questions (one or many answers, Other), plan approval
+  (carry it out, allow edits, keep planning) and command approval; a step
+  that touched a file has an Open link.
+- **2d** (`agent_edits.rs`): the window tells the daemon where you are (the
+  file in front, its cell, the selection, open files). When an agent adds or
+  changes a cell in a notebook open here, the window makes the edit in the
+  editor, saves and runs it, so you see it happen. The gear menu compacts,
+  renames (or double-click the title) and ends a conversation; an ended one
+  picks up again when you send a message, or starts afresh like it.
+
+Not yet: ⌥1–9 model shortcuts, plots in `@`, pasting or dragging files in,
+exporting a conversation, and a cell added by an agent clears that
+notebook's undo history.
+
 ## Running it
 
 ```sh

@@ -110,9 +110,34 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// The program started again in this terminal.
+    pub fn revive(&mut self, cx: &mut Context<Self>) {
+        self.exited = None;
+        cx.notify();
+    }
+
     pub fn exited(&mut self, how: String, cx: &mut Context<Self>) {
         self.exited = Some(how);
         cx.notify();
+    }
+
+    /// The screen's text, one line per row, as the program last drew it.
+    pub fn screen_text(&self) -> String {
+        let content = self.term.renderable_content();
+        let offset = content.display_offset as i32;
+        let mut rows = vec![String::new(); self.lines];
+        for indexed in content.display_iter {
+            let line = (indexed.point.line.0 + offset) as usize;
+            if let Some(row) = rows.get_mut(line)
+                && !indexed.cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+            {
+                row.push(indexed.cell.c);
+            }
+        }
+        rows.iter()
+            .map(|r| r.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn focus_handle(&self) -> FocusHandle {
