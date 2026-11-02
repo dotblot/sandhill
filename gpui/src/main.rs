@@ -19,6 +19,7 @@ mod composer;
 mod composer_view;
 mod connection;
 mod daemon;
+mod download;
 mod explorer;
 mod files;
 mod git;

@@ -21,6 +21,7 @@ sandhill-daemon = { path = "../crates/daemon" }
 alacritty_terminal = "0.26"
 anyhow = "1"
 base64 = "0.22"
+resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Unpacks the bundled Maple Mono fonts (assets/fonts).
 flate2 = "1"
 # GPUI Fast, gpui-kit's newer drawing engine, lets the web view be clipped

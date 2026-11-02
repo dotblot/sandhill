@@ -165,4 +165,51 @@ impl Workbench {
         let item = pages.into_iter().nth(ix)?;
         Some((item, ix, count))
     }
+
+    /// Loads the Viewer's page again. A Quarto preview that stopped or
+    /// failed is started again.
+    pub(crate) fn reload_viewer(&mut self, cx: &mut Context<Self>) {
+        let Some((item, ..)) = self.viewer_page() else {
+            return;
+        };
+        if let Some(path) = item
+            .extra
+            .as_deref()
+            .and_then(|k| k.strip_prefix("preview:"))
+            && item.page.is_none()
+        {
+            self.preview_document(path.to_string(), cx);
+            return;
+        }
+        let Some(page) = item.page else { return };
+        if let Some(view) = self.pages.get(&page.key())
+            && let Err(err) = view.read(cx).reload(cx)
+        {
+            self.problem = Some(format!("{err:#}"));
+            cx.notify();
+        }
+    }
+
+    /// Opens the Viewer's page in the Mac's web browser.
+    pub(crate) fn open_viewer_in_browser(&mut self, cx: &mut Context<Self>) {
+        let (Some((item, ..)), Some(daemon)) = (self.viewer_page(), self.daemon()) else {
+            return;
+        };
+        let Some(page) = item.page else { return };
+        let remote = self.target != sandhill_link::Target::Local;
+        let near = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let address = crate::pages::address(page, daemon, remote, near);
+        cx.spawn(async move |this, cx| {
+            let address = address.await;
+            this.update(cx, |this, cx| match address {
+                Ok(url) => cx.open_url(&url),
+                Err(err) => {
+                    this.problem = Some(format!("Could not open the page: {err:#}"));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }

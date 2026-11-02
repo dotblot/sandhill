@@ -1,7 +1,8 @@
 //! What the files pane does besides opening files, as the Tauri app's
 //! `FileTree.tsx` has it: New items (from the + menu, the File menu, ⌘N and
 //! ⌥⌘N), naming them in a field in the tree, and the right-click menu with
-//! Rename, Duplicate, Reveal in Finder, Copy path and Move to Trash.
+//! Rename, Duplicate, Reveal in Finder (or Download for a server's file),
+//! Copy path and Move to Trash.
 
 use std::collections::HashSet;
 
@@ -45,6 +46,8 @@ pub(crate) struct FilesUi {
     pub menu: Option<TreeMenu>,
     /// The + menu over the files.
     pub new_menu: bool,
+    /// The sort menu over the files.
+    pub sort_menu: bool,
 }
 
 pub(crate) fn new_name_input(
@@ -626,6 +629,18 @@ impl Workbench {
                 move |_, _, cx| cx.reveal_path(std::path::Path::new(&path)),
             ));
         }
+        if !local && !dir {
+            let path = path.clone();
+            rows.push(menu_item(
+                "tm-download",
+                Some("doc.download"),
+                "Download to this Mac…",
+                "",
+                &p,
+                cx,
+                move |this, _, cx| this.download(path.clone(), cx),
+            ));
+        }
         {
             let path = path.clone();
             rows.push(menu_item(
@@ -700,6 +715,44 @@ impl Workbench {
             .children(rows)
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.files_ui.new_menu = false;
+                cx.notify();
+            }));
+        Some(
+            div()
+                .absolute()
+                .top(px(28.))
+                .right(px(8.))
+                .child(deferred(body).with_priority(3))
+                .into_any_element(),
+        )
+    }
+
+    /// The sort menu over the files: by name, size or date modified, with
+    /// a check by the one in use.
+    pub(crate) fn render_sort_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.files_ui.sort_menu {
+            return None;
+        }
+        let p = *Palette::get(cx);
+        let mut rows = vec![heading("Sort files by".into(), &p)];
+        for by in crate::tree::SortBy::ALL {
+            rows.push(menu_item(
+                SharedString::from(format!("sort-{}", by.key())),
+                (by == self.tree.sort).then_some("check"),
+                by.label(),
+                by.order(),
+                &p,
+                cx,
+                move |this, _, cx| this.set_sort(by, cx),
+            ));
+        }
+        let body = crate::composer_view::popup(&p)
+            .id("sort-menu")
+            .occlude()
+            .min_w(px(240.))
+            .children(rows)
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.files_ui.sort_menu = false;
                 cx.notify();
             }));
         Some(
@@ -840,6 +893,7 @@ pub(crate) fn menu_item(
         .on_click(cx.listener(move |this, _, window, cx| {
             this.files_ui.menu = None;
             this.files_ui.new_menu = false;
+            this.files_ui.sort_menu = false;
             this.main_menu = false;
             run(this, window, cx);
             cx.notify();

@@ -54,6 +54,17 @@ impl Render for Workbench {
             .text_color(p.text)
             .text_size(px(look::CHROME))
             .line_height(rems(1.25))
+            // Esc closes the large plot and the log, before a field in
+            // them takes it.
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key != "escape" {
+                    return;
+                }
+                if this.plot_history.zoom.take().is_some() || this.log.take().is_some() {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, _: &RunAll, _, cx| this.run_all(cx)))
             .on_action(cx.listener(|this, _: &Interrupt, _, _| this.interrupt()))
@@ -466,9 +477,28 @@ impl Workbench {
                         );
                         let name = div()
                             .min_w_0()
+                            .flex_1()
                             .overflow_hidden()
                             .text_ellipsis()
                             .child(row.name.clone());
+                        let by_size = this.tree.sort == crate::tree::SortBy::Size;
+                        let tip = crate::tree::row_tip(
+                            row,
+                            !row.dir || by_size,
+                            chrono::Utc::now().timestamp_millis(),
+                        );
+                        let line = line.tooltip(move |w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                        });
+                        let meta = |shown: bool| {
+                            shown.then(|| {
+                                div()
+                                    .flex_none()
+                                    .text_size(px(look::SMALL))
+                                    .text_color(p.faint)
+                                    .child(crate::machine::format_bytes(row.size))
+                            })
+                        };
                         if row.dir {
                             return line
                                 .cursor_pointer()
@@ -485,6 +515,7 @@ impl Workbench {
                                 )
                                 .child(picture(&look::folder_icon(&row.name)))
                                 .child(name)
+                                .children(meta(by_size))
                                 .when(is_selected, |d| d.bg(p.ink(9.)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.files_ui.selected = Some((rel.clone(), true));
@@ -502,6 +533,7 @@ impl Workbench {
                             .cursor_pointer()
                             .child(picture(&look::file_icon(&row.name)))
                             .child(name)
+                            .children(meta(!openable && !crate::viewer::is_html(&rel)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.files_ui.selected = Some((rel.clone(), false));
                                 if openable || crate::viewer::is_html(&rel) {
@@ -542,7 +574,25 @@ impl Workbench {
                     })
                     .child(div().flex_1())
                     .when(self.project.is_some(), |d| {
+                        let sort = self.tree.sort;
                         d.child(
+                            icon_button("sort-files", "sort", &p, false)
+                                .when(self.files_ui.sort_menu, |d| d.text_color(p.text))
+                                .tooltip(move |w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(format!(
+                                        "Sort by {}",
+                                        sort.label().to_lowercase()
+                                    ))
+                                    .build(w, cx)
+                                })
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.files_ui.sort_menu = !this.files_ui.sort_menu;
+                                    this.files_ui.new_menu = false;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
                             icon_button("new-item", "add", &p, false)
                                 .when(self.files_ui.new_menu, |d| d.text_color(p.text))
                                 .tooltip(|w, cx| {
@@ -552,6 +602,7 @@ impl Workbench {
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.files_ui.new_menu = !this.files_ui.new_menu;
+                                    this.files_ui.sort_menu = false;
                                     cx.notify();
                                 })),
                         )
@@ -566,6 +617,7 @@ impl Workbench {
             .children(self.render_kernels(cx))
             .children(self.render_resources(cx))
             .children(self.render_new_menu(cx))
+            .children(self.render_sort_menu(cx))
             .children(self.render_project_menu(cx))
     }
 
@@ -1549,6 +1601,25 @@ impl Workbench {
                             .whitespace_nowrap()
                             .child(item.title.clone()),
                     )
+                    .child(
+                        icon_button("viewer-reload", "refresh", &p, false)
+                            .tooltip(|w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new("Reload the page")
+                                    .build(w, cx)
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| this.reload_viewer(cx))),
+                    )
+                    .child(
+                        icon_button("viewer-browser", "globe", &p, false)
+                            .when(item.page.is_none(), |d| d.opacity(0.35))
+                            .tooltip(|w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new("Open in browser")
+                                    .build(w, cx)
+                            })
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.open_viewer_in_browser(cx)),
+                            ),
+                    )
                     .when_some(extra, |d, key| {
                         d.child(
                             bar_button(
@@ -1571,13 +1642,17 @@ impl Workbench {
     pub(crate) fn render_variables(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let mut rows = Vec::new();
-        self.variable_rows(&self.vars.list, &[], &mut rows, cx);
+        let filter = self.vars_filter.read(cx).value().to_string();
+        let shown = filter_variables(&self.vars.list, &filter);
+        self.variable_rows(&shown, &[], &mut rows, cx);
         let status = if self.active_session().is_none() {
             Some("No kernel running.".to_string())
         } else if let Some(err) = &self.vars.error {
             Some(err.clone())
         } else if self.vars.list.is_empty() && !self.vars.loading {
             Some("No variables yet.".into())
+        } else if shown.is_empty() && !self.vars.list.is_empty() {
+            Some(format!("No variables match “{}”.", filter.trim()))
         } else {
             None
         };
@@ -1585,6 +1660,15 @@ impl Workbench {
             .size_full()
             .flex()
             .flex_col()
+            .when(!self.vars.list.is_empty() || !filter.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(10.))
+                        .pt(px(6.))
+                        .child(input::Input::new(&self.vars_filter).small()),
+                )
+            })
             .child(
                 div()
                     .id("variables")
@@ -1734,4 +1818,43 @@ fn failed_status(run: &Run) -> Option<String> {
 
 fn cell_text(open: &Open, ix: usize, cx: &App) -> String {
     open.editors[ix].read(cx).value().to_string()
+}
+
+/// The variables whose names hold what was typed in the filter box,
+/// ignoring case (all of them when nothing was typed).
+pub(crate) fn filter_variables(list: &[Variable], filter: &str) -> Vec<Variable> {
+    let wanted = filter.trim().to_lowercase();
+    list.iter()
+        .filter(|v| wanted.is_empty() || v.name.to_lowercase().contains(&wanted))
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filter_variables;
+    use sandhill_proto::Variable;
+
+    #[test]
+    fn filters_variables_by_name() {
+        let var = |name: &str| Variable {
+            name: name.into(),
+            kind: "data".into(),
+            class: "data.frame".into(),
+            size: None,
+            children: false,
+            table: true,
+            summary: String::new(),
+        };
+        let list = [var("seu"), var("Markers"), var("counts")];
+        let names = |filter| {
+            filter_variables(&list, filter)
+                .into_iter()
+                .map(|v| v.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(""), ["seu", "Markers", "counts"]);
+        assert_eq!(names(" mark "), ["Markers"]);
+        assert!(names("zzz").is_empty());
+    }
 }

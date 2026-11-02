@@ -305,13 +305,19 @@ preview and R's imports weren't seen.
   state. Closing a document with unsaved changes asks Save, Don't save or
   Cancel.
 
+- **7c** (`download.rs`, `tree.rs`, `plots.rs`, `viewer.rs` and others):
+  the files sort by name, size (folders' sizes too) or date modified, and
+  a row's tooltip says its size and when it changed; a server's file can
+  be downloaded to the Mac's Downloads folder. Variables has a filter box.
+  The Viewer has Reload and Open in browser beside Back and Forward.
+  Plots can be copied as a PNG, are drawn again by their session to fit
+  the pane once it stops changing size, and Esc closes the large plot.
+
 ### What the Tauri app still does that this doesn't
 
-- Sorting files by size or date, and Download to this Mac.
-- Smaller things listed under each step above: Variables' filter box, the
-  Viewer's Back, Forward, Reload and Open in browser, copying a plot,
-  fitting plots to the pane, Git's squash and reorder, and the agents'
-  ⌥1–9, `@` plots, pasting files and exporting a conversation.
+- The Data Explorer remembering filters and sorting per project, Git's
+  squash and reorder, the agents' ⌥1–9, `@` plots, pasting files and
+  exporting a conversation, and R vignettes in Help (all coming in 7c).
 
 ## Running it
 

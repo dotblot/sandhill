@@ -194,3 +194,12 @@ pub fn toggle_section(section: &str) {
     }
     write("collapsedSections", Value::Array(list));
 }
+
+/// How the files pane sorts: "name", "size" or "modified".
+pub fn tree_sort() -> String {
+    read()["treeSort"].as_str().unwrap_or("name").to_string()
+}
+
+pub fn save_tree_sort(by: &str) {
+    write("treeSort", json!(by));
+}

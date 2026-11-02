@@ -275,6 +275,8 @@ pub struct Workbench {
     /// The project's settings (`.sandhill/project.toml`) and their dialog.
     pub(crate) setup: crate::project_settings::Setup,
     pub(crate) settings_env: Entity<InputState>,
+    /// The Variables tab's filter box.
+    pub(crate) vars_filter: Entity<InputState>,
     /// Variables' Import menu and dialog.
     pub(crate) import: crate::import_dialog::Import,
     pub(crate) import_name: Entity<InputState>,
@@ -351,6 +353,13 @@ impl Workbench {
         let (name_input, name_subscription) = crate::tree_actions::new_name_input(window, cx);
         let (palette_input, palette_subscription) =
             crate::command_palette::new_palette_input(window, cx);
+        let vars_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
+        let vars_filter_subscription =
+            cx.subscribe(&vars_filter, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            });
         let mut subscriptions = vec![cx.subscribe_in(
             &console_input,
             window,
@@ -372,6 +381,7 @@ impl Workbench {
         subscriptions.push(import_subscription);
         subscriptions.push(name_subscription);
         subscriptions.push(palette_subscription);
+        subscriptions.push(vars_filter_subscription);
         // Quitting saves what was edited first, as closing a tab does.
         subscriptions.push(cx.on_app_quit(|this, cx| {
             let tasks = this.save_all_tasks(cx);
@@ -410,7 +420,7 @@ impl Workbench {
             kernels: Vec::new(),
             recent: Vec::new(),
             project: None,
-            tree: Tree::default(),
+            tree: Tree::new(),
             open: None,
             others: Vec::new(),
             tabs: Vec::new(),
@@ -450,6 +460,7 @@ impl Workbench {
             notice: None,
             setup: Default::default(),
             settings_env,
+            vars_filter,
             import: Default::default(),
             import_name,
             show_files: true,
@@ -544,7 +555,7 @@ impl Workbench {
         self.recent.clear();
         self.project = None;
         self.agents = None;
-        self.tree = Tree::default();
+        self.tree = Tree::new();
         self.open = None;
         self.others.clear();
         self.tabs.clear();
@@ -782,7 +793,7 @@ impl Workbench {
             .or_insert(Folder::Loading);
         let listed = daemon.call::<Vec<DirEntry>>(Call::ListDir {
             path: tree::join(&project, &dir),
-            sizes: false,
+            sizes: self.tree.sort == tree::SortBy::Size,
         });
         cx.spawn(async move |this, cx| {
             let listed = listed.await;
@@ -800,6 +811,23 @@ impl Workbench {
             .ok();
         })
         .detach();
+    }
+
+    /// Sorts the files another way, for every project from now on. Folder
+    /// sizes are only worked out when sorting by size.
+    pub(crate) fn set_sort(&mut self, by: tree::SortBy, cx: &mut Context<Self>) {
+        self.files_ui.sort_menu = false;
+        if self.tree.sort == by {
+            cx.notify();
+            return;
+        }
+        let sizes = by == tree::SortBy::Size || self.tree.sort == tree::SortBy::Size;
+        self.tree.sort = by;
+        crate::prefs::save_tree_sort(by.key());
+        if sizes {
+            self.refresh_files(cx);
+        }
+        cx.notify();
     }
 
     /// Opens or closes a folder in the files pane.
@@ -823,7 +851,7 @@ impl Workbench {
         self.explorer_shown = false;
         self.project = None;
         self.agents = None;
-        self.tree = Tree::default();
+        self.tree = Tree::new();
         self.terminal = None;
         self.forget_jobs();
         self.forget_git();

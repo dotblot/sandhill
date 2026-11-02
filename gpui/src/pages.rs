@@ -92,6 +92,49 @@ impl PageView {
             view.update(cx, |view, _| view.show());
         }
     }
+
+    /// Loads the page again, as a browser's Reload does.
+    pub fn reload(&self, cx: &App) -> Result<()> {
+        match &self.state {
+            State::Ready(view) => view
+                .read(cx)
+                .raw()
+                .reload()
+                .map_err(|e| anyhow!("could not reload: {e}")),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Where a page can be opened in a browser on this Mac: its address, or
+/// one the daemon serves its HTML at (through the daemon's connection when
+/// the daemon is on another machine).
+pub fn address(
+    page: Page,
+    daemon: Rc<Daemon>,
+    remote: bool,
+    near: Option<String>,
+) -> Pin<Box<dyn Future<Output = Result<String>>>> {
+    let serve = move |daemon: Rc<Daemon>, html: Option<String>, blob: Option<String>| async move {
+        let url: PageUrl = daemon.call(Call::ServeHtml { html, blob }).await?;
+        let port = reach(&daemon, remote, url.port).await?;
+        Ok(format!("http://127.0.0.1:{port}{}", url.path))
+    };
+    match page {
+        Page::Html(html) => Box::pin(serve(daemon, Some(html), None)),
+        Page::Blob(hash) => Box::pin(serve(daemon, None, Some(hash))),
+        Page::PlotlyBlob(hash) => Box::pin(async move {
+            let blob: Blob = daemon.call(Call::GetBlob { hash, near }).await?;
+            let figure = serde_json::from_str(&blob.data)?;
+            serve(daemon, Some(plotly_page(&figure)), None).await
+        }),
+        page @ (Page::File(_) | Page::Url(_)) => Box::pin(async move {
+            match content(page, Some(daemon), remote, near).await? {
+                Content::Url(url) => Ok(url),
+                Content::Html(_) => Err(anyhow!("the page has no address")),
+            }
+        }),
+    }
 }
 
 type Pending = Pin<Box<dyn Future<Output = Result<Content>>>>;
