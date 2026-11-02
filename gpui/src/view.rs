@@ -39,6 +39,7 @@ impl Render for Workbench {
         self.sync_plots(cx);
         self.sync_packages(cx);
         self.sync_jobs(cx);
+        self.sync_git(cx);
         self.fetch_plot_images(cx);
         let p = *Palette::get(cx);
         wall(&p)
@@ -618,6 +619,9 @@ impl Workbench {
 
     fn render_notebook(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
+        if self.diff_shown && self.diff.is_some() {
+            return self.render_diff(cx);
+        }
         if let Some(explorer) = self
             .explorer
             .as_ref()
@@ -690,9 +694,9 @@ impl Workbench {
 
     /// The middle pane's tabs: the open notebooks, in the order they were
     /// opened, then the Data Explorer.
-    fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
+    pub(crate) fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
         let p = *Palette::get(cx);
-        let shown = match (&self.open, self.explorer_shown) {
+        let shown = match (&self.open, self.explorer_shown || self.diff_shown) {
             (_, true) => None,
             (Some(open), false) => Some(open.notebook.path.clone()),
             (None, false) => None,
@@ -728,7 +732,7 @@ impl Workbench {
                     "explorer-tab",
                     Some(icon("table").size(px(14.)).into_any_element()),
                     explorer.read(cx).name(),
-                    self.explorer_shown,
+                    self.explorer_shown && !self.diff_shown,
                     &p,
                 )
                 .child(
@@ -749,11 +753,13 @@ impl Workbench {
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.explorer_shown = true;
+                    this.diff_shown = false;
                     cx.notify();
                 }))
                 .into_any_element(),
             );
         }
+        tabs.extend(self.diff_tab_element(cx));
         Self::strip(&p).child(capsule(&p, 22.).gap(px(1.)).min_w_0().children(tabs))
     }
 

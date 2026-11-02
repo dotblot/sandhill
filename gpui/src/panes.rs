@@ -83,6 +83,7 @@ impl Workbench {
             ),
             TopTab::Help => (self.render_help(cx), Vec::new()),
             TopTab::Packages => (self.render_packages(cx), self.package_tools(cx)),
+            TopTab::Git => (self.render_git(cx), self.git_tools(cx)),
         };
         let (bottom, tools): (AnyElement, Vec<AnyElement>) = match self.bottom_tab {
             BottomTab::Plots => (self.render_plots(cx), self.plot_tools(cx)),
@@ -115,7 +116,8 @@ impl Workbench {
                                         "Packages",
                                         TopTab::Packages,
                                         cx,
-                                    )),
+                                    ))
+                                    .child(top_tab("tab-git", "Git", TopTab::Git, cx)),
                             )
                             .when(
                                 self.top_tab == TopTab::Variables && self.vars.loading,

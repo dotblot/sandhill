@@ -195,6 +195,34 @@ LaTeX in Help, the session picker in Packages (it follows the Console's
 kernel), and the file tree doesn't refresh when a plot is saved. R's help
 pages weren't tried here (no R on the test machine).
 
+## Step 4: Git
+
+A Git tab next to Packages, as in the Tauri app (`GitPane.tsx`), reading
+and changing the repository through the daemon (`GitStatus`, `GitLog`,
+`GitShow`, `GitDiff`, `GitRun`), so it works the same over ssh.
+
+- **4a** (`git.rs`, `git_pane.rs`): the branch, how far ahead or behind its
+  upstream, and Staged and Unstaged files with their line counts and sizes;
+  stage, unstage or throw away (asked first) a file or all of them; big
+  files ask whether to stage or add to `.gitignore`. The commit box (Enter
+  goes to the description, ⌘Enter commits) with Amend, "Write it" (the
+  project's agent writes the message), and Commit and push or Stage all and
+  commit. Fetch, pull, push and undo the last commit on the strip; switch,
+  make, merge and rebase branches, tags and stashes from the menus. Merges
+  and rebases that stop show a banner with Continue and Stop, and each
+  conflicted file takes Mine or Theirs. "Start one here" makes a folder a
+  repository; your name and email are asked once if Git doesn't know them.
+  Passwords git or ssh ask for while pushing or pulling are asked for here.
+- **4b** (`git_log.rs`, `git_diff.rs`): the history as a graph, with branch
+  and tag badges and who made each commit (agents' commits marked);
+  clicking a commit shows its message and changed files. A file's diff opens
+  as a tab by the editor; click line numbers (Shift for a range) to stage,
+  unstage or throw away just those lines, or a whole hunk.
+
+Not yet: more than one diff tab at a time, dragging to pick lines, the
+squash and reorder (rewrite) dialog, and pushing or pulling with a password
+wasn't tried here (no remote that asks for one).
+
 ## Running it
 
 ```sh

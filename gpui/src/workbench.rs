@@ -177,6 +177,7 @@ pub(crate) enum TopTab {
     Variables,
     Help,
     Packages,
+    Git,
 }
 
 /// The right column's bottom tabs.
@@ -203,7 +204,7 @@ pub struct Workbench {
     /// Counts connections, so a late reply for an old one is dropped.
     generation: u64,
     /// This window, for agents' edits that arrive from the daemon.
-    window_handle: AnyWindowHandle,
+    pub(crate) window_handle: AnyWindowHandle,
     /// Where the user is, as last told the daemon (see `agent_edits`).
     pub(crate) focus_sent: Option<sandhill_proto::Focus>,
     pub(crate) focus_generation: u64,
@@ -245,6 +246,9 @@ pub struct Workbench {
     pub(crate) help: crate::help::Help,
     pub(crate) packages: crate::packages::Packages,
     pub(crate) jobs: crate::jobs::Jobs,
+    pub(crate) git: crate::git_pane::Git,
+    pub(crate) diff: Option<crate::git_diff::DiffTab>,
+    pub(crate) diff_shown: bool,
     pub(crate) terminal: Option<Entity<TerminalView>>,
     pub(crate) terminal_problem: Option<String>,
     terminal_starting: bool,
@@ -318,6 +322,7 @@ impl Workbench {
         let (help, help_subscriptions) = crate::help::new_help(window, cx);
         let (packages, package_subscriptions) = crate::packages::new_packages(window, cx);
         let (jobs, job_subscriptions) = crate::jobs::new_jobs(window, cx);
+        let (git, git_subscriptions) = crate::git_pane::new_git(window, cx);
         let mut subscriptions = vec![
             cx.subscribe(&host_input, |this, input, event: &InputEvent, cx| {
                 // Clicking away puts the machine's tab back.
@@ -364,6 +369,7 @@ impl Workbench {
         subscriptions.extend(help_subscriptions);
         subscriptions.extend(package_subscriptions);
         subscriptions.extend(job_subscriptions);
+        subscriptions.extend(git_subscriptions);
         let (page_wheel, mut wheel) = tokio::sync::mpsc::unbounded_channel::<f32>();
         cx.spawn(async move |this, cx| {
             while let Some(px) = wheel.recv().await {
@@ -416,6 +422,9 @@ impl Workbench {
             help,
             packages,
             jobs,
+            git,
+            diff: None,
+            diff_shown: false,
             terminal: None,
             terminal_problem: None,
             terminal_starting: false,
@@ -480,6 +489,7 @@ impl Workbench {
         self.console_session = None;
         self.vars = Vars::default();
         self.forget_jobs();
+        self.forget_git();
         self.terminal = None;
         self.terminal_problem = None;
         self.terminal_starting = false;
@@ -749,6 +759,7 @@ impl Workbench {
         self.tree = Tree::default();
         self.terminal = None;
         self.forget_jobs();
+        self.forget_git();
         cx.notify();
     }
 
@@ -763,6 +774,7 @@ impl Workbench {
     /// Shows the notebook open in another tab.
     pub(crate) fn show_file_tab(&mut self, path: &str, cx: &mut Context<Self>) {
         self.explorer_shown = false;
+        self.diff_shown = false;
         if self.open.as_ref().is_some_and(|o| o.notebook.path == path) {
             cx.notify();
             return;
@@ -839,6 +851,7 @@ impl Workbench {
                         }
                         this.put_away();
                         this.explorer_shown = false;
+                        this.diff_shown = false;
                         this.tabs.push(nb.path.clone());
                         this.notebook_scroll.set_offset(Point::default());
                         this.show_notebook(nb, mtime_ms, window, cx);
@@ -1935,6 +1948,7 @@ impl Workbench {
         };
         self.explorer = Some(cx.new(|cx| Explorer::new(daemon, session, path, cx)));
         self.explorer_shown = true;
+        self.diff_shown = false;
         cx.notify();
     }
 
