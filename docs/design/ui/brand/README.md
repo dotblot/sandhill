@@ -55,8 +55,7 @@ brief's colours; the concept board's are within a few steps of them).
 | `png/`, `app-icon/png/` | PNG renders; the app icon at 16–1024px |
 
 ## In the app
-`build.py` also writes `app/src-tauri/icons/source.svg` (the dark app icon)
-and `source-small.svg` (for 16 and 32 px). `npm run icon` in `app/` makes
-`icon.icns`, `icon.png` and the PNGs that `tauri.conf.json` lists from them.
-The bundle id, app name and signing are unchanged. The start screen shows
-`icon.png`, so it follows.
+`build.py` also writes `gpui/assets/icon/source.svg` (the dark app icon)
+and `source-small.svg` (for 16 and 32 px). `node gpui/assets/icon/make.mjs`
+makes `icon.icns` and the Start screen's `gpui/assets/brand/icon.png` from
+them.

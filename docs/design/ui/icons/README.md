@@ -70,6 +70,6 @@ picture), and several imitate other companies' logos.
 | R and Shell chips | Sandhill letter and prompt chips | Sandhill's own (the official R logo, CC BY-SA 4.0, is not used) |
 | Product names in text | — | Fine to use to say what Sandhill works with |
 
-To use an official file: add it under `agents/` (or `lang/`), point the
-registry entry at it, and in the app add its SVG body to `BRAND_MARKS` in
-`app/src/ui/icons.tsx`.
+To use an official file: add it under `agents/` (or `lang/`) and point the
+registry entry at it; the app reads the icons from here
+(`gpui/src/look.rs`).

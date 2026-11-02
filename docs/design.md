@@ -10,8 +10,7 @@
 
 | Layer | Pick | Why |
 |---|---|---|
-| Mac app shell | **Tauri 2** (Rust core + the system WKWebView) | No Electron or bundled Chromium. Idle RAM is typically tens of MB, not hundreds. You need a web view anyway because notebook outputs (plotly, htmlwidgets, interactive tables) are HTML. |
-| UI | **SolidJS** (chosen over Svelte), **CodeMirror 6** editor, **xterm.js** terminal | Small, fast, and CodeMirror handles very large files well. JupyterLab's editor is also CodeMirror 6, so its Python/R language modes are reusable. |
+| Mac app | **GPUI** (Zed's Rust UI toolkit) through gpui-kit, with **gpui-webview** (the system's WebKit as a native view) for HTML outputs; gpui-kit's editor and alacritty_terminal for terminals. Replaced the first app, Tauri 2 with a SolidJS UI, in November 2026 (§3) | No Electron or bundled Chromium. Native drawing starts faster and uses about a third of the web app's memory; notebook outputs that are HTML (plotly, htmlwidgets, interactive tables) still get a web view each. |
 | Mac ↔ server link | **System `ssh` (your `~/.ssh/config`, keys, ProxyJump)** carrying one multiplexed RPC stream to the daemon's stdio (msgpack or JSON-RPC) | This is the pattern VS Code Remote and Zed remote use. It needs no open ports and works through bastions. The app auto-uploads the daemon binary on first connect. |
 | Server daemon | **One Rust binary (tokio)** running as a **`systemd --user` service with `loginctl enable-linger`** | It survives the Mac app closing, network drops, and your logout, with no tmux. It owns kernels, jobs, PTYs, the output store and the agents. |
 | Kernels | **Jupyter protocol over ZeroMQ**: `ipykernel` for Python, **Ark** (Posit's Rust R kernel, MIT) for R | These are standard and reconnectable. Ark already speaks the variables, plots and help "comms" that Positron uses. Use the `runtimelib` / `jupyter-protocol` crates from nteract's runtimed. |
@@ -19,7 +18,7 @@
 | AI agents | Run the **official, unmodified `claude` and `codex` CLIs on the server**, under the daemon, each logged in with your own subscription **or an API key** (Anthropic or OpenAI format, with a custom base URL for compatible providers). Give both an **MCP server** exposed by the daemon ("run chunk", "read outputs", "list variables", "tail job log"). | This is the only clean way to use subscriptions without an API key. Running them server-side means agent work also survives the Mac closing. See §5. |
 | Language servers | Run on the server through the daemon: **basedpyright** or **ty**, plus **ruff** (Python); **Ark's built-in LSP** and **Air** (R formatter) | Analysis runs where the code and packages are. |
 
-**In short:** Tauri on the Mac (TypeScript UI, a thin Rust layer), a Rust daemon under systemd on Ubuntu, Jupyter kernels (ipykernel and Ark) behind both `.ipynb` and Quarto, sidecar output caches for Quarto, and Claude Code, Codex and Antigravity running unmodified on the server, with an MCP bridge into your live kernels.
+**In short:** a native Rust app on the Mac (GPUI), a Rust daemon under systemd on Ubuntu, Jupyter kernels (ipykernel and Ark) behind both `.ipynb` and Quarto, sidecar output caches for Quarto, and Claude Code, Codex and Antigravity running unmodified on the server, with an MCP bridge into your live kernels.
 
 ---
 
@@ -27,10 +26,10 @@
 
 ```
 ┌──────────────── macOS (Apple silicon) ────────────────┐
-│ Tauri 2 app (Rust core, ~1 process + WKWebView)       │
-│  ├─ Editor: CodeMirror 6 (ipynb / qmd / Rmd / py / R) │
-│  ├─ Inline outputs: sandboxed <iframe> per output     │
-│  ├─ Agent pane: xterm.js attached to a server PTY,    │
+│ GPUI app (Rust, one process; WebKit views for HTML)   │
+│  ├─ Editor: gpui-kit (ipynb / qmd / Rmd / py / R)     │
+│  ├─ Inline outputs: native, or a web view for HTML    │
+│  ├─ Agent pane: a terminal attached to a server PTY,  │
 │  │   or a chat view over `codex app-server`           │
 │  └─ Local cache of outputs + docs (instant reopen)    │
 └───────────────┬───────────────────────────────────────┘
@@ -53,7 +52,7 @@
 ```
 
 ### Language choice (decided 2026-10-11)
-Rust for both the daemon and the Tauri core, chosen for speed and low RAM. You are new to Rust, so AI agents write most of it and the Rust compiler acts as a strict reviewer. The UI is TypeScript. Keep the Rust code in small, well-tested crates (protocol, kernel manager, output journal, ssh link, agent host) so each piece is easy for an agent to work on alone.
+Rust for both the daemon and the app, chosen for speed and low RAM. You are new to Rust, so AI agents write most of it and the Rust compiler acts as a strict reviewer. (The first app's UI was TypeScript; since November 2026 the app is Rust too.) Keep the Rust code in small, well-tested crates (protocol, kernel manager, output journal, ssh link, agent host) so each piece is easy for an agent to work on alone.
 
 ### Local mode on the Mac (added 2026-10-11)
 The same daemon also runs on the Mac itself. "Local" is just another host:
@@ -91,8 +90,15 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 
 ---
 
-## 3. Mac app choice: why Tauri over the alternatives
+## 3. Mac app choice: GPUI (first Tauri)
 
+> **Update 2026-11-02: the GPUI app is Sandhill.** Once it did everything the
+> Tauri app did (steps 1 to 7 of "Sandhill on GPUI"), Huan tried a Mac build
+> and chose to retire the Tauri app: `app/` was deleted, and the GPUI app
+> became Sandhill.app with the Tauri app's bundle id, `dev.sandhill.ide`, so
+> it replaces it and keeps its data folder (the list of servers). The Tauri
+> app is in the git history (last in commit d3ff9f6).
+>
 > **Update 2026-11-01: moving to GPUI.** A trial GPUI app (`gpui/`, built
 > with gpui-kit and gpui-webview for HTML outputs) started in 0.4 s against
 > the Tauri app's 0.8 s and used about a third of the memory with a 400-cell
@@ -127,9 +133,9 @@ waits for you, and + to connect to another; at the right, the edit capsule
 (undo, redo | cut, copy, paste | save, save all ⌥⌘S), whose buttons act on
 the editor last in focus and dim when they can't. On macOS the windows use an
 overlay title bar with the window buttons centred on the capsules
-(`title_bar()` in `app/src-tauri/src/windows.rs`). Everything under the title
+(`gpui/src/app_window.rs`). Everything under the title
 bar belongs to the machine picked there, so local and remote work never mix:
-`app/src/ui/Workbench.tsx` keeps one project view per machine tab (and per
+`gpui/src/workbench.rs` keeps one project view per machine tab (and per
 project switched to with the project name at the top of the left pane) alive
 while hidden, so switching back returns to the same tabs, Console session,
 plot and conversation. The Start screen opens in the window, under the same
@@ -144,7 +150,7 @@ the title bar's, the picked tab a raised pill, and the tab bars (and the
 editor's kernel bar) are liquid glass floating over the top of their pane:
 the content starts under them and scrolls up beneath them, blurred. Only the
 bars blur; the panes still don't. The editor keeps the cursor clear of the
-bars (`underBars` in `app/src/editor/editing.ts`). Only the title bar drags
+bars. Only the title bar drags
 the window. No text is smaller than 10px, the smallest size macOS uses.
 
 **The file tree (built 2026-10-25)** follows drafts 26–28: a chevron column,
@@ -152,7 +158,7 @@ an icon column, 16px per level and plain guide lines. New files and folders
 are named in a field in the tree, from the + menu (in the selected folder),
 a folder's hover buttons, the right-click menu, ⌘N and ⌥⌘N; a name such as
 `raw/samples.csv` makes the folder too, and new Quarto documents, R scripts
-and notebooks start from a template (`app/src/model/files.ts`). The right-click
+and notebooks start from a template (`gpui/src/files.rs`). The right-click
 menu renames, duplicates, copies the path and moves to the Trash, plus
 Reveal in Finder on this Mac, and Download to this Mac and Delete… on a
 server. These go through the daemon (`make_dir`, `move_path`, `copy_path`,
@@ -168,7 +174,7 @@ as in RStudio: for R, text (base and readr), Excel, SPSS, SAS, Stata, R data
 and 10x Genomics; for Python, pandas, Parquet, AnnData and 10x. Each opens a
 dialog that browses the daemon's machine for files it reads, names the
 variable after the file and shows the code before running it in the session,
-so the run shows in the Console (`app/src/model/imports.ts`). The Data
+so the run shows in the Console (`gpui/src/imports.rs`). The Data
 Explorer's column list and stats hide with **Hide column stats**, remembered
 on the Mac.
 
@@ -189,7 +195,7 @@ system font. Code ligatures are on, so `<-` shows as an arrow while the file
 keeps what was typed. Plots stay white in dark mode. The panes skip
 `backdrop-filter`: over a smooth gradient a blur changes nothing you can see,
 and each blurred pane costs a window-sized compositing layer. Styles are in
-`app/src/styles.css`, icons in `app/src/ui/icons.tsx`.
+`gpui/src/look.rs`, which also draws the icons from `docs/design/ui/icons`.
 
 Kernel pickers, in the editor and the Console, show the language icon and
 version, the number only ("R 4.6.1", "Python 3.12", though Ark says "R version
@@ -307,7 +313,7 @@ With an API key, the subscription restrictions above no longer apply, which open
 - **MCP tools, first set:** `list_sessions`, `list_variables` (a quiet, history-free execute with summaries of Seurat, SingleCellExperiment, AnnData and data frames), `run_code` (in the user's session, where results stay) and `get_outputs` (a document's saved outputs, with plots as images). The server is `sandhilld mcp`, which talks to the daemon over its socket. Jobs came later (`list_jobs`, `read_job_log`, 2026-10-29). Not yet: `inspect`, starting jobs, and variable snapshots for busy kernels (listing a busy session says so instead).
 - **Code goes into the document (2026-10-12).** Asked to compute or plot something, the agent writes the code into the document with `add_cell` rather than running it out of sight, as Posit Assistant does: below the user's current cell (else after the last cell) in the document the conversation is about (else the one in front), and it runs there, in the document's own session. The output, errors and plots go back to the agent. A failed cell is fixed in place with `edit_cell`. `run_code` stays for quick looks.
   - *Where the user is.* Each window tells the daemon its document in front, current cell, line and selection, and which documents it has open (`set_focus`). The daemon keeps the latest place per project, also with the Mac closed. Agents read it with `get_focus`, and Claude Code's prompt hook adds it to every prompt, so "fix this cell" works.
-  - *Who edits.* When a window has the document open, the daemon asks that window to make the edit (`add_cell` request, answered with `answer`): it brings the tab forward, inserts the cell as typing would (one ⌘Z undoes it), moves the cursor into it, saves, and runs it as the Run button does. Editing under an open editor would instead race the user's unsaved changes. When no window has it open, the daemon edits the file and the tool runs the cell in the session that last ran the document's cells, else one in the document's folder with the kernel the document asks for. The chunk ids are the app's (label, else `chunk-<n>`); the daemon finds chunks with the same rules (`crates/daemon/src/qmd.rs`, kept in step with `app/src/model/qmd.ts` by `tests/fixtures/chunks.json`).
+  - *Who edits.* When a window has the document open, the daemon asks that window to make the edit (`add_cell` request, answered with `answer`): it brings the tab forward, inserts the cell as typing would (one ⌘Z undoes it), moves the cursor into it, saves, and runs it as the Run button does. Editing under an open editor would instead race the user's unsaved changes. When no window has it open, the daemon edits the file and the tool runs the cell in the session that last ran the document's cells, else one in the document's folder with the kernel the document asks for. The chunk ids are the app's (label, else `chunk-<n>`); the daemon finds chunks with the same rules (`crates/daemon/src/qmd.rs`, which the app uses too, with its cases in `tests/fixtures/chunks.json`).
   - *Order.* The project's place moves to each new cell, so a series of cells reads top to bottom.
 - **The app** has the Agents pane, a Terminal tab in the Console, and reloads open documents when their file changes on disk (checked every 1.5 s; unsaved changes are never replaced without asking).
 - **The chat pane (draft 18, 2026-10-12).** Claude Code shows as a chat, after Posit Assistant, while the unmodified `claude` still runs in its terminal underneath; nothing goes through the Agent SDK or Claude Code's credentials, so it stays on the allowed side of the policy above.
@@ -489,7 +495,7 @@ Not yet: the output cache in `.sandhill/outputs/`; a personal override for a col
 
 | Component | Target |
 |---|---|
-| Mac app, idle with 3 docs open | < 150 MB total (Tauri core + one WKWebView content process) |
+| Mac app, idle with 3 docs open | < 150 MB total (the app, plus a WebKit content process when HTML outputs show) |
 | Cold start to editable | < 500 ms with outputs coming from the local cache, then sync with the server |
 | Reopen a notebook with 200 outputs | Only the visible outputs are mounted; the rest are lazy |
 | Server daemon | ~10–30 MB RSS. Kernels, LSPs and agents dominate, and they would exist in any IDE. |

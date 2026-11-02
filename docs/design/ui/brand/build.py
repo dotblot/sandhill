@@ -86,8 +86,8 @@ FILES = {
     "app-icon/app-icon-light-small.svg": app_icon(False, small=True),
 }
 
-# the app's icon sources; app/scripts/icon.mjs (npm run icon) makes the bundle icons from them
-APP_ICONS = HERE.parents[3] / "app" / "src-tauri" / "icons"
+# the app's icon sources; gpui/assets/icon/make.mjs makes the bundle icon from them
+APP_ICONS = HERE.parents[3] / "gpui" / "assets" / "icon"
 APP_FILES = {"source.svg": FILES["app-icon/app-icon-dark.svg"], "source-small.svg": FILES["app-icon/app-icon-dark-small.svg"]}
 
 if __name__ == "__main__":

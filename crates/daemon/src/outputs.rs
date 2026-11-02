@@ -1,9 +1,8 @@
 //! Turns a run's journaled kernel messages into nbformat 4 output objects,
 //! the form notebooks store and the app renders.
 //!
-//! The app's UI applies the same rules to live events
-//! (`app/src/model/outputs.ts`); `tests/fixtures/outputs.json` keeps the two
-//! in agreement.
+//! The app (`gpui/`) uses this module for live events too, so both follow
+//! the same rules; `tests/fixtures/outputs.json` holds the cases.
 
 use sandhill_proto::{CellOutputs, FileOutputs, Plot, SessionPlots, SessionRun, SessionRuns};
 use serde_json::{Map, Value, json};
@@ -138,7 +137,6 @@ pub fn session_pages(journal: &Journal, session: &str, limit: u32) -> Result<Ses
 /// Whether the Viewer shows an output of a run from `file` (none for the
 /// Console): a page from the Console or a script, or an app's address from
 /// anywhere, but not a web page opened in the browser. Notebooks keep their other pages under their cells.
-/// `forViewer` in `app/src/model/pages.ts` says the same.
 pub fn for_viewer(file: Option<&str>, data: &Value, metadata: &Value) -> bool {
     // A web page R opened in the browser.
     if data[crate::viewer::MIME]["browser"] == Value::Bool(true) {

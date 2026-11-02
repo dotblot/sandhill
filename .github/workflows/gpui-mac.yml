@@ -1,14 +1,14 @@
-name: GPUI app
+name: Mac app
 
-# Checks the GPUI app in gpui/ and builds "Sandhill GPUI.app" for trying it
-# on a Mac, with sandhilld for this Mac and Linux builds of it (and Ark) to
-# install on servers. The Tauri app's CI (ci.yml) is separate.
+# Checks the app in gpui/ and builds Sandhill.app, with sandhilld for this
+# Mac and Linux builds of it (and Ark) to install on servers. The daemon's
+# own tests are in ci.yml.
 on:
   push:
     branches: [main]
-    paths: ["gpui/**", "crates/**", ".github/workflows/gpui-mac.yml"]
+    paths: ["gpui/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/gpui-mac.yml"]
   pull_request:
-    paths: ["gpui/**", "crates/**", ".github/workflows/gpui-mac.yml"]
+    paths: ["gpui/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/gpui-mac.yml"]
   # Can also be started by hand from the Actions tab.
   workflow_dispatch:
 
@@ -17,7 +17,7 @@ env:
 
 jobs:
   macos:
-    name: macOS (Apple silicon, GPUI app bundle)
+    name: macOS (Apple silicon, app bundle)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +59,7 @@ jobs:
         run: cargo build --release
       - name: Build sandhilld for servers, and fetch Ark
         # Into the app's Resources/daemons, from where it installs them on
-        # servers over ssh, as the Tauri app's bundle does (app/scripts/bundle.mjs).
+        # servers over ssh.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -86,23 +86,23 @@ jobs:
             fi
           done
           ls -l daemons
-      - name: Make Sandhill GPUI.app
+      - name: Make Sandhill.app
         run: |
-          app="Sandhill GPUI.app"
+          app="Sandhill.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp gpui/target/release/sandhill-gpui "$app/Contents/MacOS/"
-          # The app finds sandhilld next to itself, as the Tauri app's bundle does.
+          # The app finds sandhilld next to itself.
           cp target/release/sandhilld "$app/Contents/MacOS/"
-          cp app/src-tauri/icons/icon.icns "$app/Contents/Resources/"
+          cp gpui/assets/icon/icon.icns "$app/Contents/Resources/"
           cp -R daemons "$app/Contents/Resources/daemons"
           cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleName</key><string>Sandhill GPUI</string>
-            <key>CFBundleDisplayName</key><string>Sandhill GPUI</string>
-            <key>CFBundleIdentifier</key><string>dev.sandhill.gpui-trial</string>
+            <key>CFBundleName</key><string>Sandhill</string>
+            <key>CFBundleDisplayName</key><string>Sandhill</string>
+            <key>CFBundleIdentifier</key><string>dev.sandhill.ide</string>
             <key>CFBundleExecutable</key><string>sandhill-gpui</string>
             <key>CFBundleIconFile</key><string>icon.icns</string>
             <key>CFBundlePackageType</key><string>APPL</string>
@@ -115,32 +115,32 @@ jobs:
           EOF
           sed -i '' 's/^          //' "$app/Contents/Info.plist"
           plutil -lint "$app/Contents/Info.plist"
-          # Ad-hoc signature, as unsigned builds of the Tauri app have.
+          # An ad-hoc signature, so macOS opens it once the quarantine is removed.
           codesign --force --deep --sign - "$app"
-          ditto -c -k --keepParent "$app" Sandhill-GPUI-macos-arm64.zip
+          ditto -c -k --keepParent "$app" Sandhill-macos-arm64.zip
       - name: Check that the zipped app opens
         run: |
           dir=$(cd "$(mktemp -d)" && pwd -P)
-          ditto -x -k Sandhill-GPUI-macos-arm64.zip "$dir"
-          app="$dir/Sandhill GPUI.app"
+          ditto -x -k Sandhill-macos-arm64.zip "$dir"
+          app="$dir/Sandhill.app"
           codesign --verify --deep --strict --verbose=2 "$app"
           open "$app"
           for _ in $(seq 30); do
             pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null && break
             sleep 1
           done
-          pgrep -fl "$app/Contents/MacOS/" || { echo "Sandhill GPUI.app did not start"; exit 1; }
+          pgrep -fl "$app/Contents/MacOS/" || { echo "Sandhill.app did not start"; exit 1; }
           sleep 8
-          pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null || { echo "Sandhill GPUI.app quit soon after starting"; exit 1; }
+          pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null || { echo "Sandhill.app quit soon after starting"; exit 1; }
           screencapture -x start-window.png || echo "could not take a screenshot"
           pkill -f "$app/Contents/MacOS/" || true
       - uses: actions/upload-artifact@v4
         with:
-          name: Sandhill-GPUI-macos-arm64
-          path: Sandhill-GPUI-macos-arm64.zip
+          name: Sandhill-macos-arm64
+          path: Sandhill-macos-arm64.zip
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gpui-start-window-screenshot
+          name: start-window-screenshot
           path: start-window.png
           if-no-files-found: ignore

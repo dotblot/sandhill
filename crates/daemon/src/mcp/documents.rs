@@ -24,7 +24,7 @@ const MAX_PROMPT_SELECTION: usize = 1000;
 /// likely been away from Sandhill.
 const STALE_FOCUS_MS: i64 = 30 * 60_000;
 /// A script's console keeps this many runs, as `console-0` to `console-99`
-/// (as in `app/src/docs/scriptDoc.ts`).
+/// (as the app numbers them).
 const CONSOLE_SLOTS: u32 = 100;
 
 /// What `add_cell` or `edit_cell` was asked to do.

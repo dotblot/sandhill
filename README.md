@@ -16,7 +16,7 @@ and local models (through omp) working directly in your live sessions.
 ## How it fits together
 
 ```
-Mac app (Tauri, TypeScript UI)  ──ssh or local socket──▶  sandhilld (Rust daemon)
+Mac app (Rust, GPUI)           ──ssh or local socket──▶  sandhilld (Rust daemon)
                                                             ├─ Python / R kernels (Jupyter protocol)
                                                             ├─ output journal (SQLite + blobs)
                                                             ├─ jobs, terminals, language servers
@@ -30,7 +30,7 @@ The full design, including the reasoning behind each choice, is in
 
 | Path | What |
 |---|---|
-| `app/` | The Mac app: TypeScript UI in `src/`, Tauri shell in `src-tauri/` |
+| `gpui/` | The Mac app, drawn with GPUI (its own Cargo project; see [gpui/README.md](gpui/README.md)) |
 | `crates/daemon` | `sandhilld`: kernel sessions, output journal, socket server |
 | `crates/proto` | Wire protocol types and the async client the app and CLI share |
 | `crates/link` | How the app reaches sandhilld: on this Mac, or over ssh (installing it there) |
@@ -40,29 +40,25 @@ The full design, including the reasoning behind each choice, is in
 
 ## Try the Mac app
 
-You need Rust, Node 22 and Jupyter kernels for the languages you want:
-ipykernel in your Python environment (conda environments are found on their
-own; others need `python -m ipykernel install --user`), and for R,
+You need Rust and Jupyter kernels for the languages you want: ipykernel in
+your Python environment (conda environments are found on their own; others
+need `python -m ipykernel install --user`), and for R,
 [Ark](https://github.com/posit-dev/ark) or IRkernel.
 
 ```sh
-cd app
-npm install
-npm run bundle        # builds target/release/bundle/macos/Sandhill.app, with sandhilld inside
-open ../target/release/bundle/macos/Sandhill.app
+cargo build -p sandhill-daemon        # at the repo root, once
+cd gpui
+cargo run -- /path/to/project         # the folder is optional
 ```
 
-For the app to install sandhilld on servers, the bundle needs Linux builds
-of it, which `npm run bundle` makes when cargo-zigbuild is installed (CI
-builds always have them):
-`rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl`,
-`cargo install cargo-zigbuild` and `brew install zig`.
-
-Every CI run also builds the app: open the run on GitHub's Actions tab and
-download **Sandhill-macos-arm64** under Artifacts (to build one without a
-push, pick **CI** there, then **Run workflow**). The app isn't notarized, so
-after unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once, or
-macOS will refuse to open it.
+Every push to `main` (and every pull request that touches the app) builds
+Sandhill.app, with sandhilld inside and Linux builds of it and Ark to install
+on servers: open the **Mac app** run on GitHub's Actions tab and download
+**Sandhill-macos-arm64** under Artifacts (to build one without a push, pick
+**Mac app** there, then **Run workflow**). The app isn't notarized, so after
+unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once, or macOS
+will refuse to open it. `.github/workflows/gpui-mac.yml` shows how the bundle
+is put together.
 
 The app opens on a start window: open a folder with your analysis as a
 project, and it gets its own window. Projects open at Quit come back at the
@@ -118,10 +114,6 @@ login, settings, slash commands and keys.
 
 The Console also has a **Terminal** tab: a login shell in the project's folder.
 
-To work on the UI, `cargo build -p sandhill-daemon` once, then
-`npm run tauri dev` in `app/` reloads the window as you edit. Without the
-app, `npm run bridge` and `npm run dev` serve the same UI to a browser; the
-page is the start window, and `?project=<folder>` makes it a project window.
 
 ## Try the daemon
 
@@ -138,9 +130,10 @@ Against a server, copy `sandhilld` to `~/.local/bin` there and add
 `--ssh yourserver --remote-daemon '~/.local/bin/sandhilld'` to any `sandhill`
 command; the daemon starts on first use.
 
-Run the tests with `cargo test --workspace` (on Linux the app needs the
-WebKitGTK development packages; see `.github/workflows/ci.yml`) and
-`npm test` in `app/`. Kernel tests skip when a kernel isn't installed.
+Run the tests with `cargo test --workspace`, and `cargo test` in `gpui/` for
+the app (on Linux it needs `libxkbcommon-dev libxkbcommon-x11-dev
+libwebkit2gtk-4.1-dev` and X11). Kernel tests skip when a kernel isn't
+installed.
 
 ## Roadmap
 

@@ -1,13 +1,14 @@
-// Makes the app icon files in src-tauri/icons from the Sandhill crane:
+// Makes the app icon, icon.icns, from the Sandhill crane, and the picture
+// the Start screen shows (../brand/icon.png):
 //
-//   npm run icon
+//   node gpui/assets/icon/make.mjs
 //
 // source.svg is the app icon (an 824 px rounded tile on Apple's 1024 px
 // grid, with the crane) and source-small.svg the version drawn for 16 and
 // 32 px. Both are written by docs/design/ui/brand/build.py; change them
 // there. This adds the soft shadow macOS icons have to the large sizes, and
-// `tauri icon` renders them; the small sizes then replace the ones in
-// icon.icns.
+// Tauri's icon tool (fetched by npx) renders them; the small sizes then
+// replace the ones in icon.icns.
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -15,8 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const app = join(dirname(fileURLToPath(import.meta.url)), "..");
-const icons = join(app, "src-tauri", "icons");
+const icons = dirname(fileURLToPath(import.meta.url));
 
 const source = (name) => {
   const svg = readFileSync(join(icons, name), "utf8");
@@ -37,16 +37,14 @@ const work = mkdtempSync(join(tmpdir(), "sandhill-icon-"));
 try {
   writeFileSync(join(work, "full.svg"), full);
   writeFileSync(join(work, "small.svg"), small);
-  const tauri = (...args) => execFileSync("npx", ["tauri", "icon", ...args], { cwd: app, stdio: "inherit" });
+  const tauri = (...args) =>
+    execFileSync("npx", ["--yes", "@tauri-apps/cli@2.12.2", "icon", ...args], { cwd: work, stdio: "inherit" });
   tauri(join(work, "full.svg"), "-o", join(work, "full"));
   tauri(join(work, "small.svg"), "-o", join(work, "small"), "-p", "16", "-p", "32");
 
-  for (const name of ["128x128.png", "128x128@2x.png", "icon.png"]) {
-    copyFileSync(join(work, "full", name), join(icons, name));
-  }
+  copyFileSync(join(work, "full", "icon.png"), join(icons, "..", "brand", "icon.png"));
   const small16 = readFileSync(join(work, "small", "16x16.png"));
   const small32 = readFileSync(join(work, "small", "32x32.png"));
-  writeFileSync(join(icons, "32x32.png"), small32);
 
   // 16 and 32 px, and 16 pt on Retina (32 px), from the small crop. The
   // older RGB-and-mask entries for those sizes go, so they can't win.
