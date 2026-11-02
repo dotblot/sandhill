@@ -37,6 +37,8 @@ impl Render for Workbench {
         self.report_focus(window, cx);
         self.sync_pages(window, cx);
         self.sync_plots(cx);
+        self.sync_packages(cx);
+        self.sync_jobs(cx);
         self.fetch_plot_images(cx);
         let p = *Palette::get(cx);
         wall(&p)
@@ -1077,6 +1079,12 @@ impl Workbench {
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
             )
+            .when(crate::jobs::is_job_script(&open.notebook.path), |bar| {
+                bar.child(
+                    bar_button("run-job", "Run as job", Some("terminal"), &p)
+                        .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
+                )
+            })
             .child(
                 bar_button("save", "Save", Some("doc.save"), &p)
                     .when(!open.dirty, |d| d.opacity(0.45))

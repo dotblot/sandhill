@@ -164,6 +164,37 @@ Not yet: ⌥1–9 model shortcuts, plots in `@`, pasting or dragging files in,
 exporting a conversation, and a cell added by an agent clears that
 notebook's undo history.
 
+## Step 3: right-side panes
+
+The panes sit as in the Tauri app (`App.tsx`): the Console, Terminal and
+Jobs under the editor (⌘J shows or hides them); on the right, Variables,
+Help and Packages over Plots and the Viewer.
+
+- **3a** (`panes.rs`, `plots.rs`): the Plots pane keeps every plot the
+  Console, scripts and agents draw (notebooks' stay under their cells), read
+  back from the daemon when the window opens. Previous and next, thumbnails,
+  where each came from and when; zoom (double-click) shows it large and
+  saves it as PNG, SVG or PDF, drawn again at that size when the session
+  can (R; Python from its figure), asking before it replaces a file.
+- **3b** (`help.rs`, `packages.rs`): Help searches the session's help (R's
+  installed packages, Python's imported modules) and shows the page, with
+  links, Back and Forward, the function's source and runnable examples.
+  `?lm`, `help(lm)` and `np.mean?` at the Console open here. Packages lists
+  what's installed, attached or imported first, with a filter; a click opens
+  the package's help; install (pip or conda in Python, BiocManager or CRAN
+  in R), update (R checks CRAN and Bioconductor when asked) and remove run
+  in the Console, and the list is read again after.
+- **3c** (`jobs.rs`): Jobs runs a command (New job) or a script (Run as job,
+  above a saved script) in the background on the daemon's machine, each with
+  its log, how long it has run, its CPU and memory; stop it, run it again or
+  remove it. Jobs keep running when the window closes.
+
+Not yet: plots fitted to the pane (they are drawn once, at the size R or
+Python chose), copying a plot, Esc to close the zoom, R's vignettes and
+LaTeX in Help, the session picker in Packages (it follows the Console's
+kernel), and the file tree doesn't refresh when a plot is saved. R's help
+pages weren't tried here (no R on the test machine).
+
 ## Running it
 
 ```sh

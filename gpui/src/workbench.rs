@@ -168,12 +168,15 @@ pub(crate) enum Split {
 pub(crate) enum ConsoleTab {
     Console,
     Terminal,
+    Jobs,
 }
 
 /// The right column's top tabs.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TopTab {
     Variables,
+    Help,
+    Packages,
 }
 
 /// The right column's bottom tabs.
@@ -239,6 +242,9 @@ pub struct Workbench {
     pub(crate) console_height: f32,
     /// The Plots pane's history.
     pub(crate) plot_history: crate::plots::History,
+    pub(crate) help: crate::help::Help,
+    pub(crate) packages: crate::packages::Packages,
+    pub(crate) jobs: crate::jobs::Jobs,
     pub(crate) terminal: Option<Entity<TerminalView>>,
     pub(crate) terminal_problem: Option<String>,
     terminal_starting: bool,
@@ -309,7 +315,10 @@ impl Workbench {
                 .submit_on_enter(true)
                 .placeholder("Type code; Enter runs it")
         });
-        let subscriptions = vec![
+        let (help, help_subscriptions) = crate::help::new_help(window, cx);
+        let (packages, package_subscriptions) = crate::packages::new_packages(window, cx);
+        let (jobs, job_subscriptions) = crate::jobs::new_jobs(window, cx);
+        let mut subscriptions = vec![
             cx.subscribe(&host_input, |this, input, event: &InputEvent, cx| {
                 // Clicking away puts the machine's tab back.
                 if let InputEvent::Blur = event {
@@ -352,6 +361,9 @@ impl Workbench {
                 },
             ),
         ];
+        subscriptions.extend(help_subscriptions);
+        subscriptions.extend(package_subscriptions);
+        subscriptions.extend(job_subscriptions);
         let (page_wheel, mut wheel) = tokio::sync::mpsc::unbounded_channel::<f32>();
         cx.spawn(async move |this, cx| {
             while let Some(px) = wheel.recv().await {
@@ -401,6 +413,9 @@ impl Workbench {
             show_console: true,
             console_height: 260.,
             plot_history: Default::default(),
+            help,
+            packages,
+            jobs,
             terminal: None,
             terminal_problem: None,
             terminal_starting: false,
@@ -464,6 +479,7 @@ impl Workbench {
         self.console.clear();
         self.console_session = None;
         self.vars = Vars::default();
+        self.forget_jobs();
         self.terminal = None;
         self.terminal_problem = None;
         self.terminal_starting = false;
@@ -732,6 +748,7 @@ impl Workbench {
         self.agents = None;
         self.tree = Tree::default();
         self.terminal = None;
+        self.forget_jobs();
         cx.notify();
     }
 
@@ -1546,6 +1563,16 @@ impl Workbench {
         if code.trim().is_empty() {
             return;
         }
+        // `?topic` and `help(x)` open the Help pane, as in the Tauri app.
+        if let Some(asked) = self
+            .active_language()
+            .and_then(|language| crate::help::console_help(&code, &language))
+        {
+            self.console_input
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.ask_help(asked, window, cx);
+            return;
+        }
         let (Some(daemon), Some(session)) =
             (self.daemon(), self.active_session().map(str::to_string))
         else {
@@ -1649,6 +1676,7 @@ impl Workbench {
                 run.execution_count = event.content["execution_count"].as_u64();
                 if !run.quiet && active {
                     self.refresh_variables(cx);
+                    self.packages_run_finished(cx);
                 }
             }
             _ if run.quiet => {}
@@ -2013,6 +2041,9 @@ impl Workbench {
             agents.update(cx, |agents, cx| agents.on_terminal_event(event, cx));
             // The title bar's dot shows an agent waiting.
             cx.notify();
+            return;
+        }
+        if self.on_job_event(&event, cx) {
             return;
         }
         let Some(view) = self.terminal.clone() else {

@@ -10,7 +10,7 @@ use crate::look::{Palette, capsule, icon_button, pane};
 use crate::workbench::{BottomTab, ConsoleTab, Split, TopTab, Workbench};
 
 impl Workbench {
-    /// The pane under the editor: the Console or the Terminal.
+    /// The pane under the editor: the Console, the Terminal or Jobs.
     pub(crate) fn render_console_pane(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let tab =
@@ -22,6 +22,7 @@ impl Workbench {
         let body: AnyElement = match self.console_tab {
             ConsoleTab::Console => self.render_console(cx),
             ConsoleTab::Terminal => self.render_terminal(cx),
+            ConsoleTab::Jobs => self.render_jobs(cx),
         };
         pane(&p)
             .h(px(self.console_height))
@@ -32,7 +33,8 @@ impl Workbench {
                         capsule(&p, 22.)
                             .gap(px(1.))
                             .child(tab("tab-console", "Console", ConsoleTab::Console, cx))
-                            .child(tab("tab-terminal", "Terminal", ConsoleTab::Terminal, cx)),
+                            .child(tab("tab-terminal", "Terminal", ConsoleTab::Terminal, cx))
+                            .child(tab("tab-jobs", "Jobs", ConsoleTab::Jobs, cx)),
                     )
                     .child(div().flex_1())
                     .child(
@@ -47,8 +49,8 @@ impl Workbench {
             .child(div().flex_1().min_h_0().child(body))
     }
 
-    /// The right column: Variables (and later Help, Packages) over Plots
-    /// and the Viewer.
+    /// The right column: Variables, Help and Packages over Plots and the
+    /// Viewer.
     pub(crate) fn render_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let top_tab =
@@ -69,16 +71,18 @@ impl Workbench {
                     },
                 ))
             };
-        let (top, refresh): (AnyElement, Option<AnyElement>) = match self.top_tab {
+        let (top, refresh): (AnyElement, Vec<AnyElement>) = match self.top_tab {
             TopTab::Variables => (
                 self.render_variables(cx),
-                Some(
+                vec![
                     icon_button("refresh-variables", "refresh", &p, false)
                         .when(self.active_session().is_none(), |d| d.opacity(0.35))
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_variables(cx)))
                         .into_any_element(),
-                ),
+                ],
             ),
+            TopTab::Help => (self.render_help(cx), Vec::new()),
+            TopTab::Packages => (self.render_packages(cx), self.package_tools(cx)),
         };
         let (bottom, tools): (AnyElement, Vec<AnyElement>) = match self.bottom_tab {
             BottomTab::Plots => (self.render_plots(cx), self.plot_tools(cx)),
@@ -96,12 +100,23 @@ impl Workbench {
                     .flex_none()
                     .child(
                         Self::strip(&p)
-                            .child(capsule(&p, 22.).gap(px(1.)).child(top_tab(
-                                "tab-variables",
-                                "Variables",
-                                TopTab::Variables,
-                                cx,
-                            )))
+                            .child(
+                                capsule(&p, 22.)
+                                    .gap(px(1.))
+                                    .child(top_tab(
+                                        "tab-variables",
+                                        "Variables",
+                                        TopTab::Variables,
+                                        cx,
+                                    ))
+                                    .child(top_tab("tab-help", "Help", TopTab::Help, cx))
+                                    .child(top_tab(
+                                        "tab-packages",
+                                        "Packages",
+                                        TopTab::Packages,
+                                        cx,
+                                    )),
+                            )
                             .when(
                                 self.top_tab == TopTab::Variables && self.vars.loading,
                                 |d| {
@@ -115,7 +130,7 @@ impl Workbench {
                                 },
                             )
                             .child(div().flex_1())
-                            .children(refresh),
+                            .child(h_flex().gap(px(1.)).children(refresh)),
                     )
                     .child(div().flex_1().min_h_0().child(top)),
             )
