@@ -142,6 +142,7 @@ fn main() -> anyhow::Result<()> {
         .with_assets(look::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            terminal::init(cx);
             look::install(cx);
             cx.on_action(|_: &Quit, cx| app_window::quit(cx));
             // With no window open, a new one.

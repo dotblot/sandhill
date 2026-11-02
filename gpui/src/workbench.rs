@@ -2274,7 +2274,8 @@ impl Workbench {
                                 })
                             })
                         };
-                        let view = cx.new(|cx| TerminalView::new(id, input, resize, cx));
+                        let handle = this.window_handle;
+                        let view = cx.new(|cx| TerminalView::new(id, input, resize, handle, cx));
                         if this.console_tab == ConsoleTab::Terminal {
                             let focus = view.read(cx).focus_handle();
                             window.focus(&focus, cx);

@@ -479,6 +479,18 @@ pub fn set_appearance(appearance: WindowAppearance, cx: &mut App) {
     } else {
         Palette::light()
     });
+    // gpui-cn (the terminal's) keeps a theme of its own; it goes first, so
+    // gpui-kit's, set last, is the one the shared base layer draws with.
+    if cx.has_global::<gpui_cn::Theme>() {
+        gpui_cn::Theme::change(
+            if dark {
+                gpui_cn::ThemeMode::Dark
+            } else {
+                gpui_cn::ThemeMode::Light
+            },
+            cx,
+        );
+    }
     Theme::change(
         if dark {
             ThemeMode::Dark

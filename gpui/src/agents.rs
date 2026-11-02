@@ -117,6 +117,8 @@ pub(crate) enum Show {
 
 pub struct Agents {
     pub(crate) daemon: Rc<Daemon>,
+    /// The window it is in, where its terminals start.
+    window: AnyWindowHandle,
     pub(crate) project: String,
     /// The agents' CLIs and whether they are installed.
     pub(crate) installed: Vec<AgentInfo>,
@@ -211,6 +213,7 @@ impl Agents {
             },
         )];
         let mut agents = Agents {
+            window: window.window_handle(),
             daemon,
             project,
             installed: Vec::new(),
@@ -331,7 +334,8 @@ impl Agents {
                 })
             })
         };
-        let view = cx.new(|cx| TerminalView::new(id.clone(), input, resize, cx));
+        let window = self.window;
+        let view = cx.new(|cx| TerminalView::new(id.clone(), input, resize, window, cx));
         if !terminal.running {
             view.update(cx, |view, cx| view.exited("ended".into(), cx));
         }

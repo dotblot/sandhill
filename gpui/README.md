@@ -51,9 +51,12 @@ come from `gpui-kit` (Apache-2.0); nothing is taken from Zed's GPL editor.
   gives the Console a kernel of its own; **Stop** shuts it down.
 - Variables lists the kernel's variables after each run; lists, data frames
   and other containers open with the arrow.
-- Terminal is a real shell from the daemon (in the project folder), drawn
-  with `alacritty_terminal`: colours, full-screen programs like `top`,
-  Ctrl+C, paste. It keeps running when the app closes and is picked up again.
+- Terminal is a real shell from the daemon (in the project folder), run
+  through Ghostty's terminal engine (libghostty-vt) and drawn by gpui-cn's
+  terminal element (`terminal.rs`; Huan's choice, 2026-11-02): colours,
+  full-screen programs like `top`, Ctrl+C, copy and paste, selection,
+  scrollback, links. Building it needs Zig 0.17 (`ZIG`, or `zig` on PATH)
+  and network access to Ghostty's download hosts. It keeps running when the app closes and is picked up again.
 - The **Machine** box at the top connects to another computer over ssh
   (`--host HOST` on the command line does the same), using the same
   `sandhill-link` code as the Tauri app. The start screen lists recent

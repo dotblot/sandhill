@@ -289,7 +289,8 @@ impl Workbench {
                 })
             })
         };
-        let view = cx.new(|cx| TerminalView::new(id.clone(), input, resize, cx));
+        let window = self.window_handle;
+        let view = cx.new(|cx| TerminalView::new(id.clone(), input, resize, window, cx));
         self.jobs.views.insert(id.clone(), view);
         let subscribed = daemon.call::<TerminalSubscribed>(Call::SubscribeTerminal {
             terminal: id,

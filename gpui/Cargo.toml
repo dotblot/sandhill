@@ -18,7 +18,9 @@ sandhill-proto = { path = "../crates/proto" }
 sandhill-link = { path = "../crates/link" }
 # For the output and Quarto chunk rules the daemon and the web UI share.
 sandhill-daemon = { path = "../crates/daemon" }
-alacritty_terminal = "0.26"
+# The Terminal: Ghostty's terminal engine (libghostty-vt, built from source
+# with Zig 0.17: set ZIG, or have `zig` on PATH) and gpui-cn's GPUI element for it.
+gpui-cn = { version = "=0.8.0", features = ["ghostty"] }
 anyhow = "1"
 base64 = "0.22"
 resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }

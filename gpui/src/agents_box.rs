@@ -903,7 +903,7 @@ impl Agents {
         let daemon = self.daemon.clone();
         cx.spawn(async move |this, cx| {
             for i in 0..=MODE_TRIES {
-                let shown = view.read_with(cx, |v, _| composer::screen_mode(&v.screen_text()));
+                let shown = view.read_with(cx, |v, cx| composer::screen_mode(&v.screen_text(cx)));
                 let Some(shown) = shown else { break };
                 if shown.claude == mode.claude {
                     this.update(cx, |this, cx| {
