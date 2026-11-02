@@ -36,6 +36,7 @@ const PAGE_HEIGHT: f32 = 420.;
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.report_focus(window, cx);
         self.sync_pages(window, cx);
         let p = *Palette::get(cx);
         wall(&p)

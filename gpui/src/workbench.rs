@@ -105,7 +105,9 @@ pub(crate) struct Open {
     next_slot: usize,
     /// A script's code waiting for the kernel to start.
     queued: Vec<String>,
-    _subscriptions: Vec<Subscription>,
+    /// The cell last edited or clicked into: where the user is.
+    pub current: Option<usize>,
+    pub(crate) _subscriptions: Vec<Subscription>,
 }
 
 impl Open {
@@ -182,6 +184,11 @@ pub struct Workbench {
     rt: Arc<Runtime>,
     /// Counts connections, so a late reply for an old one is dropped.
     generation: u64,
+    /// This window, for agents' edits that arrive from the daemon.
+    window_handle: AnyWindowHandle,
+    /// Where the user is, as last told the daemon (see `agent_edits`).
+    pub(crate) focus_sent: Option<sandhill_proto::Focus>,
+    pub(crate) focus_generation: u64,
     pub(crate) target: Target,
     pub(crate) link: Link,
     pub(crate) about: Option<PingReply>,
@@ -343,6 +350,9 @@ impl Workbench {
         let mut this = Workbench {
             rt,
             generation: 0,
+            window_handle: window.window_handle(),
+            focus_sent: None,
+            focus_generation: 0,
             target: target.clone(),
             link: Link::Connecting,
             about: None,
@@ -432,6 +442,8 @@ impl Workbench {
         self.terminal_starting = false;
         self.problem = None;
         let connect = Daemon::connect(self.rt.clone(), target);
+        let window_handle = self.window_handle;
+        self.focus_sent = None;
         cx.spawn(async move |this, cx| {
             let result = connect.await;
             let streams = this
@@ -448,10 +460,29 @@ impl Workbench {
             let Some(Streams {
                 mut events,
                 mut terminals,
+                mut requests,
             }) = streams
             else {
                 return;
             };
+            let request_this = this.clone();
+            let handle = window_handle;
+            cx.spawn(async move |cx| {
+                while let Some(request) = requests.recv().await {
+                    let this = request_this.clone();
+                    let alive = cx.update_window(handle, |_, window, cx| {
+                        this.update(cx, |this, cx| {
+                            if this.generation == generation {
+                                this.on_request(request, window, cx)
+                            }
+                        })
+                    });
+                    if !matches!(alive, Ok(Ok(()))) {
+                        break;
+                    }
+                }
+            })
+            .detach();
             let terminal_this = this.clone();
             cx.spawn(async move |cx| {
                 while let Some(event) = terminals.recv().await {
@@ -785,19 +816,18 @@ impl Workbench {
         .detach();
     }
 
-    fn show_notebook(
+    /// An editor for each cell of a document, and what follows their edits.
+    pub(crate) fn cell_editors(
         &mut self,
-        nb: Notebook,
-        mtime_ms: i64,
+        nb: &Notebook,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let kernel = notebook::pick_kernel(&nb, &self.kernels);
+    ) -> (Vec<Entity<EditorState>>, Vec<Subscription>) {
         let code_language = editor_language(nb.language.as_deref());
         let mut subscriptions = Vec::new();
         let path = nb.path.clone();
         let script = nb.format == Format::Script;
-        let editors = nb
+        let editors: Vec<Entity<EditorState>> = nb
             .cells
             .iter()
             .enumerate()
@@ -845,6 +875,18 @@ impl Workbench {
                 editor
             })
             .collect();
+        (editors, subscriptions)
+    }
+
+    fn show_notebook(
+        &mut self,
+        nb: Notebook,
+        mtime_ms: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let kernel = notebook::pick_kernel(&nb, &self.kernels);
+        let (editors, subscriptions) = self.cell_editors(&nb, window, cx);
         let file_outputs: Vec<Value> = nb.cells.iter().flat_map(|c| c.outputs.clone()).collect();
         self.open = Some(Open {
             notebook: nb,
@@ -860,6 +902,7 @@ impl Workbench {
             editing: HashSet::new(),
             next_slot: 0,
             queued: Vec::new(),
+            current: None,
             _subscriptions: subscriptions,
         });
         self.problem = None;
@@ -1268,7 +1311,7 @@ impl Workbench {
 
     /// Runs code from the shown script in its kernel, starting it if needed.
     /// The runs show in the Console.
-    fn run_script(&mut self, code: String, cx: &mut Context<Self>) {
+    pub(crate) fn run_script(&mut self, code: String, cx: &mut Context<Self>) {
         let Some(open) = self.open.as_mut() else {
             return;
         };

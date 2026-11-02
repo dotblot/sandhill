@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use sandhill_link::{Options, Target};
 use sandhill_proto::client::Client;
-use sandhill_proto::{Call, Event, TerminalEvent};
+use sandhill_proto::{AppRequest, Call, Event, TerminalEvent};
 use serde::de::DeserializeOwned;
 use tokio::process::Child;
 use tokio::runtime::Runtime;
@@ -22,6 +22,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 pub struct Streams {
     pub events: UnboundedReceiver<Event>,
     pub terminals: UnboundedReceiver<TerminalEvent>,
+    /// What the daemon asks of this window: agents' edits to its documents.
+    pub requests: UnboundedReceiver<AppRequest>,
 }
 
 /// A call waiting its turn, and where its reply goes.
@@ -54,7 +56,15 @@ impl Daemon {
                 .client
                 .take_terminal_events()
                 .context("no terminal stream")?;
-            anyhow::Ok((conn, Streams { events, terminals }))
+            let requests = conn.client.take_requests().context("no request stream")?;
+            anyhow::Ok((
+                conn,
+                Streams {
+                    events,
+                    terminals,
+                    requests,
+                },
+            ))
         });
         async move {
             let (conn, streams) = task.await??;

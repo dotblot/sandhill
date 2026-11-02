@@ -59,10 +59,25 @@ pub fn add_cell(
 ) -> Result<Edited> {
     let resolved = files::resolve(path)?;
     let text = files::read_text(path)?.text;
+    let (text, edited) = add_cell_to_text(&resolved, &text, code, language, after, path)?;
+    files::write_text(path, &text, None)?;
+    Ok(edited)
+}
+
+/// [`add_cell`] on a document's text: the new text and the cell added. A
+/// window with the document open uses this to make the edit itself.
+pub fn add_cell_to_text(
+    resolved: &Path,
+    text: &str,
+    code: &str,
+    language: Option<&str>,
+    after: Option<&str>,
+    path: &str,
+) -> Result<(String, Edited)> {
     let language = language.map(normalize_language);
-    let (text, edited) = match kind_of(&resolved)? {
-        Kind::Quarto => add_chunk(&text, code, language, after, path)?,
-        Kind::Notebook => add_notebook_cell(&text, code, language, after, path)?,
+    Ok(match kind_of(resolved)? {
+        Kind::Quarto => add_chunk(text, code, language, after, path)?,
+        Kind::Notebook => add_notebook_cell(text, code, language, after, path)?,
         Kind::Script(own) => {
             if let Some(language) = language.filter(|l| l != own) {
                 bail!("{path} is a {own} script; it can't hold {language} code");
@@ -72,24 +87,33 @@ pub fn add_cell(
                 language: own.into(),
                 kernel: None,
             };
-            (append(&text, code), edited)
+            (append(text, code), edited)
         }
-    };
-    files::write_text(path, &text, None)?;
-    Ok(edited)
+    })
 }
 
 /// Replaces the code of cell `cell_id`.
 pub fn edit_cell(path: &str, cell_id: &str, code: &str) -> Result<Edited> {
     let resolved = files::resolve(path)?;
     let text = files::read_text(path)?.text;
-    let (text, edited) = match kind_of(&resolved)? {
-        Kind::Quarto => edit_chunk(&text, cell_id, code, path)?,
-        Kind::Notebook => edit_notebook_cell(&text, cell_id, code, path)?,
-        Kind::Script(_) => bail!("a script has no cells; edit {path} as a file instead"),
-    };
+    let (text, edited) = edit_cell_in_text(&resolved, &text, cell_id, code, path)?;
     files::write_text(path, &text, None)?;
     Ok(edited)
+}
+
+/// [`edit_cell`] on a document's text.
+pub fn edit_cell_in_text(
+    resolved: &Path,
+    text: &str,
+    cell_id: &str,
+    code: &str,
+    path: &str,
+) -> Result<(String, Edited)> {
+    Ok(match kind_of(resolved)? {
+        Kind::Quarto => edit_chunk(text, cell_id, code, path)?,
+        Kind::Notebook => edit_notebook_cell(text, cell_id, code, path)?,
+        Kind::Script(_) => bail!("a script has no cells; edit {path} as a file instead"),
+    })
 }
 
 /// A cell's language and code as the file has it.

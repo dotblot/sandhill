@@ -26,7 +26,7 @@ const LINES: usize = 8;
 const MENU_WIDTH: f32 = 280.;
 
 /// A menu's frame: the Tauri app's `.apop`.
-fn popup(p: &Palette) -> Div {
+pub(crate) fn popup(p: &Palette) -> Div {
     v_flex()
         .gap(px(2.))
         .p(px(6.))

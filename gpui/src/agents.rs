@@ -122,8 +122,11 @@ pub struct Agents {
     pub(crate) installed: Vec<AgentInfo>,
     /// This project's agent terminals, oldest first.
     pub(crate) terminals: Vec<TerminalInfo>,
-    chats: HashMap<String, Vec<Entry>>,
-    views: HashMap<String, Entity<TerminalView>>,
+    pub(crate) chats: HashMap<String, Vec<Entry>>,
+    pub(crate) views: HashMap<String, Entity<TerminalView>>,
+    /// How much of each conversation's output has come, so a new
+    /// subscription (after a restart) goes on from there.
+    output_end: HashMap<String, u64>,
     pub(crate) selected: Option<String>,
     pub(crate) show: Show,
     /// The agent a new conversation starts with.
@@ -166,6 +169,13 @@ pub struct Agents {
     pub(crate) picks: HashMap<String, Vec<String>>,
     /// The "Other…" answer to each question.
     pub(crate) others: HashMap<String, Entity<InputState>>,
+    /// The conversation menu (the gear) is open.
+    pub(crate) gear: bool,
+    /// End conversation was clicked once; the second click ends it.
+    pub(crate) confirm_end: bool,
+    /// The conversation being renamed, and its name field.
+    pub(crate) renaming: Option<(String, Entity<InputState>)>,
+    pub(crate) _rename_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -207,6 +217,7 @@ impl Agents {
             terminals: Vec::new(),
             chats: HashMap::new(),
             views: HashMap::new(),
+            output_end: HashMap::new(),
             selected: None,
             show: Show::Chat,
             new_kind: KINDS[0].kind,
@@ -232,6 +243,10 @@ impl Agents {
             workbench,
             picks: HashMap::new(),
             others: HashMap::new(),
+            gear: false,
+            confirm_end: false,
+            renaming: None,
+            _rename_subscription: None,
             _subscriptions: subscriptions,
         };
         agents.refresh(cx);
@@ -321,12 +336,24 @@ impl Agents {
             view.update(cx, |view, cx| view.exited("ended".into(), cx));
         }
         self.views.insert(id.clone(), view);
+        self.subscribe(id, None, Some(0), cx);
+    }
+
+    /// Follows a conversation from `from` in its output and `chat_from`
+    /// in its chat.
+    fn subscribe(
+        &mut self,
+        id: String,
+        from: Option<u64>,
+        chat_from: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         let subscribed = self
             .daemon
             .call::<TerminalSubscribed>(Call::SubscribeTerminal {
                 terminal: id,
-                from: None,
-                chat_from: Some(0),
+                from,
+                chat_from,
             });
         cx.spawn(async move |this, cx| {
             if let Err(err) = subscribed.await {
@@ -340,6 +367,18 @@ impl Agents {
         .detach();
     }
 
+    /// Follows a restarted conversation's new program from where the old
+    /// one got to.
+    pub(crate) fn follow_again(&mut self, id: &str, cx: &mut Context<Self>) {
+        let from = self.output_end.get(id).copied();
+        let chat_from = self
+            .chats
+            .get(id)
+            .and_then(|c| c.last())
+            .map_or(0, |e| e.seq + 1);
+        self.subscribe(id.to_string(), from, Some(chat_from), cx);
+    }
+
     /// Whether this pane follows the terminal.
     pub fn owns(&self, terminal: &str) -> bool {
         self.chats.contains_key(terminal)
@@ -351,7 +390,14 @@ impl Agents {
         if let Some(data) = &event.data
             && let Some(view) = self.views.get(&id)
         {
-            view.update(cx, |view, cx| view.feed(data, cx));
+            let end = self.output_end.entry(id.clone()).or_default();
+            let start = event.offset.unwrap_or(*end);
+            let len = decoded_len(data);
+            // A new subscription can repeat output already shown.
+            if start + len > *end || event.offset.is_none() {
+                *end = start + len;
+                view.update(cx, |view, cx| view.feed(data, cx));
+            }
         }
         if let Some(entry) = event.chat {
             let entries = self.chats.entry(id.clone()).or_default();
@@ -772,4 +818,10 @@ pub(crate) fn model_label(t: &TerminalInfo) -> Option<String> {
         .as_ref()
         .is_some_and(|a| a["status"]["model"].is_string());
     (reported || t.options.model.is_some()).then(|| crate::composer::model_label(t))
+}
+
+/// The number of bytes base64 `data` holds.
+fn decoded_len(data: &str) -> u64 {
+    let padding = data.bytes().rev().take_while(|b| *b == b'=').count();
+    (data.len() / 4 * 3).saturating_sub(padding) as u64
 }

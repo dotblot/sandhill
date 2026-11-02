@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use base64::Engine;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
 use sandhill_proto::{
     AgentOptions, Call, FileText, SessionInfo, SessionStatus, TerminalInfo, Variables,
@@ -876,6 +877,7 @@ impl Agents {
                         if let Some(t) = this.terminals.iter_mut().find(|t| t.id == id) {
                             *t = info;
                         }
+                        this.follow_again(&id, cx);
                     }
                     Err(err) => {
                         this.problem = Some(format!("Could not start {name} again: {err:#}"))
@@ -886,6 +888,132 @@ impl Agents {
             .ok();
         })
         .detach();
+    }
+}
+
+impl Agents {
+    pub(crate) fn toggle_gear(&mut self, cx: &mut Context<Self>) {
+        self.gear = !self.gear;
+        self.confirm_end = false;
+        cx.notify();
+    }
+
+    /// Names the conversation shown: its tab becomes a field.
+    pub(crate) fn start_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.gear = false;
+        let Some(t) = self.current().cloned() else {
+            return;
+        };
+        let title = self.title(&t);
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Empty: named after its first message")
+                .default_value(title)
+        });
+        let id = t.id.clone();
+        self._rename_subscription = Some(cx.subscribe_in(
+            &input,
+            window,
+            move |this, _, event: &InputEvent, _, cx| match event {
+                InputEvent::PressEnter { .. } => this.save_rename(cx),
+                InputEvent::Blur => {
+                    this.renaming = None;
+                    cx.notify();
+                }
+                _ => {}
+            },
+        ));
+        input.update(cx, |i, cx| {
+            i.focus(window, cx);
+            i.select_all(window, cx);
+        });
+        self.renaming = Some((id, input));
+        cx.notify();
+    }
+
+    fn save_rename(&mut self, cx: &mut Context<Self>) {
+        let Some((id, input)) = self.renaming.take() else {
+            return;
+        };
+        let name = input.read(cx).value().trim().to_string();
+        if let Some(t) = self.terminals.iter_mut().find(|t| t.id == id) {
+            t.name = (!name.is_empty()).then(|| name.clone());
+        }
+        let renamed = self.daemon.call::<TerminalInfo>(Call::RenameTerminal {
+            terminal: id,
+            name: (!name.is_empty()).then_some(name),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = renamed.await {
+                this.update(cx, |this, cx| {
+                    this.problem = Some(format!("Could not rename the conversation: {err:#}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Ends the conversation (the agent stops, with what it runs) and takes
+    /// it out of the history; asks for a second click while it runs.
+    pub(crate) fn end_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(t) = self.current().cloned() else {
+            return;
+        };
+        if t.running && !self.confirm_end {
+            self.confirm_end = true;
+            cx.notify();
+            return;
+        }
+        self.gear = false;
+        self.confirm_end = false;
+        let closed = self.daemon.call::<Value>(Call::CloseTerminal {
+            terminal: t.id.clone(),
+        });
+        let id = t.id.clone();
+        self.terminals.retain(|t| t.id != id);
+        self.chats.remove(&id);
+        self.views.remove(&id);
+        self.picked.remove(&id);
+        self.drafts.remove(&id);
+        self.selected = self
+            .terminals
+            .iter()
+            .rev()
+            .find(|t| t.running)
+            .map(|t| t.id.clone());
+        let next = if self.terminals.is_empty() {
+            Show::New
+        } else if self.selected.is_some() {
+            Show::Chat
+        } else {
+            Show::History
+        };
+        self.show(next, window, cx);
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = closed.await {
+                this.update(cx, |this, cx| {
+                    this.problem = Some(format!("Could not end the conversation: {err:#}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Starts a new conversation with the agent and choices an ended one had.
+    pub(crate) fn start_again(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(t) = self.current().cloned() else {
+            return;
+        };
+        let Some(kind) = crate::agents::kind_of(&t.kind) else {
+            return;
+        };
+        let options = self.resume_options(&t);
+        self.start(kind.kind, None, options, window, cx);
     }
 }
 

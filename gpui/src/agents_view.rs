@@ -99,13 +99,43 @@ impl Agents {
             .iter()
             .any(|t| self.waiting(t) && Some(&t.id) != self.selected.as_ref());
         let on = p.ink(11.);
+        let renaming = self
+            .renaming
+            .as_ref()
+            .filter(|(id, _)| {
+                matches!(self.show, Show::Chat | Show::Terminal)
+                    && Some(id) == current.map(|t| &t.id)
+            })
+            .map(|(_, input)| input.clone());
+        let title: AnyElement = match renaming {
+            Some(input) => h_flex()
+                .w(px(240.))
+                .flex_shrink(1.)
+                .min_w(px(0.))
+                .gap(px(6.))
+                .px(px(6.))
+                .children(current.map(|t| provider(&t.kind)))
+                .child(Input::new(&input).small())
+                .into_any_element(),
+            None => Workbench::tab("agent-title", Some(leading), label, true, &p)
+                .flex_shrink(1.)
+                .min_w(px(0.))
+                .overflow_hidden()
+                .when(
+                    current.is_some() && matches!(self.show, Show::Chat | Show::Terminal),
+                    |d| {
+                        d.on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                            if event.click_count() == 2 {
+                                this.start_rename(window, cx);
+                            }
+                        }))
+                    },
+                )
+                .into_any_element(),
+        };
+        let gear_on = current.is_some() && matches!(self.show, Show::Chat | Show::Terminal);
         Workbench::strip(&p)
-            .child(
-                Workbench::tab("agent-title", Some(leading), label, true, &p)
-                    .flex_shrink(1.)
-                    .min_w(px(0.))
-                    .overflow_hidden(),
-            )
+            .child(title)
             .child(div().flex_1())
             .child(
                 icon_button("agent-new", "add", &p, false)
@@ -149,6 +179,83 @@ impl Agents {
                     })),
                 )
             })
+            .child(
+                div()
+                    .relative()
+                    .child(
+                        icon_button("agent-gear", "settings", &p, false)
+                            .when(self.gear && gear_on, |d| d.bg(on).text_color(p.text))
+                            .when(!gear_on, |d| d.opacity(0.4))
+                            .when(gear_on, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| this.toggle_gear(cx)))
+                            }),
+                    )
+                    .when(self.gear && gear_on, |d| {
+                        d.children(current.map(|t| {
+                            div().absolute().right_0().bottom_0().child(deferred(
+                                anchored()
+                                    .anchor(Anchor::TopRight)
+                                    .snap_to_window_with_margin(px(8.))
+                                    .child(self.render_gear(t, &p, cx)),
+                            ))
+                        }))
+                    }),
+            )
+    }
+
+    /// The conversation's menu: compact, rename, end.
+    fn render_gear(&self, t: &TerminalInfo, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let hover = p.ink(7.);
+        let row = |id: &'static str, name: &'static str, label: String| {
+            h_flex()
+                .id(id)
+                .gap(px(8.))
+                .px(px(8.))
+                .py(px(5.))
+                .rounded(px(6.))
+                .cursor_pointer()
+                .hover(move |d| d.bg(hover))
+                .child(icon(name).size(px(14.)))
+                .child(label)
+        };
+        let compact = t.running && (t.kind == "claude" || crate::agents::drives_chat(&t.kind));
+        let end = if !t.running {
+            "Remove from history".to_string()
+        } else if self.confirm_end {
+            "Click again to end".to_string()
+        } else {
+            "End conversation".to_string()
+        };
+        crate::composer_view::popup(p)
+            .mt(px(4.))
+            .w(px(220.))
+            .occlude()
+            .when(compact, |d| {
+                d.child(
+                    row("gear-compact", "compact", "Compact conversation".into()).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.gear = false;
+                            this.compact(cx);
+                        }),
+                    ),
+                )
+            })
+            .child(
+                row("gear-rename", "edit.rename", "Rename".into())
+                    .on_click(cx.listener(|this, _, window, cx| this.start_rename(window, cx))),
+            )
+            .child(div().h(px(1.)).mx(px(4.)).my(px(3.)).bg(p.line))
+            .child(
+                row("gear-end", "delete", end)
+                    .when(self.confirm_end, |d| d.text_color(p.err))
+                    .on_click(cx.listener(|this, _, window, cx| this.end_conversation(window, cx))),
+            )
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.gear = false;
+                this.confirm_end = false;
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     fn render_note(&self, text: &str, p: &Palette) -> AnyElement {
@@ -472,12 +579,35 @@ impl Agents {
             );
         }
         if !t.running {
+            let resumable = crate::composer::can_resume(t);
             items.push(
-                div()
+                v_flex()
                     .self_center()
+                    .items_center()
+                    .gap(px(6.))
+                    .pt(px(6.))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
-                    .child("The agent has stopped running.")
+                    .child(if resumable {
+                        format!("{agent} has stopped. Send a message to pick this conversation up again.")
+                    } else {
+                        format!("{agent} has stopped.")
+                    })
+                    .when(!resumable, |d| {
+                        d.child(
+                            div()
+                                .id("chat-start-again")
+                                .px(px(10.))
+                                .py(px(3.))
+                                .rounded(px(RADIUS))
+                                .border_1()
+                                .border_color(p.line)
+                                .text_color(p.text)
+                                .cursor_pointer()
+                                .child("Start a new conversation like it")
+                                .on_click(cx.listener(|this, _, window, cx| this.start_again(window, cx))),
+                        )
+                    })
                     .into_any_element(),
             );
         }
