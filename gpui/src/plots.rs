@@ -134,7 +134,7 @@ fn plot_item(
 }
 
 /// Plots of notebooks stay under their cells; scripts' come here.
-fn from_notebook(cell: &Option<(String, String)>) -> bool {
+pub(crate) fn from_notebook(cell: &Option<(String, String)>) -> bool {
     cell.as_ref().is_some_and(|(file, _)| !is_script(file))
 }
 
@@ -266,7 +266,7 @@ impl Workbench {
                         .iter()
                         .filter_map(|p| {
                             let cell = p.cell.clone().map(|c| (c.file, c.cell_id));
-                            if from_notebook(&cell) {
+                            if !this.notebook_plots && from_notebook(&cell) {
                                 return None;
                             }
                             plot_item(&p.run, &session, p.ts_ms, true, cell, p.by.clone(), &p.data)
@@ -289,7 +289,7 @@ impl Workbench {
         let Some(run) = self.runs.get(run_id) else {
             return;
         };
-        if run.quiet || from_notebook(&run.cell) {
+        if run.quiet || (!self.notebook_plots && from_notebook(&run.cell)) {
             return;
         }
         let items: Vec<PlotItem> = run

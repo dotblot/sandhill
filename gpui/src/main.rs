@@ -13,10 +13,12 @@ mod agents;
 mod agents_box;
 mod agents_view;
 mod chat;
+mod command_palette;
 mod composer;
 mod composer_view;
 mod daemon;
 mod explorer;
+mod files;
 mod git;
 mod git_diff;
 mod git_log;
@@ -26,6 +28,7 @@ mod import_dialog;
 mod imports;
 mod jobs;
 mod look;
+mod main_menu;
 mod notebook;
 mod packages;
 mod pages;
@@ -38,6 +41,7 @@ mod statements;
 mod table;
 mod terminal;
 mod tree;
+mod tree_actions;
 mod view;
 mod viewer;
 mod workbench;
@@ -59,7 +63,26 @@ actions!(
         RunAll,
         Interrupt,
         ToggleConsole,
-        Preview
+        Preview,
+        SaveAll,
+        CloseTab,
+        CloseWindow,
+        NewFile,
+        NewFolder,
+        OpenProject,
+        ConnectServer,
+        ToggleFiles,
+        ToggleRight,
+        ToggleAgents,
+        TogglePalette,
+        HelpAtCursor,
+        About,
+        HideSandhill,
+        HideOthers,
+        ShowAll,
+        Minimize,
+        Zoom,
+        ToggleFullScreen
     ]
 );
 
@@ -115,45 +138,55 @@ fn main() -> anyhow::Result<()> {
             look::install(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             register_r();
-            let (save, run_line, run_all, interrupt, console, preview) =
-                if cfg!(target_os = "macos") {
-                    (
-                        "cmd-s",
-                        "cmd-enter",
-                        "cmd-shift-enter",
-                        "cmd-.",
-                        "cmd-j",
-                        "cmd-shift-k",
-                    )
-                } else {
-                    (
-                        "ctrl-s",
-                        "ctrl-enter",
-                        "ctrl-shift-enter",
-                        "ctrl-.",
-                        "ctrl-j",
-                        "ctrl-shift-k",
-                    )
-                };
-            cx.bind_keys([
-                KeyBinding::new("cmd-q", Quit, None),
-                KeyBinding::new(save, Save, None),
+            main_menu::install_app_actions(cx);
+            // The Tauri app's shortcuts: ⌘ on a Mac, Ctrl elsewhere.
+            let m = if cfg!(target_os = "macos") {
+                "cmd"
+            } else {
+                "ctrl"
+            };
+            // Bindings keep their keys for the life of the app.
+            let k =
+                |keys: &str| -> &'static str { Box::leak(keys.replace("mod", m).into_boxed_str()) };
+            // Elsewhere Ctrl keys belong to the shell in the terminal.
+            let g = if cfg!(target_os = "macos") {
+                None
+            } else {
+                Some("!Terminal")
+            };
+            let mut keys = vec![
+                KeyBinding::new(k("mod-q"), Quit, g),
+                KeyBinding::new(k("mod-s"), Save, g),
+                KeyBinding::new(k("alt-mod-s"), SaveAll, g),
+                KeyBinding::new(k("mod-w"), CloseTab, g),
+                KeyBinding::new(k("shift-mod-w"), CloseWindow, g),
+                KeyBinding::new(k("mod-n"), NewFile, g),
+                KeyBinding::new(k("alt-mod-n"), NewFolder, g),
+                KeyBinding::new(k("mod-o"), OpenProject, g),
+                KeyBinding::new(k("shift-mod-o"), ConnectServer, g),
                 // In a cell's editor, Shift+Enter runs the cell instead of
                 // adding a line, as in Jupyter.
                 KeyBinding::new("shift-enter", RunCell, Some("Input")),
                 // ⌘↵ runs the line or statement in a script, and the cell
                 // (staying on it) in a notebook.
-                KeyBinding::new(run_line, RunLine, Some("Input")),
-                KeyBinding::new(run_all, RunAll, None),
-                KeyBinding::new(interrupt, Interrupt, None),
-                KeyBinding::new(console, ToggleConsole, None),
-                KeyBinding::new(preview, Preview, None),
-            ]);
-            cx.set_menus(vec![Menu {
-                name: "Sandhill".into(),
-                items: vec![MenuItem::action("Quit Sandhill", Quit)],
-                disabled: false,
-            }]);
+                KeyBinding::new(k("mod-enter"), RunLine, Some("Input")),
+                KeyBinding::new(k("alt-mod-r"), RunAll, g),
+                KeyBinding::new(k("mod-shift-enter"), RunAll, g),
+                KeyBinding::new(k("mod-."), Interrupt, g),
+                KeyBinding::new(k("mod-b"), ToggleFiles, g),
+                KeyBinding::new(k("alt-mod-b"), ToggleRight, g),
+                KeyBinding::new(k("mod-i"), ToggleAgents, g),
+                KeyBinding::new(k("mod-j"), ToggleConsole, g),
+                KeyBinding::new(k("mod-k"), TogglePalette, g),
+                KeyBinding::new(k("shift-mod-k"), Preview, g),
+                KeyBinding::new("f1", HelpAtCursor, None),
+            ];
+            if cfg!(target_os = "macos") {
+                keys.push(KeyBinding::new("cmd-m", Minimize, None));
+                keys.push(KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None));
+            }
+            cx.bind_keys(keys);
+            cx.set_menus(main_menu::app_menus());
             cx.on_window_closed(|cx, _| cx.quit()).detach();
 
             let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);

@@ -93,3 +93,22 @@ pub fn save_settings_asked(project: &str) {
     }
     write("settingsAsked", Value::Array(list));
 }
+
+/// Whether notebooks' and Quarto documents' runs show in the Console too
+/// (the ☰ menu); off, as in the Tauri app.
+pub fn notebook_console() -> bool {
+    read()["notebookConsole"].as_bool().unwrap_or(false)
+}
+
+pub fn save_notebook_console(on: bool) {
+    write("notebookConsole", json!(on));
+}
+
+/// Whether notebooks' plots show in Plots too, not only under their cells.
+pub fn notebook_plots() -> bool {
+    read()["notebookPlots"].as_bool().unwrap_or(false)
+}
+
+pub fn save_notebook_plots(on: bool) {
+    write("notebookPlots", json!(on));
+}

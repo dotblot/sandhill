@@ -241,7 +241,7 @@ wasn't tried here (no remote that asks for one).
   machine and shows it in the Viewer, rendered again on each save; Stop
   ends it. HTML files open in the Viewer from the file tree.
 - **5c** (`project_settings.rs`, `import_dialog.rs`, `imports.rs`): the
-  gear in the title bar opens Project settings (the R and Python the
+  ☰ menu (the gear until step 6) opens Project settings (the R and Python the
   project runs in, where notebooks run, env files, where agent
   conversations are kept), saved in `.sandhill/project.toml`; a project
   without saved settings asks once. New notebooks follow the project's
@@ -250,9 +250,49 @@ wasn't tried here (no remote that asks for one).
   output) after showing the code it will run.
 
 Not yet: keeping a table's filters and sorting with the project for next
-time, and the Tauri app's ☰ menu (the gear stands in for it until step 6). Tried here without a server (the tunnel is checked against the
+time. Tried here without a server (the tunnel is checked against the
 local daemon in `cargo test`) and without Quarto or R installed, so a real
 preview and R's imports weren't seen.
+
+## Step 6: switching over
+
+- **6a** (`command_palette.rs`, `main_menu.rs`, `tree_actions.rs`,
+  `files.rs`): ⌘K goes to a file of the project or runs a command, by
+  typing part of its name. The Mac menu bar (Sandhill, File, Edit, View,
+  Run, Window) and the Tauri app's shortcuts: ⌘N and ⌥⌘N, ⌘O and ⇧⌘O,
+  ⌘S and ⌥⌘S, ⌘W and ⇧⌘W, ⌥⌘R, ⌘B, ⌥⌘B, ⌘I, ⌘J, ⌘K, ⇧⌘K and F1 (help for
+  the name under the cursor). On Linux they use Ctrl, except in the
+  terminal, where Ctrl keys stay the shell's. The title bar's ☰ menu has
+  other projects and servers, project settings, the console, and whether
+  notebooks' runs show in the Console and their plots in Plots (off, as in
+  the Tauri app). The files pane's + menu, ⌘N and the right-click menu
+  make files, folders, Quarto documents, R scripts and notebooks, named
+  in a field in the tree; the right-click menu also opens, runs as a job,
+  renames, duplicates, reveals, copies the path and moves to the Trash (on
+  a server, deletes after asking). Quitting or closing the window saves
+  edited documents first.
+- **6b**: the Mac app carries Linux builds of sandhilld and Ark in
+  `Contents/Resources/daemons`, which it installs on servers over ssh as
+  the Tauri app does (`$SANDHILL_DAEMON_BUILDS` points elsewhere). About
+  Sandhill shows the build.
+
+### What the Tauri app still does that this doesn't
+
+- Several windows, a tab per machine in one window, and windows reopening
+  as they were at the next launch.
+- The Start screen's cards for each server and this Mac, removing recent
+  projects, browsing a server's folders, and New project.
+- The left pane's project switcher, its list of running sessions with Shut
+  down (one, or all no file uses), and the machine's CPU and memory.
+- The connection pop-up: Reconnect, Disconnect, Restart sandhilld, and its
+  log.
+- Restart and Shut down for a document's session.
+- Asking before closing a document with unsaved changes (it is saved
+  instead), sorting files by size or date, and Download to this Mac.
+- Smaller things listed under each step above: Variables' filter box, the
+  Viewer's Back, Forward, Reload and Open in browser, copying a plot,
+  fitting plots to the pane, Git's squash and reorder, and the agents'
+  ⌥1–9, `@` plots, pasting files and exporting a conversation.
 
 ## Running it
 

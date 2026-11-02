@@ -123,6 +123,42 @@ fn is_py_name(name: &str) -> bool {
         && name.chars().all(is_name_char)
 }
 
+/// The name under the cursor, for F1: `stats::lm` is lm in stats (R);
+/// Python names may be dotted, `np.mean`.
+pub(crate) fn name_at(line: &str, column: usize, language: &str) -> Option<HelpRequest> {
+    let python = language.to_ascii_lowercase().starts_with("python");
+    let chars: Vec<char> = line.chars().collect();
+    let part = |c: char| c.is_alphanumeric() || c == '_' || c == '.' || (!python && c == ':');
+    let column = column.min(chars.len());
+    let mut from = column;
+    let mut to = column;
+    while from > 0 && part(chars[from - 1]) {
+        from -= 1;
+    }
+    while to < chars.len() && part(chars[to]) {
+        to += 1;
+    }
+    let name: String = chars[from..to].iter().collect();
+    let name = name.trim_matches(|c| c == '.' || c == ':');
+    if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let ask = |topic: &str, package: Option<&str>| HelpRequest {
+        topic: topic.to_string(),
+        package: package.map(str::to_string),
+        search: false,
+    };
+    if !python
+        && let Some((package, topic)) = name.split_once(":::").or_else(|| name.split_once("::"))
+        && package.starts_with(|c: char| c.is_ascii_alphabetic())
+        && !topic.is_empty()
+        && !topic.contains(':')
+    {
+        return Some(ask(topic, Some(package)));
+    }
+    (!name.contains(':')).then(|| ask(name, None))
+}
+
 /// Help asked for at the Console, which opens in the Help pane rather than
 /// running: R's `?lm`, `?stats::lm`, `??pca`, `help(lm)`,
 /// `help(package = "stats")`; Python's `?np.mean`, `np.mean?`, `help(np.mean)`.
@@ -424,6 +460,40 @@ impl Workbench {
                 search: false,
             };
             self.open_help(asked, true, cx);
+        }
+    }
+
+    /// F1: help for the name under the cursor in a script or cell, in the
+    /// language of the session in front.
+    pub(crate) fn help_at_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.open.as_ref() else {
+            return;
+        };
+        let Some(editor) = open
+            .editors
+            .iter()
+            .find(|e| e.read(cx).focus_handle(cx).is_focused(window))
+            .cloned()
+        else {
+            return;
+        };
+        let language = self.active_language().unwrap_or_else(|| "r".into());
+        let (selected, text, at) = {
+            let e = editor.read(cx);
+            (
+                e.selected_value().to_string(),
+                e.value().to_string(),
+                e.cursor_position(),
+            )
+        };
+        let asked = if !selected.trim().is_empty() {
+            name_at(selected.trim(), 0, &language)
+        } else {
+            let line = text.split('\n').nth(at.line as usize).unwrap_or("");
+            name_at(line, at.character as usize, &language)
+        };
+        if let Some(asked) = asked {
+            self.ask_help(asked, window, cx);
         }
     }
 
@@ -1016,6 +1086,18 @@ mod tests {
             package: package.map(str::to_string),
             search,
         })
+    }
+
+    #[test]
+    fn finds_the_name_under_the_cursor() {
+        let r = super::name_at("fit <- stats::lm(y ~ x)", 14, "r").unwrap();
+        assert_eq!(
+            (r.topic.as_str(), r.package.as_deref()),
+            ("lm", Some("stats"))
+        );
+        let py = super::name_at("np.mean(x)", 4, "python").unwrap();
+        assert_eq!(py.topic, "np.mean");
+        assert!(super::name_at("x <- 42", 6, "r").is_none());
     }
 
     #[test]
