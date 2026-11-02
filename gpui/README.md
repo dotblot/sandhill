@@ -292,15 +292,22 @@ preview and R's imports weren't seen.
   show it. The list of servers is the Tauri app's own file, so both apps
   share it. Window ▸ New Window opens another window.
 
+- **7b** (`machine.rs`, `connection.rs`): the project's name in the left
+  pane lists the machine's projects (with their running kernels) and
+  switches to one. Under the files, Kernels lists the project's running
+  sessions with what uses each and its memory; the trash button, and
+  "Shut down N unused sessions", ask first. Resources shows the machine's
+  CPU, memory, GPUs and disk as bars; clicking one shows its details. Both
+  sections fold. The status bar's connection opens a pop-up with what the
+  connection is, Reconnect (the project and its documents open again),
+  Disconnect, Connect, or Restart sandhilld on this machine, and the
+  daemon's log. A document's kernel has Restart and Shut down beside its
+  state. Closing a document with unsaved changes asks Save, Don't save or
+  Cancel.
+
 ### What the Tauri app still does that this doesn't
 
-- The left pane's project switcher, its list of running sessions with Shut
-  down (one, or all no file uses), and the machine's CPU and memory.
-- The connection pop-up: Reconnect, Disconnect, Restart sandhilld, and its
-  log.
-- Restart and Shut down for a document's session.
-- Asking before closing a document with unsaved changes (it is saved
-  instead), sorting files by size or date, and Download to this Mac.
+- Sorting files by size or date, and Download to this Mac.
 - Smaller things listed under each step above: Variables' filter box, the
   Viewer's Back, Forward, Reload and Open in browser, copying a plot,
   fitting plots to the pane, Git's squash and reorder, and the agents'
