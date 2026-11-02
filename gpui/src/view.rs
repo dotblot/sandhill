@@ -19,10 +19,8 @@ use crate::look::{
 };
 use crate::notebook::{self, CellKind};
 use crate::shown::{Shown, show};
-use crate::workbench::{
-    Link, Open, Plot, RightTab, Run, Session, Split, Workbench, is_script, plot_key,
-};
-use crate::{Interrupt, RunAll, RunCell, RunLine, Save};
+use crate::workbench::{Link, Open, Plot, Run, Session, Split, Workbench, is_script, plot_key};
+use crate::{Interrupt, RunAll, RunCell, RunLine, Save, ToggleConsole};
 
 /// Height of one line of code (15px Maple Mono at 1.3), and an editor's
 /// padding.
@@ -38,8 +36,13 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.report_focus(window, cx);
         self.sync_pages(window, cx);
+        self.sync_plots(cx);
+        self.sync_packages(cx);
+        self.sync_jobs(cx);
+        self.fetch_plot_images(cx);
         let p = *Palette::get(cx);
         wall(&p)
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -49,6 +52,10 @@ impl Render for Workbench {
             .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
             .on_action(cx.listener(|this, _: &RunAll, _, cx| this.run_all(cx)))
             .on_action(cx.listener(|this, _: &Interrupt, _, _| this.interrupt()))
+            .on_action(cx.listener(|this, _: &ToggleConsole, _, cx| {
+                this.show_console = !this.show_console;
+                cx.notify();
+            }))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 if let Some(split) = this.dragging {
                     this.drag_split(split, event.position, window.viewport_size(), cx);
@@ -63,7 +70,7 @@ impl Render for Workbench {
                 }),
             )
             .map(|d| match self.dragging {
-                Some(Split::Variables) => d.cursor(CursorStyle::ResizeUpDown),
+                Some(Split::Variables | Split::Console) => d.cursor(CursorStyle::ResizeUpDown),
                 Some(_) => d.cursor(CursorStyle::ResizeLeftRight),
                 None => d,
             })
@@ -95,12 +102,21 @@ impl Render for Workbench {
                         },
                     )
                     .child(
-                        div()
+                        v_flex()
                             .flex_1()
                             .min_w(px(320.))
                             .h_full()
-                            .flex()
-                            .child(self.render_notebook(window, cx)),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_h(px(120.))
+                                    .flex()
+                                    .child(self.render_notebook(window, cx)),
+                            )
+                            .when(self.show_console, |d| {
+                                d.child(self.splitter(Split::Console, cx))
+                                    .child(self.render_console_pane(cx))
+                            }),
                     )
                     .when(self.show_right, |d| {
                         d.child(self.splitter(Split::Right, cx))
@@ -108,6 +124,7 @@ impl Render for Workbench {
                     }),
             )
             .child(self.render_status(cx))
+            .children(self.render_zoom(cx))
     }
 }
 
@@ -118,9 +135,9 @@ const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
 impl Workbench {
     /// A gap between panes that can be dragged; an accent line shows under
     /// the pointer.
-    fn splitter(&self, split: Split, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn splitter(&self, split: Split, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let across = split == Split::Variables;
+        let across = matches!(split, Split::Variables | Split::Console);
         let dragging = self.dragging == Some(split);
         let id: SharedString = format!("split-{split:?}").into();
         let line = div()
@@ -206,9 +223,15 @@ impl Workbench {
                 self.right_width = (width - x - GAP).clamp(280., most);
             }
             Split::Variables => {
+                // The top pane's height, from the top of the column.
+                let top = look::TITLE_BAR + GAP;
+                let most = (height - look::STATUS_BAR - top - 120.).max(90.);
+                self.variables_height = (y - top).clamp(90., most);
+            }
+            Split::Console => {
                 let bottom = height - look::STATUS_BAR;
                 let most = (bottom - look::TITLE_BAR - 160.).max(80.);
-                self.variables_height = (bottom - y).clamp(80., most);
+                self.console_height = (bottom - y).clamp(80., most);
             }
         }
         cx.notify();
@@ -1056,6 +1079,12 @@ impl Workbench {
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
             )
+            .when(crate::jobs::is_job_script(&open.notebook.path), |bar| {
+                bar.child(
+                    bar_button("run-job", "Run as job", Some("terminal"), &p)
+                        .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
+                )
+            })
             .child(
                 bar_button("save", "Save", Some("doc.save"), &p)
                     .when(!open.dirty, |d| d.opacity(0.45))
@@ -1258,46 +1287,7 @@ impl Workbench {
         }
     }
 
-    /// The right column: the Console, Terminal or Viewer above Variables,
-    /// each a pane.
-    fn render_right(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *Palette::get(cx);
-        let tab =
-            |id: &'static str, label: &'static str, which: RightTab, cx: &mut Context<Self>| {
-                Self::tab(id, None, label, self.right_tab == which, &p).on_click(
-                    cx.listener(move |this, _, window, cx| this.show_tab(which, window, cx)),
-                )
-            };
-        let top: AnyElement = match self.right_tab {
-            RightTab::Console => self.render_console(cx),
-            RightTab::Terminal => self.render_terminal(cx),
-            RightTab::Viewer => self.render_viewer(cx),
-        };
-        v_flex()
-            .w(px(self.right_width))
-            .h_full()
-            // Gives way to the middle in a narrow window.
-            .flex_shrink(1.)
-            .min_w(px(280.))
-            .child(
-                pane(&p)
-                    .flex_1()
-                    .child(
-                        Self::strip(&p).child(
-                            capsule(&p, 22.)
-                                .gap(px(1.))
-                                .child(tab("tab-console", "Console", RightTab::Console, cx))
-                                .child(tab("tab-terminal", "Terminal", RightTab::Terminal, cx))
-                                .child(tab("tab-viewer", "Viewer", RightTab::Viewer, cx)),
-                        ),
-                    )
-                    .child(div().flex_1().min_h_0().child(top)),
-            )
-            .child(self.splitter(Split::Variables, cx))
-            .child(self.render_variables(cx))
-    }
-
-    fn render_console(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_console(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let entries = self
             .console
@@ -1460,7 +1450,7 @@ impl Workbench {
             .into_any_element()
     }
 
-    fn render_terminal(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_terminal(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let note = |s: String, color: Hsla| {
             div()
@@ -1484,7 +1474,7 @@ impl Workbench {
         }
     }
 
-    fn render_viewer(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_viewer(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let Some((page, title, ix, count)) = self.viewer_page() else {
             return div()
@@ -1544,7 +1534,8 @@ impl Workbench {
             .into_any_element()
     }
 
-    fn render_variables(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The Variables tab's body.
+    pub(crate) fn render_variables(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let mut rows = Vec::new();
         self.variable_rows(&self.vars.list, &[], &mut rows, cx);
@@ -1557,34 +1548,10 @@ impl Workbench {
         } else {
             None
         };
-        pane(&p)
-            .h(px(self.variables_height))
-            .flex_none()
-            .child(
-                Self::strip(&p)
-                    .child(capsule(&p, 22.).child(Self::tab(
-                        "tab-variables",
-                        None,
-                        "Variables",
-                        true,
-                        &p,
-                    )))
-                    .when(self.vars.loading, |d| {
-                        d.child(
-                            div()
-                                .pl_1()
-                                .text_size(px(look::SMALL))
-                                .text_color(p.faint)
-                                .child("updating…"),
-                        )
-                    })
-                    .child(div().flex_1())
-                    .child(
-                        icon_button("refresh-variables", "refresh", &p, false)
-                            .when(self.active_session().is_none(), |d| d.opacity(0.35))
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh_variables(cx))),
-                    ),
-            )
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
             .child(
                 div()
                     .id("variables")
@@ -1597,6 +1564,7 @@ impl Workbench {
                     })
                     .children(rows),
             )
+            .into_any_element()
     }
 
     fn variable_rows(

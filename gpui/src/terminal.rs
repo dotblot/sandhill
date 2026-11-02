@@ -27,6 +27,8 @@ type Row = (String, Vec<(std::ops::Range<usize>, HighlightStyle)>);
 /// box-drawing lines join up.
 pub const FONT_SIZE: f32 = crate::look::CODE;
 pub const LINE_HEIGHT: f32 = 18.;
+/// Output kept back until a terminal view is first laid out.
+const EARLY_MAX: usize = 1 << 20;
 
 /// Replies the terminal owes the program (to "where is the cursor?" and
 /// the like), sent back as input.
@@ -70,6 +72,10 @@ pub struct TerminalView {
     columns: usize,
     lines: usize,
     exited: Option<String>,
+    /// Output that came before the view was first laid out, which goes in
+    /// once the terminal has the view's size: a log read back (a job's)
+    /// then ends at the bottom rather than at a default 24 lines.
+    early: Option<Vec<u8>>,
 }
 
 impl TerminalView {
@@ -95,6 +101,7 @@ impl TerminalView {
             columns: 80,
             lines: 24,
             exited: None,
+            early: Some(Vec::new()),
         }
     }
 
@@ -103,7 +110,22 @@ impl TerminalView {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
             return;
         };
-        self.parser.advance(&mut self.term, &bytes);
+        if let Some(early) = &mut self.early {
+            early.extend_from_slice(&bytes);
+            // A view that isn't shown soon (an agent's) keeps no more
+            // than this: the rest goes in at the default size.
+            if early.len() > EARLY_MAX
+                && let Some(early) = self.early.take()
+            {
+                self.advance(&early, cx);
+            }
+            return;
+        }
+        self.advance(&bytes, cx);
+    }
+
+    fn advance(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        self.parser.advance(&mut self.term, bytes);
         for reply in std::mem::take(&mut *self.replies.0.lock().unwrap()) {
             let _ = self.input.send(reply);
         }
@@ -152,14 +174,20 @@ impl TerminalView {
         let lines = ((bounds.size.height.as_f32() - 8.) / LINE_HEIGHT)
             .floor()
             .max(3.) as usize;
-        if (columns, lines) == (self.columns, self.lines) {
-            return;
+        if (columns, lines) != (self.columns, self.lines) {
+            self.columns = columns;
+            self.lines = lines;
+            self.term.resize(Size { columns, lines });
+            (self.resize)(columns as u16, lines as u16);
+            cx.notify();
         }
-        self.columns = columns;
-        self.lines = lines;
-        self.term.resize(Size { columns, lines });
-        (self.resize)(columns as u16, lines as u16);
-        cx.notify();
+        // After this frame: a change made while painting isn't drawn.
+        if let Some(early) = self.early.take() {
+            cx.spawn(async move |this, cx| {
+                this.update(cx, |this, cx| this.advance(&early, cx)).ok();
+            })
+            .detach();
+        }
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
