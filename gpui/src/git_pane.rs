@@ -91,6 +91,8 @@ pub(crate) struct Git {
     user_email: Entity<InputState>,
     /// The merge message put in the commit boxes.
     merge_filled: Option<String>,
+    /// The Squash and reorder dialog, when open.
+    pub(crate) rewrite: Option<crate::git_rewrite::Rewrite>,
     // History, read in `git_log.rs`.
     pub(crate) log: crate::git_log::Log,
 }
@@ -165,6 +167,7 @@ pub(crate) fn new_git(
         user_name,
         user_email,
         merge_filled: None,
+        rewrite: None,
         log: Default::default(),
     };
     (git, subscriptions)
@@ -2123,6 +2126,13 @@ impl Workbench {
                             cx,
                         )
                     }),
+                ));
+                rows.push(item(
+                    "sort",
+                    "Squash or reorder commits…".into(),
+                    status.head.is_some() && branch.is_some() && !busy_state,
+                    cx,
+                    Box::new(|this, _, cx| this.open_rewrite(cx)),
                 ));
                 rows.push(sep());
                 let to_stage = unstaged.clone();

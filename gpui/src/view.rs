@@ -56,11 +56,22 @@ impl Render for Workbench {
             .line_height(rems(1.25))
             // Esc closes the large plot and the log, before a field in
             // them takes it.
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                // ⌥1–9 pick a model while the agents' model menu is open,
+                // wherever the focus is.
+                if let Some(agents) = this.agents.clone()
+                    && agents.update(cx, |a, cx| a.model_shortcut(event, window, cx))
+                {
+                    cx.stop_propagation();
+                    return;
+                }
                 if event.keystroke.key != "escape" {
                     return;
                 }
-                if this.plot_history.zoom.take().is_some() || this.log.take().is_some() {
+                if this.plot_history.zoom.take().is_some()
+                    || this.log.take().is_some()
+                    || this.git.rewrite.take().is_some()
+                {
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -149,6 +160,7 @@ impl Render for Workbench {
             .children(self.render_main_menu(cx))
             .children(self.render_connection_menu(cx))
             .children(self.render_log_dialog(cx))
+            .children(self.render_rewrite(cx))
             .children(self.render_tree_menu(cx))
             .children(self.render_palette(cx))
     }

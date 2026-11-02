@@ -404,6 +404,9 @@ pub struct Mention {
     pub label: Option<String>,
     /// Grey text after it: a cell's first line of code.
     pub detail: Option<String>,
+    /// What picking it saves first, as a plot's image is saved where the
+    /// agent can see it.
+    pub source: Option<Value>,
 }
 
 impl Mention {
@@ -412,6 +415,7 @@ impl Mention {
             item: json!({"kind": "file", "name": path, "path": path}),
             label: None,
             detail: None,
+            source: None,
         }
     }
 
@@ -555,6 +559,7 @@ pub fn cell_mentions(path: &str, name: &str, cells: &[DocCell]) -> Vec<Mention> 
                 "path": path,
                 "cell": cell.id,
             }),
+            source: None,
             label: Some(cell.name.clone()),
             detail: cell
                 .code
@@ -636,12 +641,14 @@ mod tests {
         let all = vec![
             Mention {
                 item: json!({"kind": "variable", "name": "markers"}),
+                source: None,
                 label: None,
                 detail: None,
             },
             Mention::file("R/markers.R"),
             Mention {
                 item: json!({"kind": "plot", "name": "umap · analysis.qmd"}),
+                source: None,
                 label: None,
                 detail: None,
             },

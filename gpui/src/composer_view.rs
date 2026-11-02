@@ -5,7 +5,9 @@
 //! the context used and the model with its effort on the right. Menus open
 //! above the box.
 
-use gpui_kit::component::input::{Backspace, Editor, Escape, IndentInline, MoveDown, MoveUp};
+use gpui_kit::component::input::{
+    Backspace, Editor, Escape, IndentInline, MoveDown, MoveUp, Paste,
+};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -217,6 +219,13 @@ impl Agents {
                     cx.stop_propagation();
                 }
             }))
+            .capture_action(cx.listener(|this, _: &Paste, _, cx| {
+                // An image or files on the clipboard are attached; text
+                // pastes as usual.
+                if this.paste_attachments(cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .capture_action(cx.listener(|this, _: &Backspace, _, cx| {
                 // Backspace at the start takes the last chip away.
                 let at_start = {
@@ -240,6 +249,11 @@ impl Agents {
                     .border_1()
                     .border_color(edge)
                     .bg(p.bg)
+                    // Files dragged in from Finder are attached.
+                    .drag_over::<ExternalPaths>(move |d, _, _, _| d.border_color(p.accent))
+                    .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                        this.attach_paths(paths.paths().to_vec(), cx)
+                    }))
                     .when(!self.refs.is_empty(), |d| {
                         d.child(h_flex().flex_wrap().gap(px(4.)).px(px(2.)).children(chips))
                     })
@@ -600,15 +614,74 @@ impl Agents {
             )
     }
 
+    /// The model menu's open tab: favourites, or an agent's.
+    fn open_model_tab(&self) -> String {
+        self.model_tab
+            .clone()
+            .filter(|t| t == "fav" || self.usable(t))
+            .unwrap_or_else(|| self.box_kind().to_string())
+    }
+
+    /// The models the open tab lists, with their agents.
+    fn model_rows(&self) -> Vec<(String, ModelChoice)> {
+        let tab = self.open_model_tab();
+        if tab == "fav" {
+            KINDS
+                .iter()
+                .flat_map(|k| {
+                    self.models_of(k.kind)
+                        .models
+                        .into_iter()
+                        .filter(|m| self.favourites.contains(&favourite_key(k.kind, m)))
+                        .map(|m| (k.kind.to_string(), m))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        } else {
+            self.models_of(&tab)
+                .models
+                .into_iter()
+                .map(|m| (tab.clone(), m))
+                .collect()
+        }
+    }
+
+    /// ⌥1, ⌥2… pick a model in the open tab of the model menu.
+    pub(crate) fn model_shortcut(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let keys = &event.keystroke;
+        if self.menu != Some(Menu::Model)
+            || !keys.modifiers.alt
+            || keys.modifiers.platform
+            || keys.modifiers.control
+        {
+            return false;
+        }
+        let Some(n) = keys
+            .key
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (1..=9).contains(n))
+        else {
+            return false;
+        };
+        let Some((kind, model)) = self.model_rows().into_iter().nth(n - 1) else {
+            return true;
+        };
+        if self.usable(&kind) {
+            self.choose_model(&kind, model, window, cx);
+        }
+        true
+    }
+
     /// The model menu: tabs for favourites and each agent, the models, and
     /// the thinking effort.
     fn render_models(&self, p: &Palette, cx: &mut Context<Self>) -> Stateful<Div> {
-        let kind = self.box_kind().to_string();
-        let tab = self
-            .model_tab
-            .clone()
-            .filter(|t| t == "fav" || self.usable(t))
-            .unwrap_or_else(|| kind.clone());
+        let tab = self.open_model_tab();
         let tab_button = |id: String, on: bool, usable: bool, inner: AnyElement| {
             div()
                 .id(SharedString::from(id))
@@ -665,25 +738,7 @@ impl Agents {
             let k = kind_of(&tab).unwrap_or(&KINDS[0]);
             format!("{} · {}", k.name, sign_in(k))
         };
-        let rows: Vec<(String, ModelChoice)> = if tab == "fav" {
-            KINDS
-                .iter()
-                .flat_map(|k| {
-                    self.models_of(k.kind)
-                        .models
-                        .into_iter()
-                        .filter(|m| self.favourites.contains(&favourite_key(k.kind, m)))
-                        .map(|m| (k.kind.to_string(), m))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
-        } else {
-            self.models_of(&tab)
-                .models
-                .into_iter()
-                .map(|m| (tab.clone(), m))
-                .collect()
-        };
+        let rows = self.model_rows();
         let list: Vec<AnyElement> = if rows.is_empty() {
             vec![
                 div()
@@ -717,6 +772,14 @@ impl Agents {
                         })
                         .when(tab == "fav", |d| d.child(provider(&k)))
                         .child(div().flex_1().child(model.label.clone()))
+                        .when(i < 9, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(look::SMALL))
+                                    .text_color(p.faint)
+                                    .child(format!("⌥{}", i + 1)),
+                            )
+                        })
                         .child(
                             div()
                                 .id(("star", i))

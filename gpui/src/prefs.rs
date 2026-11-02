@@ -203,3 +203,32 @@ pub fn tree_sort() -> String {
 pub fn save_tree_sort(by: &str) {
     write("treeSort", json!(by));
 }
+
+/// How a table in the Data Explorer was last sorted and filtered, in a
+/// project: `{sort: [...], filters: [...]}`, each key with its column's name.
+pub fn table_view(project: &str, table: &str) -> Option<Value> {
+    let view = read()["tableViews"][project][table].clone();
+    view.is_object().then_some(view)
+}
+
+/// Keeps a table's sorting and filters, or forgets them (`None`).
+pub fn save_table_view(project: &str, table: &str, view: Option<Value>) {
+    let mut all = read()["tableViews"].clone();
+    if !all.is_object() {
+        all = json!({});
+    }
+    if !all[project].is_object() {
+        all[project] = json!({});
+    }
+    if let Some(tables) = all[project].as_object_mut() {
+        match view {
+            Some(view) => {
+                tables.insert(table.to_string(), view);
+            }
+            None => {
+                tables.remove(table);
+            }
+        }
+    }
+    write("tableViews", all);
+}

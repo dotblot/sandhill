@@ -141,6 +141,29 @@ impl Daemon {
         async move { Ok(task.await??) }
     }
 
+    /// Like `call`, but gives up after `limit`: for asking kernels
+    /// something on the side, where one that doesn't answer mustn't hold
+    /// the rest up.
+    pub fn call_within<T>(
+        &self,
+        call: Call,
+        limit: std::time::Duration,
+    ) -> impl Future<Output = Result<T>> + 'static
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        let client = self.client.clone();
+        let task = self
+            .rt
+            .spawn(async move { tokio::time::timeout(limit, client.call::<T>(call)).await });
+        async move {
+            match task.await? {
+                Ok(answer) => Ok(answer?),
+                Err(_) => Err(anyhow::anyhow!("no answer in {} s", limit.as_secs())),
+            }
+        }
+    }
+
     /// Sends one request after those made before it with this method have
     /// been answered: runs, so that Run All runs the cells in order. (Calls
     /// made with `call` go out on tasks of their own and can pass each

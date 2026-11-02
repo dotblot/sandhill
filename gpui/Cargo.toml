@@ -24,6 +24,8 @@ base64 = "0.22"
 resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Unpacks the bundled Maple Mono fonts (assets/fonts).
 flate2 = "1"
+# The HTML export of a conversation.
+markdown = "1"
 # GPUI Fast, gpui-kit's newer drawing engine, lets the web view be clipped
 # by the notebook it scrolls in; both crates must have it.
 gpui-kit = { version = "=0.8.1", features = ["tree-sitter-python", "tree-sitter-markdown", "gpui-fast"] }
