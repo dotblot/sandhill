@@ -459,6 +459,20 @@
     "i-above"
    ]
   },
+  "run.below": {
+   "file": "system/run.below.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Run this cell and below",
+   "v31": []
+  },
+  "outputs.clear": {
+   "file": "system/outputs.clear.svg",
+   "kind": "system",
+   "group": "run",
+   "label": "Clear outputs",
+   "v31": []
+  },
   "stop": {
    "file": "system/stop.svg",
    "kind": "system",

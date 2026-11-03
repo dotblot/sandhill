@@ -227,6 +227,7 @@ impl Workbench {
             open.editors = editors;
             open._subscriptions = subscriptions;
             open.editing.clear();
+            open.deleted.clear();
             open.waiting.clear();
             open.dirty = true;
             open.current = Some(ix);

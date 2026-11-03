@@ -83,6 +83,8 @@ SYSTEM = [
     # running code
     ("run", ["i-play"], "run", "Run"),
     ("run.above", ["i-above"], "run", "Run all above"),
+    ("run.below", [], "run", "Run this cell and below"),
+    ("outputs.clear", [], "run", "Clear outputs"),
     ("stop", ["i-stop"], "run", "Stop"),
     ("interrupt", [], "run", "Interrupt"),
     ("power", [], "run", "Start or shut down"),
@@ -136,6 +138,8 @@ NEW_SYSTEM = {
     "power": '<path d="M8 2.2v5.3"/><path d="M5.1 4.4a5 5 0 1 0 5.8 0"/>',
     "theme.light": '<circle cx="8" cy="8" r="2.8"/><path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1.05 1.05M11.45 11.45l1.05 1.05M3.5 12.5l1.05-1.05M11.45 4.55l1.05-1.05"/>',
     "theme.dark": '<path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/>',
+    "run.below": '<path d="M4 2.5h8M8 5v8M4.5 9.5 8 13l3.5-3.5"/>',
+    "outputs.clear": '<rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><path d="M6.3 6.3l3.4 3.4M9.7 6.3l-3.4 3.4"/>',
     "warning": '<path d="M8 2.4 14 13H2z"/><path d="M8 6.6v3M8 11.4v.01"/>',
 }
 # old ids that are not system icons: they become agent chips (see AGENTS)

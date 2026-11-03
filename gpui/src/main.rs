@@ -13,6 +13,8 @@ mod agents;
 mod agents_box;
 mod agents_view;
 mod app_window;
+mod cell_view;
+mod cells;
 mod chat;
 mod command_palette;
 mod composer;
@@ -29,6 +31,7 @@ mod git_log;
 mod git_pane;
 mod git_rewrite;
 mod help;
+mod html_table;
 mod import_dialog;
 mod imports;
 mod jobs;
@@ -89,9 +92,21 @@ actions!(
         Zoom,
         ToggleFullScreen,
         NewProject,
-        NewWindow
+        NewWindow,
+        AddCellAbove,
+        AddCellBelow,
+        DeleteCell,
+        CellToCode,
+        CellToMarkdown,
+        SelectPrevCell,
+        SelectNextCell,
+        EditCell,
+        UndoDeleteCell
     ]
 );
+
+/// The key context of a notebook's cells when none is being edited.
+pub const CELLS: &str = "NotebookCells";
 
 /// Highlighting for R, with Posit's tree-sitter grammar (MIT).
 fn register_r() {
@@ -193,6 +208,21 @@ fn main() -> anyhow::Result<()> {
                 KeyBinding::new(k("mod-k"), TogglePalette, g),
                 KeyBinding::new(k("shift-mod-k"), Preview, g),
                 KeyBinding::new("f1", HelpAtCursor, None),
+                // A notebook's cells, when none is being edited (Esc
+                // leaves a cell's editor), as in Jupyter.
+                KeyBinding::new("a", AddCellAbove, Some(CELLS)),
+                KeyBinding::new("b", AddCellBelow, Some(CELLS)),
+                KeyBinding::new("d d", DeleteCell, Some(CELLS)),
+                KeyBinding::new("z", UndoDeleteCell, Some(CELLS)),
+                KeyBinding::new("y", CellToCode, Some(CELLS)),
+                KeyBinding::new("m", CellToMarkdown, Some(CELLS)),
+                KeyBinding::new("up", SelectPrevCell, Some(CELLS)),
+                KeyBinding::new("k", SelectPrevCell, Some(CELLS)),
+                KeyBinding::new("down", SelectNextCell, Some(CELLS)),
+                KeyBinding::new("j", SelectNextCell, Some(CELLS)),
+                KeyBinding::new("enter", EditCell, Some(CELLS)),
+                KeyBinding::new("shift-enter", RunCell, Some(CELLS)),
+                KeyBinding::new(k("mod-enter"), RunLine, Some(CELLS)),
             ];
             if cfg!(target_os = "macos") {
                 keys.push(KeyBinding::new("cmd-m", Minimize, None));

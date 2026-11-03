@@ -57,6 +57,8 @@ registry lists under `v31` so code can look either up.
 | `i-globe` | `globe` | files | Web |
 | `i-play` | `run` | run | Run |
 | `i-above` | `run.above` | run | Run all above |
+| — | `run.below` | run | Run this cell and below (new in V32.2) |
+| — | `outputs.clear` | run | Clear outputs (new in V32.2) |
 | `i-stop` | `stop` | run | Stop |
 | — | `interrupt` | run | Interrupt (new in V32.2) |
 | — | `power` | run | Start or shut down (new in V32.2) |

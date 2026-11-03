@@ -69,6 +69,8 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE runs ADD COLUMN quiet INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE runs ADD COLUMN origin TEXT;
      CREATE INDEX runs_by_session ON runs(session_id);",
+    // 4: runs whose outputs the user cleared from their cell.
+    "ALTER TABLE runs ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0;",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -547,10 +549,30 @@ impl Journal {
              WHERE r.cell_file = ?1
                AND r.rowid = (SELECT MAX(rowid) FROM runs
                               WHERE cell_file = r.cell_file AND cell_id = r.cell_id)
+               AND r.cleared = 0
              ORDER BY r.rowid"
         ))?;
         let rows = stmt.query_map([file], cell_run_from_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Clears the outputs of these cells of `file`: their finished runs no
+    /// longer show under them. The runs stay in the Console's history.
+    /// Returns how many runs were cleared.
+    pub fn clear_cell_outputs(&self, file: &str, cell_ids: &[String]) -> Result<usize> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut cleared = 0;
+        for cell_id in cell_ids {
+            cleared += tx.execute(
+                "UPDATE runs SET cleared = 1
+                 WHERE cell_file = ?1 AND cell_id = ?2
+                   AND finished_ms IS NOT NULL AND cleared = 0",
+                params![file, cell_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(cleared)
     }
 
     pub fn cell_run(&self, run_id: &str) -> Result<Option<CellRun>> {
@@ -825,6 +847,40 @@ mod tests {
         let events = j.run_events("r3", cutoff).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1["text"], "early");
+    }
+
+    #[test]
+    fn cleared_cells_show_no_outputs_until_they_run_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let j = journal(dir.path());
+        j.insert_session(&session("a")).unwrap();
+        let cell = |id: &str| sandhill_proto::CellRef {
+            file: "/w/a.ipynb".into(),
+            cell_id: id.into(),
+        };
+        j.insert_run("r1", "a", "m1", "1", cell_run(&cell("x")))
+            .unwrap();
+        j.insert_run("r2", "a", "m2", "2", cell_run(&cell("y")))
+            .unwrap();
+        j.finish_run("r1", "ok", Some(1)).unwrap();
+        // Only finished runs are cleared: y is still running.
+        let cleared = j
+            .clear_cell_outputs("/w/a.ipynb", &["x".into(), "y".into()])
+            .unwrap();
+        assert_eq!(cleared, 1);
+        let latest = |j: &Journal| {
+            j.latest_cell_runs("/w/a.ipynb")
+                .unwrap()
+                .into_iter()
+                .map(|r| r.run_id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(latest(&j), ["r2"]);
+        // The Console still has the run.
+        assert!(j.cell_run("r1").unwrap().is_some());
+        j.insert_run("r3", "a", "m3", "3", cell_run(&cell("x")))
+            .unwrap();
+        assert_eq!(latest(&j), ["r2", "r3"]);
     }
 
     fn cell_run(cell: &sandhill_proto::CellRef) -> NewRun<'_> {

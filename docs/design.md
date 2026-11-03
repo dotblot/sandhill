@@ -133,6 +133,29 @@ In notebooks, a cell shows its number (#3) but not its run count; Run is in
 its top right corner. Output text can be selected and copied, and a plot
 under a cell can be saved (the same dialog as the Plots pane's) or copied.
 
+Notebook cells work as Positron's notebooks do (decided 2026-11-03, Huan's
+batches 1 and 2; built from Positron's documentation and behaviour, not its
+code, which is Elastic License 2.0). Pointing at a cell shows its tools next
+to Run: run the cells above, run it and those below, fold or clear its
+outputs, move it up or down, delete it. Under the cell number the gutter
+says how its run went: `…` while it waits its turn, the time so far while
+it runs (the oldest unfinished run of the kernel is the one running), then
+how long it took, red if it failed. Rows between cells add a code or
+Markdown cell. Long outputs scroll in a box 480 px tall. A data frame
+(`<table class="dataframe">` from pandas, polars or IRkernel) shows as a
+grid, with a button that opens it in the Data Explorer when the cell's last
+line names it (`df`, `df.head()`, `head(df)`). Esc leaves a cell's editor
+and picks the cell; then A/B add a cell above/below, D D deletes (Z brings
+it back), M/Y make it Markdown/code, ↑/↓ or K/J move between cells, Enter
+edits, Shift+Enter runs and moves on. Cells are dragged to a new place by
+their gutter. Adding, removing, moving and changing cells is for Jupyter
+notebooks only: a Quarto document's cells are found in its text and its
+unlabelled chunks are known by their position. Saved `.ipynb` files no
+longer keep run counts (`execution_count` is null), so running a notebook
+doesn't change the file. Clearing outputs also clears them in the daemon
+(`clear_cell_outputs`), so they stay cleared when the notebook is opened
+again.
+
 ### The look (added 2026-10-11)
 
 The app follows the UI mockup, the agreed final layout, kept in

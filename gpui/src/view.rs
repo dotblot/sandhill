@@ -28,8 +28,8 @@ use crate::{Interrupt, RunAll, RunCell, RunLine, Save, ToggleConsole};
 const LINE_HEIGHT: f32 = 20.;
 const EDITOR_PADDING: f32 = 20.;
 const PLOT_MAX_WIDTH: f32 = 720.;
-/// The notebook's gutter, with each cell's number.
-const GUTTER: f32 = 52.;
+/// How tall a cell's outputs grow before they scroll.
+const OUTPUT_MAX_HEIGHT: f32 = 480.;
 /// Height of a web page under a cell.
 const PAGE_HEIGHT: f32 = 420.;
 
@@ -709,54 +709,52 @@ impl Workbench {
                 .child(self.render_script(open, cx))
                 .into_any_element();
         }
-        let cells = open
+        let bodies = open
             .notebook
             .cells
             .iter()
             .enumerate()
             .map(|(ix, cell)| match cell.kind {
-                CellKind::Text => h_flex()
-                    .items_start()
-                    .child(div().w(px(GUTTER)).flex_none())
-                    .child(div().flex_1().min_w_0().child(
-                        // As in the Tauri app, a notebook's Markdown shows
-                        // formatted; a Quarto document's prose stays text.
-                        if open.notebook.format != notebook::Format::Ipynb
-                            || open.editing.contains(&ix)
-                            || cell_text(open, ix, cx).trim().is_empty()
-                        {
-                            self.render_cell_editor(open, ix, false, window, cx)
-                        } else {
-                            self.render_markdown(open, ix, cx)
-                        },
-                    ))
-                    .into_any_element(),
+                // As in the Tauri app, a notebook's Markdown shows
+                // formatted; a Quarto document's prose stays text.
+                CellKind::Text => {
+                    if open.notebook.format != notebook::Format::Ipynb
+                        || open.editing.contains(&cell.id)
+                        || cell_text(open, ix, cx).trim().is_empty()
+                    {
+                        self.render_cell_editor(open, ix, false, window, cx)
+                    } else {
+                        self.render_markdown(open, ix, cx)
+                    }
+                }
                 CellKind::Code => self.render_code_cell(open, ix, window, cx),
             })
             .collect::<Vec<_>>();
+        let cells = self.render_cells(open, bodies, window, cx);
+        let commanding = self.cells_focus.is_focused(window);
+        let scroller = div()
+            .id("cells")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .track_scroll(&self.notebook_scroll)
+            .track_focus(&self.cells_focus)
+            .when(commanding, |d| d.key_context(crate::CELLS))
+            .pt(px(10.))
+            .pb(px(200.))
+            .pl(px(6.))
+            .pr(px(24.))
+            // Between cells that can be added to, the rows that add them.
+            .when(!open.notebook.can_restructure(), |d| d.gap(px(8.)))
+            .children(cells);
         pane(&p)
             .flex_1()
             .h_full()
             .child(self.render_tabs(cx))
             .child(self.render_notebook_bar(open, cx))
-            .child(
-                div()
-                    .id("cells")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.notebook_scroll)
-                    .child(
-                        v_flex()
-                            .max_w(px(1100.))
-                            .pt(px(10.))
-                            .pb(px(200.))
-                            .pl(px(6.))
-                            .pr(px(24.))
-                            .gap(px(8.))
-                            .children(cells),
-                    ),
-            )
+            .child(self.cell_keys(scroller, cx))
             .into_any_element()
     }
 
@@ -1080,7 +1078,8 @@ impl Workbench {
                     return;
                 }
                 if let Some(open) = this.open.as_mut().filter(|o| o.notebook.path == path) {
-                    open.editing.insert(ix);
+                    let id = open.notebook.cells[ix].id.clone();
+                    open.editing.insert(id);
                     editor.update(cx, |editor, cx| editor.focus(window, cx));
                     cx.notify();
                 }
@@ -1163,6 +1162,12 @@ impl Workbench {
                         .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
                 )
             })
+            .when(!open.is_script(), |bar| {
+                bar.child(
+                    bar_button("clear-all", "Clear outputs", Some("outputs.clear"), &p)
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_outputs(None, cx))),
+                )
+            })
             .child(
                 bar_button("save", "Save", Some("doc.save"), &p)
                     .when(!open.dirty, |d| d.opacity(0.45))
@@ -1224,6 +1229,9 @@ impl Workbench {
             .into_any_element()
     }
 
+    /// A code cell's editor and outputs; `render_cells` puts the gutter
+    /// and tools around them. Long outputs scroll in a box of their own;
+    /// folded ones show a line that unfolds them.
     fn render_code_cell(
         &self,
         open: &Open,
@@ -1238,100 +1246,84 @@ impl Workbench {
             .get(&cell.id)
             .and_then(|id| self.runs.get(id));
         let busy = open.sending.contains(&cell.id)
-            || open.waiting.contains(&ix)
+            || open.waiting.contains(&cell.id)
             || run.is_some_and(|r| !r.finished);
         let outputs: &[Value] = match run {
             Some(run) => &run.outputs,
             None => &cell.outputs,
         };
-        let outputs: Vec<AnyElement> = outputs
-            .iter()
-            .enumerate()
-            .map(|(n, o)| {
-                let id = SharedString::from(format!("out-{}-{n}", cell.id));
-                self.render_output(show(o), id, PLOT_MAX_WIDTH, Some(ix), cx)
-            })
-            .collect();
+        let shown: Vec<Shown> = outputs.iter().map(show).collect();
+        let pages = shown.iter().any(|s| matches!(s, Shown::Page(_)));
+        let count = shown.len();
         let failed = run.and_then(failed_status);
         let errored = run.and_then(|r| r.status.as_deref()) == Some("error");
-        let group: SharedString = format!("cell-{ix}").into();
-        let number = ix + 1;
-        h_flex()
-            .id(("cell", ix))
-            .group(group.clone())
-            .items_start()
+        let folded = open.collapsed.contains(&cell.id);
+        let outputs: Vec<AnyElement> = if folded {
+            Vec::new()
+        } else {
+            shown
+                .into_iter()
+                .enumerate()
+                .map(|(n, s)| {
+                    let id = SharedString::from(format!("out-{}-{n}", cell.id));
+                    self.render_output(s, id, PLOT_MAX_WIDTH, Some(ix), cx)
+                })
+                .collect()
+        };
+        let border = if busy {
+            p.busy
+        } else if errored || failed.is_some() {
+            p.err
+        } else {
+            p.line
+        };
+        v_flex()
             .w_full()
-            .child(
-                // The gutter: the cell's number (#3, as the Agents pane names
-                // it).
-                div()
-                    .w(px(GUTTER))
-                    .flex_none()
-                    .flex()
-                    .justify_end()
-                    .pt(px(5.))
-                    .pr(px(10.))
-                    .font_family(look::MONO)
-                    .text_color(p.faint)
-                    .child(div().opacity(0.8).child(format!("#{number}"))),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        // Run sits in the cell's top right corner; it turns
-                        // the busy colour while the cell runs.
-                        div()
-                            .relative()
-                            .w_full()
-                            .child(self.render_cell_editor(open, ix, true, window, cx))
-                            .child(
-                                div()
-                                    .id(("run", ix))
-                                    .absolute()
-                                    .top(px(4.))
-                                    .right(px(6.))
-                                    .p(px(3.))
-                                    .rounded(px(6.))
-                                    .bg(p.chunk)
-                                    .cursor_pointer()
-                                    .text_color(if busy { p.busy } else { p.faint })
-                                    .hover(|d| d.text_color(p.accent))
-                                    .tooltip(|w, cx| {
-                                        gpui_kit::component::tooltip::Tooltip::new("Run this cell")
-                                            .build(w, cx)
-                                    })
-                                    .child(icon("run").size(px(14.)))
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| this.run_cell(ix, cx)),
-                                    ),
-                            ),
+            .child(self.render_cell_editor(open, ix, true, window, cx))
+            .when(folded && count > 0, |d| {
+                d.child(
+                    div()
+                        .id(("unfold", ix))
+                        .mt(px(4.))
+                        .pl(px(12.))
+                        .border_l_2()
+                        .border_color(border)
+                        .text_size(px(look::SMALL))
+                        .text_color(p.faint)
+                        .cursor_pointer()
+                        .hover(|d| d.text_color(p.accent))
+                        .child(if count == 1 {
+                            "1 output hidden: show".to_string()
+                        } else {
+                            format!("{count} outputs hidden: show")
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_outputs(ix, cx))),
+                )
+            })
+            .when(
+                !outputs.is_empty() || failed.is_some() || busy && !folded,
+                |d| {
+                    d.child(
+                        v_flex()
+                            .id(("outputs", ix))
+                            .mt(px(4.))
+                            .my(px(2.))
+                            .pl(px(12.))
+                            .py(px(2.))
+                            .gap_1()
+                            .border_l_2()
+                            .border_color(border)
+                            // Long outputs scroll in their box, so the cells
+                            // below stay near; web pages keep their own height.
+                            .when(!pages, |d| {
+                                d.max_h(px(OUTPUT_MAX_HEIGHT)).overflow_y_scroll()
+                            })
+                            .children(outputs)
+                            .when_some(failed, |d, s| {
+                                d.child(div().text_color(p.err).child(format!("Run ended: {s}")))
+                            }),
                     )
-                    .when(!outputs.is_empty() || failed.is_some() || busy, |d| {
-                        d.child(
-                            v_flex()
-                                .mt(px(4.))
-                                .my(px(2.))
-                                .pl(px(12.))
-                                .py(px(2.))
-                                .gap_1()
-                                .border_l_2()
-                                .border_color(if busy {
-                                    p.busy
-                                } else if errored || failed.is_some() {
-                                    p.err
-                                } else {
-                                    p.line
-                                })
-                                .children(outputs)
-                                .when_some(failed, |d, s| {
-                                    d.child(
-                                        div().text_color(p.err).child(format!("Run ended: {s}")),
-                                    )
-                                }),
-                        )
-                    }),
+                },
             )
             .into_any_element()
     }
@@ -1367,6 +1359,7 @@ impl Workbench {
             Shown::Warning(s) => text(s).text_color(p.warn).into_any_element(),
             Shown::Error(s) => text(s).text_color(p.err).into_any_element(),
             Shown::Note(s) => note(s),
+            Shown::Table(table) => self.render_table(table, id, cell, cx),
             Shown::Page(_) if !pages => note("A web page: see the Viewer.".into()),
             Shown::Page(page) => match self.pages.get(&page.key()) {
                 Some(view) => div()

@@ -341,6 +341,10 @@ preview and R's imports weren't seen.
   their output text is selectable (`SelectableText`); a plot under a cell
   can be saved or copied from the buttons over it (`plots.rs`,
   `open_cell_plot`).
+  Cells have Positron-style tools, status and run times, add rows, keys
+  for picked cells (Esc, then A/B, D D, Z, M/Y, arrows) and dragging by
+  the gutter (`cell_view.rs`, `cells.rs`); data frames show as a grid
+  (`html_table.rs`). See docs/design.md.
 
 ## Running it
 
