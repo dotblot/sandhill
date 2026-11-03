@@ -117,6 +117,12 @@ pub(crate) struct Open {
     /// Cells deleted, latest last, with where they were and their text,
     /// for bringing them back.
     pub deleted: Vec<(usize, notebook::Cell, String)>,
+    /// Cells (by id) an agent changed, until the user keeps or undoes it.
+    pub agent_changes: HashMap<String, crate::cell_ai::AgentChange>,
+    /// Cells an agent deleted, shown where they were with Undo.
+    pub agent_deleted: Vec<crate::cell_ai::AgentDeleted>,
+    /// The cell an agent just added or changed, lit up for a moment.
+    pub lit: Option<(String, std::time::Instant)>,
     /// A script's next journal slot (`console-<n>`).
     next_slot: usize,
     /// A script's code waiting for the kernel to start.
@@ -1119,6 +1125,9 @@ impl Workbench {
             editing: HashSet::new(),
             collapsed: HashSet::new(),
             deleted: Vec::new(),
+            agent_changes: HashMap::new(),
+            agent_deleted: Vec::new(),
+            lit: None,
             next_slot: 0,
             queued: Vec::new(),
             current: None,

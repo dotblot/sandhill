@@ -1202,7 +1202,12 @@ impl Workbench {
         let focused = editor
             .read(cx)
             .focus_handle(cx)
-            .contains_focused(window, cx);
+            .contains_focused(window, cx)
+            // A cell the agent just added or changed lights up.
+            || open
+                .lit
+                .as_ref()
+                .is_some_and(|(id, _)| *id == open.notebook.cells[ix].id);
         div()
             .w_full()
             .when(boxed, |d| {
@@ -1277,9 +1282,11 @@ impl Workbench {
         } else {
             p.line
         };
+        let fixable = errored && !busy && !folded;
         v_flex()
             .w_full()
             .child(self.render_cell_editor(open, ix, true, window, cx))
+            .children(self.render_agent_change(open, ix, cx))
             .when(folded && count > 0, |d| {
                 d.child(
                     div()
@@ -1325,6 +1332,7 @@ impl Workbench {
                     )
                 },
             )
+            .when(fixable, |d| d.children(self.render_error_actions(ix, cx)))
             .into_any_element()
     }
 

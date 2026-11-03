@@ -723,6 +723,9 @@ pub enum Call {
         /// The project asking, to pick its window when several have the file.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
+        /// The agent asking, as the window names it ("Claude Code").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
     },
     /// Replaces the code of a cell, as [`Call::AddCell`] adds one. Returns
     /// [`CellEdited`].
@@ -734,6 +737,9 @@ pub enum Call {
         run: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
+        /// The agent asking, as the window names it ("Claude Code").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
     },
     /// Deletes a Jupyter notebook's cell, as [`Call::EditCell`] changes
     /// one: in the window that has the file open (which can bring it back),
@@ -743,6 +749,9 @@ pub enum Call {
         cell_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
+        /// The agent asking, as the window names it ("Claude Code").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
     },
     /// A window's answer to a [`ServerMessage::Request`]: `result`, or
     /// `error`. Returns null.

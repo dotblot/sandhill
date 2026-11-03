@@ -23,6 +23,8 @@ const MAX_PROMPT_SELECTION: usize = 1000;
 /// A place older than this is not mentioned with a prompt: the user has
 /// likely been away from Sandhill.
 const STALE_FOCUS_MS: i64 = 30 * 60_000;
+/// A cell named with # brings this much of its latest output.
+const MAX_REF_OUTPUT: usize = 2000;
 /// A script's console keeps this many runs, as `console-0` to `console-99`
 /// (as the app numbers them).
 const CONSOLE_SLOTS: u32 = 100;
@@ -136,6 +138,17 @@ impl Tools {
         }
         if let Some(refs) = crate::terminal::choices::refs_text(&choices.refs) {
             lines.push(refs);
+            // A cell named with # brings what it last showed, so "fix #3"
+            // needs no tool call to see the error.
+            for r in choices.refs.iter().filter(|r| r.kind == "chunk") {
+                let (Some(path), Some(cell)) = (r.path.as_deref(), r.cell.as_deref()) else {
+                    continue;
+                };
+                let shown = tokio::time::timeout(wait, self.latest_output(path, cell)).await;
+                if let Ok(Some(text)) = shown {
+                    lines.push(text);
+                }
+            }
             place["refs"] = json!(choices.refs.iter().map(|r| &r.name).collect::<Vec<_>>());
         }
         if !choices.web {
@@ -151,6 +164,15 @@ impl Tools {
             place: (place.as_object().is_some_and(|p| !p.is_empty())).then_some(place),
             report,
         }
+    }
+
+    /// What cell `cell` of `file` showed when it last ran, cut short, for
+    /// a message that names it; none when it hasn't run.
+    async fn latest_output(&self, file: &str, cell: &str) -> Option<String> {
+        let client = self.client().await.ok()?;
+        let outputs: FileOutputs = client.file_outputs(&self.path(file)).await.ok()?;
+        let found = outputs.cells.iter().find(|c| c.cell_id == cell)?;
+        Some(cell_output_note(file, found))
     }
 
     pub(super) async fn add_cell(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
@@ -183,6 +205,7 @@ impl Tools {
             after,
             run: edit.run,
             project: self.project.clone(),
+            by: self.agent_name().map(Into::into),
         };
         let since = now_ms();
         let edited: CellEdited = match client.call(call(after.clone())).await {
@@ -310,6 +333,7 @@ impl Tools {
                 code: edit.code.into(),
                 run: edit.run,
                 project: self.project.clone(),
+                by: self.agent_name().map(Into::into),
             })
             .await?;
         let head = format!(
@@ -328,6 +352,7 @@ impl Tools {
                 file,
                 cell_id: cell.into(),
                 project: self.project.clone(),
+                by: self.agent_name().map(Into::into),
             })
             .await?;
         let how = if edited.in_window {
@@ -625,6 +650,40 @@ fn language_name(language: &str) -> &str {
     }
 }
 
+/// A cell's latest output as the agent is told it with a message.
+fn cell_output_note(file: &str, cell: &CellOutputs) -> String {
+    let mut rendered = Rendered::default();
+    for output in &cell.outputs {
+        rendered.add_output(output);
+    }
+    let status = match cell.status.as_deref() {
+        Some("error") => " (it ended in an error)",
+        None if cell.finished_ms.is_none() => " (it is still running)",
+        _ => "",
+    };
+    let shown = text::strip_ansi(&rendered.text);
+    let mut note = if shown.trim().is_empty() {
+        format!(
+            "Cell `{}` of {file} showed no text when it last ran{status}.",
+            cell.cell_id
+        )
+    } else {
+        format!(
+            "Cell `{}` of {file} last showed{status}:\n```\n{}\n```",
+            cell.cell_id,
+            text::shorten(shown.trim_end(), MAX_REF_OUTPUT)
+        )
+    };
+    match rendered.images.len() {
+        0 => {}
+        1 => note.push_str("\nIt also drew a plot: get_outputs shows it."),
+        n => note.push_str(&format!(
+            "\nIt also drew {n} plots: get_outputs shows them."
+        )),
+    }
+    note
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,5 +719,42 @@ mod tests {
         assert_eq!(next_console_slot(&outputs), "console-0");
         outputs.cells.push(cell("console-0", 9));
         assert_eq!(next_console_slot(&outputs), "console-1");
+    }
+
+    #[test]
+    fn a_named_cell_brings_its_latest_output() {
+        let mut cell = CellOutputs {
+            cell_id: "c3".into(),
+            run: "r1".into(),
+            session: "s1".into(),
+            language: "python".into(),
+            code: "1/0".into(),
+            started_ms: 0,
+            finished_ms: Some(5),
+            status: Some("error".into()),
+            execution_count: None,
+            outputs: vec![json!({
+                "output_type": "error",
+                "ename": "ZeroDivisionError",
+                "evalue": "division by zero",
+                "traceback": ["\u{1b}[31mZeroDivisionError\u{1b}[0m: division by zero"],
+            })],
+        };
+        let note = cell_output_note("de.ipynb", &cell);
+        assert!(
+            note.starts_with("Cell `c3` of de.ipynb last showed (it ended in an error):\n```\n")
+        );
+        assert!(note.contains("ZeroDivisionError: division by zero"));
+        assert!(!note.contains('\u{1b}'));
+        cell.status = Some("ok".into());
+        cell.outputs = vec![json!({
+            "output_type": "display_data",
+            "data": {"image/png": "iVBOR"},
+        })];
+        assert_eq!(
+            cell_output_note("de.ipynb", &cell),
+            "Cell `c3` of de.ipynb last showed:\n```\n[plot 1]\n```\n\
+             It also drew a plot: get_outputs shows it."
+        );
     }
 }

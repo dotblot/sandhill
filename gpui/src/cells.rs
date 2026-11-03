@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::*;
 use sandhill_proto::Call;
 
-use crate::notebook::CellKind;
+use crate::notebook::{self, CellKind};
 use crate::workbench::{DocKind, Run, Workbench};
 
 /// How a cell's latest run is going.
@@ -212,6 +212,21 @@ impl Workbench {
             return;
         };
         let Some((ix, cell, source)) = open.deleted.pop() else {
+            return;
+        };
+        self.bring_back_cell(ix, cell, source, window, cx);
+    }
+
+    /// Puts a deleted cell back at `ix`, with its text.
+    pub(crate) fn bring_back_cell(
+        &mut self,
+        ix: usize,
+        cell: notebook::Cell,
+        source: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.open.as_mut() else {
             return;
         };
         let kind = cell.kind;

@@ -53,6 +53,16 @@ pub fn save_favourites(keys: &[String]) {
     write("favouriteModels", json!(keys));
 }
 
+/// Whether a notebook scrolls to, and lights up, the cells an agent adds
+/// or changes (the switch in the AI pane).
+pub fn follow_agent() -> bool {
+    read()["followAgent"].as_bool().unwrap_or(true)
+}
+
+pub fn save_follow_agent(on: bool) {
+    write("followAgent", json!(on));
+}
+
 /// Whether the Data Explorer shows its column list and stats.
 pub fn column_stats() -> bool {
     read()["deColumnStats"].as_bool().unwrap_or(true)

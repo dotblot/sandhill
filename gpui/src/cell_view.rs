@@ -22,7 +22,7 @@ use crate::{
 /// The notebook's gutter, with each cell's number.
 pub(crate) const GUTTER: f32 = 52.;
 /// How wide the cells grow.
-const CELLS_MAX_WIDTH: f32 = 1100.;
+pub(crate) const CELLS_MAX_WIDTH: f32 = 1100.;
 /// A data frame's columns, in characters, at their widest and narrowest.
 const COLUMN_CHARS: (usize, usize) = (3, 28);
 
@@ -63,14 +63,44 @@ impl Workbench {
         let mut children = Vec::with_capacity(count * 2 + 1);
         for (ix, body) in bodies.into_iter().enumerate() {
             if adds {
-                children.push(self.add_row(ix, false, cx));
+                children.push(self.add_row_after_deleted(open, ix, false, cx));
             }
             children.push(self.cell_frame(open, ix, body, window, cx));
         }
         if adds {
-            children.push(self.add_row(count, true, cx));
+            children.push(self.add_row_after_deleted(open, count, true, cx));
         }
         children
+    }
+
+    /// The row that adds a cell at `at`, under the lines where an agent
+    /// deleted cells there: one child, so cells keep their places among
+    /// the children.
+    fn add_row_after_deleted(
+        &self,
+        open: &Open,
+        at: usize,
+        always: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let deleted = self.render_agent_deleted(open, at, cx);
+        if deleted.is_empty() {
+            return self.add_row(at, always, cx);
+        }
+        v_flex()
+            .flex_none()
+            .w_full()
+            .children(deleted)
+            .child(self.add_row(at, always, cx))
+            .into_any_element()
+    }
+
+    /// Scrolls the notebook so cell `ix` shows.
+    pub(crate) fn scroll_to_cell(&mut self, ix: usize) {
+        if let Some(open) = &self.open {
+            let child = Self::child_of_cell(open, ix);
+            self.notebook_scroll.scroll_to_item(child);
+        }
     }
 
     /// Where cell `ix` is among the children `render_cells` makes.
@@ -96,6 +126,7 @@ impl Workbench {
         let group: SharedString = format!("cell-{ix}").into();
         let commanding = self.cells_focus.is_focused(window);
         let selected = open.current == Some(ix);
+        let lit = open.lit.as_ref().is_some_and(|(id, _)| *id == cell.id);
         let accent = p.accent;
         h_flex()
             .id(("cell", ix))
@@ -105,6 +136,8 @@ impl Workbench {
             .items_start()
             .w_full()
             .max_w(px(CELLS_MAX_WIDTH))
+            // A cell the agent just added or changed lights up.
+            .when(lit, |d| d.rounded(px(8.)).bg(p.accent_soft))
             .when(open.notebook.can_restructure(), |d| {
                 // The line shows where the cell lands: above this one when
                 // it comes from below, under it when from above.

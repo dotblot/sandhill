@@ -146,6 +146,8 @@ pub struct Agents {
     /// A conversation starting: its agent's name.
     pub(crate) starting: Option<&'static str>,
     pub(crate) problem: Option<String>,
+    /// Whether notebooks scroll to the cells agents add or change.
+    pub(crate) follow_edits: bool,
     /// What was added to the message with @ and #, shown as chips.
     pub(crate) refs: Vec<Value>,
     pub(crate) menu: Option<Menu>,
@@ -232,6 +234,7 @@ impl Agents {
             stopped: HashSet::new(),
             starting: None,
             problem: None,
+            follow_edits: crate::prefs::follow_agent(),
             refs: Vec::new(),
             menu: None,
             model_tab: None,
@@ -565,23 +568,7 @@ impl Agents {
             return self.pick_mention(None, window, cx);
         }
         let refs = std::mem::take(&mut self.refs);
-        let sent = match self.show {
-            Show::New => {
-                let options = self.new_options(refs.clone());
-                self.start(self.new_kind, Some(text), options, window, cx);
-                true
-            }
-            _ => match self.current().cloned() {
-                Some(t) if t.running => self.send(&t, &text, &refs, cx),
-                Some(t) => {
-                    let mut options = self.resume_options(&t);
-                    options.refs = refs.clone();
-                    self.restart(&t, options, Some(text), cx);
-                    true
-                }
-                None => false,
-            },
-        };
+        let sent = self.say(text, refs.clone(), window, cx);
         if sent {
             self.menu = None;
             self.drafts.remove(&self.draft_key);
@@ -590,6 +577,58 @@ impl Agents {
         } else {
             self.refs = refs;
         }
+    }
+
+    /// Sends `text`, with `refs`, to the conversation shown, or starts one
+    /// with it; whether it went.
+    fn say(
+        &mut self,
+        text: String,
+        refs: Vec<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match self.show {
+            Show::New => {
+                let options = self.new_options(refs);
+                self.start(self.new_kind, Some(text), options, window, cx);
+                true
+            }
+            _ => match self.current().cloned() {
+                Some(t) if t.running => self.send(&t, &text, &refs, cx),
+                Some(t) => {
+                    let mut options = self.resume_options(&t);
+                    options.refs = refs;
+                    self.restart(&t, options, Some(text), cx);
+                    true
+                }
+                None => false,
+            },
+        }
+    }
+
+    /// A notebook asks the agent about one of its cells (its Fix and
+    /// Explain buttons): the message names the cell with #, so the agent
+    /// is told what the cell last showed.
+    pub(crate) fn ask_about_cell(
+        &mut self,
+        text: String,
+        cell: Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show != Show::New && self.current().is_none() {
+            self.show = Show::New;
+        }
+        self.say(text, vec![cell], window, cx);
+        cx.notify();
+    }
+
+    /// The switch for notebooks following the agent's edits.
+    pub(crate) fn toggle_follow_edits(&mut self, cx: &mut Context<Self>) {
+        self.follow_edits = !self.follow_edits;
+        crate::prefs::save_follow_agent(self.follow_edits);
+        cx.notify();
     }
 
     /// Starts a conversation in the project's folder, with its first

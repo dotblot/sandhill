@@ -171,6 +171,7 @@ impl Agents {
                     )
             })
             .collect();
+        let following = self.follow_edits;
         let toggle = |id: &'static str, name: &'static str, on: bool| {
             let hover = p.ink(7.);
             div()
@@ -325,6 +326,20 @@ impl Agents {
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| this.set_switch("context", !context, cx),
                                 )),
+                            )
+                            .child(
+                                toggle("agent-follow", "zoom", self.follow_edits)
+                                    .tooltip(move |w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(if following {
+                                            "Notebooks follow the agent's edits: click to stop"
+                                        } else {
+                                            "Notebooks don't follow the agent's edits: click to follow"
+                                        })
+                                        .build(w, cx)
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_follow_edits(cx)),
+                                    ),
                             )
                             .child(
                                 h_flex()
