@@ -154,6 +154,151 @@ pub fn strip_ansi(text: &str) -> String {
     out
 }
 
+/// An HTML page (R's help) as plain text: block elements on lines of
+/// their own, headings marked with `#`, tags dropped, entities read.
+pub fn html_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    let mut in_pre = false;
+    let mut skip_until: Option<&str> = None;
+    while !rest.is_empty() {
+        let Some(lt) = rest.find('<') else {
+            if skip_until.is_none() {
+                push_text(&mut out, rest, in_pre);
+            }
+            break;
+        };
+        if skip_until.is_none() {
+            push_text(&mut out, &rest[..lt], in_pre);
+        }
+        let after = &rest[lt..];
+        let Some(gt) = after.find('>') else {
+            break;
+        };
+        let tag = after[1..gt].trim().to_ascii_lowercase();
+        rest = &after[gt + 1..];
+        let name = tag
+            .trim_start_matches('/')
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if let Some(end) = skip_until {
+            if tag == end {
+                skip_until = None;
+            }
+            continue;
+        }
+        let closing = tag.starts_with('/');
+        match name.as_str() {
+            "script" | "style" | "head" if !closing => {
+                skip_until = Some(match name.as_str() {
+                    "script" => "/script",
+                    "style" => "/style",
+                    _ => "/head",
+                });
+            }
+            "pre" => {
+                in_pre = !closing;
+                out.push('\n');
+            }
+            "h1" | "h2" | "h3" | "h4" if !closing => {
+                out.push_str("\n\n## ");
+            }
+            "br" => out.push('\n'),
+            "li" if !closing => out.push_str("\n- "),
+            "p" | "div" | "tr" | "table" | "dl" | "dt" | "dd" | "ul" | "ol" | "h1" | "h2"
+            | "h3" | "h4" => out.push('\n'),
+            "td" | "th" if !closing => out.push(' '),
+            _ => {}
+        }
+    }
+    // At most one blank line in a row, and no spaces at line ends.
+    let mut text = String::with_capacity(out.len());
+    let mut blank = 0;
+    for line in out.lines() {
+        let line = line.trim_end();
+        if line.trim().is_empty() {
+            blank += 1;
+            if blank > 1 {
+                continue;
+            }
+        } else {
+            blank = 0;
+        }
+        text.push_str(line);
+        text.push('\n');
+    }
+    text.trim().to_string()
+}
+
+/// Text between tags: entities read; outside `<pre>`, runs of spaces and
+/// line breaks made one space.
+fn push_text(out: &mut String, text: &str, in_pre: bool) {
+    let text = entities(text);
+    if in_pre {
+        out.push_str(&text);
+        return;
+    }
+    let mut last_space = out.ends_with([' ', '\n']);
+    for c in text.chars() {
+        if c.is_whitespace() {
+            if !last_space {
+                out.push(' ');
+                last_space = true;
+            }
+        } else {
+            out.push(c);
+            last_space = false;
+        }
+    }
+}
+
+fn entities(text: &str) -> String {
+    if !text.contains('&') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let semi = rest[..rest.len().min(10)].find(';');
+        let decoded = semi.and_then(|semi| {
+            let name = &rest[1..semi];
+            let c = match name {
+                "lt" => '<',
+                "gt" => '>',
+                "amp" => '&',
+                "quot" => '"',
+                "apos" | "#39" => '\'',
+                "nbsp" => ' ',
+                _ => {
+                    let n = name.strip_prefix('#')?;
+                    let n = match n.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                        None => n.parse().ok()?,
+                    };
+                    char::from_u32(n)?
+                }
+            };
+            Some((c, semi))
+        });
+        match decoded {
+            Some((c, semi)) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Keeps the start and the end of a long text.
 pub fn shorten(text: &str, max: usize) -> String {
     if text.len() <= max {
@@ -203,6 +348,16 @@ pub fn duration_ms(ms: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reads_an_r_help_page_as_text() {
+        let html = "<h2>Fitting Linear Models</h2>\n<h3>Description</h3>\n<p><code>lm</code> is used to fit\n  linear models &amp; more.</p>\n<h3>Usage</h3>\n<pre>lm(formula, data)\n  # two lines</pre><ul><li>one</li><li>two</li></ul><script>x()</script>";
+        let text = super::html_to_text(html);
+        assert_eq!(
+            text,
+            "## Fitting Linear Models\n\n## Description\n\nlm is used to fit linear models & more.\n\n## Usage\n\nlm(formula, data)\n  # two lines\n\n- one\n- two"
+        );
+    }
+
     use super::*;
     use serde_json::json;
 

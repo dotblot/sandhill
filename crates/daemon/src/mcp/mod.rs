@@ -5,12 +5,15 @@
 //!
 //! The tools reach the user's live sessions, which is what plain file
 //! access can't: `list_sessions`, `list_variables`, `run_code` and
-//! `get_outputs`; the user's documents as they work on them: `get_focus`,
-//! `add_cell` and `edit_cell`; and the project's background jobs:
-//! `list_jobs` and `read_job_log`.
+//! `get_outputs`, and what the panes show of them: `get_console`,
+//! `get_plots`, `view_table`, `get_help` and `list_packages`; the user's
+//! documents as they work on them: `get_focus`, `add_cell`, `edit_cell`
+//! and `delete_cell`; and the project's background jobs: `list_jobs` and
+//! `read_job_log`.
 
 mod documents;
 mod jobs;
+mod session;
 pub use documents::Prompt;
 pub mod text;
 
@@ -44,8 +47,11 @@ loaded and the outputs of their notebooks. Use list_variables and get_outputs to
 recomputing anything. Code the user asks for goes into their document with add_cell, below the \
 cell they are in, and runs there, so they see the code and its output together; fix a cell \
 that failed with edit_cell rather than adding another. Use run_code only for quick looks they \
-don't need to keep. get_focus tells you where the user is (\"this cell\", the selection). \
-list_jobs and read_job_log show the scripts and pipelines the user runs in the background and \
+don't need to keep. get_console shows what the user ran lately (and its errors), get_plots \
+their plots, view_table a data frame's first rows, get_help a function's help page and \
+list_packages what is installed, so look there before asking the user. delete_cell removes a \
+notebook cell (the user can bring it back). get_focus tells you where the user is (\"this \
+cell\", the selection). list_jobs and read_job_log show the scripts and pipelines the user runs in the background and \
 what they printed.";
 
 pub struct Tools {
@@ -198,6 +204,37 @@ impl Tools {
                 self.get_outputs(file, text("cell")).await
             }
             "get_focus" => self.get_focus().await,
+            "get_console" => {
+                self.get_console(text("session"), text("language"), args["runs"].as_u64())
+                    .await
+            }
+            "get_plots" => {
+                self.get_plots(text("session"), text("language"), args["count"].as_u64())
+                    .await
+            }
+            "view_table" => {
+                let name = text("name").context("`name` is required")?;
+                self.view_table(
+                    name,
+                    text("session"),
+                    text("language"),
+                    args["rows"].as_u64(),
+                )
+                .await
+            }
+            "get_help" => {
+                let topic = text("topic").context("`topic` is required")?;
+                self.get_help(topic, text("package"), text("session"), text("language"))
+                    .await
+            }
+            "list_packages" => {
+                self.list_packages(text("filter"), text("session"), text("language"))
+                    .await
+            }
+            "delete_cell" => {
+                let cell = text("cell").context("`cell` is required")?;
+                self.delete_cell(cell, text("file")).await
+            }
             "list_jobs" => self.list_jobs().await,
             "read_job_log" => self.read_job_log(text("job"), args["lines"].as_u64()).await,
             "add_cell" | "edit_cell" => {
@@ -754,6 +791,73 @@ fn tool_list() -> Value {
                 "timeout_seconds": {"type": "number", "description": "How long to wait for it to finish (default 120)."},
             }},
             "annotations": {"readOnlyHint": false, "destructiveHint": true},
+        },
+        {
+            "name": "delete_cell",
+            "title": "Delete a cell of the user's notebook",
+            "description": "Delete a cell of a Jupyter notebook (.ipynb). If the notebook is open in Sandhill, the user sees where the cell was and can bring it back. Quarto and R Markdown chunks can't be deleted this way.",
+            "inputSchema": {"type": "object", "required": ["cell"], "properties": {
+                "cell": {"type": "string", "description": "The notebook cell id (as get_focus and add_cell give them)."},
+                "file": {"type": "string", "description": "The notebook, relative to the project folder or absolute. Same default as add_cell."},
+            }},
+            "annotations": {"readOnlyHint": false, "destructiveHint": true},
+        },
+        {
+            "name": "get_console",
+            "title": "See what ran in a session",
+            "description": "The latest runs in one of the user's R or Python sessions, oldest first, as the Console shows them: the code (typed in the Console, from a notebook cell, a script, or an agent), how it ended and how long it took, and what it printed, including errors. Use it when the user says \"the error\" or \"what I just ran\".",
+            "inputSchema": {"type": "object", "properties": {
+                "language": {"type": "string", "enum": ["r", "python"]},
+                "session": {"type": "string", "description": "A session id (or its start) from list_sessions."},
+                "runs": {"type": "number", "description": "How many runs (default 10, at most 50)."},
+            }},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "get_plots",
+            "title": "See the user's plots",
+            "description": "The latest plots of one of the user's sessions, as images, with the code that drew each, as the Plots pane shows them.",
+            "inputSchema": {"type": "object", "properties": {
+                "language": {"type": "string", "enum": ["r", "python"]},
+                "session": {"type": "string", "description": "A session id (or its start) from list_sessions."},
+                "count": {"type": "number", "description": "How many plots (default 2, at most 4)."},
+            }},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "view_table",
+            "title": "Look at a data frame",
+            "description": "The size, column types and first rows of a data frame or matrix in the user's session, or of part of an object (a Seurat object's meta.data, an AnnData's obs), as the Data Explorer reads it, without printing the whole object. Doesn't change the session.",
+            "inputSchema": {"type": "object", "required": ["name"], "properties": {
+                "name": {"type": "string", "description": "The variable, or a part of one: df, adata.obs, seurat@meta.data, x$counts."},
+                "rows": {"type": "number", "description": "How many rows (default 10, at most 100)."},
+                "language": {"type": "string", "enum": ["r", "python"]},
+                "session": {"type": "string", "description": "A session id (or its start) from list_sessions."},
+            }},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "get_help",
+            "title": "Read a help page",
+            "description": "The help page of an R function or topic (from the installed package's documentation), or of a Python function, class or module (its signature and docstring), as the user's session has it installed. Use it to check the arguments of the version the user actually has.",
+            "inputSchema": {"type": "object", "required": ["topic"], "properties": {
+                "topic": {"type": "string", "description": "The function or topic: lm, FindMarkers, scanpy.pp.normalize_total, sc.pp.neighbors."},
+                "package": {"type": "string", "description": "R: the package the topic is in, when several have it."},
+                "language": {"type": "string", "enum": ["r", "python"]},
+                "session": {"type": "string", "description": "A session id (or its start) from list_sessions."},
+            }},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "list_packages",
+            "title": "List installed packages",
+            "description": "The packages installed for one of the user's sessions (R's libraries, or the Python environment's), with their versions, and which are attached or loaded.",
+            "inputSchema": {"type": "object", "properties": {
+                "filter": {"type": "string", "description": "Only packages whose name contains this."},
+                "language": {"type": "string", "enum": ["r", "python"]},
+                "session": {"type": "string", "description": "A session id (or its start) from list_sessions."},
+            }},
+            "annotations": {"readOnlyHint": true},
         },
         {
             "name": "list_jobs",

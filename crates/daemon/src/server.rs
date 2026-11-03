@@ -1305,6 +1305,30 @@ impl Daemon {
                 };
                 serde_json::to_value(edited)?
             }
+            Call::DeleteCell {
+                file,
+                cell_id,
+                project,
+            } => {
+                let path = windows::normalize(&files::resolve(&file)?);
+                let file = path.to_string_lossy().into_owned();
+                let params = json!({"file": file, "cell_id": cell_id});
+                let edited = match self
+                    .ask_window(&path, project, "delete_cell", params)
+                    .await?
+                {
+                    Some(edited) => edited,
+                    None => {
+                        let edited = blocking({
+                            let file = file.clone();
+                            move || cells::delete_cell(&file, &cell_id)
+                        })
+                        .await?;
+                        on_disk(file, edited)
+                    }
+                };
+                serde_json::to_value(edited)?
+            }
             Call::Answer { id, result, error } => {
                 let answer = match (result, error) {
                     (_, Some(error)) => Err(error),

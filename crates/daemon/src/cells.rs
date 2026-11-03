@@ -116,6 +116,44 @@ pub fn edit_cell_in_text(
     })
 }
 
+/// Removes cell `cell_id` of a Jupyter notebook. Returns the cell as it
+/// was (its id, and the notebook's language and kernel).
+pub fn delete_cell(path: &str, cell_id: &str) -> Result<Edited> {
+    let resolved = files::resolve(path)?;
+    let text = files::read_text(path)?.text;
+    let (text, edited) = delete_cell_in_text(&resolved, &text, cell_id, path)?;
+    files::write_text(path, &text, None)?;
+    Ok(edited)
+}
+
+/// [`delete_cell`] on a document's text. Only a notebook's cells can be
+/// deleted: a Quarto document's chunks are part of its prose.
+pub fn delete_cell_in_text(
+    resolved: &Path,
+    text: &str,
+    cell_id: &str,
+    path: &str,
+) -> Result<(String, Edited)> {
+    if kind_of(resolved)? != Kind::Notebook {
+        bail!("only a Jupyter notebook's cells can be deleted; edit {path} as a file instead");
+    }
+    let mut nb = parse_notebook(text, path)?;
+    let index = find_cell(&nb, cell_id, path)?;
+    let language = notebook_language(&nb).unwrap_or_else(|| "python".into());
+    let kernel = kernel_name(&nb);
+    if let Some(cells) = nb["cells"].as_array_mut() {
+        cells.remove(index);
+    }
+    Ok((
+        write_notebook(&nb)?,
+        Edited {
+            cell_id: cell_id.into(),
+            language,
+            kernel,
+        },
+    ))
+}
+
 /// A cell's language and code as the file has it.
 pub fn cell_code(path: &str, cell_id: &str) -> Result<Option<(String, String)>> {
     let resolved = files::resolve(path)?;

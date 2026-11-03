@@ -735,6 +735,15 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
     },
+    /// Deletes a Jupyter notebook's cell, as [`Call::EditCell`] changes
+    /// one: in the window that has the file open (which can bring it back),
+    /// else in the file. Returns [`CellEdited`] for the cell deleted.
+    DeleteCell {
+        file: String,
+        cell_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
     /// A window's answer to a [`ServerMessage::Request`]: `result`, or
     /// `error`. Returns null.
     Answer {

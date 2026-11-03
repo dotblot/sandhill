@@ -306,6 +306,12 @@ async fn the_mcp_server_speaks_json_rpc_on_stdio() {
             "get_focus",
             "add_cell",
             "edit_cell",
+            "delete_cell",
+            "get_console",
+            "get_plots",
+            "view_table",
+            "get_help",
+            "list_packages",
             "list_jobs",
             "read_job_log",
             "get_outputs"
@@ -887,5 +893,125 @@ async fn agents_read_the_projects_jobs_and_their_logs() {
     assert!(
         tail.ends_with("The last line of its log:\nerror: no index"),
         "{tail}"
+    );
+}
+
+/// Agents read what the panes show of a session: the Console's runs, the
+/// plots, a data frame's first rows, a help page and the packages; and
+/// delete a notebook's cell.
+#[tokio::test]
+async fn agents_read_the_console_plots_tables_help_and_packages() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    );
+    let ran = call(
+        &tools,
+        "run_code",
+        json!({"code": "import json\nprint('hello from the console')\n1 / 0", "language": "python"}),
+    )
+    .await;
+    assert!(ran.contains("ZeroDivisionError"), "{ran}");
+
+    let console = call(&tools, "get_console", json!({})).await;
+    assert!(
+        console.contains("The last 1 run in Python session"),
+        "{console}"
+    );
+    assert!(console.contains("run by Agent · error"), "{console}");
+    assert!(console.contains("hello from the console"), "{console}");
+    assert!(console.contains("ZeroDivisionError"), "{console}");
+
+    let plots = call(&tools, "get_plots", json!({})).await;
+    assert!(plots.contains("No plots yet"), "{plots}");
+    let has_matplotlib = call(
+        &tools,
+        "run_code",
+        json!({"code": "import importlib.util\nprint(importlib.util.find_spec('matplotlib') is not None)"}),
+    )
+    .await
+    .contains("True");
+    if has_matplotlib {
+        call(
+            &tools,
+            "run_code",
+            json!({"code": "import matplotlib\nmatplotlib.use('module://matplotlib_inline.backend_inline')\nimport matplotlib.pyplot as plt\nplt.plot([1, 3, 2])\nplt.show()"}),
+        )
+        .await;
+        let items = tools.call("get_plots", &json!({"count": 1})).await.unwrap();
+        assert!(
+            items[0]["text"].as_str().unwrap().contains("plt.plot"),
+            "{items:?}"
+        );
+        assert_eq!(items[1]["type"], "image", "{items:?}");
+    }
+
+    let has_pandas = call(
+        &tools,
+        "run_code",
+        json!({"code": "import importlib.util\nprint(importlib.util.find_spec('pandas') is not None)"}),
+    )
+    .await
+    .contains("True");
+    if has_pandas {
+        call(
+            &tools,
+            "run_code",
+            json!({"code": "import pandas as pd\ndf = pd.DataFrame({'gene': ['TP53', 'MYC', 'KRAS'], 'count': [120, 300, 7]})"}),
+        )
+        .await;
+        let table = call(&tools, "view_table", json!({"name": "df", "rows": 2})).await;
+        assert!(table.starts_with("df: 3 rows × 2 columns"), "{table}");
+        assert!(table.contains("TP53"), "{table}");
+        assert!(!table.contains("KRAS"), "{table}");
+        assert!(table.contains("(the first 2 of 3 rows)"), "{table}");
+    }
+
+    let help = call(&tools, "get_help", json!({"topic": "json.dumps"})).await;
+    assert!(help.starts_with("# json.dumps"), "{help}");
+    assert!(help.contains("Serialize"), "{help}");
+
+    let packages = call(&tools, "list_packages", json!({"filter": "ipykernel"})).await;
+    assert!(packages.contains("ipykernel "), "{packages}");
+
+    // delete_cell removes a notebook's cell on disk; a Quarto chunk can't be.
+    let notebook = project.join("nb.ipynb");
+    std::fs::write(
+        &notebook,
+        json!({
+            "nbformat": 4, "nbformat_minor": 5, "metadata": {},
+            "cells": [
+                {"cell_type": "code", "id": "a", "metadata": {}, "source": "1", "outputs": [], "execution_count": null},
+                {"cell_type": "code", "id": "b", "metadata": {}, "source": "2", "outputs": [], "execution_count": null}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let deleted = call(
+        &tools,
+        "delete_cell",
+        json!({"file": "nb.ipynb", "cell": "a"}),
+    )
+    .await;
+    assert_eq!(deleted, "Deleted cell a of nb.ipynb.");
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&notebook).unwrap()).unwrap();
+    assert_eq!(saved["cells"].as_array().unwrap().len(), 1);
+    assert_eq!(saved["cells"][0]["id"], "b");
+    std::fs::write(project.join("q.qmd"), "```{python}\nx = 1\n```\n").unwrap();
+    let refused = tools
+        .call("delete_cell", &json!({"file": "q.qmd", "cell": "chunk-1"}))
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("only a Jupyter notebook"),
+        "{refused:#}"
     );
 }

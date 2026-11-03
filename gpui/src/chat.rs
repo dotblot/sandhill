@@ -686,6 +686,37 @@ pub fn step_view(
                 view.desc = "List the jobs".into();
                 view.output = Some(text.clone());
             }
+            "get_console" => {
+                view.desc = "See what ran in the Console".into();
+                view.output = Some(text.clone());
+            }
+            "get_plots" => {
+                view.desc = "Look at the plots".into();
+                view.output = Some(text.clone());
+            }
+            "view_table" => {
+                view.desc = format!(
+                    "Look at {}",
+                    input["name"].as_str().unwrap_or("a data frame")
+                );
+                view.output = Some(text.clone());
+            }
+            "get_help" => {
+                view.desc = format!(
+                    "Read the help for {}",
+                    input["topic"].as_str().unwrap_or("a function")
+                );
+                view.output = Some(text.clone());
+            }
+            "list_packages" => {
+                view.desc = "List the installed packages".into();
+                view.output = Some(text.clone());
+            }
+            "delete_cell" => {
+                view.desc = format!("Delete {}", input["cell"].as_str().unwrap_or("a cell"));
+                view.file = s(&input["file"]);
+                view.output = Some(text.clone());
+            }
             "read_job_log" => {
                 view.desc = match input["job"].as_str() {
                     Some(j) => format!("Read the log of job {j}"),
@@ -1277,7 +1308,8 @@ pub fn ask_view(ask: &Ask, linked: Option<&str>, agent: &str) -> AskView {
             plain(format!("Read {name}?"), None, view)
         }
         "grep" | "glob" | "list_variables" | "list_sessions" | "get_focus" | "get_outputs"
-        | "list_jobs" | "read_job_log" => {
+        | "list_jobs" | "read_job_log" | "get_console" | "get_plots" | "view_table"
+        | "get_help" | "list_packages" => {
             let title = if view.desc.is_empty() {
                 format!("Allow {}?", view.name)
             } else {
