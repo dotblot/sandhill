@@ -8,7 +8,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::look::{Palette, capsule, icon_button, pane};
+use crate::look::{Palette, icon_button, pane};
 use crate::workbench::{BottomTab, ConsoleTab, Split, TopTab, Workbench};
 
 impl Workbench {
@@ -32,7 +32,7 @@ impl Workbench {
             .child(
                 Self::strip(&p)
                     .child(
-                        capsule(&p, 22.)
+                        crate::look::tab_capsule(&p)
                             .gap(px(1.))
                             .child(tab("tab-console", "Console", ConsoleTab::Console, cx))
                             .child(tab("tab-terminal", "Terminal", ConsoleTab::Terminal, cx))
@@ -106,7 +106,7 @@ impl Workbench {
                             .child(
                                 // Clipped, not pushing the tools out, when the
                                 // panel is too narrow for every tab.
-                                capsule(&p, 22.)
+                                crate::look::tab_capsule(&p)
                                     .min_w_0()
                                     .flex_shrink(1.)
                                     .overflow_hidden()
@@ -155,7 +155,7 @@ impl Workbench {
                     .child(
                         Self::strip(&p)
                             .child(
-                                capsule(&p, 22.)
+                                crate::look::tab_capsule(&p)
                                     .gap(px(1.))
                                     .child(bottom_tab("tab-files", "Files", BottomTab::Files, cx))
                                     .child(bottom_tab("tab-git", "Git", BottomTab::Git, cx))

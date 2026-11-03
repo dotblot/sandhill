@@ -485,8 +485,40 @@ impl Agents {
             .collect::<Vec<_>>()
             .join(" · ");
         let hover = p.ink(6.);
+        let group: SharedString = format!("hist-group-{}", t.id).into();
+        let asking = self.confirm_delete.as_deref() == Some(&t.id);
+        let delete_id = t.id.clone();
+        let delete = h_flex()
+            .id(SharedString::from(format!("hist-delete-{}", t.id)))
+            .flex_none()
+            .ml_auto()
+            .gap(px(4.))
+            .px(px(5.))
+            .h(px(22.))
+            .rounded(px(6.))
+            .cursor_pointer()
+            .text_size(px(look::SMALL))
+            .map(|d| {
+                if asking {
+                    d.bg(p.err_soft).text_color(p.err).child("Delete?")
+                } else {
+                    d.invisible()
+                        .group_hover(group.clone(), |d| d.visible())
+                        .text_color(p.faint)
+                        .hover(|d| d.text_color(p.err))
+                }
+            })
+            .child(icon("delete").size(px(14.)))
+            .tooltip(|w, cx| {
+                gpui_kit::component::tooltip::Tooltip::new("Delete this conversation").build(w, cx)
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.delete_from_history(delete_id.clone(), window, cx)
+            }));
         h_flex()
             .id(SharedString::from(format!("hist-{}", t.id)))
+            .group(group)
             .items_start()
             .gap(px(10.))
             .px(px(10.))
@@ -513,7 +545,11 @@ impl Agents {
                             .child(sub),
                     ),
             )
-            .on_click(cx.listener(move |this, _, window, cx| this.select(id.clone(), window, cx)))
+            .child(delete)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.confirm_delete = None;
+                this.select(id.clone(), window, cx)
+            }))
             .into_any_element()
     }
 

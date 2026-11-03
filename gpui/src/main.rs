@@ -36,6 +36,7 @@ mod html_table;
 mod import_dialog;
 mod imports;
 mod jobs;
+mod kernel_menu;
 mod look;
 mod machine;
 mod main_menu;

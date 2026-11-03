@@ -327,7 +327,6 @@ impl Workbench {
                     .id(("agent-deleted", n))
                     .flex_none()
                     .w_full()
-                    .max_w(px(crate::cell_view::CELLS_MAX_WIDTH))
                     .pl(px(crate::cell_view::GUTTER))
                     .my(px(2.))
                     .gap(px(8.))

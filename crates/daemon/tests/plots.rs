@@ -486,3 +486,35 @@ async fn r_plots_show_under_their_cell() {
         client.shutdown(&session).await.unwrap();
     }
 }
+
+/// Retina figures (Macs set this up) show, and can be drawn again:
+/// `retina_figure` reads the PNG `print_figure` makes, so only the outer
+/// call may tag it.
+#[tokio::test]
+async fn retina_figures_show_and_can_be_drawn_again() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    let matplotlib = std::process::Command::new("python3")
+        .args(["-c", "import matplotlib"])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !matplotlib {
+        eprintln!("skipping: matplotlib is not installed");
+        return;
+    }
+    let session = client.start_session("python3", None).await.unwrap().id;
+    let plot = "%config InlineBackend.figure_formats = ['retina']\n\
+                import matplotlib.pyplot as plt\nplt.plot([1, 3, 2])\nplt.show()";
+    run(&mut client, &session, plot, None, None, false).await;
+    let plots = client.session_plots(&session, None).await.unwrap().plots;
+    assert_eq!(plots.len(), 1, "{plots:#?}");
+    let asked = redraw(&mut client, &session, &plots[0], None, "png", (0.0, 0.0, 0))
+        .await
+        .unwrap();
+    assert!(asked.can, "{asked:?}");
+    client.shutdown(&session).await.unwrap();
+}

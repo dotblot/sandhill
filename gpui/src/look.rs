@@ -25,12 +25,16 @@ pub const CHROME: f32 = 15.;
 pub const CODE: f32 = 15.;
 /// Kernel and resource rows, popups and drop-downs: 11px there.
 pub const SMALL: f32 = 13.;
+/// Pane tab titles and toolbar buttons: 1pt below the chrome's text.
+pub const TAB_TEXT: f32 = 14.;
+/// A tab's corners, and those of the strip around them (half a pill's).
+pub const TAB_RADIUS: f32 = 4.5;
 /// One corner radius for every rounded thing in the window.
 pub const RADIUS: f32 = 12.;
 /// The gap between panes, and between them and the window's top.
 pub const GAP: f32 = 3.;
 /// The room between the side panels and the window's left and right edges.
-pub const EDGE: f32 = 10.;
+pub const EDGE: f32 = 8.;
 pub const TITLE_BAR: f32 = 31.;
 pub const STATUS_BAR: f32 = 26.;
 /// A pane's tab strip.
@@ -844,6 +848,11 @@ pub fn raised(d: Stateful<Div>, p: &Palette) -> Stateful<Div> {
         }])
 }
 
+/// The rounded strip a pane's tabs sit in.
+pub fn tab_capsule(p: &Palette) -> Div {
+    capsule(p, 22.).rounded(px(TAB_RADIUS + 1.))
+}
+
 /// A small icon button, as in a pane's head or the title bar.
 pub fn icon_button(
     id: impl Into<ElementId>,
@@ -887,6 +896,7 @@ pub fn bar_button(
         .h(px(22.))
         .px(px(8.))
         .rounded(px(RADIUS))
+        .text_size(px(TAB_TEXT))
         .text_color(p.muted)
         .whitespace_nowrap()
         .cursor_pointer()

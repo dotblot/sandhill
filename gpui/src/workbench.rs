@@ -253,6 +253,8 @@ pub struct Workbench {
     pub(crate) link: Link,
     pub(crate) about: Option<PingReply>,
     pub(crate) kernels: Vec<KernelspecInfo>,
+    /// The kernel picker's list is open.
+    pub(crate) kernel_menu: bool,
     pub(crate) recent: Vec<ProjectInfo>,
     pub(crate) project: Option<String>,
     /// The project's folders, read as they are opened.
@@ -304,6 +306,9 @@ pub struct Workbench {
     /// The notebook's scrolling, and where pages under its cells send the
     /// wheel's turns they don't use.
     pub(crate) notebook_scroll: ScrollHandle,
+    /// Each cell's output box (by cell id), which scrolls on its own when
+    /// its outputs are long.
+    pub(crate) output_scrolls: std::cell::RefCell<HashMap<String, ScrollHandle>>,
     /// The notebook's cells take the keys while no cell is being edited.
     pub(crate) cells_focus: FocusHandle,
     page_wheel: tokio::sync::mpsc::UnboundedSender<f32>,
@@ -337,6 +342,9 @@ pub struct Workbench {
     pub(crate) agents_width: f32,
     /// The left panel's top pane, set by dragging the gap under it.
     pub(crate) variables_height: f32,
+    /// The left panel's top pane's share of the panel's height (half at
+    /// first).
+    pub(crate) variables_share: f32,
     /// The gap being dragged.
     pub(crate) dragging: Option<Split>,
     /// Notebooks' runs show in the Console, and their plots in Plots (☰).
@@ -464,6 +472,7 @@ impl Workbench {
             link: Link::Connecting,
             about: None,
             kernels: Vec::new(),
+            kernel_menu: false,
             recent: Vec::new(),
             project: None,
             tree: Tree::new(),
@@ -499,6 +508,7 @@ impl Workbench {
             viewer_index: None,
             viewer_extra: Vec::new(),
             notebook_scroll: ScrollHandle::new(),
+            output_scrolls: Default::default(),
             cells_focus: cx.focus_handle(),
             page_wheel,
             explorer: None,
@@ -518,6 +528,7 @@ impl Workbench {
             files_width: 280.,
             agents_width: 560.,
             variables_height: 250.,
+            variables_share: 0.5,
             dragging: None,
             notebook_console: crate::prefs::notebook_console(),
             notebook_plots: crate::prefs::notebook_plots(),
