@@ -496,6 +496,14 @@ pub enum Call {
     FileOutputs {
         file: String,
     },
+    /// Clears the outputs of cells of a notebook file: their finished runs
+    /// no longer show in [`Call::FileOutputs`] until the cells run again.
+    /// The runs stay in the session's history. Returns the number of runs
+    /// cleared.
+    ClearCellOutputs {
+        file: String,
+        cell_ids: Vec<String>,
+    },
     /// Opens a folder as a project: records it as recently opened and
     /// returns [`ProjectInfo`] with the state saved for it.
     OpenProject {

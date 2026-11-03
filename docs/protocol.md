@@ -68,6 +68,7 @@ Responses can arrive out of order; match them by `id`.
 | `read_bytes` | `path`, `offset?`, `limit?` | `{path, offset, data, size, mtime_ms}`: up to 4 MiB of the file, `data` in base64 |
 | `list_files` | `path`, `limit?` | `[path]`: the files under the folder, relative to it, nearest first; hidden files and package folders (`node_modules`, `renv`, …) left out; at most 5000 unless `limit` |
 | `file_outputs` | `file` | `{file, cells, seq}` |
+| `clear_cell_outputs` | `file`, `cell_ids` | the number of runs cleared: the cells' finished runs leave `file_outputs` until they run again, and stay in `session_runs` |
 | `open_project` | `path` | `ProjectInfo` with its saved `state` |
 | `list_recent_projects` | | `[ProjectInfo]`, most recent first, `state` null |
 | `save_project_state` | `path`, `state` | `null` |

@@ -1,0 +1,579 @@
+//! Drawing a notebook's cells around their editors and outputs: the
+//! gutter (the cell's number, how its run went, and a handle to drag it
+//! by), the tools that show when the pointer is over a cell, the rows
+//! between cells that add one, and the keys that work on cells when none
+//! is being edited (Esc leaves a cell's editor), as in Jupyter.
+
+use gpui_kit::component::input;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
+
+use crate::cells::CellStatus;
+use crate::html_table::{Table, shown_name};
+use crate::look::{self, Palette, icon, icon_button};
+use crate::notebook::{CellKind, Format};
+use crate::workbench::{Open, Workbench};
+use crate::{
+    AddCellAbove, AddCellBelow, CellToCode, CellToMarkdown, DeleteCell, EditCell, RunCell, RunLine,
+    SelectNextCell, SelectPrevCell, UndoDeleteCell,
+};
+
+/// The notebook's gutter, with each cell's number.
+pub(crate) const GUTTER: f32 = 52.;
+/// How wide the cells grow.
+const CELLS_MAX_WIDTH: f32 = 1100.;
+/// A data frame's columns, in characters, at their widest and narrowest.
+const COLUMN_CHARS: (usize, usize) = (3, 28);
+
+/// A cell being dragged to a new place.
+#[derive(Clone)]
+pub(crate) struct DraggedCell {
+    ix: usize,
+    label: SharedString,
+}
+
+impl Render for DraggedCell {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        div()
+            .px(px(10.))
+            .py(px(4.))
+            .rounded(px(6.))
+            .bg(p.bg)
+            .border_1()
+            .border_color(p.accent)
+            .text_size(px(look::CHROME))
+            .child(self.label.clone())
+    }
+}
+
+impl Workbench {
+    /// The notebook's cells, each `bodies[ix]` in its frame, with the rows
+    /// that add cells between them when cells can be added.
+    pub(crate) fn render_cells(
+        &self,
+        open: &Open,
+        bodies: Vec<AnyElement>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let adds = open.notebook.can_restructure();
+        let count = bodies.len();
+        let mut children = Vec::with_capacity(count * 2 + 1);
+        for (ix, body) in bodies.into_iter().enumerate() {
+            if adds {
+                children.push(self.add_row(ix, false, cx));
+            }
+            children.push(self.cell_frame(open, ix, body, window, cx));
+        }
+        if adds {
+            children.push(self.add_row(count, true, cx));
+        }
+        children
+    }
+
+    /// Where cell `ix` is among the children `render_cells` makes.
+    fn child_of_cell(open: &Open, ix: usize) -> usize {
+        if open.notebook.can_restructure() {
+            ix * 2 + 1
+        } else {
+            ix
+        }
+    }
+
+    /// A cell's frame: its gutter, its body, and its tools.
+    fn cell_frame(
+        &self,
+        open: &Open,
+        ix: usize,
+        body: AnyElement,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = *Palette::get(cx);
+        let cell = &open.notebook.cells[ix];
+        let group: SharedString = format!("cell-{ix}").into();
+        let commanding = self.cells_focus.is_focused(window);
+        let selected = open.current == Some(ix);
+        let accent = p.accent;
+        h_flex()
+            .id(("cell", ix))
+            .group(group.clone())
+            .flex_none()
+            .relative()
+            .items_start()
+            .w_full()
+            .max_w(px(CELLS_MAX_WIDTH))
+            .when(open.notebook.can_restructure(), |d| {
+                // The line shows where the cell lands: above this one when
+                // it comes from below, under it when from above.
+                d.drag_over::<DraggedCell>(move |d, dragged, _, _| {
+                    if dragged.ix > ix {
+                        d.border_t_2().border_color(accent)
+                    } else {
+                        d.border_b_2().border_color(accent)
+                    }
+                })
+                .on_drop(cx.listener(
+                    move |this, dragged: &DraggedCell, _, cx| this.move_cell(dragged.ix, ix, cx),
+                ))
+            })
+            // Leaving a cell's editor with Esc picks the cell, for the keys.
+            .on_action(cx.listener(move |this, _: &input::Escape, window, cx| {
+                this.pick_cell(ix, window, cx)
+            }))
+            .child(self.cell_gutter(open, ix, selected && commanding, cx))
+            .child(div().flex_1().min_w_0().child(body))
+            .child(self.cell_tools(open, ix, group, selected && commanding, cx))
+            .when(cell.kind == CellKind::Text, |d| d.min_h(px(26.)))
+            .into_any_element()
+    }
+
+    /// The gutter: the cell's number (#3, as the Agents pane names it) and
+    /// how its run went. Clicking it picks the cell; it is also the handle
+    /// to drag the cell by.
+    fn cell_gutter(
+        &self,
+        open: &Open,
+        ix: usize,
+        picked: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        let cell = &open.notebook.cells[ix];
+        let code = cell.kind == CellKind::Code;
+        let status = if code {
+            self.cell_status(ix)
+        } else {
+            CellStatus::Idle
+        };
+        let (status_text, status_color, tip) = match &status {
+            CellStatus::Idle => (None, p.faint, None),
+            CellStatus::Queued => (Some("…".to_string()), p.faint, Some("Waiting to run")),
+            CellStatus::Running(_) => (
+                Some(status.time_text().unwrap_or_else(|| "…".into())),
+                p.busy,
+                Some("Running"),
+            ),
+            CellStatus::Done(_) => (status.time_text(), p.faint, Some("Ran in this long")),
+            CellStatus::Failed(_) => (
+                Some(status.time_text().unwrap_or_else(|| "failed".into())),
+                p.err,
+                Some("Failed after this long"),
+            ),
+        };
+        let label: SharedString = if code {
+            format!("Cell #{}", ix + 1).into()
+        } else {
+            format!("Markdown cell #{}", ix + 1).into()
+        };
+        v_flex()
+            .id(("gutter", ix))
+            .w(px(GUTTER))
+            .flex_none()
+            .self_stretch()
+            .items_end()
+            .pt(px(5.))
+            .pr(px(10.))
+            .gap(px(2.))
+            .font_family(look::MONO)
+            .text_color(p.faint)
+            .border_r_2()
+            .border_color(if picked {
+                p.accent
+            } else {
+                transparent_black()
+            })
+            .when(open.notebook.can_restructure(), |d| {
+                d.cursor(CursorStyle::OpenHand)
+                    .on_drag(DraggedCell { ix, label }, |d, _, _, cx| {
+                        cx.new(|_| d.clone())
+                    })
+            })
+            .on_click(cx.listener(move |this, _, window, cx| this.pick_cell(ix, window, cx)))
+            .when(code, |d| {
+                d.child(div().opacity(0.8).child(format!("#{}", ix + 1)))
+            })
+            .when_some(status_text, |d, text| {
+                d.child(
+                    div()
+                        .id(("status", ix))
+                        .text_size(px(look::SMALL))
+                        .whitespace_nowrap()
+                        .text_color(status_color)
+                        .when_some(tip, |d, tip| {
+                            d.tooltip(move |w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(tip).build(w, cx)
+                            })
+                        })
+                        .child(text),
+                )
+            })
+    }
+
+    /// The cell's tools, in its top right corner: Run (always there for
+    /// code), and the rest while the pointer is over the cell or it is
+    /// picked.
+    fn cell_tools(
+        &self,
+        open: &Open,
+        ix: usize,
+        group: SharedString,
+        picked: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        let cell = &open.notebook.cells[ix];
+        let code = cell.kind == CellKind::Code;
+        let moves = open.notebook.can_restructure();
+        let count = open.notebook.cells.len();
+        let busy = matches!(
+            self.cell_status(ix),
+            CellStatus::Queued | CellStatus::Running(_)
+        );
+        let has_outputs =
+            code && (open.cell_runs.contains_key(&cell.id) || !cell.outputs.is_empty());
+        let folded = open.collapsed.contains(&cell.id);
+        let tool = |id: &str, name: &str, tip: &'static str| {
+            icon_button(SharedString::from(format!("{id}-{ix}")), name, &p, false)
+                .tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(w, cx))
+        };
+        // Code keeps Run in sight; the rest shows on hover.
+        let hidden = |d: Div| {
+            if picked {
+                d
+            } else {
+                d.invisible().group_hover(group.clone(), |d| d.visible())
+            }
+        };
+        let tools = hidden(h_flex())
+            .gap(px(1.))
+            .when(code, |d| {
+                d.child(
+                    tool("run-above", "run.above", "Run the cells above")
+                        .on_click(cx.listener(move |this, _, _, cx| this.run_above(ix, cx))),
+                )
+                .child(
+                    tool("run-below", "run.below", "Run this cell and those below")
+                        .on_click(cx.listener(move |this, _, _, cx| this.run_below(ix, cx))),
+                )
+            })
+            .when(has_outputs, |d| {
+                d.child(
+                    tool(
+                        "fold",
+                        if folded {
+                            "chevron.right"
+                        } else {
+                            "chevron.down"
+                        },
+                        if folded {
+                            "Show the outputs"
+                        } else {
+                            "Hide the outputs"
+                        },
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_outputs(ix, cx))),
+                )
+                .child(
+                    tool("clear", "outputs.clear", "Clear the outputs").on_click(
+                        cx.listener(move |this, _, _, cx| this.clear_outputs(Some(&[ix]), cx)),
+                    ),
+                )
+            })
+            .when(moves, |d| {
+                d.when(ix > 0, |d| {
+                    d.child(tool("up", "arrow.up", "Move up").on_click(
+                        cx.listener(move |this, _, _, cx| this.move_cell(ix, ix - 1, cx)),
+                    ))
+                })
+                .when(ix + 1 < count, |d| {
+                    d.child(tool("down", "arrow.down", "Move down").on_click(
+                        cx.listener(move |this, _, _, cx| this.move_cell(ix, ix + 1, cx)),
+                    ))
+                })
+                .child(
+                    tool("delete", "delete", "Delete the cell (Z brings it back)").on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.delete_cell(ix, cx);
+                            window.focus(&this.cells_focus, cx);
+                        }),
+                    ),
+                )
+            });
+        let frame = if code { h_flex() } else { hidden(h_flex()) };
+        frame
+            .absolute()
+            .top(px(4.))
+            .right(px(6.))
+            .gap(px(2.))
+            .p(px(1.))
+            .rounded(px(7.))
+            .bg(if code { p.chunk } else { p.bg })
+            .child(tools)
+            .when(code, |d| {
+                d.child(
+                    div()
+                        .id(("run", ix))
+                        .p(px(3.))
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .text_color(if busy { p.busy } else { p.faint })
+                        .hover(|d| d.text_color(p.accent))
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Run this cell").build(w, cx)
+                        })
+                        .child(icon("run").size(px(14.)))
+                        .on_click(cx.listener(move |this, _, _, cx| this.run_cell(ix, cx))),
+                )
+            })
+    }
+
+    /// The row before cell `at` (or after the last) with buttons that add
+    /// a code or Markdown cell there; they show when the pointer is over
+    /// the row, and always after the last cell.
+    fn add_row(&self, at: usize, always: bool, cx: &mut Context<Self>) -> AnyElement {
+        let p = *Palette::get(cx);
+        let group: SharedString = format!("add-{at}").into();
+        let button = |id: &str, label: &'static str, kind: CellKind| {
+            div()
+                .id(SharedString::from(format!("{id}-{at}")))
+                .flex()
+                .items_center()
+                .gap(px(3.))
+                .px(px(8.))
+                .h(px(20.))
+                .rounded(px(10.))
+                .border(px(0.5))
+                .border_color(p.line)
+                .bg(p.bg)
+                .text_size(px(look::SMALL))
+                .text_color(p.muted)
+                .cursor_pointer()
+                .hover(|d| d.text_color(p.accent).border_color(p.accent))
+                .child(icon("add").size(px(12.)))
+                .child(label)
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.add_cell(at, kind, window, cx)),
+                )
+        };
+        h_flex()
+            .id(("add-row", at))
+            .group(group.clone())
+            .flex_none()
+            .w_full()
+            .max_w(px(CELLS_MAX_WIDTH))
+            .h(px(if always { 36. } else { 14. }))
+            .pl(px(GUTTER))
+            .justify_center()
+            .gap(px(8.))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .when(!always, |d| {
+                        d.invisible().group_hover(group, |d| d.visible())
+                    })
+                    .child(button("add-code", "Code", CellKind::Code))
+                    .child(button("add-text", "Markdown", CellKind::Text)),
+            )
+            .into_any_element()
+    }
+
+    /// Picks cell `ix` for the keys: its editor lets go of the keyboard.
+    pub(crate) fn pick_cell(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.open.as_mut() else {
+            return;
+        };
+        if ix >= open.notebook.cells.len() {
+            return;
+        }
+        open.current = Some(ix);
+        let child = Self::child_of_cell(open, ix);
+        self.notebook_scroll.scroll_to_item(child);
+        window.focus(&self.cells_focus, cx);
+        cx.notify();
+    }
+
+    /// The keys that work on the picked cell, on the notebook's cells.
+    pub(crate) fn cell_keys(&self, cells: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+        let current = |this: &Workbench| this.open.as_ref().and_then(|o| o.current);
+        cells
+            .on_action(cx.listener(move |this, _: &AddCellAbove, window, cx| {
+                let at = current(this).unwrap_or(0);
+                this.add_cell_picked(at, window, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &AddCellBelow, window, cx| {
+                let at = current(this).map_or(0, |ix| ix + 1);
+                this.add_cell_picked(at, window, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &DeleteCell, _, cx| {
+                if let Some(ix) = current(this) {
+                    this.delete_cell(ix, cx);
+                }
+            }))
+            .on_action(cx.listener(move |this, _: &UndoDeleteCell, window, cx| {
+                this.undo_delete_cell(window, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &CellToCode, window, cx| {
+                if let Some(ix) = current(this) {
+                    this.set_cell_kind(ix, CellKind::Code, window, cx);
+                    window.focus(&this.cells_focus, cx);
+                }
+            }))
+            .on_action(cx.listener(move |this, _: &CellToMarkdown, window, cx| {
+                if let Some(ix) = current(this) {
+                    this.set_cell_kind(ix, CellKind::Text, window, cx);
+                    window.focus(&this.cells_focus, cx);
+                }
+            }))
+            .on_action(cx.listener(move |this, _: &SelectPrevCell, window, cx| {
+                let ix = current(this).map_or(0, |ix| ix.saturating_sub(1));
+                this.pick_cell(ix, window, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &SelectNextCell, window, cx| {
+                let count = this.open.as_ref().map_or(0, |o| o.notebook.cells.len());
+                let ix = current(this).map_or(0, |ix| (ix + 1).min(count.saturating_sub(1)));
+                this.pick_cell(ix, window, cx);
+            }))
+            .on_action(cx.listener(move |this, _: &EditCell, window, cx| {
+                if let Some(ix) = current(this) {
+                    this.edit_cell(ix, window, cx);
+                }
+            }))
+            // Shift+Enter runs the picked cell and picks the next.
+            .on_action(cx.listener(move |this, _: &RunCell, window, cx| {
+                if let Some(ix) = current(this) {
+                    this.run_cell(ix, cx);
+                    let count = this.open.as_ref().map_or(0, |o| o.notebook.cells.len());
+                    if ix + 1 < count {
+                        this.pick_cell(ix + 1, window, cx);
+                    }
+                }
+            }))
+            .on_action(cx.listener(move |this, _: &RunLine, _, cx| {
+                if let Some(ix) = current(this) {
+                    this.run_cell(ix, cx);
+                }
+            }))
+    }
+
+    /// A data frame under a cell, as a grid that scrolls sideways, with
+    /// its size and a button that opens it in the Data Explorer when the
+    /// cell shows it by name.
+    pub(crate) fn render_table(
+        &self,
+        table: Table,
+        id: SharedString,
+        cell: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = *Palette::get(cx);
+        let char_width = look::CODE * 0.6;
+        let widths: Vec<f32> = (0..table.columns.len())
+            .map(|i| {
+                let chars = table
+                    .rows
+                    .iter()
+                    .filter_map(|r| r.get(i))
+                    .chain(std::iter::once(&table.columns[i]))
+                    .map(|s| s.chars().count())
+                    .max()
+                    .unwrap_or(0)
+                    .clamp(COLUMN_CHARS.0, COLUMN_CHARS.1);
+                chars as f32 * char_width + 16.
+            })
+            .collect();
+        let row = |cells: &[String], header: bool, n: usize| {
+            h_flex()
+                .flex_none()
+                .h(px(24.))
+                .when(header, |d| d.font_weight(FontWeight::SEMIBOLD).bg(p.chunk))
+                .when(!header && n % 2 == 1, |d| d.bg(p.ink(3.)))
+                .border_b(px(0.5))
+                .border_color(p.line)
+                .children(cells.iter().zip(&widths).enumerate().map(|(i, (text, w))| {
+                    div()
+                        .flex_none()
+                        .w(px(*w))
+                        .px(px(8.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        // The index, as pandas and R print it, stays plain.
+                        .when(i == 0 && !header, |d| d.text_color(p.muted))
+                        .child(text.clone())
+                }))
+        };
+        let explorer = cell
+            .and_then(|ix| self.open.as_ref()?.editors.get(ix))
+            .and_then(|e| shown_name(&e.read(cx).value()))
+            .filter(|_| self.vars.session.is_some());
+        v_flex()
+            .w_full()
+            .gap(px(4.))
+            .child(
+                div()
+                    .id(SharedString::from(format!("{id}-grid")))
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .rounded(px(6.))
+                    .border(px(0.5))
+                    .border_color(p.line)
+                    .font_family(look::MONO)
+                    .text_size(px(look::SMALL))
+                    .child(
+                        v_flex()
+                            .child(row(&table.columns, true, 0))
+                            .children(table.rows.iter().enumerate().map(|(n, r)| row(r, false, n))),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap(px(10.))
+                    .text_size(px(look::SMALL))
+                    .text_color(p.faint)
+                    .children(table.caption.clone())
+                    .when_some(explorer, |d, name| {
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("{id}-explore")))
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .text_color(p.accent)
+                                .cursor_pointer()
+                                .hover(|d| d.underline())
+                                .child(icon("table").size(px(12.)))
+                                .child(format!("Open {name} in the Data Explorer"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_explorer(vec![name.clone()], window, cx)
+                                })),
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// Adds a code cell at `at` and keeps the keys on the cells, picking it.
+    fn add_cell_picked(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_cell(at, CellKind::Code, window, cx);
+        self.pick_cell(at, window, cx);
+    }
+
+    /// Puts the cursor in cell `ix`; a Markdown cell shows its text.
+    pub(crate) fn edit_cell(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = self.open.as_mut() else {
+            return;
+        };
+        let (Some(cell), Some(editor)) = (open.notebook.cells.get(ix), open.editors.get(ix)) else {
+            return;
+        };
+        if cell.kind == CellKind::Text && open.notebook.format == Format::Ipynb {
+            open.editing.insert(cell.id.clone());
+        }
+        open.current = Some(ix);
+        editor.update(cx, |e, cx| e.focus(window, cx));
+        cx.notify();
+    }
+}

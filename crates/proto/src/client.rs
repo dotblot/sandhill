@@ -358,6 +358,14 @@ impl Client {
         self.call(Call::FileOutputs { file: file.into() }).await
     }
 
+    pub async fn clear_cell_outputs(&self, file: &str, cell_ids: &[&str]) -> Result<usize> {
+        self.call(Call::ClearCellOutputs {
+            file: file.into(),
+            cell_ids: cell_ids.iter().map(|c| c.to_string()).collect(),
+        })
+        .await
+    }
+
     pub async fn session_runs(&self, session: &str, limit: Option<u32>) -> Result<SessionRuns> {
         self.call(Call::SessionRuns {
             session: session.into(),

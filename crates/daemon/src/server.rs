@@ -993,6 +993,16 @@ impl Daemon {
                     .await?,
                 )?
             }
+            Call::ClearCellOutputs { file, cell_ids } => {
+                let journal = self.journal.clone();
+                serde_json::to_value(
+                    blocking(move || {
+                        let file = files::resolve(&file)?.to_string_lossy().into_owned();
+                        Ok(journal.clear_cell_outputs(&file, &cell_ids)?)
+                    })
+                    .await?,
+                )?
+            }
             Call::OpenProject { path } => {
                 let journal = self.journal.clone();
                 let info = blocking(move || projects::open(&journal, &path)).await?;

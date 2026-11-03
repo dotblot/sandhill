@@ -27,6 +27,8 @@ pub enum Shown {
     Page(Page),
     /// Something the trial can't draw.
     Note(String),
+    /// A data frame, drawn as a grid.
+    Table(crate::html_table::Table),
 }
 
 /// A web page an output holds, as `is_page` in the daemon's output rules
@@ -200,6 +202,12 @@ pub fn show(output: &Value) -> Shown {
                     mime: mime.to_string(),
                     value: data[mime].clone(),
                 }
+            } else if let Some(table) = data
+                .get("text/html")
+                .filter(|h| !h.is_null())
+                .and_then(|h| crate::html_table::parse(&multiline(h)))
+            {
+                Shown::Table(table)
             } else if mimes.contains_key("text/plain") {
                 Shown::Text(strip_ansi(&multiline(&data["text/plain"])))
             } else if mimes.contains_key("text/html") {

@@ -889,3 +889,42 @@ async fn runs_queued_behind_an_error_finish() {
         client.shutdown(&session).await.unwrap();
     }
 }
+
+/// Clearing a cell's outputs leaves the cell out of `file_outputs` (so
+/// reopening the notebook shows it empty) until it runs again.
+#[tokio::test]
+async fn cleared_cells_have_no_outputs_until_run_again() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let doc = dir.path().join("cleared.ipynb");
+    std::fs::write(&doc, "{}").unwrap();
+    let path = doc.to_string_lossy().into_owned();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session("python3", None).await.unwrap().id;
+    run_cell(&mut client, &session, "print('one')", cell(&doc, "c1")).await;
+    run_cell(&mut client, &session, "print('two')", cell(&doc, "c2")).await;
+    let cells = |outputs: sandhill_proto::FileOutputs| {
+        outputs
+            .cells
+            .into_iter()
+            .map(|c| c.cell_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        cells(client.file_outputs(&path).await.unwrap()),
+        ["c1", "c2"]
+    );
+
+    let cleared = client.clear_cell_outputs(&path, &["c1"]).await.unwrap();
+    assert_eq!(cleared, 1);
+    assert_eq!(cells(client.file_outputs(&path).await.unwrap()), ["c2"]);
+
+    run_cell(&mut client, &session, "print('again')", cell(&doc, "c1")).await;
+    let outputs = client.file_outputs(&path).await.unwrap();
+    assert_eq!(outputs.cells[1].cell_id, "c1");
+    assert_eq!(outputs.cells[1].outputs[0]["text"], "again\n");
+    client.shutdown(&session).await.unwrap();
+}

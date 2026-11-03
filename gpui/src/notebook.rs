@@ -40,6 +40,9 @@ pub struct Cell {
     span: Range<usize>,
     /// The `.ipynb` cell had no id; one is written when saving.
     new_id: bool,
+    /// The `.ipynb` cell as read or made: its metadata and attachments
+    /// are written back as they were.
+    json: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -83,15 +86,17 @@ impl Notebook {
         match &self.original {
             Original::Json(json) => {
                 let mut json = json.clone();
-                let cells = json["cells"].as_array_mut().context("no cells")?;
                 let mut any_new_id = false;
-                for ((cell, json_cell), source) in self.cells.iter().zip(cells).zip(sources) {
-                    json_cell["source"] = lines(source);
-                    if cell.new_id {
-                        json_cell["id"] = Value::String(cell.id.clone());
-                        any_new_id = true;
-                    }
-                }
+                let cells: Vec<Value> = self
+                    .cells
+                    .iter()
+                    .zip(sources)
+                    .map(|(cell, source)| {
+                        any_new_id |= cell.new_id;
+                        cell_json(cell, source)
+                    })
+                    .collect();
+                json["cells"] = Value::Array(cells);
                 // Cell ids need nbformat 4.5.
                 if any_new_id && json["nbformat_minor"].as_u64().unwrap_or(0) < 5 {
                     json["nbformat_minor"] = Value::from(5);
@@ -118,6 +123,88 @@ impl Notebook {
                 }
                 out.push_str(&text[at..]);
                 Ok(out)
+            }
+        }
+    }
+
+    /// Whether cells can be added, removed, moved and changed in kind.
+    /// Only a Jupyter notebook's: a Quarto document's cells are found in
+    /// its text, and its unlabelled chunks are known by position.
+    pub fn can_restructure(&self) -> bool {
+        self.format == Format::Ipynb
+    }
+
+    /// Adds an empty cell at `at`, and returns its id.
+    pub fn insert_cell(&mut self, at: usize, kind: CellKind) -> String {
+        let id = self.fresh_id();
+        let mut json = serde_json::json!({"metadata": {}});
+        set_cell_type(&mut json, kind);
+        let at = at.min(self.cells.len());
+        self.cells.insert(
+            at,
+            Cell {
+                id: id.clone(),
+                kind,
+                source: String::new(),
+                outputs: Vec::new(),
+                execution_count: None,
+                span: 0..0,
+                new_id: true,
+                json,
+            },
+        );
+        id
+    }
+
+    /// Puts back a cell `remove_cell` took out.
+    pub fn restore_cell(&mut self, at: usize, cell: Cell) {
+        let at = at.min(self.cells.len());
+        self.cells.insert(at, cell);
+    }
+
+    pub fn remove_cell(&mut self, ix: usize) -> Option<Cell> {
+        (ix < self.cells.len()).then(|| self.cells.remove(ix))
+    }
+
+    /// Moves the cell at `from` so it ends up at `to`.
+    pub fn move_cell(&mut self, from: usize, to: usize) {
+        if from < self.cells.len() && to < self.cells.len() && from != to {
+            let cell = self.cells.remove(from);
+            self.cells.insert(to, cell);
+        }
+    }
+
+    /// Makes a cell code or Markdown; a cell made Markdown loses its
+    /// outputs.
+    pub fn set_kind(&mut self, ix: usize, kind: CellKind) {
+        if let Some(cell) = self.cells.get_mut(ix)
+            && cell.kind != kind
+        {
+            cell.kind = kind;
+            cell.outputs.clear();
+            cell.execution_count = None;
+            set_cell_type(&mut cell.json, kind);
+        }
+    }
+
+    /// Forgets the outputs the file holds for a cell.
+    pub fn clear_outputs(&mut self, ix: usize) {
+        if let Some(cell) = self.cells.get_mut(ix) {
+            cell.outputs.clear();
+        }
+    }
+
+    /// An id no cell has, in the style Jupyter makes them.
+    fn fresh_id(&self) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        let mut n = nanos ^ ((self.cells.len() as u64) << 48);
+        loop {
+            n = n.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            let id = format!("{:08x}", n >> 32);
+            if !self.cells.iter().any(|c| c.id == id) {
+                return id;
             }
         }
     }
@@ -170,6 +257,7 @@ fn parse_ipynb(path: &str, text: &str) -> Result<Notebook> {
             execution_count: cell["execution_count"].as_u64(),
             span: 0..0,
             new_id,
+            json: cell.clone(),
         });
     }
     Ok(Notebook {
@@ -210,6 +298,7 @@ fn parse_quarto(path: &str, text: &str) -> Notebook {
                 execution_count: None,
                 span: start..start + trimmed.len(),
                 new_id: false,
+                json: Value::Null,
             });
         }
     };
@@ -225,6 +314,7 @@ fn parse_quarto(path: &str, text: &str) -> Notebook {
             execution_count: None,
             span: chunk.code_from..chunk.code_from + code.len(),
             new_id: false,
+            json: Value::Null,
         });
         at = chunk.to;
     }
@@ -259,6 +349,7 @@ fn parse_script(path: &str, text: &str) -> Notebook {
             execution_count: None,
             span: 0..text.len(),
             new_id: false,
+            json: Value::Null,
         }],
         language: Some(language.into()),
         kernel: None,
@@ -286,6 +377,53 @@ pub fn pick_kernel(notebook: &Notebook, specs: &[KernelspecInfo]) -> Option<Stri
         return None;
     }
     specs.first().map(|s| s.name.clone())
+}
+
+/// A cell as nbformat writes it, with its text as edited. Run counts are
+/// not kept: they say only the order cells last ran in, and change the
+/// file each time it runs.
+fn cell_json(cell: &Cell, source: &str) -> Value {
+    let mut json = match &cell.json {
+        Value::Object(_) => cell.json.clone(),
+        _ => serde_json::json!({"metadata": {}}),
+    };
+    if json["cell_type"].is_null() {
+        set_cell_type(&mut json, cell.kind);
+    }
+    json["source"] = lines(source);
+    if cell.new_id {
+        json["id"] = Value::String(cell.id.clone());
+    }
+    if json["cell_type"] == "code" {
+        let mut outputs = cell.outputs.clone();
+        for output in &mut outputs {
+            if output["output_type"] == "execute_result" {
+                output["execution_count"] = Value::Null;
+            }
+        }
+        json["outputs"] = Value::Array(outputs);
+        json["execution_count"] = Value::Null;
+    }
+    json
+}
+
+/// Gives a cell's JSON the fields its kind has in nbformat.
+fn set_cell_type(json: &mut Value, kind: CellKind) {
+    let Some(map) = json.as_object_mut() else {
+        return;
+    };
+    match kind {
+        CellKind::Code => {
+            map.insert("cell_type".into(), "code".into());
+            map.insert("outputs".into(), Value::Array(Vec::new()));
+            map.insert("execution_count".into(), Value::Null);
+        }
+        CellKind::Text => {
+            map.insert("cell_type".into(), "markdown".into());
+            map.remove("outputs");
+            map.remove("execution_count");
+        }
+    }
 }
 
 /// nbformat keeps text as a string or a list of lines.
@@ -400,6 +538,66 @@ mod tests {
         // Reading it back gives the same cells.
         let again = parse("/p/analysis.ipynb", &out).unwrap();
         assert_eq!(sources(&again), texts);
+    }
+
+    #[test]
+    fn does_not_save_run_counts() {
+        let nb = parse("/p/analysis.ipynb", IPYNB).unwrap();
+        let mut json = nb.cells[1].json.clone();
+        json["outputs"][0] = serde_json::json!({
+            "output_type": "execute_result", "execution_count": 3,
+            "data": {"text/plain": "2"}, "metadata": {}
+        });
+        let mut nb = nb;
+        nb.cells[1].outputs = json["outputs"].as_array().unwrap().clone();
+        let out: Value = serde_json::from_str(&nb.render(&sources(&nb)).unwrap()).unwrap();
+        assert_eq!(out["cells"][1]["execution_count"], Value::Null);
+        assert_eq!(
+            out["cells"][1]["outputs"][0]["execution_count"],
+            Value::Null
+        );
+        assert_eq!(out["cells"][1]["outputs"][0]["data"]["text/plain"], "2");
+    }
+
+    #[test]
+    fn adds_moves_changes_and_removes_ipynb_cells() {
+        let mut nb = parse("/p/analysis.ipynb", IPYNB).unwrap();
+        assert!(nb.can_restructure());
+        let added = nb.insert_cell(1, CellKind::Code);
+        assert_eq!(nb.cells[1].id, added);
+        assert_eq!(added.len(), 8);
+        nb.move_cell(1, 3);
+        assert_eq!(nb.cells[3].id, added);
+        nb.set_kind(3, CellKind::Text);
+        nb.set_kind(1, CellKind::Text);
+        assert!(nb.cells[1].outputs.is_empty());
+        nb.remove_cell(0);
+        let mut texts = sources(&nb);
+        texts[2] = "## Notes".into();
+        let out: Value = serde_json::from_str(&nb.render(&texts).unwrap()).unwrap();
+        let cells = out["cells"].as_array().unwrap();
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0]["cell_type"], "markdown");
+        assert_eq!(cells[0]["id"], "cell-2");
+        assert!(cells[0].get("outputs").is_none());
+        assert!(cells[0].get("execution_count").is_none());
+        assert_eq!(cells[1]["cell_type"], "code");
+        assert_eq!(cells[2]["id"], added.as_str());
+        assert_eq!(cells[2]["cell_type"], "markdown");
+        assert_eq!(cells[2]["source"], serde_json::json!(["## Notes"]));
+        // Read back, the cells are the same.
+        let again = parse("/p/analysis.ipynb", &serde_json::to_string(&out).unwrap()).unwrap();
+        assert_eq!(sources(&again), texts);
+        // A Quarto document's cells stay where they are.
+        assert!(!parse("/p/qc.qmd", QMD).unwrap().can_restructure());
+    }
+
+    #[test]
+    fn clears_a_cells_saved_outputs() {
+        let mut nb = parse("/p/analysis.ipynb", IPYNB).unwrap();
+        nb.clear_outputs(1);
+        let out: Value = serde_json::from_str(&nb.render(&sources(&nb)).unwrap()).unwrap();
+        assert_eq!(out["cells"][1]["outputs"], serde_json::json!([]));
     }
 
     const QMD: &str = "---\ntitle: QC\n---\n\nSome text.\n\n```{r}\nx <- 1\n```\n\n```{r qc-plot}\nplot(x)\n```\n\n```{r}\n```\nEnd.\n";

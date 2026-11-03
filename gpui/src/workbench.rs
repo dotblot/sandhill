@@ -74,6 +74,16 @@ pub(crate) struct Run {
     pub finished: bool,
     pub status: Option<String>,
     pub execution_count: Option<u64>,
+    /// The kernel session it ran in.
+    pub session: String,
+    /// When it was sent, began (the kernel runs one thing at a time) and
+    /// finished, by the daemon's clock.
+    pub queued_ms: Option<i64>,
+    pub began_ms: Option<i64>,
+    pub finished_ms: Option<i64>,
+    /// When it began by this machine's clock, for the time shown while it
+    /// runs.
+    pub began_at: Option<std::time::Instant>,
 }
 
 pub(crate) enum Plot {
@@ -91,16 +101,22 @@ pub(crate) struct Open {
     mtime_ms: i64,
     pub kernel: Option<String>,
     pub session: Session,
-    /// Cells waiting for the kernel to start.
-    pub waiting: Vec<usize>,
+    /// Cells (by id) waiting for the kernel to start.
+    pub waiting: Vec<String>,
     /// Cells sent to the daemon whose run id hasn't come back yet.
     pub sending: HashSet<String>,
     /// Each cell's latest run.
     pub cell_runs: HashMap<String, String>,
     /// Where the notebook was scrolled to while another tab was shown.
     scroll: Point<Pixels>,
-    /// Text cells being edited; the others show their Markdown formatted.
-    pub editing: HashSet<usize>,
+    /// Text cells (by id) being edited; the others show their Markdown
+    /// formatted.
+    pub editing: HashSet<String>,
+    /// Cells (by id) whose outputs are folded away.
+    pub collapsed: HashSet<String>,
+    /// Cells deleted, latest last, with where they were and their text,
+    /// for bringing them back.
+    pub deleted: Vec<(usize, notebook::Cell, String)>,
     /// A script's next journal slot (`console-<n>`).
     next_slot: usize,
     /// A script's code waiting for the kernel to start.
@@ -145,6 +161,23 @@ impl Open {
             .iter()
             .map(|e| e.read(cx).value().to_string())
             .collect()
+    }
+}
+
+/// What a cell's editor needs to know about its document.
+pub(crate) struct DocKind {
+    pub path: String,
+    pub language: Option<String>,
+    pub script: bool,
+}
+
+impl DocKind {
+    pub(crate) fn of(nb: &Notebook) -> Self {
+        DocKind {
+            path: nb.path.clone(),
+            language: nb.language.clone(),
+            script: nb.format == Format::Script,
+        }
     }
 }
 
@@ -208,6 +241,8 @@ pub struct Workbench {
     /// Where the user is, as last told the daemon (see `agent_edits`).
     pub(crate) focus_sent: Option<sandhill_proto::Focus>,
     pub(crate) focus_generation: u64,
+    /// A timer redraws running cells' times.
+    pub(crate) ticking: bool,
     pub(crate) target: Target,
     pub(crate) link: Link,
     pub(crate) about: Option<PingReply>,
@@ -263,6 +298,8 @@ pub struct Workbench {
     /// The notebook's scrolling, and where pages under its cells send the
     /// wheel's turns they don't use.
     pub(crate) notebook_scroll: ScrollHandle,
+    /// The notebook's cells take the keys while no cell is being edited.
+    pub(crate) cells_focus: FocusHandle,
     page_wheel: tokio::sync::mpsc::UnboundedSender<f32>,
     /// The Data Explorer, a tab of its own in the middle.
     pub(crate) explorer: Option<Entity<Explorer>>,
@@ -416,6 +453,7 @@ impl Workbench {
             window_handle: window.window_handle(),
             focus_sent: None,
             focus_generation: 0,
+            ticking: false,
             target: target.clone(),
             link: Link::Connecting,
             about: None,
@@ -455,6 +493,7 @@ impl Workbench {
             viewer_index: None,
             viewer_extra: Vec::new(),
             notebook_scroll: ScrollHandle::new(),
+            cells_focus: cx.focus_handle(),
             page_wheel,
             explorer: None,
             explorer_shown: false,
@@ -985,59 +1024,65 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Vec<Entity<EditorState>>, Vec<Subscription>) {
-        let code_language = editor_language(nb.language.as_deref());
-        let mut subscriptions = Vec::new();
-        let path = nb.path.clone();
-        let script = nb.format == Format::Script;
-        let editors: Vec<Entity<EditorState>> = nb
-            .cells
+        let doc = DocKind::of(nb);
+        nb.cells
             .iter()
-            .enumerate()
-            .map(|(ix, cell)| {
-                let language = match cell.kind {
-                    CellKind::Code => code_language,
-                    CellKind::Text => "markdown",
-                };
-                let source = cell.source.clone();
-                let editor = cx.new(|cx| {
-                    let editor = EditorState::new(window, cx)
-                        .language(language)
-                        .folding(false)
-                        .soft_wrap(false);
-                    if script {
-                        // A script is one editor that scrolls itself.
-                        editor.line_number(true).default_value(source)
-                    } else {
-                        // The notebook scrolls, not the cell, and a cell is as
-                        // tall as its lines.
-                        editor
-                            .line_number(false)
-                            .scroll_beyond_last_line(Some(0))
-                            .default_value(source)
-                    }
-                });
-                let path = path.clone();
-                subscriptions.push(cx.subscribe(
-                    &editor,
-                    move |this, _, event: &InputEvent, cx| {
-                        let Some(open) = this.open_at(&path) else {
-                            return;
-                        };
-                        match event {
-                            InputEvent::Change => open.dirty = true,
-                            // A text cell shows formatted again.
-                            InputEvent::Blur => {
-                                open.editing.remove(&ix);
-                            }
-                            _ => return,
-                        }
-                        cx.notify();
-                    },
-                ));
+            .map(|cell| self.cell_editor(&doc, cell.kind, cell.source.clone(), window, cx))
+            .unzip()
+    }
+
+    /// An editor for one cell of a document, and what follows its edits.
+    pub(crate) fn cell_editor(
+        &mut self,
+        nb: &DocKind,
+        kind: CellKind,
+        source: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<EditorState>, Subscription) {
+        let language = match kind {
+            CellKind::Code => editor_language(nb.language.as_deref()),
+            CellKind::Text => "markdown",
+        };
+        let script = nb.script;
+        let editor = cx.new(|cx| {
+            let editor = EditorState::new(window, cx)
+                .language(language)
+                .folding(false)
+                .soft_wrap(false);
+            if script {
+                // A script is one editor that scrolls itself.
+                editor.line_number(true).default_value(source)
+            } else {
+                // The notebook scrolls, not the cell, and a cell is as
+                // tall as its lines.
                 editor
-            })
-            .collect();
-        (editors, subscriptions)
+                    .line_number(false)
+                    .scroll_beyond_last_line(Some(0))
+                    .default_value(source)
+            }
+        });
+        let path = nb.path.clone();
+        let subscription = cx.subscribe(&editor, move |this, editor, event: &InputEvent, cx| {
+            let Some(open) = this.open_at(&path) else {
+                return;
+            };
+            // Cells move, so the editor says which cell this is.
+            let Some(ix) = open.editors.iter().position(|e| *e == editor) else {
+                return;
+            };
+            match event {
+                InputEvent::Change => open.dirty = true,
+                // A text cell shows formatted again.
+                InputEvent::Blur => {
+                    let id = open.notebook.cells[ix].id.clone();
+                    open.editing.remove(&id);
+                }
+                _ => return,
+            }
+            cx.notify();
+        });
+        (editor, subscription)
     }
 
     fn show_notebook(
@@ -1072,6 +1117,8 @@ impl Workbench {
             cell_runs: HashMap::new(),
             scroll: Point::default(),
             editing: HashSet::new(),
+            collapsed: HashSet::new(),
+            deleted: Vec::new(),
             next_slot: 0,
             queued: Vec::new(),
             current: None,
@@ -1119,6 +1166,9 @@ impl Workbench {
                     finished: cell.finished_ms.is_some(),
                     status: cell.status,
                     execution_count: cell.execution_count,
+                    session: cell.session.clone(),
+                    queued_ms: Some(cell.started_ms),
+                    finished_ms: cell.finished_ms,
                     ..Default::default()
                 },
             );
@@ -1258,10 +1308,16 @@ impl Workbench {
                             open.mtime_ms = written.mtime_ms;
                             open.dirty = open.sources(cx) != sources;
                             // Later saves start from what is on disk now.
+                            // Unless the cells were added to or moved since.
+                            let ids = |nb: &Notebook| {
+                                nb.cells.iter().map(|c| c.id.clone()).collect::<Vec<_>>()
+                            };
                             match notebook::parse(&path, &text) {
-                                Ok(nb) if nb.cells.len() == open.editors.len() => {
+                                Ok(nb) if ids(&nb) == ids(&open.notebook) => {
+                                    // Cleared outputs stay cleared.
                                     open.notebook = nb
                                 }
+                                Ok(_) if open.notebook.can_restructure() => {}
                                 _ => {
                                     this.problem = Some(
                                         "Saved. The cells changed shape; reopen the file to edit further."
@@ -1428,7 +1484,8 @@ impl Workbench {
             Some(CellKind::Code) => {}
             // Running a Markdown cell shows it formatted, as in Jupyter.
             Some(CellKind::Text) => {
-                if open.editing.remove(&index) {
+                let id = open.notebook.cells[index].id.clone();
+                if open.editing.remove(&id) {
                     cx.notify();
                 }
                 return;
@@ -1445,9 +1502,9 @@ impl Workbench {
                 let path = open.notebook.path.clone();
                 self.execute(&path, index, cx)
             }
-            Session::Starting => open.waiting.push(index),
+            Session::Starting => open.waiting.push(open.notebook.cells[index].id.clone()),
             Session::None | Session::Failed(_) => {
-                open.waiting.push(index);
+                open.waiting.push(open.notebook.cells[index].id.clone());
                 self.start_session(cx);
             }
         }
@@ -1654,8 +1711,13 @@ impl Workbench {
                                 .open_at(path)
                                 .map(|o| std::mem::take(&mut o.waiting))
                                 .unwrap_or_default();
-                            for index in waiting {
-                                this.execute(path, index, cx);
+                            for id in waiting {
+                                let index = this
+                                    .open_at(path)
+                                    .and_then(|o| o.notebook.cells.iter().position(|c| c.id == id));
+                                if let Some(index) = index {
+                                    this.execute(path, index, cx);
+                                }
                             }
                             let queued = this
                                 .open_at(path)
@@ -1881,6 +1943,11 @@ impl Workbench {
         let Some(run_id) = event.run else {
             return;
         };
+        let queue_moved = matches!(
+            event.msg_type.as_str(),
+            EVENT_RUN_STARTED | EVENT_RUN_FINISHED
+        );
+        let (session, ts_ms) = (event.session.clone(), event.ts_ms);
         if active && !event.msg_type.starts_with("status") {
             self.console_scroll.scroll_to_bottom();
         }
@@ -1896,6 +1963,8 @@ impl Workbench {
         let run = self.runs.entry(run_id.clone()).or_default();
         match event.msg_type.as_str() {
             EVENT_RUN_STARTED => {
+                run.session = event.session.clone();
+                run.queued_ms = Some(event.ts_ms);
                 let content = &event.content;
                 run.code = content["code"].as_str().unwrap_or_default().to_string();
                 run.quiet = content["quiet"].as_bool().unwrap_or(false);
@@ -1920,6 +1989,7 @@ impl Workbench {
                 run.finished = true;
                 run.status = event.content["status"].as_str().map(str::to_string);
                 run.execution_count = event.content["execution_count"].as_u64();
+                run.finished_ms = Some(event.ts_ms);
                 if !run.quiet && active {
                     self.refresh_variables(cx);
                     self.packages_run_finished(cx);
@@ -1949,6 +2019,9 @@ impl Workbench {
                     self.plots_from_run(&event.session, &run_id, cx);
                 }
             }
+        }
+        if queue_moved {
+            self.advance_queue(&session, ts_ms, cx);
         }
         cx.notify();
     }
