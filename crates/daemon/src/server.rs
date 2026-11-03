@@ -1258,10 +1258,11 @@ impl Daemon {
                 after,
                 run,
                 project,
+                by,
             } => {
                 let path = windows::normalize(&files::resolve(&file)?);
                 let file = path.to_string_lossy().into_owned();
-                let mut params = json!({"file": file, "code": code, "language": language, "after": after, "run": run});
+                let mut params = json!({"file": file, "code": code, "language": language, "after": after, "run": run, "by": by});
                 // Left out, not null: no `after` means after the last cell.
                 if let Some(map) = params.as_object_mut() {
                     map.retain(|_, v| !v.is_null());
@@ -1288,10 +1289,12 @@ impl Daemon {
                 code,
                 run,
                 project,
+                by,
             } => {
                 let path = windows::normalize(&files::resolve(&file)?);
                 let file = path.to_string_lossy().into_owned();
-                let params = json!({"file": file, "cell_id": cell_id, "code": code, "run": run});
+                let params =
+                    json!({"file": file, "cell_id": cell_id, "code": code, "run": run, "by": by});
                 let edited = match self.ask_window(&path, project, "edit_cell", params).await? {
                     Some(edited) => edited,
                     None => {
@@ -1309,10 +1312,11 @@ impl Daemon {
                 file,
                 cell_id,
                 project,
+                by,
             } => {
                 let path = windows::normalize(&files::resolve(&file)?);
                 let file = path.to_string_lossy().into_owned();
-                let params = json!({"file": file, "cell_id": cell_id});
+                let params = json!({"file": file, "cell_id": cell_id, "by": by});
                 let edited = match self
                     .ask_window(&path, project, "delete_cell", params)
                     .await?

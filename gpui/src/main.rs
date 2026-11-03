@@ -13,6 +13,7 @@ mod agents;
 mod agents_box;
 mod agents_view;
 mod app_window;
+mod cell_ai;
 mod cell_view;
 mod cells;
 mod chat;

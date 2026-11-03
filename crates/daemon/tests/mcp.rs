@@ -569,6 +569,29 @@ async fn agents_write_into_the_document_their_conversation_is_about() {
     .await;
     assert!(added.contains("to de.ipynb"), "{added}");
 
+    // A cell named with # in a message brings what it last showed.
+    let refs =
+        json!([{"kind": "chunk", "name": "qc.ipynb › cell 2", "path": "qc.ipynb", "cell": id}]);
+    client
+        .call::<Value>(Call::TellTerminal {
+            terminal: terminal.id.clone(),
+            command: json!({"kind": "set", "refs": refs}),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(TIMEOUT, async {
+        while pinned().await.is_none_or(|a| a["refs"].is_null()) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let told = tools.prompt(TIMEOUT).await.context.unwrap();
+    assert!(
+        told.contains(&format!("Cell `{id}` of qc.ipynb last showed:\n```\n42")),
+        "{told}"
+    );
+
     client.close_terminal(&terminal.id).await.unwrap();
     for session in client.list_sessions().await.unwrap() {
         client.shutdown(&session.id).await.unwrap();

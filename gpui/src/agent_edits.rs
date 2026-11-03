@@ -14,6 +14,7 @@ use sandhill_daemon::cells;
 use sandhill_proto::{AppRequest, Call, Focus};
 use serde_json::json;
 
+use crate::cell_ai::{AgentChange, AgentDeleted};
 use crate::notebook::{self, CellKind, Format};
 use crate::workbench::Workbench;
 
@@ -153,6 +154,7 @@ impl Workbench {
             .ok_or_else(|| anyhow::anyhow!("no file given"))?
             .to_string();
         let code = params["code"].as_str().unwrap_or_default().to_string();
+        let by = params["by"].as_str().unwrap_or("the agent").to_string();
         // Brings the document to the front, so the user sees the edit.
         if self.open.as_ref().map(|o| o.notebook.path.as_str()) != Some(&file) {
             self.show_file_tab(&file, cx);
@@ -196,6 +198,21 @@ impl Workbench {
                 .position(|c| c.id == id)
                 .ok_or_else(|| anyhow::anyhow!("{file} has no cell {id}"))?;
             self.delete_cell(ix, cx);
+            // Shown where it was, with Undo, rather than on the user's ⌘Z
+            // list.
+            let open = self.open.as_mut().expect("checked above");
+            if let Some((ix, cell, source)) = open.deleted.pop() {
+                for other in open.agent_deleted.iter_mut().filter(|d| d.ix > ix) {
+                    other.ix -= 1;
+                }
+                open.agent_changes.remove(&cell.id);
+                open.agent_deleted.push(AgentDeleted {
+                    ix,
+                    cell,
+                    source,
+                    by,
+                });
+            }
             (id, language, None)
         } else if request.method == "edit_cell" {
             let id = params["cell_id"].as_str().unwrap_or_default();
@@ -208,6 +225,11 @@ impl Workbench {
             if open.notebook.cells[ix].kind != CellKind::Code {
                 anyhow::bail!("cell {id} of {file} is not a code cell");
             }
+            // The text before the agent's first change, for its diff.
+            let before = open.editors[ix].read(cx).value().to_string();
+            open.agent_changes
+                .entry(id.to_string())
+                .or_insert(AgentChange { before, by });
             open.editors[ix].update(cx, |e, cx| {
                 let end = e.value().len();
                 e.set_selected_range(0..end, cx);
@@ -247,6 +269,9 @@ impl Workbench {
             open.editing.clear();
             open.deleted.clear();
             open.waiting.clear();
+            for other in open.agent_deleted.iter_mut().filter(|d| d.ix > ix) {
+                other.ix += 1;
+            }
             open.dirty = true;
             open.current = Some(ix);
             (edited.cell_id, edited.language, Some(Run::Cell(ix)))
@@ -254,6 +279,9 @@ impl Workbench {
         let format = self.open.as_ref().map(|o| o.notebook.format);
         if format != Some(Format::Script) || request.method == "add_cell" {
             self.save(cx);
+        }
+        if let (_, _, Some(Run::Cell(ix))) = &outcome {
+            self.follow_agent(*ix, cx);
         }
         Ok(outcome)
     }

@@ -97,9 +97,9 @@ Responses can arrive out of order; match them by `id`.
 | `close_terminal` | `terminal` | `null` once its program has ended and its files are gone |
 | `set_focus` | `project`, `focus` | `null` |
 | `get_focus` | `project` | `Focus` or `null` |
-| `add_cell` | `file`, `code`, `language?`, `after?`, `run?`, `project?` | `CellEdited` |
-| `edit_cell` | `file`, `cell_id`, `code`, `run?`, `project?` | `CellEdited` |
-| `delete_cell` | `file`, `cell_id`, `project?` | `CellEdited` |
+| `add_cell` | `file`, `code`, `language?`, `after?`, `run?`, `project?`, `by?` | `CellEdited` |
+| `edit_cell` | `file`, `cell_id`, `code`, `run?`, `project?`, `by?` | `CellEdited` |
+| `delete_cell` | `file`, `cell_id`, `project?`, `by?` | `CellEdited` |
 | `answer` | `id`, `result?`, `error?` | `null` |
 
 `SessionInfo` is `{id, kernel, language, language_version?, cwd, pid, status, created_ms, ended_ms?, last_seq, project?}`
@@ -662,7 +662,7 @@ window has gone (`ts_ms` says when); `get_focus` returns it.
 after the last cell (the request to a window then has no `after`): a chunk in a `.qmd`/`.Rmd`, a code cell in a notebook,
 or code at the end of an `.R`/`.py` script. `edit_cell` replaces a cell's
 code. `delete_cell` removes a notebook cell (only `.ipynb`; a window can bring
-it back). The result is `CellEdited`: `{file, cell_id, language, in_window,
+it back). `by` names the agent asking, for the window to show. The result is `CellEdited`: `{file, cell_id, language, in_window,
 kernel?}`.
 
 - When a window has the file open (it is in that connection's `open`), the
