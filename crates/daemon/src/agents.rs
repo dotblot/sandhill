@@ -394,6 +394,9 @@ pub fn instructions(options: &AgentOptions) -> String {
          and runs in their session, so they see the code and the result together. If a cell \
          you added fails, fix it with edit_cell instead of adding another. Use run_code only \
          for quick looks they don't need to keep. get_focus says where the user is. \
+         get_console shows what they ran lately and its errors, get_plots their plots, \
+         view_table a data frame's first rows, get_help a function's help page as installed, \
+         and list_packages what is installed; delete_cell removes a notebook cell. \
          list_jobs and read_job_log show the scripts and pipelines running in the background \
          and what they printed. Files you edit show up in the user's open editor.",
     );

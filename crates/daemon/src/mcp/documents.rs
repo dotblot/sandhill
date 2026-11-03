@@ -320,6 +320,28 @@ impl Tools {
         self.finish(&mut client, &edited, edit, head, since).await
     }
 
+    pub(super) async fn delete_cell(&self, cell: &str, file: Option<&str>) -> Result<Vec<Value>> {
+        let client = self.client().await?;
+        let file = self.target(&client, file).await?;
+        let edited: CellEdited = client
+            .call(Call::DeleteCell {
+                file,
+                cell_id: cell.into(),
+                project: self.project.clone(),
+            })
+            .await?;
+        let how = if edited.in_window {
+            "; the user sees where it was and can bring it back"
+        } else {
+            ""
+        };
+        Ok(vec![text_item(&format!(
+            "Deleted cell {} of {}{how}.",
+            edited.cell_id,
+            self.shown(&edited.file)
+        ))])
+    }
+
     /// Runs the cell, or follows the run the window started, and reports.
     async fn finish(
         &self,

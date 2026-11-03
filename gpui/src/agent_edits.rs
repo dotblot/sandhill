@@ -105,7 +105,10 @@ impl Workbench {
             return self.on_git_credential(request.id, &request.params, window, cx);
         }
         if self.project.as_deref() != Some(&request.project)
-            || !matches!(request.method.as_str(), "add_cell" | "edit_cell")
+            || !matches!(
+                request.method.as_str(),
+                "add_cell" | "edit_cell" | "delete_cell"
+            )
         {
             return;
         }
@@ -179,6 +182,21 @@ impl Workbench {
             open.dirty = true;
             let language = cells::normalize_language(&language);
             (String::new(), language, Some(Run::Script(code)))
+        } else if request.method == "delete_cell" {
+            let id = params["cell_id"].as_str().unwrap_or_default().to_string();
+            if !open.notebook.can_restructure() {
+                anyhow::bail!(
+                    "only a Jupyter notebook's cells can be deleted; edit {file} as a file instead"
+                );
+            }
+            let ix = open
+                .notebook
+                .cells
+                .iter()
+                .position(|c| c.id == id)
+                .ok_or_else(|| anyhow::anyhow!("{file} has no cell {id}"))?;
+            self.delete_cell(ix, cx);
+            (id, language, None)
         } else if request.method == "edit_cell" {
             let id = params["cell_id"].as_str().unwrap_or_default();
             let ix = open

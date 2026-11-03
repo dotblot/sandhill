@@ -99,6 +99,7 @@ Responses can arrive out of order; match them by `id`.
 | `get_focus` | `project` | `Focus` or `null` |
 | `add_cell` | `file`, `code`, `language?`, `after?`, `run?`, `project?` | `CellEdited` |
 | `edit_cell` | `file`, `cell_id`, `code`, `run?`, `project?` | `CellEdited` |
+| `delete_cell` | `file`, `cell_id`, `project?` | `CellEdited` |
 | `answer` | `id`, `result?`, `error?` | `null` |
 
 `SessionInfo` is `{id, kernel, language, language_version?, cwd, pid, status, created_ms, ended_ms?, last_seq, project?}`
@@ -577,8 +578,9 @@ Each agent gets Sandhill's MCP server, `sandhilld mcp --project <folder>`,
 which it starts itself (Antigravity's from its settings, as `sandhilld mcp`
 with the project in `SANDHILL_PROJECT` and the socket in `SANDHILL_SOCKET`). Its tools reach the user's live sessions through this
 same protocol: `list_sessions`, `list_variables`, `run_code` and
-`get_outputs`; and the user's documents (below): `get_focus`, `add_cell` and
-`edit_cell`. Claude Code's prompt hook (`terminal-event prompt`) adds where
+`get_outputs`, `get_console`, `get_plots`, `view_table`, `get_help` and
+`list_packages`; and the user's documents (below): `get_focus`, `add_cell`,
+`edit_cell` and `delete_cell`. Claude Code's prompt hook (`terminal-event prompt`) adds where
 the user is to each prompt.
 
 ### Conversations kept with the project
@@ -659,7 +661,8 @@ window has gone (`ts_ms` says when); `get_focus` returns it.
 `add_cell` puts code into a document as a new cell after cell `after`, or
 after the last cell (the request to a window then has no `after`): a chunk in a `.qmd`/`.Rmd`, a code cell in a notebook,
 or code at the end of an `.R`/`.py` script. `edit_cell` replaces a cell's
-code. The result is `CellEdited`: `{file, cell_id, language, in_window,
+code. `delete_cell` removes a notebook cell (only `.ipynb`; a window can bring
+it back). The result is `CellEdited`: `{file, cell_id, language, in_window,
 kernel?}`.
 
 - When a window has the file open (it is in that connection's `open`), the
