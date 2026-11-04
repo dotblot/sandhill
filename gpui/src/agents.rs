@@ -130,6 +130,9 @@ pub struct Agents {
     /// subscription (after a restart) goes on from there.
     output_end: HashMap<String, u64>,
     pub(crate) selected: Option<String>,
+    /// The conversation whose delete button in the history was clicked
+    /// once: the next click deletes it.
+    pub(crate) confirm_delete: Option<String>,
     pub(crate) show: Show,
     /// The agent a new conversation starts with.
     pub(crate) new_kind: &'static str,
@@ -224,6 +227,7 @@ impl Agents {
             views: HashMap::new(),
             output_end: HashMap::new(),
             selected: None,
+            confirm_delete: None,
             show: Show::Chat,
             new_kind: KINDS[0].kind,
             composer,

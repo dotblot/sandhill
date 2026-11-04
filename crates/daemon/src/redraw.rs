@@ -74,10 +74,18 @@ pub const PYTHON_KEEP: &str = r#"def _sandhill_keep_figures():
     names = {}
     count = itertools.count(1)
 
+    # retina_figure calls print_figure, both wrapped: only the outer call
+    # tags the image, as retina_figure reads the PNG print_figure returns.
+    drawing = [0]
+
     def keep(draw):
         def drawn(fig, *args, **kwargs):
-            out = draw(fig, *args, **kwargs)
-            if out is None:
+            drawing[0] += 1
+            try:
+                out = draw(fig, *args, **kwargs)
+            finally:
+                drawing[0] -= 1
+            if out is None or drawing[0]:
                 return out
             name = names.get(id(fig))
             if name is None or figures.get(name) is not fig:

@@ -1202,10 +1202,37 @@ impl Agents {
         }
         self.gear = false;
         self.confirm_end = false;
+        self.forget_conversation(t.id.clone(), window, cx);
+    }
+
+    /// A conversation's delete button in the history: the first click asks,
+    /// the second deletes it.
+    pub(crate) fn delete_from_history(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.confirm_delete.as_deref() != Some(&id) {
+            self.confirm_delete = Some(id);
+            cx.notify();
+            return;
+        }
+        self.confirm_delete = None;
+        let shown = self.show;
+        self.forget_conversation(id, window, cx);
+        // Deleting from the history stays in the history.
+        if shown == Show::History && !self.terminals.is_empty() {
+            self.show(Show::History, window, cx);
+        }
+    }
+
+    /// Ends a conversation (the agent stops, with what it runs) and takes it
+    /// out of the history, with its copy in the project.
+    fn forget_conversation(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let closed = self.daemon.call::<Value>(Call::CloseTerminal {
-            terminal: t.id.clone(),
+            terminal: id.clone(),
         });
-        let id = t.id.clone();
         self.terminals.retain(|t| t.id != id);
         self.chats.remove(&id);
         self.views.remove(&id);

@@ -21,8 +21,8 @@ use crate::{
 
 /// The notebook's gutter, with each cell's number.
 pub(crate) const GUTTER: f32 = 52.;
-/// How wide the cells grow.
-pub(crate) const CELLS_MAX_WIDTH: f32 = 1100.;
+/// The cell tools' height; the rows between cells leave room for them.
+pub(crate) const TOOLS_HEIGHT: f32 = 24.;
 /// A data frame's columns, in characters, at their widest and narrowest.
 const COLUMN_CHARS: (usize, usize) = (3, 28);
 
@@ -135,7 +135,6 @@ impl Workbench {
             .relative()
             .items_start()
             .w_full()
-            .max_w(px(CELLS_MAX_WIDTH))
             // A cell the agent just added or changed lights up.
             .when(lit, |d| d.rounded(px(8.)).bg(p.accent_soft))
             .when(open.notebook.can_restructure(), |d| {
@@ -176,26 +175,6 @@ impl Workbench {
         let p = *Palette::get(cx);
         let cell = &open.notebook.cells[ix];
         let code = cell.kind == CellKind::Code;
-        let status = if code {
-            self.cell_status(ix)
-        } else {
-            CellStatus::Idle
-        };
-        let (status_text, status_color, tip) = match &status {
-            CellStatus::Idle => (None, p.faint, None),
-            CellStatus::Queued => (Some("…".to_string()), p.faint, Some("Waiting to run")),
-            CellStatus::Running(_) => (
-                Some(status.time_text().unwrap_or_else(|| "…".into())),
-                p.busy,
-                Some("Running"),
-            ),
-            CellStatus::Done(_) => (status.time_text(), p.faint, Some("Ran in this long")),
-            CellStatus::Failed(_) => (
-                Some(status.time_text().unwrap_or_else(|| "failed".into())),
-                p.err,
-                Some("Failed after this long"),
-            ),
-        };
         let label: SharedString = if code {
             format!("Cell #{}", ix + 1).into()
         } else {
@@ -228,21 +207,66 @@ impl Workbench {
             .when(code, |d| {
                 d.child(div().opacity(0.8).child(format!("#{}", ix + 1)))
             })
-            .when_some(status_text, |d, text| {
-                d.child(
-                    div()
-                        .id(("status", ix))
-                        .text_size(px(look::SMALL))
-                        .whitespace_nowrap()
-                        .text_color(status_color)
-                        .when_some(tip, |d, tip| {
-                            d.tooltip(move |w, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(tip).build(w, cx)
-                            })
-                        })
-                        .child(text),
-                )
-            })
+    }
+
+    /// The line between a code cell and its outputs: its run's number, as
+    /// Jupyter shows it (`[3]`), and how long it took (or has been
+    /// running, or that it waits).
+    pub(crate) fn run_line(
+        &self,
+        open: &Open,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let p = *Palette::get(cx);
+        let cell = &open.notebook.cells[ix];
+        if cell.kind != CellKind::Code {
+            return None;
+        }
+        let status = self.cell_status(ix);
+        let (text, color) = match &status {
+            CellStatus::Idle => (None, p.faint),
+            CellStatus::Queued => (Some("waiting".to_string()), p.faint),
+            CellStatus::Running(_) => (
+                Some(
+                    status
+                        .time_text()
+                        .map_or("running".into(), |t| format!("running {t}")),
+                ),
+                p.busy,
+            ),
+            CellStatus::Done(_) => (status.time_text(), p.faint),
+            CellStatus::Failed(_) => (
+                Some(
+                    status
+                        .time_text()
+                        .map_or("failed".into(), |t| format!("failed after {t}")),
+                ),
+                p.err,
+            ),
+        };
+        let count = open
+            .cell_runs
+            .get(&cell.id)
+            .and_then(|id| self.runs.get(id))
+            .and_then(|r| r.execution_count)
+            .or(cell.execution_count);
+        if text.is_none() && count.is_none() {
+            return None;
+        }
+        Some(
+            h_flex()
+                .id(("run-line", ix))
+                .mt(px(3.))
+                .pl(px(14.))
+                .gap(px(6.))
+                .font_family(look::MONO)
+                .text_size(px(look::SMALL))
+                .text_color(p.faint)
+                .when_some(count, |d, n| d.child(format!("[{n}]")))
+                .when_some(text, |d, t| d.child(div().text_color(color).child(t)))
+                .into_any_element(),
+        )
     }
 
     /// The cell's tools, in its top right corner: Run (always there for
@@ -272,15 +296,7 @@ impl Workbench {
             icon_button(SharedString::from(format!("{id}-{ix}")), name, &p, false)
                 .tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(w, cx))
         };
-        // Code keeps Run in sight; the rest shows on hover.
-        let hidden = |d: Div| {
-            if picked {
-                d
-            } else {
-                d.invisible().group_hover(group.clone(), |d| d.visible())
-            }
-        };
-        let tools = hidden(h_flex())
+        let tools = h_flex()
             .gap(px(1.))
             .when(code, |d| {
                 d.child(
@@ -335,15 +351,27 @@ impl Workbench {
                     ),
                 )
             });
-        let frame = if code { h_flex() } else { hidden(h_flex()) };
-        frame
+        // Above the cell's top right corner, so it covers none of the code;
+        // it shows while the pointer is over the cell or over the tools
+        // (they stay where the pointer can reach them), or the cell is
+        // picked.
+        h_flex()
+            .id(("cell-tools", ix))
             .absolute()
-            .top(px(4.))
+            .bottom_full()
             .right(px(6.))
+            .h(px(TOOLS_HEIGHT))
             .gap(px(2.))
-            .p(px(1.))
-            .rounded(px(7.))
-            .bg(if code { p.chunk } else { p.bg })
+            .px(px(2.))
+            .rounded(px(6.))
+            .border(px(0.5))
+            .border_color(p.line)
+            .bg(p.bg)
+            .when(!picked, |d| {
+                d.opacity(0.)
+                    .group_hover(group, |d| d.opacity(1.))
+                    .hover(|d| d.opacity(1.))
+            })
             .child(tools)
             .when(code, |d| {
                 d.child(
@@ -352,7 +380,7 @@ impl Workbench {
                         .p(px(3.))
                         .rounded(px(6.))
                         .cursor_pointer()
-                        .text_color(if busy { p.busy } else { p.faint })
+                        .text_color(if busy { p.busy } else { p.muted })
                         .hover(|d| d.text_color(p.accent))
                         .tooltip(|w, cx| {
                             gpui_kit::component::tooltip::Tooltip::new("Run this cell").build(w, cx)
@@ -396,10 +424,9 @@ impl Workbench {
             .group(group.clone())
             .flex_none()
             .w_full()
-            .max_w(px(CELLS_MAX_WIDTH))
-            .h(px(if always { 36. } else { 14. }))
-            .pl(px(GUTTER))
-            .justify_center()
+            .h(px(if always { 36. } else { TOOLS_HEIGHT + 4. }))
+            // On the left, clear of the next cell's tools on the right.
+            .pl(px(GUTTER + 8.))
             .gap(px(8.))
             .child(
                 h_flex()

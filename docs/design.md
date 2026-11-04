@@ -118,10 +118,10 @@ Jupyter Server keeps kernels alive after the browser closes. But in the classic 
 
 ### Layout (decided 2026-11-02, Huan)
 
-Three panels across the window, 1:2:1, with 10 px between them and the
-window's left and right edges. The left panel holds, top to bottom:
+Three panels across the window, 1:2:1, with 8 px between them and the
+window's left and right edges (10 px until 2026-11-03). The left panel holds, top to bottom:
 Variables, Kernels, Help and Packages (one tab group); Files, Git, Plots and
-the Viewer (another). The middle has the editor with the Console, Terminal
+the Viewer (another), each half of the panel's height at first (2026-11-03). The middle has the editor with the Console, Terminal
 and Jobs under it. The AI pane is the right panel. The machine's resources
 (CPU, memory, GPUs, disk) sit at the right of the status bar, and the title
 bar has a light/dark theme button. (Revised the same day: the first version
@@ -129,19 +129,22 @@ was 1/5, 2/5, 2/5 with Kernels and Resources as sections of the left panel.)
 The descriptions of panes below predate this and place them where they used
 to be.
 
-In notebooks, a cell shows its number (#3) but not its run count; Run is in
-its top right corner. Output text can be selected and copied, and a plot
+In notebooks, a cell shows its number (#3) in the gutter. Between the cell
+and its output a line shows the run's number, as Jupyter does (`[3]`), and
+how long it took (2026-11-03, Huan: this replaces "no run count" and the
+time under the number). Cells take the notebook's whole width. Output text can be selected and copied, and a plot
 under a cell can be saved (the same dialog as the Plots pane's) or copied.
 
 Notebook cells work as Positron's notebooks do (decided 2026-11-03, Huan's
 batches 1 and 2; built from Positron's documentation and behaviour, not its
-code, which is Elastic License 2.0). Pointing at a cell shows its tools next
-to Run: run the cells above, run it and those below, fold or clear its
-outputs, move it up or down, delete it. Under the cell number the gutter
-says how its run went: `…` while it waits its turn, the time so far while
-it runs (the oldest unfinished run of the kernel is the one running), then
-how long it took, red if it failed. Rows between cells add a code or
-Markdown cell. Long outputs scroll in a box 480 px tall. A data frame
+code, which is Elastic License 2.0). Pointing at a cell shows its tools in a
+bar just above its top right corner, clear of the code (2026-11-03): run
+the cells above, run it and those below, fold or clear its outputs, move it
+up or down, delete it, and Run, which shows only there. The line under the
+cell says how its run went: waiting while it waits its turn, the time so
+far while it runs (the oldest unfinished run of the kernel is the one
+running), then how long it took, red if it failed. Rows between cells add a code or
+Markdown cell. Long outputs scroll in a box 480 px tall; while the pointer is over such a box, the wheel scrolls only the box, not the notebook. The notebook bar picks the kernel from one list: R kernels, then Python environments (conda and mamba ones included). A data frame
 (`<table class="dataframe">` from pandas, polars or IRkernel) shows as a
 grid, with a button that opens it in the Data Explorer when the cell's last
 line names it (`df`, `df.head()`, `head(df)`). Esc leaves a cell's editor

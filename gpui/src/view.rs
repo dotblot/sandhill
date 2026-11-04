@@ -167,6 +167,12 @@ impl Render for Workbench {
 /// come first.
 pub(crate) const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
 
+/// The height the left panel's two panes share: the window's, less the
+/// title and status bars and the gaps.
+fn left_column(height: f32) -> f32 {
+    (height - look::TITLE_BAR - look::STATUS_BAR - 2. * GAP).max(0.)
+}
+
 /// The width the three panels share: the window's, less the room at its
 /// edges and the gaps between them.
 fn panel_room(width: f32) -> f32 {
@@ -180,6 +186,8 @@ impl Workbench {
         let room = panel_room(f32::from(window.viewport_size().width));
         self.files_width = (room * self.left_share).max(220.);
         self.agents_width = (room * self.agents_share).max(300.);
+        self.variables_height =
+            (left_column(f32::from(window.viewport_size().height)) * self.variables_share).max(90.);
     }
 
     /// A gap between panes that can be dragged; an accent line shows under
@@ -268,6 +276,7 @@ impl Workbench {
                 let top = look::TITLE_BAR + GAP;
                 let most = (height - look::STATUS_BAR - top - 120.).max(90.);
                 self.variables_height = (y - top).clamp(90., most);
+                self.variables_share = self.variables_height / left_column(height).max(1.);
             }
             Split::Console => {
                 let bottom = height - look::STATUS_BAR;
@@ -672,7 +681,8 @@ impl Workbench {
             .gap(px(5.))
             .pl(px(9.))
             .pr(px(8.))
-            .rounded_full()
+            .rounded(px(look::TAB_RADIUS))
+            .text_size(px(look::TAB_TEXT))
             .whitespace_nowrap()
             .text_color(p.muted)
             .cursor_pointer()
@@ -747,7 +757,9 @@ impl Workbench {
             .pl(px(6.))
             .pr(px(24.))
             // Between cells that can be added to, the rows that add them.
-            .when(!open.notebook.can_restructure(), |d| d.gap(px(8.)))
+            .when(!open.notebook.can_restructure(), |d| {
+                d.gap(px(crate::cell_view::TOOLS_HEIGHT + 4.))
+            })
             .children(cells);
         pane(&p)
             .flex_1()
@@ -826,7 +838,12 @@ impl Workbench {
             );
         }
         tabs.extend(self.diff_tab_element(cx));
-        Self::strip(&p).child(capsule(&p, 22.).gap(px(1.)).min_w_0().children(tabs))
+        Self::strip(&p).child(
+            crate::look::tab_capsule(&p)
+                .gap(px(1.))
+                .min_w_0()
+                .children(tabs),
+        )
     }
 
     /// A tab's close button; unsaved, a dot that turns into it under the
@@ -931,62 +948,6 @@ impl Workbench {
             .line_height(rems(1.4))
             .child(body)
             .into_any_element()
-    }
-
-    /// The kernels to pick from, each a pill with its language's icon.
-    fn kernel_buttons(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let p = *Palette::get(cx);
-        let chosen = self.active_kernel().map(str::to_string);
-        // A script offers only kernels for its language.
-        let only = self
-            .open
-            .as_ref()
-            .filter(|o| o.is_script())
-            .and_then(|o| o.notebook.language.clone());
-        self.kernels
-            .iter()
-            .enumerate()
-            .filter(|(_, spec)| {
-                only.as_ref()
-                    .is_none_or(|l| spec.language.eq_ignore_ascii_case(l))
-            })
-            .map(|(ix, spec)| {
-                let name = spec.name.clone();
-                let picked = chosen.as_deref() == Some(&spec.name);
-                let hover = p.ink(8.);
-                h_flex()
-                    .id(("kernel", ix))
-                    .flex_none()
-                    .h(px(22.))
-                    .gap(px(5.))
-                    .pl(px(3.))
-                    .pr(px(8.))
-                    .rounded(px(RADIUS))
-                    .border_1()
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .map(|d| {
-                        if picked {
-                            d.border_color(p.accent)
-                                .bg(p.accent_soft)
-                                .text_color(p.text)
-                        } else {
-                            d.border_color(p.line)
-                                .text_color(p.muted)
-                                .hover(move |d| d.bg(hover))
-                        }
-                    })
-                    .map(|d| match look::language_icon(&spec.language) {
-                        Some(lang) => d.child(picture(lang).size(px(14.))),
-                        None => d.pl(px(8.)),
-                    })
-                    .child(spec.display_name.clone())
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.choose_kernel(name.clone(), cx)),
-                    )
-                    .into_any_element()
-            })
-            .collect()
     }
 
     /// Restart and Shut down for the shown document's kernel, while it runs.
@@ -1104,7 +1065,7 @@ impl Workbench {
 
     /// The bar under the notebook's tab: the kernels, then actions.
     fn render_notebook_bar(&self, open: &Open, cx: &mut Context<Self>) -> impl IntoElement {
-        let kernels = self.kernel_buttons(cx);
+        let kernels = self.kernel_picker(cx);
         let p = *Palette::get(cx);
         h_flex()
             .flex_none()
@@ -1115,7 +1076,7 @@ impl Workbench {
             .border_color(p.glass_edge)
             .whitespace_nowrap()
             .overflow_hidden()
-            .children(kernels)
+            .child(kernels)
             .child(div().w(px(8.)))
             .when(open.is_script(), |bar| {
                 bar.child(
@@ -1259,6 +1220,9 @@ impl Workbench {
         };
         let shown: Vec<Shown> = outputs.iter().map(show).collect();
         let pages = shown.iter().any(|s| matches!(s, Shown::Page(_)));
+        // An error can come from a run that ended fine, as when a plot
+        // fails to draw.
+        let error_shown = shown.iter().any(|s| matches!(s, Shown::Error(_)));
         let count = shown.len();
         let failed = run.and_then(failed_status);
         let errored = run.and_then(|r| r.status.as_deref()) == Some("error");
@@ -1282,10 +1246,11 @@ impl Workbench {
         } else {
             p.line
         };
-        let fixable = errored && !busy && !folded;
+        let fixable = (errored || error_shown) && !busy && !folded;
         v_flex()
             .w_full()
             .child(self.render_cell_editor(open, ix, true, window, cx))
+            .children(self.run_line(open, ix, cx))
             .children(self.render_agent_change(open, ix, cx))
             .when(folded && count > 0, |d| {
                 d.child(
@@ -1310,25 +1275,49 @@ impl Workbench {
             .when(
                 !outputs.is_empty() || failed.is_some() || busy && !folded,
                 |d| {
+                    let scroll = self
+                        .output_scrolls
+                        .borrow_mut()
+                        .entry(cell.id.clone())
+                        .or_default()
+                        .clone();
+                    let inner = scroll.clone();
                     d.child(
-                        v_flex()
-                            .id(("outputs", ix))
-                            .mt(px(4.))
-                            .my(px(2.))
-                            .pl(px(12.))
-                            .py(px(2.))
-                            .gap_1()
-                            .border_l_2()
-                            .border_color(border)
-                            // Long outputs scroll in their box, so the cells
-                            // below stay near; web pages keep their own height.
-                            .when(!pages, |d| {
-                                d.max_h(px(OUTPUT_MAX_HEIGHT)).overflow_y_scroll()
+                        // While its outputs are taller than it, the box
+                        // takes the wheel's turns: the notebook stays put.
+                        div()
+                            .id(("outputs-wheel", ix))
+                            .w_full()
+                            .on_scroll(move |_, _, cx| {
+                                if inner.max_offset().y > px(0.) {
+                                    cx.stop_propagation();
+                                }
                             })
-                            .children(outputs)
-                            .when_some(failed, |d, s| {
-                                d.child(div().text_color(p.err).child(format!("Run ended: {s}")))
-                            }),
+                            .child(
+                                v_flex()
+                                    .id(("outputs", ix))
+                                    .track_scroll(&scroll)
+                                    .mt(px(4.))
+                                    .my(px(2.))
+                                    .pl(px(12.))
+                                    .py(px(2.))
+                                    .gap_1()
+                                    .border_l_2()
+                                    .border_color(border)
+                                    // Long outputs scroll in their box, so the cells
+                                    // below stay near; web pages keep their own height.
+                                    .when(!pages, |d| {
+                                        d.max_h(px(OUTPUT_MAX_HEIGHT)).overflow_y_scroll()
+                                    })
+                                    .children(outputs)
+                                    .when_some(failed, |d, s| {
+                                        d.child(
+                                            div()
+                                                .text_color(p.err)
+                                                .child(format!("Run ended: {s}")),
+                                        )
+                                    }),
+                            ),
                     )
                 },
             )
@@ -1536,7 +1525,7 @@ impl Workbench {
             .border_color(p.glass_edge)
             .text_color(p.muted)
             .when(self.open.is_none() && self.project.is_some(), |d| {
-                d.children(self.kernel_buttons(cx)).when(
+                d.child(self.kernel_picker(cx)).when(
                     matches!(self.loose, Session::None | Session::Failed(_)),
                     |d| {
                         d.child(
