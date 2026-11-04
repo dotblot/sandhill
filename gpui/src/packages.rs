@@ -3,8 +3,9 @@
 //! libraries, or the Python environment), with what's attached or imported
 //! first. A click opens a package's help. Installing, updating and removing
 //! run in the Console, where their output shows, and the list is read again
-//! after. R's updates are checked when asked, as that reaches CRAN and
-//! Bioconductor from the session.
+//! after. Updates are checked when asked, as that reaches the repositories
+//! from the session: CRAN and Bioconductor for R, PyPI and conda's channels
+//! for Python.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -246,6 +247,37 @@ pub(crate) fn install_code(
     }
 }
 
+/// The Console code that updates packages: R's as they are installed;
+/// in Python, conda's own with conda (which keeps the environment
+/// consistent) and the rest with pip.
+pub(crate) fn update_code(
+    language: &str,
+    packages: &[&Package],
+    cran: bool,
+    bioconductor: bool,
+) -> String {
+    let names = |list: &[&&Package]| {
+        list.iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if !is_python(language) {
+        let names: Vec<String> = packages.iter().map(|p| p.name.clone()).collect();
+        return install_code(language, &names, cran, bioconductor, false);
+    }
+    let (conda, pip): (Vec<&&Package>, Vec<&&Package>) =
+        packages.iter().partition(|p| p.installer == "conda");
+    let mut lines = Vec::new();
+    if !conda.is_empty() {
+        lines.push(format!("%conda update -y {}", names(&conda)));
+    }
+    if !pip.is_empty() {
+        lines.push(format!("%pip install -U {}", names(&pip)));
+    }
+    lines.join("\n")
+}
+
 /// The Console code that removes packages: conda's own with conda's tool.
 pub(crate) fn remove_code(language: &str, packages: &[&Package]) -> String {
     if !is_python(language) {
@@ -444,7 +476,12 @@ impl Workbench {
             return;
         }
         let language = self.active_language().unwrap_or_default();
-        let code = install_code(&language, &names, listed.cran, listed.bioconductor, false);
+        let picked: Vec<&Package> = listed
+            .packages
+            .iter()
+            .filter(|p| names.contains(&p.name))
+            .collect();
+        let code = update_code(&language, &picked, listed.cran, listed.bioconductor);
         self.run_in_console(code, cx);
     }
 
@@ -499,25 +536,21 @@ impl Workbench {
     /// The buttons on the right of the Packages tab's strip.
     pub(crate) fn package_tools(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let p = *Palette::get(cx);
-        let python = self.active_language().is_some_and(|l| is_python(&l));
         let listed = self.packages.listed.is_some();
-        let mut tools = Vec::new();
-        if !python {
-            tools.push(
-                icon_button("check-updates", "doc.download", &p, false)
-                    .when(!listed || self.packages.checking, |d| d.opacity(0.35))
-                    .tooltip(|window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new("Check for updates")
-                            .build(window, cx)
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if this.packages.listed.is_some() && !this.packages.checking {
-                            this.check_updates(cx)
-                        }
-                    }))
-                    .into_any_element(),
-            );
-        }
+        let mut tools = vec![
+            icon_button("check-updates", "doc.download", &p, false)
+                .when(!listed || self.packages.checking, |d| d.opacity(0.35))
+                .tooltip(|window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("Check for updates")
+                        .build(window, cx)
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    if this.packages.listed.is_some() && !this.packages.checking {
+                        this.check_updates(cx)
+                    }
+                }))
+                .into_any_element(),
+        ];
         tools.push(
             icon_button("install-packages", "add", &p, false)
                 .when(self.packages.installing, |d| d.bg(p.ink(10.)))
@@ -863,8 +896,13 @@ impl Workbench {
         let listed = self.packages.listed.as_ref();
         let mut failed = false;
         let mut names: Vec<String> = Vec::new();
+        let python = self.active_language().is_some_and(|l| is_python(&l));
         let text = if self.packages.checking {
-            if listed.is_some_and(|l| l.bioconductor) {
+            if python && listed.is_some_and(|l| l.conda) {
+                "Checking conda's channels and PyPI for updates…".to_string()
+            } else if python {
+                "Checking PyPI for updates…".to_string()
+            } else if listed.is_some_and(|l| l.bioconductor) {
                 "Checking CRAN and Bioconductor for updates…".to_string()
             } else {
                 "Checking CRAN for updates…".to_string()
@@ -942,7 +980,9 @@ impl Workbench {
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_packages, install_code, package_names, package_topic, remove_code};
+    use super::{
+        filter_packages, install_code, package_names, package_topic, remove_code, update_code,
+    };
     use sandhill_proto::Package;
 
     fn pkg(name: &str, title: &str) -> Package {
@@ -990,6 +1030,14 @@ mod tests {
             "%conda remove -y numpy\n%pip uninstall -y scanpy"
         );
         assert_eq!(remove_code("R", &[&b]), "remove.packages(\"scanpy\")");
+        assert_eq!(
+            update_code("python", &[&a, &b], false, false),
+            "%conda update -y numpy\n%pip install -U scanpy"
+        );
+        assert_eq!(
+            update_code("R", &[&b], true, false),
+            "install.packages(\"scanpy\")"
+        );
     }
 
     #[test]

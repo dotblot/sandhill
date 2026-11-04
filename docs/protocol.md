@@ -41,7 +41,8 @@ Responses can arrive out of order; match them by `id`.
 | `help_page` | `session`, `topic`, `package?` | `HelpPage`: R's page as HTML, or Python's signature, docstring and members |
 | `help_source` | `session`, `topic`, `package?` | `{session, topic, package, text, file?, line?}`: a function's source |
 | `list_packages` | `session` | `Packages`: what's installed for the session's language |
-| `package_updates` | `session` | `PackageUpdates`: R packages with newer versions on CRAN or Bioconductor |
+| `package_updates` | `session` | `PackageUpdates`: packages with newer versions (R: CRAN, Bioconductor; Python: PyPI, conda's channels) |
+| `suggest_cell` | `cwd`, `language`, `cells`, `output?`, `agent?` | `{agent, code}`: a ghost cell, the code an agent suggests for the next cell (`code` null when it sees none) |
 | `git_status` | `path` | `GitStatus`: the branch, the changed files and the refs of the repository `path` is in |
 | `git_log` | `path`, `skip?`, `limit?` | `{commits, more}`: a page of every branch's commits, newest first |
 | `git_show` | `path`, `sha` | `GitCommitInfo`: a commit's whole message and the files it changed |
@@ -320,7 +321,22 @@ unreached}`, each update `{name, installed, available, library,
 bioconductor}`, and `unreached` the repositories that didn't answer; when none
 did, the call fails ("couldn't reach ...") rather than saying nothing is new. The session
 downloads the repositories' indexes, so it can take a while (at most three
-minutes). Python's aren't checked yet.
+minutes). In Python, a conda environment's own packages (installer `conda`)
+are asked of its channels with a dry run of `conda update --all` (or mamba's),
+so only versions that fit the environment count; the others, unless installed
+from a path or URL, are asked of PyPI's JSON API (`SANDHILL_PYPI_URL` in the
+kernel's environment names another index). `library` is where the package is,
+and `repos` lists "conda's channels" and the index as they were asked.
+
+`suggest_cell` asks a coding agent for a notebook's next cell: `cells` are the
+cells up to and including the one just run (the last twelve are sent), and
+`output` the text it showed. `agent` (`claude` or `codex`) is asked when it
+is installed, else Claude Code, else Codex. The agent runs once as its own
+CLI in `cwd`, with no tools and nothing saved as a conversation (`claude -p
+--model haiku --tools ""`, `codex exec --sandbox read-only`), and answers with
+one fenced block, which the call returns as `code`. It can take up to two
+minutes; the app asks only after a cell the user ran ends well, and only
+while its "Suggest" switch is on.
 
 The `git_*` calls run the `git` program on the daemon's machine (a command
 line git, which on macOS is the Xcode one only when its tools are installed),

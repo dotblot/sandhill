@@ -599,6 +599,7 @@ impl Workbench {
                     .flex_1()
                     .min_h_0()
                     .overflow_scroll()
+                    .restrict_scroll_to_axis()
                     .child(v_flex().min_w_full().children(body)),
             )
             .into_any_element()

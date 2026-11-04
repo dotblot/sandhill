@@ -625,6 +625,9 @@ impl Agents {
                     .into_any_element(),
             );
         }
+        if t.running && self.trust_asked.contains(&t.id) {
+            items.push(self.render_trust(t, cx));
+        }
         if !t.running {
             let resumable = crate::composer::can_resume(t);
             items.push(
@@ -671,6 +674,83 @@ impl Agents {
                     .pb(px(10.))
                     .gap(px(8.))
                     .children(items),
+            )
+            .into_any_element()
+    }
+
+    /// Claude Code's question, the first time it works in a folder,
+    /// whether the user trusts the files there: asked here, as its terminal
+    /// is out of sight, and a message typed at it would end it.
+    fn render_trust(&self, t: &TerminalInfo, cx: &mut Context<Self>) -> AnyElement {
+        let p = *Palette::get(cx);
+        let folder = t.cwd.clone();
+        let button = |id: &'static str, label: &'static str, primary: bool| {
+            let hover = p.hover;
+            div()
+                .id(id)
+                .h(px(28.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .rounded(px(RADIUS))
+                .border_1()
+                .whitespace_nowrap()
+                .text_size(px(look::SMALL + 1.))
+                .cursor_pointer()
+                .map(|d| {
+                    if primary {
+                        d.bg(p.accent)
+                            .border_color(p.accent)
+                            .text_color(p.accent_text)
+                            .font_weight(FontWeight::SEMIBOLD)
+                    } else {
+                        d.bg(p.bg).border_color(p.line).hover(move |d| d.bg(hover))
+                    }
+                })
+                .child(label)
+        };
+        let yes = t.clone();
+        let no = t.clone();
+        v_flex()
+            .gap(px(8.))
+            .p(px(10.))
+            .rounded(px(RADIUS))
+            .border_1()
+            .border_color(p.accent.opacity(0.55))
+            .bg(p.accent.opacity(0.06))
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap(px(8.))
+                    .child(icon("ask").size(px(18.)).text_color(p.accent))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Do you trust the files in this folder?"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(look::SMALL + 1.))
+                                    .text_color(p.muted)
+                                    .child(format!(
+                                        "Claude Code asks once for each folder before it reads, edits or runs files in it: {folder}"
+                                    )),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap(px(6.))
+                    .child(button("trust-yes", "Yes, I trust this folder", true).on_click(
+                        cx.listener(move |this, _, _, cx| this.answer_trust(&yes, true, cx)),
+                    ))
+                    .child(button("trust-no", "No, end the conversation", false).on_click(
+                        cx.listener(move |this, _, _, cx| this.answer_trust(&no, false, cx)),
+                    )),
             )
             .into_any_element()
     }

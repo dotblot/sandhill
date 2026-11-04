@@ -305,6 +305,21 @@ pub enum Call {
     PackageUpdates {
         session: String,
     },
+    /// A ghost cell: asks a coding agent (Claude Code or Codex, run once
+    /// as its own CLI, with no tools) for the code of the cell to come
+    /// after the one just run. `cells` is the notebook's cells up to and
+    /// including it, oldest first; `output` the text that cell showed.
+    /// `agent` is the one to ask first; another installed one stands in.
+    /// Returns [`CellSuggestion`].
+    SuggestCell {
+        #[serde(default)]
+        agent: Option<String>,
+        cwd: String,
+        language: String,
+        cells: Vec<String>,
+        #[serde(default)]
+        output: String,
+    },
     /// The Git state of the repository holding `path` (a project folder):
     /// its branch, how far it is ahead of and behind its upstream, and the
     /// changed files. Returns [`GitStatus`], with an empty `repo` when the
@@ -1791,6 +1806,15 @@ pub struct HelpSource {
     pub file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+}
+
+/// What [`Call::SuggestCell`] got: the next cell's code, or none when the
+/// agent saw no useful next step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CellSuggestion {
+    /// The agent that answered (its kind).
+    pub agent: String,
+    pub code: Option<String>,
 }
 
 /// Packages with a newer version, as [`Call::PackageUpdates`] asked.

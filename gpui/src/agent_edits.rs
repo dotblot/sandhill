@@ -133,7 +133,11 @@ impl Workbench {
             && request.params["run"] == true
         {
             match run {
-                Run::Cell(ix) => self.run_cell(ix, cx),
+                Run::Cell(ix) => {
+                    self.agent_running = true;
+                    self.run_cell(ix, cx);
+                    self.agent_running = false;
+                }
                 Run::Script(code) => self.run_script(code, cx),
             }
         }

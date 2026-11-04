@@ -26,6 +26,10 @@ use crate::workbench::Workbench;
 /// What Claude Code needs between a pasted message and the Enter that sends
 /// it, as in the Tauri app.
 pub(crate) const SUBMIT_DELAY: Duration = Duration::from_millis(60);
+/// Answering Claude Code's trust question: how many keys at most, and how
+/// long its screen takes to show each.
+const TRUST_TRIES: usize = 4;
+const TRUST_STEP: Duration = Duration::from_millis(250);
 /// A new agent's terminal size, until its view has one.
 pub(crate) const START_COLUMNS: u16 = 100;
 pub(crate) const START_ROWS: u16 = 30;
@@ -146,6 +150,9 @@ pub struct Agents {
     pub(crate) sent: HashSet<String>,
     /// Conversations the user stopped, until the agent says it is idle.
     stopped: HashSet<String>,
+    /// Claude Code conversations whose screen asks whether the user trusts
+    /// the folder: the chat shows the question, and holds messages.
+    pub(crate) trust_asked: HashSet<String>,
     /// A conversation starting: its agent's name.
     pub(crate) starting: Option<&'static str>,
     pub(crate) problem: Option<String>,
@@ -236,6 +243,7 @@ impl Agents {
             open_steps: HashSet::new(),
             sent: HashSet::new(),
             stopped: HashSet::new(),
+            trust_asked: HashSet::new(),
             starting: None,
             problem: None,
             follow_edits: crate::prefs::follow_agent(),
@@ -343,6 +351,22 @@ impl Agents {
         };
         let window = self.window;
         let view = cx.new(|cx| TerminalView::new(id.clone(), input, resize, window, cx));
+        if terminal.kind == "claude" {
+            let id = id.clone();
+            cx.observe(&view, move |this, view, cx| {
+                let asks =
+                    crate::composer::trust_question(&view.read(cx).screen_text(cx)).is_some();
+                let changed = if asks {
+                    this.trust_asked.insert(id.clone())
+                } else {
+                    this.trust_asked.remove(&id)
+                };
+                if changed {
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
         if !terminal.running {
             view.update(cx, |view, cx| view.exited("ended".into(), cx));
         }
@@ -487,7 +511,49 @@ impl Agents {
     }
 
     pub(crate) fn waiting(&self, t: &TerminalInfo) -> bool {
-        t.running && t.agent.as_ref().and_then(|a| a["state"].as_str()) == Some("waiting")
+        t.running
+            && (t.agent.as_ref().and_then(|a| a["state"].as_str()) == Some("waiting")
+                || self.trust_asked.contains(&t.id))
+    }
+
+    /// Answers Claude Code's question whether the user trusts the folder,
+    /// as its terminal takes it: Esc says no (and ends the conversation);
+    /// yes moves the pick to "Yes" (its first choice is "No, exit"), then
+    /// Enter. Whatever message started the conversation then goes on.
+    pub(crate) fn answer_trust(&mut self, t: &TerminalInfo, trust: bool, cx: &mut Context<Self>) {
+        let id = t.id.clone();
+        if !trust {
+            self.daemon.fire(Call::TerminalInput {
+                terminal: id,
+                data: "\x1b".into(),
+            });
+            return;
+        }
+        let Some(view) = self.view(&id) else {
+            return;
+        };
+        let daemon = self.daemon.clone();
+        cx.spawn(async move |_, cx| {
+            for _ in 0..TRUST_TRIES {
+                let shown = view.read_with(cx, |v, cx| {
+                    crate::composer::trust_question(&v.screen_text(cx))
+                });
+                let key = match shown {
+                    None => return,
+                    Some(true) => "\r",
+                    Some(false) => "\x1b[B",
+                };
+                daemon.fire(Call::TerminalInput {
+                    terminal: id.clone(),
+                    data: key.into(),
+                });
+                if key == "\r" {
+                    return;
+                }
+                cx.background_executor().timer(TRUST_STEP).await;
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn chat(&self, t: &TerminalInfo) -> Chat {
@@ -699,6 +765,11 @@ impl Agents {
         refs: &[Value],
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.trust_asked.contains(&t.id) {
+            self.problem = Some("Answer Claude Code's question above first.".into());
+            cx.notify();
+            return false;
+        }
         if !self.chat(t).waiting.is_empty() {
             let who = kind_of(&t.kind).map_or("the agent", |k| k.short);
             self.problem = Some(format!("Answer {who}'s question above first."));

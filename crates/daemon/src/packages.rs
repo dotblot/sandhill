@@ -3,7 +3,8 @@
 //! distributions (`importlib.metadata`), with which are loaded. Listed by
 //! running a short piece of code in the session, quietly. Installing and
 //! removing run in the Console, where they can be seen, so they aren't here.
-//! R's updates are asked of CRAN and Bioconductor the same way.
+//! Updates are asked of the repositories the same way: CRAN and
+//! Bioconductor for R, PyPI and conda's channels for Python.
 
 use std::time::Duration;
 
@@ -148,9 +149,123 @@ const R_UPDATES: &str = r#"local({
 })
 "#;
 
-/// The code that asks for updates in a session of `language`: only R's.
+/// Python packages with newer versions. In a conda environment, those
+/// conda installed are asked of its channels with a dry run of `conda
+/// update --all` (so only versions that fit the rest of the environment
+/// count); the rest are asked of PyPI, one at a time but in parallel.
+/// Packages installed from a path or a URL have no index to ask.
+/// `SANDHILL_PYPI_URL` names another index with PyPI's JSON API.
+const PYTHON_UPDATES: &str = r#"def _sandhill_updates():
+    import importlib.metadata as md, json, os, re, shutil, subprocess, sys, urllib.error, urllib.request
+    from concurrent.futures import ThreadPoolExecutor
+
+    def esc(s):
+        return s.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+
+    def line(*fields):
+        print(*fields, sep="\t")
+
+    def norm(name):
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    def key(v):
+        try:
+            from packaging.version import Version
+            return (1, Version(v))
+        except Exception:
+            return (0, tuple(int(n) for n in re.findall(r"\d+", v)))
+
+    def newer(a, b):
+        try:
+            ka, kb = key(a), key(b)
+            if ka[0] == kb[0]:
+                return ka[1] > kb[1]
+        except Exception:
+            pass
+        return a != b and tuple(int(n) for n in re.findall(r"\d+", a)) > tuple(int(n) for n in re.findall(r"\d+", b))
+
+    dists = {}
+    for d in md.distributions():
+        try:
+            name = d.metadata["Name"]
+            installer = (d.read_text("INSTALLER") or "").strip()
+            direct = d.read_text("direct_url.json") is not None
+            where = str(d.locate_file(""))
+        except Exception:
+            continue
+        if name and norm(name) not in dists:
+            dists[norm(name)] = (name, d.version or "", installer, direct, where)
+    found, reached, missed = {}, [], []
+
+    if os.path.isdir(os.path.join(sys.prefix, "conda-meta")) and any(i == "conda" for _, _, i, _, _ in dists.values()):
+        envs = os.path.dirname(sys.prefix)
+        base = os.path.dirname(envs) if os.path.basename(envs) == "envs" else sys.prefix
+        tools = [os.environ.get("CONDA_EXE"), os.path.join(base, "bin", "conda"), shutil.which("conda"),
+                 os.environ.get("MAMBA_EXE"), os.path.join(base, "bin", "mamba"), shutil.which("mamba")]
+        tool = next((t for t in tools if t and os.path.isfile(t)), None)
+        data = None
+        if tool:
+            try:
+                done = subprocess.run([tool, "update", "--all", "--dry-run", "--json", "--prefix", sys.prefix],
+                                      capture_output=True, text=True, timeout=150)
+                data = json.loads(done.stdout or "null")
+            except Exception:
+                data = None
+        if isinstance(data, dict) and not data.get("error"):
+            reached.append("conda's channels")
+            actions = data.get("actions") or {}
+            if isinstance(actions, list):
+                actions = actions[0] if actions else {}
+            def versions(kind):
+                return {p.get("name"): str(p.get("version", "")) for p in actions.get(kind) or [] if isinstance(p, dict)}
+            old = versions("UNLINK")
+            for name, version in versions("LINK").items():
+                dist = dists.get(norm(name or ""))
+                if dist and name in old and newer(version, old[name]):
+                    found[norm(name)] = (dist[0], dist[1], version, dist[4])
+        elif tool:
+            missed.append("conda's channels")
+
+    index = os.environ.get("SANDHILL_PYPI_URL") or "https://pypi.org/pypi"
+    asked = [d for n, d in dists.items() if d[2] != "conda" and not d[3] and n not in found]
+
+    def latest(dist):
+        try:
+            with urllib.request.urlopen(index.rstrip("/") + "/" + dist[0] + "/json", timeout=15) as r:
+                return dist, str(json.load(r)["info"]["version"]), True
+        except urllib.error.HTTPError:
+            return dist, None, True
+        except Exception:
+            return dist, None, False
+
+    if asked:
+        with ThreadPoolExecutor(16) as pool:
+            answers = list(pool.map(latest, asked))
+        if any(ok for _, _, ok in answers):
+            reached.append(index)
+            for dist, version, _ in answers:
+                if version and newer(version, dist[1]):
+                    found[norm(dist[0])] = (dist[0], dist[1], version, dist[4])
+        else:
+            missed.append(index)
+    if missed and not reached:
+        raise RuntimeError("couldn't reach " + " or ".join(missed))
+    for name, installed, available, where in found.values():
+        line("SANDHILL_UPDATE", esc(name), esc(installed), esc(available), esc(where), 0)
+    for repo in reached + missed:
+        line("SANDHILL_REPO", esc(repo), int(repo in missed))
+
+_sandhill_updates()
+del _sandhill_updates
+"#;
+
+/// The code that asks for updates in a session of `language`.
 pub fn updates_code(language: &str) -> Option<String> {
-    (language.eq_ignore_ascii_case("r")).then(|| R_UPDATES.to_string())
+    match language.to_ascii_lowercase().as_str() {
+        "r" => Some(R_UPDATES.to_string()),
+        "python" | "python3" => Some(PYTHON_UPDATES.to_string()),
+        _ => None,
+    }
 }
 
 /// What asking for updates printed.
@@ -322,6 +437,6 @@ mod tests {
         );
         assert!(updates[0].bioconductor);
         assert_eq!(repos.len(), 2);
-        assert!(updates_code("R").is_some() && updates_code("python").is_none());
+        assert!(updates_code("R").is_some() && updates_code("python").is_some());
     }
 }

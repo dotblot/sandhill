@@ -10,6 +10,7 @@ pub mod cells;
 pub mod chats;
 pub mod fileops;
 pub mod files;
+pub mod ghost;
 pub mod git;
 pub mod help;
 pub mod inline;

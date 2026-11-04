@@ -233,6 +233,88 @@ async fn r_help_is_searched_read_and_packages_listed() {
     client.shutdown(&session).await.unwrap();
 }
 
+/// A stand-in for PyPI's JSON API: every package's latest is 999.0, but
+/// `pip` isn't on it.
+fn fake_index() -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/pypi", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut request = String::new();
+            let _ = BufReader::new(&stream).read_line(&mut request);
+            let (status, body) = if request.contains("/pip/json") {
+                ("404 Not Found", "{}".to_string())
+            } else {
+                ("200 OK", r#"{"info": {"version": "999.0"}}"#.to_string())
+            };
+            let _ = write!(
+                &stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    url
+}
+
+#[tokio::test]
+async fn python_updates_are_asked_of_the_index() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session("python3", None).await.unwrap().id;
+    let index = fake_index();
+    run(
+        &mut client,
+        &session,
+        &format!("__import__('os').environ['SANDHILL_PYPI_URL'] = {index:?}"),
+    )
+    .await;
+    let listed = client.list_packages(&session).await.unwrap();
+    let found = client.package_updates(&session).await.unwrap();
+    assert_eq!(found.repos, std::slice::from_ref(&index));
+    assert!(found.unreached.is_empty());
+    // What pip installed, from an index, is asked about; pip itself isn't on
+    // this one.
+    let asked: Vec<_> = listed
+        .packages
+        .iter()
+        .filter(|p| p.installer != "conda" && p.name != "pip")
+        .collect();
+    assert!(!found.updates.is_empty(), "{listed:?}");
+    for update in &found.updates {
+        assert_eq!(update.available, "999.0", "{update:?}");
+        assert!(
+            asked
+                .iter()
+                .any(|p| p.name == update.name && p.version == update.installed)
+        );
+    }
+    assert!(!found.updates.iter().any(|u| u.name == "pip"));
+
+    // An index that can't be reached says so.
+    run(
+        &mut client,
+        &session,
+        "__import__('os').environ['SANDHILL_PYPI_URL'] = 'http://127.0.0.1:9/pypi'",
+    )
+    .await;
+    let err = client
+        .package_updates(&session)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("couldn't reach http://127.0.0.1:9/pypi"),
+        "{err}"
+    );
+    client.shutdown(&session).await.unwrap();
+}
+
 #[tokio::test]
 async fn python_help_is_searched_read_and_packages_listed() {
     if !have_kernel("python3").await {

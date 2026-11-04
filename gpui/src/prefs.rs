@@ -63,6 +63,15 @@ pub fn save_follow_agent(on: bool) {
     write("followAgent", json!(on));
 }
 
+/// Whether a notebook suggests the next cell after each run (ghost cells).
+pub fn ghost_cells() -> bool {
+    read()["ghostCells"].as_bool().unwrap_or(false)
+}
+
+pub fn save_ghost_cells(on: bool) {
+    write("ghostCells", json!(on));
+}
+
 /// Whether the Data Explorer shows its column list and stats.
 pub fn column_stats() -> bool {
     read()["deColumnStats"].as_bool().unwrap_or(true)

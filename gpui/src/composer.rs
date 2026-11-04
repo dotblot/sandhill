@@ -353,6 +353,24 @@ pub fn screen_mode(screen: &str) -> Option<&'static Mode> {
     screen.contains("? for shortcuts").then_some(&MODES[0])
 }
 
+/// Whether Claude Code's screen asks if the user trusts the folder (it
+/// does once for each folder, before anything else), and if so whether
+/// its "Yes" is the one picked: `Some(true)` when Enter would trust it.
+/// Its first choice is "No, exit", so a message typed at it ends the
+/// conversation.
+pub fn trust_question(screen: &str) -> Option<bool> {
+    let asks = screen.contains("trust this folder")
+        || screen.contains("Do you trust the files in this folder");
+    if !asks {
+        return None;
+    }
+    let picked = screen
+        .lines()
+        .find(|l| l.trim_start().starts_with('❯') || l.trim_start().starts_with('>'))
+        .map(|l| l.trim_start().trim_start_matches(['❯', '>']).trim_start());
+    Some(picked.is_some_and(|l| l.starts_with("Yes") || l.starts_with("1. Yes")))
+}
+
 /// Whether the agent can start again on its conversation: it said which.
 pub fn can_resume(t: &TerminalInfo) -> bool {
     if t.kind == "claude" {
@@ -711,6 +729,23 @@ mod tests {
         assert_eq!(id("⏵⏵ bypass permissions on"), Some("yolo"));
         assert_eq!(id("  ? for shortcuts"), Some("normal"));
         assert_eq!(id("Do you trust the files in this folder?"), None);
+    }
+
+    #[test]
+    fn sees_claude_codes_trust_question() {
+        let screen = |picked_yes: bool| {
+            format!(
+                " Accessing workspace:\n /home/huan/proj\n Quick safety check: Is this a project you created or one you trust?\n {} No, exit\n {} Yes, I trust this folder\n Enter to confirm · Esc to cancel",
+                if picked_yes { " " } else { "❯" },
+                if picked_yes { "❯" } else { " " },
+            )
+        };
+        assert_eq!(trust_question(&screen(false)), Some(false));
+        assert_eq!(trust_question(&screen(true)), Some(true));
+        assert_eq!(
+            trust_question("❯ \n⏸ manual mode on · ? for shortcuts"),
+            None
+        );
     }
 
     #[test]

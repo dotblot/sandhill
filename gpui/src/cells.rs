@@ -166,13 +166,25 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.add_cell_with(at, kind, String::new(), window, cx);
+    }
+
+    /// Adds a cell holding `source` at `at` and puts the cursor in it.
+    pub(crate) fn add_cell_with(
+        &mut self,
+        at: usize,
+        kind: CellKind,
+        source: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(open) = self.open.as_mut().filter(|o| o.notebook.can_restructure()) else {
             return;
         };
         let at = at.min(open.notebook.cells.len());
         let id = open.notebook.insert_cell(at, kind);
         let nb = DocKind::of(&open.notebook);
-        let (editor, subscription) = self.cell_editor(&nb, kind, String::new(), window, cx);
+        let (editor, subscription) = self.cell_editor(&nb, kind, source, window, cx);
         let open = self.open.as_mut().expect("checked above");
         open.editors.insert(at, editor.clone());
         open._subscriptions.push(subscription);
