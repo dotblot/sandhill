@@ -750,6 +750,21 @@ impl Daemon {
                     unreached: found.unreached,
                 })?
             }
+            Call::SuggestCell {
+                agent,
+                cwd,
+                language,
+                cells,
+                output,
+            } => {
+                let (kind, program) = crate::ghost::choose(agent.as_deref())?;
+                let prompt = crate::ghost::prompt(&language, &cells, &output);
+                let reply = crate::ghost::ask(kind, &program, Path::new(&cwd), &prompt).await?;
+                serde_json::to_value(sandhill_proto::CellSuggestion {
+                    agent: kind.into(),
+                    code: crate::ghost::parse(&reply),
+                })?
+            }
             Call::GitStatus { path } => serde_json::to_value(crate::git::status(&path).await?)?,
             Call::GitLog { path, skip, limit } => {
                 serde_json::to_value(crate::git::log(&path, skip, limit).await?)?

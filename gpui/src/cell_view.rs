@@ -83,13 +83,15 @@ impl Workbench {
         always: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let ghost = self.render_ghost(open, at, cx);
         let deleted = self.render_agent_deleted(open, at, cx);
-        if deleted.is_empty() {
+        if deleted.is_empty() && ghost.is_none() {
             return self.add_row(at, always, cx);
         }
         v_flex()
             .flex_none()
             .w_full()
+            .children(ghost)
             .children(deleted)
             .child(self.add_row(at, always, cx))
             .into_any_element()
@@ -198,7 +200,7 @@ impl Workbench {
                 transparent_black()
             })
             .when(open.notebook.can_restructure(), |d| {
-                d.cursor(CursorStyle::OpenHand)
+                d.cursor(CursorStyle::PointingHand)
                     .on_drag(DraggedCell { ix, label }, |d, _, _, cx| {
                         cx.new(|_| d.clone())
                     })
@@ -577,6 +579,7 @@ impl Workbench {
                     .id(SharedString::from(format!("{id}-grid")))
                     .max_w_full()
                     .overflow_x_scroll()
+                    .restrict_scroll_to_axis()
                     .rounded(px(6.))
                     .border(px(0.5))
                     .border_color(p.line)

@@ -26,6 +26,7 @@ mod download;
 mod explorer;
 mod export;
 mod files;
+mod ghost;
 mod git;
 mod git_diff;
 mod git_log;

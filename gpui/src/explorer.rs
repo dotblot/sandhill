@@ -1612,6 +1612,10 @@ impl Explorer {
             }),
         )
         .track_scroll(&self.scroll)
+        .map(|mut list| {
+            list.style().restrict_scroll_to_axis = Some(true);
+            list
+        })
         .flex_1();
         div()
             .id("table")
@@ -1619,6 +1623,8 @@ impl Explorer {
             .min_h_0()
             .overflow_x_scroll()
             .track_scroll(&self.across)
+            // One gesture moves the table one way: down, or across.
+            .restrict_scroll_to_axis()
             .child(
                 v_flex()
                     .w(px(width))

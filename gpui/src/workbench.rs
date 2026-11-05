@@ -123,6 +123,10 @@ pub(crate) struct Open {
     pub agent_deleted: Vec<crate::cell_ai::AgentDeleted>,
     /// The cell an agent just added or changed, lit up for a moment.
     pub lit: Option<(String, std::time::Instant)>,
+    /// The suggested next cell, and the cell the user ran last, which gets
+    /// one when its run ends well.
+    pub ghost: Option<crate::ghost::Ghost>,
+    pub ghost_after: Option<String>,
     /// A script's next journal slot (`console-<n>`).
     next_slot: usize,
     /// A script's code waiting for the kernel to start.
@@ -345,6 +349,10 @@ pub struct Workbench {
     /// The left panel's top pane's share of the panel's height (half at
     /// first).
     pub(crate) variables_share: f32,
+    /// Whether notebooks suggest the next cell after each run.
+    pub(crate) ghost_cells: bool,
+    /// An agent's edit is running a cell: no suggestion follows it.
+    pub(crate) agent_running: bool,
     /// The gap being dragged.
     pub(crate) dragging: Option<Split>,
     /// Notebooks' runs show in the Console, and their plots in Plots (☰).
@@ -529,6 +537,8 @@ impl Workbench {
             agents_width: 560.,
             variables_height: 250.,
             variables_share: 0.5,
+            ghost_cells: crate::prefs::ghost_cells(),
+            agent_running: false,
             dragging: None,
             notebook_console: crate::prefs::notebook_console(),
             notebook_plots: crate::prefs::notebook_plots(),
@@ -921,7 +931,7 @@ impl Workbench {
     }
 
     /// The open notebook with this path, shown or in another tab.
-    fn open_at(&mut self, path: &str) -> Option<&mut Open> {
+    pub(crate) fn open_at(&mut self, path: &str) -> Option<&mut Open> {
         if self.open.as_ref().is_some_and(|o| o.notebook.path == path) {
             return self.open.as_mut();
         }
@@ -1139,6 +1149,8 @@ impl Workbench {
             agent_changes: HashMap::new(),
             agent_deleted: Vec::new(),
             lit: None,
+            ghost: None,
+            ghost_after: None,
             next_slot: 0,
             queued: Vec::new(),
             current: None,
@@ -1769,6 +1781,7 @@ impl Workbench {
         let Some(daemon) = self.daemon() else {
             return;
         };
+        let by_user = !self.agent_running;
         let Some(open) = self.open_at(path) else {
             return;
         };
@@ -1791,6 +1804,9 @@ impl Workbench {
             by: None,
         });
         open.sending.insert(cell_id.clone());
+        // A new run takes the place of the last suggestion.
+        open.ghost = None;
+        open.ghost_after = by_user.then(|| cell_id.clone());
         let path = open.notebook.path.clone();
         cx.spawn(async move |this, cx| {
             let started = started.await;
@@ -2014,6 +2030,7 @@ impl Workbench {
                     self.refresh_variables(cx);
                     self.packages_run_finished(cx);
                 }
+                self.suggest_after_run(&run_id, cx);
             }
             _ if run.quiet => {}
             msg_type => {

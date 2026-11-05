@@ -30,6 +30,21 @@ const EDITOR_PADDING: f32 = 20.;
 const PLOT_MAX_WIDTH: f32 = 720.;
 /// How tall a cell's outputs grow before they scroll.
 const OUTPUT_MAX_HEIGHT: f32 = 480.;
+/// Whether a box of outputs takes a wheel turn of `dy` (negative moves
+/// down) itself, rather than letting the notebook scroll: only while it
+/// can still move that way. Its scroll listener runs first, so `offset`
+/// already holds the turn; `max` is how far down it can go.
+fn box_takes(offset: Pixels, max: Pixels, dy: Pixels) -> bool {
+    let before = offset - dy;
+    if dy < px(0.) {
+        before > -max + px(0.5)
+    } else if dy > px(0.) {
+        before < px(-0.5)
+    } else {
+        max > px(0.)
+    }
+}
+
 /// Height of a web page under a cell.
 const PAGE_HEIGHT: f32 = 420.;
 
@@ -1123,6 +1138,22 @@ impl Workbench {
                         .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
                 )
             })
+            .when(open.notebook.can_restructure(), |bar| {
+                let on = self.ghost_cells;
+                bar.child(
+                    bar_button("ghost-cells", "Suggest", Some("sparkle.ai"), &p)
+                        .when(on, |d| d.bg(p.accent_soft).text_color(p.accent))
+                        .tooltip(move |w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(if on {
+                                "Suggesting the next cell after each run: click to stop"
+                            } else {
+                                "Suggest the next cell after each run, with Claude Code or Codex"
+                            })
+                            .build(w, cx)
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_ghost_cells(cx))),
+                )
+            })
             .when(!open.is_script(), |bar| {
                 bar.child(
                     bar_button("clear-all", "Clear outputs", Some("outputs.clear"), &p)
@@ -1283,13 +1314,16 @@ impl Workbench {
                         .clone();
                     let inner = scroll.clone();
                     d.child(
-                        // While its outputs are taller than it, the box
-                        // takes the wheel's turns: the notebook stays put.
+                        // While its outputs can still move the wheel's
+                        // way, the box takes the turn and the notebook
+                        // stays put; at the box's top or bottom the
+                        // notebook scrolls on.
                         div()
                             .id(("outputs-wheel", ix))
                             .w_full()
-                            .on_scroll(move |_, _, cx| {
-                                if inner.max_offset().y > px(0.) {
+                            .on_scroll(move |event, window, cx| {
+                                let dy = event.delta.pixel_delta(window.line_height()).y;
+                                if box_takes(inner.offset().y, inner.max_offset().y, dy) {
                                     cx.stop_propagation();
                                 }
                             })
@@ -1951,7 +1985,24 @@ pub(crate) fn filter_variables(list: &[Variable], filter: &str) -> Vec<Variable>
 
 #[cfg(test)]
 mod tests {
-    use super::filter_variables;
+    use super::{box_takes, filter_variables};
+    use gpui_kit::px;
+
+    #[test]
+    fn outputs_hand_the_wheel_on_at_their_ends() {
+        let max = px(300.);
+        // At the top: up goes to the notebook, down stays in the box.
+        assert!(!box_takes(px(10.), max, px(10.)));
+        assert!(box_takes(px(-10.), max, px(-10.)));
+        // In the middle the box takes both ways.
+        assert!(box_takes(px(-90.), max, px(10.)));
+        assert!(box_takes(px(-110.), max, px(-10.)));
+        // At the bottom: down goes on to the notebook, up stays.
+        assert!(!box_takes(px(-310.), max, px(-10.)));
+        assert!(box_takes(px(-290.), max, px(10.)));
+        // A box that fits never takes it.
+        assert!(!box_takes(px(-10.), px(0.), px(-10.)));
+    }
     use sandhill_proto::Variable;
 
     #[test]
