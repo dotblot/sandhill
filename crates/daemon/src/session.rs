@@ -830,9 +830,12 @@ impl Actor {
         let _ = tokio::time::timeout_at(deadline, self.conn.control.send(msg)).await;
         // A kernel in the middle of a run gets to the request only when the
         // run ends: interrupt it, as stopping the kernel gives the run up
-        // anyway. An interrupt is not a kill, so this is still graceful.
+        // anyway. An interrupt is not a kill, so this is still graceful. An
+        // idle kernel is left alone: interrupting one that is already
+        // shutting down can stop it shutting down.
+        let busy = !self.runs.is_empty();
         let interrupt_at = tokio::time::Instant::now() + SHUTDOWN_INTERRUPT;
-        let mut interrupted = false;
+        let mut interrupted = !busy;
         while self.kernel_alive() && tokio::time::Instant::now() < deadline {
             if !interrupted && tokio::time::Instant::now() >= interrupt_at {
                 interrupted = true;
