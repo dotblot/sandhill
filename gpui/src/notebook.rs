@@ -784,12 +784,15 @@ pub fn format_of(path: &str) -> Option<Format> {
         Some("qmd" | "rmd") => Some(Format::Quarto),
         Some("r" | "py") => Some(Format::Script),
         Some("md" | "markdown" | "mdown" | "mkd") => Some(Format::Markdown),
-        Some("csv" | "tsv") => Some(Format::Delimited),
+        Some("csv" | "tsv" | "tab") => Some(Format::Delimited),
         Some(
             "sh" | "bash" | "zsh" | "json" | "jsonc" | "yaml" | "yml" | "toml" | "txt"
             | "gitignore" | "gitattributes" | "smk" | "cwl" | "ini" | "cfg" | "config" | "lock"
-            | "fa" | "fasta" | "fna" | "faa" | "fq" | "fastq" | "vcf" | "bed" | "bedgraph"
-            | "narrowpeak" | "gff" | "gff3" | "gtf" | "sam" | "mtx" | "nf" | "wdl" | "bib",
+            | "fa" | "fasta" | "fna" | "faa" | "ffn" | "frn" | "fas" | "afa" | "aln" | "fq"
+            | "fastq" | "vcf" | "gvcf" | "maf" | "bed" | "bedgraph" | "bedpe" | "narrowpeak"
+            | "broadpeak" | "gappedpeak" | "interval_list" | "wig" | "gff" | "gff3" | "gtf" | "sam"
+            | "paf" | "psl" | "blast" | "fai" | "dict" | "counts" | "tpm" | "mtx" | "nwk"
+            | "newick" | "tree" | "treefile" | "nex" | "nexus" | "nf" | "wdl" | "bib",
         ) => Some(Format::Text),
         _ => None,
     }
@@ -819,6 +822,19 @@ pub(crate) fn is_binary(path: &str) -> bool {
                 | "bz2"
                 | "xz"
                 | "zst"
+                | "bai"
+                | "crai"
+                | "tbi"
+                | "csi"
+                | "bw"
+                | "bigwig"
+                | "bb"
+                | "bigbed"
+                | "tdf"
+                | "h5mu"
+                | "cool"
+                | "mcool"
+                | "qs"
         )
     )
 }
@@ -843,11 +859,14 @@ fn text_language(path: &str) -> &'static str {
         Some("toml" | "ini" | "cfg" | "config") => "toml",
         Some("smk") => "python",
         Some("sh" | "bash" | "zsh" | "gitignore" | "gitattributes") => "bash",
-        Some("fa" | "fasta" | "fna" | "faa") => "fasta",
+        Some("fa" | "fasta" | "fna" | "faa" | "ffn" | "frn" | "fas" | "afa") => "fasta",
         Some("fq" | "fastq") => "fastq",
         Some(
-            "vcf" | "bed" | "bedgraph" | "narrowpeak" | "gff" | "gff3" | "gtf" | "sam" | "mtx",
+            "vcf" | "gvcf" | "maf" | "bed" | "bedgraph" | "bedpe" | "narrowpeak" | "broadpeak"
+            | "gappedpeak" | "interval_list" | "wig" | "gff" | "gff3" | "gtf" | "sam" | "paf"
+            | "psl" | "blast" | "fai" | "dict" | "counts" | "tpm" | "mtx",
         ) => "bio-table",
+        Some("nwk" | "newick" | "tree" | "treefile" | "nex" | "nexus") => "tree",
         Some("nf") => "nextflow",
         Some("wdl") => "wdl",
         Some("bib") => "bibtex",
@@ -1826,8 +1845,12 @@ mod tests {
                     "a.gtf",
                     "a.sam",
                     "a.mtx",
+                    "a.paf",
+                    "a.bedpe",
+                    "a.interval_list",
                 ],
             ),
+            ("tree", vec!["a.nwk", "a.treefile", "a.nexus"]),
             ("nextflow", vec!["a.nf"]),
             ("wdl", vec!["a.wdl"]),
             ("bibtex", vec!["a.bib"]),

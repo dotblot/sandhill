@@ -105,7 +105,8 @@ These plans are history: where they differ from this file, this file wins.
   without external references. Opening previews never starts a kernel.
   Every file type in the icon catalog has a defined way to open (Huan,
   2026-11-13; `docs/design/file-opening-plan.md`): text kinds open with
-  grammar, bioinformatics (FASTA/FASTQ, tab-separated VCF/BED/GFF/SAM…) or
+  grammar, bioinformatics (FASTA/FASTQ, tab-separated VCF/BED/GFF/SAM/PAF…,
+  Newick and Nexus trees) or
   keyword (Nextflow, WDL, BibTeX) highlighting; binary kinds ask to use the
   default app (servers: download a copy first). Unknown files under 5 MB that
   look like text open as plain text; text over 5 MB opens its first 5 MB
@@ -148,6 +149,8 @@ These plans are history: where they differ from this file, this file wins.
   type line under names; each header's ⋮ menu (Copy, Select, Pin/Unpin,
   Sort Ascending/Descending with ⇧ adding a key, Clear Sorting, Add Filter)
   replaces click-to-sort; pinned columns stay left while scrolling sideways.
+  The project keeps each table's pins and dragged widths with its sorting,
+  filters and hidden columns, by column name; Reset View forgets them.
   The toolbar has Copy as code (the whole view), Copy filters as code
   (dimmed without filters), a magnifier in Search, Open in a new window and
   an icon-only gear (summary panel by default, Reset View). The summary

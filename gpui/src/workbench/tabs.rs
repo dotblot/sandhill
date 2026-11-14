@@ -1079,6 +1079,7 @@ fn editor_wrap_type(
             Some("fasta") => return Some("fasta"),
             Some("fastq") => return Some("fastq"),
             Some("bio-table") => return Some("bio-table"),
+            Some("tree") => return Some("tree"),
             Some("nextflow") => return Some("nextflow"),
             Some("wdl") => return Some("wdl"),
             Some("bibtex") => return Some("bibtex"),

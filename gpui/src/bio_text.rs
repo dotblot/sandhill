@@ -20,6 +20,7 @@ enum Ink {
     Column(usize),
     Keyword,
     String,
+    Number,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -119,7 +120,16 @@ fn table_marks(text: &str) -> Vec<Mark> {
     let mut offset = 0;
     for raw in text.split_inclusive('\n') {
         let line = raw.trim_end_matches(['\r', '\n']);
-        if line.trim_start().starts_with(['#', '@', '%']) {
+        let declares = ["track", "browser", "fixedStep", "variableStep"]
+            .iter()
+            .any(|word| {
+                line.strip_prefix(word)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+            });
+        if declares {
+            // UCSC track lines (BED, bedGraph, wiggle) describe what follows.
+            push(&mut out, offset..offset + line.len(), Ink::Header);
+        } else if line.trim_start().starts_with(['#', '@', '%']) {
             push(&mut out, offset..offset + line.len(), Ink::Muted);
         } else {
             let mut start = 0;
@@ -259,11 +269,102 @@ fn keyword_marks(text: &str, language: &str) -> Vec<Mark> {
     out
 }
 
+/// Newick and Nexus trees: comments in brackets, quoted names, and the
+/// branch lengths after colons. Nexus's words count only in a file that
+/// says it is Nexus, as a Newick tree may name a taxon `tree` or `end`.
+fn tree_marks(text: &str) -> Vec<Mark> {
+    const WORDS: [&str; 19] = [
+        "begin",
+        "end",
+        "endblock",
+        "taxa",
+        "trees",
+        "tree",
+        "data",
+        "characters",
+        "dimensions",
+        "format",
+        "matrix",
+        "taxlabels",
+        "translate",
+        "sets",
+        "assumptions",
+        "charset",
+        "taxset",
+        "mrbayes",
+        "paup",
+    ];
+    let bytes = text.as_bytes();
+    let nexus = text
+        .trim_start()
+        .get(..6)
+        .is_some_and(|s| s.eq_ignore_ascii_case("#nexus"));
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() && out.len() < MAX_MARKS {
+        let start = i;
+        let byte = bytes[i];
+        if byte == b'[' {
+            // Comments nest.
+            let mut depth = 0usize;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'[' => depth += 1,
+                    b']' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            push(&mut out, start..i, Ink::Muted);
+        } else if byte == b'\'' || byte == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                i += 1;
+                if bytes[i - 1] == byte {
+                    // A doubled quote is a quote inside the name.
+                    if bytes.get(i) == Some(&byte) {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            push(&mut out, start..i, Ink::String);
+        } else if byte == b':' {
+            i += 1;
+            let number = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit()
+                    || matches!(bytes[i], b'.' | b'-' | b'+' | b'e' | b'E'))
+            {
+                i += 1;
+            }
+            push(&mut out, number..i, Ink::Number);
+        } else if nexus && (byte.is_ascii_alphabetic() || byte == b'#') {
+            i += 1;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let word = text[start..i].to_ascii_lowercase();
+            if word == "#nexus" || WORDS.contains(&word.as_str()) {
+                push(&mut out, start..i, Ink::Keyword);
+            }
+        } else {
+            i += text[i..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    out
+}
+
 fn marks(text: &str, language: &str) -> Vec<Mark> {
     match language {
         "fasta" => sequence_marks(text, false),
         "fastq" => sequence_marks(text, true),
         "bio-table" => table_marks(text),
+        "tree" => tree_marks(text),
         _ => keyword_marks(text, language),
     }
 }
@@ -283,6 +384,7 @@ fn decorate(editor: &Entity<EditorState>, language: &str, cx: &App) -> Vec<TextD
                 Ink::Column(column) => p.ansi[[4, 2, 5, 6, 3, 1][column % 6]],
                 Ink::Keyword => p.ansi[5],
                 Ink::String => p.ansi[2],
+                Ink::Number => p.ansi[3],
             };
             TextDecoration::new(
                 mark.range,
@@ -300,7 +402,7 @@ pub(crate) fn decorate_editor(
     language: Option<&str>,
     cx: &mut Context<Workbench>,
 ) -> Vec<Subscription> {
-    let Some(language @ ("fasta" | "fastq" | "bio-table" | "nextflow" | "wdl" | "bibtex")) =
+    let Some(language @ ("fasta" | "fastq" | "bio-table" | "tree" | "nextflow" | "wdl" | "bibtex")) =
         language
     else {
         return Vec::new();
@@ -326,7 +428,7 @@ pub(crate) fn decorate_editor(
 
 #[cfg(test)]
 mod tests {
-    use super::{Ink, keyword_marks, sequence_marks, table_marks};
+    use super::{Ink, keyword_marks, sequence_marks, table_marks, tree_marks};
 
     #[test]
     fn fasta_headers_and_base_ranges_preserve_original_offsets() {
@@ -416,5 +518,58 @@ mod tests {
                 .iter()
                 .any(|m| &wdl[m.range.clone()] == "File")
         );
+    }
+
+    #[test]
+    fn track_lines_head_bed_and_wiggle_data() {
+        let text = "track type=wiggle_0 name=\"α\"\nfixedStep chrom=chr1 start=1 step=1\n1.5\ntracker\t1\n";
+        let marks = table_marks(text);
+        let headers: Vec<_> = marks
+            .iter()
+            .filter(|m| m.ink == Ink::Header)
+            .map(|m| &text[m.range.clone()])
+            .collect();
+        assert_eq!(
+            headers,
+            [
+                "track type=wiggle_0 name=\"α\"",
+                "fixedStep chrom=chr1 start=1 step=1"
+            ]
+        );
+        // A value that merely starts with the word is data.
+        assert!(
+            marks
+                .iter()
+                .any(|m| m.ink == Ink::Column(0) && &text[m.range.clone()] == "tracker")
+        );
+    }
+
+    #[test]
+    fn trees_mark_lengths_names_and_comments_and_nexus_words_only_in_nexus() {
+        let of = |text: &str, ink: Ink| -> Vec<String> {
+            tree_marks(text)
+                .into_iter()
+                .filter(|m| m.ink == ink)
+                .map(|m| text[m.range].to_string())
+                .collect()
+        };
+        let newick = "(tree:0.1,'B''s α':2e-3,(C,D)90:-1)[a [nested] α]:0;";
+        assert_eq!(of(newick, Ink::Number), ["0.1", "2e-3", "-1", "0"]);
+        assert_eq!(of(newick, Ink::String), ["'B''s α'"]);
+        assert_eq!(of(newick, Ink::Muted), ["[a [nested] α]"]);
+        assert!(of(newick, Ink::Keyword).is_empty());
+        let nexus = "#NEXUS\nBegin Trees;\n  tree t1 = (A:1,B:2);\nEND;\n";
+        assert_eq!(
+            of(nexus, Ink::Keyword),
+            ["#NEXUS", "Begin", "Trees", "tree", "END"]
+        );
+        // Unfinished comments and names end with the text.
+        for cut in ["(A,B)[open α", "('open α"] {
+            assert!(
+                tree_marks(cut)
+                    .iter()
+                    .all(|m| cut.get(m.range.clone()).is_some())
+            );
+        }
     }
 }

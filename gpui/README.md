@@ -1025,6 +1025,18 @@ preview and R's imports weren't seen.
   and `docs/design/ui/brand/build.py` gives the crane a teal feather, the
   same red and a neutral white; `assets/icon/icon.icns` and
   `assets/brand/icon.png` were remade from it.
+- **Explorer keeps pins and widths; more bioinformatics text** (Huan,
+  2026-11-14):
+  - `explorer.rs::SavedView` also holds the pinned columns and the widths
+    the user dragged (`Explorer::resized`), by column name; saved on pin and
+    when a drag ends, restored in `took_shape`.
+  - `bio_text.rs`: `tree_marks` for Newick and Nexus (branch lengths, quoted
+    names, nested comments; Nexus words only in a `#NEXUS` file), and UCSC
+    `track`/`fixedStep` lines as headers in tables. `notebook.rs` maps the
+    new extensions (PAF, PSL, gVCF, BEDPE, peaks, wiggle, `.fai`, trees…);
+    `.tab` opens as tab-separated; indexes and bigWig count as binary.
+- **More files split** (see `docs/design/file-split-plan.md`): `view.rs`,
+  `plots.rs`, `git_pane.rs` and the protocol's `lib.rs`.
 
 
 ## Running it

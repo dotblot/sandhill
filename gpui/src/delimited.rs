@@ -34,7 +34,8 @@ struct Field {
 }
 
 fn delimiter(path: &str) -> u8 {
-    if path.to_ascii_lowercase().ends_with(".tsv") {
+    let path = path.to_ascii_lowercase();
+    if path.ends_with(".tsv") || path.ends_with(".tab") {
         b'\t'
     } else {
         b','
