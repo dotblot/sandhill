@@ -1,7 +1,7 @@
 # App icon
 
 The Sandhill crane (V1.1), from `docs/design/ui/brand`. `source.svg` is the
-app icon: an 824 px rounded tile on Apple's 1024 px grid, navy, with the cream
+app icon: an 824 px rounded tile on Apple's 1024 px grid, navy, with the white
 crane. `source-small.svg` is the version drawn for 16 and 32 px (one leg, a
 larger crown, no feather). Both are written by
 `docs/design/ui/brand/build.py`; change them there, then make the icon:

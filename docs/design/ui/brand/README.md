@@ -1,10 +1,10 @@
 # Sandhill crane mark V1.1
 
-A Wisconsin sandhill crane flying right: two raised wings, a sage inner
+A Wisconsin sandhill crane flying right: two raised wings, a teal inner
 feather, a long neck and pointed beak, a red crown and two trailing legs.
-[`brand-sheet.png`](brand-sheet.png) shows every version, and
-[`before-after.png`](before-after.png) compares it with the app's previous icon (the painting)
-and the V1.1 concept board.
+[`brand-sheet.png`](brand-sheet.png) and
+[`before-after.png`](before-after.png) are the boards from its approval, in
+the colours it had then (cream, sage and a deeper red).
 
 **Status: approved by Huan on 2026-10-24, and the app's icon.** The
 repository had no vector of the flying-crane logo, so these paths were drawn
@@ -16,6 +16,9 @@ two cranes at sunset, is in the git history.
 python3 docs/design/ui/brand/build.py   # SVGs
 node docs/design/ui/brand/render.mjs    # PNGs (Playwright)
 ```
+
+Without Playwright, `rsvg-convert -w N -h N` on the same files gives the
+same PNGs (as on 2026-11-14).
 
 ## Geometry
 - Seven shapes on a 1024 canvas: back wing, front wing, body with neck and head,
@@ -36,22 +39,25 @@ node docs/design/ui/brand/render.mjs    # PNGs (Playwright)
     tail. The small mark keeps one shorter, thicker leg.
 
 ## Colours
-Navy `#142844`, cream `#F8F1E4`, sage `#6FA38E`, crane red `#E64B3C` (the
-brief's colours; the concept board's are within a few steps of them).
+Navy `#142844`, white `#F5F5F7`, teal `#67B7A4`, crane red `#FC6A5D` (Huan,
+2026-11-14): the navy is unchanged and is the app's accent; the teal and red
+are the file icons' and Xcode's, and neutral white replaces cream, which no
+surface of the app uses. Until then: cream `#F8F1E4`, sage `#6FA38E`, red
+`#E64B3C`, the brief's colours.
 
 ## Files
 | File | Use |
 |---|---|
-| `crane/sandhill-crane-light.svg` | Navy crane on cream (website, About, splash) |
-| `crane/sandhill-crane-dark.svg` | Cream crane on navy |
+| `crane/sandhill-crane-light.svg` | Navy crane on white (website, About, splash) |
+| `crane/sandhill-crane-dark.svg` | White crane on navy |
 | `crane/sandhill-crane-on-light.svg`, `-on-dark.svg` | The same, transparent background |
-| `crane/sandhill-crane-mono-navy.svg`, `-mono-cream.svg` | One colour; the crown and feather keep their own shapes |
+| `crane/sandhill-crane-mono-navy.svg`, `-mono-white.svg` | One colour; the crown and feather keep their own shapes |
 | `crane/sandhill-crane-template.svg` | macOS menu bar template: black on transparent, 18pt, the small drawing |
 | `small/sandhill-mark-{64,32,24}.svg` | Small mark: one leg, larger crown |
 | `small/sandhill-mark-16.svg`, `-16-dark.svg` | 16px: no feather, crown kept |
-| `app-icon/app-icon-dark.svg` | The macOS app icon (the app uses it): an 824px tile with radius 185 on a 1024 canvas (Apple's grid), navy gradient, cream crane |
+| `app-icon/app-icon-dark.svg` | The macOS app icon (the app uses it): an 824px tile with radius 185 on a 1024 canvas (Apple's grid), navy gradient, white crane |
 | `app-icon/app-icon-*-small.svg` | The app icon for 16 and 32px: small drawing, larger |
-| `app-icon/app-icon-light.svg` | A cream alternative |
+| `app-icon/app-icon-light.svg` | A white alternative |
 | `png/`, `app-icon/png/` | PNG renders; the app icon at 16–1024px |
 
 ## In the app

@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 1.5h4.8L13 5.2v7.8c0 .8-.7 1.5-1.5 1.5h-7c-.8 0-1.5-.7-1.5-1.5V3c0-.8.7-1.5 1.5-1.5z" fill="#4e8f4c" fill-opacity=".13" stroke="#4e8f4c" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.2 1.6v2.6c0 .6.4 1 1 1h2.7" fill="none" stroke="#4e8f4c" stroke-width="1.1" stroke-linejoin="round"/><g fill="none" stroke="#4e8f4c" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><rect x="4.9" y="6.6" width="1.7" height="6" rx=".5"/><rect x="7.15" y="6.6" width="1.7" height="6" rx=".5" fill="#4e8f4c" fill-opacity=".45"/><rect x="9.4" y="6.6" width="1.7" height="6" rx=".5"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Parquet (column store)"><!-- Sandhill: Parquet: data stored by column. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). --><g transform="matrix(0.666667 0 0 0.666667 0 0)"><mask id="file-parquet-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white" />
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.3" y="11.5" width="2.2" height="8.5" rx=".6" /><rect x="10.9" y="11.5" width="2.2" height="8.5" rx=".6" /><rect x="14.5" y="11.5" width="2.2" height="8.5" rx=".6" /></g>
+</mask>
+<path fill="#41a1c0" mask="url(#file-parquet-cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z" />
+</g><title>Parquet (column store)</title></svg>

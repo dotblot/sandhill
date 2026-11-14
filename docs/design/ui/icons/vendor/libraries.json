@@ -1,0 +1,34 @@
+{
+  "gruvbox": {
+    "name": "Gruvbox Material Icons",
+    "repository": "https://github.com/navernoedenis/gruvbox-material-icons",
+    "revision": "e0b2995f75a7dee359d6c55a8014c37d13622061",
+    "license": "MIT",
+    "licenseFile": "gruvbox/LICENSE"
+  },
+  "lucide": {
+    "name": "Lucide",
+    "repository": "https://github.com/lucide-icons/lucide",
+    "revision": "53fab88ff9d1b48f4704b5b5b560d6b4d560bf4c",
+    "license": "ISC and MIT (Feather-derived icons)",
+    "licenseFile": "lucide/LICENSE"
+  },
+  "developer": {
+    "name": "Developer Icons",
+    "repository": "https://github.com/xandemon/developer-icons",
+    "revision": "4a10a1bdb1cc799956c089fc897332511d80ad52",
+    "license": "MIT",
+    "licenseFile": "developer/LICENSE"
+  },
+  "brands": {
+    "name": "Provider marks",
+    "source": "Google-Antigravity-Icon-Full-Color.svg and the Synthetic Sciences logo (supplied by Huan); Posit's logo from posit.co; the official Oh My Pi (omp.sh/favicon.svg) and pi (pi.dev/logo.svg) marks",
+    "license": "Antigravity, Synthetic Sciences and Posit marks: no redistribution license supplied; Oh My Pi and pi marks: MIT (oh-my-pi.LICENSE, pi.LICENSE)",
+    "noticeFile": "NOTICE.txt"
+  },
+  "sandhill": {
+    "name": "Sandhill",
+    "source": "Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14): bioinformatics and workflow formats Gruvbox has no artwork for.",
+    "license": "GPL-3.0-or-later, as Sandhill"
+  }
+}

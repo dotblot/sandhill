@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="FASTQ reads with qualities"><!-- Sandhill: FASTQ reads: a helix over per-base quality bars. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). --><g transform="matrix(0.666667 0 0 0.666667 0 0)"><mask id="file-fastq-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white" />
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11.5c2.5 0 2.5 4 5 4s2.5-4 5-4M7 15.5c2.5 0 2.5-4 5-4s2.5 4 5 4" /><path d="M8 20v-1.2M11 20v-2.4M14 20v-1M17 20v-2" /></g>
+</mask>
+<path fill="#ab5505" mask="url(#file-fastq-cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z" />
+</g><title>FASTQ reads with qualities</title></svg>

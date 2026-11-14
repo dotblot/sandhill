@@ -1,8 +1,5 @@
 {
- "version": "32.2",
- "grid": 16,
- "stroke": 1.4,
- "source": "docs/design/ui/icons/build.py",
+ "version": "2026-11-06",
  "icons": {
   "sidebar.left": {
    "file": "system/sidebar.left.svg",
@@ -11,7 +8,57 @@
    "label": "Show or hide the files pane",
    "v31": [
     "i-sbl"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/panel-left.svg"
+   }
+  },
+  "sidebar.middle": {
+   "file": "system/sidebar.middle.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Show or hide the editor",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/columns-3.svg"
+   }
+  },
+  "pane.maximize": {
+   "file": "system/pane.maximize.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Maximize",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/maximize.svg",
+    "note": "Corners out: the pane fills the window (Huan, 2026-11-13)."
+   }
+  },
+  "pane.restore": {
+   "file": "system/pane.restore.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Restore",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/minimize.svg",
+    "note": "Corners in: back from filling the window."
+   }
+  },
+  "welcome": {
+   "file": "system/welcome.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Welcome",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/house.svg"
+   }
   },
   "sidebar.right": {
    "file": "system/sidebar.right.svg",
@@ -20,7 +67,11 @@
    "label": "Show or hide the agent pane",
    "v31": [
     "i-sbr"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/panel-right.svg"
+   }
   },
   "pane.left": {
    "file": "system/pane.left.svg",
@@ -29,7 +80,11 @@
    "label": "Left pane (layout menu)",
    "v31": [
     "i-sidebar"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/panel-left.svg"
+   }
   },
   "pane.bottom": {
    "file": "system/pane.bottom.svg",
@@ -38,7 +93,11 @@
    "label": "Bottom pane (layout menu)",
    "v31": [
     "i-panel"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/panel-bottom.svg"
+   }
   },
   "pane.right": {
    "file": "system/pane.right.svg",
@@ -47,7 +106,11 @@
    "label": "Right pane (layout menu)",
    "v31": [
     "i-right"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/panel-right.svg"
+   }
   },
   "chat": {
    "file": "system/chat.svg",
@@ -56,7 +119,11 @@
    "label": "Conversations",
    "v31": [
     "i-chat"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/messages-square.svg"
+   }
   },
   "search": {
    "file": "system/search.svg",
@@ -65,7 +132,11 @@
    "label": "Search",
    "v31": [
     "i-search"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/search.svg"
+   }
   },
   "menu": {
    "file": "system/menu.svg",
@@ -74,7 +145,11 @@
    "label": "Menu",
    "v31": [
     "i-menu"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/menu.svg"
+   }
   },
   "more": {
    "file": "system/more.svg",
@@ -83,7 +158,11 @@
    "label": "More",
    "v31": [
     "i-more"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/ellipsis.svg"
+   }
   },
   "add": {
    "file": "system/add.svg",
@@ -92,7 +171,11 @@
    "label": "Add",
    "v31": [
     "i-plus"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/plus.svg"
+   }
   },
   "device.mac": {
    "file": "system/device.mac.svg",
@@ -101,7 +184,12 @@
    "label": "This Mac",
    "v31": [
     "i-monitor"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/monitor.svg",
+    "note": "Generic desktop monitor represents This Mac without an Apple logo."
+   }
   },
   "device.laptop": {
    "file": "system/device.laptop.svg",
@@ -110,7 +198,11 @@
    "label": "Laptop",
    "v31": [
     "i-laptop"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/laptop.svg"
+   }
   },
   "device.server": {
    "file": "system/device.server.svg",
@@ -119,7 +211,11 @@
    "label": "Server",
    "v31": [
     "i-server"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/server.svg"
+   }
   },
   "device.cloud": {
    "file": "system/device.cloud.svg",
@@ -128,7 +224,11 @@
    "label": "Remote machine",
    "v31": [
     "i-cloud"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/cloud.svg"
+   }
   },
   "folder": {
    "file": "system/folder.svg",
@@ -137,7 +237,11 @@
    "label": "Project folder",
    "v31": [
     "i-folder"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/folder.svg"
+   }
   },
   "settings": {
    "file": "system/settings.svg",
@@ -146,7 +250,11 @@
    "label": "Settings",
    "v31": [
     "i-gear"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/settings.svg"
+   }
   },
   "window.minimize": {
    "file": "system/window.minimize.svg",
@@ -155,7 +263,12 @@
    "label": "Minimise pane",
    "v31": [
     "i-minw"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/fold-vertical.svg",
+    "note": "Fold: collapse the pane to its title row; also restores a pane filling its column (Huan, 2026-11-13)."
+   }
   },
   "window.maximize": {
    "file": "system/window.maximize.svg",
@@ -164,7 +277,12 @@
    "label": "Maximise pane",
    "v31": [
     "i-maxw"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/unfold-vertical.svg",
+    "note": "Unfold: the pane fills its column; also restores a collapsed pane."
+   }
   },
   "window.restore": {
    "file": "system/window.restore.svg",
@@ -173,21 +291,34 @@
    "label": "Restore pane",
    "v31": [
     "i-restw"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/minimize.svg",
+    "note": "Mockup only; the app restores pane heights with the opposite fold/unfold icon."
+   }
   },
   "theme.light": {
    "file": "system/theme.light.svg",
    "kind": "system",
    "group": "window",
    "label": "Switch to the light theme",
-   "v31": []
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/sun.svg"
+   }
   },
   "theme.dark": {
    "file": "system/theme.dark.svg",
    "kind": "system",
    "group": "window",
    "label": "Switch to the dark theme",
-   "v31": []
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/moon.svg"
+   }
   },
   "edit.undo": {
    "file": "system/edit.undo.svg",
@@ -196,7 +327,11 @@
    "label": "Undo",
    "v31": [
     "i-undo"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/undo-2.svg"
+   }
   },
   "edit.redo": {
    "file": "system/edit.redo.svg",
@@ -205,7 +340,11 @@
    "label": "Redo",
    "v31": [
     "i-redo"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/redo-2.svg"
+   }
   },
   "edit.cut": {
    "file": "system/edit.cut.svg",
@@ -214,7 +353,11 @@
    "label": "Cut",
    "v31": [
     "i-cut"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/scissors.svg"
+   }
   },
   "edit.copy": {
    "file": "system/edit.copy.svg",
@@ -223,7 +366,11 @@
    "label": "Copy",
    "v31": [
     "i-copy"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/copy.svg"
+   }
   },
   "edit.paste": {
    "file": "system/edit.paste.svg",
@@ -232,7 +379,11 @@
    "label": "Paste",
    "v31": [
     "i-paste"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/clipboard.svg"
+   }
   },
   "edit.rename": {
    "file": "system/edit.rename.svg",
@@ -241,7 +392,11 @@
    "label": "Rename",
    "v31": [
     "i-pencil"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/pen-line.svg"
+   }
   },
   "edit.compose": {
    "file": "system/edit.compose.svg",
@@ -250,7 +405,22 @@
    "label": "New conversation",
    "v31": [
     "i-editsq"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/square-pen.svg"
+   }
+  },
+  "editor.wrap": {
+   "file": "system/editor.wrap.svg",
+   "kind": "system",
+   "group": "edit",
+   "label": "Wrap long lines",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/text-wrap.svg"
+   }
   },
   "doc.save": {
    "file": "system/doc.save.svg",
@@ -259,7 +429,11 @@
    "label": "Save",
    "v31": [
     "i-savedoc"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/save.svg"
+   }
   },
   "doc.save-all": {
    "file": "system/doc.save-all.svg",
@@ -268,7 +442,11 @@
    "label": "Save all",
    "v31": [
     "i-saveall"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/save-all.svg"
+   }
   },
   "doc.download": {
    "file": "system/doc.download.svg",
@@ -277,7 +455,11 @@
    "label": "Download / save a copy",
    "v31": [
     "i-save"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/download.svg"
+   }
   },
   "file.new": {
    "file": "system/file.new.svg",
@@ -286,7 +468,11 @@
    "label": "New file",
    "v31": [
     "i-filenew"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/file-plus.svg"
+   }
   },
   "folder.new": {
    "file": "system/folder.new.svg",
@@ -295,7 +481,11 @@
    "label": "New folder",
    "v31": [
     "i-foldernew"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/folder-plus.svg"
+   }
   },
   "files": {
    "file": "system/files.svg",
@@ -304,7 +494,11 @@
    "label": "Files",
    "v31": [
     "i-files"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/files.svg"
+   }
   },
   "refresh": {
    "file": "system/refresh.svg",
@@ -313,7 +507,11 @@
    "label": "Refresh / restart",
    "v31": [
     "i-restart"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/refresh-cw.svg"
+   }
   },
   "filter": {
    "file": "system/filter.svg",
@@ -322,7 +520,11 @@
    "label": "Filter",
    "v31": [
     "i-filter"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/funnel.svg"
+   }
   },
   "sort": {
    "file": "system/sort.svg",
@@ -331,7 +533,11 @@
    "label": "Sort",
    "v31": [
     "i-sort"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-down-a-z.svg"
+   }
   },
   "table": {
    "file": "system/table.svg",
@@ -340,7 +546,11 @@
    "label": "Table / data viewer",
    "v31": [
     "i-table"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/table-2.svg"
+   }
   },
   "outline": {
    "file": "system/outline.svg",
@@ -349,7 +559,11 @@
    "label": "Outline",
    "v31": [
     "i-outline"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/list-tree.svg"
+   }
   },
   "share": {
    "file": "system/share.svg",
@@ -358,7 +572,11 @@
    "label": "Share / export",
    "v31": [
     "i-share"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/share-2.svg"
+   }
   },
   "upload": {
    "file": "system/upload.svg",
@@ -367,7 +585,11 @@
    "label": "Import / upload",
    "v31": [
     "i-upload"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/upload.svg"
+   }
   },
   "delete": {
    "file": "system/delete.svg",
@@ -376,7 +598,11 @@
    "label": "Delete",
    "v31": [
     "i-trash"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/trash.svg"
+   }
   },
   "package": {
    "file": "system/package.svg",
@@ -385,7 +611,11 @@
    "label": "Packages",
    "v31": [
     "i-pkg"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/package.svg"
+   }
   },
   "link": {
    "file": "system/link.svg",
@@ -394,7 +624,11 @@
    "label": "Link",
    "v31": [
     "i-lockk"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/link.svg"
+   }
   },
   "lock": {
    "file": "system/lock.svg",
@@ -403,7 +637,11 @@
    "label": "Locked",
    "v31": [
     "i-lock"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/lock-keyhole.svg"
+   }
   },
   "star": {
    "file": "system/star.svg",
@@ -412,7 +650,11 @@
    "label": "Favourite",
    "v31": [
     "i-star"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/star.svg"
+   }
   },
   "star.filled": {
    "file": "system/star.filled.svg",
@@ -421,7 +663,12 @@
    "label": "Favourite (on)",
    "v31": [
     "i-starf"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/star.svg",
+    "filled": true
+   }
   },
   "pin": {
    "file": "system/pin.svg",
@@ -430,7 +677,62 @@
    "label": "Pin",
    "v31": [
     "i-pin"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/pin.svg"
+   }
+  },
+  "pin.off": {
+   "file": "system/pin.off.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Unpin",
+   "source": {
+    "library": "lucide",
+    "path": "icons/pin-off.svg"
+   }
+  },
+  "more.vertical": {
+   "file": "system/more.vertical.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Column menu",
+   "source": {
+    "library": "lucide",
+    "path": "icons/ellipsis-vertical.svg",
+    "note": "A table column's menu, as Positron's data explorer has it (Huan, 2026-11-14)."
+   }
+  },
+  "window.pop-out": {
+   "file": "system/window.pop-out.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Open in a new window",
+   "source": {
+    "library": "lucide",
+    "path": "icons/square-arrow-out-up-right.svg"
+   }
+  },
+  "column.select": {
+   "file": "system/column.select.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Select column",
+   "source": {
+    "library": "lucide",
+    "path": "icons/columns-2.svg"
+   }
+  },
+  "sort.clear": {
+   "file": "system/sort.clear.svg",
+   "kind": "system",
+   "group": "files",
+   "label": "Clear sorting",
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-down-up.svg"
+   }
   },
   "globe": {
    "file": "system/globe.svg",
@@ -439,7 +741,11 @@
    "label": "Web",
    "v31": [
     "i-globe"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/globe.svg"
+   }
   },
   "run": {
    "file": "system/run.svg",
@@ -448,7 +754,11 @@
    "label": "Run",
    "v31": [
     "i-play"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/play.svg"
+   }
   },
   "run.above": {
    "file": "system/run.above.svg",
@@ -457,21 +767,36 @@
    "label": "Run all above",
    "v31": [
     "i-above"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-up-from-line.svg",
+    "note": "Upward arrow from the current-cell boundary represents running cells above; no compound play-and-arrow artwork is added."
+   }
   },
   "run.below": {
    "file": "system/run.below.svg",
    "kind": "system",
    "group": "run",
    "label": "Run this cell and below",
-   "v31": []
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-down-from-line.svg",
+    "note": "Downward arrow from the current-cell boundary represents running this cell and below; distinct from the upward Run all above glyph."
+   }
   },
   "outputs.clear": {
    "file": "system/outputs.clear.svg",
    "kind": "system",
    "group": "run",
    "label": "Clear outputs",
-   "v31": []
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/eraser.svg",
+    "note": "Generic eraser represents clearing notebook outputs."
+   }
   },
   "stop": {
    "file": "system/stop.svg",
@@ -480,21 +805,34 @@
    "label": "Stop",
    "v31": [
     "i-stop"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/square.svg"
+   }
   },
   "interrupt": {
    "file": "system/interrupt.svg",
    "kind": "system",
    "group": "run",
    "label": "Interrupt",
-   "v31": []
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/pause.svg",
+    "note": "Pause bars represent interrupting execution; Stop uses the distinct square glyph."
+   }
   },
   "power": {
    "file": "system/power.svg",
    "kind": "system",
    "group": "run",
    "label": "Start or shut down",
-   "v31": []
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/power.svg"
+   }
   },
   "terminal": {
    "file": "system/terminal.svg",
@@ -503,7 +841,11 @@
    "label": "Terminal",
    "v31": [
     "i-term"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/square-terminal.svg"
+   }
   },
   "sessions": {
    "file": "system/sessions.svg",
@@ -512,7 +854,12 @@
    "label": "Sessions",
    "v31": [
     "i-sessions"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/square-stack.svg",
+    "note": "Stacked contexts represent the collection of sessions rather than a specific terminal instance."
+   }
   },
   "cpu": {
    "file": "system/cpu.svg",
@@ -521,7 +868,11 @@
    "label": "CPU",
    "v31": [
     "i-chip"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/cpu.svg"
+   }
   },
   "memory": {
    "file": "system/memory.svg",
@@ -530,7 +881,11 @@
    "label": "Memory",
    "v31": [
     "i-mem"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/memory-stick.svg"
+   }
   },
   "gpu": {
    "file": "system/gpu.svg",
@@ -539,7 +894,11 @@
    "label": "GPU",
    "v31": [
     "i-gpu"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/gpu.svg"
+   }
   },
   "disk": {
    "file": "system/disk.svg",
@@ -548,7 +907,11 @@
    "label": "Disk",
    "v31": [
     "i-disk"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/hard-drive.svg"
+   }
   },
   "previous": {
    "file": "system/previous.svg",
@@ -557,7 +920,11 @@
    "label": "Previous",
    "v31": [
     "i-left"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-left.svg"
+   }
   },
   "next": {
    "file": "system/next.svg",
@@ -566,7 +933,11 @@
    "label": "Next",
    "v31": [
     "i-rt"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-right.svg"
+   }
   },
   "zoom": {
    "file": "system/zoom.svg",
@@ -575,7 +946,11 @@
    "label": "Zoom",
    "v31": [
     "i-zoom"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/zoom-in.svg"
+   }
   },
   "help": {
    "file": "system/help.svg",
@@ -584,7 +959,11 @@
    "label": "Help",
    "v31": [
     "i-help"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/circle-question-mark.svg"
+   }
   },
   "git": {
    "file": "system/git.svg",
@@ -593,7 +972,12 @@
    "label": "Git",
    "v31": [
     "i-git"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/git-graph.svg",
+    "note": "Generic commit graph represents Git controls, not the Git brand logo."
+   }
   },
   "git.branch": {
    "file": "system/git.branch.svg",
@@ -602,7 +986,11 @@
    "label": "Branch",
    "v31": [
     "i-branch"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/git-branch.svg"
+   }
   },
   "git.stash": {
    "file": "system/git.stash.svg",
@@ -611,7 +999,12 @@
    "label": "Stash",
    "v31": [
     "i-stash"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/archive.svg",
+    "note": "Archive box represents stashing working changes; no Git-specific stash artwork is available."
+   }
   },
   "git.pull": {
    "file": "system/git.pull.svg",
@@ -620,7 +1013,12 @@
    "label": "Pull",
    "v31": [
     "i-pull"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-down-to-line.svg",
+    "note": "Downward transfer to a boundary represents pulling changes."
+   }
   },
   "git.push": {
    "file": "system/git.push.svg",
@@ -629,7 +1027,12 @@
    "label": "Push",
    "v31": [
     "i-push"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-up-to-line.svg",
+    "note": "Upward transfer to a boundary represents pushing changes."
+   }
   },
   "git.tag": {
    "file": "system/git.tag.svg",
@@ -638,7 +1041,11 @@
    "label": "Tag",
    "v31": [
     "i-tag"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/tag.svg"
+   }
   },
   "check": {
    "file": "system/check.svg",
@@ -647,7 +1054,11 @@
    "label": "Commit / done",
    "v31": [
     "i-check"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/check.svg"
+   }
   },
   "sparkle": {
    "file": "system/sparkle.svg",
@@ -656,7 +1067,11 @@
    "label": "Write with the agent",
    "v31": [
     "i-sparkle"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/sparkles.svg"
+   }
   },
   "sparkle.ai": {
    "file": "system/sparkle.ai.svg",
@@ -665,7 +1080,11 @@
    "label": "Agent suggestion",
    "v31": [
     "i-spark4"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/sparkle.svg"
+   }
   },
   "agent": {
    "file": "system/agent.svg",
@@ -674,7 +1093,12 @@
    "label": "Agent (generic)",
    "v31": [
     "i-agent"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/bot.svg",
+    "note": "Generic robot represents an agent without implying any AI vendor identity."
+   }
   },
   "history": {
    "file": "system/history.svg",
@@ -683,7 +1107,11 @@
    "label": "History",
    "v31": [
     "i-clock"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/rotate-ccw-clock.svg"
+   }
   },
   "context.show": {
    "file": "system/context.show.svg",
@@ -692,7 +1120,11 @@
    "label": "Share what I'm looking at",
    "v31": [
     "i-eye"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/eye.svg"
+   }
   },
   "context.hide": {
    "file": "system/context.hide.svg",
@@ -701,7 +1133,11 @@
    "label": "Don't share what I'm looking at",
    "v31": [
     "i-eyeoff"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/eye-off.svg"
+   }
   },
   "attach": {
    "file": "system/attach.svg",
@@ -710,7 +1146,11 @@
    "label": "Attach (kept for the @ menu row)",
    "v31": [
     "i-clip"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/paperclip.svg"
+   }
   },
   "send": {
    "file": "system/send.svg",
@@ -719,7 +1159,11 @@
    "label": "Send",
    "v31": [
     "i-send"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/send.svg"
+   }
   },
   "ask": {
    "file": "system/ask.svg",
@@ -728,7 +1172,11 @@
    "label": "Ask before acting",
    "v31": [
     "i-hand"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/hand.svg"
+   }
   },
   "plan": {
    "file": "system/plan.svg",
@@ -737,7 +1185,11 @@
    "label": "Plan",
    "v31": [
     "i-plan"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/list-checks.svg"
+   }
   },
   "auto": {
    "file": "system/auto.svg",
@@ -746,7 +1198,11 @@
    "label": "Act without asking",
    "v31": [
     "i-bolt"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/zap.svg"
+   }
   },
   "think": {
    "file": "system/think.svg",
@@ -755,7 +1211,11 @@
    "label": "Thinking effort",
    "v31": [
     "i-brain"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/brain.svg"
+   }
   },
   "compact": {
    "file": "system/compact.svg",
@@ -764,7 +1224,12 @@
    "label": "Compact the conversation",
    "v31": [
     "i-compact"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/minimize-2.svg",
+    "note": "Inward diagonal arrows represent compacting the conversation."
+   }
   },
   "skill": {
    "file": "system/skill.svg",
@@ -773,7 +1238,11 @@
    "label": "Skills",
    "v31": [
     "i-wand"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/wand-sparkles.svg"
+   }
   },
   "permissions": {
    "file": "system/permissions.svg",
@@ -782,7 +1251,11 @@
    "label": "Permissions",
    "v31": [
     "i-shield"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/shield-check.svg"
+   }
   },
   "step.done": {
    "file": "system/step.done.svg",
@@ -791,7 +1264,11 @@
    "label": "Step done",
    "v31": [
     "i-ccheck"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/circle-check.svg"
+   }
   },
   "step.failed": {
    "file": "system/step.failed.svg",
@@ -800,14 +1277,22 @@
    "label": "Step failed",
    "v31": [
     "i-cx"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/circle-x.svg"
+   }
   },
   "warning": {
    "file": "system/warning.svg",
    "kind": "system",
    "group": "agent",
    "label": "Needs attention",
-   "v31": []
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/triangle-exclamation-point.svg"
+   }
   },
   "close": {
    "file": "system/close.svg",
@@ -816,7 +1301,11 @@
    "label": "Close",
    "v31": [
     "i-x"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/x.svg"
+   }
   },
   "chevron.down": {
    "file": "system/chevron.down.svg",
@@ -825,7 +1314,11 @@
    "label": "Expand",
    "v31": [
     "i-chev"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/chevron-down.svg"
+   }
   },
   "chevron.right": {
    "file": "system/chevron.right.svg",
@@ -834,7 +1327,11 @@
    "label": "Collapse / go in",
    "v31": [
     "i-chevr"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/chevron-right.svg"
+   }
   },
   "arrow.up": {
    "file": "system/arrow.up.svg",
@@ -843,388 +1340,729 @@
    "label": "Up",
    "v31": [
     "i-up"
-   ]
+   ],
+   "source": {
+    "library": "lucide",
+    "path": "icons/arrow-up.svg"
+   }
   },
   "file.r": {
    "file": "bio/r.svg",
    "kind": "file",
    "family": "code",
-   "color": "#3a72b8",
-   "label": "R script"
+   "label": "R script",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/r.svg"
+   },
+   "light": "bio/r.light.svg"
   },
   "file.python": {
    "file": "bio/python.svg",
    "kind": "file",
    "family": "code",
-   "color": "#3a72b8",
-   "label": "Python script"
+   "label": "Python script",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/python.svg"
+   },
+   "light": "bio/python.light.svg"
   },
   "file.shell": {
    "file": "bio/shell.svg",
    "kind": "file",
    "family": "code",
-   "color": "#3a72b8",
-   "label": "Shell script"
+   "label": "Shell script",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/console.svg",
+    "note": "Generic shell-script artwork represents sh, Bash and zsh."
+   },
+   "light": "bio/shell.light.svg"
   },
   "file.quarto": {
    "file": "bio/quarto.svg",
    "kind": "file",
    "family": "docs",
-   "color": "#6c6fb6",
-   "label": "Quarto document"
+   "label": "Quarto document",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/quarto.svg"
+   },
+   "light": "bio/quarto.light.svg"
   },
   "file.rmarkdown": {
    "file": "bio/rmarkdown.svg",
    "kind": "file",
    "family": "docs",
-   "color": "#6c6fb6",
-   "label": "R Markdown"
+   "label": "R Markdown",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/r.svg",
+    "note": "Upstream associates R Markdown with its R artwork; no separate R Markdown SVG is present."
+   },
+   "light": "bio/rmarkdown.light.svg"
   },
   "file.markdown": {
    "file": "bio/markdown.svg",
    "kind": "file",
    "family": "docs",
-   "color": "#6c6fb6",
-   "label": "Markdown"
+   "label": "Markdown",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/markdown.svg"
+   },
+   "light": "bio/markdown.light.svg"
   },
   "file.readme": {
    "file": "bio/readme.svg",
    "kind": "file",
    "family": "docs",
-   "color": "#6c6fb6",
-   "label": "Read me"
+   "label": "Read me",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/readme.svg"
+   },
+   "light": "bio/readme.light.svg"
   },
   "file.agent-notes": {
    "file": "bio/agent-notes.svg",
    "kind": "file",
    "family": "docs",
-   "color": "#6c6fb6",
-   "label": "Agent instructions (CLAUDE.md, AGENTS.md)"
+   "label": "Agent instructions (CLAUDE.md, AGENTS.md)",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/agent.svg",
+    "note": "Gruvbox's agent artwork for agent instruction files (CLAUDE.md, AGENTS.md)."
+   },
+   "light": "bio/agent-notes.light.svg"
   },
   "file.notebook": {
    "file": "bio/notebook.svg",
    "kind": "file",
    "family": "notebook",
-   "color": "#c4672a",
-   "label": "Jupyter notebook"
+   "label": "Jupyter notebook",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/jupyter.svg"
+   },
+   "light": "bio/notebook.light.svg"
   },
   "file.fasta": {
    "file": "bio/fasta.svg",
    "kind": "file",
    "family": "sequence",
-   "color": "#1b9184",
-   "label": "FASTA sequences"
+   "label": "FASTA sequences",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/fasta.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: FASTA sequences: a DNA helix."
+   },
+   "light": "bio/fasta.light.svg"
   },
   "file.fastq": {
    "file": "bio/fastq.svg",
    "kind": "file",
    "family": "sequence",
-   "color": "#1b9184",
-   "label": "FASTQ reads with qualities"
+   "label": "FASTQ reads with qualities",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/fastq.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: FASTQ reads: a helix over per-base quality bars."
+   },
+   "light": "bio/fastq.light.svg"
   },
   "file.alignment": {
    "file": "bio/alignment.svg",
    "kind": "file",
    "family": "genomic",
-   "color": "#c44f3f",
-   "label": "Aligned reads (BAM, SAM, CRAM)"
+   "label": "Aligned reads (BAM, SAM, CRAM)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/alignment.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Aligned reads (BAM, SAM, CRAM) stacked in a pileup."
+   },
+   "light": "bio/alignment.light.svg"
   },
   "file.variants": {
    "file": "bio/variants.svg",
    "kind": "file",
    "family": "genomic",
-   "color": "#c44f3f",
-   "label": "Variants (VCF, BCF)"
+   "label": "Variants (VCF, BCF)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/variants.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Variant records (VCF, BCF): a variant pinned on a sequence."
+   },
+   "light": "bio/variants.light.svg"
   },
   "file.annotation": {
    "file": "bio/annotation.svg",
    "kind": "file",
    "family": "genomic",
-   "color": "#c44f3f",
-   "label": "Gene annotation (GFF, GTF)"
+   "label": "Gene annotation (GFF, GTF)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/annotation.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Gene annotations (GFF, GTF): a gene model, exons joined by introns."
+   },
+   "light": "bio/annotation.light.svg"
   },
   "file.intervals": {
    "file": "bio/intervals.svg",
    "kind": "file",
    "family": "genomic",
-   "color": "#c44f3f",
-   "label": "Genomic intervals (BED)"
+   "label": "Genomic intervals (BED)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/intervals.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Genomic intervals (BED) with their bounds."
+   },
+   "light": "bio/intervals.light.svg"
+  },
+  "file.signal": {
+   "file": "bio/signal.svg",
+   "kind": "file",
+   "family": "genomic",
+   "label": "Signal track (bigWig, wiggle)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/signal.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Signal tracks (bigWig, bigBed, wiggle): coverage along the genome."
+   },
+   "light": "bio/signal.light.svg"
+  },
+  "file.index": {
+   "file": "bio/index.svg",
+   "kind": "file",
+   "family": "genomic",
+   "label": "Index (BAI, FAI, TBI)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/index.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Index files (BAI, CRAI, FAI, TBI, CSI): entries pointing into another file."
+   },
+   "light": "bio/index.light.svg"
+  },
+  "file.tree": {
+   "file": "bio/tree.svg",
+   "kind": "file",
+   "family": "genomic",
+   "label": "Phylogenetic tree (Newick, Nexus)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/tree.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Phylogenetic trees (Newick, Nexus): a rooted tree."
+   },
+   "light": "bio/tree.light.svg"
   },
   "file.r-object": {
    "file": "bio/r-object.svg",
    "kind": "file",
    "family": "data",
-   "color": "#8a5fb0",
-   "label": "R object (RDS, RData)"
+   "label": "R object (RDS, RData)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/r-object.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Saved R objects (RDS, RData): a box."
+   },
+   "light": "bio/r-object.light.svg"
   },
   "file.anndata": {
    "file": "bio/anndata.svg",
    "kind": "file",
    "family": "data",
-   "color": "#8a5fb0",
-   "label": "AnnData (h5ad)"
+   "label": "AnnData (h5ad)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/anndata.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: AnnData (.h5ad): a matrix with row and column annotations."
+   },
+   "light": "bio/anndata.light.svg"
   },
   "file.hdf5": {
    "file": "bio/hdf5.svg",
    "kind": "file",
    "family": "data",
-   "color": "#8a5fb0",
-   "label": "HDF5 (h5, h5Seurat)"
+   "label": "HDF5 (h5, h5Seurat)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/hdf5.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: HDF5 and Loom: groups holding datasets, a tree."
+   },
+   "light": "bio/hdf5.light.svg"
   },
   "file.sparse-matrix": {
    "file": "bio/sparse-matrix.svg",
    "kind": "file",
    "family": "data",
-   "color": "#8a5fb0",
-   "label": "Sparse matrix (mtx)"
+   "label": "Sparse matrix (mtx)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/sparse-matrix.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Matrix Market (.mtx): a matrix with few entries."
+   },
+   "light": "bio/sparse-matrix.light.svg"
   },
   "file.table": {
    "file": "bio/table.svg",
    "kind": "file",
    "family": "table",
-   "color": "#4e8f4c",
-   "label": "Table (CSV, TSV)"
+   "label": "Table (CSV, TSV)",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/table.svg"
+   },
+   "light": "bio/table.light.svg"
   },
   "file.parquet": {
    "file": "bio/parquet.svg",
    "kind": "file",
    "family": "table",
-   "color": "#4e8f4c",
-   "label": "Parquet (column store)"
+   "label": "Parquet (column store)",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/parquet.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Parquet: data stored by column."
+   },
+   "light": "bio/parquet.light.svg"
   },
   "file.nextflow": {
    "file": "bio/nextflow.svg",
    "kind": "file",
    "family": "workflow",
-   "color": "#b07d14",
-   "label": "Nextflow"
+   "label": "Nextflow",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/nextflow.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Nextflow: a workflow joining steps."
+   },
+   "light": "bio/nextflow.light.svg"
   },
   "file.snakemake": {
    "file": "bio/snakemake.svg",
    "kind": "file",
    "family": "workflow",
-   "color": "#b07d14",
-   "label": "Snakemake"
+   "label": "Snakemake",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/snakemake.svg"
+   },
+   "light": "bio/snakemake.light.svg"
   },
   "file.wdl": {
    "file": "bio/wdl.svg",
    "kind": "file",
    "family": "workflow",
-   "color": "#b07d14",
-   "label": "WDL"
+   "label": "WDL",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/wdl.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: WDL: a chain of workflow tasks."
+   },
+   "light": "bio/wdl.light.svg"
   },
   "file.cwl": {
    "file": "bio/cwl.svg",
    "kind": "file",
    "family": "workflow",
-   "color": "#b07d14",
-   "label": "CWL"
+   "label": "CWL",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/cwl.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: CWL: a workflow fanning out to steps."
+   },
+   "light": "bio/cwl.light.svg"
   },
   "file.yaml": {
    "file": "bio/yaml.svg",
    "kind": "file",
    "family": "config",
-   "color": "#857a64",
-   "label": "YAML"
+   "label": "YAML",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/yaml.svg"
+   },
+   "light": "bio/yaml.light.svg"
   },
   "file.json": {
    "file": "bio/json.svg",
    "kind": "file",
    "family": "config",
-   "color": "#857a64",
-   "label": "JSON"
+   "label": "JSON",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/json.svg"
+   },
+   "light": "bio/json.light.svg"
   },
   "file.toml": {
    "file": "bio/toml.svg",
    "kind": "file",
    "family": "config",
-   "color": "#857a64",
-   "label": "TOML / config"
+   "label": "TOML / config",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/toml.svg"
+   },
+   "light": "bio/toml.light.svg"
   },
   "file.lock": {
    "file": "bio/lock.svg",
    "kind": "file",
    "family": "config",
-   "color": "#857a64",
-   "label": "Lock file"
+   "label": "Lock file",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/lock.svg"
+   },
+   "light": "bio/lock.light.svg"
   },
   "file.license": {
    "file": "bio/license.svg",
    "kind": "file",
    "family": "config",
-   "color": "#857a64",
-   "label": "Licence"
+   "label": "Licence",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/license.svg"
+   },
+   "light": "bio/license.light.svg"
   },
   "file.git": {
    "file": "bio/git.svg",
    "kind": "file",
    "family": "config",
-   "color": "#857a64",
-   "label": "Git settings (.gitignore)"
+   "label": "Git settings (.gitignore)",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/git.svg"
+   },
+   "light": "bio/git.light.svg"
   },
   "file.archive": {
    "file": "bio/archive.svg",
    "kind": "file",
    "family": "config",
-   "color": "#857a64",
-   "label": "Archive (zip, tar)"
+   "label": "Archive (zip, tar)",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/zip.svg"
+   },
+   "light": "bio/archive.light.svg"
   },
   "file.image": {
    "file": "bio/image.svg",
    "kind": "file",
    "family": "media",
-   "color": "#b4547d",
-   "label": "Image or PDF"
+   "label": "Image",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/image.svg"
+   },
+   "light": "bio/image.light.svg"
+  },
+  "file.pdf": {
+   "file": "bio/pdf.svg",
+   "kind": "file",
+   "family": "media",
+   "label": "PDF",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/pdf.svg"
+   },
+   "light": "bio/pdf.light.svg"
+  },
+  "file.svg": {
+   "file": "bio/svg.svg",
+   "kind": "file",
+   "family": "media",
+   "label": "SVG drawing",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/svg.svg"
+   },
+   "light": "bio/svg.light.svg"
   },
   "file.bibliography": {
    "file": "bio/bibliography.svg",
    "kind": "file",
    "family": "other",
-   "color": "#8d877d",
-   "label": "Bibliography (bib)"
+   "label": "Bibliography (bib)",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/bibliography.svg"
+   },
+   "light": "bio/bibliography.light.svg"
   },
   "file.file": {
    "file": "bio/file.svg",
    "kind": "file",
    "family": "other",
-   "color": "#8d877d",
-   "label": "Other file"
+   "label": "Other file",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/document.svg"
+   },
+   "light": "bio/file.light.svg"
   },
   "folder.project": {
    "file": "folders/project.svg",
    "kind": "folder",
-   "color": "#3a72b8",
-   "label": "Project root"
+   "label": "Project root",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-project.svg"
+   },
+   "light": "folders/project.light.svg"
   },
   "folder.data": {
    "file": "folders/data.svg",
    "kind": "folder",
-   "color": "#1b9184",
-   "label": "data"
+   "label": "data",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-database.svg",
+    "note": "Database-folder artwork represents source datasets, without implying a database service."
+   },
+   "light": "folders/data.light.svg"
   },
   "folder.results": {
    "file": "folders/results.svg",
    "kind": "folder",
-   "color": "#b07d14",
-   "label": "results"
+   "label": "results",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-dist.svg",
+    "note": "Distribution/output-folder artwork represents generated analysis results."
+   },
+   "light": "folders/results.light.svg"
   },
   "folder.figures": {
    "file": "folders/figures.svg",
    "kind": "folder",
-   "color": "#c44f3f",
-   "label": "figures, plots"
+   "label": "figures, plots",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-images.svg",
+    "note": "Image-folder artwork represents figures and plots."
+   },
+   "light": "folders/figures.light.svg"
   },
   "folder.tests": {
    "file": "folders/tests.svg",
    "kind": "folder",
-   "color": "#8a5fb0",
-   "label": "tests"
+   "label": "tests",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-test.svg"
+   },
+   "light": "folders/tests.light.svg"
   },
   "folder.sandhill": {
    "file": "folders/sandhill.svg",
    "kind": "folder",
-   "color": "#857a64",
-   "label": ".sandhill (Sandhill settings)"
+   "label": ".sandhill (Sandhill settings)",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-config.svg",
+    "note": "Configuration-folder artwork denotes .sandhill settings; the crane/app identity is unchanged."
+   },
+   "light": "folders/sandhill.light.svg"
   },
   "folder.notebooks": {
    "file": "folders/notebooks.svg",
    "kind": "folder",
-   "color": "#c4672a",
-   "label": "notebooks"
+   "label": "notebooks",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-jupyter.svg",
+    "note": "Jupyter-folder artwork represents the notebook/analysis-document family, including non-Jupyter documents."
+   },
+   "light": "folders/notebooks.light.svg"
   },
   "folder.scripts": {
    "file": "folders/scripts.svg",
    "kind": "folder",
-   "color": "#4e8f4c",
-   "label": "scripts, R, src"
+   "label": "scripts, R, src",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-scripts.svg"
+   },
+   "light": "folders/scripts.light.svg"
   },
   "folder.cache": {
    "file": "folders/cache.svg",
    "kind": "folder",
-   "color": "#8d877d",
-   "label": "cache, tmp, work"
+   "label": "cache, tmp, work",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-temp.svg",
+    "note": "Temporary-folder artwork represents cache, temporary and work directories."
+   },
+   "light": "folders/cache.light.svg"
   },
   "folder.other": {
    "file": "folders/other.svg",
    "kind": "folder",
-   "color": "#a09a90",
-   "label": "Any other folder"
+   "label": "Any other folder",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/folder-other.svg"
+   },
+   "light": "folders/other.light.svg"
   },
   "agent.claude": {
    "file": "agents/claude.svg",
    "kind": "agent",
    "label": "Claude Code",
-   "color": "#fff",
-   "note": "lookalike of Claude's spark; swap for the official file",
    "brand": null,
    "v31": [
     "i-claude"
-   ]
+   ],
+   "source": {
+    "library": "developer",
+    "path": "icons/claude-ai.svg",
+    "backplate": false
+   }
   },
   "agent.codex": {
    "file": "agents/codex.svg",
    "kind": "agent",
    "label": "Codex",
-   "color": "#fff",
-   "note": "lookalike of OpenAI's knot; swap for the official file",
    "brand": null,
    "v31": [
     "i-openai"
-   ]
+   ],
+   "source": {
+    "library": "developer",
+    "path": "icons/openai.svg",
+    "backplate": false,
+    "recolor": {
+     "#193718": "currentColor"
+    },
+    "note": "OpenAI's logo identifies the Codex integration (Huan), without a background; the app draws the one-colour mark in the surrounding text colour so it reads on light and dark."
+   }
   },
   "agent.antigravity": {
    "file": "agents/antigravity.svg",
    "kind": "agent",
    "label": "Antigravity",
-   "color": "#fff",
-   "note": "lookalike in Google's colours; swap for the official file",
    "brand": null,
    "v31": [
     "i-agy"
-   ]
+   ],
+   "source": {
+    "library": "brands",
+    "path": "antigravity.svg",
+    "note": "Original full-colour SVG supplied by Huan; redistribution license not supplied."
+   }
+  },
+  "agent.posit": {
+   "file": "agents/posit.svg",
+   "kind": "agent",
+   "label": "Posit Assistant",
+   "brand": "Posit",
+   "source": {
+    "library": "brands",
+    "path": "posit.svg",
+    "viewBox": "0.9 2 45 45",
+    "recolor": {
+     "#fff": "none"
+    },
+    "note": "Posit's blue and orange mark, as on Posit Assistant's site, from the official logo at posit.co; cropped to the mark without the wordmark, white background removed (Huan). Redistribution license not supplied."
+   }
+  },
+  "agent.openscience": {
+   "file": "agents/openscience.svg",
+   "kind": "agent",
+   "label": "OpenScience",
+   "brand": "Synthetic Sciences",
+   "source": {
+    "library": "brands",
+    "path": "synthetic-sciences.svg",
+    "strip_style": true,
+    "note": "Synthetic Sciences mark supplied by Huan (from syntheticsciences.ai/img/logo.svg), without a background (Huan). Its site draws it dark on light and light on dark; the app draws it in the surrounding text colour to do the same. Redistribution license not supplied."
+   }
   },
   "agent.omp": {
    "file": "agents/omp.svg",
    "kind": "agent",
    "label": "Oh My Pi (omp)",
-   "color": "#6b4fc8",
-   "note": "Sandhill's own \u03c0> mark for the omp integration; not the Oh My Pi logo",
-   "brand": null,
+   "brand": "Oh My Pi",
    "v31": [
     "i-omp"
-   ]
+   ],
+   "source": {
+    "library": "brands",
+    "path": "oh-my-pi.svg",
+    "viewBox": "12 16 40 40",
+    "recolor": {
+     "#0f0a14": "none"
+    },
+    "note": "Official Oh My Pi mark (omp.sh/favicon.svg, the same file as can1357/oh-my-pi packages/collab-web/public/favicon.svg at b16bfbe0f9cf953d9a37fc17284967ed18fae015, MIT): the gradient \u03c0 without its dark tile (Huan), cropped to the mark."
+   }
+  },
+  "agent.pi": {
+   "file": "agents/pi.svg",
+   "kind": "agent",
+   "label": "pi",
+   "brand": "pi",
+   "source": {
+    "library": "brands",
+    "path": "pi.svg",
+    "viewBox": "150 150 500 500",
+    "note": "Official pi mark (https://pi.dev/logo.svg, the same mark as earendil-works/pi apps/p2/public/icons/favicon.svg, MIT), cropped to the mark without the original's empty margin."
+   }
   },
   "agent.generic": {
    "file": "agents/generic.svg",
    "kind": "agent",
    "label": "Other agent",
-   "color": "#6b645e",
-   "note": "generic agent",
-   "brand": null
+   "brand": null,
+   "source": {
+    "library": "lucide",
+    "path": "icons/bot-message-square.svg",
+    "note": "Generic conversational-bot artwork for unbranded agent integrations."
+   }
   },
   "lang.r": {
    "file": "lang/r.svg",
    "kind": "language",
    "label": "R",
-   "color": "#2368b8"
+   "source": {
+    "library": "developer",
+    "path": "icons/r.svg"
+   }
   },
   "lang.python": {
    "file": "lang/python.svg",
    "kind": "language",
    "label": "Python",
-   "color": "#fff"
+   "source": {
+    "library": "developer",
+    "path": "icons/python.svg"
+   }
   },
   "lang.nextflow": {
    "file": "lang/nextflow.svg",
    "kind": "language",
    "label": "Nextflow",
-   "color": "#fff"
+   "source": {
+    "library": "lucide",
+    "path": "icons/workflow.svg",
+    "note": "Generic workflow artwork for the Nextflow runtime; not the Nextflow logo."
+   }
   },
   "lang.shell": {
    "file": "lang/shell.svg",
    "kind": "language",
    "label": "Shell",
-   "color": "#33363d"
+   "source": {
+    "library": "developer",
+    "path": "icons/bash.svg",
+    "note": "Bash artwork represents the general shell runtime category."
+   }
   }
  },
  "resolve": {
@@ -1267,30 +2105,69 @@
    "fa": "fasta",
    "fna": "fasta",
    "faa": "fasta",
+   "ffn": "fasta",
+   "frn": "fasta",
+   "fas": "fasta",
+   "aln": "fasta",
+   "afa": "fasta",
    "fastq": "fastq",
    "fq": "fastq",
    "bam": "alignment",
    "sam": "alignment",
    "cram": "alignment",
+   "paf": "alignment",
+   "psl": "alignment",
+   "blast": "alignment",
    "vcf": "variants",
    "bcf": "variants",
+   "gvcf": "variants",
+   "maf": "variants",
    "gff": "annotation",
    "gff3": "annotation",
    "gtf": "annotation",
    "bed": "intervals",
    "bedgraph": "intervals",
    "narrowpeak": "intervals",
+   "broadpeak": "intervals",
+   "gappedpeak": "intervals",
+   "bedpe": "intervals",
+   "interval_list": "intervals",
+   "bw": "signal",
+   "bigwig": "signal",
+   "bb": "signal",
+   "bigbed": "signal",
+   "wig": "signal",
+   "tdf": "signal",
+   "bai": "index",
+   "crai": "index",
+   "fai": "index",
+   "tbi": "index",
+   "csi": "index",
+   "dict": "index",
+   "nwk": "tree",
+   "newick": "tree",
+   "tree": "tree",
+   "treefile": "tree",
+   "nex": "tree",
+   "nexus": "tree",
    "rds": "r-object",
    "rdata": "r-object",
    "rda": "r-object",
+   "qs": "r-object",
    "h5ad": "anndata",
+   "h5mu": "anndata",
    "h5": "hdf5",
    "hdf5": "hdf5",
    "h5seurat": "hdf5",
    "loom": "hdf5",
+   "cool": "hdf5",
+   "mcool": "hdf5",
    "mtx": "sparse-matrix",
    "csv": "table",
    "tsv": "table",
+   "tab": "table",
+   "counts": "table",
+   "tpm": "table",
    "txt": "file",
    "parquet": "parquet",
    "nf": "nextflow",
@@ -1311,8 +2188,8 @@
    "png": "image",
    "jpg": "image",
    "jpeg": "image",
-   "svg": "image",
-   "pdf": "image",
+   "svg": "svg",
+   "pdf": "pdf",
    "tif": "image",
    "tiff": "image",
    "bib": "bibliography"
@@ -1344,5 +2221,40 @@
    ".github": "other"
   },
   "folderFallback": "other"
+ },
+ "source": "docs/design/ui/icons/build.py",
+ "libraries": {
+  "gruvbox": {
+   "name": "Gruvbox Material Icons",
+   "repository": "https://github.com/navernoedenis/gruvbox-material-icons",
+   "revision": "e0b2995f75a7dee359d6c55a8014c37d13622061",
+   "license": "MIT",
+   "licenseFile": "gruvbox/LICENSE"
+  },
+  "lucide": {
+   "name": "Lucide",
+   "repository": "https://github.com/lucide-icons/lucide",
+   "revision": "53fab88ff9d1b48f4704b5b5b560d6b4d560bf4c",
+   "license": "ISC and MIT (Feather-derived icons)",
+   "licenseFile": "lucide/LICENSE"
+  },
+  "developer": {
+   "name": "Developer Icons",
+   "repository": "https://github.com/xandemon/developer-icons",
+   "revision": "4a10a1bdb1cc799956c089fc897332511d80ad52",
+   "license": "MIT",
+   "licenseFile": "developer/LICENSE"
+  },
+  "brands": {
+   "name": "Provider marks",
+   "source": "Google-Antigravity-Icon-Full-Color.svg and the Synthetic Sciences logo (supplied by Huan); Posit's logo from posit.co; the official Oh My Pi (omp.sh/favicon.svg) and pi (pi.dev/logo.svg) marks",
+   "license": "Antigravity, Synthetic Sciences and Posit marks: no redistribution license supplied; Oh My Pi and pi marks: MIT (oh-my-pi.LICENSE, pi.LICENSE)",
+   "noticeFile": "NOTICE.txt"
+  },
+  "sandhill": {
+   "name": "Sandhill",
+   "source": "Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14): bioinformatics and workflow formats Gruvbox has no artwork for.",
+   "license": "GPL-3.0-or-later, as Sandhill"
+  }
  }
 }

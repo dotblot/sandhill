@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 1.5h4.8L13 5.2v7.8c0 .8-.7 1.5-1.5 1.5h-7c-.8 0-1.5-.7-1.5-1.5V3c0-.8.7-1.5 1.5-1.5z" fill="#b07d14" fill-opacity=".13" stroke="#b07d14" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.2 1.6v2.6c0 .6.4 1 1 1h2.7" fill="none" stroke="#b07d14" stroke-width="1.1" stroke-linejoin="round"/><g fill="none" stroke="#b07d14" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.6" cy="9.6" r="1.1"/><circle cx="10.4" cy="9.6" r="1.1"/><path d="M6.7 9.6h2.4M8.3 8.7l.9.9-.9.9"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="CWL"><!-- Sandhill: CWL: a workflow fanning out to steps. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). --><g transform="matrix(0.666667 0 0 0.666667 0 0)"><mask id="file-cwl-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white" />
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12.6" r="1.4" /><circle cx="8.5" cy="18.4" r="1.4" /><circle cx="15.5" cy="18.4" r="1.4" /><path d="M11.2 13.8l-1.9 3.3M12.8 13.8l1.9 3.3" /></g>
+</mask>
+<path fill="#fc6a5d" mask="url(#file-cwl-cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z" />
+</g><title>CWL</title></svg>

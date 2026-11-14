@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 1.5h4.8L13 5.2v7.8c0 .8-.7 1.5-1.5 1.5h-7c-.8 0-1.5-.7-1.5-1.5V3c0-.8.7-1.5 1.5-1.5z" fill="#8a5fb0" fill-opacity=".13" stroke="#8a5fb0" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.2 1.6v2.6c0 .6.4 1 1 1h2.7" fill="none" stroke="#8a5fb0" stroke-width="1.1" stroke-linejoin="round"/><g fill="none" stroke="#8a5fb0" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6.4l2.9 1.5v3.3L8 12.7l-2.9-1.5V7.9z"/><path d="M5.1 7.9 8 9.4l2.9-1.5M8 9.4v3.3"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="R object (RDS, RData)"><!-- Sandhill: RDS/RData: a saved R object, a box. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). --><g transform="matrix(0.666667 0 0 0.666667 0 0)"><mask id="file-r-object-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white" />
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 11.3l4.6 2.6v5.2L12 21.7l-4.6-2.6v-5.2z" /><path d="M7.4 13.9L12 16.5l4.6-2.6M12 16.5v5.2" /></g>
+</mask>
+<path fill="#41a1c0" mask="url(#file-r-object-cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z" />
+</g><title>R object (RDS, RData)</title></svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- Sandhill: Parquet: data stored by column. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). -->
+<mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white"/>
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.3" y="11.5" width="2.2" height="8.5" rx=".6"/><rect x="10.9" y="11.5" width="2.2" height="8.5" rx=".6"/><rect x="14.5" y="11.5" width="2.2" height="8.5" rx=".6"/></g>
+</mask>
+<path fill="#7daea3" mask="url(#cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z"/>
+</svg>

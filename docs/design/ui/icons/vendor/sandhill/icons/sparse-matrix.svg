@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- Sandhill: Matrix Market (.mtx): a matrix with few entries. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). -->
+<mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white"/>
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="11.5" width="10" height="8.5" rx="1"/><circle cx="9.5" cy="14" r=".6" fill="black"/><circle cx="14" cy="15" r=".6" fill="black"/><circle cx="11" cy="17.6" r=".6" fill="black"/><circle cx="14.8" cy="18" r=".6" fill="black"/></g>
+</mask>
+<path fill="#e3ae5a" mask="url(#cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z"/>
+</svg>

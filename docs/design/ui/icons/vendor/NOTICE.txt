@@ -1,0 +1,68 @@
+Sandhill icon artwork
+
+Gruvbox Material Icons
+https://github.com/navernoedenis/gruvbox-material-icons
+Revision: e0b2995f75a7dee359d6c55a8014c37d13622061
+MIT License, Copyright (c) 2025 navernoedenis.
+See gruvbox/LICENSE.
+The upstream README credits Material Icon Theme and its original authors:
+https://github.com/material-extensions/vscode-material-icon-theme
+Gruvbox Material Icons adapts that collection to the Gruvbox palette.
+
+Lucide
+https://github.com/lucide-icons/lucide
+Revision: 53fab88ff9d1b48f4704b5b5b560d6b4d560bf4c
+ISC License, Copyright (c) 2026 Lucide Icons and Contributors.
+Feather-derived icons are additionally covered by the MIT License,
+Copyright (c) 2013-present Cole Bemis. The complete upstream license file
+lists those icons and includes both texts; see lucide/LICENSE.
+
+Developer Icons
+https://github.com/xandemon/developer-icons
+Revision: 4a10a1bdb1cc799956c089fc897332511d80ad52
+MIT License, Copyright (c) 2024 Sandesh Katwal aka xandemon.
+See developer/LICENSE.
+
+User-supplied provider marks (Huan, 2026-11-06)
+brands/antigravity.svg: copied unchanged from the supplied file
+Google-Antigravity-Icon-Full-Color.svg. The mark belongs to Google.
+brands/synthetic-sciences.svg: Synthetic Sciences' mark, supplied by Huan
+from https://syntheticsciences.ai/img/logo.svg. The mark belongs to
+Synthetic Sciences.
+
+Official provider mark without a redistribution license (2026-11-12)
+brands/posit.svg: Posit's logo, copied unchanged from the header of
+https://posit.co/ (the mark Posit Assistant's site shows); only its blue
+and orange mark is used, without the wordmark or white background. The
+mark belongs to Posit.
+No redistribution license was supplied or found for this mark or the two
+above. The MIT/ISC terms above do not cover them. Record permission or applicable
+brand-use terms before a public release; attribution does not itself grant
+permission.
+
+Official agent marks (MIT, vendored 2026-11-12)
+brands/oh-my-pi.svg: Oh My Pi's mark, copied unchanged from
+https://omp.sh/favicon.svg, the same file as
+https://github.com/can1357/oh-my-pi/blob/b16bfbe0f9cf953d9a37fc17284967ed18fae015/packages/collab-web/public/favicon.svg
+MIT License, Copyright (c) 2025 Mario Zechner, (c) 2025-2026 Can Bölük,
+(c) 2026 Stencil Labs, Inc. See brands/oh-my-pi.LICENSE.
+brands/pi.svg: pi's mark, copied unchanged from https://pi.dev/logo.svg;
+the same mark is in https://github.com/earendil-works/pi (revision
+3c9a86bb08398a425f95a81ba4339aa76151f5a1, apps/p2/public/icons/favicon.svg).
+MIT License, Copyright (c) 2025 Mario Zechner. See brands/pi.LICENSE.
+
+Adaptations by Sandhill: proportionally fit original SVG geometry into a
+16px viewBox, namespace SVG definition IDs, let interface icons follow the
+surrounding text color, fill the selected favourite star using the same
+Lucide geometry, and place Developer Icons logos on a light rounded
+backplate for contrast. Agent marks have no background (Huan): Oh My Pi's
+dark tile and the white behind Posit's logo are not drawn, and Oh My Pi,
+Posit and pi are cropped to the mark. The app draws the one-colour OpenAI
+(Codex) and Synthetic Sciences marks in the surrounding text colour, so
+they read on light and dark. Gruvbox colors are not recolored or
+luminance-tuned. Original SVGs are retained without modification.
+
+Third-party artwork retains its upstream license. Sandhill's GPL license
+does not claim ownership of vendor trademarks or imply endorsement.
+Icon source mappings and generic substitutions are listed in MAPPING.md.
+Sandhill's crane and application icon are not part of these collections.

@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 1.5h4.8L13 5.2v7.8c0 .8-.7 1.5-1.5 1.5h-7c-.8 0-1.5-.7-1.5-1.5V3c0-.8.7-1.5 1.5-1.5z" fill="#c44f3f" fill-opacity=".13" stroke="#c44f3f" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.2 1.6v2.6c0 .6.4 1 1 1h2.7" fill="none" stroke="#c44f3f" stroke-width="1.1" stroke-linejoin="round"/><g fill="none" stroke="#c44f3f" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7.2h3.6M6.8 9.5h4.4M5 11.8h2.8M9.8 11.8h1.4" stroke-width="1.5"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Aligned reads (BAM, SAM, CRAM)"><!-- Sandhill: BAM/SAM/CRAM: reads stacked in a pileup. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). --><g transform="matrix(0.666667 0 0 0.666667 0 0)"><mask id="file-alignment-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white" />
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12h5M14.5 12h2.5M9 14.75h7.5M7 17.5h3.5M13 17.5h4M10 20.2h7" /></g>
+</mask>
+<path fill="#41a1c0" mask="url(#file-alignment-cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z" />
+</g><title>Aligned reads (BAM, SAM, CRAM)</title></svg>

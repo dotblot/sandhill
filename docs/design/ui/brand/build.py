@@ -11,7 +11,9 @@ the pose. Nothing in them is traced from, or cut out of, that image.
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-NAVY, CREAM, SAGE, RED = "#142844", "#F8F1E4", "#6FA38E", "#E64B3C"
+# Navy, and the app's own colours beside it (Huan, 2026-11-14): Xcode's teal
+# and red, as the file icons use, on a neutral white instead of cream.
+NAVY, WHITE, TEAL, RED = "#142844", "#F5F5F7", "#67B7A4", "#FC6A5D"
 
 # ---- the crane, flying right (units: the 1024 drawing canvas)
 WING_BACK = "M108 295C220 330 380 380 455 422C522 462 556 518 568 575L574 600L452 612L445 598C290 555 160 455 108 295Z"
@@ -53,32 +55,32 @@ def app_icon(dark=True, small=False):
     tx, ty = 512 - CX * s, 512 - CY * s
     if dark:
         grad = '<linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f3a5f"/><stop offset="1" stop-color="#142844"/></linearGradient>'
-        crane = CREAM
+        crane = WHITE
     else:
-        grad = '<linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbf6ec"/><stop offset="1" stop-color="#f1e7d4"/></linearGradient>'
+        grad = '<linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#ececf0"/></linearGradient>'
         crane = NAVY
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Sandhill"><title>Sandhill</title>'
             f'<defs>{grad}</defs><rect x="100" y="100" width="824" height="824" rx="185" fill="url(#g)"/>'
-            f'<g transform="translate({tx:.1f} {ty:.1f}) scale({s})">{layers(crane, SAGE, RED, small, not small)}</g></svg>\n')
+            f'<g transform="translate({tx:.1f} {ty:.1f}) scale({s})">{layers(crane, TEAL, RED, small, not small)}</g></svg>\n')
 
 
 FILES = {
     # full mark
-    "crane/sandhill-crane-light.svg": mark(NAVY, SAGE, RED, bg=CREAM),
-    "crane/sandhill-crane-dark.svg": mark(CREAM, SAGE, RED, bg=NAVY),
-    "crane/sandhill-crane-on-light.svg": mark(NAVY, SAGE, RED),  # transparent, for light surfaces
-    "crane/sandhill-crane-on-dark.svg": mark(CREAM, SAGE, RED),  # transparent, for dark surfaces
+    "crane/sandhill-crane-light.svg": mark(NAVY, TEAL, RED, bg=WHITE),
+    "crane/sandhill-crane-dark.svg": mark(WHITE, TEAL, RED, bg=NAVY),
+    "crane/sandhill-crane-on-light.svg": mark(NAVY, TEAL, RED),  # transparent, for light surfaces
+    "crane/sandhill-crane-on-dark.svg": mark(WHITE, TEAL, RED),  # transparent, for dark surfaces
     # one colour: the crown and feather keep their own shapes, separated from the body by gaps
     "crane/sandhill-crane-mono-navy.svg": mark(NAVY, NAVY, NAVY),
-    "crane/sandhill-crane-mono-cream.svg": mark(CREAM, CREAM, CREAM),
+    "crane/sandhill-crane-mono-white.svg": mark(WHITE, WHITE, WHITE),
     # macOS menu bar template: black on transparent; macOS recolours it
     "crane/sandhill-crane-template.svg": mark("#000", "#000", "#000", small=True, show_feather=False, size=18),
     # small mark
-    "small/sandhill-mark-64.svg": mark(NAVY, SAGE, RED, small=True, size=64),
-    "small/sandhill-mark-32.svg": mark(NAVY, SAGE, RED, small=True, size=32),
-    "small/sandhill-mark-24.svg": mark(NAVY, SAGE, RED, small=True, size=24),
-    "small/sandhill-mark-16.svg": mark(NAVY, SAGE, RED, small=True, show_feather=False, size=16),
-    "small/sandhill-mark-16-dark.svg": mark(CREAM, SAGE, RED, small=True, show_feather=False, size=16),
+    "small/sandhill-mark-64.svg": mark(NAVY, TEAL, RED, small=True, size=64),
+    "small/sandhill-mark-32.svg": mark(NAVY, TEAL, RED, small=True, size=32),
+    "small/sandhill-mark-24.svg": mark(NAVY, TEAL, RED, small=True, size=24),
+    "small/sandhill-mark-16.svg": mark(NAVY, TEAL, RED, small=True, show_feather=False, size=16),
+    "small/sandhill-mark-16-dark.svg": mark(WHITE, TEAL, RED, small=True, show_feather=False, size=16),
     # app icon (the dark one is the app's)
     "app-icon/app-icon-dark.svg": app_icon(True),
     "app-icon/app-icon-dark-small.svg": app_icon(True, small=True),

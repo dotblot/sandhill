@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Phylogenetic tree (Newick, Nexus)"><!-- Sandhill: Phylogenetic trees (Newick, Nexus): a rooted tree. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). --><g transform="matrix(0.666667 0 0 0.666667 0 0)"><mask id="file-tree-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white" />
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 14.5h2.5M9.5 11.8v5.9M9.5 11.8H17M9.5 17.7h3M12.5 15.9v3.6M12.5 15.9H17M12.5 19.5H17" /></g>
+</mask>
+<path fill="#297b42" mask="url(#file-tree-cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z" />
+</g><title>Phylogenetic tree (Newick, Nexus)</title></svg>

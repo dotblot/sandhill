@@ -1,0 +1,300 @@
+{
+  "file.r": {
+    "library": "gruvbox",
+    "path": "icons/r.svg"
+  },
+  "file.python": {
+    "library": "gruvbox",
+    "path": "icons/python.svg"
+  },
+  "file.shell": {
+    "library": "gruvbox",
+    "path": "icons/console.svg",
+    "note": "Generic shell-script artwork represents sh, Bash and zsh."
+  },
+  "file.quarto": {
+    "library": "gruvbox",
+    "path": "icons/quarto.svg"
+  },
+  "file.rmarkdown": {
+    "library": "gruvbox",
+    "path": "icons/r.svg",
+    "note": "Upstream associates R Markdown with its R artwork; no separate R Markdown SVG is present."
+  },
+  "file.markdown": {
+    "library": "gruvbox",
+    "path": "icons/markdown.svg"
+  },
+  "file.readme": {
+    "library": "gruvbox",
+    "path": "icons/readme.svg"
+  },
+  "file.agent-notes": {
+    "library": "gruvbox",
+    "path": "icons/agent.svg",
+    "note": "Gruvbox's agent artwork for agent instruction files (CLAUDE.md, AGENTS.md)."
+  },
+  "file.notebook": {
+    "library": "gruvbox",
+    "path": "icons/jupyter.svg"
+  },
+  "file.fasta": {
+    "library": "sandhill",
+    "path": "icons/fasta.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: FASTA sequences: a DNA helix."
+  },
+  "file.fastq": {
+    "library": "sandhill",
+    "path": "icons/fastq.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: FASTQ reads: a helix over per-base quality bars."
+  },
+  "file.alignment": {
+    "library": "sandhill",
+    "path": "icons/alignment.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Aligned reads (BAM, SAM, CRAM) stacked in a pileup."
+  },
+  "file.variants": {
+    "library": "sandhill",
+    "path": "icons/variants.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Variant records (VCF, BCF): a variant pinned on a sequence."
+  },
+  "file.annotation": {
+    "library": "sandhill",
+    "path": "icons/annotation.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Gene annotations (GFF, GTF): a gene model, exons joined by introns."
+  },
+  "file.intervals": {
+    "library": "sandhill",
+    "path": "icons/intervals.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Genomic intervals (BED) with their bounds."
+  },
+  "file.signal": {
+    "library": "sandhill",
+    "path": "icons/signal.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Signal tracks (bigWig, bigBed, wiggle): coverage along the genome."
+  },
+  "file.index": {
+    "library": "sandhill",
+    "path": "icons/index.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Index files (BAI, CRAI, FAI, TBI, CSI): entries pointing into another file."
+  },
+  "file.tree": {
+    "library": "sandhill",
+    "path": "icons/tree.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Phylogenetic trees (Newick, Nexus): a rooted tree."
+  },
+  "file.r-object": {
+    "library": "sandhill",
+    "path": "icons/r-object.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Saved R objects (RDS, RData): a box."
+  },
+  "file.anndata": {
+    "library": "sandhill",
+    "path": "icons/anndata.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: AnnData (.h5ad): a matrix with row and column annotations."
+  },
+  "file.hdf5": {
+    "library": "sandhill",
+    "path": "icons/hdf5.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: HDF5 and Loom: groups holding datasets, a tree."
+  },
+  "file.sparse-matrix": {
+    "library": "sandhill",
+    "path": "icons/sparse-matrix.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Matrix Market (.mtx): a matrix with few entries."
+  },
+  "file.table": {
+    "library": "gruvbox",
+    "path": "icons/table.svg"
+  },
+  "file.parquet": {
+    "library": "sandhill",
+    "path": "icons/parquet.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Parquet: data stored by column."
+  },
+  "file.nextflow": {
+    "library": "sandhill",
+    "path": "icons/nextflow.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Nextflow: a workflow joining steps."
+  },
+  "file.snakemake": {
+    "library": "gruvbox",
+    "path": "icons/snakemake.svg"
+  },
+  "file.wdl": {
+    "library": "sandhill",
+    "path": "icons/wdl.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: WDL: a chain of workflow tasks."
+  },
+  "file.cwl": {
+    "library": "sandhill",
+    "path": "icons/cwl.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: CWL: a workflow fanning out to steps."
+  },
+  "file.yaml": {
+    "library": "gruvbox",
+    "path": "icons/yaml.svg"
+  },
+  "file.json": {
+    "library": "gruvbox",
+    "path": "icons/json.svg"
+  },
+  "file.toml": {
+    "library": "gruvbox",
+    "path": "icons/toml.svg"
+  },
+  "file.lock": {
+    "library": "gruvbox",
+    "path": "icons/lock.svg"
+  },
+  "file.license": {
+    "library": "gruvbox",
+    "path": "icons/license.svg"
+  },
+  "file.git": {
+    "library": "gruvbox",
+    "path": "icons/git.svg"
+  },
+  "file.archive": {
+    "library": "gruvbox",
+    "path": "icons/zip.svg"
+  },
+  "file.image": {
+    "library": "gruvbox",
+    "path": "icons/image.svg"
+  },
+  "file.pdf": {
+    "library": "gruvbox",
+    "path": "icons/pdf.svg"
+  },
+  "file.svg": {
+    "library": "gruvbox",
+    "path": "icons/svg.svg"
+  },
+  "file.bibliography": {
+    "library": "gruvbox",
+    "path": "icons/bibliography.svg"
+  },
+  "file.file": {
+    "library": "gruvbox",
+    "path": "icons/document.svg"
+  },
+  "folder.project": {
+    "library": "gruvbox",
+    "path": "icons/folder-project.svg"
+  },
+  "folder.data": {
+    "library": "gruvbox",
+    "path": "icons/folder-database.svg",
+    "note": "Database-folder artwork represents source datasets, without implying a database service."
+  },
+  "folder.results": {
+    "library": "gruvbox",
+    "path": "icons/folder-dist.svg",
+    "note": "Distribution/output-folder artwork represents generated analysis results."
+  },
+  "folder.figures": {
+    "library": "gruvbox",
+    "path": "icons/folder-images.svg",
+    "note": "Image-folder artwork represents figures and plots."
+  },
+  "folder.tests": {
+    "library": "gruvbox",
+    "path": "icons/folder-test.svg"
+  },
+  "folder.sandhill": {
+    "library": "gruvbox",
+    "path": "icons/folder-config.svg",
+    "note": "Configuration-folder artwork denotes .sandhill settings; the crane/app identity is unchanged."
+  },
+  "folder.notebooks": {
+    "library": "gruvbox",
+    "path": "icons/folder-jupyter.svg",
+    "note": "Jupyter-folder artwork represents the notebook/analysis-document family, including non-Jupyter documents."
+  },
+  "folder.scripts": {
+    "library": "gruvbox",
+    "path": "icons/folder-scripts.svg"
+  },
+  "folder.cache": {
+    "library": "gruvbox",
+    "path": "icons/folder-temp.svg",
+    "note": "Temporary-folder artwork represents cache, temporary and work directories."
+  },
+  "folder.other": {
+    "library": "gruvbox",
+    "path": "icons/folder-other.svg"
+  },
+  "agent.claude": {
+    "library": "developer",
+    "path": "icons/claude-ai.svg",
+    "backplate": false
+  },
+  "agent.codex": {
+    "library": "developer",
+    "path": "icons/openai.svg",
+    "backplate": false,
+    "recolor": {
+      "#193718": "currentColor"
+    },
+    "note": "OpenAI's logo identifies the Codex integration (Huan), without a background; the app draws the one-colour mark in the surrounding text colour so it reads on light and dark."
+  },
+  "agent.antigravity": {
+    "library": "brands",
+    "path": "antigravity.svg",
+    "note": "Original full-colour SVG supplied by Huan; redistribution license not supplied."
+  },
+  "agent.posit": {
+    "library": "brands",
+    "path": "posit.svg",
+    "viewBox": "0.9 2 45 45",
+    "recolor": {
+      "#fff": "none"
+    },
+    "note": "Posit's blue and orange mark, as on Posit Assistant's site, from the official logo at posit.co; cropped to the mark without the wordmark, white background removed (Huan). Redistribution license not supplied."
+  },
+  "agent.openscience": {
+    "library": "brands",
+    "path": "synthetic-sciences.svg",
+    "strip_style": true,
+    "note": "Synthetic Sciences mark supplied by Huan (from syntheticsciences.ai/img/logo.svg), without a background (Huan). Its site draws it dark on light and light on dark; the app draws it in the surrounding text colour to do the same. Redistribution license not supplied."
+  },
+  "agent.omp": {
+    "library": "brands",
+    "path": "oh-my-pi.svg",
+    "viewBox": "12 16 40 40",
+    "recolor": {
+      "#0f0a14": "none"
+    },
+    "note": "Official Oh My Pi mark (omp.sh/favicon.svg, the same file as can1357/oh-my-pi packages/collab-web/public/favicon.svg at b16bfbe0f9cf953d9a37fc17284967ed18fae015, MIT): the gradient π without its dark tile (Huan), cropped to the mark."
+  },
+  "agent.pi": {
+    "library": "brands",
+    "path": "pi.svg",
+    "viewBox": "150 150 500 500",
+    "note": "Official pi mark (https://pi.dev/logo.svg, the same mark as earendil-works/pi apps/p2/public/icons/favicon.svg, MIT), cropped to the mark without the original's empty margin."
+  },
+  "agent.generic": {
+    "library": "lucide",
+    "path": "icons/bot-message-square.svg",
+    "note": "Generic conversational-bot artwork for unbranded agent integrations."
+  },
+  "lang.r": {
+    "library": "developer",
+    "path": "icons/r.svg"
+  },
+  "lang.python": {
+    "library": "developer",
+    "path": "icons/python.svg"
+  },
+  "lang.nextflow": {
+    "library": "lucide",
+    "path": "icons/workflow.svg",
+    "note": "Generic workflow artwork for the Nextflow runtime; not the Nextflow logo."
+  },
+  "lang.shell": {
+    "library": "developer",
+    "path": "icons/bash.svg",
+    "note": "Bash artwork represents the general shell runtime category."
+  }
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Gene annotation (GFF, GTF)"><!-- Sandhill: GFF/GTF: a gene model, exons joined by introns. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). --><g transform="matrix(0.666667 0 0 0.666667 0 0)"><mask id="file-annotation-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white" />
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 15.75h10" /><rect x="8" y="13.5" width="2.2" height="4.5" fill="black" /><rect x="12" y="13" width="1.8" height="5.5" fill="black" /><rect x="15.4" y="14" width="1.4" height="3.5" fill="black" /></g>
+</mask>
+<path fill="#c62976" mask="url(#file-annotation-cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z" />
+</g><title>Gene annotation (GFF, GTF)</title></svg>

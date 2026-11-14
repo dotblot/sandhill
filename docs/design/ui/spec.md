@@ -27,7 +27,7 @@ Draft 19 (2026-10-17) changed:
 - The status bar's connection item shows the machine's icon instead of a dot,
   follows the Local | server tab, and opens a connection pop-up.
 
-Draft 20 (2026-10-18) drops every third-party logo, so the product can be sold
+Draft 20 (2026-10-18) drops every third-party logo, so the app can be published
 without asking anyone for permission; see "Icons and licences" below.
 
 Draft 21 (2026-10-19) changed:
@@ -306,7 +306,8 @@ and remote work are never shown together.
 - Project name row. At the right:
   - + opens "New in …", naming the folder it will use:
     - New file… (⌘N) and New folder… (⌥⌘N);
-    - New Quarto document…, New R script… and New notebook…, each with its icon.
+    - New Quarto document…, New R script…, New Python script… and New notebook…,
+      each with its icon.
     - It works in the selected folder, or the selected file's folder, or the
       project's top folder when nothing is selected. A grey line under the menu
       says to select a folder first.
@@ -315,9 +316,12 @@ and remote work are never shown together.
     current one. Folders always come first, and a folder's size is the sum of
     its files.
   - refresh.
-  Then the file tree. Each row's tooltip gives its name, size and when it was
-  modified. Names that start with a dot show (`.env`, `.sandhill`), except
-  `.git`, `.DS_Store`, `.ipynb_checkpoints` and `.Rproj.user`.
+  Then the file tree. Every file row shows its size after the name, including
+  editor-supported formats and `0 B` files. The name truncates before the size.
+  Folder totals remain limited to sorting by size. Each row's tooltip gives
+  its name, size and when it was modified. Names that start with a dot show
+  (`.env`, `.sandhill`), except `.git`, `.DS_Store`, `.ipynb_checkpoints` and
+  `.Rproj.user`.
 - **Selecting**: clicking a row selects it (the text colour at 9%). Clicking a
   folder also opens or closes it; clicking a file also opens it in the editor.
 - **Folder hover buttons**: hovering over a folder shows two 20 × 18px buttons
@@ -325,7 +329,8 @@ and remote work are never shown together.
   create inside that folder.
 - **Right-click menu**:
   - On a folder: "New in …" with New file, New folder, New Quarto document,
-    New R script and New notebook; then Rename…, Duplicate, Reveal in Finder (on
+    New R script, New Python script and New notebook; then Rename…, Duplicate,
+    Reveal in Finder (on
     a server, Download to this Mac…), Copy path, and Move to Trash (on a server,
     Delete…).
   - On a file: Open, then the same actions without the New items.
@@ -346,9 +351,32 @@ and remote work are never shown together.
 - **New files open in the editor** from a template:
   - Quarto: a title block named after the file and an empty R chunk;
   - R script: a comment with its name;
+  - Python script: an empty `untitled.py`, with the name editable before creation;
   - notebook: one empty cell, R on this Mac and Python on gpu01;
   - Markdown: a heading;
   - anything else: an empty file.
+- **Standalone documents** (Huan, 2026-11-07):
+  - `.md`, `.markdown`, `.mdown` and `.mkd`, case-insensitive, open as source,
+    with a same-tab rendered view of the current edits. This needs neither
+    Quarto nor a kernel; `.mdx` and extensionless README are not inferred.
+  - `.sh`, `.bash`, `.zsh` and extensionless files with recognised shell
+    shebangs open with Bash highlighting, without executing or attaching a kernel.
+  - CSV/TSV first asks for text, import into a live R/Python session, or cancel.
+    Text remains editable original source with coloured columns and a pinned
+    grey first logical record, respecting quoted separators and multiline fields.
+    Above 5,000,000 bytes, text is unavailable. Enforce the limit through
+    bounded `read_bytes` chunks, including on older daemons, not an unbounded read.
+    Import choices show environment and working folder, with readable session
+    numbers when needed; internal IDs are never rendered.
+    Import previews code and protects existing variables; it never starts a kernel.
+  - PDF, SVG, PNG, JPEG, GIF, WebP, BMP, TIFF and ICO open as read-only middle
+    document tabs. The single editor header holds fit/zoom and PDF page controls,
+    with pane height buttons pinned at the right. Previews preserve aspect ratio;
+    GIF animation is retained. Local/remote binary reads use the daemon and its
+    tunnel, not a local-only file path. SVG cannot execute scripts or load
+    external images. No kernel starts on opening.
+  - Unsupported files ask before opening in the default Mac app. Remote files
+    explicitly offer downloading a non-overwriting copy to this Mac and opening it.
 - The file tree, in the style of VS Code:
   - Every row has a 14px **chevron column**, then a 16px **icon column**, then
     the name. Files leave the chevron column empty, so a file's icon lines up
@@ -360,38 +388,21 @@ and remote work are never shown together.
     There are no elbows.
   - Clicking a folder opens or closes it, and its chevron turns to point down
     when open.
-  - **Icons come from the V32.2 set** in [`icons/`](icons/README.md), all drawn
-    for Sandhill, and are **the same in every pane**: the file tree, editor tabs,
-    Git, the @ menu, History and the Start screen.
-    - A file icon is a page outline (10 × 13 in the 16px box, folded corner,
-      1.1 stroke, filled with its colour at 13%) with a symbol inside (1.25
-      stroke). The colour says the family and the symbol says the type:
-      code (R, Python, shell) blue `#3a72b8`; documents (Quarto, R Markdown,
-      Markdown, README, CLAUDE.md) indigo `#6c6fb6`; notebooks orange `#c4672a`;
-      sequences (FASTA, FASTQ) teal `#1b9184`; alignments, variants,
-      annotation and intervals (BAM, VCF, GFF, BED) red `#c44f3f`; scientific
-      data (RDS, h5ad, HDF5, mtx) violet `#8a5fb0`; tables (CSV, TSV, Parquet)
-      green `#4e8f4c`; workflows (Nextflow, Snakemake, WDL, CWL) amber
-      `#b07d14`; configuration and lock files taupe `#857a64`; images pink
-      `#b4547d`; anything else grey `#8d877d`. Each colour has at least 3:1
-      contrast on both the light and dark panes, so nothing is inverted for dark.
-    - Compressed files keep the icon of what is inside (`reads.fastq.gz` is a
-      FASTQ); `icons/MAPPING.md` lists every extension.
-    Dimmed files show their icon at 55% opacity.
-    - Folders are filled, some with a cut-out emblem (drawn in the pane's
-      background colour): project blue (star), data teal (cylinder), results
-      amber (bars), figures red (line chart), tests violet (flask), notebooks
-      orange (cells), scripts green (prompt), cache grey (clock), .sandhill
-      taupe (ring), and other folders a plain light grey.
-    - R files show "R", Quarto files "Q", R Markdown "Rm", Python "Py", and
-      notebooks an orbit.
-    - Tables show a grid, and data files (.rds, .h5ad, .h5, .gz, .mtx, .bed) a
-      cylinder.
-    - Lock and config files show braces, and images and PDFs a picture.
-    - Shell scripts show a prompt, and .bib files a book.
-    - README shows an info circle, CLAUDE.md and AGENTS.md a sparkle, LICENSE a
-      badge, and .gitignore a branch.
-    - Anything else shows a page.
+  - **File/folder icons come from Gruvbox Material**, through the shared
+    [`icons/`](icons/README.md) catalog, and are **the same in every pane**:
+    the file tree, editor tabs, Git, the @ menu, History and the Start screen.
+    Original geometry is fitted into a 16px box without changing its colours.
+    Interface controls use Lucide and follow the text colour; available
+    Developer integration/runtime logos sit on light backplates.
+    - Compressed files keep the icon of what is inside (`reads.fastq.gz` is
+      FASTQ). File/folder matching rules are unchanged.
+    - R, Python, Bash and Markdown use Gruvbox artwork; notebooks use its
+      Jupyter icon. Quarto and Snakemake have dedicated artwork. Formats
+      without dedicated artwork use generic document, table or database icons.
+    - Folders use Gruvbox project, database, distribution, images, test,
+      configuration, Jupyter, scripts, temporary and generic-folder artwork.
+    - `icons/MAPPING.md` records the source and any substitution for every ID.
+    - Dimmed files show their icon at 55% opacity.
 - Under the tree are two sections, **Kernels** and **Resources**:
   - Each has a header row: a chevron and the name, 22px high, in the muted colour
     and semibold.
@@ -439,6 +450,11 @@ and remote work are never shown together.
   it from then on, joining a session of that kernel already running in its
   folder, else starting one; the project keeps the pick for next time. Until a
   kernel is picked, the document runs the project's (Huan's call, 2026-11-01).
+- The kernel picker lists runnable kernels only, grouped by language, including
+  kernels discovered inside conda/mamba environments. It has no separate
+  environment inventory or disabled rows for environments without a kernel
+  (Huan, 2026-11-08). A missing remembered selection remains an explicit error,
+  rather than silently switching kernels.
 - A notebook shows each cell's number at the top of its gutter, "#3" in faint
   grey above the run count, as # in the Agents pane names it. Numbers count every
   cell, text cells too, and follow cells as they move.
@@ -459,6 +475,9 @@ and remote work are never shown together.
   (R, Python) as its language icon and version, like the kernel pickers, with no
   status dot or language name. Clicking one shows that session's console; the
   tooltip gives the language, version and state.
+- Console kernel selection starts the session automatically, without a
+  separate Start button. Choosing the same running/starting kernel does not
+  create another; choosing it after shutdown or failure starts it again.
 
 - **Jobs** is the third tab, after Console and Terminal. Its tab shows how many
   jobs run, or in the accent colour, how many ended since the tab was last
@@ -546,11 +565,11 @@ omp.
     icon and name in orange.
   - right: the context ring and tokens used (opens the context breakdown above
     the pointer), and the model with its effort, "Opus (High) ⌄" (opens the
-    model list and the effort knob from draft 17). The effort bar is 16px
-    tall and the brain knob 30px, so the knob stands out above and below the bar.
-    The knob's centre stops 15px from each end, so the knob stays inside the
-    pop-up. The bar is inset 4px at each end, and its filled part ends exactly
-    under the knob's centre.
+    model list and thinking effort). Thinking effort is one segmented bar:
+    the fill runs to the chosen level with its name inside, hairline ticks
+    divide the rest, a click or drag snaps, the fill springs to its length
+    and glows while hovered or dragged; the strongest level is a warm
+    purple-to-orange gradient. No explanatory text (Huan, 2026-11-12).
 - **@ mentions**:
   - Typing @ opens a menu above the message box with the project's files,
     variables and plots, grouped under those headings and filtered by what you
@@ -592,11 +611,16 @@ omp.
   picking a file has it work on that file, and that the agent, model and effort
   come from the model button. Codex's and Antigravity's real model lists are
   there before the first message, read from their CLIs.
-- **The model menu** (the model button in the message box), from top to bottom:
-  - **A tab row**: a star (favourites), then one tab per agent showing its chip
-    (Claude Code, Codex, Antigravity, omp). Each tab is 32 × 30px, and the open
-    tab has a 2px underline in the text colour. It opens on the conversation's
-    agent.
+  Posit Assistant is selected through the same provider menu. Its new-message
+  box keeps that picker for switching back; PA's own model/mode controls
+  are not duplicated (Huan, 2026-11-08).
+- **The model menu** (the model button in the message box):
+  - A fixed left provider rail, with Favorites first, then Antigravity, Claude
+    Code, Codex and Posit Assistant, alphabetically by display name. The 32px rail
+    shows only icons, with names in hover tooltips; active state uses the shared
+    selection tint.
+    Existing conversations open on their provider. New conversations initially
+    select Antigravity's first returned actual model, not a CLI default marker.
   - A grey line naming the agent and its sign-in ("Claude Code · your Claude
     plan").
   - **The models**, one 30px row each: the name, its shortcut in a key cap (⌥1,
@@ -605,29 +629,36 @@ omp.
     is shaded and bold.
   - The favourites tab lists starred models from every agent, each with its
     chip. With none starred, it says "Star a model to keep it here".
-  - The model list is the same height on every tab (four 30px rows). A longer
-    list scrolls inside it, so the menu never changes size.
-  - Then the effort knob, as before.
+  - The app's menu is fixed at **380×360px** on every tab, including empty
+    favourites. The left provider rail and bottom effort control stay fixed;
+    the right model list scrolls. Long names cannot widen the popup.
+  - Thinking effort is the segmented bar described under the message box; its
+    width is fixed, and a level name too long for its fill sits just after it.
   - In a new conversation every tab works. Picking another agent's model
-    switches the agent, and keeps the effort if that agent has the same level,
-    else uses its recommended one.
+    switches the agent. Generic effort can carry over when supported; an
+    Antigravity variant uses the effort encoded by the actual selected ID.
+    Every agent's tab shows that agent's effort bar (Favourites: the box's
+    agent); a level set there goes with a model then picked on that tab.
   - Once a conversation has started, the other agents' tabs and rows are dimmed
     ("start a new conversation to use it"), because the agent's own conversation
     can't move to another agent.
   - Claude Code's models: Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5.
 - **Antigravity** (Google's agent):
   - It runs as the Antigravity CLI on the server and shows as a chat, through
-    its headless mode (it has no ACP server; see docs/design.md).
+    its structured headless input/output mode (see docs/design.md).
   - It uses your Google AI plan.
-  - Its chip is "Ag" on blue-teal `#2b6f8f`, with no Google logo.
-  - Models: Gemini 3.5 Flash and Gemini 3 Pro in the mockup. The real list comes
-    from the CLI.
-  - Effort: Low, Medium (recommended) and High.
+  - Its icon uses Huan's supplied full-colour Antigravity SVG.
+  - Models come from the CLI. Returned sibling IDs such as Gemini Flash
+    `-low`, `-medium` and `-high` appear as one model row; the labelled effort
+    slider selects the matching real ID, never a fabricated base ID.
+  - Only levels actually returned for that family appear. The first model's
+    encoded effort is the initial level. Do not also send `--effort` for a family
+    variant; singleton or unrelated model IDs retain their normal effort behavior.
   - Context: 1M tokens. **Cancel** (next to the "New
   conversation" heading, or the x on its tab, or esc) goes back to the
   conversation you were in.
-- **Provider icons** are letter chips, not company logos (see "Icons and
-  licences").
+- **Provider icons** use available Developer Icons logos, Huan's Posit Assistant
+  and Antigravity marks, or generic Lucide symbols (see "Icons and licences").
 - **Fix and Explain** (built 2026-10-27): small buttons (11px) under every
   error, in a cell's output and in the Console.
   - Fix asks the agent to change the code so it works and run it again;
@@ -683,8 +714,10 @@ omp.
   line is the address.
 
 ## Status bar (26px)
-- Left: the connection, then the kernel state ("R idle", "Python running") and
-  jobs of the machine picked in the title bar's tabs.
+- Left: the connection, immediately followed by CPU, memory, available GPU
+  and disk indicators; then problems/notices (Huan, 2026-11-08).
+  Clicking a resource opens its details above that indicator, constrained
+  to the window.
 - The connection item is the machine's icon and name: a cloud and "gpu01", or a
   screen and "Local". The icon is the same one as on the title bar's tabs, and
   it shows the state. There is no status dot:
@@ -730,46 +763,59 @@ omp.
   command palette, context menus and the plot zoom dialog. The context
   breakdown is 340px wide and the model popup 268px, aligned to the right edge
   of the pane.
-- Accent: `#c2570c` in light mode, `#f29a45` in dark mode.
+- **Dropdown interaction** (Huan, 2026-11-07): clicking a trigger opens its
+  menu; clicking that same trigger closes it. Clicking a different trigger
+  switches menus; outside clicks and Escape dismiss. The active project
+  capsule has a local-device/server icon before its name, as do collapsed
+  capsules. The title-bar project `+` is absent on Welcome, retained in projects.
+  Since 2026-11-12 Welcome draws no capsules at all; its Projects page lists
+  Pinned, Open and Running projects, and Resources and Storage is a page too
+  (plan in `docs/design/welcome-projects-resources-plan.md`). Later that day
+  Welcome became its own window, as wide as its sidebar and widest page and half the display's height (at least 800×600), opening on This Mac's page, beside one
+  maximized main window (`docs/design/idle-agents-welcome-window-plan.md`).
+- **Unified interface colours** (Huan, 2026-11-08): use GPUI Kit's bundled
+  Default Light/Dark colours in both Kit controls and custom views, including
+  its neutral primary instead of the old orange or macOS system accent.
+  Backgrounds, text, borders, selection, hover and semantic status colours
+  share that source. Terminal foreground/background/cursor and ANSI colours,
+  Git graph/avatar colours and generated category colours follow it too.
+  Keep current glass opacity, transparent Console/AI inputs, layout, type,
+  radii, icon source colours and user output colours. Preserve Xcode syntax
+  and its italic rules; editor chrome uses Kit. This supersedes earlier
+  palette descriptions without changing component geometry or interactions.
 
 ## Icons and licences
-- **`icon-sheet.png`** is `icons/preview.html` on the light and dark panes:
-  every V32.2 icon with its id, and the rest, hover, selected and disabled states.
-Every icon is drawn for Sandhill. Since draft 35 the agent and language chips
-imitate the products' own logos, at Huan's request; logos are trademarks, and
-their owners' terms apply to a product that is sold.
-Product names in plain text ("Claude Code", "Codex", "Opus 5.5", "Python") are
-fine: they only say what Sandhill works with.
-- **Chips:** a 14 × 14 rounded square (radius 4) inside a 16px box, with a
-  white mark drawn as strokes (1.55), so they don't depend on a font.
-- **Language chips** (draft 35, from Huan's V32.2 picture):
-  - R: "R", white on blue `#2368b8`;
-  - Python: the two-snake logo (blue `#3a76ad`, yellow `#f2c53d`) on a white
-    tile;
-  - Nextflow: a green "N" (`#13a37f`) on a white tile;
-  - Shell: a `>_` prompt, white on graphite `#33363d`.
-- **Agent chips** (draft 35, from the same picture, "for now"):
-  - Claude Code: an orange spark (`#d97757`) on white;
-  - Codex: a black six-link knot on white;
-  - Antigravity: an "A" in blue, red, yellow and green on white;
-  - omp (Oh My Pi): "π>", white on violet `#6b4fc8`, Sandhill's own mark for
-    the integration, not Oh My Pi's logo.
-  White tiles have a 0.6 hairline edge (black at 10%). The Claude, Codex,
-  Antigravity, Python and Nextflow chips are redrawn lookalikes of trademarks,
-  to be replaced by each owner's official file (see `icons/README.md`).
-- **The V32.2 set** lives in [`icons/`](icons/README.md): one SVG per icon,
-  `registry.json` (ids, files, colours, the V31 ids each replaces and the rules
-  that pick a file's icon), `MAPPING.md` and `preview.html`. `icons/build.py`
-  writes all of it and the icon block in the mockup; change icons there.
-- **The crane mark V1.1** is in [`brand/`](brand/README.md), approved on
-  2026-10-24. It is the app icon.
-- **File icons:**
-  - `.qmd` shows a "Q" (not a mark like Quarto's).
-  - `CLAUDE.md` and `AGENTS.md` show a plain four-point sparkle in the documents
-    colour.
-  - No file icon uses a format's or tool's own logo (Jupyter, Quarto, Nextflow,
-    Snakemake, Python): each shows a symbol for what the file holds.
-- **The app icon** is the Sandhill crane (until draft 33 it was Huan's painting).
+- **Sources** (Huan, 2026-11-06): Gruvbox Material Icons for file and folder
+  artwork; Lucide for interface controls; Developer Icons for available
+  language and integration logos. Atom Material is removed. The Sandhill
+  crane and app icon are not replaced.
+- **Coverage:** 95 interface, 35 file, 10 folder, 6 agent and 4 language icons,
+  using 132 selected SVGs. Existing identifiers and matching rules stay.
+- **Geometry and contrast:** original shapes fit proportionally in 16px.
+  Interface art uses the control's text colour. Gruvbox retains its original
+  colours without luminance adjustment; Developer logos retain source colours
+  on small white rounded backplates. Generic Lucide content symbols use
+  neutral grey ink. Fonts and interactions are unchanged.
+- **Integrations:** agent marks have no background. Claude uses the Claude
+  artwork, Codex OpenAI's logo and OpenScience the Synthetic Sciences mark
+  (both in the text colour), Posit Assistant Posit's blue and orange mark
+  without the wordmark, Oh My Pi its gradient π, pi its own mark, and
+  Antigravity Huan's supplied full-colour SVG. Other unrepresented agents
+  and the Nextflow runtime use generic Lucide symbols.
+- **Generation:** `icons/catalog.json` stores IDs, labels and association
+  rules; `system-sources.json` and `content-sources.json` select upstream SVGs.
+  `icons/build.py` generates app SVGs, the registry, source mapping, preview,
+  and mockup sprite/block offline from pinned originals in `icons/vendor/`.
+- **Licenses:** upstream MIT/ISC texts, individual SVG notices and credits are
+  retained in `icons/vendor/`. Mac bundles include icon notices under
+  `Contents/Resources/licenses/icons/`. These licenses do not grant trademark
+  rights or imply endorsement. See [`icons/README.md`](icons/README.md).
+  The user-supplied Posit and Antigravity marks have no supplied redistribution
+  license; permission or applicable brand-use terms must be recorded before release.
+- **Preview:** `icons/preview.html` shows the set on light and dark panes,
+  including control states; `icon-sheet.png` is its refreshed browser capture.
+- **Brand:** the Sandhill crane V1.1 and app icon remain unchanged, from
+  [`brand/`](brand/README.md).
 - **Fonts:**
   - The system fonts need no licence in the app, because the app does not ship
     them.
@@ -783,12 +829,11 @@ fine: they only say what Sandhill works with.
     - One set, Font Logos, has no licence.
 
 ## Open questions
-- Official marks for Claude Code, Codex and Antigravity: only with each owner's
-  written permission for a product that is sold.
 - Antigravity: whether its plan usage can be shown in the status bar like
   Claude's and Codex's (headless agy doesn't report it).
-- The monospace font for a commercial release: Maple Mono NF (needs third-party
-  notices), plain Maple Mono (only its OFL text), or the system's SF Mono (nothing
-  to ship, but no ligatures and no Nerd Font symbols).
+- The monospace font for the public release: Maple Mono NF (needs third-party
+  notices, and its Font Logos set has no licence), plain Maple Mono (only its
+  OFL text), or the system's SF Mono (nothing to ship, but no ligatures and no
+  Nerd Font symbols).
 - Where banked plan-usage resets come from.
 - Whether more panes should be movable by dragging.
