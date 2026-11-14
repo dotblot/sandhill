@@ -254,10 +254,10 @@ pub(super) fn gpus() -> (Vec<GpuStats>, GpuStatus, Option<String>) {
         ],
     );
     let mut errors = Vec::new();
-    if let Err(error) = &nvidia {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            errors.push(format!("NVIDIA metrics unavailable: {error}"));
-        }
+    if let Err(error) = &nvidia
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        errors.push(format!("NVIDIA metrics unavailable: {error}"));
     }
     let mut gpus = nvidia
         .as_ref()
