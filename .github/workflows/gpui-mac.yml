@@ -147,13 +147,18 @@ jobs:
           pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null || { echo "Sandhill.app quit soon after starting"; exit 1; }
           screencapture -x start-window.png || echo "could not take a screenshot"
           pkill -f "$app/Contents/MacOS/" || true
+      # Kept a week: every push stores a 50 MB app, and the account's
+      # artifact storage filled up with months of them (2026-11-14). Any
+      # older build can be made again from its commit.
       - uses: actions/upload-artifact@v4
         with:
           name: Sandhill-macos-arm64
           path: Sandhill-macos-arm64.zip
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: start-window-screenshot
           path: start-window.png
           if-no-files-found: ignore
+          retention-days: 7
