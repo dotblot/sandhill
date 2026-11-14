@@ -18,7 +18,7 @@
 | AI agents | Run the **official, unmodified `claude` and `codex` CLIs on the server**, under the daemon, each logged in with your own subscription **or an API key** (Anthropic or OpenAI format, with a custom base URL for compatible providers). Give both an **MCP server** exposed by the daemon ("run chunk", "read outputs", "list variables", "tail job log"). | This is the only clean way to use subscriptions without an API key. Running them server-side means agent work also survives the Mac closing. See §5. |
 | Language servers | Run on the server through the daemon: **basedpyright** or **ty**, plus **ruff** (Python); **Ark's built-in LSP** and **Air** (R formatter) | Analysis runs where the code and packages are. |
 
-**In short:** a native Rust app on the Mac (GPUI), a Rust daemon under systemd on Ubuntu, Jupyter kernels (ipykernel and Ark) behind both `.ipynb` and Quarto, sidecar output caches for Quarto, and Claude Code, Codex and Antigravity running unmodified on the server, with an MCP bridge into your live kernels.
+**In short:** a native Rust app on the Mac (GPUI), a Rust daemon under systemd on Ubuntu, Jupyter kernels (ipykernel and Ark) behind both `.ipynb` and Quarto, sidecar output caches for Quarto, and Claude Code, Codex, Antigravity, Posit Assistant, OpenScience, Oh My Pi and pi running unmodified on the server, with an MCP bridge into your live kernels.
 
 ---
 
@@ -74,9 +74,242 @@ The `sandhill-link` crate (`crates/link`) is how the app reaches a daemon, on th
 - **R with no setup (Ark).** The app also carries Linux builds of Ark, Posit's R kernel (MIT), downloaded from its GitHub releases when the app is built. The check reports whether R is on the login `PATH` and the SHA-256 of `~/.local/share/sandhill/bin/ark`; when the server has R and not this Ark, the app copies Ark there the same way, after sandhilld. The daemon offers that file as the `ark` kernel ("R (Ark)") whenever R is on `PATH`, without registering it with Jupyter, and a kernel the user registered as `ark` wins. Ark stays off `PATH` because KDE has a program called `ark` too. Ark links to glibc, so unlike sandhilld it needs a glibc Linux, which any Linux with R from the usual packages is. If copying Ark fails, the connection goes ahead and R needs a kernel installed on the server, such as IRkernel.
 - **Nothing to set up on the server.** No root, no open ports, no systemd unit: `attach --start` starts the daemon as the user and it keeps running after ssh disconnects. The systemd unit in `packaging/` stays optional, for starting the daemon at boot.
 - **Reconnecting.** When the connection drops, the app retries with backoff and the UI resubscribes from the last event it saw, so output printed while disconnected appears once it is back.
-- **The start screen** lists servers next to "This Mac"; "Connect to Server…" adds one, and the list is kept in the app's `servers.json`. A window showing a project on a server is titled "project — server".
+- **The start screen** is laid out like a macOS settings window (Huan, 2026-11-11; plan in [design/welcome-sidebar-plan.md](design/welcome-sidebar-plan.md)). A glass sidebar lists Devices (This Mac first, then saved servers, each with a status dot), a "+ Connect to Server…" row, Projects, Manage → Resources and Storage and Trusted Folders, and the crane with the version and "Elegance in discovery." at the bottom; it has no Recent section. Since 2026-11-12 ([design/idle-agents-welcome-window-plan.md](design/idle-agents-welcome-window-plan.md)) Welcome is its own window, half the width and height of the display (at least 800×600), beside one maximized main window, opening on This Mac's page; Projects lists pinned, open and running projects of every connected device ([design/welcome-projects-resources-plan.md](design/welcome-projects-resources-plan.md)); devices can be renamed and projects given built-in icons, as this Mac's settings. Resources and Storage is a page, not a dialog. A device's page shows: a left-aligned title with Connect/Disconnect for servers, a state subtitle, a per-server "Connect automatically" switch (default on), the projects as one grouped inset list, a right-aligned "Open Folder…" and the note about kernels surviving. Connection state is shown by dots and buttons, never by a switch; Disconnect drops only Welcome's link and never stops server work. Earlier the same day it was one panel with device tabs; before that, a card per device. Connect to Server opens a centred dialog. Choosing a folder (Huan, 2026-11-14; [design/folder-chooser-plan.md](design/folder-chooser-plan.md)): on this Mac, Open Folder and the plot window's folder choice use the system's folder window, since the app and the daemon see the same files, and the chosen path still goes to the daemon to open; folders dragged from Finder onto Welcome open the same way. For servers, the folder dialog (`folder_dialog.rs`, reading folders through the daemon, which marks Git and Sandhill folders when `ListDir` asks) has places, a clickable path, filtering, keyboard use and New Folder; a start folder that does not exist yet opens its nearest parent. The server list is kept in the app's `servers.json`. A window showing a project on a server is titled "project — server".
 
 Not yet: password prompts, forwarding ports for the Viewer pane, Mac servers (the app would need to ship its own Mac build as one), and a server that can't reach `~/.local/bin` (a read-only home).
+
+### Device resource, storage and removal management (approved 2026-11-08)
+
+The status-bar device menu exposes a management window for this Mac and saved
+SSH destinations. The current device alone is selected initially; selecting
+other devices is explicit. Each device reports its resources, affected project
+paths, storage categories and individual operation results. An offline device
+is not a successful cleanup. Inspection of an explicitly selected device may
+connect to it; ordinary Disconnect/Reconnect retains its existing meaning.
+
+Stopping all resources first requests shutdown of Sandhill-owned kernels,
+terminals, jobs and agents and confirms their exit. Remaining processes require
+a separate force confirmation. Never identify ownership by a generic executable
+name such as `python` or `R`; unverifiable processes remain reported rather than
+being killed. Stop the daemon only after resource shutdown succeeds. Processes
+remain independent during ordinary app exit, link loss and daemon upgrades.
+Terminal hosts started by builds before managed stops (their `host.json`
+holds only `host` and `pid`) cannot stop without escalating: their only
+request, Hangup, sends SIGHUP and then SIGKILL after 3 s. Stop All reports
+them; explicit Force Stop sends that Hangup, the same request closing their
+tab used, and waits for the recorded exit (Huan, 2026-11-11).
+An incomplete Stop All leaves the daemon refusing ordinary work, but an
+explicit reopen of that device replaces the daemon; the replacement adopts the
+remaining resources and lists them for another Stop All. Builds before
+2026-11-11 refused that reopen ("resource shutdown is incomplete"), leaving the
+device unreachable; the attach bridge now answers that refusal by stopping
+only the daemon (StopDaemon keeps resources running) and starting a new one.
+
+Quit defaults to keeping background work. The alternate choice is **Stop all
+background resources and quit**, not daemon-only shutdown. Save all edited
+documents first; failure or unconfirmed remaining resources keeps the app open.
+Devices shared by several project tabs are operated on once.
+
+Storage inspection separates programs, output/history, logs, regenerable cache,
+app settings and project-local data. Cache has a bounded automatic cleanup
+policy and active previews are protected; saved outputs and conversations are
+not disposable cache. Destructive cleanup previews paths and sizes and requires
+confirmation; historical data is never selected by default. Project `.sandhill`
+directories are report-only in device cleanup, not recursively erased.
+
+Removal uses installation provenance (exact path and checksum), not a filename
+guess. Changed, shared, externally installed or unverifiable components remain
+with an explanation. Do not remove R/Python, conda environments or standalone
+agent CLIs. Stop resources, remove only owned service registrations/components
+and Sandhill tool registrations, optionally remove selected backend history,
+then stop the daemon. Preserve data by default. Report each failed step and
+remaining path, including unreachable devices. Optional removal of the current
+Mac app moves the bundle to Trash last and only after all selected device
+operations succeeded; development checkouts are not app bundles to delete.
+
+SSH upgrades also support binaries installed before provenance records existed.
+Before replacing an unrecorded daemon or Ark, preserve and verify its exact
+bytes beside the original at `<target>.legacy-sha256-<checksum>` and report the
+backup path. A conflicting backup or mismatched existing ownership record still
+blocks replacement. Only the newly installed binary is owned by Sandhill;
+legacy backups remain protected and are not silently adopted for uninstall.
+
+### Compact status and monitoring (approved 2026-11-08)
+
+The status bar keeps the device name and a colored state dot, with full state
+text in the tooltip/menu. CPU, memory, disk and available GPU metrics use small
+static rings beside that device; details report temperatures only when the
+host exposes them without elevated privileges. Unknown readings are not zero.
+GPU collector failures remain visible even when another GPU can be measured.
+
+The opposite end shows logged-in AI account quotas reported by the unmodified
+CLIs. Use their actual window durations and reset times; show the 5-hour and
+7-day windows only when supplied. Missing, stale or expired readings stay
+unavailable rather than implying free quota. Never extract OAuth tokens to
+query provider endpoints or send a conversation prompt just to fetch limits.
+
+Antigravity 1.5.5 exposes `/usage` through the official read-only
+`agy --print /usage --output-format json` command. Keep its Gemini and
+Claude/GPT quota groups separate and convert remaining fractions to usage.
+The CLI result does not identify the account: display it as an anonymous full
+CLI snapshot, never merge it with an account feed. The same built-in handles
+`/usage` from Sandhill's chat; it must not be sent as a model prompt through
+stream-json or change the conversation. Command-line mode runs agy's native
+TUI, whose own `/usage` command handles terminal input.
+
+Quota rings show their window inside (`5h`, `7d`, or a compact duration).
+A provider's popup shows its larger, bold name and logo, then the windows
+with resets, then its display switch and refresh, then "All AI accounts…"
+(Huan, 2026-11-11). Claude Code 2.1 has no headless, read-only usage command
+(`/usage` is an in-session screen), so Claude quota appears only from the
+status line of a running Sandhill Claude conversation and the popup says so.
+
+Console controls share the Console/Terminal/Jobs tab strip, only on the Console
+tab while expanded. Outer left/right pane margins are 7px; other gaps remain.
+Terminal replay reconstructs the screen without sending historical query
+responses back to the process; live terminal queries must still work.
+
+### Workspace controls and session retention (approved 2026-11-10)
+
+Preserve the existing glass, fonts, pane layout, icon source colors and accent
+palette. These changes affect controls and session lifecycle, not the visual
+direction. No new external services, credentials, dependencies or installations.
+
+1. **Stop then reopen**: distinguish a reachable daemon from one accepting work.
+   `StopResources` currently latches maintenance; a same-build attach accepts
+   that daemon based on ping/build alone. Trace why quit left that process
+   available, confirm actual daemon exit rather than only its stop reply, and
+   make an explicitly reopened device recover a stopped daemon safely. Do not
+   clear maintenance or restart during an active cleanup/uninstall, and do not
+   restart kernels stopped by the user. Failures must remain visible.
+   Legacy inventories can include unverifiable independent work. They do not
+   block a daemon-only cooperative restart: wait for the legacy lifecycle gate
+   and confirmed daemon exit, retaining every independent process.
+2. **Project close**: put an X immediately after every project name, active or
+   inactive. Reuse the existing project-close/save confirmation path. Closing a
+   project must not stop its background work; closing the last shows Welcome.
+3. **Resource icons**: replace CPU/memory/GPU/disk words in the left status bar
+   with existing control icons; retain usage rings and click details, including
+   unavailable readings and multi-GPU errors.
+4. **Quota controls**: match resource-button geometry and neutral hover/selected
+   styling. No quota-details tooltip on hover; click toggles details and
+   outside click/Escape dismisses. Each agent row has a persisted display
+   switch and refresh-now action. Disabled agents disappear from the status bar
+   and stop scheduled quota queries, but remain configurable from an account
+   control even when all are disabled. Manual refresh is explicit and bypasses
+   cached quota values; disabling must reach daemon provider selection, not
+   merely hide rendering. Do not change agent login or running conversations.
+5. **Welcome theme**: reuse the workspace theme toggle at the top right.
+   Correct secondary/path/status/footer text against both the glass wall and
+   cards in dark mode without changing glass opacity or recoloring all surfaces.
+6. **Console sessions/history**: move the unbound kernel picker immediately left
+   of the minimize control. Switching between unbound R/Python kernels retains
+   sessions instead of calling Shutdown, reuses an existing selected session,
+   and restores its journaled input/output. Add a per-session command-history
+   popup showing the newest 50 entries; retain at most 100 command-history
+   entries, removing oldest beyond that. Selecting history fills the composer
+   without executing. This bounded command list must not delete execution/output
+   journal evidence used by notebooks or analysis checks. Handle switching while
+   a session starts and while another session is busy.
+7. **Collapsed file groups**: group same-type document icons in inactive
+   capsules, ordered by first occurrence. A singleton has no count; multiple
+   files show one original-color icon and their count. Expanded file labels,
+   close controls, dirty state and non-file views remain available.
+
+Implementation spans GPUI, daemon and protocol. Verification uses targeted
+lifecycle/session/history/quota checks and an isolated native app run at normal
+and minimum window sizes in both themes. Existing user sessions, project data
+and installed applications are not stopped, migrated or replaced for verification.
+
+### RStudio and Positron borrowing (approved 2026-11-11)
+
+Huan accepted the first four priorities from the RStudio/Positron comparison:
+editing basics (completion and diagnostics, find/replace, folding/outline,
+RStudio R shortcuts), data viewing (object explorer, table column visibility
+and import code, fixed-size plots), convenience (terminal file links, Quarto
+render jobs, kernel recommendation reasons, pinned recents, focus mode) and AI
+context (Data Explorer state, Viewer reading, notebook Explain/Improve).
+Debugger, package development, profiling, spelling, snippets, databases,
+publishing, extensions, `.RData` and multi-root workspaces are not included.
+Huan accepted the plan's defaults: outline as an editor-action-row popup, ty
+and ruff for Python (Sandhill-owned pinned copies only when absent), and new
+conversations for notebook Explain/Improve. The implementation plan is in
+[design/rstudio-positron-borrowing-plan.md](design/rstudio-positron-borrowing-plan.md).
+
+Implemented 2026-11-11. Decisions made while building:
+- Python language hosts are shared per project; R hosts are keyed by the Ark
+  session, because Ark's language server reads that session's live globals.
+  Pinned Ark returns empty Jupyter `complete_request` replies, so R completion
+  comes only from Ark's LSP; the R Console therefore has no completion.
+- Language features attach when an editor is clicked/focused by the user or
+  edited; diagnostics are not computed for files that were only opened.
+- Render (icon), notebook AI (icon) and Clear outputs (icon) are icon-only so
+  Save stays visible in the 29px row at the default window width. At the
+  minimum width the row still clips, as before; Render is also in the palette.
+- The plot size control is a short `Fit`/`W×H` label for the same reason.
+- Bitmap plots now use the shared lenient base64 decoder: Ark sends PNG data
+  without padding, which the strict decoder rejected.
+- Known limit: the editor component anchors completion below the caret, so
+  Console completion near the window bottom can extend past the window.
+
+### Huan's 2026-11-11 feedback (approved)
+
+The plan is in
+[design/ui-feedback-2026-11-11-plan.md](design/ui-feedback-2026-11-11-plan.md).
+Decisions made while building:
+- Console plots stay inline. Sending a plot (or all of a session's plots) to
+  Plots is explicit; auto-send is an opt-in switch per device. Sent plots are
+  remembered locally, bounded, so reconnects restore only what was sent.
+- The Console has its own session target, separate from the active editor's.
+  Activating or running a document moves it to that document's session; a
+  document's own kernel is never changed by Console choices.
+- Opening documents shows the tab at once with a thin progress bar. Every
+  cell's editor is still created, so whole-document actions (Run All,
+  find/replace, outline, saving, agents) see the whole model. Only cell,
+  output and add-row views are built near the viewport, with reserved heights
+  and scroll anchoring. Initial script folding runs in the background. On a
+  1,500-cell notebook the first draw fell from about 102 ms to 8 ms, and a
+  50,000-line script's editor setup from 278 ms to under 1 ms.
+- The window busy cursor was removed; the pointer never changes while loading.
+
+### Huan's 2026-11-11 feedback, third batch (approved)
+
+The plan is in
+[design/ui-feedback-2026-11-11-batch3-plan.md](design/ui-feedback-2026-11-11-batch3-plan.md).
+Decisions made while building:
+- A new `.qmd` takes its first chunk's language from the kernel the document
+  will use (remembered choice, project default, first installed kernel), or
+  starts with only the YAML header when no kernel is known; `.Rmd` stays R.
+  Before, every `.qmd` began with an `{r}` chunk, so Python code typed into it
+  was analysed as R and its names were unknown to later Python chunks.
+  Existing `{r}` chunks stay R.
+- Pane headers reset the surface alpha to 0.82 rather than multiplying the
+  glass alpha, so a header is never less opaque than its pane. Scrolling
+  content is padded below the header, scrollbars start beneath it, and
+  programmatic scrolls (jump to cell, find, outline, file reveal) keep their
+  target below it. Headers are the last child of their pane, so popups from
+  other panes still draw over them.
+- The plot window keeps the original picture's pixels until it is resized,
+  so it opens looking exactly as before; Size follows window then sets the
+  export size from the room at 96 points per inch.
+- Switching a conversation between chat and command-line mode needs a bridge
+  that reports its view mode. A bridge without it, on a daemon whose binary
+  matches this app's bundled server daemon, is restarted (idle only) and then
+  switched. On an older or unverifiable daemon the AI pane says that device's
+  Sandhill service must be updated first (it is, when the device is connected
+  from an app build carrying server daemons); a dev run has none. Every AI-pane
+  error banner can be closed and clears on the next success.
+
+### Huan's 2026-11-11 feedback, fourth batch
+
+Small changes Huan described directly (no separate plan):
+- AI composer: Up/Down move through the `@`/`#` list, Enter/Tab pick, Escape
+  closes. Kit's input binds those keys to actions (`MoveUp`, `MoveDown`,
+  `IndentInline`, `Enter`), so the composer captures the actions, not key
+  events. The history's Delete? confirmation is white on solid red.
+- Data Explorer and notebook tables: see *Filters, search and sorting* and
+  *Read-only table selection* below. Huan chose copy only (no cut/paste) and
+  values without a header row.
 
 ### Why a custom daemon and not Jupyter Server?
 Jupyter Server keeps kernels alive after the browser closes. But in the classic setup, outputs a kernel emits while no client is attached go nowhere: IOPub is publish/subscribe, so a disconnected client misses them. (That is my inference from the protocol; JupyterLab's newer server-side document work narrows this gap.) Your core need is "close the laptop, come back, see everything that happened". So the daemon itself must subscribe to IOPub and journal every message to disk. On reconnect the Mac asks for "everything since sequence N" and replays it. This is the same idea nteract 2.0's `runtimed` uses locally: a per-user daemon that owns kernels, with outputs kept as content-addressed blobs ([architecture](https://mintlify.wiki/nteract/desktop/development/architecture-deep-dive)). You are adding "remote" and "journal while nobody is watching".
@@ -123,24 +356,120 @@ window's left and right edges (10 px until 2026-11-03). The left panel holds, to
 Variables, Kernels, Help and Packages (one tab group); Files, Git, Plots and
 the Viewer (another), each half of the panel's height at first (2026-11-03). The middle has the editor with the Console, Terminal
 and Jobs under it. The AI pane is the right panel. The machine's resources
-(CPU, memory, GPUs, disk) sit at the right of the status bar, and the title
-bar has a light/dark theme button. (Revised the same day: the first version
+(CPU, memory, GPUs, disk) follow the connection item at the left of the status
+bar (Huan, 2026-11-08), and the title bar has a light/dark theme button.
+(Revised the same day: the first version
 was 1/5, 2/5, 2/5 with Kernels and Resources as sections of the left panel.)
 The descriptions of panes below predate this and place them where they used
 to be.
+
+**Console and new conversation simplification (Huan, 2026-11-08).** With no
+document open, selecting a Console kernel starts it immediately; no Start
+button remains. Re-selecting a ready or starting kernel keeps that session;
+selecting it after shutdown/failure starts it again. Rapid kernel changes
+or cancellation cannot let an earlier start overwrite the newest selection
+or leave its unused kernel alive. Notebook kernel selection keeps its
+existing run-on-demand behavior.
+
+The New conversation page has no agent-button row. The composer's
+provider/model menu remains the selection point for all existing agents.
+Posit Assistant stays selectable there, and its new-conversation composer
+keeps the provider picker so the user can switch back. PA's own model/mode
+controls are not duplicated. Resource details are anchored above the selected
+left-side status indicator and constrained to the window.
+
+Each of the four pane groups (left top, left bottom, editor, Console group)
+has Collapse and Expand vertically buttons (Huan, 2026-11-05). Collapse
+leaves its 29 px title bar and gives the rest of that column to its sibling;
+vertical expansion does the opposite. Repeating the corresponding action
+restores the normal height shares, which are not overwritten by either
+operation. Column widths stay unchanged. The Console group's close button
+is removed; collapsed contents stay alive, including their kernels,
+documents and terminal sessions. Native notebook/Viewer pages are hidden
+while their containing pane is collapsed. Narrow tab strips scroll
+horizontally so the height buttons remain reachable. The AI pane already
+fills its column and has no height controls.
+
+**Brand accents and compact editor (Huan, 2026-11-08).** Kit's default neutral
+surfaces and glass remain, with interactive colours derived from the crane's
+navy `#142844`; dark mode uses a lighter blue with readable contrasting text.
+Primary buttons, focus rings, links, slider fill and selected rows/tabs share
+these tokens in Kit and custom UI. Code syntax, source icon colours, semantic
+red/amber/green, charts and terminal ANSI hues are unchanged.
+Editor pane controls and actions occupy a single 29px row, separate from the
+window's project capsules. Actions scroll horizontally when space is tight;
+height controls stay pinned. The kernel picker contains its state dot rather
+than a separate status phrase. Console puts that dot after the filename, or
+in the picker with no file. Status and failure details remain available on hover.
+The picker lists only runnable R/Python kernels, including those discovered
+inside conda/mamba environments. It does not show a separate environment
+inventory, disabled environment rows or an inventory-query warning (Huan,
+2026-11-08). Existing kernelspec discovery and command deduplication remain.
+Per-document kernel choice is saved immediately in the daemon's existing
+project state at `documents[absolute_file].kernel`. Recovery prefers a live
+session, then remembered document choice, then project default, then notebook
+metadata/language fallback only when no choice exists. Missing remembered or
+project kernels remain visible and require explicit selection before running.
+
+**Read-only media tabs (Huan, 2026-11-08).** PDF and SVG/PNG/JPEG/GIF/WebP/BMP/
+TIFF/ICO files open in middle document tabs without a kernel. Existing daemon
+`serve_page` and port tunnels stream the binary to a private `0600` temporary
+file, removed with the preview. PDFKit supplies page navigation, fit and zoom;
+AppKit supplies image decoding, animation and scrolling. SVG uses existing
+resvg with no scripts or external image references, and a shared font cache.
+Fit is applied after native view layout; explicit zoom survives resizing.
+Native surfaces hide on tab/project changes and editor collapse, and share
+GPUI Fast's clipping/overlay composition. Preview limits are 512 MiB per file,
+32 MiB for SVG source and 32M SVG raster pixels; corrupt/unsupported files
+show an error rather than opening externally or starting a kernel.
 
 In notebooks, a cell shows its number (#3) in the gutter. Between the cell
 and its output a line shows the run's number, as Jupyter does (`[3]`), and
 how long it took (2026-11-03, Huan: this replaces "no run count" and the
 time under the number). Cells take the notebook's whole width. Output text can be selected and copied, and a plot
 under a cell can be saved (the same dialog as the Plots pane's) or copied.
+Each code cell shows line numbers starting at 1; Markdown does not.
+R and Python function calls italicize only named argument identifiers in
+`name = value`, not the equals sign, value expressions, formal parameters,
+properties or ordinary variables.
+Python `from`, `import` and import-alias `as` tokens are also italic;
+unrelated `as`/`from` keywords and imported names retain their existing
+styles. R `library()` and `require()` call names, including qualified
+`base::library()`, are italic in the existing function colour. Ordinary
+references and definitions of those names are unchanged (2026-11-06).
+The output box is inset 8 px from each side of the code box and has a
+1 px border on its sides and bottom, with rounded bottom corners and no
+top border or top curves. The sides extend to the code box's lower edge,
+enclosing the run metadata as well as the outputs. Its background and
+status colours stay unchanged (Huan, 2026-11-05).
+Clicking code or output selects the owning cell without taking editor focus
+or consuming text-selection gestures. Selected code/output frames change
+border colour, not width; no left selection stripe remains. Text outputs use
+I-beam cursors and retain copy/selection (Huan, 2026-11-08).
+`output_text.rs` retains a small rendering owner per plain output/table text
+participant. Its selection-change subscription invalidates that owner so
+drag highlights can repaint through Fast's retained subtree path, without a
+timer or a whole-notebook redraw. Handles/subscriptions leave with the output.
+Verification must inspect a changed highlight before mouse-up, not merely
+successful copy after release.
+
+Document reads and parsing are tracked until completion, including failed
+and concurrent opens. The Mac requests an arrow with a clock badge while
+the shown workspace is loading, through AppKit tracking areas on the
+existing native view (`busy_cursor.rs`), without intercepting input.
+Parsing is off the UI thread; constructing GPUI editors stays on it.
+Console and AI input frames are transparent, showing the same pane
+background as their output above; their rounded borders remain visible
+and use the accent when focused (Huan, 2026-11-05). Inactive frames use a
+slightly stronger neutral border for contrast (Huan, 2026-11-08).
 
 Notebook cells work as Positron's notebooks do (decided 2026-11-03, Huan's
 batches 1 and 2; built from Positron's documentation and behaviour, not its
 code, which is Elastic License 2.0). Pointing at a cell shows its tools in a
-bar just above its top right corner, clear of the code (2026-11-03): run
-the cells above, run it and those below, fold or clear its outputs, move it
-up or down, delete it, and Run, which shows only there. The line under the
+bar just above its top right corner, clear of the code (2026-11-03): Run
+first, then run the cells above, run it and those below, fold or clear its
+outputs, move it up or down, and delete it. Run uses the same round hover
+background as the other icons (2026-11-05). The line under the
 cell says how its run went: waiting while it waits its turn, the time so
 far while it runs (the oldest unfinished run of the kernel is the one
 running), then how long it took, red if it failed. Rows between cells add a code or
@@ -151,9 +480,15 @@ line names it (`df`, `df.head()`, `head(df)`). Esc leaves a cell's editor
 and picks the cell; then A/B add a cell above/below, D D deletes (Z brings
 it back), M/Y make it Markdown/code, ↑/↓ or K/J move between cells, Enter
 edits, Shift+Enter runs and moves on. Cells are dragged to a new place by
-their gutter. Adding, removing, moving and changing cells is for Jupyter
-notebooks only: a Quarto document's cells are found in its text and its
-unlabelled chunks are known by their position. Saved `.ipynb` files no
+their gutter. Moving and changing cells is for Jupyter notebooks only:
+a Quarto document's cells are found in its text and its unlabelled chunks
+are known by their position. Adding and deleting work in `.qmd`/`.Rmd` too
+(Huan, 2026-11-11): add rows and A/B insert a fenced chunk or prose after
+any YAML header; D D deletes a cell and Z restores its exact source bytes.
+Other source, YAML and chunk options remain byte-for-byte unchanged.
+The editor's action row switches each Quarto document between Notebook
+and whole-file Source views, retaining unsaved text and cell outputs for
+the session. Saved `.ipynb` files no
 longer keep run counts (`execution_count` is null), so running a notebook
 doesn't change the file. Clearing outputs also clears them in the daemon
 (`clear_cell_outputs`), so they stay cleared when the notebook is opened
@@ -168,25 +503,60 @@ the spec and the mockup differ, the mockup wins. The app follows draft 17
 (2026-10-12) and, since 2026-10-25, the title bar and machine tabs of drafts
 20 to 35; the top of `spec.md` lists what each draft changed.
 
-**Title bar and one machine at a time (built 2026-10-25).** A 31px title bar
-row holds three capsules, fully rounded bars: after the window buttons, the
-toolbar (left pane, Agents, right pane | ⌘K, menu); centred in the window, a
-tab per machine with its project's path, an orange dot when an agent there
-waits for you, and + to connect to another; at the right, the edit capsule
-(undo, redo | cut, copy, paste | save, save all ⌥⌘S), whose buttons act on
-the editor last in focus and dim when they can't. On macOS the windows use an
-overlay title bar with the window buttons centred on the capsules
-(`gpui/src/app_window.rs`). Everything under the title
-bar belongs to the machine picked there, so local and remote work never mix:
-`gpui/src/workbench.rs` keeps one project view per machine tab (and per
-project switched to with the project name at the top of the left pane) alive
-while hidden, so switching back returns to the same tabs, Console session,
-plot and conversation. The Start screen opens in the window, under the same
-title bar, and a project opened there goes into its machine's tab.
-Right-clicking a tab closes it. The app remembers each window's tabs for the
-next launch (`open-projects.json`); a list from before machine tabs opens as
-one window. Since a window can use several machines, the app sends each
-daemon message with its host's name (`{ host, body }`).
+**Unified Kit colours (Huan, 2026-11-08; approved).** GPUI Kit's bundled
+Default Light/Default Dark themes are the single source of interface colours,
+for both Kit widgets and Sandhill's own title bar, project capsules, panes,
+menus, dialogs, inputs, status bar and data views. Terminal default text,
+background, cursor and the sixteen ANSI colours use the same theme, including
+its base colour families. Kit's default primary colour replaces the macOS
+system accent; no system-accent override remains.
+
+This is a colour-only change: preserve the native window blur and existing
+surface opacity, panel layout, sizes, fonts, radii and interactions. Transparent
+Console/AI inputs and window underlays stay transparent so the blur remains
+visible. Code syntax keeps the current Xcode colours and keyword/argument
+italic rules; editor background, foreground, line numbers and selection follow
+Kit. Preserve original file/brand icon colours, user-provided data colours,
+images, plots and embedded HTML. The app maps resolved upstream theme values
+instead of maintaining a second hardcoded interface palette.
+
+Verify light/dark switching on existing views, contrasting text on filled
+semantic controls, distinct CSV/TSV column colours, terminal ANSI output,
+retained transparency and unchanged code syntax. Build a local test app;
+report native screenshot limits if the verification Mac is locked.
+
+**Project capsules (Huan, 2026-11-06; replaces machine tabs).** The 31 px
+title bar has flat panel/search/menu buttons after the traffic lights and a
+flat theme button at the right, with hover backgrounds but no capsule
+around either group. The centre has a separate capsule for each project.
+Project identity includes its machine and canonical project path, so two
+projects on the same Mac or server remain open independently.
+
+Only the active project expands: its folder name, a vertical divider, then
+its document tabs with file icons, names, selected state, unsaved markers
+and close controls. Inactive capsules show the project name and file icons
+only, with full file paths on hover. Clicking a project name restores its
+last document; clicking an inactive file icon selects both that project
+and document. Existing Data Explorer and Git diff tabs move with the file
+tabs; labels are not duplicated in the editor pane, whose height controls
+and Notebook toolbar remain. The capsule row scrolls horizontally when
+needed, leaving the side controls clear. Same-named projects have machine
+and path tooltips. Right-clicking a capsule asks before closing that
+project, without stopping its kernels or agents.
+
+The left status bar again shows the active project's device and connection
+state, and clicking it opens the existing connection details, reconnect,
+disconnect and daemon-log actions. No run-shortcut hints return. Resource
+indicators follow the connection, then problems and notices. Switching a
+project switches the whole workbench, including Console, plots and AI,
+while native pages belonging to the previous project are parked.
+
+Window project lists and the active `(host, path)` are saved in
+`gpui-windows.json`. Old records whose selection was only a host are read
+as that host's existing project and rewritten in the new format on the
+next save. The Start screen opens projects as new capsules or activates an
+already-open one instead of replacing a same-device project. No notebook
+format or daemon protocol change is involved.
 
 **Pane tabs (built 2026-10-25).** Every pane's tabs sit in a capsule like
 the title bar's, the picked tab a raised pill, and the tab bars (and the
@@ -211,6 +581,9 @@ a server. The daemon never replaces anything: a clash comes back as an
 the documents open from it first, and refuses while one has unsaved changes.
 The tree sorts by name, size (folders by the sum of their files) or date
 modified, folders first; the order is remembered on the Mac.
+Every file row shows its formatted size after the name, including supported
+editor formats and empty files (`0 B`). Names truncate before the size; folder
+totals are still calculated only when sorting by size.
 
 **Import and column stats (built 2026-10-25).** Variables has an Import menu,
 as in RStudio: for R, text (base and readr), Excel, SPSS, SAS, Stata, R data
@@ -221,13 +594,101 @@ so the run shows in the Console (`gpui/src/imports.rs`). The Data
 Explorer's column list and stats hide with **Hide column stats**, remembered
 on the Mac.
 
+**Approved file/UI extension (Huan, 2026-11-07).**
+Keep the existing macOS palette, panes, project state and daemon-only file
+access. This extends the shared file-open dispatch rather than adding a
+second local-only file reader.
+
+- Thinking effort keeps Kit's standard slider, with labelled discrete tick
+  marks for the current model/provider's available levels. No explanatory
+  paragraph. Dense labels must not overlap or widen the fixed model menu.
+  *Superseded 2026-11-12 (Huan):* one segmented bar after a Dribbble
+  reference, the chosen level's name in its fill (`gpui/src/effort_bar.rs`).
+- Hide the title-bar project `+` on the welcome screen only; existing project
+  windows retain it. Prefix each expanded/collapsed project capsule's name
+  with the existing local-device or remote-server icon. *2026-11-12:* Welcome
+  draws no capsules; its Projects page lists pinned, open and running
+  projects (`docs/design/welcome-projects-resources-plan.md`).
+- Every dropdown trigger toggles its own popup. Fix outside-mousedown and
+  trigger-click ordering so a second click closes rather than reopens it;
+  clicking another trigger switches menus, outside clicks and Escape close.
+  Apply this to custom popups as well as built-in selectors.
+- Files' New menu adds Python script, initially `untitled.py`, using the
+  existing inline naming, conflict checks and editor-opening flow.
+- Clicking CSV/TSV first offers text editing, import into an existing live
+  R/Python session, or cancel. Import reuses the existing code-preview/run
+  path and allows selecting a live session; it never silently starts one.
+  Without a live session, import is disabled with an explanation.
+- Treat 5 MB as 5,000,000 bytes. Files above this limit cannot open as text;
+  only import or cancel is offered. Check the size on the daemon and bound
+  the text read too, so a stale tree size or file growth cannot bypass it.
+  At exactly the limit text opening remains allowed.
+  Use the original `read_bytes` API for metadata and bounded chunks, including
+  EOF/version checks, so this also works with older remote daemons. Do not
+  depend on an optional `stat_files.size` or a newer bounded-read RPC.
+  Import choices show readable environment, session number when needed, and
+  project-relative working folder, never the internal session ID.
+- Text mode remains an editable delimited file, not an imported data frame.
+  Give adjacent columns distinct, theme-readable text colours using a
+  repeating palette; delimiters, quotes and original text are preserved.
+  Treat the first logical record as the header, with a neutral grey
+  background fixed during vertical scrolling and horizontal scroll aligned
+  with the body. Respect quoted delimiters, escaped quotes and multiline
+  quoted fields. Saving uses existing external-change checks.
+- Markdown opens as source with a rendered-view toggle in the same document
+  tab, without requiring Quarto or an R/Python kernel. Render the current
+  edited content using the existing Markdown renderer; do not execute scripts
+  embedded in Markdown.
+  Supported Markdown extensions are `.md`, `.markdown`, `.mdown` and `.mkd`,
+  case-insensitive. `.mdx` and extensionless names are not inferred as Markdown;
+  Quarto and R Markdown retain their existing document flow.
+- Shell scripts open in the text editor with Bash/Shell highlighting,
+  including `.sh`, `.bash`, `.zsh` and extensionless files with a recognised
+  shell shebang. Opening never executes them or attaches an R/Python kernel.
+- Other unsupported files offer opening with the system default app or
+  cancelling. Local files open on this Mac; for remote files the prompt
+  explicitly offers download to this Mac and open the downloaded copy, not
+  running a desktop app on the server. Never overwrite an existing download.
+
+Implementation touches more than eight files across file dispatch, editor
+views, imports, popups, title bar and, where needed, daemon file metadata/
+bounded reads. No new background service or credential is required. Verify
+CSV quoting/Unicode/empty files and the byte-limit boundary, R and Python
+imports with real installed kernels, Markdown source/preview/save, Shell
+highlighting without execution, popup reopen/close order, and both local
+and remote opening routes. Native visual checks cover light/dark, empty and
+long lists, narrow windows, labelled tick endpoints, and sticky headers.
+Source files remain unchanged unless explicitly saved or imported into a
+running session; reverting the app changes needs no data migration.
+
 Panes sit 3px below the title bar, 3px apart and 3px from the window's edges;
-the gaps are drag handles. The editor and Console are translucent cards on a
-warm gradient, each with minimize and maximize buttons; the left pane sits
-directly on the background, with the project's name (a button that lists the
-machine's projects), its files, its kernel rows (language, version, files
-using it, memory, and shutting down with an inline confirmation) and the
-machine's CPU, memory, GPU and disk (`system_stats`).
+the gaps are drag handles. The left pane holds the project's name (a button
+that lists the machine's projects), its files, its kernel rows (language,
+version, files using it, memory, and shutting down with an inline
+confirmation) and the machine's CPU, memory, GPU and disk (`system_stats`).
+
+**Frosted glass, macOS's colours (Huan, 2026-11-05).** The window is one
+sheet of frosted glass and the panes float on it, as in Xcode 27. On a Mac
+the system blurs what is behind the window (GPUI's `Blurred` window
+background, an `NSVisualEffectView` with its tint taken out), and a neutral
+grey tint goes over the blur (`look::wall`); elsewhere the tint is solid.
+The editor and diffs are solid panes, so code reads as well as in Xcode;
+the side panels (the left groups and the AI pane), the Console, Terminal and
+Jobs under the editor (Huan, 2026-11-05) and the Start screen's machine
+cards are translucent, so the glass shows
+through them. gpui-kit and gpui-cn each paint their theme's background under
+the whole window, so both are transparent. There is no warm tint left: the
+greys are AppKit's (label, secondary and tertiary label, separator, text
+background), read from the system in light and dark; semantic colours are
+macOS's red, green, orange and blue (the accessible ones in light); the
+accent is the one picked in System Settings ▸ Appearance, read when the
+window opens and each time it comes to the front, with the selection and
+soft accent made from it; code is coloured as in Xcode 27.2's Default
+(Light) and Default (Dark) themes, keywords in bold and comments upright,
+on Xcode's editor backgrounds (white, #1F1F24); the terminal's 16 colours
+are macOS's system colours. The orange accent of the Tauri design stays only
+in the app icon.
+
 One corner radius, 12px, for every rounded thing. All text is 13px, the macOS
 standard size, except the kernel rows, resource rows, Git pane and pop-ups at
 11px, and nothing is below 10px. Chrome is in the system font. Code, outputs,
@@ -235,18 +696,46 @@ Variables, the console and the agent terminals are in Maple Mono NF, the Nerd
 Font build of Maple Mono, bundled with the app (OFL) so every Mac shows the
 same font and shell prompts can show their icons; the Data Explorer uses the
 system font. Code ligatures are on, so `<-` shows as an arrow while the file
-keeps what was typed. Plots stay white in dark mode. The panes skip
-`backdrop-filter`: over a smooth gradient a blur changes nothing you can see,
-and each blurred pane costs a window-sized compositing layer. Styles are in
-`gpui/src/look.rs`, which also draws the icons from `docs/design/ui/icons`.
+keeps what was typed. Plots stay white in dark mode. The panes themselves
+don't blur: behind them is already the window's blur, so a second one would
+change nothing you can see and cost a window-sized compositing layer per
+pane. Styles are in `gpui/src/look.rs`, which also draws the icons from
+`docs/design/ui/icons`.
+
+**GPUI dependency upgrade (Huan, 2026-11-06; 0.9.1 on 2026-11-13).** Kit,
+Base, Component, assets and WebView use the latest released 0.9.1 stack; GPUI
+Fast is 0.1.15 and GPUI Pre is 0.3.12. `gpui-cn`'s latest release, 0.8.0, still targets the
+older Kit. Its source and licenses are retained in `gpui/vendor/gpui-cn`,
+with only the dependency pins and new non-exhaustive theme construction
+adapted. This keeps the Ghostty terminal without loading two Kit versions.
+
+**Icon sources (Huan, 2026-11-06).** The 150 shared icons use Gruvbox Material
+Icons for files/folders, Lucide for controls, and Developer Icons for available
+integration/runtime logos. Atom Material is removed. The shared offline
+generator normalizes pinned, vendored SVGs; source mappings, license notices
+and generic substitutions are recorded in `docs/design/ui/icons/`. Existing
+IDs and file/folder association rules are unchanged. Interface icons follow
+text colour; Gruvbox artwork keeps its original colours without contrast
+adjustments. Developer logos retain their light backplates. Mac bundles include
+the upstream notices. Sandhill's crane, app icon and fonts remain unchanged.
+Agent marks have no background (Huan, 2026-11-12): OpenAI's logo for Codex and
+Synthetic Sciences' mark for OpenScience, both one colour and drawn in the text
+colour; Posit's blue and orange mark (as on Posit Assistant's site) without the
+wordmark; Oh My Pi's gradient π without its dark tile. Antigravity uses Huan's
+supplied full-colour SVG. The Antigravity, Synthetic Sciences and Posit marks
+have no redistribution licence; it must be established before a public release,
+as library licenses do not cover them.
 
 Kernel pickers, in the editor and the Console, show the language icon and
 version, the number only ("R 4.6.1", "Python 3.12", though Ark says "R version
 4.6.1 (2026-06-24)"); their drop-down holds the kernel, environment, machine, the files
 using the session, its memory and the session switch, so session IDs appear
-only there. The Agents pane came with step 4 (section 5); its effort control
-is a track with a brain for a knob that turns into a star field at the top
-level, and plan usage shows as rings. The right pane (⌥⌘B) came with step 5
+only there. The Agents pane came with step 4 (section 5). Thinking effort
+now uses Kit's standard stepped slider, with no explanatory text or custom
+knob. The model menu stays 380×360px, with a fixed 32px icon-only left provider
+rail sorted alphabetically (Favorites first), names in hover tooltips and a
+scrolling right model list; plan usage
+shows as rings. The right pane (⌥⌘B) came with step 5
 (section 5b), one pane per build: Variables first, then Plots (below
 Variables), the Data Explorer, Help and Packages, and Git.
 
@@ -324,7 +813,7 @@ OpenAI is more open:
 
 ### Google AI (Antigravity, 2026-10-25)
 Google is the least settled:
-- **The Antigravity CLI (`agy`)** has no protocol for editors: no app-server and no ACP server (asked for on Google's issue tracker). It has a **headless mode** that Google documents for scripts and CI: the message on stdin, NDJSON events on stdout (`--output-format stream-json`), and `--conversation` to go on with a conversation.
+- **The Antigravity CLI (`agy`)** provides headless input and output. Sandhill selects both with `--input-format stream-json --output-format stream-json`, writes one user NDJSON message and closes stdin; `--conversation` continues a conversation. The installed agy 1.5.2 also advertises a native `acp` command. Sandhill's current bridge remains headless NDJSON; this fix does not migrate it to ACP.
 - **Its terms are unclear for this.** Antigravity's terms forbid "using third party software, tools, or services to access the Service", and Google hasn't answered the forum questions about launching the official `agy` from another app with a personal Google AI plan. Community answers say running the unmodified CLI is fine and extracting its OAuth token isn't.
 - **What Sandhill does:** it runs the official, unmodified `agy` in headless mode, as a script would, and never reads its login. Unofficial ACP adapters exist, but some of them call Google's API with the CLI's token, so Sandhill doesn't use them. The safe path is an API key (`GEMINI_API_KEY`, with `modelProvider: "gemini"` in agy's settings), which takes the plan out of it.
 
@@ -356,9 +845,25 @@ With an API key, the subscription restrictions above no longer apply, which open
 - **MCP tools, first set:** `list_sessions`, `list_variables` (a quiet, history-free execute with summaries of Seurat, SingleCellExperiment, AnnData and data frames), `run_code` (in the user's session, where results stay) and `get_outputs` (a document's saved outputs, with plots as images). The server is `sandhilld mcp`, which talks to the daemon over its socket. Jobs came later (`list_jobs`, `read_job_log`, 2026-10-29). Not yet: `inspect`, starting jobs, and variable snapshots for busy kernels (listing a busy session says so instead).
 - **Code goes into the document (2026-10-12).** Asked to compute or plot something, the agent writes the code into the document with `add_cell` rather than running it out of sight, as Posit Assistant does: below the user's current cell (else after the last cell) in the document the conversation is about (else the one in front), and it runs there, in the document's own session. The output, errors and plots go back to the agent. A failed cell is fixed in place with `edit_cell`. `run_code` stays for quick looks.
 - **More MCP tools (2026-11-03):** `get_console` (recent runs in a session, with their code and output), `get_plots` (the session's latest plots as images), `view_table` (a data frame's first rows, also parts like `obj$x` or `adata.obs`), `get_help` (an R or Python help page as text), `list_packages`, and `delete_cell` (notebooks only; the window can bring the cell back). The read-only ones are marked so and need no approval.
+- **Bioinformatics assistance (approved 2026-11-09; implementation 2026-11-10).**
+  Retain the four general CLIs and one shared MCP server. Four embedded
+  standard-format guides cover study design, omicverse-first Python scRNA,
+  Seurat scRNA and results review; all initially await human domain review
+  and none is a reviewed default recommendation. `get_bio_guide` is bounded
+  allowlisted discovery. `begin_analysis`, `check_analysis`, `get_analysis`
+  share the existing daemon protocol/journal, not another runtime/database.
+  Bind explicit project/session/object/counts provenance and current digests.
+  Fixed read-only kernel checks use atomic idle-only actor execution and
+  retain actual run/code evidence; final checks reopen saved objects,
+  recalculate cited expression summaries and repeat recorded QC constraints.
+  Managed exports are readable copies, never authoritative pass input.
+  Historical reads are not current validation. Ask/Plan only read these
+  guides/history; independent CLI shell access is not a sandbox.
+  Human review remains necessary for design, QC, annotations and conclusions.
+  See [the full contract and acceptance limits](design/bioinformatics-assistance-plan.md).
 - **Notebook AI (2026-11-03, batch 3 of the Positron-style notebook):** a cell that ends in an error has Fix and Explain buttons, which send a message to the AI pane naming the cell with #. A cell named with # brings its latest output text to the agent (and says how many plots it drew; `get_outputs` shows them). An agent's change to a cell shows as a diff under it (removed lines red, added green) with Keep and Undo; keeping is the default, so ignoring it keeps the change. A cell an agent deletes leaves a "Deleted by Claude" line with Undo (`.ipynb` only). The notebook scrolls to, and briefly lights up, cells the agent adds or changes; a switch in the AI pane's message box turns that off. The tools send `by` (the agent's name) with `add_cell`, `edit_cell` and `delete_cell`.
   - *Ghost cells (2026-11-04).* With the notebook bar's "Suggest" switch on (off at first, as each suggestion runs the agent once), a cell the user ran that ends well gets a suggested next cell under it, faded, with Accept, Accept and Run, and ×. The daemon asks the AI pane's agent (Claude Code or Codex; Antigravity can't answer once from the command line, so Claude Code or Codex stands in) as its own CLI, run once with no tools and with Claude's quick model; it sees the last cells and what the cell showed. Run All asks only after the last cell, and a cell an agent ran gets none. `.ipynb` only, as it adds a cell.
-  - *Where the user is.* Each window tells the daemon its document in front, current cell, line and selection, and which documents it has open (`set_focus`). The daemon keeps the latest place per project, also with the Mac closed. Agents read it with `get_focus`, and Claude Code's prompt hook adds it to every prompt, so "fix this cell" works.
+  - *Where the user is.* Each window tells the daemon its document in front, current cell, line and selection, and which documents it has open (`set_focus`). The daemon keeps the latest place per project, also with the Mac closed. Agents read it with `get_focus` when the user says "this cell". Messages no longer carry it (Huan, 2026-11-12): only what the user adds with @ and # goes with a message.
   - *Who edits.* When a window has the document open, the daemon asks that window to make the edit (`add_cell` request, answered with `answer`): it brings the tab forward, inserts the cell as typing would (one ⌘Z undoes it), moves the cursor into it, saves, and runs it as the Run button does. Editing under an open editor would instead race the user's unsaved changes. When no window has it open, the daemon edits the file and the tool runs the cell in the session that last ran the document's cells, else one in the document's folder with the kernel the document asks for. The chunk ids are the app's (label, else `chunk-<n>`); the daemon finds chunks with the same rules (`crates/daemon/src/qmd.rs`, which the app uses too, with its cases in `tests/fixtures/chunks.json`).
   - *Order.* The project's place moves to each new cell, so a series of cells reads top to bottom.
 - **The app** has the Agents pane, a Terminal tab in the Console, and reloads open documents when their file changes on disk (checked every 1.5 s; unsaved changes are never replaced without asking).
@@ -368,24 +873,153 @@ With an API key, the subscription restrictions above no longer apply, which open
   - *Trusting the folder (2026-11-04).* The first time Claude Code runs in a folder, its terminal asks whether the user trusts the files there, with "No, exit" picked. A message typed at it from the chat answered that with Enter, and the conversation ended. The app now reads the question off the terminal's screen and asks it as a card in the chat (Yes moves the pick to "Yes, I trust this folder" and presses Enter; No presses Esc), and holds messages until it is answered. Claude Code remembers the answer itself; Sandhill doesn't write its settings.
   - *Writing.* The message box types into the terminal (a bracketed paste, then Enter). The first message is passed on the command line, so a new conversation starts with it. The model and effort go through `/model` and `/effort`, the mode through ⇧Tab (read back from the screen), and stopping is Esc. The terminal is one click away (gear menu), for logins, slash commands and anything the chat doesn't show.
   - *Not yet:* switching a running Claude conversation to YOLO, the Restricted and Ask modes, renaming and exporting conversations, and resuming an ended one.
-- **Codex in the chat (2026-10-17).** Codex runs as `codex app-server`, its documented JSON-RPC interface for other apps, under a small bridge in the terminal (`sandhilld codex-chat`). The bridge speaks app-server's protocol and writes the same conversation entries and reports Claude Code's hooks write, so the app shows both agents with one chat. The terminal shows a transcript.
+- **Codex in the chat (2026-10-17).** Codex runs as `codex app-server`, its documented JSON-RPC interface for other apps, under a small bridge in the terminal (`sandhilld codex-chat`). The bridge speaks app-server's protocol and writes the same conversation entries and reports Claude Code's hooks write, so the app shows both agents with one chat. In Chat mode the terminal shows a transcript; command-line mode hands it to Codex's native TUI.
   - *Steps.* Commands, file edits (`apply_patch`, shown as diffs), Sandhill's MCP tools, web searches, Codex's thinking summaries and its plan (as a to-do list) are step rows.
   - *Approvals.* Codex's requests (a command, an edit, an MCP tool call, more access, a question) are cards; each names its step. The buttons are the ones Codex offers: once, for this chat (`acceptForSession`), or for this project (a command prefix rule Codex saves).
   - *Writing.* The app sends what the user does as commands (`tell_terminal`): a message (queued while a turn runs), stop, compact, and the model, effort and mode, which apply from the next turn. Modes map onto app-server's settings per turn: Normal asks before leaving a read-only sandbox, Auto writes in the project and lets Codex's reviewer decide, YOLO has no sandbox and never asks, Plan uses Codex's plan mode and then asks to carry the plan out (yes switches to Normal). The model menu lists the models Codex offers, with each one's effort levels.
   - *Signing in.* When Codex needs a ChatGPT login and has none, the chat offers app-server's sign-in: in the browser (on this Mac), or with a code on any device (on a server).
-- **Antigravity in the chat (2026-10-25).** Antigravity is the third agent. Its CLI has no protocol for editors, so its bridge (`sandhilld agy-chat`) runs the official `agy` in headless mode for each message: the message on stdin, agy's NDJSON events turned into the same conversation entries as the other agents', and `--conversation` to go on (also after a restart). It is unofficial in that Google hasn't said this use is fine; see "Google AI" above.
+- **Native command-line mode (Huan, 2026-11-11).** Codex and Antigravity
+  pause and release their chat bridges before starting their native TUIs in
+  the same controlling PTY: `codex resume <thread>` and
+  `agy --conversation <id>`, with the same working directory, model,
+  approval/permission settings and Sandhill MCP configuration. Returning to
+  Chat cleanly quits the TUI (with bounded signal fallback), waits for exit,
+  resumes the bridge and imports new turns from the agent's own history API,
+  never by scraping its screen. A TUI exit also returns to Chat. The bridge
+  and TUI never drive the same conversation together. Switching has a short
+  status, and Terminal mode receives keyboard focus. Claude Code and Posit
+  Assistant keep their existing behavior.
+- **Antigravity in the chat (2026-10-25, corrected 2026-11-06).** Its bridge (`sandhilld agy-chat`) runs the official `agy` in headless mode for each message: one user NDJSON message on stdin, agy's NDJSON events turned into the same conversation entries as the other agents', and `--conversation` to go on (also after a restart). Both input and output formats must be selected; output formatting alone left agy trying to open its interactive TUI. It is unofficial in that Google hasn't said this use is fine; see "Google AI" above.
   - *Steps.* Tool steps show as agy names them, except commands (`run_command`, shown as Bash), new files (`write_to_file`, shown as Write) and Sandhill's MCP tools. The reply streams from agy's text pieces.
   - *Modes.* Headless agy can't stop to ask, so only three modes are offered. Normal is agy's own default: it edits files in the project, and turns down what it would have asked about (commands, by default); the step shows as failed and the chat says to switch to YOLO or allow it in agy's settings. YOLO is `--dangerously-skip-permissions`. Plan is agy's `--mode plan`, then the plan is put to the user as Claude Code's is (yes switches to Normal and carries it out).
-  - *Models.* The model menu lists `agy models`; effort is agy's `--effort` (low, medium, high). Stop sends agy SIGINT, then SIGKILL after 3 seconds.
+  - *Models (updated 2026-11-08).* The menu reads `agy models`, defaults new
+    conversations to its first returned actual ID, and groups returned sibling
+    effort variants into one row. A Gemini Flash Low/Medium/High slider selects
+    its exact `-low`/`-medium`/`-high` ID and sends no contradictory separate
+    `--effort`. Nonvariant models retain CLI effort behavior. Explicit selections,
+    raw favorite IDs and existing conversations survive background refresh;
+    browsing another provider is not a selection. Stop sends agy SIGINT, then
+    SIGKILL after 3 seconds.
   - *Signing in.* agy signs in on its own: when it isn't, the chat shows its error and says to run `agy` once in a terminal on that machine. Plan usage isn't shown, as agy doesn't report it.
-  - *Not tested against the real agy yet.* The integration test (`tests/antigravity.rs`) drives a stand-in that follows Google's documentation, and Sandhill's real MCP server and Python kernel; the real CLI needs a Google sign-in.
+  - *Verified 2026-11-06.* The integration test (`tests/antigravity.rs`) uses a strict CLI stand-in, Sandhill's real MCP server and Python kernel, including reply, stop, resume and failure paths. The repaired bridge was also checked against official agy 1.5.2: a single authorized no-tool prompt returned `OK` and ended idle; a locally invalid model produced a visible chat error without a model request.
+- **OpenScience in the chat (Huan, 2026-11-11).** Run the unmodified
+  `openscience acp` on the daemon's machine through the generic
+  `sandhilld acp-chat` bridge, kept alive by the existing terminal holder.
+  This integration is chat only, with no native command-line mode.
+  Process-local `OPENSCIENCE_CONFIG_CONTENT` denies its built-in `python`
+  and `r` tools and adds an absolute instructions-file path under that
+  terminal's own state directory, not a project or user configuration file.
+  The instructions direct analysis code to Sandhill's live kernels through
+  its MCP tools, retaining the existing document/Console routing.
+  OpenScience 2.0 ignores MCP servers passed through ACP and runs local MCP
+  servers in a sandbox without sockets, so the bridge serves Sandhill's
+  tools over loopback HTTP with a per-conversation bearer token and names
+  that endpoint in the injected configuration; leave the user's OpenScience
+  configuration and login files alone.
+  OpenScience governs its own tools and approval options. Sandhill's
+  Restricted/Ask/Plan guards independently govern Sandhill MCP operations;
+  these guards and the instructions do not sandbox OpenScience's shell.
+  Replies, thoughts, tool steps and plans use the shared chat journal, and
+  approval cards preserve exactly the option IDs and labels ACP supplies.
+  Resume with `session/load` and replay OpenScience's own history, without
+  scraping terminal output. Models and variants come from its configured
+  model list and live ACP session model state; model changes use ACP's
+  supported `session/set_model` extension. Map native modes only from the
+  advertised available modes, not assumed OpenCode names. Show no
+  subscription quota. A remote machine needs its own installed and signed-in
+  CLI. These protocol details were researched from
+  [OpenScience's ACP source](https://github.com/synthetic-sciences/openscience/blob/8e3341a5a4d14541623305bb8e602a4fc265ff49/backend/cli/src/acp/agent.ts),
+  [configuration merge](https://github.com/synthetic-sciences/openscience/blob/8e3341a5a4d14541623305bb8e602a4fc265ff49/backend/cli/src/config/config.ts)
+  and [instruction loading](https://github.com/synthetic-sciences/openscience/blob/8e3341a5a4d14541623305bb8e602a4fc265ff49/backend/cli/src/session/instruction.ts).
+  *Verified 2026-11-11* with openscience 2.0.153 and Huan's ChatGPT (Codex)
+  sign-in (`openai-codex/gpt-5.6-luna`): the agent listed sessions, asked
+  for `run_code` through a chat approval card, ran it in the live Python
+  session (Console "run by OpenScience", Variables updated) and answered 42.
+  OpenScience's "Ask always" project mode asks even for read-only tools.
+- **Oh My Pi in the chat and command line (Huan, 2026-11-12; plan in
+  [design/pi-omp-plan.md](design/pi-omp-plan.md)).** Run the unmodified
+  `omp acp` through the same `sandhilld acp-chat` bridge. Sandhill's tools
+  reach it from the bridge's loopback HTTP MCP server, named in the ACP
+  session request (omp 18 accepts `http` servers there), so no omp file is
+  edited. A per-run `PI_CONFIG_FILES` overlay in the terminal's state
+  directory sets `tools.approvalMode: always-ask`, so omp asks before steps
+  that write or run (its own default approves everything); Full access and
+  Edit mode answer those requests in the bridge, the rest become chat
+  approval cards. omp has no system prompt over ACP, so a new session's
+  first message carries Sandhill's instructions. Models and thinking effort
+  come from omp's `configOptions` (model and `thought_level` selects, set
+  with `session/set_config_option`; omp has no `session/set_model`); before
+  a conversation, `omp models --json` with its default model role
+  (`modelRoles.default`, which may carry `:effort`) and
+  `defaultThinkingLevel`. Same-named models from several providers are told
+  apart by provider. Resume uses `session/load`. Command-line mode quits
+  `omp acp` (one process owns a session) and runs `omp --resume ID` in the
+  terminal, with `--approval-mode` from Sandhill's mode, the instructions
+  and a per-run extension (`omp -e`) offering Sandhill's tools from the
+  same loopback server, since omp's TUI reads MCP servers only from its
+  `mcp.json` files; back in the chat the bridge loads the session again,
+  importing what was said there. Show no quota. Logo: the official mark
+  from the oh-my-pi repository (MIT). *Checked 2026-11-12* against omp
+  18.18.9 without a model turn: initialize, `session/new` with Sandhill's
+  HTTP MCP server (omp connected and listed tools), `session/load`,
+  config-option model/thinking changes, `set_mode`, the approval overlay,
+  and the TUI extension's tools reaching a local stand-in model endpoint.
+  `tests/omp.rs` repeats the protocol checks with the real `omp` in a
+  temporary HOME (skipped without it); `tests/omp_native.rs` drives a
+  stand-in through a chat turn, a Full-access approval and the handoff to
+  the command line and back. A real chat turn, approval card, Sandhill tool
+  call and the real TUI handoff still need checking natively.
+- **pi in the chat and command line (Huan, 2026-11-12, option A of the
+  plan).** pi has no ACP; `sandhilld pi-chat` drives `pi --mode rpc` and
+  turns its events into the same chat entries, with pi's model list
+  (`pi --list-models`) and thinking levels, resume by session, approvals and
+  Sandhill's tools through a per-run pi extension (no `~/.pi` file is
+  edited), and pi's own screen (`pi --session ID`) in command-line mode.
+  Show no quota. Logo: pi.dev's mark (MIT).
+- **Posit Assistant in its own screen (Huan, 2026-11-06).** Posit Assistant is the fourth agent: its terminal app, `pa` (install with `curl -fsSL https://assistant.posit.co/builds/install-tui.sh | bash`), runs in the AI pane as its own screen, not as a chat. What was looked at first: `pa` has no protocol for editors and no machine-readable output (its one-shot mode prints text), and no way to open its web interface on its own; the RStudio and Positron versions get theirs from Posit's own extension, which is under Posit's licence (an EULA), so Sandhill doesn't take it apart.
+  - *Sandhill's tools.* `pa` reads administrator defaults from `POSIT_ASSISTANT_SETTINGS_DEFAULT`, below the user's own settings, so Sandhill adds its MCP server there (`{"mcpServers": {"sandhill": {"type": "local", "command": [sandhilld, …, "mcp"]}}}`) and leaves `~/.posit/assistant/settings.json` alone. Defaults the daemon's environment already sets are kept. `pa` passes its environment to the server, so the server finds the conversation's terminal, and the Console marks its runs "Posit Assistant". Checked against `pa` 0.1.0: it connected and ran `list_sessions`.
+  - *The first message.* `pa` with a message answers once and quits, so the daemon starts it bare and the app types the message (with what was added with @ and #, written out as the daemon tells the other agents) once the screen shows its empty box ("Enter a prompt") and isn't asking whether to trust the folder: keys typed then would answer that question. It goes as one paste, then Enter 300 ms later (`pa` dropped an Enter that came 60 ms after the paste). Messages from Fix and Explain go the same way.
+  - *What the pane shows.* No chat and no chat/terminal switch; the message box shows only for a new conversation. Its provider picker remains available to switch agents (2026-11-08), but Sandhill's model, effort, mode, web and context controls stay hidden because `pa` has its own menus. An ended conversation offers "Start a new conversation", as `pa`'s screen has no way to resume one from the command line. Its icon is the black mark from Huan's Posit Assistant reference image.
+  - *Tested with a stand-in.* `tests/posit.rs` drives a stand-in that reads the defaults as `pa` does and adds a cell through Sandhill's real MCP server and a real Python kernel; the real `pa` needs a model provider's sign-in.
 - **The message box (drafts 30–35, 2026-10-25).** What goes with each message is chosen in the box and reaches the agent the same way for both agents: the app writes the choices into the conversation's report (`agent.json`, through a `set` command), and the prompt hook (Claude Code) or the bridge (Codex) reads them when the message is sent and adds a few lines to it.
   - *@ picks.* Typing @ lists the project's files (`list_files`), the front document's chunks, the sessions' variables and the recent plots. A pick is a chip; pasted, dropped and attached files are saved in `.sandhill/attachments/` and become chips too, as do plots (saved as images there so the agent can read them). The chips go with the next message only.
   - *The file the agent works in.* Conversations are about the whole project, not one file (Huan's call, 2026-10-31; until then a chip by the model followed the front document or was pinned to one). Each message works in the first document it names with @, and `add_cell` writes there; a file counts for the message that names it only, and with none named `add_cell` runs the code in the Console (Huan's call, 2026-11-01). Once a notebook is named, # picks one of its cells by number. The message records which file it was, so a long turn keeps writing in the file it started in. The box shows no @ of its own: typing @ opens the menu.
-  - *Models before the first message.* A new conversation's model menu shows Codex's and Antigravity's real lists before anything is sent: the daemon's `agent_models` asks a short-lived `codex app-server` (`model/list`) or runs `agy models`. Once a conversation runs, its own list replaces it.
-  - *Web and context.* The globe turns web search off for the conversation (Claude Code's `PreToolUse` hook refuses WebSearch and WebFetch; Codex is told, as app-server has no per-turn switch). The eye stops the app from sending where the user is with each message.
+  - *Models before the first message.* A new conversation's model menu shows each driven agent's real list before anything is sent, never by spending a model turn: the daemon's `agent_models` asks a short-lived `codex app-server` (`model/list`), runs `agy models`, `openscience models --flat`, `omp models --json` (with `omp config get` for its default model and thinking level) or `pi --list-models`. Once a conversation runs, its own list replaces it.
+  - *Web.* The globe turns web search off for the conversation (Claude Code's `PreToolUse` hook refuses WebSearch and WebFetch; Codex is told, as app-server has no per-turn switch). The eye that stopped the app sending where the user is went when messages stopped carrying it (2026-11-12).
   - *Models.* The model menu has a tab per agent and a favourites tab (starred models, kept per Mac), with ⌥1–9 to pick. Once a conversation has started, the other agents' tabs are dimmed: a conversation can't change agent.
-- **Next:** omp over ACP as a chat view for open models, and the context breakdown.
+- **Next:** the context breakdown. OpenScience and Oh My Pi use the
+  generic ACP bridge; pi has its own RPC bridge.
+
+**gpui-ai assessment (2026-11-06, not adopted).**
+[`gpui-ai` 0.8.0](https://github.com/labcoder/gpui-ai/tree/8a2cbf8b639f207de5b4b1a84cd98299050c1a6a)
+is an MIT-licensed, controlled UI component library, not an agent runtime.
+It provides streamed Markdown, tool/approval cards, a virtualized chat and
+a prompt bar; the host owns requests, storage and long-lived state. It can
+therefore render Sandhill's existing daemon events without replacing its
+CLI bridges, remote protocol or journal. It does not turn `pa`'s terminal
+screen into a structured chat or expose Posit's embedded web interface.
+It is not a drop-in dependency: that revision targets `gpui-component` and
+`gpui-base` 0.6, while Sandhill now uses GPUI Kit 0.9.0 with `gpui-fast`.
+The supplied `ChatMessage` model has no custom element slot for Sandhill's
+interactive tool steps and approval cards; those would need a custom list
+composed from the independent `ToolCall` / `ApprovalCard` components.
+A future adoption needs dependency/renderer adaptation, event mapping for
+Sandhill's approval scopes and questions, and retention of its `@`/`#`
+context and terminal branch. Its styles are overridable; adopting it need
+not replace Sandhill's macOS palette. Recommendation: consider individual
+message/tool components first, not a wholesale panel replacement. This is
+a source-level assessment only; no integration build or migration was done.
+
+### Verified bioinformatics assistance (proposal, 2026-11-09)
+
+Huan chose existing general-purpose agents plus reviewed bioinformatics
+guides, tools and executable checks, with analytical accuracy first.
+The [implementation proposal](design/bioinformatics-assistance-plan.md)
+defines shared MCP delivery, study-design assistance and Python/R
+single-cell workflows, daemon-owned evidence records, scientific-review
+boundaries and acceptance criteria. Implementation is not yet approved.
+This does not adopt a separate specialist agent, replace existing kernels
+or make CLI execution a sandbox.
 
 ---
 
@@ -423,12 +1057,15 @@ Positron is the target experience. The plan is to keep its features and drop its
 - *Zoom, copy and save.* The magnifier opens a plot large. An SVG plot can be saved as SVG, or as a PNG drawn from the SVG at a size you type or pick (4 × 3 in, 6 × 4 in or a 16:9 slide, at 300 dpi, written into the PNG so Word and PowerPoint place it at that size); the plot keeps its shape on a white background. A PNG plot is saved or copied as the kernel drew it. Save asks for a path in the project, `figures/<chunk label or file name>.png` at first and then the folder used last, and asks before replacing a file; the daemon writes the bytes (`write_file` with `base64`). Copy puts a PNG on the clipboard.
 - *Re-drawing to save (2026-10-25).* A plot whose session can draw it again is saved at any size, as PNG, SVG or PDF: the session draws it again into the file (`redraw_plot`), so lines and text stay sharp. Ark keeps a recording of each plot it shows (`.ps.graphics.render_plot_from_recording`'s recordings, replayed on a `png()`, `svg()` or `pdf()` device); a Python session keeps its last 10 matplotlib figures (a figure holds its data, and a UMAP of many cells is big), because code run when it starts wraps IPython's figure formatters and tags each image with its figure (`savefig` at the size picked, with the figure's own size put back). The dialog asks when it opens and says why not otherwise ("since only plots R drew can be drawn again"); those plots save as before. Copy still copies the plot as shown.
 - *Re-drawing in the pane (2026-10-29).* As in RStudio and Positron, a moment after the pane stops changing size the plot in front is drawn again at the pane's size (`redraw_plot` with `show`, which sends the PNG back instead of writing a file), so text and lines stay sharp instead of stretching. A busy session leaves the plot as it is. IRkernel's plots can be drawn again too (2026-10-31): code run when an IRkernel session starts wraps its `send_plot`, which keeps the recordings of the last 10 plots (`recordPlot()`'s, which IRkernel already makes) and tags each image with `sandhill_plot`, as Python's figures are; older plots, and plain images, show as drawn, never larger and never out of shape.
+- *Resizable enlarged preview (2026-11-09, Huan's approved direction).* Drag the zoom card's bottom-right corner to change width and height independently; window resizing also changes its drawing area. Once the measured preview size is stable for 400 ms, use the existing daemon-only `redraw_plot(show: true)` request at that logical size and the display's backing resolution. Keep at most one request in flight per preview, coalesce later sizes, and reject replies for an old size, plot, closed preview or connection. R replays its recorded plot and matplotlib renders its retained Figure; never rerun the analysis or stretch the original image. Preserve explicit fixed-aspect settings (`asp`, `coord_fixed`, `aspect="equal"`). Busy/ended sessions, missing recordings and plain images retain their image with an explanation. Preview geometry is separate from the labelled Export dimensions; changing plots retains the card size, and new live output does not silently replace the enlarged plot.
+- *Zoom must settle (2026-11-11).* The preview's status line is a single fixed-height line, so changing messages ("Waiting for the preview size to settle…", "Redrawing preview…") never changes the measured canvas, and sizes within one logical pixel count as unchanged. Only a real size or display-scale change starts the debounced redraw; an idle enlarged plot never moves.
 
 **Built: Data Explorer (step 5, part 3, 2026-10-18).**
 - *A table as an editor tab.* The table button on a data frame or matrix in Variables (`seu@meta.data`, `adata.obs`, a plain matrix or NumPy array) opens it as a tab beside the documents, with a table icon and the table's code as its name. The bar over it says the session, the table and whether it is live; Copy as code and Export CSV sit on the right. The status bar says how many rows show ("618 of 2,638 rows"). Table tabs, like diff tabs, come back when the project opens again (2026-10-25), with their sorting and filters, which keep their columns' names so they follow them if the table changed meanwhile. A table follows its session through a restart, and one whose session has ended opens in the project's session for its language when there is just one; with none, or several, it stays closed (2026-10-31).
 - *Computed in the kernel, like Positron.* Neither Ark's data-explorer comm nor a comm of our own for now: the daemon runs a quiet snippet in the session for each request (`table_rows`, `table_summary`, `table_export`), the way Variables does, so it works the same in Ark, IRkernel and ipykernel. Filtering and sorting happen in R or pandas, and only a page of 200 rows comes back. The grid draws only the rows and columns on screen and reads more pages as you scroll; a 1,000 × 1,000 array or a table of a million rows scrolls the same as a small one. Columns are read the same way, 100 at a time, cells and stats, so a table of 30,000 columns (genes as columns) shows them all; the column list at the side draws only the names in view (2026-10-29).
 - *Columns at the side.* Each column has a 20-bin histogram (numbers) or bars of its commonest values, colored for a factor or category of up to 10 values (the same colors in its cells). The picked column's min, median, mean and max, or its values with counts, show under the list; clicking a value filters to it.
-- *Filters and sorting.* Add filter asks for a column, a condition that fits its kind (`<`, between, is one of with the values to tick, contains, is missing…) and the values; chips over the grid change or remove them. Clicking a column's name sorts by it, ascending, descending, then not; shift-click sorts by another column next. Missing values sort last and pass no filter but "is missing".
+- *Filters, search and sorting (updated 2026-11-11).* The single 29px editor action row contains the icon-only stats toggle, live dataset label, refresh, Copy as code, filter chips, Add filter, search and icon-only CSV export, with pane height controls fixed at the right. Its middle scrolls horizontally when needed. Add filter toggles its popup, with outside-click and Escape dismissal. Search waits 300ms after typing, matches literal text case-insensitively across every column, combines with filters using AND, and runs in the R or Python session before sorting and paging. Copy as code and CSV export include the search. A separate small arrow at the right of a column header sorts ascending, descending, then off; shift-click adds a sort key. Header names and types have a full two-line row.
+- *Read-only table selection (2026-11-11).* Data Explorer and notebook output tables use I-beam cursors and live rectangular drag selection, with row-number and column-header tints. Shift-click extends, row numbers select rows, headers select columns, and dragging either selects adjacent rows or columns. Command-A selects all, Escape or empty-space clicks clear, and Command-C copies values as quoted TSV without headers. Selection redraws stay local to the table, never refresh the notebook. Explorer copies fetch unloaded pages and reject more than 1,000,000 selected cells with a message. Alternate neutral row tints work in both themes. The footer shows selection size at the left and filtered row/column counts at the right, without sorting-status prose.
 - *Live.* After each run in the session the table is read again, keeping the filters and sorting on their columns by name, so a new column or a changed value shows at once. While the session runs code the last rows stay and a note says so.
 - *Copy as code and Export CSV.* Copy as code puts R or pandas code that does what the view does on the clipboard (`x <- meta; x <- x[which(x$percent.mt < 5), , drop = FALSE]; x <- x[order(-xtfrm(x$nCount_RNA)), , drop = FALSE]`). Export CSV writes the rows shown, filtered and sorted, to a file in the project (`write.csv`, `to_csv`).
 - *From code (2026-10-25).* `View(df)` in R and `%view df` in Python open the table too, from the Console, a script or a notebook. Ark's own `View()` opens its data-explorer comm; the daemon reads the comm's title and closes it, as there is no Positron to answer it. IRkernel and IPython sessions get a small `View` and `%view` when they start (in an environment of their own, `tools:sandhill`, in R), which send a display_data of Sandhill's own type. Either way the app gets a `sandhill.view` event and opens what was named, which has to be a variable or a part of one (`seu@meta.data`, `adata.obs`); `View(head(df))` says to assign it first.
@@ -523,6 +1160,18 @@ my-analysis/
 **Built so far (October 2026).** Open and switch, restore and project-tagged sessions:
 - The daemon calls `open_project`, `list_recent_projects`, `save_project_state` and `forget_project` (see [protocol.md](protocol.md)). A project's tabs live in the daemon's journal, keyed by its folder, and `start_session` takes the project so sessions can be listed per project.
 - The app opens a start screen listing the host's recent projects, with a folder browser that asks the daemon for folders, so it will work the same for a server. Projects open in their machine's tab of the window (until 2026-10-25, each in its own window), and the tabs open at Quit open again at the next launch. Closing the last window with projects shows the start screen again.
+- **Quit confirmation (2026-11-08, Huan).** Cmd-Q, the Quit menu, macOS
+  termination and closing the last Welcome window ask whether to stop the
+  background services. Default No keeps them running; Return/Space choose No,
+  Escape or the backdrop cancels. Save edited documents successfully before
+  either exit path; save conflicts keep the app and services alive. Explicit
+  Stop addresses only currently connected machines, once per host, including
+  still-responsive connections retained from closed projects. Never reconnect
+  saved/disconnected servers to stop them. In-flight attaches prevent stopping
+  that host until finished. Stop failures keep the app open and report partial
+  success without automatic retries. `stop_daemon` leaves kernels, terminals
+  and jobs alive; the dialog states this. Ordinary project-window close still
+  returns to Welcome rather than prompting to quit.
 - A project window reopens its tabs, and each document picks up the sessions that last ran its cells. Its kernel picker offers that project's sessions (and ones started outside any project), not other projects'.
 - The folder and tabs the app remembered before projects come back once, as a project, the first time it is opened.
 
@@ -554,6 +1203,8 @@ Keep the daemon protocol binary (msgpack), stream outputs incrementally, and nev
 How notebooks stay small in the app (decided October 2026, after measuring three scanpy notebooks of 7, 7 and 25 MB): a `.ipynb` is mostly base64 plots, and every copy of that text costs memory in each process it passes through, which the allocator then keeps. So plots never travel as text. The daemon opens a notebook with `read_notebook`, which moves plots and outputs over 64 KB into the blob store and sends references; the web view loads them by URL. Saving sends the references back with `write_notebook`, and the daemon writes the values into the file. In the web view, images load lazily, far-away images are dropped until they scroll near, and off-screen outputs skip layout (`content-visibility`). After a large message the daemon and the app hand freed memory back to the system.
 
 Notebooks of 100 MB and more (October 2026, measured in Chromium on a 106 MB notebook of 528 cells with 440 plots and 220 tables): a notebook's outputs are drawn only once their cell comes within two screens of view, so opening it with every output shown, or pressing Show outputs, draws only a few (Show outputs went from a 2.9 s freeze to 0.3 s). Each cell's code and outputs skip layout and paint far from view (`content-visibility` on `.nb-body`), taking a height the app guesses from the cell until first drawn, then their last height; scrolling the whole notebook went from 223 to 50 slow frames (over 50 ms) of 2220, and from 10.4 s to 2.6 s of blocked time. Containment sits on the body, not the cell, so the insert buttons that hang below a cell aren't cut off, and a cell being edited drops it so the editor's pop-ups aren't either; a `:has(.cm-editor)` selector did this at first and cost more than everything it saved. A plot keeps the shape it loaded with when its pixels are let go, without reading layout. Tables over 200 rows show the first 200 and a button for the rest. `content-visibility` needs Safari 18; older versions ignore it and still get the rest.
+
+In the GPUI app (2026-11-05, measured on Huan's 190 MB notebook of 136 cells and 68 plots, 272 megapixels): GPUI lays out, prepaints and paints the whole element tree each frame, and a wheel turn redraws the window, so with every cell in the tree each frame cost the same wherever the view was, 28 ms in a release build and 221 ms in `cargo run`'s unoptimised one. The plots were not the cost (0.5% of the frame); the 136 editors (28%) and the cells' frames and outputs were. Now only the cells within a screen of the view are drawn (`cell_view::Placed`, `Workbench::place_cells`); each other cell is space of its height at the last layout, read from the scroll handle's child bounds, so the children, and scrolling to a cell, stay as they were. The cell being edited, run or lit up is always drawn, and a web page under a cell not drawn is put away like one scrolled out of view. A cell not laid out yet is drawn, which measures it, so opening a notebook still draws it whole once. A cell that changes height far from view (a run's last output) jumps into place when it comes near. Scrolling the whole notebook went to the display's 16.7 ms a frame in both builds, with about 9 ms of work in the unoptimised one; `gpui/Cargo.toml` also builds the dependencies optimised in dev builds.
 
 Saved outputs start hidden (decided October 2026, Huan's call). Each shows as its status line with a summary ("plot", "2 plots, table") and opens on a click; Show outputs and Hide outputs act on the whole document, and running a cell shows its output. A hidden output is not rendered at all, so its plots are never fetched or decoded. Which outputs are shown is kept per document in the project state, not in the file. A notebook cell shows syntax-highlighted code until it is clicked or focused, and only then gets a CodeMirror editor; far from view it gives the editor up again, keeping its state (text, selection, undo history) for the next one. Making an editor for every cell that scrolled by cost the web view about 30 MB in a 91-cell notebook, mostly CodeMirror code compiled by WebKit's JIT; the measurement that showed it was turning the JIT off (`JSC_useJIT=false`), which removed the growth.
 

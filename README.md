@@ -114,6 +114,36 @@ login, settings, slash commands and keys.
 
 The Console also has a **Terminal** tab: a login shell in the project's folder.
 
+### Bioinformatics guides and checks
+
+The existing agents share four daemon-provided MCP tools: `get_bio_guide`,
+`begin_analysis`, `check_analysis` and `get_analysis`. Ask the agent to use
+Sandhill's bioinformatics checks for an explicitly requested study design or
+exploratory single-cell analysis. Guide discovery and history are read-only;
+creating a record or running a check is blocked in Ask and Plan modes.
+
+Python analysis and plotting prefer the installed **omicverse** interfaces,
+using Scanpy or other tools where needed; R uses **Seurat**. Neither discovery
+nor record creation installs packages, downloads data or starts another kernel.
+Analysis code stays in your document and runs in the selected existing session.
+The guides describe exact inputs, QC exclusions, saved-object and marker tables.
+Execution replies and Console history expose actual run IDs for result evidence.
+
+Checks write authoritative evidence into the daemon's existing journal and
+readable exports into `.sandhill/analysis/<id>/`; results normally go into
+`results/<id>/`. Read the returned `analysis.id`, then request `design`, or
+`input`, `qc` and `result` checkpoints. Result checks reopen the saved `.h5ad` or
+`.rds`, compare it with the live object, verify cited expression summaries and
+retain actual completed execution IDs. Handwritten reports are not check results.
+Historical records are not current revalidation; recheck after changes.
+
+All initial guides are **awaiting human domain review**, not reviewed default
+recommendations. A technical pass is not scientific approval: experimental
+design, QC decisions, annotations and conclusions still need human review.
+PBMC3k is single-donor tutorial data, not evidence of treatment effects.
+The agents' own shell/file tools are not sandboxed by these checks.
+See the [analysis contract and limitations](docs/design/bioinformatics-assistance-plan.md).
+
 
 ## Try the daemon
 
@@ -142,3 +172,22 @@ installed.
 3. **Server and projects** (done): RStudio-style projects, each in its own window; connect to an Ubuntu server over ssh, with work that keeps running when the app closes.
 4. **Agents** (in progress): Claude Code and Codex in a terminal pane and MCP tools for live sessions are done; omp chat for open and local models is next.
 5. **Positron-style panes**: Variables, Data Explorer, Plots, Help, Viewer.
+
+## License
+
+Sandhill is free and open-source software, and a non-commercial project:
+there is no paid version. It is licensed under the GNU General Public License,
+version 3 or (at your option) any later version; see [LICENSE](LICENSE). You
+may use, change and share it, and a changed version you share must be under
+the same license, with its source code.
+
+The Maple Mono NF font the app ships is under the SIL Open Font License
+([gpui/assets/fonts/OFL.txt](gpui/assets/fonts/OFL.txt)), and the libraries
+Sandhill builds on keep their own licenses (MIT, Apache-2.0 and similar).
+The interface and file/integration artwork comes from Gruvbox Material Icons,
+Lucide and Developer Icons under their upstream MIT/ISC licenses; see the
+[icon attribution notices](docs/design/ui/icons/vendor/NOTICE.txt) and
+[source mapping](docs/design/ui/icons/MAPPING.md). Vendor trademarks remain
+their owners' property.
+The Posit Assistant and Antigravity marks use user-supplied references; their
+public-release permissions are not supplied by those icon-library licenses.
