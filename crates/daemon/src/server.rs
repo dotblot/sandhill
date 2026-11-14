@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::terminal::{Terminals, ToHost};
@@ -49,12 +49,13 @@ const PAGES: u32 = 20;
 const MAX_PAGES: u32 = 100;
 
 pub struct Daemon {
-    state: StateDir,
-    journal: Arc<Journal>,
-    sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
-    terminals: Terminals,
+    pub(crate) state: StateDir,
+    pub(crate) journal: Arc<Journal>,
+    pub(crate) sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
+    pub(crate) terminals: Terminals,
     windows: Windows,
     pages: Pages,
+    pub(crate) language_servers: crate::lsp::LanguageServers,
     next_connection: AtomicU64,
     options: DaemonOptions,
     /// Milliseconds since the Unix epoch.
@@ -72,6 +73,10 @@ pub struct Daemon {
     askers: Mutex<HashMap<String, Asker>>,
     /// Ends `serve`, for `stop_daemon`.
     stop: Arc<Notify>,
+    lifecycle_gate: tokio::sync::RwLock<()>,
+    pub(crate) maintenance: AtomicBool,
+    pub(crate) stopping: AtomicBool,
+    pub(crate) analysis_gate: tokio::sync::Mutex<()>,
 }
 
 /// The window a git action came from, on its connection.
@@ -133,6 +138,7 @@ impl Daemon {
             journal: journal.clone(),
             sessions: Mutex::new(HashMap::new()),
             windows: Windows::default(),
+            language_servers: crate::lsp::LanguageServers::default(),
             next_connection: AtomicU64::new(1),
             options,
             started_ms: crate::journal::now_ms(),
@@ -142,6 +148,10 @@ impl Daemon {
             opened: Mutex::default(),
             askers: Mutex::default(),
             stop: Arc::default(),
+            lifecycle_gate: tokio::sync::RwLock::new(()),
+            maintenance: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            analysis_gate: tokio::sync::Mutex::new(()),
         });
         for record in journal.sessions()? {
             if record.status == SessionStatus::Ended {
@@ -181,10 +191,31 @@ impl Daemon {
                 let Some(daemon) = daemon.upgrade() else {
                     return;
                 };
+                let _guard = daemon.lifecycle_gate.read().await;
+                if daemon.maintenance.load(Ordering::Acquire) {
+                    continue;
+                }
+                let syncing = daemon.clone();
                 let _ = tokio::task::spawn_blocking(move || {
-                    chats::sync(&daemon.terminals, &daemon.homes, &daemon.machine);
+                    chats::sync(&syncing.terminals, &syncing.homes, &syncing.machine);
                 })
                 .await;
+            }
+        });
+        let (idle_limit, idle_check) = crate::terminal::idle::timing();
+        let daemon = Arc::downgrade(&self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(idle_check).await;
+                let Some(daemon) = daemon.upgrade() else {
+                    return;
+                };
+                let _guard = daemon.lifecycle_gate.read().await;
+                if !daemon.maintenance.load(Ordering::Acquire)
+                    && !daemon.stopping.load(Ordering::Acquire)
+                {
+                    daemon.terminals.stop_idle(idle_limit).await;
+                }
             }
         });
         loop {
@@ -204,7 +235,13 @@ impl Daemon {
         W: AsyncWrite + Unpin + Send + 'static,
     {
         let (out, out_rx) = mpsc::unbounded_channel::<ServerMessage>();
-        let writer_task = tokio::spawn(write_loop(writer, out_rx));
+        let stop_reply = Arc::new(Mutex::new(None));
+        let writer_task = tokio::spawn(write_loop(
+            writer,
+            out_rx,
+            stop_reply.clone(),
+            self.stop.clone(),
+        ));
         let subscriptions: Subscriptions = Default::default();
         let tunnels = Tunnels::new(out.clone());
         let connection = self.next_connection.fetch_add(1, Ordering::Relaxed);
@@ -227,6 +264,22 @@ impl Daemon {
             // A tunnel's bytes are handled here, not in a task of their own,
             // so they keep their order.
             let request = match request.call {
+                call @ (Call::LspStart { .. } | Call::LspSend { .. } | Call::LspStop { .. }) => {
+                    // Preserve document synchronization order on the wire.
+                    self.clone()
+                        .handle(
+                            Request {
+                                id: request.id,
+                                call,
+                            },
+                            connection,
+                            out.clone(),
+                            subscriptions.clone(),
+                            stop_reply.clone(),
+                        )
+                        .await;
+                    continue;
+                }
                 Call::OpenTunnel { tunnel, port } => {
                     tunnels.open(request.id, tunnel, port);
                     continue;
@@ -249,8 +302,11 @@ impl Daemon {
             let daemon = self.clone();
             let out = out.clone();
             let subscriptions = subscriptions.clone();
+            let stop_reply = stop_reply.clone();
             tokio::spawn(async move {
-                daemon.handle(request, connection, out, subscriptions).await;
+                daemon
+                    .handle(request, connection, out, subscriptions, stop_reply)
+                    .await;
                 if large {
                     memory::release_free_memory();
                 }
@@ -261,6 +317,7 @@ impl Daemon {
         }
         drop(tunnels);
         self.windows.disconnected(connection);
+        self.language_servers.disconnected(connection).await;
         drop(out);
         let _ = writer_task.await;
     }
@@ -271,9 +328,63 @@ impl Daemon {
         connection: u64,
         out: mpsc::UnboundedSender<ServerMessage>,
         subscriptions: Subscriptions,
+        stop_reply: Arc<Mutex<Option<u64>>>,
     ) {
         let id = request.id;
+        let shutdown_request =
+            matches!(request.call, Call::StopDaemon | Call::PrepareAttach { .. });
+        let exclusive = matches!(
+            request.call,
+            Call::StopResources { .. }
+                | Call::CleanStorage { .. }
+                | Call::UninstallComponents { .. }
+                | Call::StopDaemon
+                | Call::PrepareAttach { .. }
+        );
+        let (_read, _write) = if exclusive {
+            (None, Some(self.lifecycle_gate.write().await))
+        } else {
+            (Some(self.lifecycle_gate.read().await), None)
+        };
+        if self.stopping.load(Ordering::Acquire) && !matches!(request.call, Call::Ping) {
+            let _ = out.send(response(
+                id,
+                Err(anyhow!(
+                    "daemon shutdown is in progress; reconnect after it exits"
+                )),
+            ));
+            return;
+        }
+        if self.maintenance.load(Ordering::Acquire)
+            && !crate::lifecycle::allowed_during_maintenance(&request.call)
+        {
+            let _ = out.send(response(id, Err(anyhow!("resources are stopped for maintenance; reconnect after an explicit daemon restart"))));
+            return;
+        }
+        if let Err(err) = self.check_trust(&request.call).await {
+            let _ = out.send(response(id, Err(err)));
+            return;
+        }
         let result = match request.call {
+            Call::LspStart {
+                project,
+                language,
+                document_kind: _,
+                session,
+            } => {
+                self.start_lsp(project, language, session, connection, out.clone())
+                    .await
+            }
+            Call::LspSend { lsp, message } => self
+                .language_servers
+                .send(&lsp, connection, message)
+                .await
+                .map(|()| Value::Null),
+            Call::LspStop { lsp } => self
+                .language_servers
+                .stop(&lsp, connection)
+                .await
+                .map(|()| Value::Null),
             Call::SetFocus { project, focus } => projects::normalize(&project).map(|project| {
                 self.windows.set_focus(connection, &out, project, focus);
                 Value::Null
@@ -331,7 +442,32 @@ impl Daemon {
             Call::GitRun { path, action } => self.git_run(path, action, &out).await,
             call => self.call(call).await,
         };
-        let _ = out.send(response(id, result));
+        let stopping = shutdown_request && result.is_ok() && self.stopping.load(Ordering::Acquire);
+        if stopping {
+            *stop_reply.lock().unwrap() = Some(id);
+        }
+        if out.send(response(id, result)).is_err() && stopping {
+            // Even a vanished client must not cancel an accepted shutdown.
+            self.stop.notify_one();
+        }
+    }
+    async fn agent_accounts(&self, kinds: Option<&[String]>, force: bool) -> Result<Value> {
+        let mut accounts = crate::agents::accounts(kinds, force).await?;
+        if let Some(accounts) = accounts.as_array_mut() {
+            for terminal in self.terminals.list() {
+                if kinds.is_some_and(|kinds| !kinds.contains(&terminal.kind)) {
+                    continue;
+                }
+                if let Some(mut report) = terminal.agent
+                    && report.is_object()
+                {
+                    report["kind"] = json!(terminal.kind);
+                    report["feed"] = json!(true);
+                    accounts.push(report);
+                }
+            }
+        }
+        Ok(accounts)
     }
 
     /// Runs a git action; prompts for a password go to the window that
@@ -385,8 +521,180 @@ impl Daemon {
         }
     }
 
+    async fn start_lsp(
+        &self,
+        project: String,
+        language: String,
+        session: Option<String>,
+        connection: u64,
+        out: mpsc::UnboundedSender<ServerMessage>,
+    ) -> Result<Value> {
+        let project = projects::normalize(&project)?;
+        if !Path::new(&project).is_dir() {
+            bail!("{project} is not a project directory");
+        }
+        let language = language.to_ascii_lowercase();
+        let records = self.journal.sessions()?;
+        let record = if let Some(id) = session {
+            let record = records
+                .iter()
+                .find(|record| record.id == id)
+                .context("no such session")?;
+            if record.project.as_deref() != Some(project.as_str())
+                || record.language.to_ascii_lowercase() != language
+            {
+                bail!("language session must belong to this project and language");
+            }
+            Some(record)
+        } else {
+            records
+                .iter()
+                .filter(|record| {
+                    record.project.as_deref() == Some(project.as_str())
+                        && record.language.to_ascii_lowercase() == language
+                        && record.status != SessionStatus::Ended
+                })
+                .max_by_key(|record| record.created_ms)
+        };
+        let mut interpreter = None;
+        let ark = if language == "r" {
+            record.map(|record| self.live(&record.id)).transpose()?
+        } else {
+            None
+        };
+        if language == "python" {
+            let kernel = match record {
+                Some(record) => Some(record.kernel.clone()),
+                None => {
+                    let root = PathBuf::from(&project);
+                    blocking(move || Ok(projects::setup(&root).python)).await?
+                }
+            };
+            if let Some(kernel) = kernel {
+                let spec =
+                    crate::kernel::find_kernelspec(&kernel, Some(Path::new(&project))).await?;
+                interpreter = spec
+                    .kernelspec
+                    .argv
+                    .first()
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute());
+            }
+            if interpreter.is_none() {
+                interpreter = [".venv/bin/python", ".venv/bin/python3", "venv/bin/python"]
+                    .into_iter()
+                    .map(|relative| Path::new(&project).join(relative))
+                    .find(|path| path.is_file());
+            }
+        }
+        let start = crate::lsp::Start {
+            project,
+            language,
+            interpreter,
+            ark,
+        };
+        Ok(serde_json::to_value(
+            self.language_servers.start(start, connection, out).await?,
+        )?)
+    }
+
+    /// Refuses a call that starts something acting on the files of an
+    /// untrusted project: a kernel (`.Rprofile`, env files), a terminal, job
+    /// or agent (`CLAUDE.md`, hooks), a language server, a Quarto render, or
+    /// Git (a repository's configuration can name programs to run).
+    async fn check_trust(&self, call: &Call) -> Result<()> {
+        let paths = |items: [Option<&String>; 2]| -> Vec<PathBuf> {
+            items.into_iter().flatten().map(PathBuf::from).collect()
+        };
+        let (folders, what) = match call {
+            Call::StartSession { cwd, project, .. } => {
+                (paths([cwd.as_ref(), project.as_ref()]), "start R or Python")
+            }
+            Call::LspStart { project, .. } => (paths([Some(project), None]), "check code"),
+            Call::StartTerminal {
+                kind, cwd, project, ..
+            } => (
+                paths([cwd.as_ref(), project.as_ref()]),
+                if kind == sandhill_proto::TERMINAL_SHELL {
+                    "use the Terminal"
+                } else {
+                    "use AI agents"
+                },
+            ),
+            Call::StartJob { cwd, project, .. } => {
+                (paths([cwd.as_ref(), project.as_ref()]), "run jobs")
+            }
+            Call::RestartTerminal { terminal, .. } => match self.terminals.info(terminal) {
+                Ok(info) => (vec![PathBuf::from(info.cwd)], "start it again"),
+                Err(_) => return Ok(()),
+            },
+            Call::PreviewDocument { path, project } => {
+                (paths([Some(path), project.as_ref()]), "render documents")
+            }
+            Call::SuggestCell { cwd, .. } => (paths([Some(cwd), None]), "use AI agents"),
+            Call::GitStatus { path }
+            | Call::GitLog { path, .. }
+            | Call::GitShow { path, .. }
+            | Call::GitOwnCommits { path }
+            | Call::GitDiff { path, .. }
+            | Call::GitRun { path, .. }
+            | Call::GitWriteMessage { path, .. } => (paths([Some(path), None]), "use Git"),
+            _ => return Ok(()),
+        };
+        self.trusted(folders, what).await
+    }
+
+    async fn trusted(&self, folders: Vec<PathBuf>, what: &'static str) -> Result<()> {
+        let journal = self.journal.clone();
+        blocking(move || {
+            for folder in &folders {
+                projects::trust::check(&journal, folder, what)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Tells an agent's run the trusted folder it starts in, so an agent that
+    /// can be told per run does not ask about the folder again.
+    async fn name_trust(&self, launch: &mut crate::terminal::Launch) -> Result<()> {
+        if launch.kind == sandhill_proto::TERMINAL_SHELL {
+            return Ok(());
+        }
+        let journal = self.journal.clone();
+        let cwd = launch.cwd.clone();
+        if let Some(folder) =
+            blocking(move || projects::trust::trusted_root(&journal, &cwd)).await?
+        {
+            launch
+                .env
+                .push((projects::trust::TRUSTED_FOLDER.into(), folder));
+        }
+        Ok(())
+    }
+
     async fn call(&self, call: Call) -> Result<Value> {
         Ok(match call {
+            Call::BeginAnalysis { project, spec } => self.begin_analysis(&project, spec).await?,
+            Call::CheckAnalysis {
+                project,
+                analysis,
+                checkpoint,
+                details,
+            } => {
+                self.check_analysis(&project, &analysis, &checkpoint, details)
+                    .await?
+            }
+            Call::GetAnalysis { project, analysis } => {
+                self.get_analysis(&project, &analysis).await?
+            }
+            Call::ResourceInventory => self.resource_inventory()?,
+            Call::StopResources { force } => self.stop_resources(force).await?,
+            Call::StorageInventory => self.storage_inventory()?,
+            Call::CleanStorage { categories } => self.clean_storage(&categories).await?,
+            Call::UninstallComponents { delete_data } => {
+                self.uninstall_components(delete_data).await?
+            }
             Call::Ping => serde_json::to_value(PingReply {
                 protocol_version: PROTOCOL_VERSION,
                 daemon_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -396,6 +704,14 @@ impl Daemon {
                 user: self.user.clone(),
                 started_ms: self.started_ms,
                 started_by: self.options.started_by.clone(),
+                lifecycle: if self.stopping.load(Ordering::Acquire) {
+                    "stopping"
+                } else if self.maintenance.load(Ordering::Acquire) {
+                    "stopped"
+                } else {
+                    "ready"
+                }
+                .into(),
             })?,
             Call::ListKernelspecs => {
                 serde_json::to_value(crate::kernel::list_kernelspecs(None).await)?
@@ -403,6 +719,40 @@ impl Daemon {
             Call::ListProjectKernelspecs { path } => {
                 let root = PathBuf::from(projects::normalize(&path)?);
                 serde_json::to_value(crate::kernel::list_kernelspecs(Some(root)).await)?
+            }
+            Call::ListRWithoutIrkernel { project } => {
+                let root = project.map(|p| projects::normalize(&p)).transpose()?;
+                let found = blocking(move || {
+                    let search = crate::kernelspecs::Search::from_env()
+                        .in_project(root.as_deref().map(Path::new));
+                    Ok(crate::irkernel::find(&search)
+                        .iter()
+                        .map(|candidate| candidate.info(&search))
+                        .collect::<Vec<_>>())
+                })
+                .await?;
+                serde_json::to_value(found)?
+            }
+            Call::InstallIrkernel { r, project } => {
+                let project = project.map(|p| projects::normalize(&p)).transpose()?;
+                let root = project.clone();
+                let (mut launch, trust) = blocking(move || {
+                    let search = crate::kernelspecs::Search::from_env()
+                        .in_project(root.as_deref().map(Path::new));
+                    crate::irkernel::launch(&r, &search)
+                })
+                .await?;
+                // pixi reads the project's manifest; plain R and conda don't
+                // act on the project's files.
+                if let Some(folder) = trust {
+                    self.trusted(vec![folder], "install IRkernel with pixi")
+                        .await?;
+                }
+                // Listed with the project's jobs.
+                launch.project = project;
+                let started = self.terminals.start(launch).await?;
+                self.keep_awake(&started.id);
+                serde_json::to_value(started)?
             }
             Call::StartSession {
                 kernel,
@@ -445,6 +795,19 @@ impl Daemon {
                     .map(|r| self.journal.session_info(r))
                     .collect::<Result<Vec<_>, _>>()?;
                 serde_json::to_value(infos)?
+            }
+            Call::Complete {
+                session,
+                code,
+                cursor_pos,
+            } => serde_json::to_value(self.live(&session)?.complete(code, cursor_pos).await?)?,
+            Call::Inspect {
+                session,
+                code,
+                cursor_pos,
+            } => serde_json::to_value(self.live(&session)?.inspect(code, cursor_pos).await?)?,
+            Call::LspStart { .. } | Call::LspSend { .. } | Call::LspStop { .. } => {
+                bail!("language server subscriptions require a client connection")
             }
             Call::Execute {
                 session,
@@ -543,6 +906,23 @@ impl Daemon {
                     more,
                 })?
             }
+            Call::FindVariables {
+                session,
+                query,
+                root,
+            } => {
+                let printed = self
+                    .quietly(&session, "search the variables", |language| {
+                        crate::variable_search::code(language, &query, &root)
+                    })
+                    .await?;
+                let (matches, complete) = crate::variable_search::parse(&printed.stdout);
+                serde_json::to_value(sandhill_proto::VariableMatches {
+                    session,
+                    matches,
+                    complete,
+                })?
+            }
             Call::DeleteVariables { session, names } => {
                 if !names.is_empty() {
                     self.quietly(&session, "delete variables", |language| {
@@ -559,21 +939,34 @@ impl Daemon {
                 limit,
                 sort,
                 filters,
+                search,
+                columns,
                 column_offset,
                 column_limit,
                 cells_only,
             } => {
+                if columns
+                    .as_ref()
+                    .is_some_and(|cols| cols.len() > tables::MAX_COLUMNS as usize)
+                {
+                    bail!(
+                        "at most {} projected columns can be requested",
+                        tables::MAX_COLUMNS
+                    );
+                }
                 let ask = tables::Ask {
                     mode: tables::Mode::Rows,
                     path: &path,
                     sort: &sort,
                     filters: &filters,
+                    search: &search,
                     offset,
                     limit: limit.unwrap_or(tables::ROWS).min(tables::MAX_ROWS),
                     column_offset,
                     column_limit: column_limit
                         .unwrap_or(tables::COLUMNS)
                         .min(tables::MAX_COLUMNS),
+                    columns: columns.as_deref(),
                     headers: !cells_only,
                     file: "",
                 };
@@ -589,6 +982,7 @@ impl Daemon {
                     code: rows.code,
                     matrix: rows.matrix,
                     columns: rows.columns,
+                    column_indices: columns,
                     column_offset,
                     width: rows.width,
                     total: rows.total,
@@ -602,6 +996,7 @@ impl Daemon {
                 session,
                 path,
                 filters,
+                search,
                 column_offset,
                 column_limit,
             } => {
@@ -610,12 +1005,14 @@ impl Daemon {
                     path: &path,
                     sort: &[],
                     filters: &filters,
+                    search: &search,
                     offset: 0,
                     limit: 0,
                     column_offset,
                     column_limit: column_limit
                         .unwrap_or(tables::COLUMNS)
                         .min(tables::MAX_COLUMNS),
+                    columns: None,
                     headers: false,
                     file: "",
                 };
@@ -854,6 +1251,7 @@ impl Daemon {
                 path,
                 sort,
                 filters,
+                search,
                 file,
             } => {
                 let resolved = files::resolve(&file)?.to_string_lossy().into_owned();
@@ -862,10 +1260,12 @@ impl Daemon {
                     path: &path,
                     sort: &sort,
                     filters: &filters,
+                    search: &search,
                     offset: 0,
                     limit: 0,
                     column_offset: 0,
                     column_limit: 0,
+                    columns: None,
                     headers: false,
                     file: &resolved,
                 };
@@ -972,8 +1372,8 @@ impl Daemon {
                     .await?,
                 )?
             }
-            Call::ListDir { path, sizes } => {
-                serde_json::to_value(blocking(move || files::list_dir(&path, sizes)).await?)?
+            Call::ListDir { path, sizes, marks } => {
+                serde_json::to_value(blocking(move || files::list_dir(&path, sizes, marks)).await?)?
             }
             Call::MakeDir { path } => {
                 serde_json::to_value(blocking(move || fileops::make_dir(&path)).await?)?
@@ -1065,6 +1465,20 @@ impl Daemon {
                 blocking(move || Ok(journal.forget_project(&projects::normalize(&path)?)?)).await?;
                 Value::Null
             }
+            Call::TrustFolder { path } => {
+                let journal = self.journal.clone();
+                blocking(move || projects::trust::trust(&journal, &path)).await?;
+                Value::Null
+            }
+            Call::UntrustFolder { path } => {
+                let journal = self.journal.clone();
+                blocking(move || projects::trust::untrust(&journal, &path)).await?;
+                Value::Null
+            }
+            Call::ListTrustedFolders => {
+                let journal = self.journal.clone();
+                serde_json::to_value(blocking(move || projects::trust::list(&journal)).await?)?
+            }
             Call::SystemStats { path } => {
                 let journal = self.journal.clone();
                 let jobs: Vec<(String, u32)> = self
@@ -1105,14 +1519,10 @@ impl Daemon {
                     })?;
                 serde_json::to_value(tail)?
             }
+            Call::PrepareAttach { build } => self.prepare_attach(&build)?,
             Call::StopDaemon => {
-                tracing::info!("stopping, as a client asked");
-                // Answer first: the reply goes out before the daemon stops.
-                let stop = self.stop.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    stop.notify_one();
-                });
+                tracing::info!("daemon shutdown accepted; waiting for reply flush");
+                self.stopping.store(true, Ordering::Release);
                 Value::Null
             }
             Call::StatFiles { paths } => {
@@ -1120,6 +1530,48 @@ impl Daemon {
             }
             Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
             Call::AgentModels { kind } => crate::agents::models(&kind).await?,
+            Call::AgentAccounts => self.agent_accounts(None, false).await?,
+            Call::AgentAccountsQuery { kinds, force } => {
+                self.agent_accounts(Some(&kinds), force).await?
+            }
+            Call::ListAgentAccounts { refresh } => {
+                serde_json::to_value(crate::accounts::Registry::from_env().list(refresh).await?)?
+            }
+            Call::AddAgentAccount {
+                kind,
+                name,
+                api_key,
+            } => serde_json::to_value(crate::accounts::Registry::from_env().add(
+                &kind,
+                &name,
+                api_key.as_deref(),
+            )?)?,
+            Call::RenameAgentAccount { id, name } => {
+                serde_json::to_value(crate::accounts::Registry::from_env().rename(&id, &name)?)?
+            }
+            Call::RemoveAgentAccount { id } => {
+                crate::accounts::Registry::from_env().remove(&id, &self.terminals.list())?;
+                Value::Null
+            }
+            Call::SignInAgentAccount { id, cols, rows } => {
+                // Finished sign-ins leave nothing worth keeping; clear them.
+                for ended in self
+                    .terminals
+                    .list()
+                    .into_iter()
+                    .filter(|t| t.kind == sandhill_proto::TERMINAL_LOGIN && !t.running)
+                {
+                    let _ = self.terminals.remove(&ended.id);
+                }
+                let mut launch = crate::accounts::Registry::from_env().sign_in(&id)?;
+                launch.size = cols.zip(rows);
+                serde_json::to_value(self.terminals.start(launch).await?)?
+            }
+            Call::UseAgentReset { id, credit } => {
+                crate::accounts::Registry::from_env()
+                    .use_reset(&id, credit.as_deref())
+                    .await?
+            }
             Call::StartTerminal {
                 kind,
                 cwd,
@@ -1147,6 +1599,7 @@ impl Daemon {
                 };
                 let mut launch = crate::agents::launch(&kind, &options, &context).await?;
                 launch.size = cols.zip(rows);
+                self.name_trust(&mut launch).await?;
                 serde_json::to_value(self.terminals.start(launch).await?)?
             }
             Call::StartJob { job, cwd, project } => {
@@ -1155,6 +1608,8 @@ impl Daemon {
                 let launch =
                     blocking(move || crate::jobs::launch(&job, cwd.as_deref(), project.as_deref()))
                         .await?;
+                // A job with no folder given runs in its script's.
+                self.trusted(vec![launch.cwd.clone()], "run jobs").await?;
                 let started = self.terminals.start(launch).await?;
                 self.keep_awake(&started.id);
                 serde_json::to_value(started)?
@@ -1209,9 +1664,10 @@ impl Daemon {
                     prompt: prompt.as_deref(),
                     resume: resume.id.as_deref(),
                 };
-                let options = options.unwrap_or(info.options);
+                let options = options.unwrap_or_else(|| info.options.clone());
                 let mut launch = crate::agents::launch(&info.kind, &options, &context).await?;
                 launch.size = cols.zip(rows);
+                self.name_trust(&mut launch).await?;
                 let keep = &crate::agents::RESUME_KEYS;
                 serde_json::to_value(self.terminals.restart(&terminal, launch, keep).await?)?
             }
@@ -1637,14 +2093,24 @@ async fn forward_events(
 async fn write_loop<W: AsyncWrite + Unpin>(
     mut writer: W,
     mut messages: mpsc::UnboundedReceiver<ServerMessage>,
+    stop_reply: Arc<Mutex<Option<u64>>>,
+    stop: Arc<Notify>,
 ) {
     while let Some(message) = messages.recv().await {
+        let shutdown = matches!(&message, ServerMessage::Response { id, .. }
+            if Some(*id) == *stop_reply.lock().unwrap());
         let Ok(mut line) = serde_json::to_vec(&message) else {
             continue;
         };
         drop(message);
         line.push(b'\n');
-        if writer.write_all(&line).await.is_err() || writer.flush().await.is_err() {
+        let failed = writer.write_all(&line).await.is_err() || writer.flush().await.is_err();
+        if shutdown || (failed && stop_reply.lock().unwrap().is_some()) {
+            // A response is an acknowledgement, not proof of exit. Notify only
+            // after attempting its flush; attach verifies the process exit.
+            stop.notify_one();
+        }
+        if failed {
             return;
         }
         if line.len() > memory::LARGE {
@@ -1712,5 +2178,100 @@ pub(crate) fn response(id: u64, result: Result<Value>) -> ServerMessage {
             Ok(value) => Outcome::Result(value),
             Err(err) => Outcome::Error(format!("{err:#}")),
         },
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use sandhill_proto::client::Client;
+    use std::time::Duration;
+
+    fn connect(daemon: Arc<Daemon>) -> Client {
+        let (server, client) = tokio::io::duplex(8192);
+        let (reader, writer) = tokio::io::split(server);
+        tokio::spawn(daemon.serve_connection(reader, writer));
+        let (reader, writer) = tokio::io::split(client);
+        Client::new(reader, writer)
+    }
+
+    #[tokio::test]
+    async fn accepted_shutdown_rejects_later_destructive_requests() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateDir::new(temp.path().join("state"));
+        let daemon = Daemon::open(state.clone()).await.unwrap();
+        let client = connect(daemon);
+        std::fs::create_dir_all(state.root().join("pages/keep")).unwrap();
+        std::fs::write(state.root().join("pages/keep/output"), b"preserve").unwrap();
+        client.call::<()>(Call::StopDaemon).await.unwrap();
+        let error = client
+            .call::<Value>(Call::CleanStorage {
+                categories: vec!["cache".into()],
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("shutdown is in progress"), "{error}");
+        assert!(state.root().join("pages/keep/output").exists());
+        assert_eq!(client.ping().await.unwrap().lifecycle, "stopping");
+    }
+
+    #[tokio::test]
+    async fn attach_cannot_interrupt_maintenance_or_restart_an_uninstall() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = StateDir::new(temp.path().join("state"));
+        let daemon = Daemon::open(state.clone()).await.unwrap();
+        let client = connect(daemon.clone());
+        // The same exclusive guard held by CleanStorage/UninstallComponents.
+        let active = daemon.lifecycle_gate.write().await;
+        let mut attach = tokio::spawn(async move {
+            client
+                .call::<Value>(Call::PrepareAttach {
+                    build: "different".into(),
+                })
+                .await
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut attach)
+                .await
+                .is_err()
+        );
+        assert!(!daemon.stopping.load(Ordering::Acquire));
+        std::fs::write(state.root().join("uninstalled"), b"fixture uninstall").unwrap();
+        drop(active);
+        let error = attach.await.unwrap().unwrap_err().to_string();
+        assert!(error.contains("uninstalled"), "{error}");
+        assert!(!daemon.stopping.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn shutdown_notification_waits_for_reply_flush() {
+        let (writer, reader) = tokio::io::duplex(1);
+        let (out, incoming) = mpsc::unbounded_channel();
+        let stop = Arc::new(Notify::new());
+        let task = tokio::spawn(write_loop(
+            writer,
+            incoming,
+            Arc::new(Mutex::new(Some(0))),
+            stop.clone(),
+        ));
+        out.send(response(0, Ok(Value::Null))).unwrap();
+        // One byte of capacity keeps the acknowledgement from being flushed.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), stop.notified())
+                .await
+                .is_err()
+        );
+        let mut line = String::new();
+        BufReader::new(reader).read_line(&mut line).await.unwrap();
+        assert!(
+            line.contains("\"id\":0") && line.contains(":null"),
+            "{line}"
+        );
+        tokio::time::timeout(Duration::from_secs(1), stop.notified())
+            .await
+            .unwrap();
+        drop(out);
+        task.await.unwrap();
     }
 }

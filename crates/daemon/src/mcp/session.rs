@@ -68,9 +68,11 @@ impl Tools {
             rendered.text.push_str("(nothing has run yet)\n");
         }
         for run in &listed.runs {
-            rendered
-                .text
-                .push_str(&format!("\n## {}\n", self.run_head(run)));
+            rendered.text.push_str(&format!(
+                "\n## {}\nRun ID: {}\n",
+                self.run_head(run),
+                run.run
+            ));
             rendered.text.push_str(&fenced(&run.code));
             let before = rendered.text.len();
             for output in &run.outputs {
@@ -170,21 +172,71 @@ impl Tools {
         session: Option<&str>,
         language: Option<&str>,
         rows: Option<u64>,
+        view: Option<&str>,
     ) -> Result<Vec<Value>> {
+        if !matches!(view, None | Some("current") | Some("original")) {
+            bail!("view must be `current` or `original`");
+        }
         let client = self.client().await?;
-        let session = self
-            .idle_session(&client, session, language, "show")
-            .await?;
         let path = table_path(name);
-        let limit = rows.map_or(TABLE_ROWS, |n| (n as u32).clamp(1, MAX_TABLE_ROWS));
-        let table = client
-            .table_rows(&session.id, &path, 0, Some(limit), &[], &[])
-            .await
-            .with_context(|| format!("{name} could not be read as a table"))?;
-        Ok(vec![text_item(&text::shorten(
-            &format_table(name, &table),
-            text::MAX_TEXT,
-        ))])
+        let focus = if let Some(project) = self.project.as_deref() {
+            client.get_focus(project).await?.and_then(|f| f.table)
+        } else {
+            None
+        };
+        let focus =
+            focus.filter(|f| f.path == path && session.is_none_or(|s| f.session.starts_with(s)));
+        let chosen_session = session.or_else(|| focus.as_ref().map(|f| f.session.as_str()));
+        let session = self
+            .idle_session(&client, chosen_session, language, "show")
+            .await?;
+        let current = focus
+            .as_ref()
+            .filter(|f| view != Some("original") && f.session == session.id);
+        let limit = rows
+            .map_or(TABLE_ROWS, |n| n.min(u64::from(MAX_TABLE_ROWS)) as u32)
+            .max(1);
+        let sort = current.map_or(&[][..], |f| f.sort.as_slice());
+        let filters = current.map_or(&[][..], |f| f.filters.as_slice());
+        let search = current.map_or("", |f| f.search.as_str());
+        let table = if let Some(focus) = current.filter(|f| !f.hidden_columns.is_empty()) {
+            let header = client
+                .table_rows(&session.id, &path, 0, Some(0), &[], &[], "")
+                .await?;
+            let columns: Vec<u32> = (0..header.width.min(u64::from(u32::MAX)) as u32)
+                .filter(|c| !focus.hidden_columns.contains(c))
+                .take(TABLE_COLUMNS)
+                .collect();
+            client
+                .call(sandhill_proto::Call::TableRows {
+                    session: session.id.clone(),
+                    path: path.clone(),
+                    offset: 0,
+                    limit: Some(limit),
+                    sort: sort.to_vec(),
+                    filters: filters.to_vec(),
+                    search: search.into(),
+                    columns: Some(columns),
+                    column_offset: 0,
+                    column_limit: None,
+                    cells_only: false,
+                })
+                .await
+        } else {
+            client
+                .table_rows(&session.id, &path, 0, Some(limit), sort, filters, search)
+                .await
+        }
+        .with_context(|| format!("{name} could not be read as a table"))?;
+        let mut rendered = format_table(name, &table);
+        if current.is_some() {
+            rendered.push_str(&format!("\nUsing the user's current table view (sort, filters, search, hidden columns): filtered {} of {} rows.\n", table.rows, table.total));
+        } else {
+            rendered.push_str(
+                "\nUsing the original table (no view filters, search, sort, or hidden columns).\n",
+            );
+        }
+        Ok(vec![text_item(&text::shorten(&rendered, text::MAX_TEXT))])
     }
 
     pub(super) async fn get_help(
@@ -423,6 +475,7 @@ mod tests {
                     kind_detail: "int".into(),
                 },
             ],
+            column_indices: None,
             column_offset: 0,
             width: 2,
             total: 3,

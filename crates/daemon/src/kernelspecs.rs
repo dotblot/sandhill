@@ -667,7 +667,7 @@ pub fn conda_envs(search: &Search) -> Vec<PathBuf> {
 }
 
 /// `base` for a conda installation itself, else the environment's folder name.
-fn conda_name(prefix: &Path) -> String {
+pub(crate) fn conda_name(prefix: &Path) -> String {
     if conda_root(prefix) == prefix {
         "base".into()
     } else {
@@ -675,7 +675,7 @@ fn conda_name(prefix: &Path) -> String {
     }
 }
 
-fn conda_root(prefix: &Path) -> &Path {
+pub(crate) fn conda_root(prefix: &Path) -> &Path {
     match prefix.parent() {
         Some(envs) if envs.file_name().is_some_and(|n| n == "envs") => {
             envs.parent().unwrap_or(prefix)
@@ -748,7 +748,7 @@ fn file_name(path: &Path) -> String {
         .into_owned()
 }
 
-fn canonical(path: &Path) -> PathBuf {
+pub(crate) fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 

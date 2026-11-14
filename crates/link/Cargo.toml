@@ -3,6 +3,7 @@ name = "sandhill-link"
 description = "Reaching sandhilld: on this machine, or on a server over ssh"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

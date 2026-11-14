@@ -1,14 +1,15 @@
 //! Connecting to a "server" through a stand-in for ssh that runs commands
 //! here, in a fake home directory, as sshd would run them in the user's
 //! home. Everything else is real: the probe script, copying the build over
-//! ssh's stdin, and `sandhilld attach --start` starting a daemon there.
+//! ssh's stdin, and `sandhilld attach --start --confirm-exit` starting a daemon there.
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use sandhill_link::{Error, Options, Target, connect};
-use sandhill_proto::ARK_PATH;
+use sandhill_proto::{ARK_PATH, RUFF_PATH, TY_PATH};
+use sha2::{Digest, Sha256};
 
 /// The sandhilld that `cargo test --workspace` builds next to this test.
 fn daemon_binary() -> Option<PathBuf> {
@@ -45,7 +46,9 @@ const TOOLS: &[&str] = &[
     "cat",
     "chmod",
     "mv",
+    "ln",
     "rm",
+    "rmdir",
 ];
 
 struct Server {
@@ -230,6 +233,66 @@ async fn installs_ark_on_a_server_with_r() {
 }
 
 #[tokio::test]
+async fn installs_python_language_servers_without_r_and_reuses_matching_payloads() {
+    let Some(daemon) = daemon_binary() else {
+        eprintln!("skipping: sandhilld is not built (run `cargo test --workspace`)");
+        return;
+    };
+    let server = Server::new();
+    let builds = builds(&daemon);
+    let bytes = b"#!/bin/sh\n# bundled language server\n";
+    for name in ["ty", "ruff"] {
+        std::fs::write(
+            builds.path().join(format!("{name}-{}", this_triple())),
+            bytes,
+        )
+        .unwrap();
+    }
+    let options = server.options(Some(builds.path()));
+    let said = Mutex::new(Vec::<String>::new());
+    let progress = |note: &str| said.lock().unwrap().push(note.to_string());
+    let connection = connect(&lab(), &options, &progress)
+        .await
+        .expect("connects");
+    connection.client.ping().await.unwrap();
+    drop(connection);
+    for (name, target) in [("ty", TY_PATH), ("ruff", RUFF_PATH)] {
+        assert_eq!(
+            std::fs::read(server.home.path().join(target)).unwrap(),
+            bytes
+        );
+        let manifest = std::fs::read_to_string(
+            server
+                .home
+                .path()
+                .join(format!(".local/share/sandhill/install/{name}.json")),
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.trim(),
+            format!(
+                "{{\"version\":1,\"component\":\"{name}\",\"path\":\"{target}\",\"sha256\":\"{}\"}}",
+                sandhill_proto::hex(&Sha256::digest(bytes))
+            )
+        );
+    }
+    assert_eq!(
+        *said.lock().unwrap(),
+        [
+            "Installing sandhilld on me@lab…",
+            "Installing ty on me@lab…",
+            "Installing ruff on me@lab…",
+        ]
+    );
+    said.lock().unwrap().clear();
+    let connection = connect(&lab(), &options, &progress)
+        .await
+        .expect("reconnects");
+    connection.client.ping().await.unwrap();
+    assert!(said.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn replaces_another_build() {
     let Some(daemon) = daemon_binary() else {
         eprintln!("skipping: sandhilld is not built (run `cargo test --workspace`)");
@@ -243,6 +306,21 @@ async fn replaces_another_build() {
     )
     .unwrap();
     std::fs::set_permissions(server.installed(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Replacing a prior build is allowed only when its ownership record
+    // matches the exact bytes installed on this mock device.
+    let checksum = sandhill_proto::hex(&Sha256::digest(std::fs::read(server.installed()).unwrap()));
+    let manifest = server
+        .home
+        .path()
+        .join(".local/share/sandhill/install/sandhilld.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(
+        manifest,
+        format!(
+            "{{\"version\":1,\"component\":\"sandhilld\",\"path\":\".local/bin/sandhilld\",\"sha256\":\"{checksum}\"}}"
+        ),
+    )
+    .unwrap();
 
     let builds = builds(&daemon);
     let connection = connect(&lab(), &server.options(Some(builds.path())), &|_| {})
@@ -253,6 +331,95 @@ async fn replaces_another_build() {
         std::fs::read(server.installed()).unwrap(),
         std::fs::read(&daemon).unwrap()
     );
+}
+
+#[tokio::test]
+async fn upgrades_pre_manifest_daemon_and_ark_and_reports_preserved_originals() {
+    let Some(daemon) = daemon_binary() else {
+        eprintln!("skipping: sandhilld is not built (run `cargo test --workspace`)");
+        return;
+    };
+    let server = Server::new();
+    server.add_r();
+    let legacy_daemon = b"#!/bin/sh\necho legacy daemon >&2\nexit 1\n";
+    let legacy_ark = b"#!/bin/sh\n# legacy R kernel\n";
+    std::fs::create_dir_all(server.installed().parent().unwrap()).unwrap();
+    std::fs::create_dir_all(server.ark().parent().unwrap()).unwrap();
+    std::fs::write(server.installed(), legacy_daemon).unwrap();
+    std::fs::write(server.ark(), legacy_ark).unwrap();
+    std::fs::set_permissions(server.installed(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let builds = builds(&daemon);
+    let ark = b"#!/bin/sh\n# current R kernel\n";
+    std::fs::write(builds.path().join(format!("ark-{}", ark_triple())), ark).unwrap();
+    let options = server.options(Some(builds.path()));
+    let said = Mutex::new(Vec::<String>::new());
+    let progress = |note: &str| said.lock().unwrap().push(note.to_string());
+
+    let connection = connect(&lab(), &options, &progress)
+        .await
+        .expect("connects after preserving pre-manifest installs");
+    connection.client.ping().await.unwrap();
+    let daemon_backup = server.home.path().join(format!(
+        ".local/bin/sandhilld.legacy-sha256-{}",
+        sandhill_proto::hex(&Sha256::digest(legacy_daemon))
+    ));
+    let ark_backup = server.home.path().join(format!(
+        "{ARK_PATH}.legacy-sha256-{}",
+        sandhill_proto::hex(&Sha256::digest(legacy_ark))
+    ));
+    assert_eq!(std::fs::read(&daemon_backup).unwrap(), legacy_daemon);
+    assert_eq!(std::fs::read(&ark_backup).unwrap(), legacy_ark);
+    let current_daemon = std::fs::read(&daemon).unwrap();
+    assert_eq!(std::fs::read(server.installed()).unwrap(), current_daemon);
+    assert_eq!(std::fs::read(server.ark()).unwrap(), ark);
+    assert_eq!(
+        *said.lock().unwrap(),
+        [
+            "Installing sandhilld on me@lab…".to_string(),
+            format!(
+                "Preserved previous sandhilld on me@lab at {}",
+                daemon_backup.display()
+            ),
+            "Installing the R kernel on me@lab…".to_string(),
+            format!(
+                "Preserved previous ark on me@lab at {}",
+                ark_backup.display()
+            ),
+        ]
+    );
+    for (component, target, bytes) in [
+        (
+            "sandhilld",
+            ".local/bin/sandhilld",
+            current_daemon.as_slice(),
+        ),
+        ("ark", ARK_PATH, ark.as_slice()),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(
+                server
+                    .home
+                    .path()
+                    .join(format!(".local/share/sandhill/install/{component}.json"))
+            )
+            .unwrap()
+            .trim(),
+            format!(
+                "{{\"version\":1,\"component\":\"{component}\",\"path\":\"{target}\",\"sha256\":\"{}\"}}",
+                sandhill_proto::hex(&Sha256::digest(bytes))
+            )
+        );
+    }
+    drop(connection);
+
+    said.lock().unwrap().clear();
+    let connection = connect(&lab(), &options, &progress)
+        .await
+        .expect("reuses the newly owned builds");
+    connection.client.ping().await.unwrap();
+    assert!(said.lock().unwrap().is_empty());
+    assert_eq!(std::fs::read(daemon_backup).unwrap(), legacy_daemon);
+    assert_eq!(std::fs::read(ark_backup).unwrap(), legacy_ark);
 }
 
 #[tokio::test]
@@ -272,6 +439,46 @@ async fn uses_what_the_server_has_when_the_app_has_no_build() {
     std::fs::copy(&daemon, server.installed()).unwrap();
     let connection = connect(&lab(), &options, &|_| {}).await.expect("connects");
     connection.client.ping().await.unwrap();
+}
+
+#[tokio::test]
+async fn rejects_an_installed_legacy_bridge_without_exit_confirmation() {
+    let server = Server::new();
+    let program = server.installed();
+    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+    std::fs::write(
+        &program,
+        "#!/bin/sh\n\
+         case \"$*\" in\n\
+           *--confirm-exit*) echo 'legacy bridge does not support --confirm-exit' >&2; exit 2;;\n\
+         esac\n\
+         echo unverified > legacy-started\n\
+         exit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let marker = server.home.path().join("legacy-started");
+    // Positive control: without the contract flag this legacy executable
+    // starts a bridge and reports success without any process-exit guarantee.
+    let baseline = std::process::Command::new(&program)
+        .args(["attach", "--start"])
+        .current_dir(server.home.path())
+        .status()
+        .unwrap();
+    assert!(baseline.success());
+    assert!(marker.exists());
+    std::fs::remove_file(&marker).unwrap();
+
+    let result = connect(&lab(), &server.options(None), &|_| {}).await;
+    let error = match result {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("accepted a legacy bridge without exit confirmation"),
+    };
+    assert!(error.contains("does not support --confirm-exit"), "{error}");
+    assert!(
+        !marker.exists(),
+        "legacy bridge started without the required contract"
+    );
 }
 
 #[tokio::test]

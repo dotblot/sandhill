@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use jupyter_protocol::{
-    CommClose, CommId, ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage,
-    JupyterMessageContent, KernelInfoRequest, ShutdownRequest,
+    CommClose, CommId, CommOpen, CompleteRequest, ExecuteRequest, ExecutionState, InspectRequest,
+    InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest, ReplyStatus,
+    ShutdownRequest,
 };
 use sandhill_proto::{
-    CellRef, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED, EVENT_VIEW, Event,
-    RunFinished, RunStarted, SessionStatus,
+    CellRef, CompletionReply, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED,
+    EVENT_VIEW, Event, InspectReply, RunFinished, RunStarted, SessionStatus,
 };
 use serde_json::json;
 use tokio::process::Child;
@@ -38,6 +39,9 @@ const JOURNALED: &[&str] = &[
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const LIVENESS_INTERVAL: Duration = Duration::from_secs(2);
+const COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
+const ARK_LSP_TIMEOUT: Duration = Duration::from_secs(5);
+const LANGUAGE_SEND_TIMEOUT: Duration = Duration::from_millis(100);
 
 enum Command {
     Execute {
@@ -47,10 +51,33 @@ enum Command {
         by: Option<String>,
         reply: oneshot::Sender<Result<RunStarted>>,
     },
+    BioCheck {
+        code: String,
+        reply: oneshot::Sender<Result<RunStarted>>,
+    },
+    Complete {
+        code: String,
+        cursor_pos: usize,
+        deadline: tokio::time::Instant,
+        reply: oneshot::Sender<Result<CompletionReply>>,
+    },
+    Inspect {
+        code: String,
+        cursor_pos: usize,
+        deadline: tokio::time::Instant,
+        reply: oneshot::Sender<Result<InspectReply>>,
+    },
+    StartArkLsp {
+        deadline: tokio::time::Instant,
+        reply: oneshot::Sender<Result<u16>>,
+    },
     Interrupt {
         reply: oneshot::Sender<Result<()>>,
     },
     Shutdown {
+        reply: oneshot::Sender<Result<()>>,
+    },
+    Force {
         reply: oneshot::Sender<Result<()>>,
     },
 }
@@ -90,6 +117,7 @@ impl SessionHandle {
             .filter(|p| p.is_dir());
         let spec = kernel::find_kernelspec(kernel, root.as_deref()).await?;
         let language = spec.kernelspec.language.clone();
+        let ark = is_ark_spec(&language, &spec.kernelspec.argv);
         // R reads `.Rprofile` and `.Renviron` in the folder it starts in,
         // which is how renv loads a project's library: start it in the
         // project's folder, then move to `cwd`.
@@ -185,6 +213,7 @@ impl SessionHandle {
         let begin = Begin {
             child: Some(child),
             prelude,
+            ark,
             ..Begin::default()
         };
         Ok(Self::spawn(record, journal, conn, rx, begin))
@@ -231,6 +260,14 @@ impl SessionHandle {
                 let begin = Begin {
                     runs,
                     probe_id: Some(probe_id),
+                    ark: kernel::find_kernelspec(
+                        &record.kernel,
+                        record.project.as_deref().map(Path::new),
+                    )
+                    .await
+                    .is_ok_and(|spec| {
+                        is_ark_spec(&spec.kernelspec.language, &spec.kernelspec.argv)
+                    }),
                     ..Begin::default()
                 };
                 Ok(Self::spawn(record, journal, conn, rx, begin))
@@ -268,6 +305,10 @@ impl SessionHandle {
             probe_id: begin.probe_id,
             prelude: begin.prelude,
             busy: None,
+            ark: begin.ark,
+            completions: HashMap::new(),
+            inspections: HashMap::new(),
+            lsp_starts: HashMap::new(),
         };
         let task = tokio::spawn(actor.run());
         SessionHandle {
@@ -301,6 +342,64 @@ impl SessionHandle {
         rx.await.map_err(|_| ended())?
     }
 
+    /// Requests live-kernel completion without executing or recording code.
+    /// Cursor offsets are Unicode scalar positions, as required by Jupyter.
+    pub async fn complete(&self, code: String, cursor_pos: usize) -> Result<CompletionReply> {
+        let deadline = tokio::time::Instant::now() + COMPLETION_TIMEOUT;
+        let (reply, rx) = oneshot::channel();
+        tokio::time::timeout_at(deadline, async {
+            self.send(Command::Complete {
+                code,
+                cursor_pos,
+                deadline,
+                reply,
+            })
+            .await?;
+            rx.await.map_err(|_| ended())?
+        })
+        .await
+        .context("kernel completion timed out")?
+    }
+
+    /// Requests live-kernel introspection (detail level 0) at a cursor, like
+    /// `complete`: never executes or records code. Offsets are Unicode scalars.
+    pub async fn inspect(&self, code: String, cursor_pos: usize) -> Result<InspectReply> {
+        let deadline = tokio::time::Instant::now() + COMPLETION_TIMEOUT;
+        let (reply, rx) = oneshot::channel();
+        tokio::time::timeout_at(deadline, async {
+            self.send(Command::Inspect {
+                code,
+                cursor_pos,
+                deadline,
+                reply,
+            })
+            .await?;
+            rx.await.map_err(|_| ended())?
+        })
+        .await
+        .context("kernel inspection timed out")?
+    }
+
+    /// Starts Ark's built-in language server on the daemon's loopback interface.
+    /// The caller owns the returned TCP connection and LSP lifecycle.
+    pub async fn start_ark_lsp(&self) -> Result<u16> {
+        let deadline = tokio::time::Instant::now() + ARK_LSP_TIMEOUT;
+        let (reply, rx) = oneshot::channel();
+        tokio::time::timeout_at(deadline, async {
+            self.send(Command::StartArkLsp { deadline, reply }).await?;
+            rx.await.map_err(|_| ended())?
+        })
+        .await
+        .context("Ark language server startup timed out")?
+    }
+
+    /// The actor accepts this only while idle, atomically with queuing it.
+    pub(crate) async fn bio_check(&self, code: String) -> Result<RunStarted> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Command::BioCheck { code, reply }).await?;
+        rx.await.map_err(|_| ended())?
+    }
+
     pub async fn interrupt(&self) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         self.send(Command::Interrupt { reply }).await?;
@@ -310,6 +409,12 @@ impl SessionHandle {
     pub async fn shutdown(&self) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         self.send(Command::Shutdown { reply }).await?;
+        rx.await.map_err(|_| ended())?
+    }
+
+    pub async fn force_stop(&self) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Command::Force { reply }).await?;
         rx.await.map_err(|_| ended())?
     }
 
@@ -327,6 +432,13 @@ impl SessionHandle {
         self.task.abort();
     }
 
+    pub(crate) async fn detach_wait(&self) {
+        self.task.abort();
+        while !self.task.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    }
+
     async fn send(&self, command: Command) -> Result<()> {
         self.commands.send(command).await.map_err(|_| ended())
     }
@@ -334,6 +446,15 @@ impl SessionHandle {
 
 fn ended() -> anyhow::Error {
     anyhow!("the session has ended")
+}
+
+fn is_ark_spec(language: &str, argv: &[String]) -> bool {
+    crate::cells::normalize_language(language) == "r"
+        && argv.first().is_some_and(|program| {
+            Path::new(program)
+                .file_name()
+                .is_some_and(|name| name == "ark" || name == "ark.exe")
+        })
 }
 
 /// What a session's actor starts with besides its connection.
@@ -347,6 +468,7 @@ struct Begin {
     probe_id: Option<String>,
     /// The code run at start (see `startup`).
     prelude: Option<String>,
+    ark: bool,
 }
 
 struct RunState {
@@ -357,6 +479,11 @@ struct RunState {
     idle: bool,
     /// Started before a daemon restart; its reply may never arrive.
     recovered: bool,
+}
+
+struct PendingLanguage<T> {
+    reply: oneshot::Sender<Result<T>>,
+    deadline: tokio::time::Instant,
 }
 
 struct Actor {
@@ -376,24 +503,49 @@ struct Actor {
     /// The request the kernel is busy with, for messages that name none:
     /// Ark opens its comms without a parent.
     busy: Option<String>,
+    /// Derived from the actual launch spec, not the user-visible kernel name.
+    ark: bool,
+    completions: HashMap<String, PendingLanguage<CompletionReply>>,
+    inspections: HashMap<String, PendingLanguage<InspectReply>>,
+    lsp_starts: HashMap<String, PendingLanguage<u16>>,
 }
 
 impl Actor {
     async fn run(mut self) {
         let mut liveness = tokio::time::interval(LIVENESS_INTERVAL);
         loop {
+            let language_deadline = self
+                .completions
+                .values()
+                .map(|pending| pending.deadline)
+                .chain(self.inspections.values().map(|pending| pending.deadline))
+                .chain(self.lsp_starts.values().map(|pending| pending.deadline))
+                .min()
+                .unwrap_or_else(|| tokio::time::Instant::now() + STARTUP_TIMEOUT);
             tokio::select! {
                 Some(msg) = self.kernel_rx.recv() => self.on_kernel_message(msg).await,
                 command = self.command_rx.recv() => match command {
                     Some(Command::Shutdown { reply }) => {
                         let result = self.shutdown().await;
+                        let stopped = result.is_ok();
                         let _ = reply.send(result);
-                        return;
+                        if stopped {
+                            return;
+                        }
+                    }
+                    Some(Command::Force { reply }) => {
+                        let result = self.force_stop().await;
+                        let stopped = result.is_ok();
+                        let _ = reply.send(result);
+                        if stopped {
+                            return;
+                        }
                     }
                     Some(command) => self.on_command(command).await,
                     // The daemon dropped the handle; keep the kernel running.
                     None => return,
                 },
+                _ = tokio::time::sleep_until(language_deadline) => self.expire_language_requests(),
                 _ = liveness.tick() => {
                     if !self.kernel_alive() {
                         self.finish("kernel process exited");
@@ -415,10 +567,171 @@ impl Actor {
             } => {
                 let _ = reply.send(self.execute(code, cell, quiet, by).await);
             }
+            Command::BioCheck { code, reply } => {
+                // Pending executes count as busy even before their IOPub status.
+                let result = if !self.runs.is_empty()
+                    || self.busy.is_some()
+                    || self.probe_id.is_some()
+                    || self.prelude.is_some()
+                {
+                    Err(anyhow!("the session is busy; checkpoint not checked"))
+                } else {
+                    self.execute(code, None, true, Some("Sandhill bio checker".into()))
+                        .await
+                };
+                let _ = reply.send(result);
+            }
+            Command::Complete {
+                code,
+                cursor_pos,
+                deadline,
+                reply,
+            } => {
+                if reply.is_closed() || deadline <= tokio::time::Instant::now() {
+                    return;
+                }
+                if self.language_busy() {
+                    let _ = reply.send(Err(anyhow!("kernel_busy: kernel busy")));
+                    return;
+                }
+                let request = JupyterMessage::new(CompleteRequest { code, cursor_pos }, None);
+                let id = request.header.msg_id.clone();
+                match self.send_language(request, deadline).await {
+                    Ok(()) => {
+                        self.completions
+                            .insert(id, PendingLanguage { reply, deadline });
+                    }
+                    Err(err) => {
+                        let _ = reply.send(Err(err));
+                    }
+                }
+            }
+            Command::Inspect {
+                code,
+                cursor_pos,
+                deadline,
+                reply,
+            } => {
+                if reply.is_closed() || deadline <= tokio::time::Instant::now() {
+                    return;
+                }
+                if self.language_busy() {
+                    let _ = reply.send(Err(anyhow!("kernel_busy: kernel busy")));
+                    return;
+                }
+                let request = JupyterMessage::new(
+                    InspectRequest {
+                        code,
+                        cursor_pos,
+                        detail_level: Some(0),
+                    },
+                    None,
+                );
+                let id = request.header.msg_id.clone();
+                match self.send_language(request, deadline).await {
+                    Ok(()) => {
+                        self.inspections
+                            .insert(id, PendingLanguage { reply, deadline });
+                    }
+                    Err(err) => {
+                        let _ = reply.send(Err(err));
+                    }
+                }
+            }
+            Command::StartArkLsp { deadline, reply } => {
+                if reply.is_closed() || deadline <= tokio::time::Instant::now() {
+                    return;
+                }
+                if !self.ark {
+                    let _ = reply.send(Err(anyhow!(
+                        "ark_lsp_unsupported: R language service requires an Ark session; IRkernel and other kernels do not support positron.lsp"
+                    )));
+                    return;
+                }
+                if self.language_busy() {
+                    let _ = reply.send(Err(anyhow!("kernel_busy: kernel busy")));
+                    return;
+                }
+                if !self.lsp_starts.is_empty() {
+                    let _ = reply.send(Err(anyhow!(
+                        "Ark language server startup already in progress"
+                    )));
+                    return;
+                }
+                // Ark MIT, commit 4f88ecc8a7161e34ba036f933769ee7d274474cb:
+                // amalthea/src/comm/server_comm.rs and socket/shell.rs.
+                // Ark binds the port itself and acknowledges it on this comm.
+                let id = uuid::Uuid::new_v4().to_string();
+                let request = CommOpen {
+                    comm_id: CommId(id.clone()),
+                    target_name: "positron.lsp".into(),
+                    data: serde_json::Map::from_iter([("ip_address".into(), json!("127.0.0.1"))]),
+                    target_module: None,
+                };
+                match self
+                    .send_language(JupyterMessage::new(request, None), deadline)
+                    .await
+                {
+                    Ok(()) => {
+                        self.lsp_starts
+                            .insert(id, PendingLanguage { reply, deadline });
+                    }
+                    Err(err) => {
+                        let _ = reply.send(Err(err));
+                    }
+                }
+            }
             Command::Interrupt { reply } => {
                 let _ = reply.send(self.interrupt().await);
             }
-            Command::Shutdown { .. } => unreachable!("handled in run()"),
+            Command::Shutdown { .. } | Command::Force { .. } => unreachable!("handled in run()"),
+        }
+    }
+
+    fn language_busy(&self) -> bool {
+        !self.runs.is_empty()
+            || self.busy.is_some()
+            || self.probe_id.is_some()
+            || self.prelude.is_some()
+    }
+
+    async fn send_language(
+        &mut self,
+        request: JupyterMessage,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        let send_deadline = deadline.min(tokio::time::Instant::now() + LANGUAGE_SEND_TIMEOUT);
+        tokio::time::timeout_at(send_deadline, self.conn.shell.send(request))
+            .await
+            .context("kernel language request send timed out")??;
+        Ok(())
+    }
+
+    fn expire_language_requests(&mut self) {
+        let now = tokio::time::Instant::now();
+        for (_, pending) in self
+            .completions
+            .extract_if(|_, pending| pending.deadline <= now || pending.reply.is_closed())
+        {
+            let _ = pending
+                .reply
+                .send(Err(anyhow!("kernel completion timed out")));
+        }
+        for (_, pending) in self
+            .inspections
+            .extract_if(|_, pending| pending.deadline <= now || pending.reply.is_closed())
+        {
+            let _ = pending
+                .reply
+                .send(Err(anyhow!("kernel inspection timed out")));
+        }
+        for (_, pending) in self
+            .lsp_starts
+            .extract_if(|_, pending| pending.deadline <= now || pending.reply.is_closed())
+        {
+            let _ = pending
+                .reply
+                .send(Err(anyhow!("Ark language server startup timed out")));
         }
     }
 
@@ -483,20 +796,36 @@ impl Actor {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        let msg = JupyterMessage::new(ShutdownRequest { restart: false }, None);
-        let _ = self.conn.control.send(msg).await;
         let deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+        let msg = JupyterMessage::new(ShutdownRequest { restart: false }, None);
+        // A vanished/disconnected kernel must not hang management forever.
+        let _ = tokio::time::timeout_at(deadline, self.conn.control.send(msg)).await;
         while self.kernel_alive() && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        if let Some(pid) = self.record.pid {
-            kernel::kill_process_group(pid);
-        }
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.wait().await;
+        if self.kernel_alive() {
+            bail!("kernel did not stop gracefully; explicit force is required");
         }
         self.finish("shut down");
         Ok(())
+    }
+
+    async fn force_stop(&mut self) -> Result<()> {
+        if let Some(child) = self.child.as_mut() {
+            // An unreaped child cannot have its PID reused.
+            if let Some(pid) = child.id() {
+                // The retained, unreaped leader pins this process group.
+                kernel::kill_process_group(pid);
+            }
+            child.start_kill()?;
+            tokio::time::timeout(SHUTDOWN_GRACE, child.wait())
+                .await
+                .context("kernel did not exit after explicit force")??;
+            self.finish("explicitly force stopped");
+            Ok(())
+        } else {
+            bail!("no retained child handle; identity-checked termination required");
+        }
     }
 
     fn kernel_alive(&mut self) -> bool {
@@ -518,11 +847,42 @@ impl Actor {
 
     async fn on_iopub(&mut self, msg: JupyterMessage) {
         let parent = msg.parent_header.as_ref().map(|h| h.msg_id.clone());
+        match &msg.content {
+            JupyterMessageContent::CommMsg(comm) => {
+                if comm.data.get("msg_type").and_then(|value| value.as_str())
+                    == Some("server_started")
+                    && let Some(pending) = self.lsp_starts.remove(&comm.comm_id.0)
+                {
+                    let result = comm
+                        .data
+                        .get("content")
+                        .and_then(|content| content.get("port"))
+                        .and_then(|port| port.as_u64())
+                        .and_then(|port| u16::try_from(port).ok())
+                        .filter(|port| *port != 0)
+                        .context("Ark language server returned an invalid TCP port");
+                    let _ = pending.reply.send(result);
+                    return;
+                }
+            }
+            JupyterMessageContent::CommClose(comm) => {
+                if let Some(pending) = self.lsp_starts.remove(&comm.comm_id.0) {
+                    let _ = pending.reply.send(Err(anyhow!(
+                        "Ark closed positron.lsp before its language server started"
+                    )));
+                    return;
+                }
+            }
+            _ => {}
+        }
         if let JupyterMessageContent::Status(status) = &msg.content {
             if status.execution_state == ExecutionState::Busy {
                 self.busy = parent.clone();
             } else if status.execution_state == ExecutionState::Idle && self.busy == parent {
                 self.busy = None;
+            }
+            if status.execution_state == ExecutionState::Idle && parent == self.prelude {
+                self.prelude = None;
             }
             if status.execution_state == ExecutionState::Idle
                 && let Some(run) = parent.as_deref().and_then(|p| self.runs.get_mut(p))
@@ -587,7 +947,37 @@ impl Actor {
         let Some(parent) = msg.parent_header.as_ref().map(|h| h.msg_id.clone()) else {
             return;
         };
-        match &msg.content {
+        match msg.content {
+            JupyterMessageContent::CompleteReply(reply) => {
+                if let Some(pending) = self.completions.remove(&parent) {
+                    let result = if reply.status == ReplyStatus::Ok {
+                        Ok(CompletionReply {
+                            matches: reply.matches,
+                            cursor_start: reply.cursor_start,
+                            cursor_end: reply.cursor_end,
+                            metadata: serde_json::Value::Object(reply.metadata),
+                        })
+                    } else {
+                        Err(anyhow!("kernel completion failed: {:?}", reply.error))
+                    };
+                    let _ = pending.reply.send(result);
+                }
+            }
+            JupyterMessageContent::InspectReply(reply) => {
+                if let Some(pending) = self.inspections.remove(&parent) {
+                    let result = if reply.status == ReplyStatus::Ok {
+                        serde_json::to_value(&reply.data)
+                            .map(|data| InspectReply {
+                                found: reply.found,
+                                data,
+                            })
+                            .map_err(Into::into)
+                    } else {
+                        Err(anyhow!("kernel inspection failed: {:?}", reply.error))
+                    };
+                    let _ = pending.reply.send(result);
+                }
+            }
             JupyterMessageContent::ExecuteReply(reply) => {
                 let status = serde_json::to_value(&reply.status)
                     .ok()

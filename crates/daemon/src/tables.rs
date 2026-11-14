@@ -42,11 +42,14 @@ pub struct Ask<'a> {
     pub path: &'a [String],
     pub sort: &'a [TableSort],
     pub filters: &'a [TableFilter],
+    pub search: &'a str,
     pub offset: u64,
     pub limit: u32,
     /// The columns to read cells of, or summarize.
     pub column_offset: u32,
     pub column_limit: u32,
+    /// Explicit original positions; overrides the contiguous window.
+    pub columns: Option<&'a [u32]>,
     /// Whether [`Mode::Rows`] lists every column, not only cells.
     pub headers: bool,
     /// The CSV file to write, for [`Mode::Export`].
@@ -59,10 +62,12 @@ const R: &str = r#"local({
   .sort_col <- __SORT_COL__
   .sort_desc <- __SORT_DESC__
   .filters <- __FILTERS__
+  .search <- __SEARCH__
   .offset <- __OFFSET__
   .limit <- __LIMIT__
   .col_offset <- __COL_OFFSET__
   .col_limit <- __COL_LIMIT__
+  .projection <- __COLUMNS__
   .headers <- __HEADERS__
   .file <- __FILE__
 __WALK__
@@ -131,6 +136,15 @@ __WALK__
     .m[is.na(.m)] <- FALSE
     .mask <- .mask & .m
   }
+  if (nzchar(.search)) {
+    .keyword <- tolower(.search)
+    .matches <- rep(FALSE, .n)
+    for (.j in seq_len(.width)) {
+      .v <- .col(.j)
+      .matches <- .matches | (!is.na(.v) & grepl(.keyword, tolower(as.character(.v)), fixed = TRUE))
+    }
+    .mask <- .mask & .matches
+  }
   .idx <- which(.mask)
   if (length(.sort_col)) {
     .keys <- lapply(seq_along(.sort_col), function(i) {
@@ -139,7 +153,8 @@ __WALK__
     })
     .idx <- .idx[do.call(order, c(.keys, list(na.last = TRUE)))]
   }
-  .cols <- seq_len(max(0, min(.col_limit, .width - .col_offset))) + .col_offset
+  .cols <- if (is.null(.projection)) seq_len(max(0, min(.col_limit, .width - .col_offset))) + .col_offset else .projection
+  if (any(.cols < 1 | .cols > .width)) stop("projected column is outside the table")
   # Each column's kind and type: a matrix's are all its first column's.
   .each <- function(f, js) {
     if (!length(js)) return(character(0))
@@ -147,9 +162,9 @@ __WALK__
   }
   if (.mode == "rows") {
     .line("SANDHILL_TABLE", .n, length(.idx), .width, .esc(.found$code), as.integer(.matrix))
-    if (.headers && .width) {
-      .all <- seq_len(.width)
-      writeLines(paste("SANDHILL_COL", .esc(.names), .each(.kind, .all), .each(.type, .all), sep = "\t"))
+    if (.headers && .width && (is.null(.projection) || length(.projection))) {
+      .all <- if (is.null(.projection)) seq_len(.width) else .cols
+      writeLines(paste("SANDHILL_COL", .esc(.names[.all]), .each(.kind, .all), .each(.type, .all), sep = "\t"))
     }
     .line("SANDHILL_KINDS", .each(.kind, .cols))
     .page <- .idx[seq_len(max(0, min(.limit, length(.idx) - .offset))) + .offset]
@@ -201,7 +216,7 @@ __WALK__
 })
 "#;
 
-const PYTHON: &str = r#"def _sandhill_table(path, mode, sort, filters, offset, limit, col_offset, col_limit, headers, file):
+const PYTHON: &str = r#"def _sandhill_table(path, mode, sort, filters, offset, limit, col_offset, col_limit, headers, file, projection, search):
     ip = globals().get("get_ipython", lambda: None)()
     ns = ip.user_ns if ip is not None else globals()
 __WALK__
@@ -212,7 +227,9 @@ __WALK__
     import pandas as pd
     t = v if type(v).__name__ == "DataFrame" else pd.DataFrame(v)
     n, width = t.shape
-    cols = range(min(col_offset, width), min(width, col_offset + col_limit))
+    cols = range(min(col_offset, width), min(width, col_offset + col_limit)) if projection is None else projection
+    if any(c < 0 or c >= width for c in cols):
+        raise IndexError("projected column is outside the table")
     types = pd.api.types
 
     def esc(s):
@@ -287,6 +304,14 @@ __WALK__
         else:
             raise ValueError(f"unknown filter: {op}")
         mask &= m.fillna(False).to_numpy(dtype=bool)
+    if search:
+        keyword = search.lower()
+        matches = np.zeros(n, dtype=bool)
+        for c in range(width):
+            s = t.iloc[:, c]
+            m = s.notna() & s.astype(str).str.lower().str.contains(keyword, regex=False)
+            matches |= m.fillna(False).to_numpy(dtype=bool)
+        mask &= matches
     idx = np.flatnonzero(mask)
     if sort:
         keys = pd.DataFrame({i: t.iloc[idx, c].reset_index(drop=True) for i, (c, _) in enumerate(sort)})
@@ -300,8 +325,8 @@ __WALK__
     if mode == "rows":
         line("SANDHILL_TABLE", n, len(idx), width, esc(code), int(t is not v))
         if headers:
-            for name, d in zip(t.columns, t.dtypes):
-                line("SANDHILL_COL", esc(str(name)), kind_of(d), str(d))
+            for c in (range(width) if projection is None else cols):
+                line("SANDHILL_COL", esc(str(t.columns[c])), kind_of(t.dtypes.iloc[c]), str(t.dtypes.iloc[c]))
         line("SANDHILL_KINDS", *[kind_of(t.dtypes.iloc[c]) for c in cols])
         page = idx[offset:offset + limit]
         if len(page):
@@ -344,7 +369,7 @@ __WALK__
         t.iloc[idx].to_csv(file, index=not isinstance(t.index, pd.RangeIndex))
         line("SANDHILL_WROTE", len(idx))
 
-_sandhill_table(__PATH__, __MODE__, __SORT__, __FILTERS__, __OFFSET__, __LIMIT__, __COL_OFFSET__, __COL_LIMIT__, __HEADERS__, __FILE__)
+_sandhill_table(__PATH__, __MODE__, __SORT__, __FILTERS__, __OFFSET__, __LIMIT__, __COL_OFFSET__, __COL_LIMIT__, __HEADERS__, __FILE__, __COLUMNS__, __SEARCH__)
 del _sandhill_table
 "#;
 
@@ -391,8 +416,24 @@ fn r_code(ask: &Ask) -> String {
         .replace("__LIMIT__", &ask.limit.to_string())
         .replace("__COL_OFFSET__", &ask.column_offset.to_string())
         .replace("__COL_LIMIT__", &ask.column_limit.to_string())
+        .replace(
+            "__COLUMNS__",
+            &ask.columns.map_or_else(
+                || "NULL".into(),
+                |cols| {
+                    format!(
+                        "as.integer(c({}))",
+                        cols.iter()
+                            .map(|c| (u64::from(*c) + 1).to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                },
+            ),
+        )
         .replace("__HEADERS__", if ask.headers { "TRUE" } else { "FALSE" })
         .replace("__FILE__", &literal(ask.file))
+        .replace("__SEARCH__", &literal(ask.search))
 }
 
 fn python_code(ask: &Ask) -> String {
@@ -429,8 +470,16 @@ fn python_code(ask: &Ask) -> String {
         .replace("__LIMIT__", &ask.limit.to_string())
         .replace("__COL_OFFSET__", &ask.column_offset.to_string())
         .replace("__COL_LIMIT__", &ask.column_limit.to_string())
+        .replace(
+            "__COLUMNS__",
+            &ask.columns.map_or_else(
+                || "None".into(),
+                |cols| serde_json::to_string(cols).expect("column indices serialize"),
+            ),
+        )
         .replace("__HEADERS__", if ask.headers { "True" } else { "False" })
         .replace("__FILE__", &literal(ask.file))
+        .replace("__SEARCH__", &literal(ask.search))
 }
 
 /// A JSON string is also an R string literal and a Python one.
@@ -699,10 +748,12 @@ mod tests {
             path: &path,
             sort: &sort,
             filters: &filters,
+            search: "",
             offset: 200,
             limit: 100,
             column_offset: 100,
             column_limit: 50,
+            columns: None,
             headers: false,
             file: "",
         };
@@ -716,8 +767,54 @@ mod tests {
         assert!(r.contains(".headers <- FALSE"));
         assert!(r.contains(".find <- function(path)"));
         let py = code("python", &ask).unwrap();
-        assert!(py.contains(r#"_sandhill_table(["seu", "meta \"data\""], "rows", [(2, True)], [(0, "<", ["5"]), (4, "missing", [])], 200, 100, 100, 50, False, "")"#));
+        assert!(py.contains(r#"_sandhill_table(["seu", "meta \"data\""], "rows", [(2, True)], [(0, "<", ["5"]), (4, "missing", [])], 200, 100, 100, 50, False, "", None, "")"#));
         assert!(py.contains("    def walk(path):"));
         assert!(code("julia", &ask).is_none());
+    }
+
+    fn search_ask(search: &str) -> Ask<'_> {
+        Ask {
+            mode: Mode::Rows,
+            path: &[],
+            sort: &[],
+            filters: &[],
+            search,
+            offset: 0,
+            limit: 1,
+            column_offset: 0,
+            column_limit: 1,
+            columns: None,
+            headers: false,
+            file: "",
+        }
+    }
+
+    #[test]
+    fn r_search_escapes_literal_keywords_and_precedes_sorting() {
+        let ask = search_ask("A\"\\\n[.]__FILE__");
+        let code = code("r", &ask).unwrap();
+        assert!(code.contains(r#".search <- "A\"\\\n[.]__FILE__""#));
+        assert!(code.contains("grepl(.keyword, tolower(as.character(.v)), fixed = TRUE)"));
+        assert!(code.contains("!is.na(.v) & grepl"));
+        let search = code.find("if (nzchar(.search))").unwrap();
+        let sort = code.find("if (length(.sort_col))").unwrap();
+        let page = code.find(".page <-").unwrap();
+        assert!(search < sort && sort < page);
+    }
+
+    #[test]
+    fn python_search_escapes_literal_keywords_and_precedes_sorting() {
+        let ask = search_ask("A\"\\\n[.]__FILE__");
+        let code = code("python", &ask).unwrap();
+        assert!(code.contains(r#", None, "A\"\\\n[.]__FILE__")"#));
+        assert!(
+            code.contains(
+                "s.notna() & s.astype(str).str.lower().str.contains(keyword, regex=False)"
+            )
+        );
+        let search = code.find("    if search:").unwrap();
+        let sort = code.find("    if sort:").unwrap();
+        let page = code.find("        page = idx[").unwrap();
+        assert!(search < sort && sort < page);
     }
 }

@@ -7,8 +7,6 @@
 //!   `document`, so a working agent keeps the file it started in.
 //! - `web: false`: no web search. Claude Code's `PreToolUse` hook blocks
 //!   its web tools, and both agents are told with each message.
-//! - `context: false`: where the user is in the editor stays out of their
-//!   messages.
 //! - `refs`: files, chunks, variables and plots the user added to the next
 //!   message with the @ menu. That message takes them, and they go.
 
@@ -19,7 +17,7 @@ use serde_json::Value;
 
 /// The report keys the app sets with `{kind: "set", ...}`; `refs` also
 /// comes with a message (`{kind: "say", text, refs}`).
-pub const KEYS: [&str; 4] = ["pin", "web", "context", "refs"];
+pub const KEYS: [&str; 3] = ["pin", "web", "refs"];
 
 /// Claude Code's tools that reach the web.
 const WEB_TOOLS: [&str; 2] = ["WebSearch", "WebFetch"];
@@ -35,7 +33,6 @@ pub const WEB_BLOCKED: &str = "Not run: web search is off for this conversation 
 pub struct Choices {
     pub pin: Option<String>,
     pub web: bool,
-    pub context: bool,
     pub refs: Vec<Ref>,
 }
 
@@ -44,7 +41,6 @@ impl Default for Choices {
         Choices {
             pin: None,
             web: true,
-            context: true,
             refs: Vec::new(),
         }
     }
@@ -88,7 +84,6 @@ pub fn of(report: &Value) -> Choices {
             .filter(|p| !p.is_empty())
             .map(str::to_string),
         web: report["web"] != false,
-        context: report["context"] != false,
         refs: serde_json::from_value(report["refs"].clone()).unwrap_or_default(),
     }
 }
@@ -158,11 +153,10 @@ mod tests {
         let choices = of(&json!({
             "pin": "fig3.qmd",
             "web": false,
-            "context": true,
             "refs": [{"kind": "file", "name": "theme.R", "path": "R/theme.R"}],
         }));
         assert_eq!(choices.pin.as_deref(), Some("fig3.qmd"));
-        assert!(!choices.web && choices.context);
+        assert!(!choices.web);
         assert_eq!(choices.refs[0].path.as_deref(), Some("R/theme.R"));
         // Cleared refs and an unpinned file read as none.
         let cleared = of(&json!({"pin": null, "refs": null}));

@@ -5,7 +5,7 @@
 //!
 //! - the user's messages (and mode, model and effort) come from the app
 //!   through the terminal host ([`super::ToHost::Command`]) and become
-//!   Codex's turns, with where the user is in their document;
+//!   Codex's turns, with what the user added with @ and #;
 //! - what Codex does comes back as the conversation entries Claude Code's
 //!   hooks make ([`super::chat`], translated in [`items`]), so the chat
 //!   shows both agents the same way;
@@ -18,9 +18,10 @@
 //! its own; Sandhill never sees its login.
 
 pub mod items;
+pub(crate) mod native;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -39,8 +40,8 @@ use crate::journal::now_ms;
 
 /// Replies are sent to the chat in pieces at most this far apart.
 const FLUSH: Duration = Duration::from_millis(120);
-/// A message waits this long at most for where the user is.
-const PLACE_TIMEOUT: Duration = Duration::from_millis(1500);
+/// A message waits this long at most for what a # cell last showed.
+const REFS_TIMEOUT: Duration = Duration::from_millis(1500);
 /// What a plan is carried out with, once the user approves it.
 const CARRY_OUT: &str = "Carry out the plan.";
 
@@ -49,7 +50,7 @@ pub struct Options {
     pub codex: PathBuf,
     /// More arguments for `codex app-server`, such as `-c` settings.
     pub args: Vec<String>,
-    /// The daemon's socket, for where the user is.
+    /// The daemon's socket, for what goes with a message.
     pub daemon: PathBuf,
     pub project: Option<String>,
     pub options: AgentOptions,
@@ -62,7 +63,7 @@ pub struct Options {
 }
 
 /// Runs Codex's conversation until Codex exits; returns its exit code.
-pub async fn run(options: Options) -> Result<i32> {
+pub async fn run(mut options: Options) -> Result<i32> {
     let dir = std::env::var_os("SANDHILL_TERMINAL")
         .map(PathBuf::from)
         .context("codex-chat runs in a Sandhill terminal")?;
@@ -74,23 +75,11 @@ pub async fn run(options: Options) -> Result<i32> {
     let host = Host(tokio::sync::Mutex::new(to_host));
     host.send(&ToHost::Listen).await?;
 
-    // Codex starts MCP servers with few of its variables: Sandhill's is
-    // told which conversation it serves, for the document it is about.
-    let terminal = serde_json::to_string(&dir.to_string_lossy())?;
-    let mut child = tokio::process::Command::new(&options.codex)
-        .arg("app-server")
-        .args(&options.args)
-        .arg("-c")
-        .arg(format!(
-            "mcp_servers.sandhill.env.SANDHILL_TERMINAL={terminal}"
-        ))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .kill_on_drop(true)
+    let mut child = app_server(&options, &dir)
         .spawn()
         .with_context(|| format!("cannot start {}", options.codex.display()))?;
     let rpc = Rpc {
-        stdin: tokio::sync::Mutex::new(child.stdin.take().context("no stdin")?),
+        stdin: tokio::sync::Mutex::new(Some(child.stdin.take().context("no stdin")?)),
         next: AtomicI64::new(1),
         pending: Mutex::new(HashMap::new()),
     };
@@ -107,19 +96,20 @@ pub async fn run(options: Options) -> Result<i32> {
             permission: options.options.permission.clone(),
             ..State::default()
         }),
+        tasks: Mutex::new(Vec::new()),
     });
-    tokio::spawn(
+    let mut reader = tokio::spawn(
         bridge
             .clone()
             .read(child.stdout.take().context("no stdout")?),
     );
 
-    if let Err(err) = bridge.start(&options).await {
+    if let Err(err) = bridge.start(&options, false).await {
         let message = format!("Codex couldn't start its conversation: {err:#}");
         println!("{message}");
         bridge.chat(json!({"kind": "error", "text": message})).await;
         let _ = child.start_kill();
-    } else if let Some(prompt) = options.prompt.filter(|p| !p.trim().is_empty()) {
+    } else if let Some(prompt) = options.prompt.clone().filter(|p| !p.trim().is_empty()) {
         bridge.clone().say(prompt, true).await;
     }
 
@@ -129,7 +119,67 @@ pub async fn run(options: Options) -> Result<i32> {
             line = commands.next_line() => match line {
                 Ok(Some(line)) => {
                     if let Ok(FromHost::Command { command }) = serde_json::from_str(&line) {
-                        tokio::spawn(bridge.clone().command(command));
+                        if command["kind"] == "view" {
+                            if command["mode"] != "terminal" {
+                                continue;
+                            }
+                            bridge.state.lock().unwrap().paused = true;
+                            bridge.report(json!({"view_mode": "switching_terminal"})).await;
+                            if let Err(err) = bridge.release().await {
+                                bridge.state.lock().unwrap().paused = false;
+                                bridge.chat(json!({"kind": "error", "text": format!("Codex couldn't open Terminal: {err:#}")})).await;
+                                bridge.report(json!({"view_mode": "chat"})).await;
+                                bridge.next();
+                                continue;
+                            }
+                            bridge.stop_tasks().await;
+                            // EOF asks the stdio app-server to shut down. Never start
+                            // another owner while this process is still alive.
+                            bridge.rpc.stdin.lock().await.take();
+                            if !matches!(tokio::time::timeout(Duration::from_secs(15), child.wait()).await, Ok(Ok(_))) {
+                                bridge.chat(json!({"kind": "error", "text": "Codex app-server did not shut down; Terminal was not started."})).await;
+                                bridge.report(json!({"view_mode": "chat"})).await;
+                                let _ = child.kill().await;
+                                return Ok(1);
+                            }
+                            let _ = reader.await;
+                            let mut native_command = bridge.native_command(&options);
+                            bridge.report(json!({"view_mode": "terminal"})).await;
+                            let queued = native::run(&mut native_command, &bridge.dir, &mut commands).await;
+                            bridge.report(json!({"view_mode": "switching_chat"})).await;
+                            if let Err(err) = &queued {
+                                bridge.chat(json!({"kind": "error", "text": format!("Codex Terminal failed: {err:#}")})).await;
+                            }
+                            options.thread = Some(bridge.state.lock().unwrap().thread.clone());
+                            child = match app_server(&options, &bridge.dir).spawn() {
+                                Ok(child) => child,
+                                Err(err) => {
+                                    bridge.chat(json!({"kind": "error", "text": format!("Codex couldn't return to Chat: {err:#}")})).await;
+                                    bridge.report(json!({"view_mode": "chat"})).await;
+                                    return Ok(1);
+                                }
+                            };
+                            *bridge.rpc.stdin.lock().await = Some(child.stdin.take().context("no stdin")?);
+                            reader = tokio::spawn(bridge.clone().read(child.stdout.take().context("no stdout")?));
+                            if let Err(err) = bridge.start(&options, true).await {
+                                bridge.chat(json!({"kind": "error", "text": format!("Codex couldn't resume Chat: {err:#}")})).await;
+                                bridge.report(json!({"view_mode": "chat"})).await;
+                                let _ = child.kill().await;
+                                return Ok(1);
+                            }
+                            bridge.state.lock().unwrap().paused = false;
+                            bridge.report(json!({"view_mode": "chat"})).await;
+                            bridge.spawn(bridge.clone().look_around());
+                            bridge.clone().drain_queued().await;
+                            if let Ok(queued) = queued {
+                                for command in queued {
+                                    bridge.clone().command(command).await;
+                                }
+                            }
+                            bridge.next();
+                        } else {
+                            bridge.clone().command(command).await;
+                        }
                     }
                 }
                 // The terminal is going away.
@@ -147,13 +197,160 @@ pub async fn run(options: Options) -> Result<i32> {
     }
 }
 
+/// Both interfaces use the same overrides, without app-server's subcommand:
+/// Sandhill's MCP server, and trust in the folder when the user trusted it
+/// in Sandhill, so Codex does not ask again. The trust is for this run only;
+/// Codex's own configuration is not written.
+fn configured_command(options: &Options, dir: &std::path::Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(&options.codex);
+    command.args(&options.args).arg("-c").arg(format!(
+        "mcp_servers.sandhill.env.SANDHILL_TERMINAL={}",
+        serde_json::to_string(&dir.to_string_lossy()).unwrap(),
+    ));
+    if let Ok(folder) = std::env::var(crate::projects::trust::TRUSTED_FOLDER) {
+        // The bridge runs in the conversation's folder.
+        let cwd = std::env::current_dir()
+            .map(|dir| dir.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| folder.clone());
+        command.arg("-c").arg(trust_override(&folder, &cwd));
+    }
+    configure_account(&mut command, None);
+    command
+}
+
+/// Codex's `projects` table naming `folder` and the run's own `cwd` trusted.
+/// The whole table is one value, as a dotted `-c` key cannot hold a path.
+pub fn trust_override(folder: &str, cwd: &str) -> String {
+    let entry = |path: &str| {
+        format!(
+            "{}={{trust_level=\"trusted\"}}",
+            serde_json::to_string(path).unwrap()
+        )
+    };
+    if folder == cwd {
+        format!("projects={{{}}}", entry(folder))
+    } else {
+        format!("projects={{{},{}}}", entry(folder), entry(cwd))
+    }
+}
+
+fn app_server(options: &Options, dir: &std::path::Path) -> tokio::process::Command {
+    let mut command = configured_command(options, dir);
+    command
+        .arg("app-server")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
+/// Added accounts use their own file-backed login, never the shared keyring.
+/// Live bridges inherit their account home; read-only queries select it here.
+fn configure_account(command: &mut tokio::process::Command, home: Option<&Path>) {
+    if let Some(home) = home {
+        command.env("CODEX_HOME", home);
+    }
+    if home.is_some() || std::env::var("SANDHILL_CODEX_FILE_AUTH").as_deref() == Ok("1") {
+        command.arg("-c").arg("cli_auth_credentials_store=\"file\"");
+    }
+}
+
 /// How long asking a Codex with no conversation for its models may take.
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The models Codex offers, before any conversation: `codex app-server`
 /// started only to ask (`model/list`), for a new conversation's model menu.
 pub async fn list_models(codex: &std::path::Path) -> Result<Value> {
+    read_only(codex, false, None).await
+}
+
+/// Queries only identity and subscription limits, never starting a thread or turn.
+pub async fn read_account(codex: &std::path::Path) -> Result<Value> {
+    read_account_in(codex, None).await
+}
+
+/// Queries an account in its own Codex home without changing the daemon's
+/// environment. `None` uses the inherited home and account policy.
+pub async fn read_account_in(codex: &Path, home: Option<&Path>) -> Result<Value> {
+    read_only(codex, true, home).await
+}
+
+/// Uses a banked reset (`account/rateLimitResetCredit/consume`): `credit`, else
+/// the one Codex picks. Returns Codex's outcome: `reset`, `nothingToReset`,
+/// `noCredit` or `alreadyRedeemed`.
+pub async fn use_reset_credit(
+    codex: &Path,
+    home: Option<&Path>,
+    credit: Option<&str>,
+) -> Result<String> {
     let mut command = tokio::process::Command::new(codex);
+    configure_account(&mut command, home);
+    command
+        .arg("app-server")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    if let Some(path) = crate::agents::path_for(codex)? {
+        command.env("PATH", path);
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("cannot start {}", codex.display()))?;
+    let mut stdin = child.stdin.take().context("no stdin")?;
+    let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
+    // One attempt, one key: a retry by Codex itself cannot spend a second reset.
+    let key = uuid::Uuid::new_v4().to_string();
+    let ask = async {
+        let mut send = async |message: Value| -> Result<()> {
+            let mut line = serde_json::to_vec(&message)?;
+            line.push(b'\n');
+            stdin.write_all(&line).await?;
+            Ok(stdin.flush().await?)
+        };
+        let client =
+            json!({"name": "sandhill", "title": "Sandhill", "version": env!("CARGO_PKG_VERSION")});
+        send(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": client}})).await?;
+        while let Some(line) = lines.next_line().await? {
+            let Ok(message) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if let Some(error) = message.get("error") {
+                anyhow::bail!(
+                    "Codex said: {}",
+                    error["message"].as_str().unwrap_or("an error")
+                );
+            }
+            match message["id"].as_i64() {
+                Some(1) => {
+                    send(json!({"jsonrpc": "2.0", "method": "initialized"})).await?;
+                    send(json!({"jsonrpc": "2.0", "id": 2,
+                        "method": "account/rateLimitResetCredit/consume",
+                        "params": {"creditId": credit, "idempotencyKey": key}}))
+                    .await?;
+                }
+                Some(2) => {
+                    return message["result"]["outcome"]
+                        .as_str()
+                        .map(str::to_string)
+                        .context("Codex gave no outcome for the reset");
+                }
+                _ => {}
+            }
+        }
+        anyhow::bail!("Codex stopped before using the reset")
+    };
+    let outcome = tokio::time::timeout(LIST_TIMEOUT, ask)
+        .await
+        .context("Codex took too long to use the reset");
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    outcome?
+}
+
+async fn read_only(codex: &Path, account: bool, home: Option<&Path>) -> Result<Value> {
+    let mut command = tokio::process::Command::new(codex);
+    configure_account(&mut command, home);
     command
         .arg("app-server")
         .stdin(std::process::Stdio::piped())
@@ -178,12 +375,16 @@ pub async fn list_models(codex: &std::path::Path) -> Result<Value> {
         let clients =
             json!({"name": "sandhill", "title": "Sandhill", "version": env!("CARGO_PKG_VERSION")});
         send(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": clients}})).await?;
+        let mut snapshot = Value::Null;
         let mut asked = false;
         while let Some(line) = lines.next_line().await? {
             let Ok(message) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };
             if let Some(error) = message.get("error") {
+                if account && message["id"] == 3 && !snapshot.is_null() {
+                    return Ok(snapshot);
+                }
                 anyhow::bail!(
                     "Codex said: {}",
                     error["message"].as_str().unwrap_or("an error")
@@ -192,21 +393,54 @@ pub async fn list_models(codex: &std::path::Path) -> Result<Value> {
             match message["id"].as_i64() {
                 Some(1) if !asked => {
                     send(json!({"jsonrpc": "2.0", "method": "initialized"})).await?;
-                    send(json!({"jsonrpc": "2.0", "id": 2, "method": "model/list", "params": {}}))
+                    let (method, params) = if account {
+                        ("account/read", json!({"refreshToken": false}))
+                    } else {
+                        ("model/list", json!({}))
+                    };
+                    send(json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": params}))
                         .await?;
                     asked = true;
                 }
-                Some(2) => return Ok(items::models(&message["result"])),
+                Some(2) if !account => return Ok(items::models(&message["result"])),
+                Some(2) => {
+                    let read = &message["result"];
+                    snapshot = json!({"account": account_summary(&read["account"]),
+                        "observed_at_ms": now_ms()});
+                    if read["account"]["type"] != "chatgpt" {
+                        return Ok(snapshot);
+                    }
+                    send(json!({"jsonrpc": "2.0", "id": 3,
+                        "method": "account/rateLimits/read", "params": {}}))
+                    .await?;
+                }
+                Some(3) => {
+                    snapshot["status"] = json!({"rate_limits":
+                        items::rate_limits(&Value::Null, &message["result"]["rateLimits"])});
+                    if let Some(credits) = items::reset_credits(&message["result"]) {
+                        snapshot["status"]["reset_credits"] = credits;
+                    }
+                    return Ok(snapshot);
+                }
                 _ => {}
             }
         }
-        anyhow::bail!("Codex stopped before listing its models")
+        anyhow::bail!("Codex stopped before completing its read-only query")
     };
     let models = tokio::time::timeout(LIST_TIMEOUT, ask)
         .await
-        .context("Codex took too long to list its models")?;
+        .context("Codex took too long to complete its read-only query");
     let _ = child.start_kill();
-    models
+    let _ = child.wait().await;
+    models?
+}
+
+fn account_summary(account: &Value) -> Value {
+    if account.is_null() {
+        Value::Null
+    } else {
+        json!({"type": account["type"], "email": account["email"], "plan": account["planType"]})
+    }
 }
 
 /// The connection to the terminal host: entries and reports go out on it.
@@ -223,7 +457,7 @@ impl Host {
 
 /// JSON-RPC with `codex app-server`, one message per line.
 struct Rpc {
-    stdin: tokio::sync::Mutex<ChildStdin>,
+    stdin: tokio::sync::Mutex<Option<ChildStdin>>,
     next: AtomicI64,
     pending: Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>,
 }
@@ -233,6 +467,7 @@ impl Rpc {
         let mut line = serde_json::to_vec(&message)?;
         line.push(b'\n');
         let mut stdin = self.stdin.lock().await;
+        let stdin = stdin.as_mut().context("Codex app-server is stopped")?;
         stdin.write_all(&line).await?;
         stdin.flush().await?;
         Ok(())
@@ -277,6 +512,11 @@ impl Rpc {
 #[derive(Default)]
 struct State {
     thread: String,
+    /// Blocks every source of automatic/queued work during ownership handoff.
+    paused: bool,
+    view_mode: String,
+    /// Durable turns already represented in Sandhill's chat.
+    history: HashSet<String>,
     /// The turn Codex is working on.
     turn: Option<String>,
     /// The user's choices; `None` leaves Codex's own.
@@ -332,13 +572,177 @@ struct Bridge {
     daemon: PathBuf,
     project: Option<String>,
     state: Mutex<State>,
+    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl Bridge {
+    fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
+        let state = self.state.lock().unwrap();
+        if !state.paused {
+            let mut tasks = self.tasks.lock().unwrap();
+            tasks.retain(|task| !task.is_finished());
+            tasks.push(tokio::spawn(future));
+        }
+    }
+
+    async fn stop_tasks(&self) {
+        let tasks = std::mem::take(&mut *self.tasks.lock().unwrap());
+        for task in &tasks {
+            task.abort();
+        }
+        let requests = std::mem::take(&mut self.state.lock().unwrap().requests);
+        for (_, request) in requests {
+            request.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
+        self.state.lock().unwrap().waiting = 0;
+    }
+
+    /// Interrupt before unsubscribing, then let the process close its durable
+    /// history. Unsubscribe alone has a grace period and is not exclusive.
+    async fn release(self: &Arc<Self>) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let (thread, turn, started) = {
+                    let state = self.state.lock().unwrap();
+                    (state.thread.clone(), state.turn.clone(), state.started)
+                };
+                match turn {
+                    None => break,
+                    Some(turn) if started => {
+                        self.rpc
+                            .call(
+                                "turn/interrupt",
+                                json!({"threadId": thread, "turnId": turn}),
+                            )
+                            .await?;
+                        break;
+                    }
+                    _ => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+            while self.state.lock().unwrap().turn.is_some() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let thread = self.state.lock().unwrap().thread.clone();
+            self.rpc
+                .call("thread/unsubscribe", json!({"threadId": thread}))
+                .await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .context("Codex did not release its active turn")?
+    }
+
+    fn native_command(&self, options: &Options) -> tokio::process::Command {
+        let state = self.state.lock().unwrap();
+        let mut command = configured_command(options, &self.dir);
+        let mode = items::mode_settings(state.permission.as_deref());
+        let sandbox = match mode["sandboxPolicy"]["type"].as_str() {
+            Some("dangerFullAccess") => "danger-full-access",
+            Some("workspaceWrite") => "workspace-write",
+            _ => "read-only",
+        };
+        for (key, value) in [
+            ("developer_instructions", json!(options.instructions)),
+            ("approval_policy", mode["approvalPolicy"].clone()),
+            ("approvals_reviewer", mode["approvalsReviewer"].clone()),
+            ("sandbox_mode", json!(sandbox)),
+        ] {
+            command.arg("-c").arg(format!("{key}={value}"));
+        }
+        if let Some(effort) = &state.effort {
+            command
+                .arg("-c")
+                .arg(format!("model_reasoning_effort={}", json!(effort)));
+        }
+        command
+            .arg("resume")
+            .arg(&state.thread)
+            .arg("--cd")
+            .arg(&self.cwd)
+            .arg("--no-daemon");
+        if let Some(model) = &state.model {
+            command.arg("--model").arg(model);
+        }
+        command.current_dir(&self.cwd);
+        command
+    }
+
+    /// Recent Codex versions can return a backwards history cursor instead
+    /// of every turn inline. Older versions return all turns directly.
+    async fn history(&self, resumed: &Value) -> Result<Value> {
+        let mut cursor = resumed["turnsBackwardsCursor"].as_str().map(str::to_owned);
+        let mut older = Vec::new();
+        while let Some(current) = cursor {
+            let page = self
+                .rpc
+                .call(
+                    "thread/turns/list",
+                    json!({
+                        "threadId": resumed["thread"]["id"],
+                        "cursor": current,
+                        "sortDirection": "desc",
+                        "itemsView": "full",
+                        "limit": 100,
+                    }),
+                )
+                .await?;
+            older.extend(page["data"].as_array().into_iter().flatten().cloned());
+            cursor = page["nextCursor"].as_str().map(str::to_owned);
+        }
+        older.reverse();
+        older.extend(
+            resumed["thread"]["turns"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .cloned(),
+        );
+        Ok(json!(older))
+    }
+
+    /// Import only new durable turns, through Codex's history API, never its
+    /// screen. Reuse live item translation so tools and replies have one shape.
+    async fn import_history(self: &Arc<Self>, turns: &Value) {
+        for turn in turns.as_array().into_iter().flatten() {
+            let Some(id) = turn["id"].as_str() else {
+                continue;
+            };
+            if !self.state.lock().unwrap().history.insert(id.to_string()) {
+                continue;
+            }
+            self.state.lock().unwrap().errored = false;
+            for item in turn["items"].as_array().into_iter().flatten() {
+                if item["type"] == "userMessage" {
+                    let text = item["content"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.show_turn(id);
+                    self.chat(json!({"kind": "prompt", "turn": id, "text": text}))
+                        .await;
+                } else if item["type"] == "plan" {
+                    let mut message = item.clone();
+                    message["type"] = json!("agentMessage");
+                    self.item_completed(id, &message).await;
+                } else {
+                    self.item_completed(id, item).await;
+                }
+            }
+            self.turn_completed(turn).await;
+        }
+    }
+
     /// Starts Codex's conversation: says who Sandhill is, then starts a
     /// thread in the folder (or resumes the one it had), with Sandhill's
     /// instructions and the mode.
-    async fn start(self: &Arc<Self>, options: &Options) -> Result<()> {
+    async fn start(self: &Arc<Self>, options: &Options, importing: bool) -> Result<()> {
         self.rpc
             .call(
                 "initialize",
@@ -371,10 +775,9 @@ impl Bridge {
             params["model"] = json!(model);
         }
         let started = match &options.thread {
-            // The chat already shows the turns.
             Some(thread) => {
                 params["threadId"] = json!(thread);
-                params["excludeTurns"] = json!(true);
+                params["excludeTurns"] = json!(false);
                 self.rpc.call("thread/resume", params).await?
             }
             None => {
@@ -421,8 +824,19 @@ impl Bridge {
         };
         self.chat(json!({"kind": "session", "source": source, "model": started["model"]}))
             .await;
+        let history = self.history(&started).await?;
+        if importing {
+            self.import_history(&history).await;
+        } else {
+            let mut state = self.state.lock().unwrap();
+            for turn in history.as_array().into_iter().flatten() {
+                if let Some(id) = turn["id"].as_str() {
+                    state.history.insert(id.to_string());
+                }
+            }
+        }
         // What the app shows besides: the models, the account and its limits.
-        tokio::spawn(self.clone().look_around());
+        self.spawn(self.clone().look_around());
         Ok(())
     }
 
@@ -456,17 +870,23 @@ impl Bridge {
             return;
         };
         let account = &read["account"];
-        let summary = if account.is_null() {
-            Value::Null
-        } else {
-            json!({"type": account["type"], "email": account["email"], "plan": account["planType"]})
-        };
-        self.report(json!({"account": summary, "auth_required": read["requiresOpenaiAuth"]}))
+        let summary = account_summary(account);
+        // A refreshed identity must not inherit another account's windows.
+        self.state.lock().unwrap().status.remove("rate_limits");
+        self.report(json!({"account": summary, "observed_at_ms": now_ms(),
+            "auth_required": read["requiresOpenaiAuth"]}))
             .await;
         if account["type"] == "chatgpt"
             && let Ok(limits) = self.rpc.call("account/rateLimits/read", json!({})).await
         {
             self.limits(&limits["rateLimits"]);
+            if let Some(credits) = items::reset_credits(&limits) {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .status
+                    .insert("reset_credits".into(), credits);
+            }
         }
     }
 
@@ -474,9 +894,7 @@ impl Bridge {
         let mut state = self.state.lock().unwrap();
         let known = state.status.get("rate_limits").cloned().unwrap_or_default();
         let limits = items::rate_limits(&known, snapshot);
-        if limits.as_object().is_some_and(|l| !l.is_empty()) {
-            state.status.insert("rate_limits".into(), limits);
-        }
+        state.status.insert("rate_limits".into(), limits);
     }
 
     /// What the user did in the chat.
@@ -538,7 +956,7 @@ impl Bridge {
         let at_ms = now_ms();
         let (params, asking) = {
             let mut state = self.state.lock().unwrap();
-            if state.turn.is_some() || state.waiting > 0 {
+            if state.paused || state.turn.is_some() || state.waiting > 0 {
                 state.queued.push(text);
                 return;
             }
@@ -571,6 +989,14 @@ impl Bridge {
         } else {
             Default::default()
         };
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.paused {
+                state.turn = None;
+                state.queued.push(text);
+                return;
+            }
+        }
         let mut input = vec![json!({"type": "text", "text": text, "text_elements": []})];
         if let Some(context) = &prompt.context {
             input.push(json!({"type": "text", "text": context, "text_elements": []}));
@@ -593,7 +1019,9 @@ impl Bridge {
                 let turn = started["turn"]["id"].as_str().unwrap_or("").to_string();
                 {
                     let mut state = self.state.lock().unwrap();
-                    if state.turn.as_deref().is_none_or(str::is_empty) {
+                    // A fast turn can complete before its start reply is handled.
+                    // Do not resurrect it while returning from native mode.
+                    if state.turn.as_deref() == Some("") && !state.history.contains(&turn) {
                         state.turn = Some(turn.clone());
                     }
                     if shown {
@@ -633,11 +1061,11 @@ impl Bridge {
     }
 
     /// What goes with the user's message, as Claude Code's prompt hook
-    /// gives it: the text for the agent, and the place for the chat.
+    /// gives it: the text for the agent, and the refs for the chat.
     async fn prompt(&self) -> crate::mcp::Prompt {
         let tools = crate::mcp::Tools::new(self.daemon.clone(), self.project.clone())
             .in_terminal(Some(self.dir.clone()));
-        tools.prompt(PLACE_TIMEOUT).await
+        tools.prompt(REFS_TIMEOUT).await
     }
 
     async fn interrupt(&self) {
@@ -712,7 +1140,10 @@ impl Bridge {
         match (method, message.get("id")) {
             // A request: Codex asks the user something.
             (Some(method), Some(id)) => {
-                tokio::spawn(self.request(id.clone(), method, message["params"].clone()));
+                self.spawn(
+                    self.clone()
+                        .request(id.clone(), method, message["params"].clone()),
+                );
             }
             (Some(method), None) => self.notification(&method, &message["params"]).await,
             (None, Some(id)) => {
@@ -740,7 +1171,7 @@ impl Bridge {
                 };
                 if stopping {
                     let me = self.clone();
-                    tokio::spawn(async move { me.interrupt().await });
+                    self.spawn(async move { me.interrupt().await });
                 }
                 self.report(json!({})).await;
             }
@@ -800,7 +1231,7 @@ impl Bridge {
                 if params["success"] == true {
                     self.report(json!({"login": null})).await;
                     let me = self.clone();
-                    tokio::spawn(async move { me.account().await });
+                    self.spawn(async move { me.account().await });
                 } else {
                     let error = params["error"].as_str().unwrap_or("Signing in failed");
                     self.report(json!({"login": {"error": error}})).await;
@@ -808,7 +1239,7 @@ impl Bridge {
             }
             "account/updated" => {
                 let me = self.clone();
-                tokio::spawn(async move { me.account().await });
+                self.spawn(async move { me.account().await });
             }
             "serverRequest/resolved" => {
                 // Settled without the user (the turn was stopped): the ask goes.
@@ -979,6 +1410,7 @@ impl Bridge {
         self.flush_replies(None).await;
         let (plan, errored, shown) = {
             let mut state = self.state.lock().unwrap();
+            state.history.insert(id.clone());
             state.turn = None;
             state.started = false;
             state.stopping = false;
@@ -996,8 +1428,12 @@ impl Bridge {
         let planning = self.state.lock().unwrap().permission.as_deref() == Some("plan");
         match plan {
             // A plan to carry out: the turn ends once the user decides.
-            Some(plan) if planning && turn["status"] == "completed" => {
-                tokio::spawn(self.clone().decide_plan(id, plan));
+            Some(plan)
+                if planning
+                    && turn["status"] == "completed"
+                    && !self.state.lock().unwrap().paused =>
+            {
+                self.spawn(self.clone().decide_plan(id, plan));
             }
             _ => {
                 // Idle before the turn shows as ended, so a client that sees
@@ -1013,9 +1449,19 @@ impl Bridge {
 
     /// Starts the messages that came while the turn ran.
     fn next(self: &Arc<Self>) {
-        let queued = std::mem::take(&mut self.state.lock().unwrap().queued);
+        self.spawn(self.clone().drain_queued());
+    }
+
+    async fn drain_queued(self: Arc<Self>) {
+        let queued = {
+            let mut state = self.state.lock().unwrap();
+            if state.paused {
+                return;
+            }
+            std::mem::take(&mut state.queued)
+        };
         if !queued.is_empty() {
-            tokio::spawn(self.clone().say(queued.join("\n\n"), true));
+            self.say(queued.join("\n\n"), true).await;
         }
     }
 
@@ -1046,7 +1492,7 @@ impl Bridge {
         self.report(json!({})).await;
         self.chat(json!({"kind": "stop", "turn": turn})).await;
         if carry_out {
-            tokio::spawn(self.clone().say(CARRY_OUT.to_string(), false));
+            self.spawn(self.clone().say(CARRY_OUT.to_string(), false));
         } else {
             self.next();
         }
@@ -1149,7 +1595,10 @@ impl Bridge {
     /// idle; the mode; and the status the app shows.
     async fn report(&self, extra: Value) {
         let report = {
-            let state = self.state.lock().unwrap();
+            let mut state = self.state.lock().unwrap();
+            if let Some(mode) = extra["view_mode"].as_str() {
+                state.view_mode = mode.to_string();
+            }
             let busy = state.turn.is_some();
             let mut status = state.status.clone();
             if let Some(effort) = &state.effort {
@@ -1158,6 +1607,8 @@ impl Bridge {
             let mut report = json!({
                 "state": if state.waiting > 0 { "waiting" } else if busy { "busy" } else { "idle" },
                 "permission": state.permission.as_deref().unwrap_or("supervised"),
+                "thread": state.thread,
+                "view_mode": if state.view_mode.is_empty() { "chat" } else { &state.view_mode },
                 "status": status,
             });
             if !state.models.is_null() {
@@ -1209,5 +1660,34 @@ fn one_line(input: &Value) -> String {
     match line.char_indices().nth(100) {
         Some((at, _)) => format!("{}…", &line[..at]),
         None => line.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn added_account_query_scopes_home_and_forces_file_auth() {
+        let mut command = tokio::process::Command::new("codex");
+        command
+            .arg("-c")
+            .arg("cli_auth_credentials_store=\"keyring\"");
+        let home = Path::new("/sandhill-test/accounts/codex/work");
+        configure_account(&mut command, Some(home));
+        let command = command.as_std();
+        let environment = command.get_envs().collect::<Vec<_>>();
+        assert_eq!(
+            environment,
+            vec![(std::ffi::OsStr::new("CODEX_HOME"), Some(home.as_os_str()))]
+        );
+        let args = command.get_args().collect::<Vec<_>>();
+        assert_eq!(
+            &args[args.len() - 2..],
+            [
+                std::ffi::OsStr::new("-c"),
+                std::ffi::OsStr::new("cli_auth_credentials_store=\"file\"")
+            ]
+        );
     }
 }

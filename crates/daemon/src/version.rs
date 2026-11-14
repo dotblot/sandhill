@@ -22,10 +22,18 @@ pub fn build_id() -> &'static str {
 }
 
 fn hash_executable() -> std::io::Result<String> {
+    use std::io::Read;
     let mut file = std::fs::File::open(std::env::current_exe()?)?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)?;
-    let hash = format!("{:x}", hasher.finalize());
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let hash = sandhill_proto::hex(&hasher.finalize());
     Ok(hash[..16].to_string())
 }
 

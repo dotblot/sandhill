@@ -598,7 +598,7 @@ async fn codex_lists_its_models_before_a_conversation() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let (port, _) = model(Vec::new()).await;
+    let (port, requests) = model(Vec::new()).await;
     let home = dir.path().join("codex-home");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
@@ -643,5 +643,18 @@ async fn codex_lists_its_models_before_a_conversation() {
     assert!(
         client.agent_models("claude").await.is_err(),
         "Claude Code's models are known"
+    );
+    // Official account reads must neither create a conversation nor ask a model.
+    let accounts = client.agent_accounts().await.unwrap();
+    let codex = accounts
+        .iter()
+        .find(|account| account["kind"] == "codex")
+        .expect("installed Codex reported its account state");
+    assert!(codex.get("account").is_some());
+    assert!(codex["observed_at_ms"].as_i64().is_some_and(|at| at > 0));
+    assert!(client.list_terminals().await.unwrap().is_empty());
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "account reads sent a model request"
     );
 }

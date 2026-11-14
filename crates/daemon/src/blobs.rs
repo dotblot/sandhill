@@ -45,7 +45,7 @@ impl BlobStore {
     }
 
     pub fn put(&self, bytes: &[u8]) -> std::io::Result<String> {
-        let hash = format!("{:x}", Sha256::digest(bytes));
+        let hash = sandhill_proto::hex(&Sha256::digest(bytes));
         let path = self.path_for(&hash).expect("sha256 hex is a valid hash");
         if !path.exists() {
             std::fs::create_dir_all(path.parent().unwrap())?;

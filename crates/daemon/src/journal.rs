@@ -71,6 +71,22 @@ const MIGRATIONS: &[&str] = &[
      CREATE INDEX runs_by_session ON runs(session_id);",
     // 4: runs whose outputs the user cleared from their cell.
     "ALTER TABLE runs ADD COLUMN cleared INTEGER NOT NULL DEFAULT 0;",
+    // 5: authoritative bioinformatics declarations and measured evidence.
+    "CREATE TABLE analyses (
+         id TEXT PRIMARY KEY, project TEXT NOT NULL, record TEXT NOT NULL
+     );
+     CREATE TABLE analysis_checks (
+         id TEXT PRIMARY KEY, analysis_id TEXT NOT NULL REFERENCES analyses(id),
+         run_id TEXT REFERENCES runs(id), record TEXT NOT NULL
+     );
+     CREATE INDEX analysis_checks_by_analysis ON analysis_checks(analysis_id);",
+    // 6: folders the user trusts. Projects opened before trust existed were
+    // already used, so they start trusted (Huan, 2026-11-12).
+    "CREATE TABLE trusted_folders (
+         path       TEXT PRIMARY KEY,
+         trusted_ms INTEGER NOT NULL
+     );
+     INSERT INTO trusted_folders (path, trusted_ms) SELECT path, opened_ms FROM projects;",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +182,8 @@ pub struct CellRun {
 pub struct Journal {
     conn: Mutex<Connection>,
     blobs: BlobStore,
+    db_path: PathBuf,
+    db_identity: (u64, u64),
 }
 
 impl Journal {
@@ -176,14 +194,69 @@ impl Journal {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(db_path)?;
         Ok(Journal {
             conn: Mutex::new(conn),
             blobs,
+            db_path: db_path.to_path_buf(),
+            db_identity: (metadata.dev(), metadata.ino()),
         })
     }
 
     pub fn blobs(&self) -> &BlobStore {
         &self.blobs
+    }
+
+    /// Clear explicitly selected history without unlinking the live database.
+    /// The lifecycle write lock excludes requests and all resources are stopped.
+    /// Project state/settings deliberately survive.
+    pub(crate) fn clear_history(&self) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        self.check_history_storage()?;
+        let transaction = conn.transaction()?;
+        transaction.execute_batch("DELETE FROM analysis_checks; DELETE FROM analyses; DELETE FROM events; DELETE FROM runs; DELETE FROM sessions;")?;
+        transaction.commit()?;
+        conn.execute_batch(
+            "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);",
+        )?;
+        Ok(())
+    }
+
+    /// Recheck just before SQL mutation, not only at inventory time: unlinking
+    /// a cache link is safe, but DELETE/checkpoint/VACUUM mutate shared inodes.
+    pub(crate) fn check_history_storage(&self) -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let sidecar = |suffix: &str| {
+            let mut path = self.db_path.as_os_str().to_os_string();
+            path.push(suffix);
+            PathBuf::from(path)
+        };
+        for (path, main) in [
+            (self.db_path.clone(), true),
+            (sidecar("-wal"), false),
+            (sidecar("-shm"), false),
+        ] {
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(err) if !main && err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err.into()),
+            };
+            if !metadata.is_file()
+                || metadata.nlink() != 1
+                || main && (metadata.dev(), metadata.ino()) != self.db_identity
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "history database is linked or its identity changed; preserved: {}",
+                        path.display()
+                    ),
+                )
+                .into());
+            }
+        }
+        Ok(())
     }
 
     pub fn insert_session(&self, s: &SessionRecord) -> Result<()> {
@@ -318,6 +391,31 @@ impl Journal {
             .unwrap()
             .execute("DELETE FROM projects WHERE path = ?1", params![path])?;
         Ok(())
+    }
+
+    pub fn trust_folder(&self, path: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT OR IGNORE INTO trusted_folders (path, trusted_ms) VALUES (?1, ?2)",
+            params![path, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    pub fn untrust_folder(&self, path: &str) -> Result<()> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM trusted_folders WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    /// `(path, trusted_ms)` of every trusted folder, by path.
+    pub fn trusted_folders(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT path, trusted_ms FROM trusted_folders ORDER BY path")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn last_seq(&self, session: &str) -> Result<i64> {
@@ -655,6 +753,162 @@ impl Journal {
     }
 }
 
+impl Journal {
+    pub(crate) fn analysis(
+        &self,
+        id: &str,
+    ) -> Result<Option<sandhill_proto::analysis::AnalysisRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let text: Option<String> = conn
+            .query_row("SELECT record FROM analyses WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        Ok(text.map(|text| serde_json::from_str(&text)).transpose()?)
+    }
+
+    pub(crate) fn analysis_checks(
+        &self,
+        id: &str,
+    ) -> Result<Vec<sandhill_proto::analysis::AnalysisCheck>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT record FROM analysis_checks WHERE analysis_id = ?1 ORDER BY rowid")?;
+        let rows = stmt.query_map([id], |row| row.get::<_, String>(0))?;
+        let mut checks = Vec::new();
+        for row in rows {
+            checks.push(serde_json::from_str(&row?)?);
+        }
+        Ok(checks)
+    }
+
+    /// A checkpoint and its measured baseline are committed together.
+    pub(crate) fn save_analysis(
+        &self,
+        record: &sandhill_proto::analysis::AnalysisRecord,
+        check: Option<&sandhill_proto::analysis::AnalysisCheck>,
+    ) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO analyses(id, project, record) VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET record = excluded.record WHERE analyses.project = excluded.project",
+            params![record.id, record.project, serde_json::to_string(record)?],
+        )?;
+        if let Some(check) = check {
+            tx.execute(
+                "INSERT INTO analysis_checks(id, analysis_id, run_id, record) VALUES (?1, ?2, ?3, ?4)",
+                params![check.id, record.id, check.run_id, serde_json::to_string(check)?],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn latest_session_run(&self, session: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM runs WHERE session_id = ?1 ORDER BY rowid DESC LIMIT 1",
+                [session],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub(crate) fn bio_run_status(&self, run: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM runs WHERE id = ?1 AND finished_ms IS NOT NULL",
+                [run],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    pub(crate) fn bio_run_output(
+        &self,
+        run: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<(String, Value)>> {
+        let conn = self.conn.lock().unwrap();
+        let size: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(length(CAST(content AS BLOB))),0) FROM events
+             WHERE run_id = ?1 AND msg_type IN ('stream','error')",
+            [run],
+            |row| row.get(0),
+        )?;
+        if size > max_bytes as i64 {
+            return Err(std::io::Error::other("checker output exceeds bounded capture").into());
+        }
+        let mut stmt = conn.prepare("SELECT msg_type,content FROM events WHERE run_id=?1 AND msg_type IN ('stream','error') ORDER BY seq")?;
+        let rows = stmt.query_map([run], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (kind, text) = row?;
+            out.push((kind, serde_json::from_str(&text)?));
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn analysis_execution_evidence(
+        &self,
+        session: &str,
+        ids: &[String],
+    ) -> Result<Value> {
+        use sha2::{Digest, Sha256};
+        let conn = self.conn.lock().unwrap();
+        let mut total = 0;
+        let mut evidence = Vec::new();
+        for id in ids {
+            let (owner, code, started, finished, status, quiet): (
+                String,
+                String,
+                i64,
+                Option<i64>,
+                Option<String>,
+                bool,
+            ) = conn.query_row(
+                "SELECT session_id,code,started_ms,finished_ms,status,quiet FROM runs WHERE id=?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )?;
+            if owner != session || finished.is_none() || status.as_deref() != Some("ok") || quiet {
+                return Err(std::io::Error::other("execution run must be completed successfully, non-tool code in the bound session").into());
+            }
+            total += code.len();
+            if total > 128 * 1024 {
+                return Err(
+                    std::io::Error::other("execution provenance code exceeds 128KiB").into(),
+                );
+            }
+            let code_digest = format!(
+                "sha256:{}",
+                sandhill_proto::hex(&Sha256::digest(code.as_bytes()))
+            );
+            evidence.push(serde_json::json!({"run_id":id,"session":session,"code":code,"code_digest":code_digest,"started_ms":started,"finished_ms":finished,"status":"ok"}));
+        }
+        Ok(Value::Array(evidence))
+    }
+}
+
 const CELL_RUN_SELECT: &str = "
     SELECT r.cell_file, r.cell_id, r.id, r.session_id, s.language, s.kernel, r.code,
            r.started_ms, r.finished_ms, r.status, r.execution_count
@@ -762,6 +1016,30 @@ mod tests {
         assert_eq!(j.recent_projects().unwrap()[0].0, "/w/a");
         j.forget_project("/w/a").unwrap();
         assert_eq!(j.recent_projects().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn document_kernel_history_survives_restart_and_stays_on_its_machine() {
+        let local = tempfile::tempdir().unwrap();
+        let remote = tempfile::tempdir().unwrap();
+        let state = json!({
+            "documents": {
+                "/work/atlas/qc.py": {"kernel": "conda-env-analysis-py", "scroll": 42},
+                "/work/atlas/other.py": {"kernel": "missing"}
+            },
+            "tabs": ["qc.py"]
+        });
+        {
+            let j = journal(local.path());
+            j.save_project_state("/work/atlas", &state).unwrap();
+        }
+        let reopened = journal(local.path());
+        assert_eq!(reopened.open_project("/work/atlas").unwrap(), state);
+        let other_machine = journal(remote.path());
+        assert_eq!(
+            other_machine.open_project("/work/atlas").unwrap(),
+            Value::Null
+        );
     }
 
     #[test]
@@ -953,5 +1231,47 @@ mod tests {
             j.events_since("a", 0, 10).unwrap()[0].run.as_deref(),
             Some("r1")
         );
+    }
+
+    #[test]
+    fn history_purge_refuses_hardlinked_database_without_changing_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let j = journal(dir.path());
+        j.insert_session(&session("kept")).unwrap();
+        j.insert_run("r-kept", "kept", "m-kept", "saved", NewRun::default())
+            .unwrap();
+        std::fs::hard_link(
+            dir.path().join("j.sqlite"),
+            outside.path().join("backup.sqlite"),
+        )
+        .unwrap();
+        assert!(j.clear_history().is_err());
+        assert_eq!(j.sessions().unwrap().len(), 1);
+        assert!(j.run_by_msg_id("m-kept").unwrap().is_some());
+    }
+
+    #[test]
+    fn history_purge_rechecks_database_inode_and_wal_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let j = journal(dir.path());
+        j.insert_session(&session("kept")).unwrap();
+        std::fs::hard_link(
+            dir.path().join("j.sqlite-wal"),
+            outside.path().join("wal-copy"),
+        )
+        .unwrap();
+        assert!(j.clear_history().is_err());
+        assert_eq!(j.sessions().unwrap().len(), 1);
+        std::fs::remove_file(outside.path().join("wal-copy")).unwrap();
+        std::fs::rename(
+            dir.path().join("j.sqlite"),
+            outside.path().join("original.sqlite"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("j.sqlite"), b"replacement").unwrap();
+        assert!(j.clear_history().is_err());
+        assert_eq!(j.sessions().unwrap().len(), 1);
     }
 }

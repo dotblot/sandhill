@@ -9,6 +9,7 @@
 pub mod envfiles;
 pub mod environments;
 pub mod settings;
+pub mod trust;
 
 use std::path::{Component, Path, PathBuf};
 
@@ -42,16 +43,21 @@ pub fn open(journal: &Journal, path: &str) -> Result<ProjectInfo> {
     let state = journal.open_project(&path)?;
     let mut info = info(&path, crate::journal::now_ms());
     info.state = state;
+    info.trusted = trust::is_trusted(journal, &path)?;
     Ok(info)
 }
 
 pub fn recent(journal: &Journal) -> Result<Vec<ProjectInfo>> {
-    Ok(journal
+    journal
         .recent_projects()?
         .into_iter()
         .take(RECENT_LIMIT)
-        .map(|(path, opened_ms)| info(&path, opened_ms))
-        .collect())
+        .map(|(path, opened_ms)| {
+            let mut info = info(&path, opened_ms);
+            info.trusted = trust::is_trusted(journal, &path)?;
+            Ok(info)
+        })
+        .collect()
 }
 
 /// A project's settings, what its files point to, and so the kernel each
@@ -108,6 +114,7 @@ fn info(path: &str, opened_ms: i64) -> ProjectInfo {
         opened_ms,
         exists: p.is_dir(),
         state: Value::Null,
+        trusted: true,
     }
 }
 

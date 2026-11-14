@@ -11,9 +11,12 @@
 //! and `delete_cell`; and the project's background jobs: `list_jobs` and
 //! `read_job_log`.
 
+pub(crate) mod bio;
 mod documents;
+pub mod http;
 mod jobs;
 mod session;
+mod viewer;
 pub use documents::Prompt;
 pub mod text;
 
@@ -141,7 +144,7 @@ impl Tools {
         self
     }
 
-    async fn handle(&self, method: &str, params: Value) -> Result<Value> {
+    pub(crate) async fn handle(&self, method: &str, params: Value) -> Result<Value> {
         Ok(match method {
             "initialize" => {
                 let asked = params["protocolVersion"].as_str().unwrap_or("");
@@ -153,7 +156,7 @@ impl Tools {
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "sandhill", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": INSTRUCTIONS,
+                    "instructions": format!("{INSTRUCTIONS} {}", bio::GUIDANCE),
                 })
             }
             "ping" => json!({}),
@@ -192,6 +195,9 @@ impl Tools {
     pub async fn call(&self, name: &str, args: &Value) -> Result<Vec<Value>> {
         let text = |s: &str| args[s].as_str().map(str::trim).filter(|s| !s.is_empty());
         match name {
+            "get_bio_guide" | "begin_analysis" | "check_analysis" | "get_analysis" => {
+                self.bio_tool(name, args).await
+            }
             "list_sessions" => self.list_sessions().await,
             "list_variables" => self.list_variables(text("session"), text("language")).await,
             "run_code" => {
@@ -212,6 +218,7 @@ impl Tools {
                 self.get_plots(text("session"), text("language"), args["count"].as_u64())
                     .await
             }
+            "get_viewer" => self.get_viewer(text("session")).await,
             "view_table" => {
                 let name = text("name").context("`name` is required")?;
                 self.view_table(
@@ -219,6 +226,7 @@ impl Tools {
                     text("session"),
                     text("language"),
                     args["rows"].as_u64(),
+                    text("view"),
                 )
                 .await
             }
@@ -569,6 +577,7 @@ impl Tools {
 /// What a run printed and how it ended.
 #[derive(Default)]
 struct Outcome {
+    run_id: String,
     rendered: Rendered,
     stdout: String,
     status: Option<String>,
@@ -599,7 +608,10 @@ async fn run(
         })
         .await?;
     let run = started_run.run;
-    let mut outcome = Outcome::default();
+    let mut outcome = Outcome {
+        run_id: run.clone(),
+        ..Default::default()
+    };
     follow(
         client,
         &run,
@@ -728,7 +740,7 @@ pub fn read_only_tools() -> Vec<String> {
 }
 
 fn tool_list() -> Value {
-    json!([
+    let mut tools = json!([
         {
             "name": "list_sessions",
             "title": "List R and Python sessions",
@@ -825,14 +837,24 @@ fn tool_list() -> Value {
             "annotations": {"readOnlyHint": true},
         },
         {
+            "name": "get_viewer",
+            "title": "Read the latest Viewer page",
+            "description": "Read the latest saved Viewer page in a session, or the project's most recent page: title, widget types, visible text, the first 20 rows of DT/HTML tables and plotly series summaries. Read-only, capped at 64 KB, and never returns script source. In-page interaction state such as zoom, sorting and filtering is unavailable.",
+            "inputSchema": {"type": "object", "properties": {
+                "session": {"type": "string", "description": "A session id (or its start); omit for the project's most recent Viewer page."},
+            }},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
             "name": "view_table",
             "title": "Look at a data frame",
-            "description": "The size, column types and first rows of a data frame or matrix in the user's session, or of part of an object (a Seurat object's meta.data, an AnnData's obs), as the Data Explorer reads it, without printing the whole object. Doesn't change the session.",
+            "description": "The size, column types and first rows of a data frame or matrix in the user's session, or of part of an object (a Seurat object's meta.data, an AnnData's obs), as the Data Explorer reads it, without printing the whole object. Defaults to the focused table's current filters, search, sorting and hidden columns when it matches; request original to read the unfiltered table. Doesn't change the session.",
             "inputSchema": {"type": "object", "required": ["name"], "properties": {
                 "name": {"type": "string", "description": "The variable, or a part of one: df, adata.obs, seurat@meta.data, x$counts."},
                 "rows": {"type": "number", "description": "How many rows (default 10, at most 100)."},
                 "language": {"type": "string", "enum": ["r", "python"]},
                 "session": {"type": "string", "description": "A session id (or its start) from list_sessions."},
+                "view": {"type": "string", "enum": ["current", "original"], "description": "Use the focused table's current filters, search, sorting and hidden columns when it matches (default current), or read the original table."},
             }},
             "annotations": {"readOnlyHint": true},
         },
@@ -886,7 +908,9 @@ fn tool_list() -> Value {
             }},
             "annotations": {"readOnlyHint": true},
         },
-    ])
+    ]);
+    tools.as_array_mut().unwrap().extend(bio::tool_list());
+    tools
 }
 
 /// A run's result for the agent: `head`, how it ended, what it printed,
@@ -901,8 +925,9 @@ async fn report(client: &Client, head: &str, outcome: &Outcome) -> Vec<Value> {
         ),
     };
     let mut items = vec![text_item(&format!(
-        "{head} · {status} · {}\n{}",
+        "{head} · {status} · {}\nRun ID: {}\n{}",
         text::duration_ms(outcome.elapsed_ms),
+        outcome.run_id,
         outcome.rendered.finished_text()
     ))];
     items.extend(images(client, &outcome.rendered).await);

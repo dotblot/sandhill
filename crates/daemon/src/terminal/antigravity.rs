@@ -1,9 +1,8 @@
 //! Antigravity in the chat: `sandhilld agy-chat`, which runs in an
-//! Antigravity conversation's terminal. Google's CLI, `agy`, has no
-//! protocol for editors (no app-server, no ACP server), so Sandhill uses
-//! the headless mode Google documents for scripts: each message runs `agy`
-//! once, with the message on stdin and what it does on stdout as NDJSON
-//! (`--output-format stream-json`), and the next message goes on with the
+//! Antigravity conversation's terminal. Sandhill uses Google's CLI `agy`
+//! in its headless mode: each message runs `agy` once, with a user NDJSON
+//! message on stdin (`--input-format stream-json`) and events on stdout
+//! (`--output-format stream-json`). The next message goes on with the
 //! same conversation (`--conversation`).
 //!
 //! - What agy does becomes the conversation entries Claude Code's hooks
@@ -12,6 +11,9 @@
 //!   is turned down, and the chat says so. YOLO lets everything through.
 //! - Sandhill's tools reach it as an MCP server in agy's own settings,
 //!   added once with `agy mcp add sandhill`, as a user would add one.
+//! - Headless agy runs without the conversation's terminal ([`headless`]),
+//!   and a message whose agy says nothing within [`START_TIMEOUT`] fails
+//!   with what it said on stderr (a sign-in it waits for, say).
 //!
 //! agy is unmodified and signs in on its own; Sandhill never sees its
 //! login. Whether Google means its headless mode to be driven by another
@@ -36,6 +38,10 @@ use super::chat::shorten;
 use super::{FromHost, Paths, ToHost};
 use crate::journal::now_ms;
 
+mod history;
+mod native;
+pub(crate) mod usage;
+
 /// Replies are sent to the chat in pieces at most this far apart.
 const FLUSH: Duration = Duration::from_millis(120);
 /// A message waits this long at most for where the user is.
@@ -50,6 +56,8 @@ pub const SERVER: &str = "sandhill";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long agy has to stop after being asked, before it is made to.
 const STOP_GRACE: Duration = Duration::from_secs(3);
+/// How long agy may take to start a message, until its first event.
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Options {
     /// The `agy` CLI.
@@ -91,6 +99,8 @@ pub async fn run(options: Options) -> Result<i32> {
         daemon: options.daemon.clone(),
         project: options.project.clone(),
         instructions: options.instructions.clone(),
+        work: tokio::sync::RwLock::new(()),
+        plan_cancel: tokio::sync::Notify::new(),
         state: Mutex::new(State {
             conversation: options.conversation.clone(),
             told: options.conversation.is_some(),
@@ -133,19 +143,40 @@ pub async fn run(options: Options) -> Result<i32> {
     }
 
     let mut commands = BufReader::new(from_host).lines();
+    let mut pending = std::collections::VecDeque::new();
     loop {
-        match commands.next_line().await {
-            Ok(Some(line)) => {
-                if let Ok(FromHost::Command { command }) = serde_json::from_str(&line) {
-                    tokio::spawn(bridge.clone().command(command));
+        let command = if let Some(command) = pending.pop_front() {
+            Some(command)
+        } else {
+            match commands.next_line().await {
+                Ok(Some(line)) => {
+                    serde_json::from_str::<FromHost>(&line)
+                        .ok()
+                        .and_then(|message| {
+                            if let FromHost::Command { command } = message {
+                                Some(command)
+                            } else {
+                                None
+                            }
+                        })
+                }
+                _ => {
+                    if let Some(pid) = bridge.state.lock().unwrap().pid {
+                        signal_group(pid, libc::SIGKILL);
+                    }
+                    return Ok(1);
                 }
             }
-            // The terminal is going away, and agy with it.
-            _ => {
-                if let Some(pid) = bridge.state.lock().unwrap().pid {
-                    signal_group(pid, libc::SIGKILL);
+        };
+        if let Some(command) = command {
+            if command["kind"] == "view" {
+                if command["mode"] == "terminal" {
+                    pending.extend(bridge.clone().native(&mut commands).await);
+                } else {
+                    bridge.report(json!({"view_mode":"chat"})).await;
                 }
-                return Ok(1);
+            } else {
+                tokio::spawn(bridge.clone().command(command));
             }
         }
     }
@@ -185,6 +216,98 @@ struct State {
     /// The status the app shows: model and effort.
     status: serde_json::Map<String, Value>,
     models: Value,
+    /// Native owns the conversation while bridge turns are paused.
+    paused: bool,
+    view_mode: Option<&'static str>,
+    /// Invalidates plan answers when ownership leaves the bridge.
+    generation: u64,
+}
+
+/// A family must contain distinct, actually returned effort variants.
+fn effort_variant(id: &str) -> Option<(&str, &str)> {
+    let (base, effort) = id.rsplit_once('-')?;
+    ["low", "medium", "high", "xhigh", "max"]
+        .contains(&effort)
+        .then_some((base, effort))
+}
+
+fn family_effort<'a>(models: &Value, id: &'a str) -> Option<&'a str> {
+    let (base, effort) = effort_variant(id)?;
+    let listed = models.as_array()?;
+    if !listed.iter().any(|m| m["id"] == id) {
+        return None;
+    }
+    listed
+        .iter()
+        .any(|m| {
+            m["id"]
+                .as_str()
+                .and_then(effort_variant)
+                .is_some_and(|(stem, level)| stem == base && level != effort)
+        })
+        .then_some(effort)
+}
+
+impl State {
+    fn set_choices(&mut self, command: &Value) {
+        if command.get("model").is_some() {
+            self.model = command["model"].as_str().map(str::to_string);
+        }
+        if let Some(id) = self.model.as_deref()
+            && family_effort(&self.models, id).is_some()
+        {
+            if let Some(level) = command["effort"].as_str() {
+                let base = effort_variant(id).unwrap().0;
+                if let Some(id) = self
+                    .models
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|m| m["id"].as_str())
+                    .find(|id| effort_variant(id) == Some((base, level)))
+                {
+                    self.model = Some(id.into());
+                }
+            }
+            self.effort = None;
+        } else if command.get("effort").is_some() {
+            self.effort = command["effort"].as_str().map(str::to_string);
+        }
+        if command.get("permission").is_some() {
+            self.permission = command["permission"].as_str().map(str::to_string);
+        }
+    }
+
+    /// The chosen next-turn model wins over a late init event from the
+    /// current turn, so status, resumed options and CLI arguments agree.
+    fn model_status(&self) -> serde_json::Map<String, Value> {
+        let mut status = self.status.clone();
+        let id = self
+            .model
+            .as_deref()
+            .or_else(|| status.get("model_id").and_then(Value::as_str));
+        let effort = id
+            .and_then(|id| family_effort(&self.models, id))
+            .or(self.effort.as_deref())
+            .map(str::to_string);
+        if let Some(id) = self.model.as_deref() {
+            let label = self
+                .models
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|m| m["id"] == id)
+                .map(|m| m["label"].clone())
+                .unwrap_or_else(|| json!(model_label(id)));
+            status.insert("model_id".into(), json!(id));
+            status.insert("model".into(), label);
+        }
+        status.remove("effort");
+        if let Some(effort) = effort {
+            status.insert("effort".into(), json!(effort));
+        }
+        status
+    }
 }
 
 struct Bridge {
@@ -199,6 +322,9 @@ struct Bridge {
     project: Option<String>,
     instructions: String,
     state: Mutex<State>,
+    /// Held through process exit, including prompt/context preparation.
+    work: tokio::sync::RwLock<()>,
+    plan_cancel: tokio::sync::Notify,
 }
 
 /// One message's run of agy, as its events come.
@@ -229,48 +355,38 @@ struct Reply {
 }
 
 impl Bridge {
-    /// Adds Sandhill's MCP server to agy's settings unless it is there:
-    /// agy reads MCP servers only from its settings, not from flags. It
-    /// finds the daemon and the project from what agy-chat gives agy to
-    /// pass on.
+    /// Preserve legacy/user registrations and track our separate replacement.
     async fn add_tools(&self, executable: &Path) -> Result<()> {
-        let exe = executable.to_string_lossy();
-        let (_, list) = self.agy_command(&["mcp", "list"]).await?;
-        if list.contains(&*exe) {
+        let (server, ready) = crate::lifecycle::antigravity_registration(executable)?;
+        if ready {
             return Ok(());
         }
-        // Sandhill's, from another place it was installed.
-        if list
-            .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
-            .any(|word| word == SERVER)
-        {
-            let _ = self.agy_command(&["mcp", "remove", SERVER]).await;
-        }
+        let exe = executable.to_string_lossy();
         let (ok, said) = self
-            .agy_command(&["mcp", "add", SERVER, "--", &exe, "mcp"])
+            .agy_command(&["mcp", "add", &server, "--", &exe, "mcp"])
             .await?;
         if !ok {
-            bail!("`agy mcp add {SERVER}` failed: {}", said.trim());
+            bail!("`agy mcp add {server}` failed: {}", said.trim());
         }
+        crate::lifecycle::record_antigravity_mcp(&server, executable)?;
         println!(
-            "Added Sandhill's tools to Antigravity's settings (`agy mcp remove {SERVER}` takes them out)."
+            "Added Sandhill's tools to Antigravity (`agy mcp remove {server}` takes them out)."
         );
         Ok(())
     }
 
     /// Runs one of agy's own commands: whether it succeeded, and what it said.
     async fn agy_command(&self, args: &[&str]) -> Result<(bool, String)> {
-        let output = tokio::time::timeout(
-            COMMAND_TIMEOUT,
-            tokio::process::Command::new(&self.agy)
-                .args(args)
-                .current_dir(&self.cwd)
-                .stdin(Stdio::null())
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await
-        .with_context(|| format!("`agy {}` took too long", args.join(" ")))??;
+        let mut command = account_command(&self.agy);
+        command
+            .args(args)
+            .current_dir(&self.cwd)
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+        headless(&mut command);
+        let output = tokio::time::timeout(COMMAND_TIMEOUT, command.output())
+            .await
+            .with_context(|| format!("`agy {}` took too long", args.join(" ")))??;
         let mut said = String::from_utf8_lossy(&output.stdout).into_owned();
         said.push_str(&String::from_utf8_lossy(&output.stderr));
         Ok((output.status.success(), said))
@@ -331,20 +447,9 @@ impl Bridge {
             }
             "interrupt" => self.interrupt(),
             "set" => {
-                let text = |key: &str| command[key].as_str().map(str::to_string);
-                if command.get("model").is_some() {
-                    self.state.lock().unwrap().model = text("model");
-                    self.set_model(command["model"].as_str());
-                }
-                {
-                    let mut state = self.state.lock().unwrap();
-                    if command.get("effort").is_some() {
-                        state.effort = text("effort");
-                    }
-                    if command.get("permission").is_some() {
-                        state.permission = text("permission");
-                    }
-                }
+                self.state.lock().unwrap().set_choices(&command);
+                let model = self.state.lock().unwrap().model.clone();
+                self.set_model(model.as_deref());
                 self.report(json!({})).await;
             }
             _ => {}
@@ -359,22 +464,26 @@ impl Bridge {
     }
 
     async fn say_now(self: Arc<Self>, text: String, shown: bool) {
+        let _work = self.work.read().await;
         let at_ms = now_ms();
         let id = uuid::Uuid::new_v4().to_string();
+        let usage = text.trim() == "/usage";
         let (args, tell, planning) = {
             let mut state = self.state.lock().unwrap();
-            if state.turn.is_some() || state.waiting > 0 {
+            if state.paused || state.turn.is_some() || state.waiting > 0 {
                 state.queued.push(text);
                 return;
             }
             state.turn = Some(id.clone());
             state.stopping = false;
-            let tell = !state.told;
-            state.told = true;
-            let planning = state.permission.as_deref() == Some("plan");
+            let tell = !usage && !state.told;
+            if !usage {
+                state.told = true;
+            }
+            let planning = !usage && state.permission.as_deref() == Some("plan");
             (turn_args(&self.help, &state), tell, planning)
         };
-        let prompt = if shown {
+        let prompt = if shown && !usage {
             self.prompt().await
         } else {
             Default::default()
@@ -403,9 +512,20 @@ impl Bridge {
                 .await;
         }
         self.report(json!({"state": "busy"})).await;
-        let errors = match self.run_agy(&mut turn, args, input).await {
-            Ok(errors) => errors,
-            Err(err) => vec![format!("{err:#}")],
+        let errors = if usage {
+            match usage::read_usage(&self.agy, Some(&self.cwd)).await {
+                Ok(usage) => {
+                    self.report(usage.report).await;
+                    turn.result = Some(json!({"status":"SUCCESS", "response":usage.text}));
+                    Vec::new()
+                }
+                Err(error) => vec![format!("{error:#}")],
+            }
+        } else {
+            match self.run_agy(&mut turn, args, input).await {
+                Ok(errors) => errors,
+                Err(err) => vec![format!("{err:#}")],
+            }
         };
         let plan = self.end_turn(&mut turn, &errors, planning).await;
         {
@@ -415,9 +535,22 @@ impl Bridge {
             state.stopping = false;
         }
         match plan {
-            // A plan to carry out: the turn ends once the user decides.
+            // Register before releasing the turn's ownership guard.
             Some(plan) => {
-                tokio::spawn(self.clone().decide_plan(id, plan));
+                let generation = {
+                    let mut state = self.state.lock().unwrap();
+                    if state.paused {
+                        None
+                    } else {
+                        state.waiting += 1;
+                        Some(state.generation)
+                    }
+                };
+                if let Some(generation) = generation {
+                    tokio::spawn(self.clone().decide_plan(id, plan, generation));
+                } else if turn.shown {
+                    self.chat(json!({"kind":"stop","turn":id})).await;
+                }
             }
             None => {
                 // Idle before the turn shows as ended, so a client that sees
@@ -439,7 +572,7 @@ impl Bridge {
         args: Vec<String>,
         input: String,
     ) -> Result<Vec<String>> {
-        let mut command = tokio::process::Command::new(&self.agy);
+        let mut command = account_command(&self.agy);
         command
             .args(&args)
             .current_dir(&self.cwd)
@@ -449,9 +582,9 @@ impl Bridge {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // Its own group, so stopping it stops what it runs too.
-            .process_group(0)
             .kill_on_drop(true);
+        // Its own session and group: stopping it stops what it runs too.
+        headless(&mut command);
         if let Some(project) = &self.project {
             command.env("SANDHILL_PROJECT", project);
         }
@@ -468,34 +601,64 @@ impl Bridge {
             signal_group(pid, libc::SIGINT);
         }
         let mut stdin = child.stdin.take().context("no stdin")?;
+        let mut input = serde_json::to_vec(&json!({
+            "event": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": input}],
+            },
+        }))?;
+        input.push(b'\n');
         tokio::spawn(async move {
-            let _ = stdin.write_all(input.as_bytes()).await;
+            let _ = stdin.write_all(&input).await;
             let _ = stdin.shutdown().await;
         });
         let stderr = child.stderr.take().context("no stderr")?;
-        let errors = tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            let mut said = Vec::new();
-            while let Ok(Some(line)) = lines.next_line().await {
-                println!("  {line}");
-                said.push(line);
+        let said = Arc::new(Mutex::new(Vec::new()));
+        let errors = tokio::spawn({
+            let said = said.clone();
+            async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    println!("  {line}");
+                    said.lock().unwrap().push(line);
+                }
             }
-            said
         });
         let mut lines = BufReader::new(child.stdout.take().context("no stdout")?).lines();
         let mut tick = tokio::time::interval(FLUSH);
+        // agy says `init` as soon as it is up. Silence means it is stuck
+        // before the message (a sign-in waiting for a browser, say): it is
+        // stopped, and the turn fails with what it said.
+        let start = tokio::time::sleep(START_TIMEOUT);
+        tokio::pin!(start);
+        let mut started = false;
+        let mut stalled = false;
         loop {
             tokio::select! {
                 line = lines.next_line() => {
                     let Ok(Some(line)) = line else { break };
+                    started = true;
                     self.event(turn, &line).await;
                 }
                 _ = tick.tick() => self.flush(turn).await,
+                _ = &mut start, if !started => {
+                    if let Some(pid) = child.id() {
+                        signal_group(pid, libc::SIGKILL);
+                    }
+                    stalled = true;
+                    break;
+                }
             }
         }
         let status = child.wait().await?;
-        let mut said = errors.await.unwrap_or_default();
-        if turn.result.is_none() && !status.success() && said.is_empty() {
+        // What it runs may keep stderr open after it ends.
+        let _ = tokio::time::timeout(STOP_GRACE, errors).await;
+        let mut said = std::mem::take(&mut *said.lock().unwrap());
+        if stalled {
+            let text = stalled_text(&said);
+            said.push(text);
+        } else if turn.result.is_none() && !status.success() && said.is_empty() {
             said.push(format!("agy exited ({status})"));
         }
         Ok(said)
@@ -513,6 +676,9 @@ impl Bridge {
         let body = &message[kind];
         match kind {
             "init" => {
+                // Known from the start, so the command line can open the
+                // conversation while its first message runs.
+                self.conversation(&message["conversation_id"]).await;
                 if let Some(model) = body["model"].as_str() {
                     self.set_model(Some(model));
                     self.report(json!({})).await;
@@ -689,7 +855,13 @@ impl Bridge {
 
     /// Starts the messages that came while the turn ran.
     fn next(self: &Arc<Self>) {
-        let queued = std::mem::take(&mut self.state.lock().unwrap().queued);
+        let queued = {
+            let mut state = self.state.lock().unwrap();
+            if state.paused {
+                return;
+            }
+            std::mem::take(&mut state.queued)
+        };
         if !queued.is_empty() {
             tokio::spawn(self.clone().say(queued.join("\n\n"), true));
         }
@@ -697,9 +869,15 @@ impl Bridge {
 
     /// Stops the turn: agy is asked to (SIGINT), then made to.
     fn interrupt(self: Arc<Self>) {
+        self.stop_active(true);
+    }
+
+    fn stop_active(self: &Arc<Self>, clear_queue: bool) {
         let pid = {
             let mut state = self.state.lock().unwrap();
-            state.queued.clear();
+            if clear_queue {
+                state.queued.clear();
+            }
             if state.turn.is_none() {
                 return;
             }
@@ -708,9 +886,10 @@ impl Bridge {
         };
         let Some(pid) = pid else { return };
         signal_group(pid, libc::SIGINT);
+        let this = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(STOP_GRACE).await;
-            if self.state.lock().unwrap().pid == Some(pid) {
+            if this.state.lock().unwrap().pid == Some(pid) {
                 signal_group(pid, libc::SIGKILL);
             }
         });
@@ -719,7 +898,13 @@ impl Bridge {
     /// Asks the user whether to carry out the plan agy made in plan mode,
     /// as Claude Code's plan card does; yes switches to Normal and carries
     /// it out.
-    async fn decide_plan(self: Arc<Self>, turn: String, plan: String) {
+    async fn decide_plan(self: Arc<Self>, turn: String, plan: String, generation: u64) {
+        let cancelled = self.plan_cancel.notified();
+        tokio::pin!(cancelled);
+        cancelled.as_mut().enable();
+        if self.state.lock().unwrap().generation != generation {
+            return;
+        }
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let event = json!({
             "kind": "ask",
@@ -729,12 +914,20 @@ impl Bridge {
             "input": {"plan": plan},
             "at_ms": now_ms(),
         });
-        self.state.lock().unwrap().waiting += 1;
         self.report(json!({})).await;
-        let answer = super::ask(&self.dir, &id, event).await.ok().flatten();
+        let answer = tokio::select! {
+            answer = super::ask(&self.dir, &id, event) => answer.ok().flatten(),
+            _ = &mut cancelled => {
+                self.chat(json!({"kind":"stop","turn":turn})).await;
+                return;
+            }
+        };
         let carry_out = answer.as_ref().is_some_and(|a| a["behavior"] == "allow");
         {
             let mut state = self.state.lock().unwrap();
+            if state.generation != generation || state.paused {
+                return;
+            }
             state.waiting -= 1;
             if carry_out {
                 state.permission = Some("supervised".into());
@@ -772,14 +965,16 @@ impl Bridge {
     async fn report(&self, extra: Value) {
         let report = {
             let state = self.state.lock().unwrap();
-            let mut status = state.status.clone();
-            if let Some(effort) = &state.effort {
-                status.insert("effort".into(), json!(effort));
-            }
+            let status = state.model_status();
             let mut report = json!({
                 "state": if state.waiting > 0 { "waiting" } else if state.turn.is_some() { "busy" } else { "idle" },
                 "permission": state.permission.as_deref().unwrap_or("supervised"),
                 "status": status,
+                "view_mode": state.view_mode.unwrap_or("chat"),
+                // Why the command line failed: only in the report that
+                // ends its switch back to chat.
+                "view_error": null,
+                "thread": state.conversation,
             });
             if !state.models.is_null() {
                 report["models"] = state.models.clone();
@@ -796,19 +991,59 @@ impl Bridge {
     }
 }
 
+/// Select the added account for this process only. agy merges this provider
+/// override with its other settings; the key stays in inherited GEMINI_API_KEY.
+fn account_command(agy: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(agy);
+    command.args(account_settings(api_key_account()));
+    command
+}
+
+fn account_settings(api_key: bool) -> &'static [&'static str] {
+    if api_key {
+        &["--settings", r#"{"modelProvider":"gemini"}"#]
+    } else {
+        &[]
+    }
+}
+
+fn api_key_account() -> bool {
+    std::env::var_os("SANDHILL_AGY_API_KEY").as_deref() == Some(std::ffi::OsStr::new("1"))
+}
+
 /// agy's arguments for one message, with the user's choices. Flags an
 /// older agy doesn't list in its help are left out.
 fn turn_args(help: &str, state: &State) -> Vec<String> {
     let has = |flag: &str| help.contains(flag);
-    let mut args = vec!["--output-format".to_string(), "stream-json".into()];
+    // Output formatting alone leaves agy in its interactive TUI. Streamed
+    // input selects headless mode and keeps the prompt out of process argv.
+    let mut args = vec![
+        "--input-format".to_string(),
+        "stream-json".into(),
+        "--output-format".into(),
+        "stream-json".into(),
+    ];
     if has("--print-timeout") {
         args.extend(["--print-timeout".into(), PRINT_TIMEOUT.into()]);
     }
+    args.extend(conversation_args(help, state));
+    args
+}
+
+/// Choices shared by headless turns and the native CLI.
+fn conversation_args(help: &str, state: &State) -> Vec<String> {
+    let has = |flag: &str| help.contains(flag);
+    let mut args = Vec::new();
     if let Some(model) = &state.model {
         args.extend(["--model".into(), model.clone()]);
     }
     if let Some(effort) = &state.effort
         && has("--effort")
+        && state
+            .model
+            .as_deref()
+            .and_then(|id| family_effort(&state.models, id))
+            .is_none()
     {
         args.extend(["--effort".into(), effort.clone()]);
     }
@@ -850,7 +1085,9 @@ fn tool_step(name: &str, parameters: &Value) -> (String, Value) {
 fn sandhill_tool(name: &str) -> Option<String> {
     let rest = name.strip_prefix("mcp").unwrap_or(name);
     let rest = rest.trim_start_matches(['_', '/', '.']);
-    let rest = rest.strip_prefix(SERVER)?;
+    let rest = rest
+        .strip_prefix("sandhill-managed")
+        .or_else(|| rest.strip_prefix(SERVER))?;
     let tool = rest.trim_start_matches(['_', '/', '.']);
     crate::mcp::tool_names()
         .iter()
@@ -981,11 +1218,12 @@ fn denials(result: &Value, errors: &[String]) -> Option<String> {
 /// The models agy offers, before any conversation (`agy models`), for a
 /// new conversation's model menu.
 pub async fn list_models(agy: &Path) -> Result<Value> {
-    let mut command = tokio::process::Command::new(agy);
+    let mut command = account_command(agy);
     command
         .arg("models")
         .stdin(Stdio::null())
         .kill_on_drop(true);
+    headless(&mut command);
     if let Some(path) = crate::agents::path_for(agy)? {
         command.env("PATH", path);
     }
@@ -1056,6 +1294,44 @@ fn signal_group(pid: u32, signal: libc::c_int) {
     }
 }
 
+/// Runs agy away from the conversation's terminal: in a session of its
+/// own, without a controlling terminal, as the leader of its own process
+/// group (for [`signal_group`]). Over SSH, agy on Linux asks the terminal
+/// what it is (DA2) even when it only prints; from a background process
+/// group of the conversation's terminal that stops it for good (SIGTTOU),
+/// and from its foreground the question shows in the terminal.
+fn headless(command: &mut tokio::process::Command) {
+    // SAFETY: setsid is async-signal-safe, as code between fork and exec
+    // must be.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Why a message failed whose agy never started: how long it had, and the
+/// first thing it said (agy asks for a sign-in on stderr, then waits).
+fn stalled_text(said: &[String]) -> String {
+    let mut text = format!(
+        "Antigravity didn't start within {} s, so Sandhill stopped it",
+        START_TIMEOUT.as_secs()
+    );
+    if let Some(line) = said.iter().map(|l| l.trim()).find(|l| !l.is_empty()) {
+        let line = line.trim_end_matches(':');
+        let line = match line.char_indices().nth(200) {
+            Some((at, _)) => format!("{}…", &line[..at]),
+            None => line.to_string(),
+        };
+        text.push_str(". It said: ");
+        text.push_str(&line);
+    }
+    text
+}
+
 /// A step's input on one line, for the terminal.
 fn one_line(input: &Value) -> String {
     let text = input["command"]
@@ -1075,6 +1351,83 @@ mod tests {
     use super::*;
 
     #[test]
+    fn added_accounts_override_only_the_provider_without_a_key_argument() {
+        assert!(account_settings(false).is_empty());
+        let args = account_settings(true);
+        assert_eq!(args[0], "--settings");
+        let settings: Value = serde_json::from_str(args[1]).unwrap();
+        assert_eq!(settings, json!({"modelProvider": "gemini"}));
+    }
+
+    fn variant_listing() -> Value {
+        json!([
+            {"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash High"},
+            {"id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash Medium"},
+            {"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash Low"},
+            {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"}
+        ])
+    }
+
+    #[test]
+    fn variant_effort_changes_route_cli_model_and_status_together() {
+        let mut state = State {
+            model: Some("gemini-3.8-flash-high".into()),
+            // Old stored options must not override an encoded variant.
+            effort: Some("medium".into()),
+            models: variant_listing(),
+            ..State::default()
+        };
+        assert_eq!(state.model_status()["effort"], "high");
+        let args = turn_args("--model --effort", &state);
+        assert!(
+            args.windows(2)
+                .any(|a| a == ["--model", "gemini-3.8-flash-high"])
+        );
+        assert!(!args.iter().any(|a| a == "--effort"));
+        for level in ["low", "medium", "high"] {
+            state.set_choices(&json!({"effort": level}));
+            let id = format!("gemini-3.8-flash-{level}");
+            assert_eq!(state.model.as_deref(), Some(id.as_str()));
+            let status = state.model_status();
+            assert_eq!(status["model_id"], id);
+            assert_eq!(status["effort"], level);
+            assert_eq!(state.effort, None);
+            let args = turn_args("--model --effort", &state);
+            assert!(args.windows(2).any(|a| a[0] == "--model" && a[1] == id));
+            assert!(!args.iter().any(|a| a == "--effort"));
+        }
+        // A late init event from the active turn cannot undo a next-turn pick.
+        state
+            .status
+            .insert("model_id".into(), json!("gemini-3.8-flash-low"));
+        assert_eq!(state.model_status()["model_id"], "gemini-3.8-flash-high");
+        state.set_choices(&json!({"effort": "max"}));
+        assert_eq!(state.model.as_deref(), Some("gemini-3.8-flash-high"));
+        state.set_choices(&json!({"model": "claude-sonnet-4-6", "effort": "high"}));
+        let args = turn_args("--model --effort", &state);
+        assert!(args.windows(2).any(|a| a == ["--effort", "high"]));
+        assert_eq!(state.model_status()["effort"], "high");
+    }
+
+    #[test]
+    fn singleton_suffix_and_similar_model_ids_are_not_variant_families() {
+        let mut state = State {
+            model: Some("gemini-3.8-flash-high".into()),
+            models: json!([
+                {"id": "gemini-3.8-flash-high"},
+                {"id": "gemini-3.8-flash-lite-low"},
+                {"id": "gemini-3.8-flash-high-preview"}
+            ]),
+            ..State::default()
+        };
+        state.set_choices(&json!({"effort": "low"}));
+        assert_eq!(state.model.as_deref(), Some("gemini-3.8-flash-high"));
+        assert_eq!(state.effort.as_deref(), Some("low"));
+        let args = turn_args("--effort", &state);
+        assert!(args.windows(2).any(|a| a == ["--effort", "low"]));
+    }
+
+    #[test]
     fn each_message_runs_agy_headless_with_the_users_choices() {
         let help = "--output-format --print-timeout --effort --mode";
         let state = State {
@@ -1087,6 +1440,8 @@ mod tests {
         assert_eq!(
             turn_args(help, &state),
             [
+                "--input-format",
+                "stream-json",
                 "--output-format",
                 "stream-json",
                 "--print-timeout",
@@ -1109,7 +1464,12 @@ mod tests {
         assert!(turn_args("", &full).contains(&"--dangerously-skip-permissions".to_string()));
         assert_eq!(
             turn_args("", &State::default()),
-            ["--output-format", "stream-json"]
+            [
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json"
+            ]
         );
     }
 

@@ -18,11 +18,6 @@ use crate::cells;
 const WINDOW_RUN_WAIT: Duration = Duration::from_secs(60);
 /// Selections longer than this are cut for the agent.
 const MAX_SELECTION: usize = 4000;
-/// With each prompt, the selection is cut shorter.
-const MAX_PROMPT_SELECTION: usize = 1000;
-/// A place older than this is not mentioned with a prompt: the user has
-/// likely been away from Sandhill.
-const STALE_FOCUS_MS: i64 = 30 * 60_000;
 /// A cell named with # brings this much of its latest output.
 const MAX_REF_OUTPUT: usize = 2000;
 /// A script's console keeps this many runs, as `console-0` to `console-99`
@@ -45,8 +40,8 @@ pub(super) struct Edit<'a> {
 pub struct Prompt {
     /// What the agent is told with it.
     pub context: Option<String>,
-    /// What the chat shows went with it: `{file?, cell?, line?, refs?}`,
-    /// the file as shown to the agent.
+    /// What the chat shows went with it: `{refs}`, the names of what the
+    /// user added with @ and #.
     pub place: Option<Value>,
     /// What the message changes in the terminal's report: the file it
     /// works in (`document`), and the refs it took.
@@ -73,50 +68,18 @@ impl Tools {
     /// What goes with each message the user sends (Claude Code's
     /// UserPromptSubmit hook, Codex's turns): a few lines for the agent and
     /// what the chat shows went with it, from the user's choices in the
-    /// message box (see [`crate::terminal::choices`]) and where they are,
-    /// so "this cell" and "the selection" mean something.
+    /// message box (see [`crate::terminal::choices`]). Only what the user
+    /// added with @ and # goes with it, never the document in front or
+    /// the selection (Huan's call, 2026-11-12): the agent asks `get_focus`
+    /// when the user says "this cell" or "here".
     pub async fn prompt(&self, wait: Duration) -> Prompt {
         let choices = self
             .terminal_dir
             .as_deref()
             .map(crate::terminal::choices::read)
             .unwrap_or_default();
-        let focus = tokio::time::timeout(wait, async {
-            let client = self.client().await.ok()?;
-            self.focus(&client).await
-        })
-        .await
-        .ok()
-        .flatten()
-        .filter(|f| now_ms() - f.ts_ms <= STALE_FOCUS_MS);
         let mut lines = Vec::new();
         let mut place = json!({});
-        if let Some(focus) = focus.as_ref().filter(|_| choices.context)
-            && let Some(file) = focus.file.as_deref()
-        {
-            place["file"] = json!(self.shown(file));
-            if let Some(cell) = &focus.cell {
-                place["cell"] = json!(cell);
-            }
-            if let Some(line) = focus.line {
-                place["line"] = json!(line);
-            }
-            let mut text = format!("Sandhill: the user is in {}", self.shown(file));
-            if let Some(cell) = &focus.cell {
-                text.push_str(&format!(", cell {cell}"));
-            }
-            if let Some(line) = focus.line {
-                text.push_str(&format!(", line {line}"));
-            }
-            text.push('.');
-            if let Some(selection) = focus.selection.as_deref().filter(|s| !s.trim().is_empty()) {
-                text.push_str(&format!(
-                    " They have selected:\n```\n{}\n```",
-                    text::shorten(selection, MAX_PROMPT_SELECTION)
-                ));
-            }
-            lines.push(text);
-        }
         // The file this message works in: a document the user named with @,
         // else the pinned one, kept while the agent works on it. Only that:
         // conversations are about the whole project, and a file is worked on
@@ -411,7 +374,10 @@ impl Tools {
                 "{head}. Sandhill's window was asked to run it but hasn't started it yet; get_outputs shows its output once it has run."
             ))]);
         };
-        let mut outcome = Outcome::default();
+        let mut outcome = Outcome {
+            run_id: cell.run.clone(),
+            ..Default::default()
+        };
         for output in &cell.outputs {
             outcome.rendered.add_output(output);
         }
@@ -482,7 +448,11 @@ impl Tools {
 
     async fn describe_focus(&self, focus: &Focus) -> String {
         let Some(file) = &focus.file else {
-            return "The user has no document in front.".into();
+            return focus
+                .table
+                .as_ref()
+                .map(table_focus_note)
+                .unwrap_or_else(|| "The user has no document in front.".into());
         };
         let mut text = format!("The user is in {}", self.shown(file));
         if let Some(cell) = &focus.cell {
@@ -524,6 +494,9 @@ impl Tools {
             .collect();
         if !others.is_empty() {
             text.push_str(&format!("\nAlso open: {}.", others.join(", ")));
+        }
+        if let Some(table) = &focus.table {
+            text.push_str(&format!("\n{}", table_focus_note(table)));
         }
         text
     }
@@ -586,6 +559,20 @@ impl Tools {
         self.start_kernel(client, &language, kernel, Some(folder))
             .await
     }
+}
+
+fn table_focus_note(table: &sandhill_proto::TableFocus) -> String {
+    format!(
+        "The user is viewing table {} in session {}: filtered {} of {} rows.\nTable state (original column indices): {}",
+        table.name,
+        table.session,
+        table.shown_rows,
+        table.total_rows,
+        text::shorten(
+            &serde_json::to_string(table).unwrap_or_default(),
+            MAX_SELECTION
+        )
+    )
 }
 
 /// Waits for a run of `cell_id` that started at `since` or later.

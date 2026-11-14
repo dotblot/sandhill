@@ -85,6 +85,20 @@ pub fn foreground_group(master: RawFd) -> Option<libc::pid_t> {
     (pgrp > 0).then_some(pgrp)
 }
 
+/// Signal the PTY's actual foreground group inside the kernel, rather than
+/// resolving a group number and racing its exit/PID reuse in userspace.
+pub fn signal_foreground(master: RawFd, signal: libc::c_int) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    const TIOCSIG: libc::c_ulong = 0x2000_745f; // sys/ttycom.h: _IO('t', 95)
+    #[cfg(target_os = "linux")]
+    const TIOCSIG: libc::c_ulong = libc::TIOCSIG as libc::c_ulong;
+    // TIOCSIG takes the signal as its immediate integer argument on both OSes.
+    if unsafe { libc::ioctl(master, TIOCSIG as _, signal) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 pub fn set_nonblocking(fd: RawFd) -> io::Result<()> {
     // SAFETY: fcntl on a descriptor we own.
     unsafe {

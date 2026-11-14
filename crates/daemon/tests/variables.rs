@@ -364,3 +364,301 @@ async fn the_console_lists_a_sessions_runs() {
     assert_eq!(last.runs[0].code, "print(x)");
     client.shutdown(&session).await.unwrap();
 }
+
+/// Collect every returned accessor under a real object, including table
+/// columns and nested parts, rather than checking just example strings.
+async fn accessor_tree(client: &Client, session: &str, root: &str) -> Vec<(Vec<String>, String)> {
+    let mut pending = vec![vec![root.to_string()]];
+    let mut found = Vec::new();
+    let globals = client.list_variables(session, &[]).await.unwrap();
+    found.push((
+        vec![root.into()],
+        find(&globals.variables, root)
+            .accessor
+            .clone()
+            .expect("root accessor"),
+    ));
+    while let Some(path) = pending.pop() {
+        let listed = client.list_variables(session, &path).await.unwrap();
+        assert_eq!(listed.more, 0, "synthetic object must fit in one page");
+        for variable in listed.variables {
+            let mut child = path.clone();
+            child.push(variable.name.clone());
+            found.push((
+                child.clone(),
+                variable.accessor.expect("every node has an accessor"),
+            ));
+            if variable.children && child.len() < 7 {
+                pending.push(child);
+            }
+        }
+        assert!(found.len() < 500, "synthetic object unexpectedly large");
+    }
+    found
+}
+
+#[tokio::test]
+async fn ark_seurat_accessors_equal_walked_nodes_and_search_is_quiet() {
+    if !have_kernel("ark").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session("ark", None).await.unwrap().id;
+    run(
+        &mut client,
+        &session,
+        "have_packages <- requireNamespace('SeuratObject', quietly = TRUE)",
+        None,
+        None,
+    )
+    .await;
+    if find(&list(&client, &session, &[]).await, "have_packages").summary != "TRUE" {
+        eprintln!("skipping: SeuratObject is not installed in Ark");
+        client.shutdown(&session).await.unwrap();
+        return;
+    }
+    run(
+        &mut client,
+        &session,
+        r#"counts <- matrix(c(1L,0L,3L,2L,4L,0L,5L,2L,1L,0L,2L,3L), 4,
+  dimnames = list(paste0("gene", 1:4), paste0("cell", 1:3)))
+seu <- SeuratObject::CreateSeuratObject(counts)
+seu@meta.data$nested_obs_column <- c("AlphaValue", "Beta", "Gamma")
+seu@assays$legacy <- SeuratObject::CreateAssayObject(counts)
+deep <- 1
+for (i in 1:8) deep <- list(child = deep)
+wide_search <- as.list(seq_len(20005))
+"#,
+        None,
+        None,
+    )
+    .await;
+    let tree = accessor_tree(&client, &session, "seu").await;
+    assert!(
+        tree.iter()
+            .any(|(p, a)| p.last().is_some_and(|s| s == "counts")
+                && (a.contains("LayerData(") || a.contains("@counts")))
+    );
+    let r_vec = |path: &[String]| {
+        format!(
+            "c({})",
+            path.iter()
+                .map(|s| serde_json::to_string(s).unwrap())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let checks = tree
+        .iter()
+        .map(|(p, a)| {
+            format!(
+                "identical(eval(parse(text = {}), envir = globalenv()), .find({})$x)",
+                serde_json::to_string(a).unwrap(),
+                r_vec(p)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let check = format!(
+        "accessor_ok <- local({{\n{}\nall(c({checks}))\n}})",
+        sandhill_daemon::variables::R_WALK
+    );
+    run(&mut client, &session, &check, None, None).await;
+    assert_eq!(
+        find(&list(&client, &session, &[]).await, "accessor_ok").summary,
+        "TRUE"
+    );
+    let before = client
+        .session_runs(&session, None)
+        .await
+        .unwrap()
+        .runs
+        .len();
+    let matches = client
+        .find_variables(&session, "NESTED_OBS_COLUMN", &["seu".into()])
+        .await
+        .unwrap();
+    assert!(matches.complete, "{matches:?}");
+    assert!(
+        matches
+            .matches
+            .iter()
+            .any(|m| m.path == ["seu", "meta.data", "nested_obs_column"])
+    );
+    let column = matches
+        .matches
+        .iter()
+        .find(|m| m.path == ["seu", "meta.data", "nested_obs_column"])
+        .unwrap();
+    assert!(!column.children && !column.table, "{column:?}");
+    let metadata = matches
+        .matches
+        .iter()
+        .find(|m| m.path == ["seu", "meta.data"])
+        .unwrap();
+    assert!(metadata.children && metadata.table, "{metadata:?}");
+    let values = client
+        .find_variables(&session, "alphavalue", &["seu".into()])
+        .await
+        .unwrap();
+    assert!(values.matches.iter().any(|m| m.name == "nested_obs_column"));
+    assert!(
+        !client
+            .find_variables(&session, "absent", &["deep".into()])
+            .await
+            .unwrap()
+            .complete
+    );
+    assert!(
+        !client
+            .find_variables(&session, "absent", &["wide_search".into()])
+            .await
+            .unwrap()
+            .complete
+    );
+    assert_eq!(
+        client
+            .session_runs(&session, None)
+            .await
+            .unwrap()
+            .runs
+            .len(),
+        before
+    );
+    client.shutdown(&session).await.unwrap();
+}
+
+#[tokio::test]
+async fn anndata_accessors_equal_walked_nodes_and_search_is_bounded() {
+    let kernel = if have_kernel("conda-env-omicverse-py").await {
+        "conda-env-omicverse-py"
+    } else if have_kernel("python3").await {
+        "python3"
+    } else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    let session = client.start_session(kernel, None).await.unwrap().id;
+    run(&mut client, &session, "try:\n    import anndata as ad, numpy as np, pandas as pd\n    have_packages = True\nexcept ImportError:\n    have_packages = False", None, None).await;
+    if find(&list(&client, &session, &[]).await, "have_packages").summary != "True" {
+        eprintln!("skipping: anndata/numpy/pandas are not installed in {kernel}");
+        client.shutdown(&session).await.unwrap();
+        return;
+    }
+    run(
+        &mut client,
+        &session,
+        r#"adata = ad.AnnData(np.arange(12).reshape(3,4).astype(float))
+adata.obs["nested_obs_column"] = ["AlphaValue", "Beta", "Gamma"]
+adata.obsm["X_pca"] = np.arange(6).reshape(3,2)
+adata.obsm["frame"] = pd.DataFrame({"named column": [1,2,3]}, index=adata.obs_names)
+adata.varm["loadings"] = np.arange(8).reshape(4,2)
+adata.layers["counts"] = adata.X.copy()
+adata.uns["nested"] = {"deeper": {"needle": "AlphaValue"}}
+deep = 1
+for _ in range(8):
+    deep = {"child": deep}
+wide_search = list(range(20005))
+"#,
+        None,
+        None,
+    )
+    .await;
+    let tree = accessor_tree(&client, &session, "adata").await;
+    assert!(
+        tree.iter().any(|(_, a)| a == "adata.obsm['X_pca'][:, 0]"),
+        "{tree:?}"
+    );
+    assert!(
+        tree.iter()
+            .any(|(_, a)| a.contains("['frame']['named column']"))
+    );
+    let checks = serde_json::to_string(&tree).unwrap();
+    let check = format!(
+        r#"def _sandhill_check_accessors():
+    ns = get_ipython().user_ns
+{walk}
+    def equal(a, b):
+        if a is b:
+            return True
+        if isinstance(a, Mapping) and isinstance(b, Mapping):
+            return a.keys() == b.keys() and all(equal(a[k], b[k]) for k in a)
+        if hasattr(a, "equals"):
+            return a.equals(b)
+        if hasattr(a, "toarray"):
+            return np.array_equal(a.toarray(), b.toarray())
+        return np.array_equal(a, b)
+    return all(equal(eval(accessor, ns), walk(path)[0]) for path, accessor in {checks})
+accessor_ok = _sandhill_check_accessors()
+del _sandhill_check_accessors
+"#,
+        walk = sandhill_daemon::variables::PYTHON_WALK
+    );
+    run(&mut client, &session, &check, None, None).await;
+    assert_eq!(
+        find(&list(&client, &session, &[]).await, "accessor_ok").summary,
+        "True"
+    );
+    let before = client
+        .session_runs(&session, None)
+        .await
+        .unwrap()
+        .runs
+        .len();
+    let matches = client
+        .find_variables(&session, "NESTED_OBS_COLUMN", &["adata".into()])
+        .await
+        .unwrap();
+    assert!(matches.complete, "{matches:?}");
+    assert!(
+        matches
+            .matches
+            .iter()
+            .any(|m| m.path == ["adata", "obs", "nested_obs_column"])
+    );
+    let column = matches
+        .matches
+        .iter()
+        .find(|m| m.path == ["adata", "obs", "nested_obs_column"])
+        .unwrap();
+    assert!(!column.children && !column.table, "{column:?}");
+    let obs = matches
+        .matches
+        .iter()
+        .find(|m| m.path == ["adata", "obs"])
+        .unwrap();
+    assert!(obs.children && obs.table, "{obs:?}");
+    let values = client
+        .find_variables(&session, "alphavalue", &["adata".into()])
+        .await
+        .unwrap();
+    assert!(values.matches.iter().any(|m| m.name == "needle"));
+    assert!(
+        !client
+            .find_variables(&session, "absent", &["deep".into()])
+            .await
+            .unwrap()
+            .complete
+    );
+    assert!(
+        !client
+            .find_variables(&session, "absent", &["wide_search".into()])
+            .await
+            .unwrap()
+            .complete
+    );
+    assert_eq!(
+        client
+            .session_runs(&session, None)
+            .await
+            .unwrap()
+            .runs
+            .len(),
+        before
+    );
+    client.shutdown(&session).await.unwrap();
+}

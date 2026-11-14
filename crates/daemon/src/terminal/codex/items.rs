@@ -495,21 +495,49 @@ pub fn context(usage: &Value) -> Option<Value> {
     Some(json!({"context": (percent * 10.0).round() / 10.0, "context_size": size as u64}))
 }
 
-/// Codex's plan limits, in the shape Claude Code's status line gives them
-/// (`five_hour`, `seven_day`), merged into what was known: updates leave
-/// out what didn't change.
+/// Preserve Codex's actual window duration. Omitted windows are unchanged;
+/// explicit null clears them. Each measurement keeps its own observation time.
 pub fn rate_limits(known: &Value, snapshot: &Value) -> Value {
     let mut limits = known.as_object().cloned().unwrap_or_default();
-    for (window, key) in [("primary", "five_hour"), ("secondary", "seven_day")] {
-        let window = &snapshot[window];
-        if let Some(used) = window["usedPercent"].as_f64() {
+    for key in ["primary", "secondary"] {
+        let Some(window) = snapshot.get(key) else {
+            continue;
+        };
+        if window.is_null() {
+            limits.remove(key);
+        } else if let Some(used) = window["usedPercent"].as_f64() {
             limits.insert(
                 key.into(),
-                json!({"used_percentage": used, "resets_at": window["resetsAt"]}),
+                json!({"used_percentage": used, "resets_at": window["resetsAt"],
+                    "window_minutes": window["windowDurationMins"],
+                    "observed_at_ms": crate::journal::now_ms()}),
             );
         }
     }
     Value::Object(limits)
+}
+
+/// Codex's banked resets (`rateLimitResetCredits` from
+/// `account/rateLimits/read`): how many are available, when the first of
+/// them expires (Unix seconds; null when none expires or details are absent)
+/// and that one's id, which using a reset names.
+pub fn reset_credits(read: &Value) -> Option<Value> {
+    let credits = read.get("rateLimitResetCredits")?;
+    let available = credits["availableCount"].as_i64()?;
+    let usable: Vec<&Value> = credits["credits"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|credit| credit["status"] == "available")
+        .collect();
+    // The soonest to expire goes first; one that never expires goes last.
+    let next = usable
+        .iter()
+        .min_by_key(|credit| credit["expiresAt"].as_i64().unwrap_or(i64::MAX));
+    Some(json!({"available": available,
+        "expires_at": next.and_then(|credit| credit["expiresAt"].as_i64()),
+        "next_id": next.and_then(|credit| credit["id"].as_str()),
+        "observed_at_ms": crate::journal::now_ms()}))
 }
 
 /// The models to offer: `{id, label, efforts, effort, default}`.
@@ -726,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn usage_and_limits_take_claude_codes_shape() {
+    fn usage_and_limits_preserve_actual_windows() {
         let messages = recorded();
         let usage = &find(&messages, "thread/tokenUsage/updated", "")["params"]["tokenUsage"];
         assert_eq!(
@@ -737,14 +765,37 @@ mod tests {
             &Value::Null,
             &json!({"primary": {"usedPercent": 42.0, "windowDurationMins": 300, "resetsAt": 1792270000}, "secondary": null}),
         );
-        assert_eq!(limits["five_hour"]["used_percentage"], 42.0);
-        // A later update without the 5-hour window keeps it.
+        assert_eq!(limits["primary"]["used_percentage"], 42.0);
+        assert_eq!(limits["primary"]["window_minutes"], 300);
+        // A later update without the primary window keeps it.
         let limits = rate_limits(
             &limits,
             &json!({"secondary": {"usedPercent": 7.0, "resetsAt": 1792900000}}),
         );
-        assert_eq!(limits["five_hour"]["used_percentage"], 42.0);
-        assert_eq!(limits["seven_day"]["used_percentage"], 7.0);
+        assert_eq!(limits["primary"]["used_percentage"], 42.0);
+        assert_eq!(limits["secondary"]["used_percentage"], 7.0);
+        assert!(limits["secondary"]["window_minutes"].is_null());
+        let limits = rate_limits(&limits, &json!({"primary": null}));
+        assert!(limits.get("primary").is_none());
+    }
+
+    #[test]
+    fn banked_resets_count_and_first_expiry() {
+        let read = json!({"rateLimitResetCredits": {"availableCount": 3, "credits": [
+            {"id": "a", "status": "available", "expiresAt": 1_900_000_000, "grantedAt": 1},
+            {"id": "b", "status": "redeemed", "expiresAt": 1_800_000_000, "grantedAt": 1},
+            {"id": "c", "status": "available", "expiresAt": 1_850_000_000, "grantedAt": 1},
+            {"id": "d", "status": "available", "expiresAt": null, "grantedAt": 1}]}});
+        let credits = reset_credits(&read).unwrap();
+        assert_eq!(credits["available"], 3);
+        // The earliest expiry among available credits; a redeemed one is ignored.
+        assert_eq!(credits["expires_at"], 1_850_000_000);
+        // Using a reset uses that soonest one.
+        assert_eq!(credits["next_id"], "c");
+        // Only the count known: no expiry to show.
+        let count_only = json!({"rateLimitResetCredits": {"availableCount": 1, "credits": null}});
+        assert!(reset_credits(&count_only).unwrap()["expires_at"].is_null());
+        assert!(reset_credits(&json!({})).is_none());
     }
 
     #[test]

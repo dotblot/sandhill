@@ -11,6 +11,7 @@
 //! agent.json   what the agent last reported through its hooks, and
 //!              Sandhill's own mode for it (see `guard`)
 //! exit.json    how the program ended
+//! render.json  successful Quarto output paths (written by the host)
 //! host.log     the host's own errors
 //! ```
 //!
@@ -18,6 +19,7 @@
 //! `sock` with one JSON message per line ([`ToHost`], [`FromHost`]). Once
 //! the program has ended, the daemon reads the folder instead.
 
+pub mod acp;
 pub mod antigravity;
 pub mod chat;
 pub mod choices;
@@ -25,7 +27,9 @@ pub mod codex;
 pub mod events;
 pub mod guard;
 pub mod host;
+pub(crate) mod idle;
 pub mod log;
+pub mod pi;
 pub mod pty;
 
 use std::collections::HashMap;
@@ -74,6 +78,14 @@ pub enum ToHost {
     },
     /// End the program, as closing a terminal window does.
     Hangup,
+    /// Management stop: no escalation unless force was explicitly confirmed.
+    Stop {
+        force: bool,
+    },
+    /// Check inactivity in the host before ending a resumable agent.
+    StopIfIdle {
+        limit_ms: u64,
+    },
     /// What an agent reports about itself; merged into its report.
     Agent {
         value: Value,
@@ -177,6 +189,9 @@ impl Paths {
     }
     pub fn exit(&self) -> PathBuf {
         self.dir.join("exit.json")
+    }
+    fn render_outputs(&self) -> PathBuf {
+        self.dir.join("render.json")
     }
     pub fn agent(&self) -> PathBuf {
         self.dir.join("agent.json")
@@ -341,6 +356,14 @@ impl Terminals {
         }
         self.inputs.lock().await.remove(id);
         let mut meta: Meta = serde_json::from_slice(&std::fs::read(paths.meta())?)?;
+        let previous_account = meta.options.account.as_deref().unwrap_or(&meta.kind);
+        let next_account = launch.options.account.as_deref().unwrap_or(&launch.kind);
+        let switched = if crate::agents::is_agent(&launch.kind) && previous_account != next_account
+        {
+            Some(crate::accounts::Registry::from_env().account(next_account)?)
+        } else {
+            None
+        };
         meta.started_ms = now_ms();
         meta.options = launch.options.clone();
         meta.command = command_of(&launch);
@@ -356,8 +379,13 @@ impl Terminals {
             .filter(|(key, _)| keep.contains(&key.as_str()))
             .collect();
         write_report(&paths, kept, &launch.options)?;
-        for file in [paths.exit(), paths.host()] {
+        for file in [paths.exit(), paths.host(), paths.render_outputs()] {
             let _ = std::fs::remove_file(file);
+        }
+        if let Some(account) = switched {
+            chat::ChatLog::open(paths.dir())?.append(serde_json::json!({
+                "kind": "account", "account": account.id, "name": account.name, "at_ms": now_ms()
+            }))?;
         }
         self.spawn_host(&paths, &launch).await?;
         self.info(id)
@@ -404,6 +432,7 @@ impl Terminals {
             code: None,
             signal: None,
             ended_ms: adopted.ended_ms,
+            idle: false,
         };
         std::fs::write(paths.exit(), serde_json::to_vec(&exit)?)?;
         // Last, as it makes the terminal.
@@ -519,6 +548,10 @@ impl Terminals {
         let exit = read_json::<TerminalExit>(&paths.exit());
         let running = exit.is_none() && host_alive(&paths);
         let outdated = outdated(&meta);
+        let output_paths = exit
+            .as_ref()
+            .map(|exit| render_output_paths(&paths, exit))
+            .unwrap_or_default();
         Ok(TerminalInfo {
             id: meta.id,
             kind: meta.kind,
@@ -538,6 +571,7 @@ impl Terminals {
             outdated,
             name: meta.name,
             job: meta.job,
+            output_paths,
         })
     }
 
@@ -619,17 +653,33 @@ impl Terminals {
         loop {
             if let Ok(stream) = UnixStream::connect(paths.socket()).await {
                 let (reader, mut writer) = stream.into_split();
-                let mut line = serde_json::to_vec(&ToHost::Subscribe { from, chat_from })?;
+                // Existing hosts clamp the requested offset to their atomic
+                // subscription snapshot and return it in Start. Attach at
+                // that end, then read history ourselves: even an old host
+                // needs no restart or new protocol to distinguish replay.
+                let mut line = serde_json::to_vec(&ToHost::Subscribe {
+                    from: Some(u64::MAX),
+                    chat_from,
+                })?;
                 line.push(b'\n');
                 writer.write_all(&line).await?;
                 let mut lines = BufReader::new(reader).lines();
                 if let Some(first) = lines.next_line().await?
-                    && let Ok(FromHost::Start { from }) = serde_json::from_str(&first)
+                    && let Ok(FromHost::Start { from: end }) = serde_json::from_str(&first)
                 {
+                    let recent = from.is_none();
+                    let from = from.unwrap_or(end.saturating_sub(RECENT)).min(end);
+                    let (start, bytes) = log::read(paths.dir(), from, end)?;
+                    let (start, bytes) = if recent && start > 0 {
+                        host::after_line_break(start, bytes)
+                    } else {
+                        (start, bytes)
+                    };
                     return Ok(TerminalStream {
                         id: id.to_string(),
-                        from,
+                        from: start,
                         source: Source::Live {
+                            replay: bytes,
                             lines,
                             _writer: writer,
                             paths,
@@ -662,7 +712,11 @@ impl Terminals {
                     code: None,
                     signal: None,
                     ended_ms: now_ms(),
+                    idle: false,
                 }),
+                output_paths: read_json::<TerminalExit>(&paths.exit())
+                    .map(|exit| render_output_paths(&paths, &exit))
+                    .unwrap_or_default(),
             },
         })
     }
@@ -673,6 +727,26 @@ impl Terminals {
             self.send(id, ToHost::Hangup).await?;
         }
         Ok(())
+    }
+
+    /// Requests an atomic activity/state check in each running agent's host.
+    /// Hosts retain activity across daemon restarts, without polling log files.
+    pub(crate) async fn stop_idle(&self, limit: Duration) {
+        for terminal in self.list() {
+            if terminal.running && idle::is_agent(&terminal.kind) {
+                let result = self
+                    .send(
+                        &terminal.id,
+                        ToHost::StopIfIdle {
+                            limit_ms: limit.as_millis().try_into().unwrap_or(u64::MAX),
+                        },
+                    )
+                    .await;
+                if let Err(error) = result {
+                    tracing::debug!("idle check for {}: {error:#}", terminal.id);
+                }
+            }
+        }
     }
 
     /// Removes an ended terminal.
@@ -717,6 +791,7 @@ pub struct TerminalStream {
 enum Source {
     Live {
         lines: Lines<BufReader<OwnedReadHalf>>,
+        replay: Vec<u8>,
         /// Kept so the host keeps the subscription open.
         _writer: OwnedWriteHalf,
         paths: Paths,
@@ -726,6 +801,7 @@ enum Source {
         chat: Vec<ChatEntry>,
         agent: Option<Value>,
         exit: TerminalExit,
+        output_paths: Vec<String>,
     },
 }
 
@@ -756,12 +832,14 @@ impl TerminalStream {
                 chat,
                 agent,
                 exit,
+                output_paths,
             } => {
                 let engine = base64::engine::general_purpose::STANDARD;
                 for (i, piece) in bytes.chunks(64 * 1024).enumerate() {
                     if !send(TerminalEvent {
                         offset: Some(self.from + (i * 64 * 1024) as u64),
                         data: Some(engine.encode(piece)),
+                        replay: true,
                         ..Default::default()
                     }) {
                         return;
@@ -783,12 +861,27 @@ impl TerminalStream {
                 }
                 send(TerminalEvent {
                     exit: Some(exit),
+                    output_paths,
                     ..Default::default()
                 });
             }
             Source::Live {
-                mut lines, paths, ..
+                mut lines,
+                paths,
+                replay,
+                ..
             } => {
+                let engine = base64::engine::general_purpose::STANDARD;
+                for (i, piece) in replay.chunks(64 * 1024).enumerate() {
+                    if !send(TerminalEvent {
+                        offset: Some(self.from + (i * 64 * 1024) as u64),
+                        data: Some(engine.encode(piece)),
+                        replay: true,
+                        ..Default::default()
+                    }) {
+                        return;
+                    }
+                }
                 while let Ok(Some(line)) = lines.next_line().await {
                     let event = match serde_json::from_str::<FromHost>(&line) {
                         Ok(FromHost::Output { offset, data }) => TerminalEvent {
@@ -806,6 +899,7 @@ impl TerminalStream {
                         },
                         Ok(FromHost::Exit { exit }) => {
                             send(TerminalEvent {
+                                output_paths: render_output_paths(&paths, &exit),
                                 exit: Some(exit),
                                 ..Default::default()
                             });
@@ -828,8 +922,10 @@ impl TerminalStream {
                     code: None,
                     signal: None,
                     ended_ms: now_ms(),
+                    idle: false,
                 });
                 send(TerminalEvent {
+                    output_paths: render_output_paths(&paths, &exit),
                     exit: Some(exit),
                     ..Default::default()
                 });
@@ -904,9 +1000,6 @@ fn write_report(
     if let Some(web) = options.web {
         kept.insert("web".into(), web.into());
     }
-    if let Some(context) = options.context {
-        kept.insert("context".into(), context.into());
-    }
     if !options.refs.is_empty() {
         kept.insert("refs".into(), options.refs.clone().into());
     }
@@ -951,19 +1044,33 @@ pub fn code_to_console(dir: &Path) -> bool {
 }
 
 /// The agent in the terminal in `dir`, as the Console names it: "Claude",
-/// "Codex", "Antigravity".
+/// "Codex", "Antigravity", "Posit Assistant".
 pub fn agent_name(dir: &Path) -> Option<&'static str> {
     let meta: Meta = read_json(&Paths::new(dir).meta())?;
     match meta.kind.as_str() {
         crate::agents::CLAUDE => Some("Claude"),
         crate::agents::CODEX => Some("Codex"),
         crate::agents::ANTIGRAVITY => Some("Antigravity"),
+        crate::agents::OPENSCIENCE => Some("OpenScience"),
+        crate::agents::OMP => Some("Oh My Pi"),
+        crate::agents::PI => Some("pi"),
+        crate::agents::POSIT => Some("Posit Assistant"),
         _ => None,
     }
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// The host saves these before announcing success, independently of daemon
+/// subscriptions and terminal log retention. Failed/interrupted runs expose none.
+fn render_output_paths(paths: &Paths, exit: &TerminalExit) -> Vec<String> {
+    if exit.code == Some(0) && exit.signal.is_none() {
+        read_json(&paths.render_outputs()).unwrap_or_default()
+    } else {
+        Vec::new()
+    }
 }
 
 /// Whether an agent was started by another build than this one. Agents
@@ -977,6 +1084,90 @@ fn outdated(meta: &Meta) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn old_host_snapshot_separates_replay_from_immediately_queued_live_output() {
+        use base64::Engine as _;
+
+        let dir = tempfile::Builder::new()
+            .prefix("sandhill-replay-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let paths = Paths::new(dir.path().join(&id));
+        std::fs::create_dir_all(paths.dir()).unwrap();
+        std::fs::write(paths.meta(), b"{}").unwrap();
+        let history = b"history\x1b[c\x1b[6n\x1b]10;?\x1b\\";
+        let live = b"live\x1b[6n";
+        let mut log = log::LogWriter::create(paths.dir()).unwrap();
+        log.append(history).unwrap();
+        let listener = tokio::net::UnixListener::bind(paths.socket()).unwrap();
+        let engine = base64::engine::general_purpose::STANDARD;
+        let exit = TerminalExit {
+            code: Some(0),
+            signal: None,
+            ended_ms: 1,
+            idle: false,
+        };
+        let host = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let request = BufReader::new(reader)
+                .lines()
+                .next_line()
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                serde_json::from_str::<ToHost>(&request).unwrap(),
+                ToHost::Subscribe {
+                    from: Some(u64::MAX),
+                    ..
+                }
+            ));
+            // New bytes already exist on disk when the daemon handles Start.
+            // An old host's atomic snapshot, not a later log bounds query,
+            // determines the replay boundary.
+            log.append(live).unwrap();
+            for message in [
+                FromHost::Start {
+                    from: history.len() as u64,
+                },
+                FromHost::Output {
+                    offset: history.len() as u64,
+                    data: base64::engine::general_purpose::STANDARD.encode(live),
+                },
+                FromHost::Exit { exit },
+            ] {
+                let mut line = serde_json::to_vec(&message).unwrap();
+                line.push(b'\n');
+                writer.write_all(&line).await.unwrap();
+            }
+        });
+        let terminals = Terminals::new(dir.path().into(), PathBuf::new());
+        let stream = terminals.open(&id, Some(0), None).await.unwrap();
+        assert_eq!(stream.subscribed().from, 0);
+        let (out, mut events) = mpsc::unbounded_channel();
+        stream.forward(out).await;
+        let mut pieces = Vec::new();
+        while let Some(ServerMessage::Terminal { terminal }) = events.recv().await {
+            if let Some(data) = terminal.data {
+                pieces.push((
+                    terminal.offset,
+                    terminal.replay,
+                    engine.decode(data).unwrap(),
+                ));
+            }
+        }
+        assert_eq!(
+            pieces,
+            vec![
+                (Some(0), true, history.to_vec()),
+                (Some(history.len() as u64), false, live.to_vec()),
+            ],
+        );
+        host.await.unwrap();
+    }
 
     #[test]
     fn agents_from_another_build_are_outdated() {

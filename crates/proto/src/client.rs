@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use crate::{
     AgentInfo, AgentOptions, AppRequest, Blob, Call, CellRef, DirEntry, Event, FileOutputs,
@@ -18,7 +18,7 @@ use crate::{
     KernelspecInfo, Outcome, PackageUpdates, Packages, PageUrl, PingReply, PreviewInfo,
     ProjectInfo, Request, RunStarted, ServerMessage, SessionInfo, SessionPlots, SessionRuns,
     Subscribed, SystemStats, TableFilter, TableRows, TableSort, TableSummary, TerminalEvent,
-    TerminalInfo, TerminalSubscribed, Variables,
+    TerminalInfo, TerminalSubscribed, VariableMatches, Variables,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +31,8 @@ pub enum ClientError {
     Remote(String),
     #[error("connection to the daemon closed")]
     Disconnected,
+    #[error("cannot read file: {0}")]
+    InvalidFile(String),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
@@ -51,10 +53,12 @@ pub struct Client {
     pending: Pending,
     events: Option<mpsc::UnboundedReceiver<Event>>,
     terminal_events: Option<mpsc::UnboundedReceiver<TerminalEvent>>,
+    lsp_messages: Option<mpsc::UnboundedReceiver<crate::LspMessage>>,
     requests: Option<mpsc::UnboundedReceiver<AppRequest>>,
     tunnels: Tunnels,
     next_id: AtomicU64,
     next_tunnel: AtomicU64,
+    closed: watch::Receiver<bool>,
 }
 
 impl Client {
@@ -68,7 +72,9 @@ impl Client {
         let (event_tx, events) = mpsc::unbounded_channel();
         let (terminal_tx, terminal_events) = mpsc::unbounded_channel();
         let (request_tx, requests) = mpsc::unbounded_channel();
+        let (lsp_tx, lsp_messages) = mpsc::unbounded_channel();
         let tunnels: Tunnels = Default::default();
+        let (closed_tx, closed) = watch::channel(false);
         tokio::spawn(read_loop(
             reader,
             pending.clone(),
@@ -76,7 +82,9 @@ impl Client {
                 events: event_tx,
                 terminal_events: terminal_tx,
                 requests: request_tx,
+                lsp_messages: lsp_tx,
                 tunnels: tunnels.clone(),
+                closed: closed_tx,
             },
         ));
         Client {
@@ -84,10 +92,12 @@ impl Client {
             pending,
             events: Some(events),
             terminal_events: Some(terminal_events),
+            lsp_messages: Some(lsp_messages),
             requests: Some(requests),
             tunnels,
             next_id: AtomicU64::new(1),
             next_tunnel: AtomicU64::new(1),
+            closed,
         }
     }
 
@@ -109,6 +119,13 @@ impl Client {
         let stdin = child.stdin.take().ok_or(ClientError::Disconnected)?;
         let stdout = child.stdout.take().ok_or(ClientError::Disconnected)?;
         Ok((Self::new(stdout, stdin), child))
+    }
+
+    /// Waits for the connection's read side to close, including an EOF that
+    /// arrived before this call. Multiple waiters do not consume the signal.
+    pub async fn wait_closed(&self) {
+        let mut closed = self.closed.clone();
+        let _ = closed.wait_for(|closed| *closed).await;
     }
 
     /// Sends a request the daemon doesn't answer.
@@ -193,6 +210,56 @@ impl Client {
     /// Takes the terminal messages, as [`Client::take_events`] does for sessions.
     pub fn take_terminal_events(&mut self) -> Option<mpsc::UnboundedReceiver<TerminalEvent>> {
         self.terminal_events.take()
+    }
+
+    pub fn take_lsp_messages(&mut self) -> Option<mpsc::UnboundedReceiver<crate::LspMessage>> {
+        self.lsp_messages.take()
+    }
+
+    pub async fn next_lsp_message(&mut self) -> Option<crate::LspMessage> {
+        self.lsp_messages.as_mut()?.recv().await
+    }
+
+    pub async fn complete(
+        &self,
+        session: &str,
+        code: &str,
+        cursor_pos: usize,
+    ) -> Result<crate::CompletionReply> {
+        self.call(Call::Complete {
+            session: session.into(),
+            code: code.into(),
+            cursor_pos,
+        })
+        .await
+    }
+
+    pub async fn lsp_start(
+        &self,
+        project: &str,
+        language: &str,
+        document_kind: Option<String>,
+        session: Option<String>,
+    ) -> Result<crate::LspStarted> {
+        self.call(Call::LspStart {
+            project: project.into(),
+            language: language.into(),
+            document_kind,
+            session,
+        })
+        .await
+    }
+
+    pub async fn lsp_send(&self, lsp: &str, message: serde_json::Value) -> Result<()> {
+        self.call(Call::LspSend {
+            lsp: lsp.into(),
+            message,
+        })
+        .await
+    }
+
+    pub async fn lsp_stop(&self, lsp: &str) -> Result<()> {
+        self.call(Call::LspStop { lsp: lsp.into() }).await
     }
 
     /// Next request for a window (see [`Call::SetFocus`]); `None` once
@@ -350,6 +417,7 @@ impl Client {
         self.call(Call::ListDir {
             path: path.into(),
             sizes: false,
+            marks: false,
         })
         .await
     }
@@ -418,6 +486,20 @@ impl Client {
         .await
     }
 
+    pub async fn find_variables(
+        &self,
+        session: &str,
+        query: &str,
+        root: &[String],
+    ) -> Result<VariableMatches> {
+        self.call(Call::FindVariables {
+            session: session.into(),
+            query: query.into(),
+            root: root.to_vec(),
+        })
+        .await
+    }
+
     pub async fn delete_variables(&self, session: &str, names: &[String]) -> Result<()> {
         self.call(Call::DeleteVariables {
             session: session.into(),
@@ -426,6 +508,7 @@ impl Client {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn table_rows(
         &self,
         session: &str,
@@ -434,6 +517,7 @@ impl Client {
         limit: Option<u32>,
         sort: &[TableSort],
         filters: &[TableFilter],
+        search: &str,
     ) -> Result<TableRows> {
         self.call(Call::TableRows {
             session: session.into(),
@@ -442,6 +526,8 @@ impl Client {
             limit,
             sort: sort.to_vec(),
             filters: filters.to_vec(),
+            search: search.into(),
+            columns: None,
             column_offset: 0,
             column_limit: None,
             cells_only: false,
@@ -454,11 +540,13 @@ impl Client {
         session: &str,
         path: &[String],
         filters: &[TableFilter],
+        search: &str,
     ) -> Result<TableSummary> {
         self.call(Call::TableSummary {
             session: session.into(),
             path: path.to_vec(),
             filters: filters.to_vec(),
+            search: search.into(),
             column_offset: 0,
             column_limit: None,
         })
@@ -472,12 +560,14 @@ impl Client {
         sort: &[TableSort],
         filters: &[TableFilter],
         file: &str,
+        search: &str,
     ) -> Result<FileWritten> {
         self.call(Call::TableExport {
             session: session.into(),
             path: path.to_vec(),
             sort: sort.to_vec(),
             filters: filters.to_vec(),
+            search: search.into(),
             file: file.into(),
         })
         .await
@@ -625,6 +715,18 @@ impl Client {
         self.call(Call::ForgetProject { path: path.into() }).await
     }
 
+    pub async fn trust_folder(&self, path: &str) -> Result<()> {
+        self.call(Call::TrustFolder { path: path.into() }).await
+    }
+
+    pub async fn untrust_folder(&self, path: &str) -> Result<()> {
+        self.call(Call::UntrustFolder { path: path.into() }).await
+    }
+
+    pub async fn list_trusted_folders(&self) -> Result<Vec<crate::TrustedFolder>> {
+        self.call(Call::ListTrustedFolders).await
+    }
+
     pub async fn stat_files(&self, paths: Vec<String>) -> Result<Vec<FileStat>> {
         self.call(Call::StatFiles { paths }).await
     }
@@ -635,6 +737,18 @@ impl Client {
 
     pub async fn agent_models(&self, kind: &str) -> Result<serde_json::Value> {
         self.call(Call::AgentModels { kind: kind.into() }).await
+    }
+
+    pub async fn agent_accounts(&self) -> Result<Vec<serde_json::Value>> {
+        self.call(Call::AgentAccounts).await
+    }
+
+    pub async fn agent_accounts_query(
+        &self,
+        kinds: Vec<String>,
+        force: bool,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.call(Call::AgentAccountsQuery { kinds, force }).await
     }
 
     pub async fn start_terminal(
@@ -791,8 +905,10 @@ impl Client {
 struct Senders {
     events: mpsc::UnboundedSender<Event>,
     terminal_events: mpsc::UnboundedSender<TerminalEvent>,
+    lsp_messages: mpsc::UnboundedSender<crate::LspMessage>,
     requests: mpsc::UnboundedSender<AppRequest>,
     tunnels: Tunnels,
+    closed: watch::Sender<bool>,
 }
 
 async fn read_loop<R: AsyncRead + Unpin>(reader: R, pending: Pending, to: Senders) {
@@ -812,6 +928,9 @@ async fn read_loop<R: AsyncRead + Unpin>(reader: R, pending: Pending, to: Sender
             }
             Ok(ServerMessage::Terminal { terminal }) => {
                 let _ = to.terminal_events.send(terminal);
+            }
+            Ok(ServerMessage::LspMessage { lsp, message }) => {
+                let _ = to.lsp_messages.send(crate::LspMessage { lsp, message });
             }
             Ok(ServerMessage::Request { request }) => {
                 let _ = to.requests.send(request);
@@ -841,4 +960,23 @@ async fn read_loop<R: AsyncRead + Unpin>(reader: R, pending: Pending, to: Sender
     // Dropping the senders wakes every waiting call with `Disconnected`.
     pending.lock().unwrap().clear();
     to.tunnels.lock().unwrap().clear();
+    to.closed.send_replace(true);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Client;
+
+    #[tokio::test]
+    async fn closed_connection_remembers_eof_for_late_and_multiple_waiters() {
+        let (stream, peer) = tokio::io::duplex(64);
+        let (reader, writer) = tokio::io::split(stream);
+        let client = Client::new(reader, writer);
+        drop(peer);
+        client.wait_closed().await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), client.wait_closed())
+            .await
+            .unwrap();
+        let ((), ()) = tokio::join!(client.wait_closed(), client.wait_closed());
+    }
 }

@@ -1,8 +1,8 @@
-//! The coding agents Sandhill runs: Claude Code, Codex and Antigravity as
-//! their own, unmodified CLIs, each in a terminal the daemon keeps (see
-//! `terminal`).
+//! The coding agents Sandhill runs: Claude Code, Codex, Antigravity,
+//! OpenScience, Oh My Pi, pi and Posit Assistant as their own, unmodified
+//! CLIs, each in a terminal the daemon keeps (see `terminal`).
 //! Sandhill only configures them the way a user could, with command-line
-//! flags:
+//! flags or environment variables:
 //!
 //! - its MCP server (`sandhilld mcp`), so they can reach the project's live
 //!   R and Python sessions;
@@ -13,7 +13,14 @@
 //!   app-server` (see `terminal::codex`), and tells it the same things;
 //! - for Antigravity, nothing either: Sandhill runs `agy` headless for each
 //!   message (see `terminal::antigravity`), which adds Sandhill's MCP server
-//!   to agy's settings, the only place agy reads them from.
+//!   to agy's settings, the only place agy reads them from;
+//! - for OpenScience and Oh My Pi, nothing either: Sandhill drives them
+//!   over ACP (see `terminal::acp`), passing its tools per run;
+//! - for pi, nothing either: Sandhill drives `pi --mode rpc` (see
+//!   `terminal::pi`), passing its tools in a per-run extension;
+//! - for Posit Assistant, nothing either: `pa` runs its own screen (the
+//!   app shows that terminal), with the MCP server added through its
+//!   administrator defaults, which leave the user's settings file alone.
 //!
 //! Sandhill never reads their logins: each signs in through its own
 //! `/login` or sign-in (or an API key the user set up for it).
@@ -32,6 +39,10 @@ use crate::terminal::Launch;
 pub const CLAUDE: &str = "claude";
 pub const CODEX: &str = "codex";
 pub const ANTIGRAVITY: &str = "antigravity";
+pub const OPENSCIENCE: &str = "openscience";
+pub const OMP: &str = "omp";
+pub const PI: &str = "pi";
+pub const POSIT: &str = "posit";
 
 struct Agent {
     kind: &'static str,
@@ -40,7 +51,7 @@ struct Agent {
     install: &'static str,
 }
 
-const AGENTS: [Agent; 3] = [
+const AGENTS: [Agent; 7] = [
     Agent {
         kind: CLAUDE,
         name: "Claude Code",
@@ -59,7 +70,34 @@ const AGENTS: [Agent; 3] = [
         program: "agy",
         install: "curl -fsSL https://antigravity.google/install.sh | bash",
     },
+    Agent {
+        kind: OPENSCIENCE,
+        name: "OpenScience",
+        program: "openscience",
+        install: "npm install -g @synsci/openscience",
+    },
+    Agent {
+        kind: OMP,
+        name: "Oh My Pi",
+        program: "omp",
+        install: "curl -fsSL https://omp.sh/install.sh | bash",
+    },
+    Agent {
+        kind: PI,
+        name: "pi",
+        program: "pi",
+        install: "curl -fsSL https://pi.dev/install.sh | sh",
+    },
+    Agent {
+        kind: POSIT,
+        name: "Posit Assistant",
+        program: "pa",
+        install: "curl -fsSL https://assistant.posit.co/builds/install-tui.sh | bash",
+    },
 ];
+
+/// Where `pa` reads administrator defaults: settings under the user's own.
+const POSIT_DEFAULTS: &str = "POSIT_ASSISTANT_SETTINGS_DEFAULT";
 
 /// What an agent's terminal needs to know about this daemon.
 pub struct Context<'a> {
@@ -85,7 +123,7 @@ pub const RESUME_KEYS: [&str; 2] = ["session_id", "thread"];
 pub fn resume_key(kind: &str) -> Option<&'static str> {
     match kind {
         CLAUDE => Some(RESUME_KEYS[0]),
-        CODEX | ANTIGRAVITY => Some(RESUME_KEYS[1]),
+        CODEX | ANTIGRAVITY | OPENSCIENCE | OMP | PI => Some(RESUME_KEYS[1]),
         _ => None,
     }
 }
@@ -131,7 +169,144 @@ pub async fn models(kind: &str) -> Result<Value> {
     match kind {
         CODEX => crate::terminal::codex::list_models(&program).await,
         ANTIGRAVITY => crate::terminal::antigravity::list_models(&program).await,
+        OPENSCIENCE | OMP => crate::terminal::acp::list_models(kind, &program).await,
+        PI => crate::terminal::pi::list_models(&program).await,
         _ => bail!("{} lists its models itself", agent.name),
+    }
+}
+
+/// One cache per provider, shared by every monitor connected to this daemon.
+/// The lock spans discovery. A forced waiter may share a query completed after
+/// it arrived, but can never receive a snapshot cached before its request.
+struct AccountCache {
+    snapshot: tokio::sync::Mutex<Option<(std::time::Instant, Option<Value>)>>,
+}
+
+impl AccountCache {
+    const fn new() -> Self {
+        Self {
+            snapshot: tokio::sync::Mutex::const_new(None),
+        }
+    }
+
+    async fn query<F, Fut>(&self, force: bool, query: F) -> Option<Value>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Option<Value>>,
+    {
+        let requested = std::time::Instant::now();
+        let mut cache = self.snapshot.lock().await;
+        if let Some((at, snapshot)) = cache.as_ref()
+            && ((!force && at.elapsed() < Duration::from_secs(30)) || *at >= requested)
+        {
+            return snapshot.clone();
+        }
+        let snapshot = query().await;
+        *cache = Some((std::time::Instant::now(), snapshot.clone()));
+        snapshot
+    }
+}
+
+/// Account identity and quotas from official CLI interfaces only. Failure is not
+/// sign-out: identity queries are omitted; anonymous usage reports carry an error.
+/// None selects every supported provider for the unchanged CLI request; an
+/// explicit empty selection performs no discovery at all.
+pub async fn accounts(kinds: Option<&[String]>, force: bool) -> Result<Value> {
+    static CODEX_CACHE: AccountCache = AccountCache::new();
+    static CLAUDE_CACHE: AccountCache = AccountCache::new();
+    static ANTIGRAVITY_CACHE: AccountCache = AccountCache::new();
+    Ok(json!(
+        account_snapshots(
+            kinds,
+            force,
+            &[
+                (CODEX, &CODEX_CACHE),
+                (CLAUDE, &CLAUDE_CACHE),
+                (ANTIGRAVITY, &ANTIGRAVITY_CACHE),
+            ],
+            query_account
+        )
+        .await
+    ))
+}
+
+async fn account_snapshots<F, Fut>(
+    kinds: Option<&[String]>,
+    force: bool,
+    providers: &[(&'static str, &AccountCache)],
+    query: F,
+) -> Vec<Value>
+where
+    F: Fn(&'static str) -> Fut,
+    Fut: Future<Output = Option<Value>>,
+{
+    let mut accounts = Vec::with_capacity(providers.len());
+    for &(kind, cache) in providers {
+        if kinds.is_some_and(|kinds| !kinds.iter().any(|selected| selected == kind)) {
+            continue;
+        }
+        if let Some(snapshot) = cache.query(force, || query(kind)).await {
+            accounts.push(snapshot);
+        }
+    }
+    accounts
+}
+
+async fn query_account(kind: &str) -> Option<Value> {
+    match kind {
+        CODEX => {
+            let codex = find("codex")?;
+            let mut snapshot = crate::terminal::codex::read_account(&codex).await.ok()?;
+            snapshot["kind"] = json!(CODEX);
+            Some(snapshot)
+        }
+        CLAUDE => {
+            let claude = find("claude")?;
+            let account = claude_account(&claude).await.ok()?;
+            Some(json!({"kind": CLAUDE, "account": account,
+                "observed_at_ms": crate::journal::now_ms()}))
+        }
+        ANTIGRAVITY => {
+            let agy = find("agy")?;
+            match crate::terminal::antigravity::usage::read_usage(&agy, None).await {
+                Ok(usage) => Some(usage.report),
+                Err(error) => Some(json!({"kind": ANTIGRAVITY,
+                    "quota_source": "cli_snapshot", "observed_at_ms": crate::journal::now_ms(),
+                    "quota_error": format!("{error:#}"), "status": {"rate_limits": {}}})),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Official read-only identity query shared by discovery and quota status hooks.
+pub(crate) async fn claude_account(claude: &Path) -> Result<Value> {
+    claude_account_in(claude, None).await
+}
+
+/// Queries the account selected for this run, never the daemon's other accounts.
+pub(crate) async fn claude_account_in(claude: &Path, config: Option<&Path>) -> Result<Value> {
+    let mut command = tokio::process::Command::new(claude);
+    command
+        .args(["auth", "status", "--json"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    if let Some(path) = path_for(claude)? {
+        command.env("PATH", path);
+    }
+    if let Some(config) = config {
+        command.env("CLAUDE_CONFIG_DIR", config);
+    }
+    let output = tokio::time::timeout(Duration::from_secs(10), command.output()).await??;
+    let status: Value = serde_json::from_slice(&output.stdout)?;
+    match status["loggedIn"].as_bool() {
+        Some(true) => Ok(
+            json!({"type": status["authMethod"], "email": status["email"],
+            "plan": status["subscriptionType"], "organization": status["orgId"]}),
+        ),
+        Some(false) => Ok(Value::Null),
+        None => bail!("Claude did not report its authentication state"),
     }
 }
 
@@ -166,6 +341,8 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         );
     };
     let help = help_text(&program).await;
+    launch.env =
+        crate::accounts::Registry::from_env().environment(kind, options.account.as_deref())?;
     launch.title = agent.name.into();
     match kind {
         CLAUDE => {
@@ -180,10 +357,29 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
                     agent.install
                 );
             }
+            if !help.contains("--input-format") {
+                bail!(
+                    "this `agy` has no structured headless input; update Antigravity's CLI with `agy update`"
+                );
+            }
             // Sandhill runs agy for each message (see
             // `terminal::antigravity`).
             launch.args = agy_args(options, context, &program);
             launch.program = context.executable.to_path_buf();
+        }
+        OPENSCIENCE | OMP | PI => {
+            launch.args = acp_args(kind, options, context, &program);
+            launch.program = context.executable.to_path_buf();
+        }
+        POSIT => {
+            // No arguments: a prompt would run pa once without its screen,
+            // so the app types the first message once pa is ready.
+            let defaults = std::env::var(POSIT_DEFAULTS).ok();
+            launch.env.push((
+                POSIT_DEFAULTS.into(),
+                posit_defaults(context, defaults.as_deref()),
+            ));
+            launch.program = program.clone();
         }
         _ => {
             if !help.contains("app-server") {
@@ -222,21 +418,41 @@ pub(crate) fn path_for(program: &Path) -> Result<Option<String>> {
     Ok(Some(joined.to_string_lossy().into_owned()))
 }
 
-fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<String> {
-    let exe = context.executable.to_string_lossy();
-    let mut mcp_args = vec![
+/// `sandhilld`'s arguments for its MCP server for the project.
+fn mcp_args(context: &Context<'_>) -> Vec<String> {
+    let mut args = vec![
         "--socket".to_string(),
         context.socket.to_string_lossy().into_owned(),
         "mcp".into(),
     ];
     if let Some(project) = context.project {
-        mcp_args.extend(["--project".into(), project.into()]);
+        args.extend(["--project".into(), project.into()]);
     }
-    let mcp =
-        json!({"mcpServers": {"sandhill": {"type": "stdio", "command": exe, "args": mcp_args}}});
+    args
+}
+
+/// pa's administrator defaults, `existing` (what the daemon's environment
+/// sets, if anything) with Sandhill's MCP server added.
+fn posit_defaults(context: &Context<'_>, existing: Option<&str>) -> String {
+    let mut defaults = existing
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    if !defaults["mcpServers"].is_object() {
+        defaults["mcpServers"] = json!({});
+    }
+    let mut command = vec![context.executable.to_string_lossy().into_owned()];
+    command.extend(mcp_args(context));
+    defaults["mcpServers"]["sandhill"] = json!({"type": "local", "command": command});
+    defaults.to_string()
+}
+
+fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<String> {
+    let exe = context.executable.to_string_lossy();
+    let mcp = json!({"mcpServers": {"sandhill": {"type": "stdio", "command": exe, "args": mcp_args(context)}}});
     // One command for every hook: it reports the agent's state, keeps its
-    // conversation for the chat, adds where the user is to each prompt, and
-    // asks the user in the app for permissions.
+    // conversation for the chat, adds what the user added with @ and # to
+    // each prompt, and asks the user in the app for permissions.
     let command = format!(
         "{} --socket {} terminal-event hook{}",
         shell_quote(&exe),
@@ -312,14 +528,7 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
 /// Sandhill's MCP server for `codex app-server`.
 fn codex_args(options: &AgentOptions, context: &Context<'_>, codex: &Path) -> Vec<String> {
     let exe = context.executable.to_string_lossy();
-    let mut mcp_args = vec![
-        "--socket".to_string(),
-        context.socket.to_string_lossy().into_owned(),
-        "mcp".into(),
-    ];
-    if let Some(project) = context.project {
-        mcp_args.extend(["--project".into(), project.into()]);
-    }
+    let mcp_args = mcp_args(context);
     let mut args = vec![
         "--socket".to_string(),
         context.socket.to_string_lossy().into_owned(),
@@ -371,6 +580,41 @@ fn agy_args(options: &AgentOptions, context: &Context<'_>, agy: &Path) -> Vec<St
     args
 }
 
+/// A bridge that drives the provider's unmodified executable over its
+/// machine interface: `acp-chat` for ACP agents, `pi-chat` for pi's RPC mode.
+fn acp_args(
+    kind: &str,
+    options: &AgentOptions,
+    context: &Context<'_>,
+    program: &Path,
+) -> Vec<String> {
+    let mut args = vec![
+        "--socket".into(),
+        context.socket.to_string_lossy().into_owned(),
+    ];
+    if kind == PI {
+        args.push("pi-chat".into());
+    } else {
+        args.extend(["acp-chat".into(), "--agent".into(), kind.into()]);
+    }
+    args.extend([
+        "--program".into(),
+        program.to_string_lossy().into_owned(),
+        "--options".into(),
+        serde_json::to_string(options).unwrap_or_else(|_| "{}".into()),
+    ]);
+    if let Some(project) = context.project {
+        args.extend(["--project".into(), project.into()]);
+    }
+    if let Some(prompt) = context.prompt.filter(|p| !p.trim().is_empty()) {
+        args.extend(["--prompt".into(), prompt.into()]);
+    }
+    if let Some(session) = context.resume {
+        args.extend(["--session".into(), session.into()]);
+    }
+    args
+}
+
 /// The first message, after `--` so one starting with a dash isn't taken for a flag.
 fn push_prompt(args: &mut Vec<String>, context: &Context<'_>) {
     if let Some(prompt) = context.prompt.filter(|p| !p.trim().is_empty()) {
@@ -400,6 +644,8 @@ pub fn instructions(options: &AgentOptions) -> String {
          list_jobs and read_job_log show the scripts and pipelines running in the background \
          and what they printed. Files you edit show up in the user's open editor.",
     );
+    text.push(' ');
+    text.push_str(crate::mcp::bio::GUIDANCE);
     if let Some(pin) = &options.pin {
         text.push_str(&format!(
             " The user pinned this session to {pin}; add_cell writes there."
@@ -479,11 +725,22 @@ fn is_executable(path: &Path) -> bool {
 }
 
 pub(crate) async fn version(program: &Path) -> Option<String> {
-    let output = run(program, "--version").await?;
-    // "2.1.296 (Claude Code)", "codex-cli 0.162.1", "agy version 2.0.0"
+    version_in(&run(program, "--version").await?)
+}
+
+/// The version a CLI's `--version` gives: "2.1.296 (Claude Code)",
+/// "codex-cli 0.162.1", "agy version 2.0.0", "Posit Assistant TUI v0.1.0"
+/// (then its build and commit).
+fn version_in(output: &str) -> Option<String> {
+    let starts_with_digit = |word: &str| word.starts_with(|c: char| c.is_ascii_digit());
     output
         .split_whitespace()
-        .find(|word| word.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(|word| {
+            word.strip_prefix('v')
+                .filter(|rest| starts_with_digit(rest))
+                .unwrap_or(word)
+        })
+        .find(|word| starts_with_digit(word))
         .map(str::to_string)
 }
 
@@ -558,6 +815,100 @@ fn toml_array(items: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn provider_selection_excludes_disabled_discovery() {
+        let codex = AccountCache::new();
+        let claude = AccountCache::new();
+        let antigravity = AccountCache::new();
+        let providers = [
+            (CODEX, &codex),
+            (CLAUDE, &claude),
+            (ANTIGRAVITY, &antigravity),
+        ];
+        let calls = std::sync::Mutex::new(Vec::new());
+        let query = |kind| {
+            calls.lock().unwrap().push(kind);
+            std::future::ready(Some(json!({"kind": kind})))
+        };
+        let only_codex = vec![CODEX.to_string()];
+        assert_eq!(
+            account_snapshots(Some(&only_codex), false, &providers, query).await,
+            vec![json!({"kind": CODEX})]
+        );
+        assert_eq!(*calls.lock().unwrap(), vec![CODEX]);
+        assert!(
+            account_snapshots(Some(&[]), false, &providers, query)
+                .await
+                .is_empty()
+        );
+        assert_eq!(*calls.lock().unwrap(), vec![CODEX]);
+        // Explicit refresh selects the disabled provider without polling the
+        // enabled one or changing the caller's persistent selection.
+        let only_claude = vec![CLAUDE.to_string()];
+        assert_eq!(
+            account_snapshots(Some(&only_claude), true, &providers, query).await,
+            vec![json!({"kind": CLAUDE})]
+        );
+        assert_eq!(*calls.lock().unwrap(), vec![CODEX, CLAUDE]);
+        account_snapshots(Some(&only_codex), false, &providers, query).await;
+        assert_eq!(*calls.lock().unwrap(), vec![CODEX, CLAUDE]);
+        let only_antigravity = vec![ANTIGRAVITY.to_string()];
+        assert_eq!(
+            account_snapshots(Some(&only_antigravity), true, &providers, query).await,
+            vec![json!({"kind": ANTIGRAVITY})]
+        );
+        assert_eq!(*calls.lock().unwrap(), vec![CODEX, CLAUDE, ANTIGRAVITY]);
+        account_snapshots(Some(&only_antigravity), false, &providers, query).await;
+        assert_eq!(*calls.lock().unwrap(), vec![CODEX, CLAUDE, ANTIGRAVITY]);
+    }
+
+    #[tokio::test]
+    async fn forced_provider_refresh_bypasses_cache_and_preserves_failure() {
+        let cache = AccountCache::new();
+        let old = json!({"observed_at_ms": 1});
+        assert_eq!(
+            cache.query(false, || async { Some(old.clone()) }).await,
+            Some(old.clone())
+        );
+        assert_eq!(
+            cache
+                .query(false, || async { panic!("cached provider queried") })
+                .await,
+            Some(old)
+        );
+        let fresh = json!({"observed_at_ms": 2});
+        assert_eq!(
+            cache.query(true, || async { Some(fresh.clone()) }).await,
+            Some(fresh)
+        );
+        assert_eq!(cache.query(true, || async { None }).await, None);
+        assert_eq!(
+            cache
+                .query(false, || async { panic!("failed discovery queried again") })
+                .await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_forced_monitors_share_provider_work() {
+        let cache = AccountCache::new();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let query = || async {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tokio::task::yield_now().await;
+            Some(json!({"observed_at_ms": 42}))
+        };
+        let (first, second, third) = tokio::join!(
+            cache.query(true, query),
+            cache.query(true, query),
+            cache.query(false, query)
+        );
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
 
     fn context() -> Context<'static> {
         Context {
@@ -721,5 +1072,88 @@ mod tests {
             &r#"mcp_servers.sandhill.args=["--socket", "/state/sandhilld.sock", "mcp", "--project", "/data/pbmc"]"#
                 .to_string()
         ));
+    }
+
+    #[test]
+    fn oh_my_pi_and_pi_run_under_their_bridges() {
+        let context = Context {
+            resume: Some("01a1-session"),
+            ..context()
+        };
+        let omp = acp_args(
+            OMP,
+            &AgentOptions::default(),
+            &context,
+            Path::new("/bin/omp"),
+        );
+        assert_eq!(
+            omp[..7],
+            [
+                "--socket",
+                "/state/sandhilld.sock",
+                "acp-chat",
+                "--agent",
+                "omp",
+                "--program",
+                "/bin/omp"
+            ]
+        );
+        let pi = acp_args(PI, &AgentOptions::default(), &context, Path::new("/bin/pi"));
+        assert_eq!(
+            pi[..5],
+            [
+                "--socket",
+                "/state/sandhilld.sock",
+                "pi-chat",
+                "--program",
+                "/bin/pi"
+            ]
+        );
+        for args in [omp, pi] {
+            assert_eq!(args[args.len() - 2..], ["--session", "01a1-session"]);
+        }
+        assert_eq!(resume_key(OMP), Some("thread"));
+        assert_eq!(resume_key(PI), Some("thread"));
+    }
+
+    #[test]
+    fn posit_assistant_gets_the_mcp_server_beside_the_admins_defaults() {
+        let defaults: Value = serde_json::from_str(&posit_defaults(&context(), None)).unwrap();
+        assert_eq!(
+            defaults,
+            json!({"mcpServers": {"sandhill": {"type": "local", "command": [
+                "/opt/it's/sandhilld", "--socket", "/state/sandhilld.sock", "mcp", "--project", "/data/pbmc"
+            ]}}})
+        );
+        // What the daemon's environment already sets stays.
+        let existing =
+            r#"{"defaultModel": "posit/x", "mcpServers": {"db": {"url": "https://db"}}}"#;
+        let defaults: Value =
+            serde_json::from_str(&posit_defaults(&context(), Some(existing))).unwrap();
+        assert_eq!(defaults["defaultModel"], "posit/x");
+        assert_eq!(defaults["mcpServers"]["db"]["url"], "https://db");
+        assert_eq!(defaults["mcpServers"]["sandhill"]["type"], "local");
+        // Something pa couldn't read either is replaced.
+        for broken in ["not json", "[1]", r#"{"mcpServers": 3}"#] {
+            let defaults: Value =
+                serde_json::from_str(&posit_defaults(&context(), Some(broken))).unwrap();
+            assert_eq!(
+                defaults["mcpServers"]["sandhill"]["type"], "local",
+                "{broken}"
+            );
+        }
+    }
+
+    #[test]
+    fn versions_are_read_from_each_cli() {
+        assert_eq!(
+            version_in("2.1.296 (Claude Code)").as_deref(),
+            Some("2.1.296")
+        );
+        assert_eq!(version_in("codex-cli 0.162.1").as_deref(), Some("0.162.1"));
+        assert_eq!(version_in("agy version 2.0.0").as_deref(), Some("2.0.0"));
+        let pa = "Posit Assistant TUI v0.1.0\nBuild:  dev\nCommit: 8c1abe7\n";
+        assert_eq!(version_in(pa).as_deref(), Some("0.1.0"));
+        assert_eq!(version_in("no version here"), None);
     }
 }

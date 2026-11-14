@@ -33,8 +33,6 @@ use crate::journal::now_ms;
 const FRAME: usize = 64 * 1024;
 /// After the program exits, output still arriving this soon is kept.
 const DRAIN: Duration = Duration::from_millis(200);
-/// How long a hung-up program gets before it is killed.
-const HANGUP_GRACE: Duration = Duration::from_secs(3);
 /// Commands kept for a program that doesn't listen yet.
 const MAX_QUEUED: usize = 64;
 
@@ -66,10 +64,15 @@ struct Shared {
     queued: Mutex<Vec<Value>>,
     live: broadcast::Sender<Live>,
     agent: Mutex<Value>,
+    kind: String,
+    /// Locked before agent/child when checking idle retirement.
+    activity: Mutex<Option<super::idle::Activity>>,
     exit: Mutex<Option<TerminalExit>>,
     input: mpsc::UnboundedSender<Vec<u8>>,
     master: Arc<AsyncFd<OwnedFd>>,
     pid: u32,
+    /// Kept until reaped under this lock; never signal a recycled child PID.
+    child: Mutex<Option<std::process::Child>>,
 }
 
 /// Runs the program until it exits, serving clients meanwhile.
@@ -101,8 +104,7 @@ pub async fn run(options: HostOptions) -> Result<()> {
 
     let mut command = std::process::Command::new(program);
     command.args(args).current_dir(&options.cwd);
-    let pty::Pty { master, mut child } = match pty::spawn(&mut command, options.cols, options.rows)
-    {
+    let pty::Pty { master, child } = match pty::spawn(&mut command, options.cols, options.rows) {
         Ok(pty) => pty,
         Err(err) => {
             let _ = std::fs::remove_file(&socket);
@@ -112,12 +114,19 @@ pub async fn run(options: HostOptions) -> Result<()> {
     let pid = child.id();
     write_json(
         &paths.host(),
-        &json!({"host": std::process::id(), "pid": pid}),
+        &json!({"host": std::process::id(), "pid": pid,
+            "host_identity": crate::lifecycle::ProcessIdentity::read(std::process::id()),
+            "identity": crate::lifecycle::ProcessIdentity::read(pid),
+            "management_stop": true}),
     )?;
     pty::set_nonblocking(master.as_raw_fd())?;
-    let master = Arc::new(AsyncFd::new(master)?);
+    // SAFETY: `master` is the pseudo-terminal's open descriptor, owned by the
+    // `AsyncFd` from here on and closed only when that is dropped.
+    let master = Arc::new(unsafe { AsyncFd::register(master) }.map_err(std::io::Error::from)?);
 
     let (input, input_rx) = mpsc::unbounded_channel();
+    let meta = super::read_json::<super::Meta>(&paths.meta());
+    let kind = meta.as_ref().map_or("", |meta| meta.kind.as_str());
     let shared = Arc::new(Shared {
         log: Mutex::new(LogWriter::create(&options.dir)?),
         chat: Mutex::new(ChatLog::open(&options.dir)?),
@@ -128,35 +137,60 @@ pub async fn run(options: HostOptions) -> Result<()> {
         // What a restarted program's terminal kept of the agent's report.
         agent: Mutex::new(super::read_json(&paths.agent()).unwrap_or(Value::Null)),
         exit: Mutex::new(None),
+        kind: kind.to_string(),
+        activity: Mutex::new(super::idle::is_agent(kind).then(super::idle::Activity::new)),
         input,
         master: master.clone(),
         pid,
+        child: Mutex::new(Some(child)),
         paths: paths.clone(),
     });
     tokio::spawn(write_input(master.clone(), input_rx));
     tokio::spawn(accept(shared.clone(), listener));
 
-    let (exited_tx, mut exited) = tokio::sync::oneshot::channel();
-    std::thread::spawn(move || {
-        let _ = exited_tx.send(child.wait());
+    let reaper = shared.clone();
+    let mut exited = Box::pin(async move {
+        loop {
+            {
+                let mut child = reaper.child.lock().unwrap();
+                if let Some(status) = child.as_mut().expect("single reaper").try_wait()? {
+                    *child = None;
+                    return std::io::Result::Ok(status);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     });
+    let mut render = meta
+        .filter(|meta| meta.kind == sandhill_proto::TERMINAL_JOB)
+        .and_then(|meta| meta.job?.path)
+        .filter(|file| crate::preview::previewable(Path::new(file)))
+        .map(|_| crate::jobs::RenderOutputs::new(options.cwd.clone()));
 
     let mut buf = vec![0u8; 64 * 1024];
     let mut status = None;
     loop {
         tokio::select! {
             read = read_some(&master, &mut buf) => match read {
-                Some(n) => shared.publish(&buf[..n]),
+                Some(n) => {
+                    if let Some(render) = &mut render {
+                        render.push(&buf[..n]);
+                    }
+                    shared.publish(&buf[..n]);
+                }
                 // The terminal closed: everything holding it has exited.
                 None => break,
             },
             result = &mut exited, if status.is_none() => {
-                status = Some(result.ok().and_then(Result::ok));
+                status = Some(result.ok());
                 // Keep what is still on its way, then stop even if a
                 // background process holds the terminal open.
                 while let Ok(Some(n)) =
                     tokio::time::timeout(DRAIN, read_some(&master, &mut buf)).await
                 {
+                    if let Some(render) = &mut render {
+                        render.push(&buf[..n]);
+                    }
                     shared.publish(&buf[..n]);
                 }
                 break;
@@ -165,13 +199,28 @@ pub async fn run(options: HostOptions) -> Result<()> {
     }
     let status = match status {
         Some(status) => status,
-        None => exited.await.ok().and_then(Result::ok),
+        None => exited.await.ok(),
     };
     let exit = TerminalExit {
         code: status.and_then(|s| s.code()),
         signal: status.and_then(|s| std::os::unix::process::ExitStatusExt::signal(&s)),
         ended_ms: now_ms(),
+        idle: shared
+            .activity
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|a| a.stopped),
     };
+    if exit.code == Some(0)
+        && exit.signal.is_none()
+        && let Some(render) = render
+    {
+        write_json(
+            &paths.render_outputs(),
+            &serde_json::to_value(render.finish())?,
+        )?;
+    }
     write_json(&paths.exit(), &serde_json::to_value(&exit)?)?;
     *shared.exit.lock().unwrap() = Some(exit.clone());
     let _ = shared.live.send(Live::Exit(exit));
@@ -273,10 +322,17 @@ async fn serve(shared: Arc<Shared>, stream: UnixStream) {
                 )));
             }
             ToHost::Input { data } => {
+                shared.touch();
                 let _ = shared.input.send(data.into_bytes());
             }
             ToHost::Resize { cols, rows } => shared.resize(cols, rows),
             ToHost::Hangup => shared.hang_up(),
+            ToHost::Stop { force } => {
+                shared.stop_program(force);
+            }
+            ToHost::StopIfIdle { limit_ms } => {
+                shared.stop_if_idle(Duration::from_millis(limit_ms));
+            }
             ToHost::Agent { value } => shared.report(value),
             ToHost::Chat { event } => shared.add_chat(event),
             ToHost::Ask { id, event } => {
@@ -291,9 +347,15 @@ async fn serve(shared: Arc<Shared>, stream: UnixStream) {
                     }
                 });
             }
-            ToHost::Answer { id, answer } => shared.answer(&id, answer),
+            ToHost::Answer { id, answer } => {
+                shared.touch();
+                shared.answer(&id, answer);
+            }
             ToHost::Listen => shared.listen(out.clone()),
-            ToHost::Command { command } => shared.command(command),
+            ToHost::Command { command } => {
+                shared.touch();
+                shared.command(command);
+            }
         }
     }
     if let Some(task) = subscription {
@@ -428,7 +490,7 @@ fn send_output(out: &mpsc::UnboundedSender<FromHost>, offset: u64, bytes: &[u8])
 /// Recent output starts at an arbitrary byte, which may be inside an
 /// escape sequence or a character; start after the next line break instead
 /// when there is one near.
-fn after_line_break(start: u64, bytes: Vec<u8>) -> (u64, Vec<u8>) {
+pub(super) fn after_line_break(start: u64, bytes: Vec<u8>) -> (u64, Vec<u8>) {
     match bytes.iter().take(4096).position(|&b| b == b'\n') {
         Some(i) => (start + i as u64 + 1, bytes[i + 1..].to_vec()),
         None => (start, bytes),
@@ -436,7 +498,26 @@ fn after_line_break(start: u64, bytes: Vec<u8>) -> (u64, Vec<u8>) {
 }
 
 impl Shared {
+    fn touch(&self) {
+        if let Some(activity) = self.activity.lock().unwrap().as_mut() {
+            activity.touch();
+        }
+    }
+
+    fn stop_if_idle(&self, limit: Duration) {
+        let mut activity = self.activity.lock().unwrap();
+        let Some(activity) = activity.as_mut() else {
+            return;
+        };
+        let agent = self.agent.lock().unwrap();
+        if activity.expired(limit) && super::idle::resumable_idle(&self.kind, &agent) {
+            // Record the reason before the reaper can publish the exit.
+            activity.stopped = self.stop_program(false);
+        }
+    }
+
     fn publish(&self, bytes: &[u8]) {
+        self.touch();
         let mut log = self.log.lock().unwrap();
         let offset = log.end();
         if let Err(err) = log.append(bytes) {
@@ -458,30 +539,32 @@ impl Shared {
         }
     }
 
-    /// Closes the terminal as a closed window would: SIGHUP, then SIGKILL
-    /// for a program that ignores it.
+    /// The same owned-child path is used for closing a terminal and Stop All.
+    /// Never schedule a delayed numeric-PID kill after the child was reaped.
     fn hang_up(&self) {
-        let fd = self.master.get_ref().as_raw_fd();
-        let groups = [Some(self.pid as libc::pid_t), pty::foreground_group(fd)];
-        for group in groups.into_iter().flatten() {
-            // SAFETY: signalling process groups in the program's session.
-            unsafe { libc::kill(-group, libc::SIGHUP) };
+        self.stop_program(false);
+    }
+
+    fn stop_program(&self, force: bool) -> bool {
+        let child = self.child.lock().unwrap();
+        if child.is_none() {
+            return false;
         }
-        let pid = self.pid as libc::pid_t;
-        tokio::spawn(async move {
-            tokio::time::sleep(HANGUP_GRACE).await;
-            for group in groups.into_iter().flatten() {
-                // SAFETY: as above; harmless if the group is gone.
-                unsafe { libc::kill(-group, libc::SIGKILL) };
-            }
-            // SAFETY: as above.
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-        });
+        let signal = if force { libc::SIGKILL } else { libc::SIGHUP };
+        let _ = pty::signal_foreground(self.master.get_ref().as_raw_fd(), signal);
+        // Holding the unreaped child fixes the identity of the process-group
+        // leader. This group cannot be recycled while that child exists.
+        unsafe { libc::kill(-(self.pid as libc::pid_t), signal) };
+        true
     }
 
     /// Merges what an agent reported (`{state}` from a hook, `{status}` from
     /// its status line) and tells the clients.
     fn report(&self, value: Value) {
+        let mut activity = self.activity.lock().unwrap();
+        if let Some(activity) = activity.as_mut() {
+            activity.touch();
+        }
         let merged = {
             let mut agent = self.agent.lock().unwrap();
             if !agent.is_object() {
@@ -499,12 +582,15 @@ impl Shared {
             }
             agent.clone()
         };
+        drop(activity);
         let _ = write_json(&self.paths.agent(), &merged);
+        crate::accounts::observe(&self.kind, &value);
         let _ = self.live.send(Live::Agent(merged));
     }
 
     /// Keeps an entry of the agent's conversation and tells the clients.
     fn add_chat(&self, event: Value) {
+        self.touch();
         let mut chat = self.chat.lock().unwrap();
         match chat.append(event) {
             Ok(entry) => {

@@ -6,6 +6,7 @@ members = ["crates/proto", "crates/link", "crates/daemon", "crates/cli"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 publish = false
 
 [workspace.dependencies]
@@ -13,13 +14,13 @@ sandhill-proto = { path = "crates/proto" }
 sandhill-link = { path = "crates/link" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-jupyter-protocol = "2.0.2"
-jupyter-zmq-client = { version = "1.0.1", features = ["tokio-runtime"] }
+jupyter-protocol = "2.0.3"
+jupyter-zmq-client = { version = "3.0.1", features = ["tokio-runtime"] }
 libc = "0.2"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
@@ -27,7 +28,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 # For its socket traits; jupyter-zmq-client picks the runtime.
-zeromq = { version = "0.6", default-features = false }
+zeromq = { version = "0.7", default-features = false }
 
 # Hashing runs at every daemon start (to identify the build) and for every
 # stored output; unoptimized it takes seconds on a debug build's executable.

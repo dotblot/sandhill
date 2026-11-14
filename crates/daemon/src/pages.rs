@@ -75,7 +75,7 @@ impl Pages {
 
     /// Writes HTML to a page of its own and serves it.
     pub async fn serve_html(&self, html: &str) -> Result<PageUrl> {
-        let hash = format!("{:x}", Sha256::digest(html.as_bytes()));
+        let hash = sandhill_proto::hex(&Sha256::digest(html.as_bytes()));
         let folder = self.dir.join(&hash[..16]);
         std::fs::create_dir_all(&folder)?;
         let file = folder.join("index.html");
@@ -267,7 +267,7 @@ fn sign(key: &str, folder: &Path) -> String {
     hash.update(key.as_bytes());
     hash.update([0]);
     hash.update(folder.as_os_str().as_encoded_bytes());
-    format!("{:x}", hash.finalize())[..32].to_string()
+    sandhill_proto::hex(&hash.finalize())[..32].to_string()
 }
 
 /// A path as a URL's, each byte other than letters, digits, `/` and
@@ -317,6 +317,8 @@ pub(crate) fn content_type(path: &Path) -> &'static str {
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
         "ico" => "image/x-icon",
         "woff" => "font/woff",
         "woff2" => "font/woff2",

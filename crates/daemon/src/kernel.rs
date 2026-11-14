@@ -103,7 +103,7 @@ pub async fn launch(
         Some(Stdio::from(log)),
     )?;
     command.current_dir(cwd).process_group(0);
-    let child = command.spawn().map_err(|err| {
+    let mut child = command.spawn().map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             let place = if program.contains('/') {
                 ""
@@ -120,6 +120,11 @@ pub async fn launch(
     // The kernel binds these ports as soon as it starts; release them now.
     drop(listeners);
     let pid = child.id().context("kernel exited immediately")?;
+    if let Err(err) = crate::lifecycle::record_kernel(&connection_file, pid) {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        return Err(err.context("cannot record kernel ownership"));
+    }
     Ok(Launched {
         child,
         pid,

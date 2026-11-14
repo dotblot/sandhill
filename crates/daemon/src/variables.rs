@@ -34,6 +34,10 @@ pub const R_WALK: &str = r#"  .kids <- function(x) {
     .some <- function(l) Filter(function(v) length(v) > 0, l)
     if (inherits(x, "Seurat")) return(.some(list(meta.data = .try(x@meta.data),
       assays = .try(x@assays), reductions = .try(x@reductions), active.ident = .try(x@active.ident))))
+    if (inherits(x, "Assay5")) return(setNames(lapply(SeuratObject::Layers(x),
+      function(k) SeuratObject::LayerData(x, layer = k)), SeuratObject::Layers(x)))
+    if (inherits(x, "Assay")) return(setNames(lapply(c("counts", "data", "scale.data"),
+      function(k) methods::slot(x, k)), c("counts", "data", "scale.data")))
     if (inherits(x, "SummarizedExperiment")) return(.some(list(
       colData = .try(as.data.frame(SummarizedExperiment::colData(x))),
       rowData = .try(as.data.frame(SummarizedExperiment::rowData(x))),
@@ -59,6 +63,8 @@ pub const R_WALK: &str = r#"  .kids <- function(x) {
   .code_part <- function(x, code, k) {
     q <- encodeString(k, quote = '"')
     if (inherits(x, "Seurat")) return(paste0(code, "@", k))
+    if (inherits(x, "Assay5")) return(paste0("SeuratObject::LayerData(", code, ", layer = ", q, ")"))
+    if (inherits(x, "Assay")) return(paste0(code, "@", k))
     if (inherits(x, "SummarizedExperiment")) return(switch(k,
       colData = paste0("as.data.frame(SummarizedExperiment::colData(", code, "))"),
       rowData = paste0("as.data.frame(SummarizedExperiment::rowData(", code, "))"),
@@ -129,26 +135,28 @@ const R: &str = r#"local({
     "data"
   }
   .has <- function(x) {
-    if (inherits(x, c("Seurat", "SummarizedExperiment"))) return(TRUE)
+    if (inherits(x, c("Seurat", "Assay5", "Assay", "SummarizedExperiment"))) return(TRUE)
     if (is.data.frame(x) || inherits(x, "DataFrame")) return(ncol(x) > 0)
     is.list(x) && length(x) > 0
   }
 __WALK__
-  .emit <- function(name, x) {
+  .emit <- function(name, x, code, path = character(0)) {
     .size <- tryCatch(as.numeric(utils::object.size(x)), error = function(e) -1)
     .d <- tryCatch(.describe(x), error = function(e) "")
     .h <- isTRUE(tryCatch(.has(x), error = function(e) FALSE))
     .tb <- isTRUE(tryCatch(.is_table(x), error = function(e) FALSE))
     cat("SANDHILL_VAR", .clean(name), .kind(x), .clean(class(x)[1]), format(.size, scientific = FALSE),
-      if (.h) 1 else 0, if (.tb) 1 else 0, .clean(.d), sep = "\t")
+      if (.h) 1 else 0, if (.tb) 1 else 0, .clean(.d), .clean(code), sep = "\t")
+    if (length(path)) for (p in path) cat("\t", paste(sprintf("%02x", as.integer(charToRaw(enc2utf8(p)))), collapse = ""), sep = "")
     cat("\n")
   }
   if (!length(.path)) {
-    for (.v in ls(envir = globalenv())) .emit(.v, get(.v, envir = globalenv()))
+    for (.v in ls(envir = globalenv())) .emit(.v, get(.v, envir = globalenv()), .code_name(.v))
   } else {
-    .x <- .find(.path)$x
+    .found <- .find(.path)
+    .x <- .found$x
     .kk <- .kids(.x)
-    for (.i in seq_len(min(length(.kk), 200))) .emit(names(.kk)[[.i]], .kk[[.i]])
+    for (.i in seq_len(min(length(.kk), 200))) .emit(names(.kk)[[.i]], .kk[[.i]], .code_part(.x, .found$code, names(.kk)[[.i]]))
     if (length(.kk) > 200) cat("SANDHILL_MORE", length(.kk) - 200, "\n", sep = "\t")
   }
   invisible(NULL)
@@ -160,6 +168,7 @@ __WALK__
 /// code for it. `part(v, key)` gives one of an object's parts,
 /// `is_table(v)` says whether the Data Explorer shows it.
 pub const PYTHON_WALK: &str = r#"    maps = ("obsm", "varm", "obsp", "varp", "layers")
+    from collections.abc import Mapping
 
     def keys(mapping):
         # anndata 0.13 lists X in layers.keys() as None.
@@ -168,16 +177,15 @@ pub const PYTHON_WALK: &str = r#"    maps = ("obsm", "varm", "obsp", "varp", "la
     def part(v, key):
         name = type(v).__name__
         if name in ("AnnData", "Raw"):
-            x = getattr(v, key)
-            if key in maps:
-                return {k: x[k] for k in keys(x)}
-            return dict(x) if key == "uns" else x
+            return getattr(v, key)
         if name == "DataFrame" and hasattr(v, "columns"):
             return v.iloc[:, [str(c) for c in v.columns].index(key)]
-        if isinstance(v, dict):
+        if isinstance(v, Mapping):
             return next(x for k, x in v.items() if str(k) == key)
         if isinstance(v, (list, tuple)) and key.startswith("[") and key.endswith("]"):
             return v[int(key[1:-1])]
+        if name == "ndarray" and getattr(v, "ndim", 0) == 2:
+            return v[:, int(key[3:-1])]
         raise KeyError(f"no part named {key}")
 
     def code_part(v, code, key):
@@ -187,7 +195,9 @@ pub const PYTHON_WALK: &str = r#"    maps = ("obsm", "varm", "obsp", "varp", "la
         if name == "DataFrame" and hasattr(v, "columns"):
             column = next(c for c in v.columns if str(c) == key)
             return f"{code}[{column!r}]"
-        if isinstance(v, dict):
+        if name == "ndarray" and getattr(v, "ndim", 0) == 2:
+            return f"{code}[:, {int(key[3:-1])}]"
+        if isinstance(v, Mapping):
             return f"{code}[{next(k for k in v if str(k) == key)!r}]"
         return f"{code}{key}"
 
@@ -248,7 +258,7 @@ const PYTHON: &str = r#"def _sandhill_variables(path):
             text = f" {by} ".join(f"{n:,}" for n in shape) + (f" {dtype}" if dtype is not None else "")
             nnz = getattr(v, "nnz", None)
             return text + (f", {nnz:,} stored" if isinstance(nnz, int) else "")
-        if isinstance(v, dict):
+        if isinstance(v, Mapping):
             return f"{len(v):,} item{'' if len(v) == 1 else 's'}" + names("keys", list(v)[:9])
         if isinstance(v, (list, tuple, set, frozenset)):
             return f"{len(v):,} item{'' if len(v) == 1 else 's'}"
@@ -278,7 +288,9 @@ const PYTHON: &str = r#"def _sandhill_variables(path):
             return True
         if name == "DataFrame" and hasattr(v, "columns"):
             return len(v.columns) > 0
-        return isinstance(v, (dict, list, tuple)) and len(v) > 0
+        if name == "ndarray" and getattr(v, "ndim", 0) == 2:
+            return v.shape[1] > 0
+        return isinstance(v, (Mapping, list, tuple)) and len(v) > 0
 
 __WALK__
     def parts(v):
@@ -296,13 +308,16 @@ __WALK__
         if name == "DataFrame" and hasattr(v, "columns"):
             n = len(v.columns)
             return [(str(c), v.iloc[:, i]) for i, c in enumerate(v.columns[:limit])], n
-        if isinstance(v, dict):
-            return [(str(k), x) for k, x in list(v.items())[:limit]], len(v)
+        if name == "ndarray" and getattr(v, "ndim", 0) == 2:
+            return [(f"[:,{i}]", v[:, i]) for i in range(min(v.shape[1], limit))], v.shape[1]
+        if isinstance(v, Mapping):
+            import itertools
+            return [(str(k), x) for k, x in itertools.islice(v.items(), limit)], len(v)
         if isinstance(v, (list, tuple)):
             return [(f"[{i}]", x) for i, x in enumerate(v[:limit])], len(v)
         return [], 0
 
-    def emit(key, value):
+    def emit(key, value, code, path=()):
         try:
             text = " ".join(describe(value).split())
         except Exception:
@@ -320,7 +335,7 @@ __WALK__
         except Exception:
             table = 0
         clean = " ".join(str(key).split())
-        print("SANDHILL_VAR", clean, kind(value), type(value).__name__, nbytes, more, table, text, sep="\t")
+        print("SANDHILL_VAR", clean, kind(value), type(value).__name__, nbytes, more, table, text, code, *[str(p).encode("utf-8").hex() for p in path], sep="\t")
 
     if not path:
         for key, value in list(ns.items()):
@@ -328,12 +343,12 @@ __WALK__
                 continue
             if isinstance(value, (types.ModuleType, type)):
                 continue
-            emit(key, value)
+            emit(key, value, key)
         return
-    v, _ = walk(path)
+    v, code = walk(path)
     listed, total = parts(v)
     for key, value in listed:
-        emit(key, value)
+        emit(key, value, code_part(v, code, key))
     if total > len(listed):
         print("SANDHILL_MORE", total - len(listed), sep="\t")
 
@@ -438,7 +453,7 @@ pub fn parse(stdout: &str) -> (Vec<Variable>, u64) {
                 more = n.trim().parse().unwrap_or(0);
                 return None;
             }
-            let mut fields = line.strip_prefix(MARK)?.strip_prefix('\t')?.splitn(7, '\t');
+            let mut fields = line.strip_prefix(MARK)?.strip_prefix('\t')?.split('\t');
             let name = fields.next()?.to_string();
             let kind = fields.next()?.to_string();
             let class = fields.next()?.to_string();
@@ -452,6 +467,7 @@ pub fn parse(stdout: &str) -> (Vec<Variable>, u64) {
             let children = fields.next()?.trim() == "1";
             let table = fields.next()?.trim() == "1";
             let summary = fields.next().unwrap_or("").trim().to_string();
+            let accessor = fields.next().filter(|s| !s.is_empty()).map(str::to_string);
             Some(Variable {
                 name,
                 kind,
@@ -460,6 +476,7 @@ pub fn parse(stdout: &str) -> (Vec<Variable>, u64) {
                 children,
                 table,
                 summary,
+                accessor,
             })
         })
         .collect();
@@ -544,7 +561,8 @@ mod tests {
                     size: Some(312_000_000),
                     children: true,
                     table: false,
-                    summary: "2,638 cells × 13,714 features".into()
+                    summary: "2,638 cells × 13,714 features".into(),
+                    accessor: None,
                 },
                 Variable {
                     name: "x".into(),
@@ -553,7 +571,8 @@ mod tests {
                     size: Some(28),
                     children: false,
                     table: false,
-                    summary: "3".into()
+                    summary: "3".into(),
+                    accessor: None,
                 },
                 Variable {
                     name: "obs".into(),
@@ -562,7 +581,8 @@ mod tests {
                     size: Some(1200),
                     children: true,
                     table: true,
-                    summary: "3 × 2".into()
+                    summary: "3 × 2".into(),
+                    accessor: None,
                 },
             ]
         );

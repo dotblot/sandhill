@@ -40,10 +40,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const STDIN_TIMEOUT: Duration = Duration::from_secs(2);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(1);
 const STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
-/// The prompt waits this long at most for where the user is.
+/// The prompt waits this long at most for what a # cell last showed.
 const CONTEXT_TIMEOUT: Duration = Duration::from_millis(1500);
 
-/// `socket` is the daemon's, for asking where the user is.
+/// `socket` is the daemon's, for what goes with a prompt.
 pub async fn run(args: &[String], socket: &Path) -> Result<()> {
     let terminal = std::env::var_os("SANDHILL_TERMINAL").map(PathBuf::from);
     let what = args.first().map(String::as_str).unwrap_or("");
@@ -89,7 +89,21 @@ pub async fn run(args: &[String], socket: &Path) -> Result<()> {
         "status" => {
             let raw = read_stdin_bytes().await;
             let input: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
-            let report = send(terminal.as_deref(), json!({"status": status(&input)}));
+            let mut status = status(&input);
+            if status.get("rate_limits").is_some() {
+                // Bind this measurement to the CLI's current official identity,
+                // not a launch-time account that an in-session /login can change.
+                let identity = async {
+                    let claude = crate::agents::find("claude")?;
+                    crate::agents::claude_account(&claude).await.ok()
+                };
+                let account = tokio::time::timeout(Duration::from_secs(2), identity)
+                    .await
+                    .ok()
+                    .flatten();
+                bind_quota_account(&mut status, account.as_ref());
+            }
+            let report = send(terminal.as_deref(), json!({"status": status}));
             let own = own_status_line(&input, &raw);
             let (reported, line) = tokio::join!(report, own);
             if let Some(line) = line {
@@ -404,5 +418,43 @@ mod tests {
                 "rate_limits": {"five_hour": {"used_percentage": 42, "resets_at": "2026-10-12T05:00:00Z"}},
             })
         );
+    }
+}
+
+/// Failed or signed-out identity lookups must not leave attributable quota data.
+fn bind_quota_account(status: &mut Value, account: Option<&Value>) {
+    if let Some(account) = account.filter(|account| account.is_object()) {
+        status["quota_account"] = account.clone();
+        status["quota_observed_at_ms"] = json!(crate::journal::now_ms());
+    } else if let Some(status) = status.as_object_mut() {
+        status.remove("rate_limits");
+        status.remove("quota_account");
+        status.remove("quota_observed_at_ms");
+    }
+}
+
+#[cfg(test)]
+mod quota_identity_tests {
+    use super::*;
+
+    #[test]
+    fn measurement_identity_is_required_and_never_falls_back_to_launch_identity() {
+        let account = json!({"type": "claude.ai", "email": "b@example.test"});
+        let mut status =
+            json!({"model": "Opus", "rate_limits": {"five_hour": {"used_percentage": 42}}});
+        bind_quota_account(&mut status, Some(&account));
+        assert_eq!(status["quota_account"], account);
+        assert!(
+            status["quota_observed_at_ms"]
+                .as_i64()
+                .is_some_and(|at| at > 0)
+        );
+        bind_quota_account(&mut status, None);
+        assert!(status.get("rate_limits").is_none());
+        assert!(status.get("quota_account").is_none());
+        assert_eq!(status["model"], "Opus");
+        status["rate_limits"] = json!({"five_hour": {"used_percentage": 12}});
+        bind_quota_account(&mut status, Some(&Value::Null));
+        assert!(status.get("rate_limits").is_none());
     }
 }

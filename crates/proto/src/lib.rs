@@ -7,6 +7,8 @@
 //! the client subscribed to. The same stream works over a Unix socket or over
 //! `ssh host sandhilld attach`.
 
+pub mod analysis;
+mod bounded;
 pub mod client;
 
 use serde::{Deserialize, Serialize};
@@ -28,10 +30,16 @@ pub const EVENT_VIEW: &str = "sandhill.view";
 /// the home folder. The daemon offers it as the `ark` kernel when R is on
 /// `PATH`. It is kept off `PATH`: KDE has a program called `ark` too.
 pub const ARK_PATH: &str = ".local/share/sandhill/bin/ark";
+pub const TY_PATH: &str = ".local/share/sandhill/bin/ty";
+pub const RUFF_PATH: &str = ".local/share/sandhill/bin/ruff";
 
 /// Key used in place of a large or binary output value that was moved to the
 /// blob store. The value becomes `{"sandhill_blob": "<sha256>", "size": n}`.
 pub const BLOB_KEY: &str = "sandhill_blob";
+
+fn empty_analysis_details() -> Value {
+    serde_json::json!({})
+}
 
 /// Decodes base64 as kernels write it: IRkernel breaks it into lines of 72,
 /// and padding may be left off.
@@ -46,6 +54,16 @@ pub fn decode_base64(text: &str) -> Result<Vec<u8>, base64::DecodeError> {
     LENIENT.decode(text)
 }
 
+/// Bytes as lowercase hexadecimal, the way checksums are written.
+pub fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(text, "{byte:02x}");
+    }
+    text
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Request {
     pub id: u64,
@@ -58,6 +76,24 @@ pub struct Request {
 pub enum Call {
     /// Returns [`PingReply`].
     Ping,
+    /// Creates an authoritative analysis record; does not run an analysis.
+    BeginAnalysis {
+        project: String,
+        spec: Value,
+    },
+    /// Executes a fixed checkpoint checker in the explicitly bound session.
+    CheckAnalysis {
+        project: String,
+        analysis: String,
+        checkpoint: String,
+        #[serde(default = "empty_analysis_details")]
+        details: Value,
+    },
+    /// Reads authoritative historical evidence without executing a check.
+    GetAnalysis {
+        project: String,
+        analysis: String,
+    },
     /// Returns `Vec<KernelspecInfo>`.
     ListKernelspecs,
     /// Starts a kernel. Returns [`SessionInfo`].
@@ -72,6 +108,39 @@ pub enum Call {
     },
     /// Returns `Vec<SessionInfo>`, including ended sessions.
     ListSessions,
+    /// Kernel-native completion; never executes code or changes history.
+    Complete {
+        session: String,
+        code: String,
+        /// Unicode scalar offset (Jupyter), not UTF-8 bytes or LSP UTF-16.
+        cursor_pos: usize,
+    },
+    /// Kernel-native introspection (Jupyter `inspect_request`, detail level
+    /// 0); never executes code or changes history.
+    Inspect {
+        session: String,
+        code: String,
+        /// Unicode scalar offset (Jupyter), not UTF-8 bytes or LSP UTF-16.
+        cursor_pos: usize,
+    },
+    /// Attaches this connection to the project's shared language server.
+    LspStart {
+        project: String,
+        language: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        document_kind: Option<String>,
+        /// Optional existing kernel, required to select among R sessions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<String>,
+    },
+    LspSend {
+        lsp: String,
+        message: Value,
+    },
+    /// Detaches this connection; the shared server stops after an idle grace.
+    LspStop {
+        lsp: String,
+    },
     /// Queues code for execution. Returns [`RunStarted`].
     Execute {
         session: String,
@@ -198,6 +267,13 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         path: Vec<String>,
     },
+    /// Bounded, quiet recursive search of names and short values.
+    FindVariables {
+        session: String,
+        query: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        root: Vec<String>,
+    },
     /// Deletes variables from a session and frees their memory: `rm()` and
     /// `gc()` in R, `del` and `gc.collect()` in Python.
     DeleteVariables {
@@ -223,6 +299,14 @@ pub enum Call {
         sort: Vec<TableSort>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filters: Vec<TableFilter>,
+        /// Case-insensitive literal substring in any nonmissing column value.
+        /// ANDed with filters before sorting, paging or projection.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        search: String,
+        /// Original zero-based column positions, in requested order.
+        /// When present, overrides the contiguous column window.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        columns: Option<Vec<u32>>,
         /// The first column to return cells of, from 0.
         #[serde(default, skip_serializing_if = "is_zero")]
         column_offset: u32,
@@ -243,6 +327,8 @@ pub enum Call {
         path: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filters: Vec<TableFilter>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        search: String,
         #[serde(default, skip_serializing_if = "is_zero")]
         column_offset: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -257,6 +343,8 @@ pub enum Call {
         sort: Vec<TableSort>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filters: Vec<TableFilter>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        search: String,
         /// The file to write.
         file: String,
     },
@@ -458,11 +546,14 @@ pub enum Call {
     },
     /// Returns `Vec<DirEntry>`, directories first, then by name. With
     /// `sizes`, a directory's `size` is the sum of the files in it, for
-    /// sorting by size.
+    /// sorting by size. With `marks`, each directory says whether it is a
+    /// Git repository or holds a `.sandhill` folder.
     ListDir {
         path: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         sizes: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        marks: bool,
     },
     /// Makes a folder and any folders above it. Fails if anything is
     /// already at `path`. Returns [`FileWritten`].
@@ -491,6 +582,7 @@ pub enum Call {
     },
     /// Up to `limit` bytes of a file from `offset` (at most
     /// [`MAX_READ_BYTES`]), for downloading it. Returns [`FileBytes`].
+    /// With `limit: 0`, returns full-file size and mtime without file contents.
     ReadBytes {
         path: String,
         #[serde(default)]
@@ -538,6 +630,19 @@ pub enum Call {
     ForgetProject {
         path: String,
     },
+    /// Trusts a folder and those inside it, so kernels, terminals, jobs,
+    /// agents, language servers and Git start there. A project opened for
+    /// the first time is not trusted (`ProjectInfo::trusted`), and those
+    /// calls are refused with an error starting "Restricted Mode:".
+    TrustFolder {
+        path: String,
+    },
+    /// Stops trusting a folder. What already runs there keeps running.
+    UntrustFolder {
+        path: String,
+    },
+    /// The folders trusted on this machine. Returns `Vec<TrustedFolder>`.
+    ListTrustedFolders,
     /// A project's shared settings, from `.sandhill/project.toml`, and the
     /// environments its files point to. Returns [`ProjectSetup`].
     GetProjectSettings {
@@ -556,6 +661,21 @@ pub enum Call {
     ListProjectKernelspecs {
         path: String,
     },
+    /// The R installations on the machine that IRkernel could be added to:
+    /// those no installed IRkernel runs, including R that Ark runs on, with
+    /// `project`'s own pixi environment. Returns `Vec<RWithoutIrkernel>`.
+    ListRWithoutIrkernel {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
+    /// Adds IRkernel to the R at `r` (one `list_r_without_irkernel` named)
+    /// in a job, as [`RWithoutIrkernel::plan`] says, so it runs on when
+    /// clients disconnect. Returns the job's [`TerminalInfo`].
+    InstallIrkernel {
+        r: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
     /// What the machine is doing: CPU, memory, GPUs, the disk `path` is on
     /// (the home folder without it), and the memory each running kernel
     /// holds. Returns [`SystemStats`].
@@ -573,6 +693,28 @@ pub enum Call {
     /// running, and the next `attach --start` starts a daemon that
     /// reattaches to them. Returns `null`.
     StopDaemon,
+    /// Live kernels and every terminal kind, including agents, jobs and previews.
+    /// Returns `{resources: [{id, kind, label, project, state}], errors: []}`.
+    ResourceInventory,
+    /// Stops owned background work, never the daemon. Force must be an
+    /// explicitly confirmed choice; false never escalates to SIGKILL.
+    /// Returns `{stopped, remaining: [resource], errors: []}`.
+    StopResources {
+        force: bool,
+    },
+    /// Categorized storage with safe paths, byte counts and removal eligibility.
+    StorageInventory,
+    /// Cleans only explicitly selected categories: cache, logs or history.
+    /// Project-local data and program files cannot be cleaned by this call.
+    CleanStorage {
+        categories: Vec<String>,
+    },
+    /// Removes only provenance-verified components after graceful resource stop.
+    /// Preserves data unless explicitly selected. Does not stop this daemon,
+    /// so clients receive individual failures rather than a false success.
+    UninstallComponents {
+        delete_data: bool,
+    },
     /// Modification times of files, to notice changes made outside the app
     /// (by an agent, say). Returns `Vec<FileStat>` in the same order.
     StatFiles {
@@ -582,10 +724,77 @@ pub enum Call {
     /// installed. Returns `Vec<AgentInfo>`.
     ListAgents,
     /// The models an agent offers before any conversation, as its model
-    /// menu lists them: `[{id, label, efforts?, effort?, default?}]`. Codex
-    /// and Antigravity only; Claude Code's are known.
+    /// menu lists them: `[{id, label, efforts?, effort?, default?}]`. Codex,
+    /// Antigravity, OpenScience, Oh My Pi and pi; Claude Code's are known.
     AgentModels {
         kind: String,
+    },
+    /// Read-only official CLI account snapshots, without starting conversations.
+    /// Returns `[{kind, account, observed_at_ms, status: {rate_limits?}}]`.
+    /// A null account explicitly means signed out, not merely unavailable.
+    AgentAccounts,
+    /// Selects only these providers for official account/quota discovery.
+    /// An empty list queries none. Force bypasses snapshots cached before this
+    /// request, while concurrent requests share an in-flight discovery.
+    AgentAccountsQuery {
+        kinds: Vec<String>,
+        #[serde(default)]
+        force: bool,
+    },
+    /// The accounts each agent can run on, on this device: the agent's own
+    /// login first, then the ones added with `add_agent_account`. With
+    /// `refresh`, asks each agent whether it is signed in and how much it
+    /// has used (official CLI queries only); otherwise returns what was
+    /// last known. Returns `Vec<AgentAccount>`.
+    ListAgentAccounts {
+        #[serde(default)]
+        refresh: bool,
+    },
+    /// Adds an account for `kind`: for Claude Code and Codex a folder of
+    /// Sandhill's own that the agent keeps that login in (sign in with
+    /// `sign_in_agent_account`); for Antigravity a Gemini API key, given
+    /// here and kept by Sandhill. Returns [`AgentAccount`].
+    AddAgentAccount {
+        kind: String,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_key: Option<String>,
+    },
+    /// Renames an added account. Returns [`AgentAccount`].
+    RenameAgentAccount {
+        id: String,
+        name: String,
+    },
+    /// Removes an added account and its login (never the agent's own).
+    /// Refused while a running conversation uses it. Returns null.
+    RemoveAgentAccount {
+        id: String,
+    },
+    /// Starts the agent's own sign-in for an account, in a terminal of kind
+    /// [`TERMINAL_LOGIN`] the app shows; it ends when sign-in is done. For
+    /// Antigravity's own login this is its whole-device sign-out and
+    /// sign-in. Returns [`TerminalInfo`].
+    SignInAgentAccount {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cols: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rows: Option<u16>,
+    },
+    /// Uses one of a Codex account's banked resets now: `credit` (the
+    /// `next_id` in its usage's `reset_credits`, the soonest to expire),
+    /// else the one Codex picks. Cannot be undone. Returns `{outcome,
+    /// account}`: Codex's outcome (`reset`, `nothingToReset`, `noCredit`,
+    /// `alreadyRedeemed`) and the account read again.
+    UseAgentReset {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        credit: Option<String>,
+    },
+    /// Atomically checks whether an attaching app can reuse this daemon.
+    /// Returns `{restart: bool}`; a restart decision also shuts the daemon down.
+    PrepareAttach {
+        build: String,
     },
     /// Starts a program in a terminal that keeps running when clients
     /// disconnect and when the daemon restarts: a shell, or an agent CLI.
@@ -636,6 +845,7 @@ pub enum Call {
         #[serde(flatten)]
         job: JobSpec,
         /// Where it runs: the project folder, else the script's folder.
+        /// Quarto renders always start in the document directory.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -798,9 +1008,41 @@ pub struct Focus {
     /// Every document open in the window.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open: Vec<String>,
+    /// The table currently in front; absent when focus is elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableFocus>,
     /// When the window said so; set by the daemon.
     #[serde(default)]
     pub ts_ms: i64,
+}
+
+/// A table view's state. Column positions refer to the original table.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TableFocus {
+    pub session: String,
+    pub path: Vec<String>,
+    pub name: String,
+    #[serde(default)]
+    pub sort: Vec<TableSort>,
+    #[serde(default)]
+    pub filters: Vec<TableFilter>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub search: String,
+    #[serde(default)]
+    pub hidden_columns: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_cells: Vec<TableCell>,
+    pub shown_rows: u64,
+    pub total_rows: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableCell {
+    /// Zero-based row in the filtered/sorted view.
+    pub row: u64,
+    pub column: u32,
 }
 
 /// A cell an agent added or changed.
@@ -840,6 +1082,9 @@ pub const TERMINAL_SHELL: &str = "shell";
 pub const TERMINAL_PREVIEW: &str = "preview";
 /// The kind of terminal a job runs in (see [`Call::StartJob`]).
 pub const TERMINAL_JOB: &str = "job";
+/// The kind of terminal an agent's own sign-in runs in (see
+/// [`Call::SignInAgentAccount`]).
+pub const TERMINAL_LOGIN: &str = "login";
 
 /// What a job runs: a script, with the program for its kind, or a command
 /// line, which the user's shell runs as their Terminal would.
@@ -848,7 +1093,8 @@ pub struct JobSpec {
     /// A script: R runs with `Rscript` and Python with `python`, each from
     /// the environment of the project's kernel for it; shell scripts with
     /// `bash`, Nextflow pipelines with `nextflow run`, Snakefiles with
-    /// `snakemake`; any other file runs as a program.
+    /// `snakemake`; `.qmd`/`.Rmd` with `quarto render`; any other file
+    /// runs as a program. Quarto uses a fresh process, not live variables.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// A command line; with `path`, the arguments that follow the script.
@@ -897,6 +1143,11 @@ pub enum ServerMessage {
     Tunnel {
         tunnel: TunnelData,
     },
+    /// JSON-RPC object from a language server subscribed to by this connection.
+    LspMessage {
+        lsp: String,
+        message: Value,
+    },
 }
 
 /// What came back through a tunnel: `data` (base64), or `closed` once the
@@ -908,6 +1159,34 @@ pub struct TunnelData {
     pub data: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub closed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompletionReply {
+    pub matches: Vec<String>,
+    pub cursor_start: usize,
+    pub cursor_end: usize,
+    pub metadata: Value,
+}
+
+/// A kernel's `inspect_reply`: `data` is its MIME bundle (`text/plain`…).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InspectReply {
+    pub found: bool,
+    pub data: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LspStarted {
+    pub lsp: String,
+    /// The merged LSP InitializeResult. Position encoding is always UTF-16.
+    pub capabilities: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LspMessage {
+    pub lsp: String,
+    pub message: Value,
 }
 
 /// A document's preview (see [`Call::PreviewDocument`]).
@@ -974,6 +1253,9 @@ pub struct PingReply {
     /// `systemd`. Empty when it was started by hand, and from older daemons.
     #[serde(default)]
     pub started_by: String,
+    /// `ready`, `stopped` or `stopping`; empty from older daemons.
+    #[serde(default)]
+    pub lifecycle: String,
 }
 
 /// The end of the daemon's log file.
@@ -995,6 +1277,20 @@ pub struct KernelspecInfo {
     /// version), so a notebook that names its environment finds it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
+}
+
+/// An R installation without IRkernel (see [`Call::ListRWithoutIrkernel`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RWithoutIrkernel {
+    /// The R program, as found: `/opt/homebrew/bin/R`.
+    pub r: String,
+    /// Its version, like `4.6.2`; empty when R didn't say.
+    pub version: String,
+    /// The environment it belongs to, like `conda env omicverse`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+    /// What installing does, in a sentence, for the user to confirm.
+    pub plan: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -1148,6 +1444,23 @@ pub struct ProjectInfo {
     /// and always `null` in `list_recent_projects`.
     #[serde(default)]
     pub state: Value,
+    /// Whether the user trusts the folder (`trust_folder`). Daemons from
+    /// before folder trust do not say, and trust every folder.
+    #[serde(default = "yes")]
+    pub trusted: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// A folder the user trusts, with the folders inside it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrustedFolder {
+    pub path: String,
+    pub trusted_ms: i64,
+    /// False when the folder no longer exists.
+    pub exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1227,10 +1540,17 @@ pub enum EntryKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SystemStats {
     pub cpu: CpuStats,
-    pub memory: MemoryStats,
-    /// NVIDIA GPUs, as `nvidia-smi` reports them. Empty when there are none.
+    #[serde(default)]
+    pub memory: Option<MemoryStats>,
+    /// Devices discovered on this host, including devices with unreadable metrics.
     #[serde(default)]
     pub gpus: Vec<GpuStats>,
+    /// Older daemons did not distinguish absent devices from failed discovery.
+    #[serde(default)]
+    pub gpu_status: GpuStatus,
+    /// Bounded source error, even if another GPU source succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk: Option<DiskStats>,
     /// Memory held by each running session's kernel, with the processes it started.
@@ -1241,16 +1561,31 @@ pub struct SystemStats {
     pub jobs: Vec<JobUsage>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuStatus {
+    #[default]
+    Unknown,
+    Available,
+    Absent,
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CpuStats {
-    /// Share of all cores busy, 0 to 100, over the last moment.
-    pub percent: f64,
+    /// Share of all cores busy, 0 to 100; absent when sampling failed.
+    #[serde(default)]
+    pub percent: Option<f64>,
     pub cores: u32,
     /// The processor's name, like "Apple M3 Pro", when the system says.
     #[serde(default)]
     pub model: String,
-    /// One-minute load average.
-    pub load: f64,
+    /// One-minute load average, when readable.
+    #[serde(default)]
+    pub load: Option<f64>,
+    /// Hottest CPU sensor in Celsius, when exposed without elevated privileges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_celsius: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1263,10 +1598,16 @@ pub struct MemoryStats {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GpuStats {
     pub name: String,
-    /// Utilization, 0 to 100.
-    pub percent: f64,
-    pub memory_used: u64,
-    pub memory_total: u64,
+    /// Utilization, 0 to 100. Missing is not an idle device.
+    #[serde(default)]
+    pub percent: Option<f64>,
+    #[serde(default)]
+    pub memory_used: Option<u64>,
+    /// Dedicated VRAM only; unified-memory GPUs do not invent a VRAM capacity.
+    #[serde(default)]
+    pub memory_total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_celsius: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1304,6 +1645,12 @@ pub struct DirEntry {
     pub kind: EntryKind,
     pub size: u64,
     pub mtime_ms: i64,
+    /// A directory holding `.git`; reported only when `ListDir` asks for marks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub git: bool,
+    /// A directory holding `.sandhill`; reported only when asked for marks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandhill: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1330,6 +1677,36 @@ pub struct AgentInfo {
     pub version: Option<String>,
     /// A shell command that installs the CLI, for when it is missing.
     pub install: String,
+}
+
+/// An account an agent can run a conversation on (see
+/// [`Call::ListAgentAccounts`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentAccount {
+    /// The agent's kind (`claude`) for its own login; `<kind>:<slug>` for
+    /// one added in Sandhill. What [`AgentOptions::account`] takes.
+    pub id: String,
+    pub kind: String,
+    /// "Default" for the agent's own login, else the name it was given.
+    pub name: String,
+    /// `login` (the agent's own sign-in) or `api_key` (Antigravity).
+    pub method: String,
+    /// The agent's own login: `~/.claude`, `~/.codex`, Antigravity's.
+    #[serde(default)]
+    pub default: bool,
+    /// Whether it is signed in; `None` when that could not be checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_in: Option<bool>,
+    /// The email or account name the agent reports, when signed in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+    /// Its last known use, as conversations and status queries report it:
+    /// `{rate_limits: {<window>: {used_percentage, resets_at?}}, observed_at_ms,
+    /// reset_credits?}`. `reset_credits` is Codex's banked resets, `{available,
+    /// expires_at}` (the first expiry, Unix seconds, or null); Claude Code has
+    /// no official way to read its limit resets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Value>,
 }
 
 /// How to start an agent. Empty fields leave the CLI's own defaults.
@@ -1362,15 +1739,16 @@ pub struct AgentOptions {
     /// `false` turns web search off; unset is on. `set` changes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web: Option<bool>,
-    /// `false` keeps where the user is in the editor out of their
-    /// messages; unset sends it. `set` changes it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<bool>,
     /// What the user added to the first message with the @ menu (files,
     /// chunks, variables, plots), which that message takes. A message
     /// later takes them from a `set` or `say` command's `refs`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refs: Vec<Value>,
+    /// The account it runs on (an [`AgentAccount::id`]); unset is the
+    /// agent's own login. `restart_terminal` with another account switches
+    /// a conversation, which goes on where it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 impl AgentOptions {
@@ -1418,6 +1796,9 @@ pub struct TerminalInfo {
     /// For a job: what it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<JobSpec>,
+    /// Successful Quarto render outputs, absolute paths, retained on reconnect.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1427,6 +1808,9 @@ pub struct TerminalExit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal: Option<i32>,
     pub ended_ms: i64,
+    /// The daemon stopped this run after prolonged inactivity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub idle: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1447,6 +1831,10 @@ pub struct TerminalEvent {
     /// Output bytes, base64.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Historical output reconstructs the display, but must never answer
+    /// terminal queries back to the running program.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replay: bool,
     /// What an agent reported through its hooks and status line:
     /// `{state: "busy" | "waiting" | "idle", mode, status: {model, context,
     /// effort, rate_limits...}}`.
@@ -1458,6 +1846,9 @@ pub struct TerminalEvent {
     pub chat: Option<ChatEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<TerminalExit>,
+    /// Successful Quarto render outputs, also retained in TerminalInfo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_paths: Vec<String>,
 }
 
 /// One entry of an agent's conversation, as its hooks reported it. `seq`
@@ -1587,6 +1978,29 @@ pub struct Variables {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VariableMatches {
+    pub session: String,
+    pub matches: Vec<VariableMatch>,
+    /// False when depth (6), node count (20,000), or time (2s) was hit.
+    pub complete: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VariableMatch {
+    pub path: Vec<String>,
+    pub name: String,
+    pub class: String,
+    pub summary: String,
+    pub accessor: String,
+    /// Whether this node has parts, as in Variable.
+    #[serde(default)]
+    pub children: bool,
+    /// Whether this node opens as a table, as in Variable.
+    #[serde(default)]
+    pub table: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Variable {
     pub name: String,
     /// `data`, `value` (a single number, string or the like) or `function`.
@@ -1604,6 +2018,8 @@ pub struct Variable {
     pub table: bool,
     /// Dimensions, the first values, or the like: "2,638 × 7; columns: …".
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accessor: Option<String>,
 }
 
 /// A sort key for [`Call::TableRows`].
@@ -1655,6 +2071,10 @@ pub struct TableRows {
     /// All its columns, unless only cells were asked for.
     #[serde(default)]
     pub columns: Vec<TableColumn>,
+    /// Original positions for projected cells/headers, in requested order.
+    /// Absent for contiguous pages and from old servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column_indices: Option<Vec<u32>>,
     /// The column the cells in `values` start at: each row has the cells
     /// of the columns asked for, from this one on.
     #[serde(default)]
@@ -2262,6 +2682,85 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn quota_selection_preserves_the_legacy_account_request() {
+        let legacy = json!({"method": "agent_accounts"});
+        assert_eq!(
+            serde_json::from_value::<Call>(legacy.clone()).unwrap(),
+            Call::AgentAccounts
+        );
+        assert_eq!(serde_json::to_value(Call::AgentAccounts).unwrap(), legacy);
+        let selected = json!({"method": "agent_accounts_query",
+            "params": {"kinds": ["codex"]}});
+        assert_eq!(
+            serde_json::from_value::<Call>(selected).unwrap(),
+            Call::AgentAccountsQuery {
+                kinds: vec!["codex".into()],
+                force: false
+            }
+        );
+        let force = Call::AgentAccountsQuery {
+            kinds: vec![],
+            force: true,
+        };
+        assert_eq!(
+            serde_json::from_value::<Call>(serde_json::to_value(&force).unwrap()).unwrap(),
+            force
+        );
+    }
+
+    #[test]
+    fn legacy_ping_has_unknown_lifecycle() {
+        let reply: PingReply = serde_json::from_value(json!({
+            "protocol_version": 1, "daemon_version": "old"
+        }))
+        .unwrap();
+        assert!(reply.lifecycle.is_empty());
+    }
+
+    #[test]
+    fn hardware_snapshots_accept_old_daemons_and_preserve_unknown() {
+        let legacy: SystemStats = serde_json::from_value(json!({
+            "cpu": {"percent": 17.5, "cores": 8, "load": 2.0},
+            "memory": {"used": 100, "total": 200},
+            "gpus": [{"name":"NVIDIA", "percent":0.0, "memory_used":0, "memory_total":1024}]
+        }))
+        .unwrap();
+        assert_eq!(legacy.cpu.percent, Some(17.5));
+        assert_eq!(legacy.cpu.temperature_celsius, None);
+        assert_eq!(legacy.gpu_status, GpuStatus::Unknown);
+        assert_eq!(legacy.gpus[0].percent, Some(0.0));
+        assert_eq!(legacy.gpus[0].temperature_celsius, None);
+        let unavailable: SystemStats = serde_json::from_value(json!({
+            "cpu": {"cores":8, "percent":null, "load":null},
+            "memory": null,
+            "gpus": [{"name":"Apple GPU", "percent":null, "memory_used":null, "memory_total":null}],
+            "gpu_status": "unavailable",
+            "gpu_error": "driver query failed"
+        }))
+        .unwrap();
+        assert_eq!(unavailable.cpu.percent, None);
+        assert_eq!(unavailable.memory, None);
+        assert_eq!(unavailable.gpus[0].percent, None);
+        assert_eq!(unavailable.gpu_status, GpuStatus::Unavailable);
+        let roundtrip: SystemStats =
+            serde_json::from_value(serde_json::to_value(&unavailable).unwrap()).unwrap();
+        assert_eq!(roundtrip, unavailable);
+    }
+
+    #[test]
+    fn legacy_read_file_wire_shape_is_unchanged() {
+        let legacy = json!({"method": "read_file", "params": {"path": "/data/a.csv"}});
+        let parsed: Call = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            parsed,
+            Call::ReadFile {
+                path: "/data/a.csv".into()
+            }
+        );
+        assert_eq!(serde_json::to_value(parsed).unwrap(), legacy);
+    }
+
+    #[test]
     fn base64_in_lines_or_without_padding_decodes() {
         assert_eq!(decode_base64("aGVs\nbG8=\n").unwrap(), b"hello");
         assert_eq!(decode_base64("aGVsbG8").unwrap(), b"hello");
@@ -2315,5 +2814,119 @@ mod tests {
                 outcome: Outcome::Result(json!([1, 2]))
             }
         );
+    }
+
+    #[test]
+    fn lifecycle_calls_have_stable_shapes_and_no_implicit_force() {
+        for (call, wire) in [
+            (
+                Call::ResourceInventory,
+                json!({"method":"resource_inventory"}),
+            ),
+            (
+                Call::StopResources { force: false },
+                json!({"method":"stop_resources","params":{"force":false}}),
+            ),
+            (
+                Call::StorageInventory,
+                json!({"method":"storage_inventory"}),
+            ),
+            (
+                Call::CleanStorage {
+                    categories: vec!["cache".into()],
+                },
+                json!({"method":"clean_storage","params":{"categories":["cache"]}}),
+            ),
+            (
+                Call::UninstallComponents { delete_data: false },
+                json!({"method":"uninstall_components","params":{"delete_data":false}}),
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(&call).unwrap(), wire);
+            assert_eq!(serde_json::from_value::<Call>(wire).unwrap(), call);
+        }
+        assert!(
+            serde_json::from_value::<Call>(json!({"method":"stop_resources","params":{}})).is_err()
+        );
+        assert!(
+            serde_json::from_value::<Call>(json!({"method":"uninstall_components","params":{}}))
+                .is_err()
+        );
+    }
+    #[test]
+    fn data_context_additions_keep_old_wire_shapes_readable() {
+        let variable: Variable = serde_json::from_value(json!({
+            "name":"df", "kind":"data", "class":"data.frame", "summary":"3 x 2"
+        }))
+        .unwrap();
+        assert_eq!(variable.accessor, None);
+        assert!(
+            serde_json::to_value(variable)
+                .unwrap()
+                .get("accessor")
+                .is_none()
+        );
+        let focus: Focus = serde_json::from_value(json!({"open":[]})).unwrap();
+        assert_eq!(focus.table, None);
+        let rows: TableRows = serde_json::from_value(json!({
+            "session":"s", "path":["df"], "code":"df", "width":2,
+            "total":3, "rows":3, "offset":0, "labels":[], "values":[]
+        }))
+        .unwrap();
+        assert_eq!(rows.column_indices, None);
+        let old: Call = serde_json::from_value(json!({
+            "method":"table_rows", "params":{"session":"s","path":["df"]}
+        }))
+        .unwrap();
+        assert!(matches!(old, Call::TableRows { columns: None, .. }));
+        let search: Call = serde_json::from_value(json!({
+            "method":"find_variables", "params":{"session":"s","query":"x"}
+        }))
+        .unwrap();
+        assert_eq!(
+            search,
+            Call::FindVariables {
+                session: "s".into(),
+                query: "x".into(),
+                root: vec![],
+            }
+        );
+        let projected: Call = serde_json::from_value(json!({
+            "method":"table_rows", "params":{"session":"s","path":["df"],"columns":[2,0]}
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(projected).unwrap()["params"]["columns"],
+            json!([2, 0])
+        );
+    }
+
+    #[test]
+    fn table_search_defaults_empty_and_round_trips_literal_text() {
+        for method in ["table_rows", "table_summary", "table_export"] {
+            let mut wire = json!({
+                "method": method,
+                "params": {"session": "s", "path": ["df"], "file": "out.csv"}
+            });
+            let old: Call = serde_json::from_value(wire.clone()).unwrap();
+            let search = match &old {
+                Call::TableRows { search, .. }
+                | Call::TableSummary { search, .. }
+                | Call::TableExport { search, .. } => search,
+                _ => unreachable!(),
+            };
+            assert!(search.is_empty());
+            assert!(
+                serde_json::to_value(old).unwrap()["params"]
+                    .get("search")
+                    .is_none()
+            );
+            wire["params"]["search"] = json!("A\"\\\n[.]");
+            let call: Call = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(call).unwrap()["params"]["search"],
+                wire["params"]["search"]
+            );
+        }
     }
 }

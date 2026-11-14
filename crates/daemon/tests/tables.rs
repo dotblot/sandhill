@@ -98,7 +98,7 @@ async fn rows(
     let path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     tokio::time::timeout(
         TIMEOUT,
-        client.table_rows(session, &path, offset, None, sort, filters),
+        client.table_rows(session, &path, offset, None, sort, filters, ""),
     )
     .await
     .expect("reading the table timed out")
@@ -206,7 +206,7 @@ async fn check_meta(client: &Client, session: &str, code: &str, text: &[&str], t
 
     let summary = tokio::time::timeout(
         TIMEOUT,
-        client.table_summary(session, &["meta".into()], &[]),
+        client.table_summary(session, &["meta".into()], &[], ""),
     )
     .await
     .unwrap()
@@ -228,7 +228,7 @@ async fn check_meta(client: &Client, session: &str, code: &str, text: &[&str], t
     assert_eq!(top, [("0", 2), ("1", 2), ("2", 1)]);
     let kept = tokio::time::timeout(
         TIMEOUT,
-        client.table_summary(session, &["meta".into()], &filters),
+        client.table_summary(session, &["meta".into()], &filters, ""),
     )
     .await
     .unwrap()
@@ -246,6 +246,7 @@ async fn check_meta(client: &Client, session: &str, code: &str, text: &[&str], t
             &sort,
             &filters,
             file.to_str().unwrap(),
+            "",
         ),
     )
     .await
@@ -289,6 +290,8 @@ async fn check_wide(client: &Client, session: &str, last: &str) {
             limit: None,
             sort: vec![],
             filters: vec![],
+            search: String::new(),
+            columns: None,
             column_offset,
             column_limit: None,
             cells_only,
@@ -303,11 +306,56 @@ async fn check_wide(client: &Client, session: &str, last: &str) {
     assert_eq!(end.column_offset, 1150);
     let want: Vec<Value> = (1150..1200).map(|j| json!(2400 + j)).collect();
     assert_eq!(end.values[2], want);
+    // Projection preserves requested order and original identities, for
+    // both real R and Python kernels using this shared check.
+    let projected: TableRows = client
+        .call(Call::TableRows {
+            session: session.into(),
+            path: vec!["wide".into()],
+            offset: 0,
+            limit: Some(3),
+            sort: vec![],
+            filters: vec![],
+            search: String::new(),
+            columns: Some(vec![1199, 2, 0]),
+            column_offset: 0,
+            column_limit: None,
+            cells_only: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(projected.column_indices, Some(vec![1199, 2, 0]));
+    assert_eq!(projected.columns.len(), 3);
+    assert_eq!(projected.columns[0].name, last);
+    assert_eq!(
+        projected.values[2],
+        vec![json!(3599), json!(2402), json!(2400)]
+    );
+    let empty: TableRows = client
+        .call(Call::TableRows {
+            session: session.into(),
+            path: vec!["wide".into()],
+            offset: 0,
+            limit: Some(1),
+            sort: vec![],
+            filters: vec![],
+            search: String::new(),
+            columns: Some(vec![]),
+            column_offset: 0,
+            column_limit: None,
+            cells_only: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(empty.column_indices, Some(vec![]));
+    assert!(empty.columns.is_empty());
+    assert_eq!(empty.values, vec![Vec::<Value>::new()]);
     let summary: TableSummary = client
         .call(Call::TableSummary {
             session: session.into(),
             path: vec!["wide".into()],
             filters: vec![],
+            search: String::new(),
             column_offset: 1190,
             column_limit: None,
         })
@@ -319,10 +367,160 @@ async fn check_wide(client: &Client, session: &str, last: &str) {
     assert_eq!((last.min, last.max), (Some(1199.0), Some(3599.0)));
 }
 
+/// Search is evaluated in the live kernel over full values and every
+/// column, including columns omitted from the returned page.
+async fn check_search(client: &mut Client, session: &str, language: &str) {
+    let keyword = "A\"\\\n[.]";
+    let literal = serde_json::to_string(keyword).unwrap();
+    let code = if language == "r" {
+        format!(
+            "searched <- data.frame(name = c('Alpha', 'beta', 'gamma', 'alpha', 'Delta', 'none'), category = factor(c('group', 'ALPHA', 'other', 'other', 'other', 'other')), score = c(42L, 12L, 942L, 24L, 6L, 7L), flag = c(TRUE, FALSE, TRUE, FALSE, TRUE, FALSE), day = as.Date(c('2024-01-02', rep('2025-02-03', 5))), note = c('x', 'x', {literal}, 'x', NA, paste0(strrep('x', 510), 'Needle')), row.names = paste0('R', 1:6))"
+        )
+    } else {
+        format!(
+            "searched = pd.DataFrame({{'name': ['Alpha', 'beta', 'gamma', 'alpha', 'Delta', 'none'], 'category': pd.Categorical(['group', 'ALPHA', 'other', 'other', 'other', 'other']), 'score': [42, 12, 942, 24, 6, 7], 'flag': [True, False, True, False, True, False], 'day': pd.to_datetime(['2024-01-02'] + ['2025-02-03'] * 5), 'note': ['x', 'x', {literal}, 'x', None, 'x' * 510 + 'Needle']}}, index=[f'R{{i}}' for i in range(1, 7)])"
+        )
+    };
+    run(client, session, &code, None, None).await;
+    let path = vec!["searched".into()];
+    for (search, labels) in [
+        ("aLpHa", vec!["R1", "R2", "R4"]),
+        ("42", vec!["R1", "R3"]),
+        ("TRUE", vec!["R1", "R3", "R5"]),
+        ("2024-01", vec!["R1"]),
+        (keyword, vec!["R3"]),
+        ("[.]", vec!["R3"]),
+        ("needle", vec!["R6"]),
+        ("no match", vec![]),
+        ("", vec!["R1", "R2", "R3", "R4", "R5", "R6"]),
+    ] {
+        let result = client
+            .table_rows(session, &path, 0, None, &[], &[], search)
+            .await
+            .unwrap();
+        assert_eq!(result.total, 6);
+        assert_eq!(result.rows, labels.len() as u64, "{language}: {search:?}");
+        assert_eq!(result.labels, labels, "{language}: {search:?}");
+    }
+    let filters = vec![filter(2, ">", &["20"])];
+    let sort = vec![TableSort {
+        column: 2,
+        descending: true,
+    }];
+    let page: TableRows = client
+        .call(Call::TableRows {
+            session: session.into(),
+            path: path.clone(),
+            offset: 1,
+            limit: Some(1),
+            sort: sort.clone(),
+            filters: filters.clone(),
+            search: "alpha".into(),
+            columns: Some(vec![2]),
+            column_offset: 0,
+            column_limit: None,
+            cells_only: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!((page.total, page.rows), (6, 2));
+    assert_eq!(page.labels, ["R4"]);
+    assert_eq!(page.values, vec![vec![json!(24)]]);
+    let summary = client
+        .table_summary(session, &path, &filters, "alpha")
+        .await
+        .unwrap();
+    assert_eq!(summary.rows, 2);
+    assert_eq!(
+        (summary.columns[2].min, summary.columns[2].max),
+        (Some(24.0), Some(42.0))
+    );
+    let literal_summary = client
+        .table_summary(session, &path, &[], keyword)
+        .await
+        .unwrap();
+    assert_eq!(literal_summary.rows, 1);
+    assert_eq!(literal_summary.columns[2].min, Some(942.0));
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("search.csv");
+    client
+        .table_export(
+            session,
+            &path,
+            &sort,
+            &filters,
+            file.to_str().unwrap(),
+            "alpha",
+        )
+        .await
+        .unwrap();
+    let csv = std::fs::read_to_string(&file).unwrap();
+    let lines: Vec<_> = csv.lines().collect();
+    assert_eq!(lines.len(), 3, "{csv}");
+    assert!(
+        lines[1].starts_with("\"R1\"") || lines[1].starts_with("R1,"),
+        "{csv}"
+    );
+    assert!(
+        lines[2].starts_with("\"R4\"") || lines[2].starts_with("R4,"),
+        "{csv}"
+    );
+    client
+        .table_export(session, &path, &[], &[], file.to_str().unwrap(), keyword)
+        .await
+        .unwrap();
+    let csv = std::fs::read_to_string(&file).unwrap();
+    assert!(csv.contains("gamma") && csv.contains("942"), "{csv}");
+    assert!(!csv.contains("Alpha") && !csv.contains("Delta"), "{csv}");
+
+    // A subsequent request reads the changed live object, not a UI-side cache.
+    let update = if language == "r" {
+        "searched$name[1] <- 'changed'"
+    } else {
+        "searched.loc['R1', 'name'] = 'changed'"
+    };
+    run(client, session, update, None, None).await;
+    let changed = client
+        .table_rows(session, &path, 0, None, &[], &[], "alpha")
+        .await
+        .unwrap();
+    assert_eq!(changed.labels, ["R2", "R4"]);
+    for keyword in ["NA", "nan"] {
+        let missing = client
+            .table_rows(session, &path, 0, None, &[], &[], keyword)
+            .await
+            .unwrap();
+        assert_eq!(
+            missing.rows, 0,
+            "{language}: missing values matched {keyword:?}"
+        );
+    }
+    let matrix = client
+        .table_rows(session, &["m".into()], 0, None, &[], &[], "6")
+        .await
+        .unwrap();
+    assert_eq!(matrix.rows, 1);
+    assert_eq!(matrix.values, vec![vec![json!(2), json!(4), json!(6)]]);
+    let empty = if language == "r" {
+        "no_columns <- data.frame(row.names = c('R1', 'R2'))"
+    } else {
+        "no_columns = pd.DataFrame(index=['R1', 'R2'])"
+    };
+    run(client, session, empty, None, None).await;
+    for (search, expected) in [("", 2), ("anything", 0)] {
+        let empty = client
+            .table_rows(session, &["no_columns".into()], 0, None, &[], &[], search)
+            .await
+            .unwrap();
+        assert_eq!((empty.total, empty.width, empty.rows), (2, 0, expected));
+    }
+}
+
 async fn rows_error(client: &Client, session: &str, path: &[&str]) -> String {
     let path: Vec<String> = path.iter().map(|s| s.to_string()).collect();
     client
-        .table_rows(session, &path, 0, None, &[], &[])
+        .table_rows(session, &path, 0, None, &[], &[], "")
         .await
         .expect_err("reading should fail")
         .to_string()
@@ -378,6 +576,7 @@ async fn r_tables_are_read_filtered_sorted_and_exported() {
             .contains("can't be shown as a table")
     );
     check_wide(&client, &session, "V1200").await;
+    check_search(&mut client, &session, "r").await;
     client.shutdown(&session).await.unwrap();
 }
 
@@ -453,6 +652,7 @@ async fn python_tables_are_read_filtered_sorted_and_exported() {
             .contains("can't be shown as a table")
     );
     check_wide(&client, &session, "1199").await;
+    check_search(&mut client, &session, "python").await;
     client.shutdown(&session).await.unwrap();
 }
 

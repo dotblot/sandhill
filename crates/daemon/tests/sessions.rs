@@ -328,12 +328,78 @@ async fn sessions_report_their_language_version_and_memory() {
         .find(|s| s.session == info.id)
         .unwrap();
     assert!(held.rss > 200 << 20, "kernel holds {} bytes", held.rss);
-    assert!(stats.cpu.cores >= 1 && stats.memory.total > held.rss);
+    assert!(stats.cpu.cores >= 1 && stats.memory.as_ref().unwrap().total > held.rss);
     assert_eq!(stats.disk.unwrap().path, dir.path().to_str().unwrap());
 
     client.shutdown(&info.id).await.unwrap();
     let stats = client.system_stats(None).await.unwrap();
     assert!(stats.sessions.iter().all(|s| s.session != info.id));
+}
+
+/// Hardware capabilities are collected on the daemon host, not the client,
+/// and optional readings survive the same wire path as real kernel memory.
+#[tokio::test]
+async fn hardware_snapshot_reports_available_or_unknown_without_fake_zero() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let client = daemon.client().await;
+    let session = client.start_session("python3", None).await.unwrap();
+    let stats = client
+        .system_stats(Some(dir.path().to_str().unwrap()))
+        .await
+        .unwrap();
+    assert!(
+        stats
+            .sessions
+            .iter()
+            .any(|s| s.session == session.id && s.rss > 0)
+    );
+    assert!(
+        stats
+            .cpu
+            .percent
+            .is_some_and(|v| (0.0..=100.0).contains(&v))
+    );
+    assert!(
+        stats
+            .cpu
+            .temperature_celsius
+            .is_none_or(|v| v.is_finite() && (-20.0..=150.0).contains(&v))
+    );
+    assert!(
+        stats
+            .memory
+            .as_ref()
+            .is_some_and(|m| m.total > 0 && m.used <= m.total)
+    );
+    assert_eq!(
+        stats.disk.as_ref().unwrap().path,
+        dir.path().to_str().unwrap()
+    );
+    assert_ne!(stats.gpu_status, sandhill_proto::GpuStatus::Unknown);
+    for gpu in &stats.gpus {
+        assert!(!gpu.name.is_empty());
+        assert!(
+            gpu.percent
+                .is_none_or(|v| v.is_finite() && (0.0..=100.0).contains(&v))
+        );
+        assert!(
+            gpu.temperature_celsius
+                .is_none_or(|v| v.is_finite() && (-20.0..=150.0).contains(&v))
+        );
+        assert!(gpu.memory_total.is_none_or(|v| v > 0));
+    }
+    if stats.gpu_status == sandhill_proto::GpuStatus::Absent {
+        assert!(stats.gpus.is_empty());
+        assert!(stats.gpu_error.is_none());
+    }
+    if stats.gpu_status == sandhill_proto::GpuStatus::Unavailable {
+        assert!(stats.gpu_error.as_ref().is_some_and(|s| !s.is_empty()));
+    }
+    client.shutdown(&session.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -597,11 +663,38 @@ async fn the_file_tree_makes_renames_copies_and_deletes() {
         .call(Call::ListDir {
             path: at(""),
             sizes: true,
+            marks: false,
         })
         .await
         .unwrap();
     let listed: Vec<_> = sized.iter().map(|e| (e.name.as_str(), e.size)).collect();
     assert_eq!(listed, [("data", 6), ("results", 0)]);
+
+    // The folder chooser marks Git repositories and Sandhill projects.
+    std::fs::create_dir(work.join("data/.git")).unwrap();
+    std::fs::create_dir(work.join("results/.sandhill")).unwrap();
+    std::fs::write(work.join(".git"), "gitdir: elsewhere\n").unwrap();
+    let marked: Vec<DirEntry> = client
+        .call(Call::ListDir {
+            path: at(""),
+            sizes: false,
+            marks: true,
+        })
+        .await
+        .unwrap();
+    let listed: Vec<_> = marked
+        .iter()
+        .map(|e| (e.name.as_str(), e.git, e.sandhill))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("data", true, false),
+            ("results", false, true),
+            (".git", false, false)
+        ]
+    );
+    std::fs::remove_file(work.join(".git")).unwrap();
 
     // Downloading reads a file in parts.
     let part: FileBytes = client
@@ -810,6 +903,9 @@ async fn projects_keep_their_state_and_their_sessions() {
         assert_eq!(opened.path, project_path);
         assert_eq!(opened.name, "my-analysis");
         assert!(opened.state.is_null());
+        // A project opened for the first time starts nothing until trusted.
+        assert!(!opened.trusted);
+        client.trust_folder(&project_path).await.unwrap();
         client
             .save_project_state(&project_path, serde_json::json!({"tabs": ["a.qmd"]}))
             .await

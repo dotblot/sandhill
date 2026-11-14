@@ -1,7 +1,7 @@
 //! Reaching sandhilld, on this machine or on a server over ssh.
 //!
-//! Either way the app runs `sandhilld attach --start` and speaks the wire
-//! protocol over its stdin and stdout: on this machine as a child process,
+//! Either way the app runs `sandhilld attach --start --confirm-exit` and speaks
+//! the wire protocol over its stdin and stdout: locally as a child process,
 //! on a server through the system `ssh`, so `~/.ssh/config`, keys, the agent
 //! and jump hosts work as they do in a terminal. Before attaching to a
 //! server, the link installs the app's own build of sandhilld there if the
@@ -46,11 +46,41 @@ impl Target {
 
 #[derive(Debug, Clone, Default)]
 pub struct Options {
-    /// Builds of sandhilld to install on servers, named
-    /// `sandhilld-<target triple>`, such as `sandhilld-x86_64-unknown-linux-musl`.
+    /// Bundled daemon/kernel/language-server builds, named `<program>-<target triple>`.
+    /// Used for SSH installation and local ty/Ruff installation.
     pub builds: Option<PathBuf>,
     /// The ssh program; `ssh` from `PATH` if not set.
     pub ssh: Option<PathBuf>,
+}
+
+impl Options {
+    /// Compare the daemon's executable fingerprint with this app's payloads.
+    /// Ping has no platform field; an exact hash match identifies both the
+    /// build and its platform without comparing Mac and Linux executables.
+    /// `None` means there is no readable bundled daemon to compare.
+    pub fn matches_daemon_build(&self, build: &str) -> Option<bool> {
+        if build.is_empty() {
+            return None;
+        }
+        let mut found = false;
+        for entry in std::fs::read_dir(self.builds.as_ref()?).ok()?.flatten() {
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("sandhilld-")
+                || !entry.file_type().is_ok_and(|kind| kind.is_file())
+            {
+                continue;
+            }
+            if let Ok(hash) = ssh::sha256_file(&entry.path()) {
+                found = true;
+                if hash.get(..16) == Some(build) {
+                    return Some(true);
+                }
+            }
+        }
+        found.then_some(false)
+    }
 }
 
 /// A connected daemon.
@@ -83,7 +113,7 @@ pub async fn connect(
     progress: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<Connection, Error> {
     match target {
-        Target::Local => local::connect().await,
+        Target::Local => local::connect(options, progress).await,
         Target::Ssh(destination) => ssh::connect(destination, options, progress).await,
     }
 }
@@ -136,4 +166,32 @@ async fn attach(
 fn worth_reporting(line: &str) -> bool {
     let line = line.trim();
     !line.is_empty() && !line.starts_with("Warning: Permanently added")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Options, ssh};
+
+    #[test]
+    fn bundled_daemon_build_matches_fingerprint_not_version_or_app_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = Options {
+            builds: Some(dir.path().into()),
+            ssh: None,
+        };
+        assert_eq!(options.matches_daemon_build("0123456789abcdef"), None);
+        // Unrelated tools must not establish that a daemon bundle exists.
+        std::fs::write(dir.path().join("ark-x86_64-unknown-linux-gnu"), b"ark").unwrap();
+        assert_eq!(options.matches_daemon_build("0123456789abcdef"), None);
+        let path = dir.path().join("sandhilld-x86_64-unknown-linux-gnu");
+        std::fs::write(&path, b"current Linux daemon").unwrap();
+        let hash = ssh::sha256_file(&path).unwrap();
+        assert_eq!(options.matches_daemon_build(&hash[..16]), Some(true));
+        assert_eq!(
+            options.matches_daemon_build("0123456789abcdef"),
+            Some(false)
+        );
+        assert_eq!(options.matches_daemon_build(""), None);
+        assert_eq!(Options::default().matches_daemon_build(&hash[..16]), None);
+    }
 }

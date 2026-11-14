@@ -1,6 +1,6 @@
 //! Antigravity in the chat: Sandhill's bridge driving a stand-in for
 //! Google's `agy` CLI that speaks its documented headless mode (NDJSON on
-//! stdout, the message on stdin, `agy mcp add` for MCP servers), and uses
+//! stdin and stdout, `agy mcp add` for MCP servers), and uses
 //! Sandhill's real MCP server with a real Python kernel. The real `agy`
 //! needs a Google sign-in, so it isn't run here. Skips (and says so) when
 //! Python or the kernel isn't installed.
@@ -37,10 +37,10 @@ def record(entry):
         f.write(json.dumps(entry) + "\n")
 
 def servers():
-    return json.load(open(config)) if config and os.path.exists(config) else {}
+    return json.load(open(config)).get("mcpServers", {}) if config and os.path.exists(config) else {}
 
 if args[:1] == ["--help"]:
-    print("Usage: agy [flags]\n  --output-format\n  --print-timeout\n  --model\n  --effort\n  --conversation\n  --mode\n  --dangerously-skip-permissions")
+    print("Usage: agy [flags]\n  --input-format\n  --output-format\n  --print-timeout\n  --model\n  --effort\n  --conversation\n  --mode\n  --dangerously-skip-permissions")
     sys.exit(0)
 if args[:1] == ["--version"]:
     print("agy version 2.0.0")
@@ -59,13 +59,37 @@ if args[:2] == ["mcp", "add"]:
         rest = rest[1:]
     all = servers()
     all[name] = {"command": rest[0], "args": rest[1:]}
-    json.dump(all, open(config, "w"))
+    document = json.load(open(config)) if os.path.exists(config) else {}
+    document["mcpServers"] = all
+    json.dump(document, open(config, "w"))
     record({"added": name, "command": rest})
     sys.exit(0)
+if args == ["--print", "/usage", "--output-format", "json"]:
+    record({"usage_query": True})
+    print(json.dumps({"status":"SUCCESS","conversation_id":"","num_turns":0,
+        "response":"Gemini Models: 99% remaining",
+        "command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[
+        {"id":"gemini-5h","window":"5h","remaining_fraction":0.99,"reset_time":"2099-01-01T00:00:00Z"}]}]}}}))
+    sys.exit(0)
 
-prompt = sys.stdin.read()
-record({"args": args, "prompt": prompt})
 flag = lambda name: args[args.index(name) + 1] if name in args else None
+# agy does not infer print mode from --output-format: the original bridge
+# invocation would start the TUI instead of consuming a message.
+if flag("--input-format") != "stream-json" or flag("--output-format") != "stream-json":
+    print("CLI error: interactive TUI requires a terminal; use structured headless input", file=sys.stderr)
+    sys.exit(2)
+wire = sys.stdin.read()
+messages = [json.loads(line) for line in wire.splitlines() if line.strip()]
+assert len(messages) == 1, "one NDJSON user message and EOF per turn"
+message = messages[0]
+assert message["event"] == "user"
+assert message["message"]["role"] == "user"
+content = message["message"]["content"]
+assert isinstance(content, list) and content
+assert all(part["type"] == "text" and isinstance(part["text"], str) for part in content)
+prompt = "".join(part["text"] for part in content)
+assert prompt.strip(), "a turn must contain a prompt"
+record({"args": args, "prompt": prompt, "input_messages": len(messages)})
 conversation = flag("--conversation") or "conv-1"
 
 def emit(kind, body):
@@ -85,7 +109,7 @@ def done(response):
                     "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}})
 
 def call_tool(name, arguments):
-    server = servers()["sandhill"]
+    server = servers()["sandhill-managed"]
     mcp = subprocess.Popen([server["command"]] + server["args"], stdin=subprocess.PIPE,
                            stdout=subprocess.PIPE, text=True)
     def ask(id, method, params):
@@ -145,6 +169,8 @@ elif "Take your time" in prompt:
     step({"step_index": 1, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "Thinking"})
     time.sleep(60)
 else:
+    emit("result", {"conversation_id": conversation, "status": "ERROR", "response": "",
+                    "error": "model gemini-9 not found"})
     print('AGY_ERROR: {"message": "model gemini-9 not found"}', file=sys.stderr)
     sys.exit(3)
 "#;
@@ -309,7 +335,16 @@ async fn antigravity_works_through_the_chat() {
     // before starting anything that reads it.
     unsafe { std::env::set_var("PATH", &path) };
     let log = dir.path().join("agy.log");
-    let config = dir.path().join("mcp_config.json");
+    let home = dir.path().join("home");
+    let config = home.join(".gemini/config/mcp_config.json");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let legacy = json!({"command":"/expired/Sandhill.app/Contents/MacOS/sandhilld","args":["mcp"]});
+    let user_server = json!({"command":"/user/custom-server","args":["--own"]});
+    std::fs::write(
+        &config,
+        json!({"mcpServers":{"sandhill":legacy,"user":user_server}}).to_string(),
+    )
+    .unwrap();
 
     let options = AgentOptions {
         permission: Some("supervised".into()),
@@ -330,6 +365,7 @@ async fn antigravity_works_through_the_chat() {
         .await
         .unwrap();
     launch.env.extend([
+        ("HOME".to_string(), home.to_string_lossy().into_owned()),
         (
             "STANDIN_LOG".to_string(),
             log.to_string_lossy().into_owned(),
@@ -379,14 +415,30 @@ async fn antigravity_works_through_the_chat() {
     assert_eq!(written["cells"][1]["source"], json!(["print(6 * 7)"]));
     // Sandhill's tools were added to agy's settings, as `agy mcp add` does.
     let added: Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
-    assert_eq!(added["sandhill"]["command"], exe.to_string_lossy().as_ref());
-    assert_eq!(added["sandhill"]["args"], json!(["mcp"]));
+    assert_eq!(
+        added["mcpServers"]["sandhill-managed"]["command"],
+        exe.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        added["mcpServers"]["sandhill-managed"]["args"],
+        json!(["mcp"])
+    );
+    assert_eq!(added["mcpServers"]["sandhill"], legacy);
+    assert_eq!(added["mcpServers"]["user"], user_server);
     // agy ran headless, was told about Sandhill, and named its conversation.
     let first = &runs(&log)[0];
     assert_eq!(
         args(first),
-        ["--output-format", "stream-json", "--print-timeout", "24h"]
+        [
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--print-timeout",
+            "24h"
+        ]
     );
+    assert_eq!(first["input_messages"], 1);
     let told = first["prompt"].as_str().unwrap();
     assert!(
         told.starts_with("You are running inside Sandhill"),
@@ -398,6 +450,31 @@ async fn antigravity_works_through_the_chat() {
     assert_eq!(agent["thread"], "conv-1");
     assert_eq!(agent["status"]["model"], "Gemini 3.6 Flash High");
     assert_eq!(agent["models"][1]["id"], "gemini-3.1-pro-low");
+
+    // The GUI composer invokes the CLI built-in without adding a model turn.
+    // Native PTY input is covered separately in antigravity_native.rs.
+    let after = entries.len();
+    say(
+        &terminals,
+        &info.id,
+        &[json!({"kind":"say","text":"/usage"})],
+    )
+    .await;
+    chat_until(&mut events, &mut entries, after, "stop").await;
+    assert_eq!(kinds(&entries[after..]), ["prompt", "text", "stop"]);
+    assert_eq!(reply(&entries[after..]), "Gemini Models: 99% remaining");
+    assert_eq!(runs(&log).len(), 1);
+    let agent = terminals.info(&info.id).unwrap().agent.unwrap();
+    assert_eq!(agent["thread"], "conv-1");
+
+    assert_eq!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .filter(|line| line.contains("\"usage_query\""))
+            .count(),
+        1
+    );
 
     // Normal: headless agy can't ask, so the command is turned down, and
     // the chat says how to let it.
@@ -561,6 +638,7 @@ async fn antigravity_works_through_the_chat() {
         .await
         .unwrap();
     launch.env.extend([
+        ("HOME".to_string(), home.to_string_lossy().into_owned()),
         (
             "STANDIN_LOG".to_string(),
             log.to_string_lossy().into_owned(),

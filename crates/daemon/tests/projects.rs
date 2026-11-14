@@ -46,6 +46,38 @@ impl TestDaemon {
     }
 }
 
+#[tokio::test]
+async fn document_kernel_history_does_not_launch_sessions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("atlas");
+    let env = project.join(".conda");
+    std::fs::create_dir_all(env.join("conda-meta")).unwrap();
+    let daemon = TestDaemon::start(&tmp.path().join("state")).await;
+    let client = daemon.client().await;
+    let path = project.to_string_lossy().into_owned();
+    let file = project.join("qc.py").to_string_lossy().into_owned();
+    let specs: Vec<KernelspecInfo> = client
+        .call(Call::ListProjectKernelspecs { path: path.clone() })
+        .await
+        .unwrap();
+    assert!(
+        !specs
+            .iter()
+            .any(|spec| spec.name.starts_with("project-conda"))
+    );
+    let mut state = json!({"tabs": ["qc.py"], "documents": {}});
+    state["documents"][&file] = json!({"kernel": "remembered-but-missing", "scroll": 42});
+    client
+        .save_project_state(&path, state.clone())
+        .await
+        .unwrap();
+    drop(client);
+    let reconnected = daemon.client().await;
+    let restored = reconnected.open_project(&path).await.unwrap();
+    assert_eq!(restored.state, state);
+    assert!(reconnected.list_sessions().await.unwrap().is_empty());
+}
+
 async fn have_kernel(name: &str) -> bool {
     let found = sandhill_daemon::kernel::find_kernelspec(name, None)
         .await

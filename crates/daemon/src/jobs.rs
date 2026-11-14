@@ -49,8 +49,9 @@ pub fn keep_awake(pid: u32) {
     }
 }
 
-/// The terminal to run `job` in. Without `cwd` it runs in the project
-/// folder, else the script's folder.
+/// The terminal to run `job` in. Quarto always runs from the document's
+/// folder, allowing Quarto to discover the enclosing project itself.
+/// Other jobs use `cwd`, then the project folder, then the script's folder.
 pub fn launch(job: &JobSpec, cwd: Option<&Path>, project: Option<&str>) -> Result<Launch> {
     let root = project.map(Path::new);
     let args = job
@@ -75,6 +76,13 @@ pub fn launch(job: &JobSpec, cwd: Option<&Path>, project: Option<&str>) -> Resul
                 (Kind::Python, None) => vec!["python3".into()],
                 (Kind::Shell, _) => vec!["bash".into()],
                 (Kind::Nextflow, _) => vec!["nextflow".into(), "run".into()],
+                (Kind::Quarto, None) => {
+                    let search = Search::from_env().in_project(root);
+                    let Some(quarto) = crate::preview::find_quarto(&search) else {
+                        bail!("{}", crate::preview::install_advice());
+                    };
+                    vec![shell_quote(&quarto.to_string_lossy()), "render".into()]
+                }
                 (Kind::Snakemake, _) => vec!["snakemake".into(), "--snakefile".into()],
                 (Kind::Program, _) => {
                     if !is_executable(script) {
@@ -105,7 +113,12 @@ pub fn launch(job: &JobSpec, cwd: Option<&Path>, project: Option<&str>) -> Resul
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            (line, name)
+            let title = if kind == Kind::Quarto {
+                format!("Render {name}")
+            } else {
+                name
+            };
+            (line, title)
         }
         None => {
             let Some(command) = args else {
@@ -114,17 +127,25 @@ pub fn launch(job: &JobSpec, cwd: Option<&Path>, project: Option<&str>) -> Resul
             (command.to_string(), title_of(command))
         }
     };
-    let cwd = match cwd {
-        Some(cwd) => cwd.to_path_buf(),
-        None => root
-            .map(Path::to_path_buf)
-            .or_else(|| {
-                script
-                    .as_deref()
-                    .and_then(Path::parent)
-                    .map(Path::to_path_buf)
-            })
-            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or("/".into()))),
+    let document_dir = script
+        .as_deref()
+        .filter(|path| Kind::of(path) == Kind::Quarto)
+        .and_then(Path::parent);
+    let cwd = if let Some(dir) = document_dir {
+        dir.to_path_buf()
+    } else {
+        match cwd {
+            Some(cwd) => cwd.to_path_buf(),
+            None => root
+                .map(Path::to_path_buf)
+                .or_else(|| {
+                    script
+                        .as_deref()
+                        .and_then(Path::parent)
+                        .map(Path::to_path_buf)
+                })
+                .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or("/".into()))),
+        }
     };
     if !cwd.is_dir() {
         bail!("{} is not a folder", cwd.display());
@@ -151,6 +172,7 @@ enum Kind {
     Shell,
     Nextflow,
     Snakemake,
+    Quarto,
     Program,
 }
 
@@ -166,6 +188,7 @@ impl Kind {
             Some("sh" | "bash") => Kind::Shell,
             Some("nf") => Kind::Nextflow,
             Some("smk") => Kind::Snakemake,
+            Some("qmd" | "rmd") => Kind::Quarto,
             _ if name == "Snakefile" => Kind::Snakemake,
             _ => Kind::Program,
         }
@@ -240,6 +263,91 @@ fn title_of(command: &str) -> String {
     }
     let short: String = line.chars().take(TITLE_CHARS - 1).collect();
     format!("{}…", short.trim_end())
+}
+
+/// Collects Quarto's reported outputs in the independent terminal host, not
+/// in a client subscription. Lines and UTF-8/ANSI sequences may span reads.
+pub(crate) struct RenderOutputs {
+    cwd: PathBuf,
+    line: Vec<u8>,
+    oversized: bool,
+    paths: Vec<PathBuf>,
+}
+
+impl RenderOutputs {
+    pub(crate) fn new(cwd: PathBuf) -> Self {
+        Self {
+            cwd,
+            line: Vec::new(),
+            oversized: false,
+            paths: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            if matches!(byte, b'\n' | b'\r') {
+                if !self.oversized {
+                    self.record();
+                }
+                self.line.clear();
+                self.oversized = false;
+            } else if !self.oversized {
+                // An unbounded line from user code must not grow host memory.
+                if self.line.len() == 64 * 1024 {
+                    self.line.clear();
+                    self.oversized = true;
+                } else {
+                    self.line.push(byte);
+                }
+            }
+        }
+    }
+
+    fn record(&mut self) {
+        let raw = String::from_utf8_lossy(&self.line);
+        let text = if raw.contains('\u{1b}') {
+            std::borrow::Cow::Owned(crate::mcp::text::strip_ansi(&raw))
+        } else {
+            raw
+        };
+        let Some(output) = text.trim().strip_prefix("Output created:") else {
+            return;
+        };
+        let output = output.trim();
+        let output = ['"', '\'', '`']
+            .into_iter()
+            .find_map(|quote| output.strip_prefix(quote)?.strip_suffix(quote))
+            .unwrap_or(output);
+        if output.is_empty() {
+            return;
+        }
+        let path = self.cwd.join(output);
+        if !self.paths.contains(&path) {
+            self.paths.push(path);
+        }
+    }
+
+    /// Called only after a successful exit. Canonical paths handle Quarto's
+    /// project output directories, relative paths and symlinks consistently.
+    pub(crate) fn finish(mut self) -> Vec<String> {
+        if !self.oversized {
+            self.record();
+        }
+        let mut outputs = Vec::new();
+        for path in self.paths {
+            let Ok(path) = path.canonicalize() else {
+                continue;
+            };
+            if path.is_file() {
+                let path = path.to_string_lossy().into_owned();
+                if !outputs.contains(&path) {
+                    outputs.push(path);
+                }
+            }
+        }
+        outputs
+    }
 }
 
 #[cfg(test)]
@@ -325,5 +433,64 @@ mod tests {
         assert!(launch(&spec(None, Some("  ")), None, None).is_err());
         let missing = dir.path().join("missing.R");
         assert!(launch(&spec(Some(&missing), None), None, None).is_err());
+    }
+
+    #[test]
+    fn only_quarto_documents_are_render_jobs() {
+        for name in ["report.qmd", "report.Rmd", "report.QMD"] {
+            assert_eq!(Kind::of(Path::new(name)), Kind::Quarto);
+        }
+        for name in ["report.md", "report.ipynb", "report.html"] {
+            assert_eq!(Kind::of(Path::new(name)), Kind::Program);
+        }
+    }
+
+    #[test]
+    fn render_outputs_handle_chunking_ansi_quotes_and_project_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let documents = dir.path().join("documents");
+        let site = dir.path().join("_site");
+        std::fs::create_dir(&documents).unwrap();
+        std::fs::create_dir(&site).unwrap();
+        let html = site.join("résult report.html");
+        let pdf = site.join("report.pdf");
+        std::fs::write(&html, "html").unwrap();
+        std::fs::write(&pdf, "pdf").unwrap();
+        let log = format!(
+            "progress\r\u{1b}[32mOutput created: '../_site/résult report.html'\u{1b}[0m\r\n\
+             Output created: \u{1b}]8;;file://{}\u{7}{}\u{1b}]8;;\u{1b}\\\n\
+             Output created: ../_site/résult report.html\n\
+             Output created: missing.html\n\
+             Output created: `{}`",
+            pdf.display(),
+            pdf.display(),
+            site.display()
+        );
+        let mut parser = RenderOutputs::new(documents);
+        // Deliberately split multibyte characters and escape sequences.
+        for byte in log.as_bytes() {
+            parser.push(std::slice::from_ref(byte));
+        }
+        assert_eq!(
+            parser.finish(),
+            vec![
+                html.canonicalize().unwrap().to_string_lossy().into_owned(),
+                pdf.canonicalize().unwrap().to_string_lossy().into_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn render_output_lines_are_bounded_and_final_line_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let html = dir.path().join("report.html");
+        std::fs::write(&html, "html").unwrap();
+        let mut parser = RenderOutputs::new(dir.path().to_path_buf());
+        parser.push(&vec![b'x'; 64 * 1024 + 1]);
+        parser.push(b"Output created: report.html\nOutput created: \"report.html\"");
+        assert_eq!(
+            parser.finish(),
+            vec![html.canonicalize().unwrap().to_string_lossy().into_owned()]
+        );
     }
 }

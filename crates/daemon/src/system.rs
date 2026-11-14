@@ -1,25 +1,22 @@
-//! What the machine is doing, for the resource rows in the app's left pane:
-//! how busy the CPU is, memory in use, NVIDIA GPUs, the disk a project is
-//! on, the memory each kernel holds, and the CPU and memory each job uses.
-//! Linux reads `/proc`; macOS asks the kernel through libc.
+//! Host-local resource snapshots. Linux reads procfs/sysfs; macOS uses
+//! kernel statistics and read-only IOKit properties. Missing measurements
+//! remain unavailable rather than being reported as idle.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use sandhill_proto::{
-    CpuStats, DiskStats, GpuStats, JobUsage, MemoryStats, SessionMemory, SystemStats,
-};
+use sandhill_proto::{CpuStats, DiskStats, JobUsage, MemoryStats, SessionMemory, SystemStats};
+
+#[path = "system_hardware.rs"]
+mod hardware;
 
 /// A CPU percentage needs two readings. Each call measures from the
 /// previous one; without a recent one it takes a second reading after this.
 const CPU_SAMPLE: Duration = Duration::from_millis(250);
 /// A previous reading older than this says little about now.
 const CPU_STALE: Duration = Duration::from_secs(30);
-/// `nvidia-smi` can hang when a driver is wedged.
-const GPU_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Busy and total CPU time since boot, in the system's ticks.
 #[derive(Debug, Clone, Copy)]
@@ -46,10 +43,13 @@ struct TreeUsage {
 /// job with its program's. Blocks for a moment on the first call, to
 /// measure the CPU.
 pub fn stats(path: &Path, kernels: &[(String, u32)], jobs: &[(String, u32)]) -> SystemStats {
+    let (gpus, gpu_status, gpu_error) = hardware::gpus();
     SystemStats {
         cpu: cpu(),
-        memory: memory().unwrap_or(MemoryStats { total: 0, used: 0 }),
-        gpus: gpus(),
+        memory: memory(),
+        gpus,
+        gpu_status,
+        gpu_error,
         disk: disk(path),
         sessions: kernels
             .iter()
@@ -94,12 +94,12 @@ fn job_usage(jobs: &[(String, u32)]) -> Vec<JobUsage> {
 }
 
 fn cpu() -> CpuStats {
-    let percent = cpu_percent().unwrap_or(0.0);
     CpuStats {
-        percent,
+        percent: cpu_percent(),
         cores: cores(),
         model: cpu_model().unwrap_or_default(),
-        load: load_average().unwrap_or(0.0),
+        load: load_average(),
+        temperature_celsius: hardware::cpu_temperature(),
     }
 }
 
@@ -146,58 +146,6 @@ fn disk(path: &Path) -> Option<DiskStats> {
         used: total.saturating_sub(free),
         available: fs.f_bavail as u64 * unit,
     })
-}
-
-/// NVIDIA GPUs, from `nvidia-smi`. None on machines without the tool.
-fn gpus() -> Vec<GpuStats> {
-    let child = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,utilization.gpu,memory.used,memory.total",
-            "--format=csv,noheader,nounits",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn();
-    let Ok(mut child) = child else {
-        return Vec::new();
-    };
-    let deadline = Instant::now() + GPU_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Vec::new();
-            }
-        }
-    }
-    let mut out = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
-    }
-    parse_nvidia_smi(&out)
-}
-
-/// Lines like `NVIDIA A100-SXM4-40GB, 84, 33000, 40960` (memory in MiB).
-fn parse_nvidia_smi(text: &str) -> Vec<GpuStats> {
-    const MIB: u64 = 1 << 20;
-    text.lines()
-        .filter_map(|line| {
-            let fields: Vec<&str> = line.split(',').map(str::trim).collect();
-            let [name, util, used, total] = fields[..] else {
-                return None;
-            };
-            Some(GpuStats {
-                name: name.to_string(),
-                percent: util.parse().unwrap_or(0.0),
-                memory_used: used.parse::<u64>().ok()? * MIB,
-                memory_total: total.parse::<u64>().ok()? * MIB,
-            })
-        })
-        .collect()
 }
 
 #[cfg(target_os = "linux")]
@@ -477,6 +425,7 @@ fn process_tree(pid: u32) -> Option<TreeUsage> {
     // SAFETY: zeroed is a valid mach_timebase_info, filled if ok.
     #[allow(deprecated)]
     let base = unsafe { base.assume_init() };
+    #[allow(deprecated)]
     let (numer, denom) = if ok && base.denom > 0 {
         (u128::from(base.numer), u128::from(base.denom))
     } else {
@@ -529,22 +478,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_nvidia_smi() {
-        let gpus = parse_nvidia_smi("NVIDIA A100-SXM4-40GB, 84, 33000, 40960\nbad line\n");
-        assert_eq!(gpus.len(), 1);
-        assert_eq!(gpus[0].name, "NVIDIA A100-SXM4-40GB");
-        assert_eq!(gpus[0].percent, 84.0);
-        assert_eq!(gpus[0].memory_total, 40960 << 20);
-    }
-
-    #[test]
     fn measures_this_machine() {
         let dir = tempfile::tempdir().unwrap();
         let me = std::process::id();
         let s = stats(dir.path(), &[("me".into(), me)], &[("job".into(), me)]);
         assert!(s.cpu.cores >= 1);
-        assert!((0.0..=100.0).contains(&s.cpu.percent));
-        assert!(s.memory.total > 0 && s.memory.used <= s.memory.total);
+        assert!(s.cpu.percent.is_some_and(|p| (0.0..=100.0).contains(&p)));
+        let memory = s.memory.unwrap();
+        assert!(memory.total > 0 && memory.used <= memory.total);
         let disk = s.disk.unwrap();
         assert!(disk.total > 0 && disk.used <= disk.total);
         assert_eq!(s.sessions.len(), 1);

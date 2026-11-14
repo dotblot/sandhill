@@ -5,9 +5,11 @@
 //! whether R is on it, and the sandhilld and Ark it has. If sandhilld is
 //! missing or another build than the app's, the next copies the app's build
 //! to `~/.local/bin/sandhilld`; if the server has R, the same goes for Ark,
-//! the R kernel, at [`ARK_PATH`]. The last runs `sandhilld attach --start`,
-//! whose stdin and stdout carry the protocol for as long as the connection
-//! lasts.
+//! the R kernel, at [`ARK_PATH`]. Bundled ty and Ruff language servers are
+//! installed in Sandhill's private bin directory as well. The last runs
+//! `sandhilld attach --start --confirm-exit`, whose stdin and stdout carry
+//! the protocol for as long as the connection lasts. The required flag rejects
+//! older bridges that cannot confirm actual daemon process exit.
 //!
 //! Commands are written for any login shell (sh, bash, zsh, fish, csh): what
 //! ssh hands to it is a single `sh -c "..."` with nothing the outer shell
@@ -22,7 +24,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use sandhill_proto::ARK_PATH;
+use sandhill_proto::{ARK_PATH, RUFF_PATH, TY_PATH};
 
 use crate::{Connection, Error, Options};
 
@@ -33,8 +35,8 @@ const INSTALL_DIR: &str = ".local/bin";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(45);
 /// A build is about 10 MB; this allows for a slow link.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
-/// ssh, then starting the daemon on the server.
-const ANSWER_TIMEOUT: Duration = Duration::from_secs(45);
+/// ssh, then serializing startup/recovery and confirming the old daemon's exit.
+const ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// An ssh destination as you would type it after `ssh`: a `Host` from
 /// `~/.ssh/config`, a host name, or `user@host`.
@@ -74,6 +76,11 @@ pub(crate) async fn connect(
     progress: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<Connection, Error> {
     let server = probe(destination, options).await?;
+    if server.uninstalled {
+        return Err(Error::Failed(format!(
+            "Sandhill was uninstalled on {destination}; an explicit reinstall is required before reconnecting"
+        )));
+    }
     let build = match &options.builds {
         Some(dir) => find_build(dir, &server, "sandhilld")?,
         None => None,
@@ -89,6 +96,7 @@ pub(crate) async fn connect(
                 options,
                 build,
                 &format!("{INSTALL_DIR}/sandhilld"),
+                progress,
             )
             .await?;
             format!("{INSTALL_DIR}/sandhilld")
@@ -108,8 +116,23 @@ pub(crate) async fn connect(
     {
         progress(&format!("Installing the R kernel on {destination}…"));
         // A server without Ark still works, just without that R kernel.
-        if let Err(err) = install(destination, options, &ark, ARK_PATH).await {
+        if let Err(err) = install(destination, options, &ark, ARK_PATH, progress).await {
             tracing::warn!("cannot install Ark on {destination}: {err}");
+        }
+    }
+    if let Some(dir) = &options.builds {
+        for (name, target, installed) in [
+            ("ty", TY_PATH, &server.ty),
+            ("ruff", RUFF_PATH, &server.ruff),
+        ] {
+            if let Some(build) = find_build(dir, &server, name)?
+                && installed.as_ref() != Some(&build.sha256)
+            {
+                progress(&format!("Installing {name} on {destination}…"));
+                if let Err(err) = install(destination, options, &build, target, progress).await {
+                    tracing::warn!("cannot install {name} on {destination}: {err}");
+                }
+            }
         }
     }
     let mut command = ssh(destination, options);
@@ -152,6 +175,9 @@ struct Server {
     r: bool,
     /// The sha256 of the Ark the app installed, if there is one.
     ark: Option<String>,
+    ty: Option<String>,
+    ruff: Option<String>,
+    uninstalled: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -160,11 +186,23 @@ struct Installed {
     sha256: String,
 }
 
+/// Match StateDir::default_location, including explicitly empty overrides.
+const STATE_ROOT_SCRIPT: &str = r#"
+if [ "${SANDHILL_STATE_DIR+x}" = x ]; then
+  state="${SANDHILL_STATE_DIR:-.}"
+elif [ "${XDG_STATE_HOME+x}" = x ]; then
+  state="${XDG_STATE_HOME:+$XDG_STATE_HOME/}sandhill"
+else
+  state="$HOME/.local/state/sandhill"
+fi
+"#;
+
 /// Runs on the server with `sh -s`. Prints `key=value` lines. The login
 /// shell's output is cut down to its environment after a marker, because
 /// shell profiles can print anything. `timeout` guards against profiles
 /// that wait for input or start tmux.
 const PROBE: &str = r#"
+if [ -e "$state/uninstalled" ] || [ -L "$state/uninstalled" ]; then echo "uninstalled=yes"; fi
 echo "os=$(uname -s)"
 echo "arch=$(uname -m)"
 mark=__SANDHILL_ENV__
@@ -184,6 +222,13 @@ if [ -x "$a" ]; then
   h=$(sha256sum "$a" 2>/dev/null || shasum -a 256 "$a" 2>/dev/null)
   echo "ark=${h%% *}"
 fi
+for tool in ty ruff; do
+  a="$HOME/.local/share/sandhill/bin/$tool"
+  if [ -x "$a" ]; then
+    h=$(sha256sum "$a" 2>/dev/null || shasum -a 256 "$a" 2>/dev/null)
+    echo "$tool=${h%% *}"
+  fi
+done
 "#;
 
 async fn probe(destination: &Destination, options: &Options) -> Result<Server, Error> {
@@ -198,7 +243,8 @@ async fn probe(destination: &Destination, options: &Options) -> Result<Server, E
         .map_err(|err| Error::Failed(format!("cannot run ssh: {err}")))?;
     if let Some(mut stdin) = child.stdin.take() {
         // If ssh fails early, the write fails too; its exit says why.
-        let _ = stdin.write_all(PROBE.as_bytes()).await;
+        let script = format!("{STATE_ROOT_SCRIPT}\n{PROBE}");
+        let _ = stdin.write_all(script.as_bytes()).await;
     }
     let output = tokio::time::timeout(PROBE_TIMEOUT, child.wait_with_output())
         .await
@@ -225,7 +271,10 @@ fn parse_probe(text: &str) -> Server {
             "arch" => server.arch = value.trim().to_string(),
             "path" => server.path = Some(value.to_string()).filter(|p| !p.is_empty()),
             "r" => server.r = value.trim() == "yes",
+            "uninstalled" => server.uninstalled = value.trim() == "yes",
             "ark" => server.ark = Some(value.trim().to_string()).filter(|h| h.len() == 64),
+            "ty" => server.ty = Some(value.trim().to_string()).filter(|h| h.len() == 64),
+            "ruff" => server.ruff = Some(value.trim().to_string()).filter(|h| h.len() == 64),
             "installed" => {
                 server.installed = value.split_once(' ').and_then(|(sha256, path)| {
                     (sha256.len() == 64).then(|| Installed {
@@ -247,20 +296,28 @@ fn triples(os: &str, arch: &str) -> &'static [&'static str] {
         ("Linux", "aarch64" | "arm64") => {
             &["aarch64-unknown-linux-musl", "aarch64-unknown-linux-gnu"]
         }
-        ("Darwin", "arm64") => &["aarch64-apple-darwin"],
+        ("Darwin", "arm64" | "aarch64") => &["aarch64-apple-darwin"],
         _ => &[],
     }
 }
 
-struct Build {
-    path: PathBuf,
-    sha256: String,
+pub(crate) struct Build {
+    pub(crate) path: PathBuf,
+    pub(crate) sha256: String,
 }
 
-/// The app's build of `program` (sandhilld or ark) for `server`, if it has
-/// one.
+/// The app's build of a daemon, kernel or language server for `server`.
 fn find_build(dir: &Path, server: &Server, program: &str) -> Result<Option<Build>, Error> {
-    let Some(path) = triples(&server.os, &server.arch)
+    find_platform_build(dir, &server.os, &server.arch, program)
+}
+
+pub(crate) fn find_platform_build(
+    dir: &Path,
+    os: &str,
+    arch: &str,
+    program: &str,
+) -> Result<Option<Build>, Error> {
+    let Some(path) = triples(os, arch)
         .iter()
         .map(|triple| dir.join(format!("{program}-{triple}")))
         .find(|path| path.is_file())
@@ -272,38 +329,53 @@ fn find_build(dir: &Path, server: &Server, program: &str) -> Result<Option<Build
     Ok(Some(Build { path, sha256 }))
 }
 
-fn sha256_file(path: &Path) -> std::io::Result<String> {
+pub(crate) fn sha256_file(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)?;
-    Ok(format!("{:x}", hasher.finalize()))
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(sandhill_proto::hex(&hasher.finalize()))
 }
 
-/// Copies `build` to `target` (relative to the home directory) on the
-/// server through ssh's stdin. The new file replaces the old one in a single
-/// rename, so a daemon or kernel that is running keeps working; for
-/// sandhilld, `attach --start` then replaces it with the new build.
+/// Preserves pre-manifest binaries before replacing them; recorded installs
+/// must still match their owned checksum. A matching probed binary is reused
+/// without adopting it. Only newly installed bytes receive ownership records.
 async fn install(
     destination: &Destination,
     options: &Options,
     build: &Build,
     target: &str,
+    progress: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<(), Error> {
-    let (dir, name) = target.rsplit_once('/').unwrap_or((".", target));
-    let new = format!("{dir}/.{name}.new");
-    let script = format!(
-        "mkdir -p {dir} && cat > {new} && chmod 755 {new} && mv -f {new} {target} \
-         && (sha256sum {target} || shasum -a 256 {target})"
-    );
+    let script = install_script(target, &build.sha256)?;
     let mut command = ssh(destination, options);
+    command.arg(format!("sh -c {}", shell_quote(&script)));
+    install_command(command, build, target, &destination.to_string(), progress).await
+}
+
+/// Local and SSH installs share the same ownership checks and transfer script.
+pub(crate) async fn install_command(
+    mut command: Command,
+    build: &Build,
+    target: &str,
+    location: &str,
+    progress: &(dyn Fn(&str) + Send + Sync),
+) -> Result<(), Error> {
+    let name = target.rsplit('/').next().unwrap_or(target);
     command
-        .arg(format!("sh -c \"{script}\""))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command
         .spawn()
-        .map_err(|err| Error::Failed(format!("cannot run ssh: {err}")))?;
+        .map_err(|err| Error::Failed(format!("cannot run installer on {location}: {err}")))?;
     let mut stdin = child.stdin.take().expect("stdin is piped");
     let copy = async move {
         let mut file = tokio::fs::File::open(&build.path).await?;
@@ -315,26 +387,142 @@ async fn install(
         (copied, child.wait_with_output().await)
     })
     .await
-    .map_err(|_| Error::Failed(format!("copying {name} to {destination} took too long")))?;
-    let output = output.map_err(|err| Error::Failed(format!("ssh failed: {err}")))?;
+    .map_err(|_| Error::Failed(format!("copying {name} to {location} took too long")))?;
+    let output = output.map_err(|err| Error::Failed(format!("installer failed: {err}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for path in stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("backup="))
+    {
+        progress(&format!(
+            "Preserved previous {name} on {location} at {path}"
+        ));
+    }
     if !output.status.success() {
-        let failed = failure(&output.stderr, "ssh", output.status);
+        let failed = failure(&output.stderr, "installer", output.status);
         return Err(Error::Failed(format!(
-            "cannot install {name} on {destination}: {failed}"
+            "cannot install {name} on {location}: {failed}"
         )));
     }
     if let Err(err) = copied {
         return Err(Error::Failed(format!(
-            "cannot copy {name} to {destination}: {err}"
+            "cannot copy {name} to {location}: {err}"
         )));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.split_whitespace().next() != Some(build.sha256.as_str()) {
+    if stdout
+        .lines()
+        .filter(|line| !line.starts_with("backup="))
+        .flat_map(str::split_whitespace)
+        .next()
+        != Some(build.sha256.as_str())
+    {
         return Err(Error::Failed(format!(
-            "the copy of {name} on {destination} does not match this app's"
+            "the copy of {name} on {location} does not match this app's"
         )));
     }
     Ok(())
+}
+
+/// Manifest paths and fields are shared with the daemon's lifecycle module.
+/// Keep paths HOME-relative: a home directory need not be valid JSON text.
+fn install_manifest(component: &str, target: &str, sha256: &str) -> String {
+    format!(
+        "{{\"version\":1,\"component\":\"{component}\",\"path\":\"{target}\",\"sha256\":\"{sha256}\"}}"
+    )
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+pub(crate) fn install_script(target: &str, sha256: &str) -> Result<String, Error> {
+    let component = match target {
+        ".local/bin/sandhilld" => "sandhilld",
+        ARK_PATH => "ark",
+        TY_PATH => "ty",
+        RUFF_PATH => "ruff",
+        _ => return Err(Error::Failed("unsupported component install path".into())),
+    };
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    {
+        return Err(Error::Failed("invalid component checksum".into()));
+    }
+    let (dir, name) = target.rsplit_once('/').expect("allowlisted path");
+    let manifest = install_manifest(component, target, sha256);
+    // A single-quoted outer command prevents the login shell from expanding
+    // $HOME, command substitutions or filenames before sh interprets them.
+    Ok(format!(
+        r#"set -eu
+umask 077
+cd "$HOME"
+{STATE_ROOT_SCRIPT}
+[ ! -e "$state/uninstalled" ] && [ ! -L "$state/uninstalled" ] || {{ echo "Sandhill was uninstalled; explicit reinstall required" >&2; exit 1; }}
+for p in .local .local/share .local/share/sandhill .local/share/sandhill/install {dir}; do
+  [ ! -L "$p" ] || {{ echo "refusing symlinked install directory: $p" >&2; exit 1; }}
+done
+mkdir -p {dir} .local/share/sandhill/install
+record=.local/share/sandhill/install/{component}.json
+[ ! -L "$record" ] || {{ echo "refusing symlinked ownership record" >&2; exit 1; }}
+[ ! -e "$record" ] || [ -f "$record" ] || {{ echo "refusing non-regular ownership record" >&2; exit 1; }}
+lock=.local/share/sandhill/install/.{component}.lock
+mkdir "$lock" || {{ echo "another component install is in progress" >&2; exit 1; }}
+trap 'rmdir "$lock"' EXIT
+stage={dir}/.{name}.install.$$
+mkdir "$stage" || {{ echo "refusing component staging collision" >&2; exit 1; }}
+new="$stage/{name}.new"
+next="$lock/record.new"
+legacy="$stage/legacy"
+trap 'rm -f "$new" "$next" "$legacy"; rmdir "$stage"; rmdir "$lock"' EXIT
+trap 'exit 1' HUP INT TERM
+hash() {{ h=$(sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"); printf '%s' "${{h%% *}}"; }}
+old=
+backup=
+if [ -e {target} ] || [ -L {target} ]; then
+  [ -f {target} ] && [ ! -L {target} ] || {{ echo "refusing non-regular component target" >&2; exit 1; }}
+  old=$(hash {target})
+  if [ -e "$record" ]; then
+    expected=$(printf '{{"version":1,"component":"{component}","path":"{target}","sha256":"%s"}}' "$old")
+    [ "$(cat "$record")" = "$expected" ] || {{ echo "refusing to replace a modified {component}; ownership record does not match" >&2; exit 1; }}
+  else
+    backup={target}.legacy-sha256-"$old"
+  fi
+else
+  [ ! -e "$record" ] || {{ echo "refusing ownership record without component target" >&2; exit 1; }}
+fi
+(set -C; cat > "$new")
+chmod 755 "$new"
+[ "$(hash "$new")" = "{sha256}" ] || {{ echo "component transfer checksum mismatch" >&2; exit 1; }}
+(set -C; printf '%s\n' '{manifest}' > "$next")
+if [ -n "$backup" ]; then
+  if [ ! -e "$backup" ] && [ ! -L "$backup" ]; then
+    (set -C; cat {target} > "$legacy")
+    [ "$(hash "$legacy")" = "$old" ] || {{ echo "legacy component changed during backup" >&2; exit 1; }}
+    ln "$legacy" "$backup" || {{ echo "refusing legacy backup collision: $backup" >&2; exit 1; }}
+  fi
+  [ -f "$backup" ] && [ ! -L "$backup" ] || {{ echo "refusing non-regular legacy backup: $backup" >&2; exit 1; }}
+  [ "$(hash "$backup")" = "$old" ] || {{ echo "refusing legacy backup checksum mismatch: $backup" >&2; exit 1; }}
+  printf 'backup=%s/%s\n' "$HOME" "$backup"
+fi
+# Recheck the target after receiving the payload and preserving any legacy bytes.
+if [ -n "$old" ]; then
+  [ -f {target} ] && [ ! -L {target} ] && [ "$(hash {target})" = "$old" ] || {{ echo "component changed during install" >&2; exit 1; }}
+else
+  [ ! -e {target} ] && [ ! -L {target} ] || {{ echo "component appeared during install" >&2; exit 1; }}
+fi
+[ ! -L "$record" ] && {{ [ ! -e "$record" ] || [ -f "$record" ]; }} || {{ echo "ownership record changed during install" >&2; exit 1; }}
+if [ -n "$old" ] && [ -z "$backup" ]; then
+  [ -f "$record" ] && [ "$(cat "$record")" = "$expected" ] || {{ echo "ownership record changed during install" >&2; exit 1; }}
+else
+  [ ! -e "$record" ] || {{ echo "ownership record appeared during install" >&2; exit 1; }}
+fi
+mv -f "$new" {target}
+mv -f "$next" "$record"
+printf '%s\n' '{sha256}'
+"#
+    ))
 }
 
 /// The command that attaches to the server's daemon, starting it with the
@@ -349,7 +537,7 @@ fn attach_command(program: &str, path: Option<&str>) -> String {
     } else {
         "sandhilld"
     };
-    script.push_str(&format!("exec '{program}' attach --start"));
+    script.push_str(&format!("exec '{program}' attach --start --confirm-exit"));
     format!("sh -c \"{script}\"")
 }
 
@@ -410,6 +598,9 @@ mod tests {
                 }),
                 r: true,
                 ark: Some(hash),
+                ty: None,
+                ruff: None,
+                uninstalled: false,
             }
         );
         // Nothing installed, and a shell that gave no PATH.
@@ -439,13 +630,309 @@ mod tests {
     fn attach_quotes_what_it_can() {
         assert_eq!(
             attach_command(".local/bin/sandhilld", Some("/opt/conda/bin:/usr/bin")),
-            "sh -c \"export PATH='/opt/conda/bin:/usr/bin'; exec '.local/bin/sandhilld' attach --start\""
+            "sh -c \"export PATH='/opt/conda/bin:/usr/bin'; exec '.local/bin/sandhilld' attach --start --confirm-exit\""
         );
         // A PATH that can't be quoted safely is left out; the daemon then
         // gets ssh's default PATH.
         assert_eq!(
             attach_command(".local/bin/sandhilld", Some("/a:$HOME/bin")),
-            "sh -c \"exec '.local/bin/sandhilld' attach --start\""
+            "sh -c \"exec '.local/bin/sandhilld' attach --start --confirm-exit\""
         );
+    }
+
+    fn install_in(
+        home: &Path,
+        target: &str,
+        bytes: &[u8],
+        checksum: Option<&str>,
+    ) -> std::process::Output {
+        use std::io::Write as _;
+        let checksum = checksum
+            .map(str::to_owned)
+            .unwrap_or_else(|| sandhill_proto::hex(&Sha256::digest(bytes)));
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", &install_script(target, &checksum).unwrap()])
+            .env("HOME", home)
+            .env_remove("SANDHILL_STATE_DIR")
+            .env_remove("XDG_STATE_HOME")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // A refusal may close the pipe before the payload is written.
+        let _ = child.stdin.take().unwrap().write_all(bytes);
+        child.wait_with_output().unwrap()
+    }
+
+    #[test]
+    fn installation_records_checksums_and_protects_modified_components() {
+        let home = tempfile::tempdir().unwrap();
+        for (target, component) in [
+            (".local/bin/sandhilld", "sandhilld"),
+            (ARK_PATH, "ark"),
+            (TY_PATH, "ty"),
+            (RUFF_PATH, "ruff"),
+        ] {
+            let output = install_in(home.path(), target, b"first build", None);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let hash = sandhill_proto::hex(&Sha256::digest(b"first build"));
+            assert_eq!(
+                std::fs::read_to_string(
+                    home.path()
+                        .join(format!(".local/share/sandhill/install/{component}.json"))
+                )
+                .unwrap()
+                .trim(),
+                install_manifest(component, target, &hash)
+            );
+            assert!(
+                install_in(home.path(), target, b"updated build", None)
+                    .status
+                    .success()
+            );
+            std::fs::write(home.path().join(target), b"user replacement").unwrap();
+            let output = install_in(home.path(), target, b"third build", None);
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("modified"));
+            assert_eq!(
+                std::fs::read(home.path().join(target)).unwrap(),
+                b"user replacement"
+            );
+            let record = home
+                .path()
+                .join(format!(".local/share/sandhill/install/{component}.json"));
+            assert_eq!(
+                std::fs::read_to_string(record).unwrap().trim(),
+                install_manifest(
+                    component,
+                    target,
+                    &sandhill_proto::hex(&Sha256::digest(b"updated build"))
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn installation_preserves_legacy_bytes_before_claiming_only_the_new_build() {
+        for (target, component) in [
+            (".local/bin/sandhilld", "sandhilld"),
+            (ARK_PATH, "ark"),
+            (TY_PATH, "ty"),
+            (RUFF_PATH, "ruff"),
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let path = home.path().join(target);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let original = b"legacy installation\0with unknown bytes";
+            std::fs::write(&path, original).unwrap();
+            let old = sandhill_proto::hex(&Sha256::digest(original));
+            let backup = home.path().join(format!("{target}.legacy-sha256-{old}"));
+            let output = install_in(home.path(), target, b"app build", None);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(std::fs::read(&backup).unwrap(), original);
+            assert_eq!(std::fs::read(&path).unwrap(), b"app build");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                format!(
+                    "backup={}\n{}\n",
+                    backup.display(),
+                    sandhill_proto::hex(&Sha256::digest(b"app build"))
+                )
+            );
+            let record = home
+                .path()
+                .join(format!(".local/share/sandhill/install/{component}.json"));
+            assert_eq!(
+                std::fs::read_to_string(&record).unwrap().trim(),
+                install_manifest(
+                    component,
+                    target,
+                    &sandhill_proto::hex(&Sha256::digest(b"app build"))
+                )
+            );
+            let output = install_in(home.path(), target, b"next build", None);
+            assert!(output.status.success());
+            assert_eq!(std::fs::read(&path).unwrap(), b"next build");
+            assert_eq!(std::fs::read(&backup).unwrap(), original);
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                format!("{}\n", sandhill_proto::hex(&Sha256::digest(b"next build")))
+            );
+        }
+    }
+
+    fn make_fifo(path: &Path) {
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(path)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    #[test]
+    fn installation_reuses_only_an_exact_regular_legacy_backup() {
+        for target in [".local/bin/sandhilld", ARK_PATH, TY_PATH, RUFF_PATH] {
+            for collision in ["matching", "different", "symlink", "directory", "fifo"] {
+                let home = tempfile::tempdir().unwrap();
+                let path = home.path().join(target);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, b"legacy build").unwrap();
+                let old = sandhill_proto::hex(&Sha256::digest(b"legacy build"));
+                let backup = home.path().join(format!("{target}.legacy-sha256-{old}"));
+                match collision {
+                    "matching" => std::fs::write(&backup, b"legacy build").unwrap(),
+                    "different" => std::fs::write(&backup, b"unrelated backup").unwrap(),
+                    "symlink" => std::os::unix::fs::symlink(&path, &backup).unwrap(),
+                    "directory" => std::fs::create_dir(&backup).unwrap(),
+                    "fifo" => make_fifo(&backup),
+                    _ => unreachable!(),
+                }
+                let output = install_in(home.path(), target, b"app build", None);
+                assert_eq!(
+                    output.status.success(),
+                    collision == "matching",
+                    "{target}, {collision}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                if collision == "matching" {
+                    assert_eq!(std::fs::read(&path).unwrap(), b"app build");
+                    assert_eq!(std::fs::read(&backup).unwrap(), b"legacy build");
+                } else {
+                    assert_eq!(std::fs::read(&path).unwrap(), b"legacy build");
+                    assert!(String::from_utf8_lossy(&output.stderr).contains("legacy backup"));
+                    assert!(
+                        std::fs::read_dir(home.path().join(".local/share/sandhill/install"))
+                            .unwrap()
+                            .next()
+                            .is_none()
+                    );
+                    match collision {
+                        "different" => {
+                            assert_eq!(std::fs::read(&backup).unwrap(), b"unrelated backup");
+                        }
+                        "symlink" => assert_eq!(std::fs::read_link(&backup).unwrap(), path),
+                        "directory" => {
+                            assert!(std::fs::read_dir(&backup).unwrap().next().is_none());
+                        }
+                        "fifo" => {
+                            use std::os::unix::fs::FileTypeExt as _;
+                            assert!(backup.symlink_metadata().unwrap().file_type().is_fifo());
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn installation_rejects_bad_transfers_without_touching_legacy_bytes() {
+        for target in [".local/bin/sandhilld", ARK_PATH, TY_PATH, RUFF_PATH] {
+            let home = tempfile::tempdir().unwrap();
+            let path = home.path().join(target);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, b"legacy build").unwrap();
+            let output = install_in(
+                home.path(),
+                target,
+                b"partial transfer",
+                Some(&"0".repeat(64)),
+            );
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("transfer checksum mismatch"));
+            assert_eq!(std::fs::read(&path).unwrap(), b"legacy build");
+            let old = sandhill_proto::hex(&Sha256::digest(b"legacy build"));
+            assert!(
+                !home
+                    .path()
+                    .join(format!("{target}.legacy-sha256-{old}"))
+                    .exists()
+            );
+            assert!(
+                std::fs::read_dir(home.path().join(".local/share/sandhill/install"))
+                    .unwrap()
+                    .next()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn installation_refuses_nonregular_targets_and_existing_locks() {
+        for target in [".local/bin/sandhilld", ARK_PATH, TY_PATH, RUFF_PATH] {
+            for kind in ["symlink", "directory", "fifo", "lock"] {
+                let home = tempfile::tempdir().unwrap();
+                let path = home.path().join(target);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                match kind {
+                    "symlink" => std::os::unix::fs::symlink("missing", &path).unwrap(),
+                    "directory" => std::fs::create_dir(&path).unwrap(),
+                    "fifo" => make_fifo(&path),
+                    "lock" => {
+                        std::fs::write(&path, b"legacy build").unwrap();
+                        let component = target.rsplit('/').next().unwrap();
+                        std::fs::create_dir_all(
+                            home.path()
+                                .join(format!(".local/share/sandhill/install/.{component}.lock")),
+                        )
+                        .unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+                let output = install_in(home.path(), target, b"app build", None);
+                assert!(!output.status.success(), "{target}, {kind}");
+                assert!(path.symlink_metadata().is_ok());
+                if kind == "lock" {
+                    assert_eq!(std::fs::read(&path).unwrap(), b"legacy build");
+                } else {
+                    assert!(
+                        String::from_utf8_lossy(&output.stderr).contains("non-regular component")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn installation_refuses_symlinked_directories_and_uninstalled_state() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), home.path().join(".local")).unwrap();
+        assert!(
+            !install_in(home.path(), ARK_PATH, b"build", None)
+                .status
+                .success()
+        );
+        assert!(!outside.path().join("share").exists());
+        let retired = tempfile::tempdir().unwrap();
+        let state = retired.path().join(".local/state/sandhill");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("uninstalled"), b"retired").unwrap();
+        assert!(
+            !install_in(retired.path(), ".local/bin/sandhilld", b"build", None)
+                .status
+                .success()
+        );
+        assert!(!retired.path().join(".local/bin/sandhilld").exists());
+        assert!(parse_probe("uninstalled=yes\n").uninstalled);
+    }
+
+    #[test]
+    fn install_script_accepts_only_fixed_paths_and_lowercase_checksums() {
+        assert!(install_script("../sandhilld", &"a".repeat(64)).is_err());
+        assert!(install_script(ARK_PATH, &"A".repeat(64)).is_err());
+        assert!(install_script(ARK_PATH, "bad").is_err());
+        assert_eq!(shell_quote("a'b $HOME"), "'a'\\''b $HOME'");
     }
 }

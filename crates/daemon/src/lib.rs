@@ -4,7 +4,9 @@
 //! It also keeps terminals, where shells and coding agents run, and serves
 //! the agents' tools (`mcp`).
 
+pub mod accounts;
 pub mod agents;
+pub mod bio;
 pub mod blobs;
 pub mod cells;
 pub mod chats;
@@ -14,11 +16,14 @@ pub mod ghost;
 pub mod git;
 pub mod help;
 pub mod inline;
+pub mod irkernel;
 pub mod jobs;
 pub mod journal;
 pub mod kernel;
 pub mod kernelspecs;
+pub mod lifecycle;
 pub mod logfile;
+pub mod lsp;
 pub mod mcp;
 pub mod memory;
 pub mod notebook;
@@ -40,6 +45,7 @@ pub mod system;
 pub mod tables;
 pub mod terminal;
 pub mod tunnels;
+pub mod variable_search;
 pub mod variables;
 pub mod version;
 pub mod view;

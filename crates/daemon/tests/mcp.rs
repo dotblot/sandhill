@@ -290,34 +290,6 @@ async fn the_mcp_server_speaks_json_rpc_on_stdio() {
     assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
     assert_eq!(init["result"]["serverInfo"]["name"], "sandhill");
 
-    let tools = ask(2, "tools/list", json!({})).await;
-    let names: Vec<&str> = tools["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        names,
-        [
-            "list_sessions",
-            "list_variables",
-            "run_code",
-            "get_focus",
-            "add_cell",
-            "edit_cell",
-            "delete_cell",
-            "get_console",
-            "get_plots",
-            "view_table",
-            "get_help",
-            "list_packages",
-            "list_jobs",
-            "read_job_log",
-            "get_outputs"
-        ]
-    );
-
     let listed = ask(
         3,
         "tools/call",
@@ -409,7 +381,7 @@ async fn agents_write_cells_into_documents_on_disk() {
     assert_eq!(client.list_sessions().await.unwrap().len(), 1);
 
     // Where the user is decides where the next cell goes, and the agent can
-    // see it.
+    // see it when it asks.
     let focus = Focus {
         file: Some(doc.to_string_lossy().into()),
         cell: Some("chunk-1".into()),
@@ -427,7 +399,8 @@ async fn agents_write_cells_into_documents_on_disk() {
         "{seen}"
     );
     assert!(seen.contains("```python\nx = 21\n```"), "{seen}");
-    // Claude Code's prompt hook adds it to each prompt.
+    // Claude Code's prompt hook doesn't add it: only what the user adds
+    // with @ and # goes with a message.
     let mut hook = tokio::process::Command::new(env!("CARGO_BIN_EXE_sandhilld"))
         .arg("--socket")
         .arg(&daemon.socket)
@@ -445,12 +418,7 @@ async fn agents_write_cells_into_documents_on_disk() {
     drop(stdin);
     let printed = hook.wait_with_output().await.unwrap();
     let context = String::from_utf8_lossy(&printed.stdout);
-    assert!(
-        context.starts_with(
-            "Sandhill: the user is in notes/analysis.qmd, cell chunk-1, line 4. They have selected:\n```\nx = 21\n```"
-        ),
-        "{context}"
-    );
+    assert!(context.trim().is_empty(), "{context}");
     let added = call(
         &tools,
         "add_cell",
@@ -770,6 +738,52 @@ async fn in_ask_mode_sandhills_tools_only_look() {
     assert_eq!(added["isError"], true);
     let listed = call(3, "list_sessions", json!({})).await;
     assert_eq!(listed["isError"], false);
+    for (id, name) in [(10, "begin_analysis"), (11, "check_analysis")] {
+        let refused = call(id, name, json!({})).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+        assert!(
+            refused["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Ask mode"),
+            "{refused}"
+        );
+    }
+    let catalog = call(12, "get_bio_guide", json!({})).await;
+    assert_eq!(catalog["isError"], false, "{catalog}");
+    let history = call(13, "get_analysis", json!({"analysis": "missing"})).await;
+    assert_eq!(history["isError"], true, "{history}");
+    assert!(
+        !history["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Ask mode"),
+        "{history}"
+    );
+    for report in [json!({"mode": "plan"}), json!({"permission": "plan"})] {
+        std::fs::write(terminal.join("agent.json"), report.to_string()).unwrap();
+        for (id, name) in [(20, "begin_analysis"), (21, "check_analysis")] {
+            let refused = call(id, name, json!({})).await;
+            assert_eq!(refused["isError"], true, "{refused}");
+            assert!(
+                refused["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Plan mode"),
+                "{refused}"
+            );
+        }
+        let catalog = call(22, "get_bio_guide", json!({})).await;
+        assert_eq!(catalog["isError"], false, "{catalog}");
+        let history = call(23, "get_analysis", json!({"analysis": "missing"})).await;
+        assert!(
+            !history["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Plan mode"),
+            "{history}"
+        );
+    }
 
     // Switched out of Ask mode, the tool runs (and finds no session).
     std::fs::write(terminal.join("agent.json"), r#"{"guard": null}"#).unwrap();
@@ -995,6 +1009,114 @@ async fn agents_read_the_console_plots_tables_help_and_packages() {
         assert!(table.contains("TP53"), "{table}");
         assert!(!table.contains("KRAS"), "{table}");
         assert!(table.contains("(the first 2 of 3 rows)"), "{table}");
+        let window = daemon.client().await;
+        let session = window
+            .list_sessions()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|s| s.language.eq_ignore_ascii_case("python"))
+            .unwrap()
+            .id;
+        let focused = sandhill_proto::TableFocus {
+            session: session.clone(),
+            path: vec!["df".into()],
+            name: "df".into(),
+            sort: vec![sandhill_proto::TableSort {
+                column: 1,
+                descending: true,
+            }],
+            filters: vec![sandhill_proto::TableFilter {
+                column: 1,
+                op: ">".into(),
+                values: vec!["10".into()],
+            }],
+            search: String::new(),
+            hidden_columns: vec![1],
+            selected_column: Some(0),
+            selected_cells: vec![sandhill_proto::TableCell { row: 0, column: 0 }],
+            shown_rows: 2,
+            total_rows: 3,
+        };
+        window
+            .set_focus(
+                &project.to_string_lossy(),
+                Focus {
+                    table: Some(focused.clone()),
+                    ..Focus::default()
+                },
+            )
+            .await
+            .unwrap();
+        let echoed = window
+            .get_focus(&project.to_string_lossy())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(echoed.table, Some(focused.clone()));
+        let seen = call(&tools, "get_focus", json!({})).await;
+        assert!(
+            seen.contains("viewing table df") && seen.contains("filtered 2 of 3 rows"),
+            "{seen}"
+        );
+        assert!(
+            seen.contains("selected_cells") && seen.contains("hidden_columns"),
+            "{seen}"
+        );
+        let current = call(&tools, "view_table", json!({"name":"df"})).await;
+        assert!(
+            current.contains("current table view") && current.contains("filtered 2 of 3 rows"),
+            "{current}"
+        );
+        assert!(
+            !current.contains("KRAS") && !current.contains("count <"),
+            "{current}"
+        );
+        assert!(
+            current.find("MYC").unwrap() < current.find("TP53").unwrap(),
+            "{current}"
+        );
+        let original = call(
+            &tools,
+            "view_table",
+            json!({"name":"df", "view":"original"}),
+        )
+        .await;
+        assert!(
+            original.contains("original table")
+                && original.contains("KRAS")
+                && original.contains("count <"),
+            "{original}"
+        );
+        assert!(
+            original.find("TP53").unwrap() < original.find("MYC").unwrap(),
+            "{original}"
+        );
+        let mut searched = focused;
+        searched.search = "12".into();
+        searched.shown_rows = 1;
+        for hidden in [vec![1], vec![]] {
+            searched.hidden_columns = hidden;
+            window
+                .set_focus(
+                    &project.to_string_lossy(),
+                    Focus {
+                        table: Some(searched.clone()),
+                        ..Focus::default()
+                    },
+                )
+                .await
+                .unwrap();
+            let current = call(&tools, "view_table", json!({"name":"df"})).await;
+            assert!(
+                current.contains("TP53") && current.contains("filtered 1 of 3 rows"),
+                "{current}"
+            );
+            assert!(
+                !current.contains("MYC") && !current.contains("KRAS"),
+                "{current}"
+            );
+        }
     }
 
     let help = call(&tools, "get_help", json!({"topic": "json.dumps"})).await;

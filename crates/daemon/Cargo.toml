@@ -3,6 +3,7 @@ name = "sandhill-daemon"
 description = "sandhilld: keeps kernels, outputs, jobs and agents alive on the analysis machine"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [[bin]]
@@ -12,12 +13,13 @@ path = "src/main.rs"
 [dependencies]
 sandhill-proto.workspace = true
 anyhow.workspace = true
-base64 = "0.22"
+base64 = "0.23"
 clap.workspace = true
 jupyter-protocol.workspace = true
 jupyter-zmq-client.workspace = true
 libc.workspace = true
 rusqlite.workspace = true
+scraper = "0.29"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -29,6 +31,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 zeromq.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Apache-2.0/MIT, compatible with GPL-3.0-or-later.
+security-framework = "3.7"
 
 [dev-dependencies]
 sandhill-link.workspace = true

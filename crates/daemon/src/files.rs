@@ -1,7 +1,7 @@
 //! File access for clients. The app edits notebooks through the daemon so the
 //! same code works whether the files are on the Mac or on a server.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -27,26 +27,53 @@ pub fn resolve(path: &str) -> Result<PathBuf> {
 }
 
 pub fn read_text(path: &str) -> Result<FileText> {
+    read_text_bounded(path, MAX_READ)
+}
+
+/// Read through one file descriptor, never allocating/reading an unbounded
+/// replacement after a separate metadata check. The extra byte detects growth
+/// across the limit without returning a truncated, apparently editable file.
+pub fn read_text_bounded(path: &str, max_bytes: u64) -> Result<FileText> {
     let resolved = resolve(path)?;
-    let meta = std::fs::metadata(&resolved)
+    let file = std::fs::File::open(&resolved)
         .with_context(|| format!("cannot open {}", resolved.display()))?;
-    if meta.is_dir() {
-        bail!("{} is a directory", resolved.display());
+    let limit = max_bytes.min(MAX_READ);
+    read_open_text(file, &resolved, limit)
+}
+
+fn read_open_text(mut file: std::fs::File, resolved: &Path, limit: u64) -> Result<FileText> {
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        bail!("{} is not a regular file", resolved.display());
     }
-    if meta.len() > MAX_READ {
+    if meta.len() > limit {
         bail!(
-            "{} is too large to open ({} bytes)",
+            "{} is too large to open as text ({} bytes; limit {limit} bytes)",
             resolved.display(),
             meta.len()
         );
     }
-    let bytes = std::fs::read(&resolved)?;
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!(
+            "{} grew beyond the text limit ({limit} bytes)",
+            resolved.display()
+        );
+    }
+    let after = file.metadata()?;
+    if meta.len() != after.len() || meta.modified().ok() != after.modified().ok() {
+        bail!(
+            "{} changed while it was being read; try again",
+            resolved.display()
+        );
+    }
     let text = String::from_utf8(bytes)
         .map_err(|_| anyhow::anyhow!("{} is not a UTF-8 text file", resolved.display()))?;
     Ok(FileText {
         path: resolved.to_string_lossy().into_owned(),
         text,
-        mtime_ms: mtime_ms(&meta),
+        mtime_ms: mtime_ms(&after),
     })
 }
 
@@ -147,8 +174,9 @@ pub fn stat(paths: &[String]) -> Vec<FileStat> {
         .collect()
 }
 
-/// With `sizes`, a folder's size is the sum of the files in it.
-pub fn list_dir(path: &str, sizes: bool) -> Result<Vec<DirEntry>> {
+/// With `sizes`, a folder's size is the sum of the files in it; with
+/// `marks`, a folder says whether it holds `.git` or `.sandhill`.
+pub fn list_dir(path: &str, sizes: bool, marks: bool) -> Result<Vec<DirEntry>> {
     let resolved = resolve(path)?;
     let mut entries = Vec::new();
     let mut budget = crate::fileops::SizeBudget::default();
@@ -172,11 +200,15 @@ pub fn list_dir(path: &str, sizes: bool) -> Result<Vec<DirEntry>> {
         } else {
             meta.len()
         };
+        let holds =
+            |name: &str| marks && kind == EntryKind::Dir && entry.path().join(name).exists();
         entries.push(DirEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
             kind,
             size,
             mtime_ms: mtime_ms(&meta),
+            git: holds(".git"),
+            sandhill: holds(".sandhill"),
         });
     }
     entries.sort_by(|a, b| {
@@ -238,7 +270,7 @@ mod tests {
         std::fs::write(dir.path().join("b.ipynb"), "{}").unwrap();
         std::fs::write(dir.path().join("A.qmd"), "").unwrap();
         std::fs::create_dir(dir.path().join("zdata")).unwrap();
-        let names: Vec<_> = list_dir(&dir.path().to_string_lossy(), false)
+        let names: Vec<_> = list_dir(&dir.path().to_string_lossy(), false, false)
             .unwrap()
             .into_iter()
             .map(|e| e.name)
@@ -258,5 +290,57 @@ mod tests {
         let path = path_in(dir.path(), "x.bin");
         std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
         assert!(read_text(&path).is_err());
+    }
+    #[test]
+    fn bounded_text_read_accepts_exact_limit_and_refuses_one_more_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_in(dir.path(), "boundary.csv");
+        let exact = "x".repeat(5_000_000);
+        std::fs::write(&path, &exact).unwrap();
+        let read = read_text_bounded(&path, 5_000_000).unwrap();
+        assert_eq!(read.text, exact);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"\n")
+            .unwrap();
+        assert!(
+            read_text_bounded(&path, 5_000_000)
+                .unwrap_err()
+                .to_string()
+                .contains("too large")
+        );
+        assert!(read_text_bounded(&path, u64::MAX).is_ok());
+    }
+
+    #[test]
+    fn bounded_text_read_preserves_raw_delimited_bytes_and_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_in(dir.path(), "quoted.tsv");
+        let text = "\u{feff}name\tvalue\r\n\"雪\t\"\"ice\"\"\"\t\"two\nlines\"\r\n\t\r\n";
+        let written = write_text(&path, text, None).unwrap();
+        let read = read_text_bounded(&path, text.len() as u64).unwrap();
+        assert_eq!(read.text, text);
+        assert_eq!(read.mtime_ms, written.mtime_ms);
+        assert!(read_text_bounded(&path, text.len() as u64 - 1).is_err());
+        assert!(read_text_bounded(&path, 0).is_err());
+    }
+    #[test]
+    fn bounded_read_uses_metadata_from_the_open_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replaced.csv");
+        std::fs::write(&path, b"a,b\r\n1,2\r\n").unwrap();
+        let opened = std::fs::File::open(&path).unwrap();
+        let replacement = dir.path().join("replacement.csv");
+        std::fs::write(&replacement, b"oversized replacement").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        // A path replacement must not swap in different bytes between the
+        // descriptor's size check and read. The next open sees the new file.
+        assert_eq!(
+            read_open_text(opened, &path, 10).unwrap().text,
+            "a,b\r\n1,2\r\n"
+        );
+        assert!(read_text_bounded(&path.to_string_lossy(), 10).is_err());
     }
 }
