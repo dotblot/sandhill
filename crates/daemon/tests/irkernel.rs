@@ -43,6 +43,24 @@ async fn r_without_irkernel_is_offered_until_one_runs_it() {
         eprintln!("skipping: no R on PATH");
         return;
     };
+    // The daemon's own home and Jupyter folders are empty, but the system's
+    // kernels can't be hidden from it: with an IRkernel there (as on CI's
+    // Linux), this R already has one and is rightly not offered.
+    let system_wide = [
+        "/usr/local/share/jupyter",
+        "/usr/share/jupyter",
+        "/opt/homebrew/share/jupyter",
+    ]
+    .iter()
+    .filter_map(|dir| std::fs::read_dir(Path::new(dir).join("kernels")).ok())
+    .flatten()
+    .flatten()
+    .filter_map(|kernel| std::fs::read_to_string(kernel.path().join("kernel.json")).ok())
+    .any(|spec| spec.contains("IRkernel"));
+    if system_wide {
+        eprintln!("skipping: an IRkernel is installed system-wide");
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let jupyter = tmp.path().join("jupyter");
