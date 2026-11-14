@@ -54,10 +54,25 @@ struct, `new`, connecting, opening and closing a project, the file tree.
 
 `console.rs` stays where it is (it is already a child module).
 
-## Not in this change
-`view.rs`, `plots.rs`, `git_pane.rs`, `crates/proto/src/lib.rs` and
-`crates/daemon/src/server.rs` are also large. They are split when next
-changed in a big way, by the same rules.
+## Second round (Huan, 2026-11-14)
+By the same rules:
+
+| File | Before | After | Children |
+|---|---|---|---|
+| `gpui/src/view.rs` | 2,901 | 368 | `view/layout.rs`, `top_bar.rs`, `cells.rs`, `side.rs`, `console_pane.rs` |
+| `gpui/src/plots.rs` | 2,870 | 1,127 | `plots/zoom.rs`, `zoom_view.rs`, `save.rs`, `size_menu.rs`, `pane.rs` |
+| `gpui/src/git_pane.rs` | 2,259 | 919 | `git_pane/stage.rs`, `menu.rs`, `asks.rs` |
+| `crates/proto/src/lib.rs` | 2,932 | 1,320 | `sessions.rs`, `files.rs`, `git.rs`, `terminals.rs`, `packages.rs`, `system.rs`, `projects.rs`, `tables.rs`, each re-exported, so every `sandhill_proto::Name` is as it was |
+
+`view/cells.rs` and `view/console_pane.rs` are not named `notebook` and
+`console`: a child module of that name would hide `crate::notebook` and the
+workbench's `console` inside `view.rs`.
+
+## Not split
+`crates/daemon/src/server.rs` (2,277 lines): half of it is one function,
+`Daemon::call`, a single `match` over every call. Splitting it means giving
+each group of calls its own function, which changes code rather than moving
+it, so it needs its own plan.
 
 ## Risk
 A moved function that used a `use` from the top of the old file needs that
