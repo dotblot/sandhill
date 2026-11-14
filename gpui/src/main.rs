@@ -9,6 +9,7 @@ mod agent_accounts;
 mod agent_edits;
 mod agents;
 mod agents_box;
+mod agents_start;
 mod agents_view;
 mod app_uninstall;
 mod app_window;

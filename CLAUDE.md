@@ -15,6 +15,9 @@ like PR and CI.
   may change it). Small fixes Huan asked for need no plan.
 - Design and building are separate steps; design answers go into the
   design docs below.
+- Commit as work is done, but push to GitHub only when Huan asks or a
+  batch of changes has built up, not after each small change: every push
+  runs about 45 minutes of checks (Huan, 2026-11-14).
 
 ## Design docs
 - `docs/design.md`: architecture decisions and why (read before changing it).
@@ -251,6 +254,12 @@ These plans are history: where they differ from this file, this file wins.
   (and brings its output). No @ symbol is shown in the composer box.
   Messages carry no implicit document context (open file, cell or
   selection); only what the user adds with @ and # (Huan, 2026-11-12).
+  A new conversation (Huan, 2026-11-14; `docs/design/new-conversation-plan.md`)
+  shows the agent centred (mark, name, model and account, the project's live
+  sessions as chips), then over the message box "Start with" rows that only
+  fill the box (an open file or a live table as @ chips, never sent by
+  themselves), "Continue" with the three latest conversations, and the @ / #
+  / Enter hints.
 - Console kernel selection starts its session automatically; no Start button.
   New conversation has no separate agent buttons. Agent/model selection stays
   in the composer picker, including Posit Assistant; PA manages models itself.

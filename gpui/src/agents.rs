@@ -352,6 +352,8 @@ pub struct Agents {
     pub(crate) follow_edits: bool,
     /// What was added to the message with @ and #, shown as chips.
     pub(crate) refs: Vec<Value>,
+    /// What a new conversation's screen knows of the project.
+    pub(crate) start: crate::agents_start::StartContext,
     pub(crate) menu: Option<Menu>,
     pub(crate) popup_triggers: crate::popup::PopupTriggers,
     /// The model menu's tab: an agent's kind, or "fav".
@@ -453,6 +455,7 @@ impl Agents {
             problem: None,
             follow_edits: crate::prefs::follow_agent(),
             refs: Vec::new(),
+            start: Default::default(),
             menu: None,
             popup_triggers: crate::popup::PopupTriggers::default(),
             model_tab: None,

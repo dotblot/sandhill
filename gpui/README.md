@@ -1049,6 +1049,14 @@ preview and R's imports weren't seen.
   `notices/libghostty-vt/*`, Sandhill's `LICENSE` and the code font's
   `OFL.txt` into `Resources/licenses`; Ark's `LICENSE` and `NOTICE` go
   beside it as `daemons/ark-<triple>.notices`.
+- **New conversation screen** (Huan, 2026-11-14; plan in
+  `docs/design/new-conversation-plan.md`): `agents_start.rs` replaces
+  `render_new`. `Agents::start` (`StartContext`) holds the project's live
+  sessions, the open document and a table in a session, read by
+  `refresh_start` when the screen shows (again after 15 s). A starter fills
+  the message box and its chips through `add_ref`; nothing is sent.
+  Checked in the app in light and dark, including filling the box; the
+  Continue rows were not seen, as the test project had no conversations.
 
 
 ## Running it

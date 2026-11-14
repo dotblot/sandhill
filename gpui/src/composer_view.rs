@@ -75,7 +75,7 @@ fn heading(text: impl Into<SharedString>, p: &Palette) -> Div {
 }
 
 /// A ref's icon: a file's, else a cell's, a plot's or a table.
-fn ref_icon(item: &Value) -> AnyElement {
+pub(crate) fn ref_icon(item: &Value) -> AnyElement {
     match ref_kind(item) {
         "file" | "attach" => {
             let path = item["path"].as_str().unwrap_or(ref_name(item));

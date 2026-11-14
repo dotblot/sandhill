@@ -15,7 +15,7 @@ use sandhill_proto::{Call, TerminalInfo};
 use serde_json::{Value, json};
 
 use crate::agents::{
-    Agents, KINDS, Show, kind_of, model_label, provider_show, question_key, supports_terminal,
+    Agents, Show, kind_of, model_label, provider_show, question_key, supports_terminal,
     terminal_only,
 };
 use crate::chat::{self, Ask, Item, Step, StepStatus};
@@ -34,6 +34,9 @@ impl Render for Agents {
                 .update(cx, |c, cx| c.set_placeholder(hint, window, cx));
         }
         self.question_fields(window, cx);
+        if self.show == Show::New {
+            self.refresh_start(cx);
+        }
         let current = self.current().cloned();
         if let Some(t) = &current {
             self.show = provider_show(&t.kind, self.show);
@@ -414,80 +417,6 @@ impl Agents {
             .child(
                 primary_button("agent-empty-new", "New conversation", &p)
                     .on_click(cx.listener(|this, _, window, cx| this.show(Show::New, window, cx))),
-            )
-            .into_any_element()
-    }
-
-    /// The project-wide conversation; agent/model selection stays in the composer.
-    fn render_new(&self, cx: &mut Context<Self>) -> AnyElement {
-        let p = *Palette::get(cx);
-        let project = self
-            .project
-            .rsplit('/')
-            .next()
-            .unwrap_or(&self.project)
-            .to_string();
-        let chosen = kind_of(self.new_kind).unwrap_or(&KINDS[0]);
-        let missing = self
-            .installed
-            .iter()
-            .find(|a| a.kind == chosen.kind)
-            .filter(|a| a.path.is_none())
-            .map(|a| a.install.clone());
-        div()
-            .id("agent-new-body")
-            .flex_1()
-            .overflow_y_scroll()
-            .child(
-                v_flex()
-                    .gap(px(10.))
-                    .p(px(16.))
-                    .line_height(rems(1.45))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("New conversation"),
-                    )
-                    .child(div().text_color(p.muted).child(format!(
-                        "It works on the whole {project} project and sees your live sessions. To have it work on a file, name the file in your message."
-                    )))
-                    .child(
-                        div()
-                            .text_size(px(look::SMALL + 1.))
-                            .text_color(p.faint)
-                            .child(chosen.plan),
-                    )
-                    .when_some(missing, |d, install| {
-                        d.child(
-                            v_flex()
-                                .gap(px(6.))
-                                .px(px(10.))
-                                .py(px(8.))
-                                .rounded(px(RADIUS))
-                                .bg(p.accent_soft)
-                                .child(format!(
-                                    "{} isn't installed on this machine. Install it with:",
-                                    chosen.name
-                                ))
-                                .child(
-                                    div()
-                                        .font_family(look::MONO)
-                                        .text_size(px(look::SMALL + 1.))
-                                        .child(install),
-                                ),
-                        )
-                    })
-                    .child(div().text_color(p.faint).child(if terminal_only(chosen.kind) {
-                        format!(
-                            "Opens {}'s own screen here, in this project's folder, with the model providers you set up in it. Type your first message below, or press Enter to start without one.",
-                            chosen.name
-                        )
-                    } else {
-                        format!(
-                            "Runs in this project's folder, signed in with your own {} account. Type your first message below.",
-                            chosen.name
-                        )
-                    })),
             )
             .into_any_element()
     }
@@ -1730,7 +1659,7 @@ fn primary_button(id: &'static str, label: &'static str, p: &Palette) -> Statefu
 }
 
 /// "16:42", or "Oct 9" for another day.
-fn time_label(ms: i64) -> String {
+pub(crate) fn time_label(ms: i64) -> String {
     let Some(at) = Local.timestamp_millis_opt(ms).single() else {
         return String::new();
     };
