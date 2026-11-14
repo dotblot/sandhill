@@ -2,7 +2,7 @@
 //! Each provider has its own status chip and account popup; hidden providers
 //! remain reachable through the full account list in the same popup frame.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -24,16 +24,11 @@ use crate::look::{self, Palette};
 const FRESH_MS: i64 = 5 * 60 * 1000;
 
 /// OpenScience, Oh My Pi and pi use the user's own model accounts and keys,
-/// with no subscription account query.
+/// and Posit Assistant manages its own models: none has a quota to show.
 fn quota_providers() -> impl Iterator<Item = &'static crate::agents::Kind> {
     crate::agents::KINDS
         .iter()
-        .filter(|provider| !matches!(provider.kind, "openscience" | "omp" | "pi"))
-}
-
-#[derive(Default)]
-struct Quotas {
-    accounts: BTreeMap<String, Account>,
+        .filter(|provider| !matches!(provider.kind, "openscience" | "omp" | "pi" | "posit"))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,31 +40,20 @@ enum QuotaPopup {
 pub(crate) struct QuotaMonitor {
     daemon: Rc<Daemon>,
     host: String,
-    quotas: Quotas,
     manager: Entity<AccountManager>,
     agents: Option<Entity<Agents>>,
     agents_observation: Option<Subscription>,
     popup_triggers: crate::popup::PopupTriggers,
     quota_open: Option<QuotaPopup>,
     enabled: BTreeMap<String, bool>,
-    refreshing: BTreeSet<String>,
-    refresh_errors: BTreeMap<String, String>,
     reset_confirm: Option<ResetConfirmation>,
     reset_pending: Option<String>,
     reset_notices: BTreeMap<String, (String, bool)>,
-    polling: bool,
 }
 
 #[derive(Default)]
 struct Account {
-    identity: Option<Value>,
-    identity_at: i64,
-    /// Anonymous official CLI snapshots are never joined with account feeds.
-    cli_snapshot_at: i64,
-    quota_error: Option<String>,
-    changed_at: i64,
-    /// Full authoritative snapshots also tombstone windows absent from them.
-    windows_at: i64,
+    observed_at: i64,
     windows: BTreeMap<String, QuotaWindow>,
 }
 
@@ -313,107 +297,6 @@ fn reset_expiry(expires_at: Option<i64>, now_ms: i64) -> String {
     }
 }
 
-impl Quotas {
-    /// Account timestamps win over arrival order, including replayed terminal
-    /// reports. Null is a sign-out tombstone. Quotas never cross identities.
-    pub(crate) fn ingest(&mut self, kind: &str, report: &Value) {
-        if !matches!(kind, "codex" | "claude" | "antigravity") {
-            return;
-        }
-        let account = self.accounts.entry(kind.into()).or_default();
-        let at = report["observed_at_ms"].as_i64().unwrap_or(0);
-        if kind == "antigravity" {
-            if report["quota_source"] != "cli_snapshot" || at <= 0 || at < account.cli_snapshot_at {
-                return;
-            }
-            let Some(windows) = report["status"]["rate_limits"].as_object() else {
-                return;
-            };
-            account.identity = report
-                .get("account")
-                .filter(|identity| !identity.is_null())
-                .cloned();
-            account.identity_at = 0;
-            account.cli_snapshot_at = at;
-            account.quota_error = report["quota_error"].as_str().map(str::to_owned);
-            account.windows_at = at;
-            // Every anonymous result replaces the entire provider snapshot:
-            // neither removed groups nor a previous account's windows can leak.
-            account.windows = windows
-                .iter()
-                .map(|(key, value)| (key.clone(), QuotaWindow::parse_cli(key, value, at)))
-                .collect();
-            return;
-        }
-        if let Some(identity) = report.get("account")
-            && at > 0
-            && at >= account.identity_at
-        {
-            let identity = (!identity.is_null()).then(|| identity.clone());
-            if account.identity != identity {
-                if account.identity_at != 0 {
-                    account.changed_at = at;
-                }
-                account.windows_at = 0;
-                account.windows.clear();
-                account.identity = identity;
-            }
-            account.identity_at = at;
-        }
-        if account.identity.is_none() {
-            return;
-        }
-        // Explicitly attributed snapshots for a different account cannot update
-        // the current account, even if their quota notification arrived later.
-        if let Some(identity) = report.get("account")
-            && account.identity.as_ref() != Some(identity)
-        {
-            return;
-        }
-        let status = &report["status"];
-        let observed = status["quota_observed_at_ms"].as_i64().unwrap_or(at);
-        let Some(windows) = status["rate_limits"].as_object() else {
-            return;
-        };
-        if kind == "claude"
-            && (status.get("quota_account") != account.identity.as_ref()
-                || observed < account.identity_at
-                || observed - account.identity_at > FRESH_MS)
-        {
-            return;
-        }
-        let full = kind == "codex"
-            && report.get("account").is_some()
-            && report["feed"] != true
-            && at >= account.windows_at;
-        if full {
-            account.windows_at = at;
-        }
-        for (key, value) in windows {
-            let window = QuotaWindow::parse(key, value, observed);
-            if window.observed_ms < account.changed_at
-                || window.observed_ms < account.windows_at
-                || window.observed_ms <= 0
-            {
-                continue;
-            }
-            if account
-                .windows
-                .get(key)
-                .is_none_or(|old| old.observed_ms <= window.observed_ms)
-            {
-                account.windows.insert(key.clone(), window);
-            }
-        }
-        // A full, fresh Codex snapshot can explicitly remove a window.
-        if full {
-            account
-                .windows
-                .retain(|key, old| windows.contains_key(key) || old.observed_ms > at);
-        }
-    }
-}
-
 impl Account {
     fn from_agent(account: &AgentAccount) -> Self {
         let usage = account.usage.as_ref();
@@ -430,53 +313,9 @@ impl Account {
             })
             .unwrap_or_default();
         Self {
-            identity_at: observed,
-            cli_snapshot_at: observed,
+            observed_at: observed,
             windows,
-            ..Self::default()
         }
-    }
-
-    fn available(&self) -> bool {
-        self.identity.is_some() || self.cli_snapshot_at > 0
-    }
-
-    fn observed_at(&self) -> i64 {
-        self.cli_snapshot_at.max(self.identity_at)
-    }
-}
-
-fn account_name(account: &Account) -> String {
-    let Some(identity) = &account.identity else {
-        return if account.cli_snapshot_at > 0 {
-            "Official CLI usage · account identity not reported".into()
-        } else {
-            String::new()
-        };
-    };
-    let email = identity["email"].as_str().filter(|s| !s.is_empty());
-    let plan = identity["plan"].as_str().filter(|s| !s.is_empty());
-    match (email, plan) {
-        (Some(email), Some(plan)) => format!("{email} · {plan}"),
-        (Some(email), None) => email.into(),
-        (None, Some(plan)) => plan.into(),
-        _ => "Signed in through CLI".into(),
-    }
-}
-
-fn unavailable_reason(_kind: &str, account: &Account) -> &'static str {
-    let mode = account
-        .identity
-        .as_ref()
-        .and_then(|identity| identity["type"].as_str())
-        .unwrap_or("");
-    if matches!(
-        mode,
-        "apiKey" | "api_key" | "anthropic_api_key" | "bedrock" | "vertex"
-    ) {
-        "API key · no plan limits"
-    } else {
-        "No usage reported yet"
     }
 }
 
@@ -503,19 +342,15 @@ impl QuotaMonitor {
         Self {
             daemon,
             host,
-            quotas: Quotas::default(),
             manager,
             agents: None,
             agents_observation: None,
             popup_triggers: crate::popup::PopupTriggers::default(),
             quota_open: None,
             enabled,
-            refreshing: BTreeSet::new(),
-            refresh_errors: BTreeMap::new(),
             reset_confirm: None,
             reset_pending: None,
             reset_notices: BTreeMap::new(),
-            polling: true,
         }
     }
 
@@ -866,95 +701,20 @@ impl QuotaMonitor {
         crate::prefs::save_quota_provider(&self.host, kind, on);
         self.enabled.insert(kind.into(), on);
         if on {
-            self.refresh_provider(kind, false, cx);
+            self.refresh_accounts(false, cx);
         }
-        cx.notify();
-    }
-
-    fn refresh_provider(&mut self, kind: &'static str, force: bool, cx: &mut Context<Self>) {
-        if matches!(kind, "claude" | "codex" | "antigravity") {
-            self.refresh_accounts(force, cx);
-            return;
-        }
-        if !self.refreshing.insert(kind.into()) {
-            return;
-        }
-        self.refresh_errors.remove(kind);
-        let daemon = self.daemon.clone();
-        cx.spawn(async move |this, cx| {
-            let result = daemon
-                .call_within::<Vec<Value>>(
-                    Call::AgentAccountsQuery {
-                        kinds: vec![kind.into()],
-                        force,
-                    },
-                    Duration::from_secs(50),
-                )
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                this.refreshing.remove(kind);
-                match result {
-                    Ok(reports) => {
-                        for report in reports {
-                            if report["kind"] == kind {
-                                this.quotas.ingest(kind, &report);
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        this.refresh_errors
-                            .insert(kind.into(), format!("Refresh failed: {err}"));
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
         cx.notify();
     }
 
     fn start_quota_poll(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
-                let Ok((daemon, kinds)) = this.update(cx, |this, cx| {
-                    // Reload device settings before every scheduled request:
-                    // another workspace may have disabled a provider.
-                    this.enabled = crate::prefs::quota_providers(&this.host);
-                    this.polling = true;
-                    this.refresh_accounts(true, cx);
-                    cx.notify();
-                    let kinds = quota_providers()
-                        .filter(|provider| this.provider_enabled(provider.kind))
-                        .filter(|provider| provider.kind == "posit")
-                        .map(|provider| provider.kind.to_string())
-                        .collect::<Vec<_>>();
-                    (this.daemon.clone(), kinds)
-                }) else {
-                    break;
-                };
-                let reports = if kinds.is_empty() {
-                    Vec::new()
-                } else {
-                    daemon
-                        .call_within::<Vec<Value>>(
-                            Call::AgentAccountsQuery {
-                                kinds,
-                                force: false,
-                            },
-                            Duration::from_secs(50),
-                        )
-                        .await
-                        .unwrap_or_default()
-                };
                 if this
                     .update(cx, |this, cx| {
-                        this.polling = false;
-                        for report in reports {
-                            if let Some(kind) = report["kind"].as_str() {
-                                this.quotas.ingest(kind, &report);
-                            }
-                        }
-                        // Even a failed poll must redraw stale measurements unknown.
+                        // Reload device settings before every scheduled refresh:
+                        // another workspace may have disabled a provider.
+                        this.enabled = crate::prefs::quota_providers(&this.host);
+                        this.refresh_accounts(true, cx);
                         cx.notify();
                     })
                     .is_err()
@@ -1015,13 +775,7 @@ impl Render for QuotaMonitor {
                         .map_or(account.default, |(id, _)| account.id == *id)
             });
             let managed_snapshot = selected.map(Account::from_agent);
-            let account = managed_snapshot.as_ref().unwrap_or_else(|| {
-                if kind == "posit" {
-                    self.quotas.accounts.get(kind).unwrap_or(&unknown_account)
-                } else {
-                    &unknown_account
-                }
-            });
+            let account = managed_snapshot.as_ref().unwrap_or(&unknown_account);
             let missing = |label: &str| QuotaWindow {
                 label: label.into(),
                 ring_label: "?".into(),
@@ -1037,7 +791,7 @@ impl Render for QuotaMonitor {
                 windows
             } else {
                 [
-                    missing(if matches!(kind, "antigravity" | "posit") {
+                    missing(if kind == "antigravity" {
                         "Quota"
                     } else {
                         "primary"
@@ -1051,7 +805,7 @@ impl Render for QuotaMonitor {
                 ["primary", "secondary"]
             };
             let mut windows = Vec::with_capacity(account.windows.len().max(2));
-            if kind == "posit" || (kind == "antigravity" && account.windows.is_empty()) {
+            if kind == "antigravity" && account.windows.is_empty() {
                 windows.push(&unknown[0]);
             } else if kind != "antigravity" {
                 for (index, key) in keys.iter().enumerate() {
@@ -1098,8 +852,8 @@ impl Render for QuotaMonitor {
                 }) {
                     let value = (selected.is_none_or(|account| {
                         account.method != "api_key" && account.signed_in == Some(true)
-                    }) && now >= account.observed_at()
-                        && now - account.observed_at() <= FRESH_MS)
+                    }) && now >= account.observed_at
+                        && now - account.observed_at <= FRESH_MS)
                         .then(|| window.remaining(now))
                         .flatten();
                     item = item.child(crate::meter::labelled_ring(
@@ -1115,12 +869,7 @@ impl Render for QuotaMonitor {
             if self.quota_open != Some(QuotaPopup::All) && self.quota_open != Some(provider_popup) {
                 continue;
             }
-            let managed = matches!(kind, "claude" | "codex" | "antigravity");
-            let refreshing = if managed {
-                manager_refreshing
-            } else {
-                self.refreshing.contains(kind) || (self.polling && enabled)
-            };
+            let refreshing = manager_refreshing;
             let mut section = v_flex()
                 .gap(px(10.))
                 .px(px(8.))
@@ -1152,61 +901,34 @@ impl Render for QuotaMonitor {
                                     "Refresh quota"
                                 })
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.refresh_provider(kind, true, cx)
+                                    this.refresh_accounts(true, cx)
                                 })),
                         ),
                 );
-            if managed {
-                let switchable = shown.as_ref().filter(|(_, can_switch)| *can_switch);
-                let default_account = if switchable.is_none() {
-                    crate::prefs::agent_account(&self.host, kind)
-                } else {
-                    None
-                };
-                let selection = switchable.map_or(
-                    (default_account.as_deref().unwrap_or(kind), false),
-                    |(id, _)| (id.as_str(), true),
-                );
-                for entry in managed_accounts
-                    .iter()
-                    .filter(|account| account.kind == kind)
-                {
-                    section = section.child(self.account_card(entry, kind, selection, now, &p, cx));
-                }
-                if !managed_accounts.iter().any(|account| account.kind == kind) {
-                    section = section.child(div().text_color(p.muted).child(if refreshing {
-                        "Checking official CLI account data"
-                    } else {
-                        "Account data unavailable from official CLI"
-                    }));
-                }
-                if let Some(error) = manager_error {
-                    section = section.child(div().text_color(p.err).child(error.clone()));
-                }
-            } else if account.available() {
-                section = section.child(div().text_color(p.muted).child(account_name(account)));
-                if account.windows.is_empty() {
-                    section = section.child(
-                        div().text_color(p.muted).child(
-                            account
-                                .quota_error
-                                .clone()
-                                .unwrap_or_else(|| unavailable_reason(kind, account).into()),
-                        ),
-                    );
-                } else {
-                    for window in &windows {
-                        section = section.child(window.row(now, &p));
-                    }
-                }
+            let switchable = shown.as_ref().filter(|(_, can_switch)| *can_switch);
+            let default_account = if switchable.is_none() {
+                crate::prefs::agent_account(&self.host, kind)
             } else {
+                None
+            };
+            let selection = switchable.map_or(
+                (default_account.as_deref().unwrap_or(kind), false),
+                |(id, _)| (id.as_str(), true),
+            );
+            for entry in managed_accounts
+                .iter()
+                .filter(|account| account.kind == kind)
+            {
+                section = section.child(self.account_card(entry, kind, selection, now, &p, cx));
+            }
+            if !managed_accounts.iter().any(|account| account.kind == kind) {
                 section = section.child(div().text_color(p.muted).child(if refreshing {
                     "Checking official CLI account data"
                 } else {
-                    "No supported subscription quota query"
+                    "Account data unavailable from official CLI"
                 }));
             }
-            if let Some(error) = self.refresh_errors.get(kind) {
+            if let Some(error) = manager_error {
                 section = section.child(div().text_color(p.err).child(error.clone()));
             }
             section = section.child(
@@ -1216,36 +938,39 @@ impl Render for QuotaMonitor {
                     .border_color(p.line)
                     .justify_between()
                     .gap(px(8.))
-                    .child(h_flex().gap(px(10.)).when(managed, |row| {
-                        row.child(
-                            div()
-                                .id(SharedString::from(format!("quota-add-{kind}")))
-                                .cursor_pointer()
-                                .text_color(p.accent)
-                                .child("Add Account…")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.dismiss_popup(cx);
-                                    this.manager
-                                        .update(cx, |manager, cx| manager.add(kind, window, cx));
-                                })),
-                        )
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("quota-manage-{kind}")))
-                                .cursor_pointer()
-                                .text_color(p.accent)
-                                .child("Manage…")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.dismiss_popup(cx);
-                                    crate::app_window::show_welcome(
-                                        Some(crate::start_screen::StartMode::Accounts(
-                                            this.host.clone(),
-                                        )),
-                                        cx,
-                                    );
-                                })),
-                        )
-                    }))
+                    .child(
+                        h_flex()
+                            .gap(px(10.))
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("quota-add-{kind}")))
+                                    .cursor_pointer()
+                                    .text_color(p.accent)
+                                    .child("Add Account…")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.dismiss_popup(cx);
+                                        this.manager.update(cx, |manager, cx| {
+                                            manager.add(kind, window, cx)
+                                        });
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("quota-manage-{kind}")))
+                                    .cursor_pointer()
+                                    .text_color(p.accent)
+                                    .child("Manage…")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.dismiss_popup(cx);
+                                        crate::app_window::show_welcome(
+                                            Some(crate::start_screen::StartMode::Accounts(
+                                                this.host.clone(),
+                                            )),
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
                     .child(
                         h_flex().gap(px(6.)).child("Show in status bar").child(
                             Switch::new(SharedString::from(format!("quota-show-{kind}")))
@@ -1346,8 +1071,8 @@ impl Render for QuotaMonitor {
 #[cfg(test)]
 mod tests {
     use super::{
-        FRESH_MS, QuotaWindow, Quotas, RemainingLevel, banked_resets, quota_providers,
-        remaining_level, window_label,
+        FRESH_MS, QuotaWindow, RemainingLevel, banked_resets, quota_providers, remaining_level,
+        window_label,
     };
     use serde_json::{Value, json};
 
@@ -1409,16 +1134,10 @@ mod tests {
     }
 
     #[test]
-    fn bring_your_own_key_agents_have_no_quota_chip_or_account_polling() {
+    fn agents_without_a_subscription_quota_have_no_quota_chip() {
         assert!(quota_providers().any(|provider| provider.kind == "codex"));
-        for kind in ["openscience", "omp", "pi"] {
+        for kind in ["openscience", "omp", "pi", "posit"] {
             assert!(!quota_providers().any(|provider| provider.kind == kind));
-            let mut quotas = Quotas::default();
-            quotas.ingest(
-                kind,
-                &json!({"observed_at_ms": 1000, "status": {"rate_limits": {}}}),
-            );
-            assert!(!quotas.accounts.contains_key(kind));
         }
     }
 
@@ -1486,146 +1205,6 @@ mod tests {
     }
 
     #[test]
-    fn account_changes_and_signout_defeat_replayed_old_reports() {
-        let mut quotas = Quotas::default();
-        let report = |email, at, used| {
-            json!({"account": {"type": "chatgpt", "email": email},
-            "observed_at_ms": at, "status": {"rate_limits": {"primary": {
-                "window_minutes": 300, "used_percentage": used, "observed_at_ms": at, "resets_at": 1000}}}})
-        };
-        quotas.ingest("codex", &report("a@example.test", 1000, 30));
-        assert_eq!(quotas.accounts["codex"].windows["primary"].used, Some(30.));
-        quotas.ingest("codex", &json!({"account": {"type": "chatgpt", "email": "b@example.test"}, "observed_at_ms": 2000}));
-        quotas.ingest("codex", &report("a@example.test", 1500, 99));
-        assert!(quotas.accounts["codex"].windows.is_empty());
-        quotas.ingest("codex", &report("b@example.test", 3000, 12));
-        assert_eq!(quotas.accounts["codex"].windows["primary"].used, Some(12.));
-        quotas.ingest("codex", &json!({"account": null, "observed_at_ms": 4000}));
-        quotas.ingest("codex", &report("b@example.test", 3000, 12));
-        assert!(quotas.accounts["codex"].identity.is_none());
-        assert!(quotas.accounts["codex"].windows.is_empty());
-    }
-
-    #[test]
-    fn claude_feed_is_fresh_only_for_the_current_cli_identity() {
-        let mut quotas = Quotas::default();
-        let identity = |email, at| {
-            json!({"account": {"type": "claude.ai", "email": email},
-            "observed_at_ms": at})
-        };
-        let feed = |email, at| {
-            json!({"status": {"quota_observed_at_ms": at,
-            "quota_account": {"type": "claude.ai", "email": email},
-            "rate_limits": {"five_hour": {"used_percentage": 42, "resets_at": 1000}}}})
-        };
-        quotas.ingest("claude", &identity("a@example.test", 1000));
-        // Discovery can still cache A after an in-session login to B. A newer
-        // measurement bound to B must not populate A's account.
-        quotas.ingest("claude", &feed("b@example.test", 1400));
-        assert!(quotas.accounts["claude"].windows.is_empty());
-        quotas.ingest("claude", &feed("a@example.test", 1500));
-        assert_eq!(
-            quotas.accounts["claude"].windows["five_hour"].used,
-            Some(42.)
-        );
-        quotas.ingest("claude", &identity("b@example.test", 2000));
-        quotas.ingest("claude", &feed("a@example.test", 2500));
-        assert!(quotas.accounts["claude"].windows.is_empty());
-        quotas.ingest("claude", &feed("b@example.test", 2500));
-        assert_eq!(
-            quotas.accounts["claude"].windows["five_hour"].used,
-            Some(42.)
-        );
-        quotas.ingest("claude", &identity("c@example.test", 3000));
-        let mut ambiguous = feed("c@example.test", 3500);
-        ambiguous["status"]
-            .as_object_mut()
-            .unwrap()
-            .remove("quota_account");
-        quotas.ingest("claude", &ambiguous);
-        assert!(quotas.accounts["claude"].windows.is_empty());
-        quotas.ingest("claude", &feed("c@example.test", 3000 + FRESH_MS + 1));
-        assert!(
-            quotas.accounts["claude"].windows.is_empty(),
-            "fresh feed cannot join an expired account identity"
-        );
-    }
-
-    #[test]
-    fn api_accounts_and_unqueried_antigravity_do_not_invent_windows() {
-        let mut quotas = Quotas::default();
-        quotas.ingest(
-            "codex",
-            &json!({"account": {"type": "apiKey"}, "observed_at_ms": 1000}),
-        );
-        assert!(quotas.accounts["codex"].windows.is_empty());
-        quotas.ingest(
-            "antigravity",
-            &json!({"account": {"type": "google"}, "observed_at_ms": 1000}),
-        );
-        assert!(quotas.accounts["antigravity"].windows.is_empty());
-    }
-
-    #[test]
-    fn authoritative_codex_removal_survives_older_same_account_replay() {
-        let mut quotas = Quotas::default();
-        let identity = json!({"type": "chatgpt", "email": "a@example.test"});
-        let old = json!({"account": identity, "feed": true, "observed_at_ms": 1000,
-            "status": {"rate_limits": {"primary": {"window_minutes": 300,
-            "used_percentage": 42, "resets_at": 1000, "observed_at_ms": 1500}}}});
-        quotas.ingest("codex", &old);
-        assert!(quotas.accounts["codex"].windows.contains_key("primary"));
-        quotas.ingest(
-            "codex",
-            &json!({"account": identity, "observed_at_ms": 2000,
-            "status": {"rate_limits": {}}}),
-        );
-        quotas.ingest("codex", &old);
-        assert!(quotas.accounts["codex"].windows.is_empty());
-        let mut newer = old;
-        newer["status"]["rate_limits"]["primary"]["observed_at_ms"] = json!(2500);
-        quotas.ingest("codex", &newer);
-        assert!(quotas.accounts["codex"].windows.contains_key("primary"));
-    }
-
-    #[test]
-    fn installation_or_unattributed_feed_does_not_establish_login() {
-        let mut quotas = Quotas::default();
-        quotas.ingest(
-            "claude",
-            &json!({"status": {"rate_limits": {"five_hour": {
-            "used_percentage": 42, "resets_at": 1000}}, "quota_observed_at_ms": 1000}}),
-        );
-        assert!(quotas.accounts["claude"].identity.is_none());
-        quotas.ingest("antigravity", &json!({"path": "/usr/bin/agy"}));
-        assert!(quotas.accounts["antigravity"].identity.is_none());
-    }
-
-    fn agy_snapshot(at: i64, windows: Value) -> Value {
-        json!({"kind": "antigravity", "quota_source": "cli_snapshot", "observed_at_ms": at,
-            "status": {"quota_observed_at_ms": at, "rate_limits": windows}})
-    }
-
-    #[test]
-    fn antigravity_official_groups_need_no_fabricated_identity_or_reset() {
-        let mut quotas = Quotas::default();
-        quotas.ingest("antigravity", &agy_snapshot(1000, json!({
-            "gemini-weekly": {"label": "Gemini Models · weekly", "used_percentage": 0.6253361701965332,
-                "resets_at": "2026-11-17T18:03:02Z"},
-            "3p-5h": {"label": "Claude and GPT models · 5h", "used_percentage": 0}
-        })));
-        let account = &quotas.accounts["antigravity"];
-        assert!(account.available());
-        assert!(account.identity.is_none());
-        assert_eq!(
-            account.windows["gemini-weekly"].label,
-            "Gemini Models · weekly"
-        );
-        assert_eq!(account.windows["3p-5h"].value(1500), Some(0.));
-        assert_eq!(account.windows["3p-5h"].value(1000 + FRESH_MS + 1), None);
-    }
-
-    #[test]
     fn antigravity_invalid_and_expired_measurements_stay_unknown() {
         for value in [
             json!({"used_percentage": null}),
@@ -1646,63 +1225,5 @@ mod tests {
             QuotaWindow::parse("five_hour", &json!({"used_percentage": 0}), 1000).value(1500),
             None
         );
-    }
-
-    #[test]
-    fn antigravity_full_snapshots_remove_stale_groups_and_never_join_accounts() {
-        let mut quotas = Quotas::default();
-        let old = agy_snapshot(
-            1000,
-            json!({
-                "gemini-weekly": {"label": "Gemini Models · weekly", "used_percentage": 42},
-                "3p-5h": {"label": "Claude and GPT models · 5h", "used_percentage": 0}
-            }),
-        );
-        quotas.ingest("antigravity", &old);
-        let mut new_account = agy_snapshot(
-            2000,
-            json!({
-                "3p-5h": {"label": "Claude and GPT models · 5h", "used_percentage": 12}
-            }),
-        );
-        new_account["account"] = json!({"email": "explicit@example.test"});
-        quotas.ingest("antigravity", &new_account);
-        assert_eq!(quotas.accounts["antigravity"].windows.len(), 1);
-        quotas.ingest("antigravity", &old);
-        assert_eq!(quotas.accounts["antigravity"].windows.len(), 1);
-        assert_eq!(
-            quotas.accounts["antigravity"].windows["3p-5h"].used,
-            Some(12.)
-        );
-        quotas.ingest(
-            "antigravity",
-            &agy_snapshot(
-                3000,
-                json!({
-                    "gemini-weekly": {"label": "Gemini Models · weekly", "used_percentage": 5}
-                }),
-            ),
-        );
-        let account = &quotas.accounts["antigravity"];
-        assert!(account.identity.is_none());
-        assert_eq!(account.windows.len(), 1);
-        assert!(!account.windows.contains_key("3p-5h"));
-        // Unattributed incremental data cannot resurrect another account's window.
-        quotas.ingest(
-            "antigravity",
-            &json!({"observed_at_ms": 4000, "status": {
-            "rate_limits": {"3p-5h": {"used_percentage": 99}}}}),
-        );
-        assert!(!quotas.accounts["antigravity"].windows.contains_key("3p-5h"));
-        let mut failed = agy_snapshot(5000, json!({}));
-        failed["quota_error"] = json!("Antigravity /usage exited with status 7");
-        quotas.ingest("antigravity", &failed);
-        assert!(quotas.accounts["antigravity"].windows.is_empty());
-        assert_eq!(
-            quotas.accounts["antigravity"].quota_error.as_deref(),
-            Some("Antigravity /usage exited with status 7")
-        );
-        quotas.ingest("antigravity", &old);
-        assert!(quotas.accounts["antigravity"].windows.is_empty());
     }
 }

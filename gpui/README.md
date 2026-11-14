@@ -1057,6 +1057,12 @@ preview and R's imports weren't seen.
   the message box and its chips through `add_ref`; nothing is sent.
   Checked in the app in light and dark, including filling the box; the
   Continue rows were not seen, as the test project had no conversations.
+- **Status bar quota and Welcome build id** (Huan, 2026-11-14): Posit
+  Assistant joins OpenScience, omp and pi in `quota_providers`' exclusions.
+  With it went `QuotaMonitor`'s own quota query (`Quotas`, `ingest`,
+  `refresh_provider`), which only Posit still used; every remaining
+  provider is read through `AccountManager`. The Welcome sidebar shows the
+  first seven characters of `SANDHILL_COMMIT`.
 
 
 ## Running it

@@ -564,7 +564,7 @@ impl AppWindow {
                         div()
                             .text_size(px(12.))
                             .text_color(p.muted)
-                            .child(format!("build {build}"))
+                            .child(format!("build {}", build.get(..7).unwrap_or(build)))
                     }))
                     .child(
                         div()
