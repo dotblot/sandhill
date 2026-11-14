@@ -8,6 +8,7 @@ Every version shares the same paths; only the colours change. The paths were
 drawn by hand on a 1024 canvas, using the V1.1 concept board as a guide for
 the pose. Nothing in them is traced from, or cut out of, that image.
 """
+import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -64,6 +65,63 @@ def app_icon(dark=True, small=False):
             f'<g transform="translate({tx:.1f} {ty:.1f}) scale({s})">{layers(crane, TEAL, RED, small, not small)}</g></svg>\n')
 
 
+def srgb(hex_color):
+    h = hex_color.lstrip("#")
+    return "srgb:" + ",".join(f"{int(h[i:i + 2], 16) / 255:.5f}" for i in (0, 2, 4)) + ",1.00000"
+
+
+def icon_package():
+    """The app icon as an Icon Composer document (macOS 26 and later): the
+    system draws it in the Dock with a white tile and navy crane in light
+    mode, a navy tile and white crane in dark, and tints or clears it as the
+    user's icon style says (Huan, 2026-11-14: flat, white tile in light).
+    Each part of the crane is its own layer so its colour can change; the
+    1024 canvas is the whole tile, which the system shapes and shades."""
+    s = 0.70 * 1024 / 824  # the crane's size on the tile, as in app_icon()
+    tx, ty = 512 - CX * s, 512 - CY * s
+
+    def art(d):
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">'
+                f'<g transform="translate({tx:.2f} {ty:.2f}) scale({s:.5f})"><path fill="#000" d="{d}"/></g></svg>\n')
+
+    def layer(name, base, specialized=()):
+        entry = {"name": name, "image-name": f"{name}.svg", "glass": False}
+        if specialized:
+            entry["fill-specializations"] = [{"value": {"solid": srgb(base)}}] + [
+                {"appearance": appearance, "value": {"solid": srgb(color)}} for appearance, color in specialized
+            ]
+        else:
+            entry["fill"] = {"solid": srgb(base)}
+        return entry
+
+    document = {
+        "fill-specializations": [
+            {"value": {"linear-gradient": [srgb("#FFFFFF"), srgb("#ECECF0")]}},
+            {"appearance": "dark", "value": {"linear-gradient": [srgb("#1F3A5F"), srgb(NAVY)]}},
+        ],
+        "groups": [{
+            # Front to back.
+            "layers": [
+                layer("crown", RED),
+                layer("feather", TEAL),
+                # Tinted icons are drawn from brightness: a navy crane would
+                # vanish into the tint, so it is white there as in dark.
+                layer("crane", NAVY, [("dark", WHITE), ("tinted", WHITE)]),
+            ],
+            "shadow": {"kind": "neutral", "opacity": 0.35},
+            "translucency": {"enabled": False, "value": 0.5},
+            "specular": False,
+        }],
+        "supported-platforms": {"squares": ["macOS"]},
+    }
+    return {
+        "icon.json": json.dumps(document, indent=2, sort_keys=True) + "\n",
+        "Assets/crane.svg": art(body()),
+        "Assets/feather.svg": art(FEATHER),
+        "Assets/crown.svg": art(CROWN),
+    }
+
+
 FILES = {
     # full mark
     "crane/sandhill-crane-light.svg": mark(NAVY, TEAL, RED, bg=WHITE),
@@ -91,6 +149,7 @@ FILES = {
 # the app's icon sources; gpui/assets/icon/make.mjs makes the bundle icon from them
 APP_ICONS = HERE.parents[3] / "gpui" / "assets" / "icon"
 APP_FILES = {"source.svg": FILES["app-icon/app-icon-dark.svg"], "source-small.svg": FILES["app-icon/app-icon-dark-small.svg"]}
+APP_FILES.update({f"Sandhill.icon/{rel}": text for rel, text in icon_package().items()})
 
 if __name__ == "__main__":
     for rel, text in FILES.items():
@@ -98,5 +157,7 @@ if __name__ == "__main__":
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
     for name, text in APP_FILES.items():
-        (APP_ICONS / name).write_text(text)
+        p = APP_ICONS / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
     print(len(FILES), "SVGs written, and", len(APP_FILES), "app icon sources")

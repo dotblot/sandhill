@@ -56,6 +56,29 @@ try {
   rmSync(work, { recursive: true, force: true });
 }
 
+// Sandhill.icon, written by build.py, is the icon macOS 26 and later draw in
+// light, dark, tinted and clear looks; Xcode's actool compiles it into
+// Assets.car, which the bundle carries beside icon.icns (older macOS uses
+// that). Needs Xcode 26 or later.
+const car = mkdtempSync(join(tmpdir(), "sandhill-car-"));
+try {
+  execFileSync(
+    "xcrun",
+    [
+      "actool", join(icons, "Sandhill.icon"),
+      "--compile", car,
+      "--platform", "macosx",
+      "--minimum-deployment-target", "12.0",
+      "--app-icon", "Sandhill",
+      "--output-partial-info-plist", join(car, "partial.plist"),
+    ],
+    { stdio: "inherit" },
+  );
+  copyFileSync(join(car, "Assets.car"), join(icons, "Assets.car"));
+} finally {
+  rmSync(car, { recursive: true, force: true });
+}
+
 // An .icns file is "icns", its length, then entries of a 4-letter type, a
 // length (including these 8 bytes) and the data.
 function readIcns(data) {

@@ -65,3 +65,19 @@ surface of the app uses. Until then: cream `#F8F1E4`, sage `#6FA38E`, red
 and `source-small.svg` (for 16 and 32 px). `node gpui/assets/icon/make.mjs`
 makes `icon.icns` and the Start screen's `gpui/assets/brand/icon.png` from
 them.
+
+It also writes `gpui/assets/icon/Sandhill.icon`, an Icon Composer document
+with the crane in three layers (body, feather, crown) on the whole 1024
+canvas: a white tile and navy crane in light, a navy tile and white crane in
+dark, the crane white in tinted looks (Huan, 2026-11-14). `make.mjs`
+compiles it with Xcode's `actool` into `Assets.car`, which macOS 26 and later
+use in place of `icon.icns`. To see every look:
+
+```sh
+ictool="$(dirname "$(xcode-select -p)")/Applications/Icon Composer.app/Contents/Executables/ictool"
+"$ictool" gpui/assets/icon/Sandhill.icon --export-image --output-file dark.png \
+  --platform macOS --rendition Dark --width 512 --height 512 --scale 2
+```
+
+(`--rendition` is `Default`, `Dark`, `TintedLight`, `TintedDark`,
+`ClearLight` or `ClearDark`.)

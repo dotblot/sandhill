@@ -321,7 +321,11 @@ These plans are history: where they differ from this file, this file wins.
   to the fallback. A project's default icon is the project folder's.
   Vendor pinned sources with upstream licenses and notices. Keep Sandhill's
   crane: navy `#142844` with the palette's teal feather and red crown on
-  neutral white `#F5F5F7`, no cream (Huan, 2026-11-14). Fonts are unchanged
+  neutral white `#F5F5F7`, no cream (Huan, 2026-11-14). The Dock icon
+  follows the theme on macOS 26 and later (Huan, 2026-11-14): flat, a white
+  tile and navy crane in light, a navy tile and white crane in dark, tinted
+  and clear looks drawn by the system with the crane light; older macOS
+  keeps the navy `icon.icns`. Fonts are unchanged
   while Huan contacts the font author.
   Agent marks have no background (Huan, 2026-11-12): OpenAI's logo for Codex
   and Synthetic Sciences' mark for OpenScience, in the text colour; Posit's

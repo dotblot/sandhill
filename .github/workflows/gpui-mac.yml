@@ -102,6 +102,9 @@ jobs:
           # The app finds sandhilld next to itself.
           cp target/release/sandhilld "$app/Contents/MacOS/"
           cp gpui/assets/icon/icon.icns "$app/Contents/Resources/"
+          # The icon macOS 26 and later draw for light, dark, tinted and clear
+          # (CFBundleIconName); older macOS keeps icon.icns.
+          cp gpui/assets/icon/Assets.car "$app/Contents/Resources/"
           cp -R daemons "$app/Contents/Resources/daemons"
           mkdir -p "$app/Contents/Resources/licenses/icons"
           cp docs/design/ui/icons/vendor/NOTICE.txt "$app/Contents/Resources/licenses/icons/"
@@ -133,6 +136,7 @@ jobs:
             <key>CFBundleIdentifier</key><string>dev.sandhill.ide</string>
             <key>CFBundleExecutable</key><string>sandhill-gpui</string>
             <key>CFBundleIconFile</key><string>icon.icns</string>
+            <key>CFBundleIconName</key><string>Sandhill</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>0.1.0</string>
             <key>CFBundleVersion</key><string>${GITHUB_SHA::7}</string>
