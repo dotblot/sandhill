@@ -1043,6 +1043,12 @@ preview and R's imports weren't seen.
   `documents.rs::opens_as_text` reads a `.bed`'s first bytes before opening
   it (`notebook::shared_with_binary`), so genotypes are offered to the
   default app instead of failing as text.
+- **Third-party notices in the bundle** (Huan, 2026-11-14): the Mac
+  workflow runs `notices/make.sh` (cargo-about, installed by
+  `taiki-e/install-action`) and copies `sandhill-app.txt`, `sandhilld.txt`,
+  `notices/libghostty-vt/*`, Sandhill's `LICENSE` and the code font's
+  `OFL.txt` into `Resources/licenses`; Ark's `LICENSE` and `NOTICE` go
+  beside it as `daemons/ark-<triple>.notices`.
 
 
 ## Running it

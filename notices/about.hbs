@@ -1,0 +1,23 @@
+Third-party software in Sandhill
+===============================
+
+Sandhill is free software under GPL-3.0-or-later (see its LICENSE). It is
+built with the open-source Rust libraries below, each under its own licence,
+whose text follows the list of libraries that use it.
+
+{{#each overview}}
+- {{{name}}}: {{count}} {{#if (eq count 1)}}library{{else}}libraries{{/if}}
+{{/each}}
+
+{{#each licenses}}
+--------------------------------------------------------------------------------
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} ({{{crate.repository}}}){{/if}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

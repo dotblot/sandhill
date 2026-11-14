@@ -1,0 +1,35 @@
+# What cargo-about (https://github.com/EmbarkStudios/cargo-about) may list in
+# Sandhill's third-party notices: notices/make.sh runs it for the daemon's
+# workspace and for the app's. A crate under a licence missing here fails the
+# build, so a new kind of licence is looked at before it ships.
+accepted = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "NCSA",
+    "CDLA-Permissive-2.0",
+    # File-level copyleft, compatible with Sandhill's GPL; the crates' sources
+    # are public on crates.io.
+    "MPL-2.0",
+]
+# The platforms Sandhill ships for: the app on Apple silicon, and sandhilld
+# there and on Linux servers.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+]
+ignore-build-dependencies = false
+ignore-dev-dependencies = true
+# Sandhill's own crates (`publish = false`) are under its own LICENSE.
+private = { ignore = true }

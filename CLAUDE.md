@@ -293,6 +293,12 @@ These plans are history: where they differ from this file, this file wins.
   GPL-3.0-or-later (`LICENSE`, and `license` in Sandhill's own `Cargo.toml`
   files), with no paid version. Code taken from elsewhere must be under a
   GPL-3.0-compatible licence; vendored dependencies retain their own licences.
+  Sandhill.app carries every component's notices in `Resources/licenses`
+  and beside each bundled program (2026-11-14): `notices/make.sh`
+  (cargo-about) lists the Rust libraries of the app and the daemon, and a
+  library under a licence not accepted in `notices/about.toml` fails the
+  build; `notices/libghostty-vt/` holds the terminal engine's C/C++/Zig
+  libraries' licences; Ark, ruff and ty keep theirs in `daemons/*.notices`.
 - Icons (Huan, 2026-11-06): use Gruvbox Material Icons for files/folders,
   Lucide for controls, and Developer Icons for available integration/runtime
   logos. Remove Atom Material entirely. File and folder icons keep Gruvbox's

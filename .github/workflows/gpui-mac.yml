@@ -28,7 +28,8 @@ jobs:
           targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-zigbuild
+          # cargo-about writes the open-source libraries' notices.
+          tool: cargo-zigbuild,cargo-about
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -82,11 +83,17 @@ jobs:
               unzip -q -o "$work"/*.zip -d "$work"
               cp "$(find "$work" -type f -name ark | head -1)" "daemons/ark-$triple"
               chmod 755 "daemons/ark-$triple"
+              # Ark's MIT licence and the notices of what it is built from,
+              # beside it, as ruff's and ty's are.
+              mkdir -p "daemons/ark-$triple.notices"
+              cp "$work/LICENSE" "$work/NOTICE" "daemons/ark-$triple.notices/"
             elif [ "$arch" = x64 ]; then
               echo "Ark $tag has no linux-x64 build"; exit 1
             fi
           done
           ls -l daemons
+      - name: Write the third-party notices
+        run: sh notices/make.sh notices-out
       - name: Make Sandhill.app
         run: |
           app="Sandhill.app"
@@ -108,6 +115,14 @@ jobs:
           cp gpui/vendor/gpui-cn/LICENSE-MUXY "$app/Contents/Resources/licenses/gpui-cn/"
           mkdir -p "$app/Contents/Resources/licenses/gpui-component"
           cp gpui/vendor/gpui-component/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-component/"
+          # Sandhill's own licence, the open-source Rust libraries built into
+          # the app and the daemon, the terminal engine's C/C++/Zig
+          # libraries, and the code font.
+          cp LICENSE "$app/Contents/Resources/licenses/Sandhill-LICENSE"
+          cp notices-out/sandhill-app.txt notices-out/sandhilld.txt "$app/Contents/Resources/licenses/"
+          mkdir -p "$app/Contents/Resources/licenses/libghostty-vt" "$app/Contents/Resources/licenses/fonts"
+          cp notices/libghostty-vt/*-LICENSE* "$app/Contents/Resources/licenses/libghostty-vt/"
+          cp gpui/assets/fonts/OFL.txt "$app/Contents/Resources/licenses/fonts/Maple-Mono-OFL.txt"
           cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
