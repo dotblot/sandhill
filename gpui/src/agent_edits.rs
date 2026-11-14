@@ -38,6 +38,18 @@ impl Workbench {
                 }),
             ..Focus::default()
         };
+        if self.objects.is_shown() {
+            return focus;
+        }
+        if !self.diff_shown
+            && (self.explorer_shown || (self.open.is_none() && self.media_shown.is_none()))
+        {
+            focus.table = self
+                .explorer
+                .as_ref()
+                .and_then(|e| e.read(cx).table_focus());
+            return focus;
+        }
         if let Some(open) = &self.open {
             focus.file = Some(open.notebook.path.clone());
             if let Some(ix) = open.current
@@ -168,6 +180,11 @@ impl Workbench {
             .as_mut()
             .filter(|o| o.notebook.path == file)
             .ok_or_else(|| anyhow::anyhow!("Sandhill could not open {file}"))?;
+        if !open.notebook.can_run() {
+            anyhow::bail!(
+                "this document does not contain executable notebook cells; edit {file} as a file instead"
+            );
+        }
         let language = open.notebook.language.clone().unwrap_or_default();
         let outcome = if open.is_script() {
             if request.method != "add_cell" {

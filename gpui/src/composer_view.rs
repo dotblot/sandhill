@@ -1,12 +1,13 @@
 //! Drawing the message box, in the look of the Tauri app's
 //! `AgentComposer.tsx` (drafts 18 and 30–35), text 2px larger: chips for
 //! what was added with @ and #, the text and a round send (or stop)
-//! button; under it web search, session context and the mode on the left,
+//! button; under it web search, following edits and the mode on the left,
 //! the context used and the model with its effort on the right. Menus open
 //! above the box.
 
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::input::{
-    Backspace, Editor, Escape, IndentInline, MoveDown, MoveUp, Paste,
+    Backspace, Editor, Enter, Escape, IndentInline, MoveDown, MoveUp, Paste,
 };
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -15,8 +16,8 @@ use sandhill_proto::TerminalInfo;
 use serde_json::Value;
 
 use crate::RunCell;
-use crate::agents::{Agents, KINDS, Menu, Show, kind_of};
-use crate::agents_box::favourite_key;
+use crate::agents::{Agents, KINDS, Menu, Show, kind_of, terminal_only};
+use crate::agents_view::provider;
 use crate::composer::{
     self, MODES, ModelChoice, effort_name, ref_kind, ref_name, short_model, tokens,
 };
@@ -26,10 +27,25 @@ const LINE: f32 = 20.;
 /// The message box grows to this many lines, then scrolls.
 const LINES: usize = 8;
 const MENU_WIDTH: f32 = 280.;
+const MODEL_MENU_WIDTH: f32 = 380.;
+const MODEL_MENU_HEIGHT: f32 = 360.;
+const MODEL_PROVIDER_WIDTH: f32 = 32.;
+const MODEL_COLUMN_GAP: f32 = 6.;
+// Popup border + inset, left provider rail + gap, effort section inset.
+const EFFORT_WIDTH: f32 =
+    MODEL_MENU_WIDTH - 2. * (1. + 6. + 8.) - MODEL_PROVIDER_WIDTH - MODEL_COLUMN_GAP;
+static MODEL_PROVIDERS: std::sync::LazyLock<[&crate::agents::Kind; KINDS.len()]> =
+    std::sync::LazyLock::new(|| {
+        let mut providers = std::array::from_fn(|index| &KINDS[index]);
+        providers.sort_by_key(|kind| kind.name.to_lowercase());
+        providers
+    });
 
 /// A menu's frame: the Tauri app's `.apop`.
 pub(crate) fn popup(p: &Palette) -> Div {
     v_flex()
+        .occlude()
+        .on_scroll(|_, _, cx| cx.stop_propagation())
         .gap(px(2.))
         .p(px(6.))
         .bg(p.bg)
@@ -73,20 +89,11 @@ fn ref_icon(item: &Value) -> AnyElement {
     }
 }
 
-fn provider(kind: &str) -> Img {
-    let name = if KINDS.iter().any(|k| k.kind == kind) {
-        kind
-    } else {
-        "generic"
-    };
-    picture(&format!("agents/{name}")).size(px(14.))
-}
-
 impl Agents {
     pub(crate) fn render_composer(
         &self,
         current: Option<&TerminalInfo>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = *Palette::get(cx);
@@ -110,11 +117,10 @@ impl Agents {
         let edge = if focused {
             p.accent.opacity(0.6)
         } else {
-            p.line
+            p.ink(if p.dark { 26. } else { 22. })
         };
         let mode = self.box_mode();
-        let web = self.box_switch("web");
-        let context = self.box_switch("context");
+        let web = self.box_web();
         let effort = self
             .box_effort()
             .unwrap_or_else(|| self.models_of(&kind).recommended);
@@ -132,7 +138,7 @@ impl Agents {
             .as_ref()
             .and_then(|s| s["context"].as_f64())
             .unwrap_or(0.);
-        let menu = self.render_menu(t, &p, cx);
+        let menu = self.render_menu(t, &p, window, cx);
         let chips: Vec<_> = self
             .refs
             .iter()
@@ -196,6 +202,8 @@ impl Agents {
                 // Shift+Enter adds a line.
                 this.composer.update(cx, |c, cx| c.insert("\n", window, cx));
             }))
+            // Up, Down, Tab and Enter are bound to the input's own actions,
+            // so the mention list takes those actions rather than key events.
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
                 if matches!(this.menu, Some(Menu::Mention { .. })) {
                     this.move_mention(false, cx);
@@ -210,6 +218,12 @@ impl Agents {
             }))
             .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
                 if matches!(this.menu, Some(Menu::Mention { .. })) {
+                    this.pick_mention(None, window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, action: &Enter, window, cx| {
+                if matches!(this.menu, Some(Menu::Mention { .. })) && !action.shift {
                     this.pick_mention(None, window, cx);
                     cx.stop_propagation();
                 }
@@ -249,7 +263,6 @@ impl Agents {
                     .rounded(px(RADIUS))
                     .border_1()
                     .border_color(edge)
-                    .bg(p.bg)
                     // Files dragged in from Finder are attached.
                     .drag_over::<ExternalPaths>(move |d, _, _, _| d.border_color(p.accent))
                     .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
@@ -291,7 +304,7 @@ impl Agents {
                                             d.bg(p.accent).when(!typed, |d| d.opacity(0.5)).child(
                                                 icon("arrow.up")
                                                     .size(px(15.))
-                                                    .text_color(p.accent_text),
+                                                    .text_color(p.primary_text),
                                             )
                                         }
                                     })
@@ -304,29 +317,19 @@ impl Agents {
                                     })),
                             ),
                     )
-                    .child(
+                    // New conversations always keep a provider picker, including PA.
+                    .when(!terminal_only(&kind) || self.show == Show::New, |d| {
+                        d.child(
                         h_flex()
                             .gap(px(2.))
                             .h(px(26.))
                             .text_size(px(look::SMALL))
                             .text_color(p.muted)
+                            .when(!terminal_only(&kind), |d| {
+                                d
                             .child(toggle("agent-web", "globe", web).on_click(
-                                cx.listener(move |this, _, _, cx| this.set_switch("web", !web, cx)),
+                                cx.listener(move |this, _, _, cx| this.set_web(!web, cx)),
                             ))
-                            .child(
-                                toggle(
-                                    "agent-context",
-                                    if context {
-                                        "context.show"
-                                    } else {
-                                        "context.hide"
-                                    },
-                                    context,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| this.set_switch("context", !context, cx),
-                                )),
-                            )
                             .child(
                                 toggle("agent-follow", "zoom", self.follow_edits)
                                     .tooltip(move |w, cx| {
@@ -344,6 +347,7 @@ impl Agents {
                             .child(
                                 h_flex()
                                     .id("agent-mode")
+                                    .on_prepaint(self.popup_triggers.track("agent-mode"))
                                     .flex_none()
                                     .gap(px(4.))
                                     .h(px(24.))
@@ -359,11 +363,13 @@ impl Agents {
                                         this.toggle_menu(Menu::Mode, window, cx)
                                     })),
                             )
+                            })
                             .child(div().flex_1())
                             .when_some(used, |d, used| {
                                 d.child(
                                     h_flex()
                                         .id("agent-tokens")
+                                        .on_prepaint(self.popup_triggers.track("agent-context"))
                                         .flex_none()
                                         .gap(px(4.))
                                         .h(px(24.))
@@ -381,6 +387,7 @@ impl Agents {
                             .child(
                                 h_flex()
                                     .id("agent-model")
+                                    .on_prepaint(self.popup_triggers.track("agent-model"))
                                     .flex_shrink(1.)
                                     .min_w(px(0.))
                                     .overflow_hidden()
@@ -394,17 +401,28 @@ impl Agents {
                                     .hover(|d| d.bg(p.ink(7.)))
                                     .when(self.menu == Some(Menu::Model), |d| d.bg(p.ink(9.)))
                                     .child(provider(&kind))
-                                    .child(format!(
-                                        "{} ({})",
-                                        short_model(&self.box_model()),
-                                        effort_name(&effort)
-                                    ))
+                                    .child(if terminal_only(&kind) {
+                                        kind_of(&kind).map_or("Agent", |kind| kind.name).to_string()
+                                    } else if kind == "antigravity"
+                                        && !self.models_of(&kind).models.iter().any(|m| m.id.is_some())
+                                    {
+                                        "Antigravity models not loaded".to_string()
+                                    } else if composer::configured_models(&kind) && effort.is_empty() {
+                                        short_model(&self.box_model())
+                                    } else {
+                                        format!(
+                                            "{} ({})",
+                                            short_model(&self.box_model()),
+                                            effort_name(&effort)
+                                        )
+                                    })
                                     .child(icon("chevron.down").size(px(11.)).text_color(p.muted))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.toggle_menu(Menu::Model, window, cx)
                                     })),
                             ),
-                    ),
+                        )
+                    }),
             )
     }
 
@@ -413,16 +431,28 @@ impl Agents {
         &self,
         t: Option<&TerminalInfo>,
         p: &Palette,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let (body, right) = match self.menu.as_ref()? {
             Menu::Mention { .. } => (self.render_mentions(p, cx), false),
             Menu::Mode => (self.render_modes(p, cx), false),
-            Menu::Model => (self.render_models(p, cx), true),
+            Menu::Model => (self.render_models(p, window, cx), true),
             Menu::Context => (render_context(t?, p, cx), true),
         };
-        let menu =
-            body.on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_menu(window, cx)));
+        let trigger = match self.menu.as_ref()? {
+            Menu::Mode => "agent-mode",
+            Menu::Model => "agent-model",
+            Menu::Context => "agent-context",
+            Menu::Mention { .. } => "agent-mention",
+        };
+        let menu = body.on_mouse_down_out(cx.listener(
+            move |this, event: &MouseDownEvent, window, cx| {
+                if !this.popup_triggers.contains(trigger, event.position) {
+                    this.close_menu(window, cx);
+                }
+            },
+        ));
         Some(
             div()
                 .h(px(0.))
@@ -474,7 +504,7 @@ impl Agents {
                         .rounded(px(6.))
                         .cursor_pointer()
                         .when(on, |d| d.bg(p.hover))
-                        .hover(|d| d.bg(p.accent).text_color(p.accent_text))
+                        .hover(|d| d.bg(p.accent).text_color(p.primary_text))
                         .child(ref_icon(&m.item))
                         .child(
                             div()
@@ -526,7 +556,7 @@ impl Agents {
                     .px(px(8.))
                     .rounded(px(6.))
                     .cursor_pointer()
-                    .hover(|d| d.bg(p.accent).text_color(p.accent_text))
+                    .hover(|d| d.bg(p.accent).text_color(p.primary_text))
                     .child(icon("upload").size(px(13.)))
                     .child("Attach from this computer…")
                     .child(div().flex_1())
@@ -543,6 +573,7 @@ impl Agents {
             .w(px(MENU_WIDTH))
             .max_h(px(320.))
             .overflow_y_scroll()
+            .track_scroll(&self.mention_scroll)
             .gap(px(0.))
             .p(px(5.))
             .children(rows)
@@ -630,7 +661,7 @@ impl Agents {
     }
 
     /// The model menu's open tab: favourites, or an agent's.
-    fn open_model_tab(&self) -> String {
+    pub(crate) fn open_model_tab(&self) -> String {
         self.model_tab
             .clone()
             .filter(|t| t == "fav" || self.usable(t))
@@ -641,17 +672,33 @@ impl Agents {
     fn model_rows(&self) -> Vec<(String, ModelChoice)> {
         let tab = self.open_model_tab();
         if tab == "fav" {
-            KINDS
-                .iter()
-                .flat_map(|k| {
-                    self.models_of(k.kind)
-                        .models
-                        .into_iter()
-                        .filter(|m| self.favourites.contains(&favourite_key(k.kind, m)))
-                        .map(|m| (k.kind.to_string(), m))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
+            let mut rows: Vec<(String, ModelChoice)> = Vec::new();
+            for k in KINDS.iter().filter(|k| !terminal_only(k.kind)) {
+                let models = self.models_of(k.kind);
+                for key in &self.favourites {
+                    let Some((kind, id)) = key.split_once(':') else {
+                        continue;
+                    };
+                    if kind != k.kind
+                        || rows.iter().any(|(kind, row)| {
+                            kind == k.kind && models.same_model(row.id.as_deref(), Some(id))
+                        })
+                    {
+                        continue;
+                    }
+                    let model = if id.is_empty() {
+                        models.models.iter().find(|m| m.id.is_none()).cloned()
+                    } else {
+                        Some(models.choice(id))
+                    };
+                    if let Some(model) = model {
+                        rows.push((kind.into(), model));
+                    }
+                }
+            }
+            rows
+        } else if terminal_only(&tab) {
+            Vec::new()
         } else {
             self.models_of(&tab)
                 .models
@@ -695,16 +742,21 @@ impl Agents {
 
     /// The model menu: tabs for favourites and each agent, the models, and
     /// the thinking effort.
-    fn render_models(&self, p: &Palette, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_models(
+        &self,
+        p: &Palette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let tab = self.open_model_tab();
-        let tab_button = |id: String, on: bool, usable: bool, inner: AnyElement| {
-            div()
+        let tab_button = |id: String, on: bool, usable: bool, inner: AnyElement, label: &str| {
+            h_flex()
                 .id(SharedString::from(id))
-                .size(px(28.))
-                .rounded(px(7.))
-                .flex()
-                .items_center()
+                .flex_none()
+                .w_full()
+                .h(px(30.))
                 .justify_center()
+                .rounded(px(6.))
                 .when(on, |d| d.bg(p.hover))
                 .map(|d| {
                     if usable {
@@ -714,6 +766,12 @@ impl Agents {
                     }
                 })
                 .child(inner)
+                .tooltip({
+                    let label = label.to_string();
+                    move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx)
+                    }
+                })
         };
         let mut tabs = vec![
             tab_button(
@@ -721,13 +779,14 @@ impl Agents {
                 tab == "fav",
                 true,
                 icon("star").size(px(14.)).into_any_element(),
+                "Favorites",
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.model_tab = Some("fav".into());
                 cx.notify();
             })),
         ];
-        for k in &KINDS {
+        for &k in MODEL_PROVIDERS.iter() {
             let usable = self.usable(k.kind);
             let name = k.kind;
             tabs.push(
@@ -736,11 +795,22 @@ impl Agents {
                     tab == k.kind,
                     usable,
                     provider(k.kind).into_any_element(),
+                    match k.kind {
+                        "claude" => "Claude",
+                        "posit" => "Posit",
+                        _ => k.name,
+                    },
                 )
-                .on_click(cx.listener(move |this, _, _, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     if this.usable(name) {
-                        this.model_tab = Some(name.into());
-                        cx.notify();
+                        if terminal_only(name) {
+                            this.choose_new_kind(name, cx);
+                            this.model_tab = None;
+                            this.close_menu(window, cx);
+                        } else {
+                            this.model_tab = Some(name.into());
+                            cx.notify();
+                        }
                     }
                 })),
             );
@@ -754,7 +824,16 @@ impl Agents {
             format!("{} · {}", k.name, sign_in(k))
         };
         let rows = self.model_rows();
-        let list: Vec<AnyElement> = if rows.is_empty() {
+        let list: Vec<AnyElement> = if terminal_only(&tab) {
+            vec![
+                div()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .text_color(p.muted)
+                    .child("Choose models inside Posit Assistant. Use the providers on the left to switch.")
+                    .into_any_element(),
+            ]
+        } else if rows.is_empty() {
             vec![
                 div()
                     .px(px(8.))
@@ -768,11 +847,19 @@ impl Agents {
                 .enumerate()
                 .map(|(i, (k, model))| {
                     let on = self.is_model(&k, &model);
-                    let usable = self.usable(&k);
-                    let starred = self.favourites.contains(&favourite_key(&k, &model));
+                    let usable = self.usable(&k) && (k != "antigravity" || model.id.is_some());
+                    let models = self.models_of(&k);
+                    let starred = self.favourites.iter().any(|key| {
+                        key.split_once(':').is_some_and(|(kind, id)| {
+                            kind == k && models.same_model(Some(id), model.id.as_deref())
+                        })
+                    });
                     let (k2, m2) = (k.clone(), model.clone());
                     h_flex()
                         .id(("model", i))
+                        .flex_none()
+                        .w_full()
+                        .min_w_0()
                         .gap(px(7.))
                         .h(px(28.))
                         .px(px(8.))
@@ -786,10 +873,19 @@ impl Agents {
                             }
                         })
                         .when(tab == "fav", |d| d.child(provider(&k)))
-                        .child(div().flex_1().child(model.label.clone()))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(model.label.clone()),
+                        )
                         .when(i < 9, |d| {
                             d.child(
                                 div()
+                                    .flex_none()
                                     .text_size(px(look::SMALL))
                                     .text_color(p.faint)
                                     .child(format!("⌥{}", i + 1)),
@@ -798,6 +894,7 @@ impl Agents {
                         .child(
                             div()
                                 .id(("star", i))
+                                .flex_none()
                                 .size(px(20.))
                                 .rounded(px(5.))
                                 .flex()
@@ -822,119 +919,73 @@ impl Agents {
                 })
                 .collect()
         };
-        popup(p)
-            .id("model-menu")
-            .w(px(MENU_WIDTH))
-            .child(h_flex().gap(px(2.)).children(tabs))
-            .child(div().px(px(6.)).py(px(2.)).text_color(p.faint).child(sub))
+        let content = v_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(
+                div()
+                    .flex_none()
+                    .min_w_0()
+                    .px(px(6.))
+                    .py(px(2.))
+                    .text_size(px(look::SMALL))
+                    .text_color(p.faint)
+                    .child(sub),
+            )
             .when_some(self.model_note(), |d, note| {
                 d.child(
                     div()
+                        .flex_none()
                         .mx(px(4.))
-                        .px(px(8.))
+                        .px(px(4.))
                         .py(px(5.))
                         .rounded(px(6.))
                         .bg(p.accent_soft)
                         .child(note),
                 )
             })
-            .children(list)
-            .child(self.render_effort(p, cx))
-    }
-
-    /// Thinking effort: a dot for each level on a track, the knob on the
-    /// chosen one and a tick under the agent's own default.
-    fn render_effort(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
-        let kind = self.box_kind().to_string();
-        let models = self.models_of(&kind);
-        let current = self
-            .box_effort()
-            .filter(|e| models.efforts.contains(e))
-            .unwrap_or_else(|| models.recommended.clone());
-        let at = models
-            .efforts
-            .iter()
-            .position(|e| *e == current)
-            .unwrap_or(0);
-        let top = models.efforts.len().saturating_sub(1).max(1) as f32;
-        let dots = models.efforts.iter().enumerate().map(|(i, level)| {
-            let on = i == at;
-            let filled = i <= at;
-            let recommended = *level == models.recommended;
-            let level = level.clone();
-            v_flex()
-                .id(("effort", i))
-                .items_center()
-                .gap(px(3.))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .size(px(if on { 18. } else { 8. }))
-                        .rounded_full()
-                        .bg(if filled { p.accent } else { p.ink(18.) })
-                        .when(on, |d| d.border_2().border_color(p.bg)),
-                )
-                .child(
-                    div()
-                        .w(px(1.))
-                        .h(px(4.))
-                        .when(recommended, |d| d.bg(p.faint)),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.choose_effort(level.clone(), cx)))
-        });
-        let fill = at as f32 / top;
-        v_flex()
-            .gap(px(4.))
-            .px(px(8.))
-            .pt(px(8.))
-            .pb(px(4.))
-            .mt(px(4.))
-            .border_t_1()
-            .border_color(p.line)
+            .child(
+                v_flex()
+                    .id(SharedString::from(format!("model-list-{tab}")))
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .gap(px(2.))
+                    .overflow_y_scroll()
+                    .children(list),
+            )
+            .when_some(
+                Some(self.effort_kind()).filter(|kind| {
+                    !terminal_only(kind)
+                        && (!composer::configured_models(kind)
+                            || !self.models_of(kind).efforts.is_empty())
+                        && (kind != "antigravity"
+                            || self.models_of(kind).models.iter().any(|m| m.id.is_some()))
+                }),
+                |d, kind| d.child(self.render_effort(&kind, EFFORT_WIDTH, p, window, cx)),
+            );
+        popup(p)
+            .id("model-menu")
+            .flex_none()
+            .w(px(MODEL_MENU_WIDTH))
+            .h(px(MODEL_MENU_HEIGHT))
+            .overflow_hidden()
             .child(
                 h_flex()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Thinking effort"))
-                    .child(div().flex_1())
-                    .child(div().text_color(p.accent).child(effort_name(&current))),
-            )
-            .child(
-                div()
-                    .relative()
-                    .h(px(26.))
+                    .items_stretch()
+                    .w_full()
+                    .h_full()
+                    .gap(px(MODEL_COLUMN_GAP))
                     .child(
-                        div()
-                            .absolute()
-                            .top(px(6.))
-                            .left(px(4.))
-                            .right(px(4.))
-                            .h(px(6.))
-                            .rounded_full()
-                            .bg(p.ink(8.))
-                            .child(
-                                div()
-                                    .h_full()
-                                    .w(relative(fill))
-                                    .rounded_full()
-                                    .bg(p.accent.opacity(0.35)),
-                            ),
+                        v_flex()
+                            .id("model-provider-tabs")
+                            .flex_none()
+                            .w(px(MODEL_PROVIDER_WIDTH))
+                            .gap(px(3.))
+                            .children(tabs),
                     )
-                    .child(
-                        h_flex()
-                            .absolute()
-                            .top(px(0.))
-                            .left(px(0.))
-                            .right(px(0.))
-                            .h(px(18.))
-                            .items_center()
-                            .justify_between()
-                            .children(dots),
-                    ),
-            )
-            .child(
-                div()
-                    .text_color(p.faint)
-                    .line_height(rems(1.35))
-                    .child("How long the model thinks before it answers. Higher effort handles harder problems, takes longer and uses more of your plan."),
+                    .child(content),
             )
     }
 }
@@ -1015,7 +1066,7 @@ fn render_context(t: &TerminalInfo, p: &Palette, cx: &mut Context<Agents>) -> St
                     .items_center()
                     .cursor_pointer()
                     .bg(p.accent)
-                    .text_color(p.accent_text)
+                    .text_color(p.primary_text)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Compact now")
                     .on_click(cx.listener(|this, _, _, cx| this.compact(cx))),

@@ -9,8 +9,8 @@ use gpui_kit::*;
 use sandhill_proto::{Call, GitCommit, GitCommitInfo, GitLog};
 
 use crate::git::{
-    self, LANE_COLORS, MarkKind, WORKTREE, avatar, badges, coauthors_of, file_mark, layout_graph,
-    line_counts, split_path, staged_files, time_ago, unstaged_files,
+    self, MarkKind, WORKTREE, avatar, badges, coauthors_of, file_mark, layout_graph, line_counts,
+    split_path, staged_files, time_ago, unstaged_files,
 };
 use crate::look::{self, Palette, RADIUS, icon, icon_button, picture};
 use crate::workbench::Workbench;
@@ -50,8 +50,36 @@ impl Default for Log {
     }
 }
 
-fn lane_color(lane: usize) -> Hsla {
-    rgb(LANE_COLORS[lane % LANE_COLORS.len()]).into()
+fn lane_color(p: &Palette, lane: usize) -> Hsla {
+    p.chart[lane % p.chart.len()]
+}
+
+/// Choose Kit's neutral foreground with the best contrast across the gradient.
+fn avatar_text(p: &Palette, colors: (Hsla, Hsla)) -> Hsla {
+    let luminance = |color: Hsla| {
+        let c = color.to_rgb();
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+    };
+    let backgrounds = [luminance(colors.0), luminance(colors.1)];
+    let contrast = |text| {
+        let text = luminance(text);
+        backgrounds
+            .into_iter()
+            .map(|bg| (text.max(bg) + 0.05) / (text.min(bg) + 0.05))
+            .fold(f32::INFINITY, f32::min)
+    };
+    if contrast(p.text) >= contrast(p.primary_text) {
+        p.text
+    } else {
+        p.primary_text
+    }
 }
 
 impl Workbench {
@@ -64,6 +92,9 @@ impl Workbench {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
+        if self.restricted() {
+            return;
+        }
         self.git.log.generation += 1;
         let mine = self.git.log.generation;
         let skip = if append {
@@ -142,7 +173,11 @@ impl Workbench {
     }
 
     /// The history: a row for the working tree, then the commits.
-    pub(crate) fn render_git_log(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_git_log(
+        &self,
+        notices: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = *Palette::get(cx);
         let Some(status) = &self.git.status else {
             return div().into_any_element();
@@ -191,7 +226,7 @@ impl Workbench {
                         path.cubic_bezier_to(at(x2, y2), at(x1, y1 + 12.), at(x2, y2 - 12.));
                     }
                     if let Ok(path) = path.build() {
-                        window.paint_path(path, lane_color(*color));
+                        window.paint_path(path, lane_color(&p, *color));
                     }
                 }
             },
@@ -261,12 +296,13 @@ impl Workbench {
                     .rounded_full()
                     .border_1()
                     .border_dashed()
-                    .border_color(lane_color(lane))
+                    .border_color(lane_color(&p, lane))
                     .bg(p.bg)
                     .into_any_element(),
                 Some(c) => {
                     let face = avatar(&c.author, &c.email, &c.coauthors);
                     let is_head = head.as_deref() == Some(c.sha.as_str());
+                    let colors = (p.chart[face.chart_indices.0], p.chart[face.chart_indices.1]);
                     div()
                         .absolute()
                         .left(px(x(lane) - 9.))
@@ -274,21 +310,21 @@ impl Workbench {
                         .size(px(18.))
                         .rounded_full()
                         .border(px(1.5))
-                        .border_color(lane_color(lane))
+                        .border_color(lane_color(&p, lane))
                         .bg(linear_gradient(
                             135.,
-                            linear_color_stop(rgb(face.colors.0), 0.),
-                            linear_color_stop(rgb(face.colors.1), 1.),
+                            linear_color_stop(colors.0, 0.),
+                            linear_color_stop(colors.1, 1.),
                         ))
                         .flex()
                         .items_center()
                         .justify_center()
                         .text_size(px(7.5))
                         .font_weight(FontWeight::BOLD)
-                        .text_color(white())
+                        .text_color(avatar_text(&p, colors))
                         .when(is_head, |d| {
                             d.shadow(vec![BoxShadow {
-                                color: lane_color(lane).opacity(0.6),
+                                color: lane_color(&p, lane).opacity(0.6),
                                 offset: point(px(0.), px(0.)),
                                 blur_radius: px(0.),
                                 spread_radius: px(2.),
@@ -391,20 +427,22 @@ impl Workbench {
             .child(div().w(px(graph_width)).flex_none().child("Graph"))
             .child(div().child("Message"));
         v_flex()
+            .relative()
             .flex_none()
-            .h(px(self.git.log.height))
+            .h(px(self.git.log.height + look::STRIP + 32.))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
-            .child(columns)
-            .child(
+            .child(look::PaneScroll::new(
+                "git-log-scroll",
+                look::STRIP + 32. + 20.,
+                0.,
                 div()
                     .id("git-log")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
+                    .children(notices)
                     .child(div().relative().child(lines).children(rows))
                     .children(older),
-            )
+            ))
+            .child(look::floating_header(&p, look::STRIP + 32., false, columns))
             .into_any_element()
     }
 
@@ -484,36 +522,15 @@ impl Workbench {
                 )
         });
         v_flex()
+            .relative()
             .flex_1()
             .min_h(px(140.))
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(6.))
-                    .text_size(px(look::SMALL))
-                    .child(
-                        div()
-                            .font_family(look::MONO)
-                            .text_color(p.accent)
-                            .child(info.sha[..7.min(info.sha.len())].to_string()),
-                    )
-                    .child(div().text_color(p.text).child(face.who))
-                    .child(div().text_color(p.faint).child(git::when(info.time_ms)))
-                    .child(div().flex_1())
-                    .child(
-                        icon_button("git-detail-close", "close", &p, false).on_click(
-                            cx.listener(|this, _, _, cx| this.pick_commit(WORKTREE.into(), cx)),
-                        ),
-                    ),
-            )
-            .child(
+            .child(look::PaneScroll::new(
+                "git-detail-scroll",
+                36.,
+                0.,
                 div()
                     .id("git-detail")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
                     .child(
                         div().px(px(12.)).pb(px(8.)).whitespace_normal().children(
                             info.message
@@ -541,6 +558,29 @@ impl Workbench {
                             ),
                     )
                     .children(files),
+            ))
+            .child(
+                h_flex()
+                    .h(px(36.))
+                    .gap(px(8.))
+                    .px(px(12.))
+                    .py(px(6.))
+                    .text_size(px(look::SMALL))
+                    .child(
+                        div()
+                            .font_family(look::MONO)
+                            .text_color(p.accent)
+                            .child(info.sha[..7.min(info.sha.len())].to_string()),
+                    )
+                    .child(div().text_color(p.text).child(face.who))
+                    .child(div().text_color(p.faint).child(git::when(info.time_ms)))
+                    .child(div().flex_1())
+                    .child(
+                        icon_button("git-detail-close", "close", &p, false).on_click(
+                            cx.listener(|this, _, _, cx| this.pick_commit(WORKTREE.into(), cx)),
+                        ),
+                    )
+                    .map(|row| look::floating_header(&p, 0., false, row)),
             )
             .into_any_element()
     }

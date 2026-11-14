@@ -18,6 +18,7 @@ struct LineInfo {
     indent: usize,
     /// Still inside brackets or a string at the end of the line.
     open: bool,
+    starts_in_string: bool,
 }
 
 /// R operators that, ending a line, continue the expression on the next.
@@ -96,6 +97,112 @@ pub fn statements(text: &str, language: &str) -> Vec<Statement> {
     result
 }
 
+/// Indented suites at every nesting depth, not only runnable top-level statements.
+pub(crate) fn python_folds(text: &str) -> Vec<(usize, usize)> {
+    let source: Vec<_> = text.split('\n').collect();
+    let lines = scan(&source, true);
+    let mut result = Vec::new();
+    for (start, line) in lines.iter().enumerate() {
+        if !line.code || line.open || !line.text.ends_with(':') {
+            continue;
+        }
+        let header = (0..=start)
+            .rev()
+            .find(|ix| *ix == 0 || !lines[*ix - 1].open)
+            .unwrap_or(start);
+        let mut end = start;
+        for (ix, next) in lines.iter().enumerate().skip(start + 1) {
+            if !next.code {
+                continue;
+            }
+            if next.indent <= lines[header].indent {
+                break;
+            }
+            end = ix;
+        }
+        if end > start {
+            result.push((header, end + 1));
+        }
+    }
+    result
+}
+
+/// Uses the same statement boundaries as Run line, so unrelated earlier plots
+/// and text inside comments cannot switch an ordinary pipe into a ggplot plus.
+pub(crate) fn ggplot_chain(text: &str, cursor: usize) -> bool {
+    let before = &text[..cursor.min(text.len())];
+    let line = before.bytes().filter(|b| *b == b'\n').count();
+    let source: Vec<_> = before.split('\n').collect();
+    let scanned = scan(&source, false);
+    if scanned
+        .iter()
+        .rev()
+        .find(|line| line.code)
+        .is_some_and(|line| line.text.ends_with('+'))
+        || scanned
+            .get(scanned.len().saturating_sub(2))
+            .is_some_and(|line| line.text.ends_with('+'))
+    {
+        return true;
+    }
+    let start = statements(text, "r")
+        .into_iter()
+        .find(|statement| line >= statement.from && line <= statement.to)
+        .map_or(line, |statement| statement.from);
+    let statement = source[start..].join("\n");
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_r::LANGUAGE.into())
+        .is_err()
+    {
+        return false;
+    }
+    let Some(tree) = parser.parse(&statement, None) else {
+        return false;
+    };
+    fn contains(node: tree_sitter::Node<'_>, source: &str) -> bool {
+        if node.kind() == "call"
+            && let Some(function) = node.child_by_field_name("function")
+        {
+            let name = source[function.byte_range()].trim();
+            if name == "ggplot" || name.ends_with("::ggplot") {
+                return true;
+            }
+        }
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor)
+            .any(|child| contains(child, source))
+    }
+    contains(tree.root_node(), &statement)
+}
+
+pub(crate) fn python_declarations(text: &str) -> Vec<(usize, String)> {
+    let source: Vec<_> = text.split('\n').collect();
+    scan(&source, true)
+        .iter()
+        .enumerate()
+        .filter_map(|(line, info)| {
+            if info.indent != 0 || info.starts_in_string {
+                return None;
+            }
+            let declaration = info.text.strip_prefix("async ").unwrap_or(&info.text);
+            let name = declaration
+                .strip_prefix("def ")
+                .or_else(|| declaration.strip_prefix("class "))?;
+            Some((line, name.split(['(', ':']).next()?.trim().to_string()))
+        })
+        .collect()
+}
+
+pub(crate) fn comment_lines(text: &str, python: bool) -> Vec<bool> {
+    let source: Vec<_> = text.split('\n').collect();
+    scan(&source, python)
+        .iter()
+        .zip(source)
+        .map(|(info, line)| !info.starts_in_string && line.trim_start().starts_with('#'))
+        .collect()
+}
+
 #[cfg(test)]
 /// The statement on `line` (from 0), or none on a blank or comment line.
 pub fn statement_at(text: &str, language: &str, line: usize) -> Option<Statement> {
@@ -157,6 +264,7 @@ fn scan(source: &[&str], python: bool) -> Vec<LineInfo> {
                 indent: line.len() - line.trim_start().len(),
                 open: depth > 0 || !quote.is_empty(),
                 text,
+                starts_in_string,
             }
         })
         .collect()

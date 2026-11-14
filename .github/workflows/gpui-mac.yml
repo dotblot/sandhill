@@ -68,11 +68,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p daemons
-          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            cargo zigbuild --release -p sandhill-daemon --target "$target"
-            cp "target/$target/release/sandhilld" "daemons/sandhilld-$target"
-          done
+          bash gpui/build-server-daemons.sh "$PWD/daemons"
           # Ark, Posit's R kernel (MIT), so R runs on servers with no setup.
           # Its Linux builds link to glibc, so they are named for gnu triples.
           # Ark marks no release as "latest", so take the newest one, as ci.yml does.
@@ -100,6 +96,18 @@ jobs:
           cp target/release/sandhilld "$app/Contents/MacOS/"
           cp gpui/assets/icon/icon.icns "$app/Contents/Resources/"
           cp -R daemons "$app/Contents/Resources/daemons"
+          mkdir -p "$app/Contents/Resources/licenses/icons"
+          cp docs/design/ui/icons/vendor/NOTICE.txt "$app/Contents/Resources/licenses/icons/"
+          cp docs/design/ui/icons/vendor/gruvbox/LICENSE "$app/Contents/Resources/licenses/icons/Gruvbox-Material-LICENSE"
+          cp docs/design/ui/icons/vendor/lucide/LICENSE "$app/Contents/Resources/licenses/icons/Lucide-LICENSE"
+          cp docs/design/ui/icons/vendor/developer/LICENSE "$app/Contents/Resources/licenses/icons/Developer-Icons-LICENSE"
+          cp docs/design/ui/icons/vendor/brands/oh-my-pi.LICENSE "$app/Contents/Resources/licenses/icons/Oh-My-Pi-LICENSE"
+          cp docs/design/ui/icons/vendor/brands/pi.LICENSE "$app/Contents/Resources/licenses/icons/pi-LICENSE"
+          mkdir -p "$app/Contents/Resources/licenses/gpui-cn"
+          cp gpui/vendor/gpui-cn/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-cn/"
+          cp gpui/vendor/gpui-cn/LICENSE-MUXY "$app/Contents/Resources/licenses/gpui-cn/"
+          mkdir -p "$app/Contents/Resources/licenses/gpui-component"
+          cp gpui/vendor/gpui-component/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-component/"
           cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

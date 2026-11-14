@@ -35,9 +35,38 @@ fn downloads() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Publishes a completed download without an overwrite window.
+fn publish(partial: &Path, target: &Path) -> Result<PathBuf, String> {
+    let dir = target.parent().ok_or("missing download folder")?;
+    let name = target
+        .file_name()
+        .ok_or("missing download name")?
+        .to_string_lossy();
+    let mut destination = target.to_path_buf();
+    loop {
+        match std::fs::hard_link(partial, &destination) {
+            Ok(()) => break,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                destination = free_name(dir, &name);
+            }
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+    std::fs::remove_file(partial).map_err(|err| err.to_string())?;
+    Ok(destination)
+}
+
 impl Workbench {
     /// Copies a file of the server into ~/Downloads, then shows it.
     pub(crate) fn download(&mut self, path: String, cx: &mut Context<Self>) {
+        self.download_file(path, false, cx);
+    }
+
+    pub(crate) fn download_and_open(&mut self, path: String, cx: &mut Context<Self>) {
+        self.download_file(path, true, cx);
+    }
+
+    fn download_file(&mut self, path: String, open: bool, cx: &mut Context<Self>) {
         let Some(daemon) = self.daemon() else {
             return;
         };
@@ -52,13 +81,20 @@ impl Workbench {
         };
         self.notice = Some(format!("Downloading {name}…"));
         cx.notify();
-        let partial = target.with_file_name(format!(
+        let partial_name = format!(
             "{}.download",
             target.file_name().unwrap_or_default().to_string_lossy()
-        ));
+        );
+        let partial = free_name(target.parent().unwrap(), &partial_name);
         cx.spawn(async move |this, cx| {
+            let mut owns_partial = false;
             let result = async {
-                let mut file = std::fs::File::create(&partial).map_err(|err| err.to_string())?;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&partial)
+                    .map_err(|err| err.to_string())?;
+                owns_partial = true;
                 let mut offset = 0;
                 loop {
                     let part: FileBytes = daemon
@@ -79,18 +115,22 @@ impl Workbench {
                     }
                 }
                 file.sync_all().map_err(|err| err.to_string())?;
-                std::fs::rename(&partial, &target).map_err(|err| err.to_string())
+                publish(&partial, &target)
             }
             .await;
-            if result.is_err() {
+            if result.is_err() && owns_partial {
                 let _ = std::fs::remove_file(&partial);
             }
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(()) => {
+                    Ok(target) => {
                         let folder = target.parent().map(Path::to_path_buf).unwrap_or_default();
                         this.notice = Some(format!("Downloaded {name} to {}", folder.display()));
-                        cx.reveal_path(&target);
+                        if open {
+                            cx.open_with_system(&target);
+                        } else {
+                            cx.reveal_path(&target);
+                        }
                     }
                     Err(err) => {
                         this.notice = None;
@@ -107,7 +147,7 @@ impl Workbench {
 
 #[cfg(test)]
 mod tests {
-    use super::free_name;
+    use super::{free_name, publish};
 
     #[test]
     fn downloads_never_replace_a_file() {
@@ -117,5 +157,22 @@ mod tests {
         std::fs::write(dir.path().join("a 2.bam"), "").unwrap();
         assert_eq!(free_name(dir.path(), "a.bam"), dir.path().join("a 3.bam"));
         assert_eq!(free_name(dir.path(), ".env"), dir.path().join(".env"));
+    }
+
+    #[test]
+    fn finishing_a_download_preserves_a_newly_created_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = free_name(dir.path(), "report.txt");
+        let partial = dir.path().join("report.txt.download");
+        std::fs::write(&partial, "downloaded").unwrap();
+        std::fs::write(&target, "created while downloading").unwrap();
+        let published = publish(&partial, &target).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "created while downloading"
+        );
+        assert_eq!(std::fs::read_to_string(&published).unwrap(), "downloaded");
+        assert_ne!(published, target);
+        assert!(!partial.exists());
     }
 }

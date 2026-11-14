@@ -3,14 +3,17 @@
 //! the file, name the variable and see the code before it runs. The code
 //! runs in the session like any other, so it shows in the Console.
 
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::{Call, DirEntry, EntryKind, RunStarted};
+use sandhill_proto::{Call, DirEntry, EntryKind, RunStarted, SessionInfo, SessionStatus};
 
-use crate::imports::{code_path, importable, imports_for, valid_variable, variable_name};
+use crate::imports::{
+    generated_import_code, importable, imports_for, valid_variable, variable_name,
+};
 use crate::look::{self, Palette, bar_button, icon, picture};
 use crate::workbench::Workbench;
 
@@ -27,6 +30,8 @@ pub(crate) struct ImportDialog {
     running: bool,
     error: Option<String>,
     generation: u64,
+    /// File-tree imports arrive with their file already selected.
+    preselected: bool,
 }
 
 #[derive(Default)]
@@ -84,7 +89,7 @@ impl Workbench {
 
     pub(crate) fn import_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let ready = self.active_session().is_some()
+        let ready = self.variables_session().is_some()
             && self
                 .active_language()
                 .is_some_and(|l| !imports_for(&l).is_empty());
@@ -96,6 +101,7 @@ impl Workbench {
         bar_button("import", "", Some("table"), &p)
             .px(px(5.))
             .gap(px(2.))
+            .on_prepaint(self.popup_triggers.track("import-kind"))
             .child(icon("chevron.down").size(px(11.)))
             .when(!ready, |d| d.opacity(0.4))
             .tooltip(move |w, cx| {
@@ -170,7 +176,10 @@ impl Workbench {
             .occlude()
             .min_w(px(300.))
             .children(rows)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if this.popup_triggers.contains("import-kind", event.position) {
+                    return;
+                }
                 this.import.menu = false;
                 cx.notify();
             }));
@@ -187,7 +196,7 @@ impl Workbench {
 
     fn open_import(&mut self, kind: usize, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(session), Some(language)) = (
-            self.active_session().map(str::to_string),
+            self.variables_session().map(str::to_string),
             self.active_language(),
         ) else {
             return;
@@ -210,8 +219,44 @@ impl Workbench {
             running: false,
             error: None,
             generation: 0,
+            preselected: false,
         });
         self.list_import_dir(dir, window, cx);
+    }
+
+    pub(crate) fn open_preselected_import(
+        &mut self,
+        path: String,
+        session: SessionInfo,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let language = session.language.to_ascii_lowercase();
+        if session.status != SessionStatus::Running || imports_for(&language).is_empty() {
+            self.problem = Some("Import requires an existing live R or Python session".into());
+            cx.notify();
+            return;
+        }
+        let name = variable_name(&path);
+        self.import_name.update(cx, |input, cx| {
+            input.set_value(name, window, cx);
+            input.focus(window, cx);
+        });
+        self.import.menu = false;
+        self.import.dialog = Some(ImportDialog {
+            kind: 0,
+            language,
+            session: session.id,
+            cwd: Some(session.cwd),
+            dir: parent(&path),
+            entries: Some(Ok(Vec::new())),
+            file: Some(path),
+            running: false,
+            error: None,
+            generation: 0,
+            preselected: true,
+        });
+        cx.notify();
     }
 
     fn list_import_dir(&mut self, dir: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -234,6 +279,7 @@ impl Workbench {
         let listed = daemon.call::<Vec<DirEntry>>(Call::ListDir {
             path: dir,
             sizes: false,
+            marks: false,
         });
         cx.spawn(async move |this, cx| {
             let listed = listed.await;
@@ -282,7 +328,7 @@ impl Workbench {
     }
 
     /// What the dialog would run now, and whether the name is a bad one.
-    fn import_code(&self, cx: &App) -> Option<(String, bool)> {
+    pub(crate) fn import_code(&self, cx: &App) -> Option<(String, bool)> {
         let dialog = self.import.dialog.as_ref()?;
         let kind = &imports_for(&dialog.language)[dialog.kind];
         let chosen = dialog
@@ -298,9 +344,34 @@ impl Workbench {
             typed
         };
         Some((
-            kind.code(&code_path(&chosen, dialog.cwd.as_deref()), &name),
+            generated_import_code(
+                &dialog.language,
+                kind,
+                &chosen,
+                dialog.cwd.as_deref(),
+                &name,
+            ),
             bad,
         ))
+    }
+
+    pub(crate) fn copy_import_code(&mut self, cx: &mut Context<Self>) {
+        let Some((code, false)) = self.import_code(cx) else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(code));
+        self.notice = Some("Copied import code.".into());
+        cx.notify();
+    }
+
+    pub(crate) fn insert_import_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((code, false)) = self.import_code(cx) else {
+            return;
+        };
+        if self.insert_into_active_document(&code, window, cx) {
+            self.import.dialog = None;
+            cx.notify();
+        }
     }
 
     pub(crate) fn run_import(&mut self, cx: &mut Context<Self>) {
@@ -315,15 +386,33 @@ impl Workbench {
             return;
         }
         dialog.running = true;
-        let started = daemon.call_in_order::<RunStarted>(Call::Execute {
-            session: dialog.session.clone(),
-            code,
-            cell: None,
-            quiet: false,
-            by: None,
-        });
+        dialog.error = None;
+        let session = dialog.session.clone();
         cx.spawn(async move |this, cx| {
-            let started = started.await;
+            let started = async {
+                let sessions = daemon.call::<Vec<SessionInfo>>(Call::ListSessions).await?;
+                let live = sessions
+                    .iter()
+                    .find(|s| s.id == session && s.status == SessionStatus::Running)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("The selected session has ended; choose a live session")
+                    })?;
+                if live.pending_runs > 0 {
+                    anyhow::bail!(
+                        "The selected session is busy; wait for it to finish and try again"
+                    );
+                }
+                daemon
+                    .call_in_order::<RunStarted>(Call::Execute {
+                        session,
+                        code,
+                        cell: None,
+                        quiet: false,
+                        by: None,
+                    })
+                    .await
+            }
+            .await;
             this.update(cx, |this, cx| {
                 match started {
                     Ok(_) => this.import.dialog = None,
@@ -444,7 +533,7 @@ impl Workbench {
                         language_name(&dialog.language)
                     )),
             )
-            .child(
+            .when(!dialog.preselected, |d| d.child(
                 v_flex()
                     .rounded(px(6.))
                     .border_1()
@@ -483,7 +572,13 @@ impl Workbench {
                             .p(px(4.))
                             .child(list),
                     ),
-            )
+            ))
+            .when(dialog.preselected, |d| d.child(
+                v_flex().gap(px(4.))
+                    .child(div().text_color(p.muted).child(format!("Session: {}", dialog.session)))
+                    .child(div().font_family(look::MONO).whitespace_normal()
+                        .child(dialog.file.clone().unwrap_or_default())),
+            ))
             .when(named, |d| {
                 d.child(
                     h_flex()
@@ -498,6 +593,10 @@ impl Workbench {
                     )))
                 })
             })
+            .when(named, |d| d.child(div().text_size(px(look::SMALL)).text_color(p.muted)
+                .child("Existing variables are protected. Choose a new name if this name is already in use.")))
+            .when(!named, |d| d.child(div().text_size(px(look::SMALL)).text_color(p.warn)
+                .child("Loading R data can replace existing variables with the same names.")))
             .child(
                 div()
                     .p(px(10.))
@@ -521,6 +620,13 @@ impl Workbench {
                 h_flex()
                     .justify_end()
                     .gap(px(8.))
+                    .flex_wrap()
+                    .child(Button::new("import-copy").small().label("Copy Code")
+                        .disabled(code.is_none() || bad || dialog.running)
+                        .on_click(cx.listener(|this, _, _, cx| this.copy_import_code(cx))))
+                    .child(Button::new("import-insert").small().label("Insert into Document")
+                        .disabled(code.is_none() || bad || dialog.running || !self.can_insert_into_active_document(cx))
+                        .on_click(cx.listener(|this, _, window, cx| this.insert_import_code(window, cx))))
                     .child(
                         Button::new("import-cancel")
                             .small()

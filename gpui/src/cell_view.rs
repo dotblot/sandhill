@@ -2,7 +2,11 @@
 //! gutter (the cell's number, how its run went, and a handle to drag it
 //! by), the tools that show when the pointer is over a cell, the rows
 //! between cells that add one, and the keys that work on cells when none
-//! is being edited (Esc leaves a cell's editor), as in Jupyter.
+//! is being edited (Esc leaves a cell's editor), as in Jupyter. Only the
+//! cells near the view are drawn (see [`Placed`]).
+
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use gpui_kit::component::input;
 use gpui_kit::component::{h_flex, v_flex};
@@ -13,18 +17,19 @@ use crate::cells::CellStatus;
 use crate::html_table::{Table, shown_name};
 use crate::look::{self, Palette, icon, icon_button};
 use crate::notebook::{CellKind, Format};
+use crate::output_table::OutputTable;
+use crate::output_text::OutputText;
 use crate::workbench::{Open, Workbench};
 use crate::{
     AddCellAbove, AddCellBelow, CellToCode, CellToMarkdown, DeleteCell, EditCell, RunCell, RunLine,
     SelectNextCell, SelectPrevCell, UndoDeleteCell,
 };
 
-/// The notebook's gutter, with each cell's number.
-pub(crate) const GUTTER: f32 = 52.;
+/// The notebook's gutter, the handle cells are picked and dragged by. With
+/// the list's 6px padding it matches the 24px on the right.
+pub(crate) const GUTTER: f32 = 18.;
 /// The cell tools' height; the rows between cells leave room for them.
 pub(crate) const TOOLS_HEIGHT: f32 = 24.;
-/// A data frame's columns, in characters, at their widest and narrowest.
-const COLUMN_CHARS: (usize, usize) = (3, 28);
 
 /// A cell being dragged to a new place.
 #[derive(Clone)]
@@ -48,28 +53,157 @@ impl Render for DraggedCell {
     }
 }
 
+/// Where the open notebook's cells were at the last layout, and which to
+/// draw. Only the cells within a screen of the view are drawn; the others
+/// are space of their last height. Every cell laid out and painted each
+/// frame made scrolling a notebook of 136 cells take 28 ms a frame (221 ms
+/// unoptimised), however few showed.
+#[derive(Default)]
+pub(crate) struct Placed {
+    /// The notebook last drawn, its cells' ids in order, and whether add
+    /// rows sat between them: what the scroll handle's children were.
+    drawn: RefCell<(String, Vec<String>, bool)>,
+    /// Each cell's top (from the top of the notebook) and height, by id.
+    places: HashMap<String, (Pixels, Pixels)>,
+    /// Whether each cell is drawn this frame.
+    pub(crate) near: Vec<bool>,
+}
+
+impl Placed {
+    /// Whether cell `ix` is drawn this frame.
+    pub(crate) fn shows(&self, ix: usize) -> bool {
+        self.near.get(ix).copied().unwrap_or(true)
+    }
+}
+
+/// A reservation, not a rendered cell. Keep the full document's scroll extent
+/// from the first frame without decoding offscreen outputs or formatting prose.
+fn estimated_cell_height(cell: &crate::notebook::Cell) -> Pixels {
+    let source = cell.source.split('\n').count().max(1) as f32 * 20. + 22.;
+    let mut outputs = 0.;
+    for output in &cell.outputs {
+        let data = &output["data"];
+        outputs += if data.get("image/png").is_some()
+            || data.get("image/jpeg").is_some()
+            || data.get("image/svg+xml").is_some()
+        {
+            240.
+        } else if data.get("text/html").is_some() {
+            420.
+        } else {
+            let text = output["text"]
+                .as_str()
+                .or_else(|| data["text/plain"].as_str())
+                .unwrap_or("");
+            text.lines().count().max(1) as f32 * 20.
+        };
+        if outputs >= 480. {
+            break;
+        }
+    }
+    px(source + outputs.min(480.) + if cell.outputs.is_empty() { 0. } else { 24. })
+}
+
 impl Workbench {
-    /// The notebook's cells, each `bodies[ix]` in its frame, with the rows
-    /// that add cells between them when cells can be added.
+    /// Draw only cells near the viewport, including on the first frame.
+    /// Unmeasured cells reserve estimated space until scrolled into view;
+    /// constructing their editors' elements just to measure them blocks opening.
+    pub(crate) fn place_cells(&mut self, window: &Window) {
+        let Some(open) = &self.open else {
+            self.placed.near.clear();
+            return;
+        };
+        let scroll = &self.notebook_scroll;
+        let view = scroll.bounds();
+        let placed = &mut self.placed;
+        {
+            let (path, ids, adds) = &*placed.drawn.borrow();
+            if *path != open.notebook.path {
+                placed.places.clear();
+            } else {
+                for (ix, id) in ids.iter().enumerate() {
+                    let child = if *adds { ix * 2 + 1 } else { ix };
+                    if let Some(b) = scroll.bounds_for_item(child) {
+                        placed
+                            .places
+                            .insert(id.clone(), (b.top() - view.top(), b.size.height));
+                    }
+                }
+            }
+        }
+        let gap = TOOLS_HEIGHT + 4.;
+        let mut next_y = px(10.
+            + if open.notebook.can_add_cells() {
+                gap
+            } else {
+                0.
+            });
+        for cell in &open.notebook.cells {
+            let (y, height) = *placed
+                .places
+                .entry(cell.id.clone())
+                .or_insert_with(|| (next_y, estimated_cell_height(cell)));
+            next_y = y + height + px(gap);
+        }
+        let top = -scroll.offset().y;
+        let screen = if view.size.height > px(0.) {
+            view.size.height
+        } else {
+            window.viewport_size().height.max(px(1.))
+        };
+        let (from, to) = (top - screen, top + screen * 2.);
+        placed.near = open
+            .notebook
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(ix, cell)| {
+                self.find.replaying
+                    || open.current == Some(ix)
+                    || open.editing.contains(&cell.id)
+                    || open.lit.as_ref().is_some_and(|(id, _)| *id == cell.id)
+                    || placed
+                        .places
+                        .get(&cell.id)
+                        .is_none_or(|(y, height)| *y + *height >= from && *y <= to)
+            })
+            .collect();
+    }
+
+    /// The notebook's cells, each `bodies[ix]` in its frame (or, for a
+    /// cell not drawn, space of its last height), with the rows that add
+    /// cells between them when cells can be added.
     pub(crate) fn render_cells(
         &self,
         open: &Open,
-        bodies: Vec<AnyElement>,
+        bodies: Vec<Option<AnyElement>>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let adds = open.notebook.can_restructure();
+        let adds = open.notebook.can_add_cells();
         let count = bodies.len();
         let mut children = Vec::with_capacity(count * 2 + 1);
         for (ix, body) in bodies.into_iter().enumerate() {
             if adds {
                 children.push(self.add_row_after_deleted(open, ix, false, cx));
             }
-            children.push(self.cell_frame(open, ix, body, window, cx));
+            children.push(match body {
+                Some(body) => self.cell_frame(open, ix, body, window, cx),
+                None => {
+                    let id = &open.notebook.cells[ix].id;
+                    let height = self.placed.places.get(id).map_or(px(0.), |(_, h)| *h);
+                    div().flex_none().w_full().h(height).into_any_element()
+                }
+            });
         }
         if adds {
             children.push(self.add_row_after_deleted(open, count, true, cx));
         }
+        *self.placed.drawn.borrow_mut() = (
+            open.notebook.path.clone(),
+            open.notebook.cells.iter().map(|c| c.id.clone()).collect(),
+            adds,
+        );
         children
     }
 
@@ -86,6 +220,14 @@ impl Workbench {
         let ghost = self.render_ghost(open, at, cx);
         let deleted = self.render_agent_deleted(open, at, cx);
         if deleted.is_empty() && ghost.is_none() {
+            let last = open.notebook.cells.len().saturating_sub(1);
+            if !self.placed.shows(at.min(last)) && !self.placed.shows(at.saturating_sub(1)) {
+                return div()
+                    .flex_none()
+                    .w_full()
+                    .h(px(if always { 36. } else { TOOLS_HEIGHT + 4. }))
+                    .into_any_element();
+            }
             return self.add_row(at, always, cx);
         }
         v_flex()
@@ -101,13 +243,17 @@ impl Workbench {
     pub(crate) fn scroll_to_cell(&mut self, ix: usize) {
         if let Some(open) = &self.open {
             let child = Self::child_of_cell(open, ix);
-            self.notebook_scroll.scroll_to_item(child);
+            if open.single_editor() {
+                self.notebook_scroll.scroll_to_item(child);
+            } else {
+                self.notebook_scroll_target.set(Some(child));
+            }
         }
     }
 
     /// Where cell `ix` is among the children `render_cells` makes.
-    fn child_of_cell(open: &Open, ix: usize) -> usize {
-        if open.notebook.can_restructure() {
+    pub(crate) fn child_of_cell(open: &Open, ix: usize) -> usize {
+        if open.notebook.can_add_cells() {
             ix * 2 + 1
         } else {
             ix
@@ -139,6 +285,17 @@ impl Workbench {
             .w_full()
             // A cell the agent just added or changed lights up.
             .when(lit, |d| d.rounded(px(8.)).bg(p.accent_soft))
+            // Observe the press without taking focus or consuming it: editor
+            // caret placement and output drag-selection keep their own events.
+            .capture_any_mouse_down(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                if event.button == MouseButton::Left
+                    && let Some(open) = this.open.as_mut()
+                    && open.current != Some(ix)
+                {
+                    open.current = Some(ix);
+                    cx.notify();
+                }
+            }))
             .when(open.notebook.can_restructure(), |d| {
                 // The line shows where the cell lands: above this one when
                 // it comes from below, under it when from above.
@@ -157,24 +314,16 @@ impl Workbench {
             .on_action(cx.listener(move |this, _: &input::Escape, window, cx| {
                 this.pick_cell(ix, window, cx)
             }))
-            .child(self.cell_gutter(open, ix, selected && commanding, cx))
+            .child(self.cell_gutter(open, ix, cx))
             .child(div().flex_1().min_w_0().child(body))
             .child(self.cell_tools(open, ix, group, selected && commanding, cx))
             .when(cell.kind == CellKind::Text, |d| d.min_h(px(26.)))
             .into_any_element()
     }
 
-    /// The gutter: the cell's number (#3, as the Agents pane names it) and
-    /// how its run went. Clicking it picks the cell; it is also the handle
-    /// to drag the cell by.
-    fn cell_gutter(
-        &self,
-        open: &Open,
-        ix: usize,
-        picked: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let p = *Palette::get(cx);
+    /// The gutter beside a cell: clicking it picks the cell, and it is the
+    /// handle to drag the cell by. The number shows on the run line.
+    fn cell_gutter(&self, open: &Open, ix: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let cell = &open.notebook.cells[ix];
         let code = cell.kind == CellKind::Code;
         let label: SharedString = if code {
@@ -187,18 +336,6 @@ impl Workbench {
             .w(px(GUTTER))
             .flex_none()
             .self_stretch()
-            .items_end()
-            .pt(px(5.))
-            .pr(px(10.))
-            .gap(px(2.))
-            .font_family(look::MONO)
-            .text_color(p.faint)
-            .border_r_2()
-            .border_color(if picked {
-                p.accent
-            } else {
-                transparent_black()
-            })
             .when(open.notebook.can_restructure(), |d| {
                 d.cursor(CursorStyle::PointingHand)
                     .on_drag(DraggedCell { ix, label }, |d, _, _, cx| {
@@ -206,14 +343,13 @@ impl Workbench {
                     })
             })
             .on_click(cx.listener(move |this, _, window, cx| this.pick_cell(ix, window, cx)))
-            .when(code, |d| {
-                d.child(div().opacity(0.8).child(format!("#{}", ix + 1)))
-            })
+            .when(code, |d| d.min_h(px(20.)))
     }
 
-    /// The line between a code cell and its outputs: its run's number, as
-    /// Jupyter shows it (`[3]`), and how long it took (or has been
-    /// running, or that it waits).
+    /// The line between a code cell and its outputs: the cell's number
+    /// (`Cell #3`, as the Agents pane names it), its run's number as Jupyter
+    /// counts it (`Output [5]`), and how long it took (or has been running,
+    /// or that it waits).
     pub(crate) fn run_line(
         &self,
         open: &Open,
@@ -253,19 +389,17 @@ impl Workbench {
             .and_then(|id| self.runs.get(id))
             .and_then(|r| r.execution_count)
             .or(cell.execution_count);
-        if text.is_none() && count.is_none() {
-            return None;
-        }
         Some(
             h_flex()
                 .id(("run-line", ix))
                 .mt(px(3.))
                 .pl(px(14.))
-                .gap(px(6.))
+                .gap(px(10.))
                 .font_family(look::MONO)
                 .text_size(px(look::SMALL))
                 .text_color(p.faint)
-                .when_some(count, |d, n| d.child(format!("[{n}]")))
+                .child(format!("Cell #{}", ix + 1))
+                .when_some(count, |d, n| d.child(format!("Output [{n}]")))
                 .when_some(text, |d, t| d.child(div().text_color(color).child(t)))
                 .into_any_element(),
         )
@@ -344,7 +478,9 @@ impl Workbench {
                         cx.listener(move |this, _, _, cx| this.move_cell(ix, ix + 1, cx)),
                     ))
                 })
-                .child(
+            })
+            .when(open.notebook.can_delete_cells(), |d| {
+                d.child(
                     tool("delete", "delete", "Delete the cell (Z brings it back)").on_click(
                         cx.listener(move |this, _, window, cx| {
                             this.delete_cell(ix, cx);
@@ -374,28 +510,20 @@ impl Workbench {
                     .group_hover(group, |d| d.opacity(1.))
                     .hover(|d| d.opacity(1.))
             })
-            .child(tools)
+            // Run first, then Run the cells above and the other tools.
             .when(code, |d| {
                 d.child(
-                    div()
-                        .id(("run", ix))
-                        .p(px(3.))
-                        .rounded(px(6.))
-                        .cursor_pointer()
-                        .text_color(if busy { p.busy } else { p.muted })
-                        .hover(|d| d.text_color(p.accent))
-                        .tooltip(|w, cx| {
-                            gpui_kit::component::tooltip::Tooltip::new("Run this cell").build(w, cx)
-                        })
-                        .child(icon("run").size(px(14.)))
+                    tool("run", "run", "Run this cell")
+                        .when(busy, |d| d.text_color(p.busy))
                         .on_click(cx.listener(move |this, _, _, cx| this.run_cell(ix, cx))),
                 )
             })
+            .child(tools)
     }
 
-    /// The row before cell `at` (or after the last) with buttons that add
-    /// a code or Markdown cell there; they show when the pointer is over
-    /// the row, and always after the last cell.
+    /// The centred row before cell `at` (or after the last) with buttons
+    /// that add a code or Markdown cell there; they show when the pointer
+    /// is over the row, and always after the last cell.
     fn add_row(&self, at: usize, always: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let group: SharedString = format!("add-{at}").into();
@@ -427,9 +555,7 @@ impl Workbench {
             .flex_none()
             .w_full()
             .h(px(if always { 36. } else { TOOLS_HEIGHT + 4. }))
-            // On the left, clear of the next cell's tools on the right.
-            .pl(px(GUTTER + 8.))
-            .gap(px(8.))
+            .justify_center()
             .child(
                 h_flex()
                     .gap(px(8.))
@@ -452,7 +578,7 @@ impl Workbench {
         }
         open.current = Some(ix);
         let child = Self::child_of_cell(open, ix);
-        self.notebook_scroll.scroll_to_item(child);
+        self.notebook_scroll_target.set(Some(child));
         window.focus(&self.cells_focus, cx);
         cx.notify();
     }
@@ -525,48 +651,13 @@ impl Workbench {
     /// cell shows it by name.
     pub(crate) fn render_table(
         &self,
-        table: Table,
+        mut table: Table,
         id: SharedString,
         cell: Option<usize>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
-        let char_width = look::CODE * 0.6;
-        let widths: Vec<f32> = (0..table.columns.len())
-            .map(|i| {
-                let chars = table
-                    .rows
-                    .iter()
-                    .filter_map(|r| r.get(i))
-                    .chain(std::iter::once(&table.columns[i]))
-                    .map(|s| s.chars().count())
-                    .max()
-                    .unwrap_or(0)
-                    .clamp(COLUMN_CHARS.0, COLUMN_CHARS.1);
-                chars as f32 * char_width + 16.
-            })
-            .collect();
-        let row = |cells: &[String], header: bool, n: usize| {
-            h_flex()
-                .flex_none()
-                .h(px(24.))
-                .when(header, |d| d.font_weight(FontWeight::SEMIBOLD).bg(p.chunk))
-                .when(!header && n % 2 == 1, |d| d.bg(p.ink(3.)))
-                .border_b(px(0.5))
-                .border_color(p.line)
-                .children(cells.iter().zip(&widths).enumerate().map(|(i, (text, w))| {
-                    div()
-                        .flex_none()
-                        .w(px(*w))
-                        .px(px(8.))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        // The index, as pandas and R print it, stays plain.
-                        .when(i == 0 && !header, |d| d.text_color(p.muted))
-                        .child(text.clone())
-                }))
-        };
+        let caption = table.caption.take();
         let explorer = cell
             .and_then(|ix| self.open.as_ref()?.editors.get(ix))
             .and_then(|e| shown_name(&e.read(cx).value()))
@@ -574,29 +665,17 @@ impl Workbench {
         v_flex()
             .w_full()
             .gap(px(4.))
-            .child(
-                div()
-                    .id(SharedString::from(format!("{id}-grid")))
-                    .max_w_full()
-                    .overflow_x_scroll()
-                    .restrict_scroll_to_axis()
-                    .rounded(px(6.))
-                    .border(px(0.5))
-                    .border_color(p.line)
-                    .font_family(look::MONO)
-                    .text_size(px(look::SMALL))
-                    .child(
-                        v_flex()
-                            .child(row(&table.columns, true, 0))
-                            .children(table.rows.iter().enumerate().map(|(n, r)| row(r, false, n))),
-                    ),
-            )
+            .child(OutputTable::new(id.clone(), table))
             .child(
                 h_flex()
                     .gap(px(10.))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
-                    .children(table.caption.clone())
+                    .when_some(caption, |d, caption| {
+                        d.child(div().when(cell.is_some(), |d| d.cursor_text()).child(
+                            OutputText::new(SharedString::from(format!("{id}-caption")), caption),
+                        ))
+                    })
                     .when_some(explorer, |d, name| {
                         d.child(
                             div()
@@ -620,8 +699,17 @@ impl Workbench {
 
     /// Adds a code cell at `at` and keeps the keys on the cells, picking it.
     fn add_cell_picked(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self
+            .open
+            .as_ref()
+            .map_or(0, |open| open.notebook.cells.len());
         self.add_cell(at, CellKind::Code, window, cx);
-        self.pick_cell(at, window, cx);
+        if let Some(open) = &self.open
+            && open.notebook.cells.len() > count
+            && let Some(inserted) = open.current
+        {
+            self.pick_cell(inserted, window, cx);
+        }
     }
 
     /// Puts the cursor in cell `ix`; a Markdown cell shows its text.

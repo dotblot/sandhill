@@ -7,16 +7,33 @@
 //! the keys, pastes and replies the engine encodes, and the grid sizes it
 //! measures, go back to the daemon.
 
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
 use base64::Engine as _;
 use gpui_cn::terminal::{
-    Engine, EngineOptions, StreamEvent, StreamPeer, StreamSource, Terminal, TerminalAppearance,
-    TerminalColors, TerminalConfig, TerminalState,
+    Engine, EngineOptions, FileLink, StreamEvent, StreamPeer, StreamSource, Terminal,
+    TerminalAppearance, TerminalColors, TerminalConfig, TerminalEvent, TerminalState,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::daemon::Daemon;
 use crate::look::{self, Palette};
+
+struct FileLinks {
+    daemon: Rc<Daemon>,
+    project: String,
+    start_cwd: String,
+    cache: HashMap<String, (Instant, bool)>,
+    pending: HashMap<String, FileLink>,
+}
+
+const LINK_CACHE_TTL: Duration = Duration::from_secs(3);
+/// How often an undrawn terminal's screen is brought up to date.
+const UNDRAWN_FRAME: Duration = Duration::from_millis(100);
 
 /// The Tauri app's 13px, 2px larger; lines as tall as the font's own, so
 /// box-drawing lines join up.
@@ -42,8 +59,13 @@ pub struct TerminalView {
     /// What callers focus; the terminal takes the focus over when drawn.
     focus: FocusHandle,
     exited: Option<String>,
-    /// The appearance the terminal's colours were made for.
-    dark: Option<bool>,
+    /// Drawn since the engine's last frame arrived; an undrawn terminal
+    /// (an agent's behind its chat) is read through `screen_text`, so it is
+    /// given each next frame itself, at most every `UNDRAWN_FRAME`.
+    drawn: bool,
+    granting: bool,
+    file_links: Option<FileLinks>,
+    _theme: Subscription,
     _events: Task<()>,
 }
 
@@ -77,6 +99,13 @@ impl TerminalView {
                 this.update(cx, |view, cx| view.start(window, cx)).ok();
             });
         });
+        let theme = cx.observe_global::<Palette>(|view, cx| {
+            if let Some(state) = &view.state {
+                let p = *Palette::get(cx);
+                state.update(cx, |state, cx| state.set_colors(colors(&p), cx));
+            }
+            cx.notify();
+        });
         TerminalView {
             id,
             peer,
@@ -85,7 +114,10 @@ impl TerminalView {
             window,
             focus: cx.focus_handle(),
             exited: None,
-            dark: None,
+            drawn: false,
+            granting: false,
+            _theme: theme,
+            file_links: None,
             _events: events,
         }
     }
@@ -95,7 +127,6 @@ impl TerminalView {
             return;
         };
         let p = *Palette::get(cx);
-        self.dark = Some(p.dark);
         let config = TerminalConfig::default()
             .with_colors(colors(&p))
             .with_appearance(
@@ -112,15 +143,57 @@ impl TerminalView {
                 cx,
             )
         });
-        cx.observe(&state, |_, _, cx| cx.notify()).detach();
+        cx.observe(&state, |view, state, cx| {
+            if !std::mem::take(&mut view.drawn) && !view.granting {
+                view.granting = true;
+                let state = state.downgrade();
+                cx.spawn(async move |view, cx| {
+                    cx.background_executor().timer(UNDRAWN_FRAME).await;
+                    let _ = view.update(cx, |view, cx| {
+                        view.granting = false;
+                        if !view.drawn
+                            && let Some(state) = state.upgrade()
+                        {
+                            state.read(cx).frame_read();
+                        }
+                    });
+                })
+                .detach();
+            }
+            cx.notify()
+        })
+        .detach();
+        cx.subscribe(
+            &state,
+            |view, state, event: &TerminalEvent, cx| match event {
+                TerminalEvent::FileLinkHovered(file) => {
+                    view.check_file_link(file.clone(), &state, cx)
+                }
+                TerminalEvent::FileLinkOpened(file) => {
+                    if let Some(file) = view.resolve_link(file, cx) {
+                        cx.emit(file);
+                    }
+                }
+                _ => {}
+            },
+        )
+        .detach();
+        if self.file_links.is_some() {
+            state.update(cx, |state, cx| state.enable_file_links(cx));
+        }
         self.state = Some(state);
         cx.notify();
     }
 
-    /// Output from the program, base64 as the daemon sends it.
-    pub fn feed(&mut self, data: &str, _cx: &mut Context<Self>) {
+    /// Output from the program, base64 as the daemon sends it. Historical
+    /// output restores the screen but cannot write replies into a live shell.
+    pub fn feed(&mut self, data: &str, replay: bool, _cx: &mut Context<Self>) {
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
-            self.peer.output(&bytes);
+            if replay {
+                self.peer.replay(&bytes);
+            } else {
+                self.peer.output(&bytes);
+            }
         }
     }
 
@@ -153,6 +226,167 @@ impl TerminalView {
     pub fn focus_handle(&self) -> FocusHandle {
         self.focus.clone()
     }
+
+    /// Configure daemon-only file validation for this project's terminal.
+    pub(crate) fn set_file_links(
+        &mut self,
+        daemon: Rc<Daemon>,
+        project: String,
+        start_cwd: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.file_links = Some(FileLinks {
+            daemon,
+            project,
+            start_cwd,
+            cache: HashMap::new(),
+            pending: HashMap::new(),
+        });
+        if let Some(state) = &self.state {
+            state.update(cx, |state, cx| state.enable_file_links(cx));
+        }
+    }
+
+    fn resolve_link(&self, file: &FileLink, cx: &App) -> Option<FileLink> {
+        let links = self.file_links.as_ref()?;
+        let cwd = self
+            .state
+            .as_ref()
+            .and_then(|state| state.read(cx).cwd())
+            .and_then(|cwd| cwd.to_str())
+            .unwrap_or(&links.start_cwd);
+        Some(FileLink {
+            path: project_file(&file.path, cwd, &links.project)?,
+            line: file.line,
+            column: file.column,
+        })
+    }
+
+    fn check_file_link(
+        &mut self,
+        candidate: FileLink,
+        state: &Entity<TerminalState>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(resolved) = self.resolve_link(&candidate, cx) else {
+            state.update(cx, |state, cx| {
+                state.confirm_file_link(&candidate, false, cx)
+            });
+            return;
+        };
+        let links = self.file_links.as_mut().unwrap();
+        links
+            .cache
+            .retain(|_, (when, _)| when.elapsed() < LINK_CACHE_TTL);
+        if let Some((_, exists)) = links.cache.get(&resolved.path) {
+            state.update(cx, |state, cx| {
+                state.confirm_file_link(&candidate, *exists, cx)
+            });
+            return;
+        }
+        if links
+            .pending
+            .insert(resolved.path.clone(), candidate)
+            .is_some()
+        {
+            return;
+        }
+        let daemon = links.daemon.clone();
+        let path = resolved.path.clone();
+        let stat = daemon.call::<Vec<sandhill_proto::FileStat>>(sandhill_proto::Call::StatFiles {
+            paths: vec![path.clone()],
+        });
+        let state = state.downgrade();
+        cx.spawn(async move |this, cx| {
+            let exists = stat.await.ok().is_some_and(|stats| {
+                stats
+                    .first()
+                    .is_some_and(|stat| stat.path == path && stat.mtime_ms.is_some())
+            });
+            // StatFiles also includes directories. Confirm a regular file using
+            // the daemon's directory metadata, never the Mac's filesystem.
+            let exists = if exists {
+                let parent = crate::files::parent_of(&path);
+                daemon
+                    .call::<Vec<sandhill_proto::DirEntry>>(sandhill_proto::Call::ListDir {
+                        path: parent,
+                        sizes: false,
+                        marks: false,
+                    })
+                    .await
+                    .ok()
+                    .is_some_and(|entries| {
+                        entries.iter().any(|entry| {
+                            entry.name == crate::files::base_name(&path)
+                                && entry.kind == sandhill_proto::EntryKind::File
+                        })
+                    })
+            } else {
+                false
+            };
+            this.update(cx, |view, cx| {
+                let Some(links) = view.file_links.as_mut() else {
+                    return;
+                };
+                if !Rc::ptr_eq(&daemon, &links.daemon) {
+                    return;
+                }
+                let Some(candidate) = links.pending.remove(&path) else {
+                    return;
+                };
+                if links.cache.len() >= 256 {
+                    links.cache.clear();
+                }
+                links.cache.insert(path.clone(), (Instant::now(), exists));
+                if view
+                    .resolve_link(&candidate, cx)
+                    .is_some_and(|file| file.path == path)
+                {
+                    state
+                        .update(cx, |state, cx| {
+                            state.confirm_file_link(&candidate, exists, cx)
+                        })
+                        .ok();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+impl EventEmitter<FileLink> for TerminalView {}
+
+/// Lexical POSIX resolution matches the daemon's local or remote filesystem.
+fn project_file(path: &str, cwd: &str, project: &str) -> Option<String> {
+    fn absolute(path: &str) -> Option<String> {
+        if !path.starts_with('/') {
+            return None;
+        }
+        let mut parts = Vec::new();
+        for part in path.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                _ => parts.push(part),
+            }
+        }
+        Some(format!("/{}", parts.join("/")))
+    }
+    if path.starts_with("~/") {
+        return None;
+    }
+    let path = if path.starts_with('/') {
+        absolute(path)?
+    } else {
+        absolute(&format!("{cwd}/{path}"))?
+    };
+    let project = absolute(project)?;
+    let relative = path.strip_prefix(&project)?;
+    (relative.starts_with('/') && relative.len() > 1 || project == "/" && path.len() > 1)
+        .then_some(path)
 }
 
 /// The terminal's colours from Sandhill's palette: its background and
@@ -178,6 +412,7 @@ impl Render for TerminalView {
         if self.state.is_none() && window.window_handle() == self.window {
             self.start(window, cx);
         }
+        self.drawn = true;
         let Some(state) = self.state.clone() else {
             return div()
                 .id("terminal")
@@ -186,11 +421,6 @@ impl Render for TerminalView {
                 .bg(p.term)
                 .into_any_element();
         };
-        // The theme changed: the terminal follows.
-        if self.dark != Some(p.dark) {
-            self.dark = Some(p.dark);
-            state.update(cx, |s, cx| s.set_colors(colors(&p), cx));
-        }
         // Focus given to this view goes on to the terminal.
         if self.focus.is_focused(window) {
             let inner = state.read(cx).focus_handle().clone();
@@ -228,6 +458,24 @@ impl Render for TerminalView {
 mod tests {
     use super::to_rgb;
     use gpui_kit::{Hsla, rgb};
+
+    #[test]
+    fn resolves_files_against_shell_cwd_with_project_boundaries() {
+        use super::project_file;
+        assert_eq!(
+            project_file("a.py", "/p/src", "/p").as_deref(),
+            Some("/p/src/a.py")
+        );
+        assert_eq!(
+            project_file("../a.py", "/p/src", "/p").as_deref(),
+            Some("/p/a.py")
+        );
+        assert!(project_file("../../secret", "/p/src", "/p").is_none());
+        assert!(project_file("/project-other/a.py", "/p", "/project").is_none());
+        assert!(project_file("/p", "/p", "/p").is_none());
+        assert!(project_file("~/a.py", "/p", "/p").is_none());
+        assert_eq!(project_file("a.py", "/p", "/").as_deref(), Some("/p/a.py"));
+    }
 
     #[test]
     fn turns_palette_colours_into_bytes() {

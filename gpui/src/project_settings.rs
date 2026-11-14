@@ -18,6 +18,7 @@ use sandhill_proto::{
 
 use crate::look::{self, Palette, icon};
 use crate::workbench::Workbench;
+use gpui_kit::base::ElementExt as _;
 
 /// Why a language's list has no other kernel to pick.
 fn only_kernel(language: &str) -> &'static str {
@@ -98,6 +99,18 @@ pub(crate) fn new_env_input(
 }
 
 impl Workbench {
+    pub(crate) fn dismiss_settings_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        let open = self
+            .setup
+            .dialog
+            .as_mut()
+            .is_some_and(|dialog| dialog.menu.take().is_some());
+        if open {
+            cx.notify();
+        }
+        open
+    }
+
     /// Reads the project's settings and kernels; with `ask`, offers the
     /// dialog if the project has none saved yet (once per project).
     pub(crate) fn read_setup(&mut self, ask: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -367,6 +380,31 @@ impl Workbench {
                     false,
                 ));
             }
+            if id == "r" {
+                for (ix, offer) in self.irkernel.list.iter().enumerate() {
+                    let picked = offer.clone();
+                    field = field.child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(div().flex_1().min_w_0().child(note(
+                                format!(
+                                    "{} ({}) has no IRkernel.",
+                                    crate::irkernel::r_name(offer),
+                                    crate::irkernel::r_place(offer)
+                                ),
+                                false,
+                            )))
+                            .child(
+                                Button::new(("settings-install-irkernel", ix))
+                                    .xsmall()
+                                    .label("Install IRkernel")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.ask_install_irkernel(picked.clone(), cx)
+                                    })),
+                            ),
+                    );
+                }
+            }
             rows.push(row(label(title), field).into_any_element());
         }
         let documents = match dialog.documents {
@@ -533,9 +571,16 @@ impl Workbench {
             .map(|(_, label)| label.clone())
             .unwrap_or_default();
         let open = dialog.menu == Some(menu);
+        let trigger = match menu {
+            Menu::R => "settings-r",
+            Menu::Python => "settings-python",
+            Menu::Documents => "settings-documents",
+            Menu::History => "settings-history",
+        };
         let hover = p.ink(8.);
         let button = h_flex()
             .id(SharedString::from(format!("select-{}", menu as u8)))
+            .on_prepaint(self.popup_triggers.track(trigger))
             .h(px(28.))
             .px(px(10.))
             .gap(px(6.))
@@ -566,11 +611,17 @@ impl Workbench {
             }));
         let list = open.then(|| {
             v_flex()
+                .id(trigger)
                 .rounded(px(6.))
                 .border_1()
                 .border_color(p.line)
                 .bg(p.bg)
                 .py(px(3.))
+                .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if !this.popup_triggers.contains(trigger, event.position) {
+                        this.dismiss_settings_menu(cx);
+                    }
+                }))
                 .children(options.into_iter().enumerate().map(|(i, (value, label))| {
                     let on = value == chosen;
                     h_flex()

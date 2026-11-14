@@ -82,6 +82,8 @@ impl Workbench {
         sha: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        self.reveal_middle();
+        self.hide_object_explorer();
         let repo = self
             .git
             .status
@@ -307,13 +309,10 @@ impl Workbench {
         let file = tab.file.clone();
         let mut bar = h_flex()
             .flex_none()
-            .h(px(30.))
+            .h_full()
             .px(px(8.))
             .gap(px(6.))
-            .border_b(px(0.5))
-            .border_color(p.glass_edge)
             .whitespace_nowrap()
-            .overflow_hidden()
             .child(picture(&look::file_icon(&tab.file)).size(px(14.)))
             .child(
                 div()
@@ -591,8 +590,20 @@ impl Workbench {
         pane(&p)
             .flex_1()
             .h_full()
-            .child(self.render_tabs(cx))
-            .child(bar)
+            .child(
+                Self::strip(&p)
+                    .child(
+                        h_flex()
+                            .id("diff-actions")
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_x_scroll()
+                            .restrict_scroll_to_axis()
+                            .child(bar),
+                    )
+                    .child(self.panel_buttons(crate::panes::Panel::Editor, cx)),
+            )
             .child(
                 div()
                     .id("diff-body")
@@ -605,37 +616,45 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// The diff's tab in the middle's tab strip.
-    pub(crate) fn diff_tab_element(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The diff's document tab in its project capsule.
+    pub(crate) fn diff_tab_element(
+        &self,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let p = *Palette::get(cx);
         let tab = self.diff.as_ref()?;
-        let hover = p.ink(8.);
-        let text = p.text;
+        let picked = expanded && self.diff_shown;
+        let lead = icon("git").size(px(14.)).into_any_element();
+        let (lead, trailing) = if expanded {
+            crate::look::place_close(
+                lead,
+                crate::look::tab_close("diff-close", picked, &p).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.close_diff(cx)
+                    },
+                )),
+                picked,
+            )
+        } else {
+            (lead, None)
+        };
         Some(
             Self::tab(
                 "diff-tab",
-                Some(icon("git").size(px(14.)).into_any_element()),
-                tab.title(),
-                self.diff_shown,
+                Some(lead),
+                if expanded { tab.title() } else { String::new() },
+                picked,
                 &p,
             )
-            .child(
-                div()
-                    .id("diff-close")
-                    .size(px(16.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .text_color(p.faint)
-                    .hover(move |d| d.bg(hover).text_color(text))
-                    .child(icon("close").size(px(12.)))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.close_diff(cx)
-                    })),
-            )
+            .flex_none()
+            .when(!expanded, |d| d.px(px(5.)).gap_0())
+            .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new("Git diff").build(w, cx))
+            .when_some(trailing, |d, close| d.pr(px(3.)).child(close))
             .on_click(cx.listener(|this, _, _, cx| {
+                this.reveal_middle();
+                this.hide_object_explorer();
                 this.diff_shown = true;
                 this.explorer_shown = false;
                 this.read_diff(cx);

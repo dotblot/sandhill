@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable, Selectable};
@@ -257,6 +258,10 @@ impl Workbench {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
+        // A repository's own configuration can run programs.
+        if self.restricted() {
+            return;
+        }
         self.git.generation += 1;
         let mine = self.git.generation;
         self.git.reading = true;
@@ -923,6 +928,7 @@ impl Workbench {
                 let on = enabled && busy.is_none();
                 h_flex()
                     .id(id)
+                    .on_prepaint(self.popup_triggers.track(id))
                     .h(px(22.))
                     .px(px(5.))
                     .gap(px(2.))
@@ -1040,11 +1046,10 @@ impl Workbench {
     }
 
     pub(crate) fn toggle_git_menu(&mut self, menu: GitMenu, cx: &mut Context<Self>) {
-        self.git.menu = if self.git.menu == Some(menu) {
-            None
-        } else {
-            Some(menu)
-        };
+        let same_family = self.git.menu == Some(menu)
+            || (menu == GitMenu::Branches
+                && matches!(self.git.menu, Some(GitMenu::Merge | GitMenu::Rebase)));
+        self.git.menu = if same_family { None } else { Some(menu) };
         cx.notify();
     }
 
@@ -1056,6 +1061,7 @@ impl Workbench {
         let Some(status) = &self.git.status else {
             return v_flex()
                 .size_full()
+                .pt(px(look::STRIP))
                 .child(match &self.git.error {
                     Some(err) => note(err.clone(), p.err),
                     None if self.project.is_none() => {
@@ -1070,6 +1076,7 @@ impl Workbench {
                 .size_full()
                 .gap(px(8.))
                 .p(px(14.))
+                .pt(px(look::STRIP + 14.))
                 .child(
                     div()
                         .text_color(p.muted)
@@ -1095,15 +1102,15 @@ impl Workbench {
                 )
                 .into_any_element();
         }
-        let mut column: Vec<AnyElement> = vec![self.render_git_head(status, cx)];
+        let mut notices: Vec<AnyElement> = Vec::new();
         if let Some(ask) = self.render_git_ask(cx) {
-            column.push(ask);
+            notices.push(ask);
         }
         if let Some(prompt) = self.render_git_prompt(cx) {
-            column.push(prompt);
+            notices.push(prompt);
         }
         if let Some((text, failed)) = &self.git.note {
-            column.push(
+            notices.push(
                 h_flex()
                     .flex_none()
                     .px(px(12.))
@@ -1130,17 +1137,23 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        column.push(self.render_git_log(cx));
-        if self.git.log.picked == git::WORKTREE {
-            column.push(self.render_git_stage(status, cx));
+        let detail = if self.git.log.picked == git::WORKTREE {
+            self.render_git_stage(status, cx)
         } else {
-            column.push(self.render_commit_detail(cx));
-        }
+            self.render_commit_detail(cx)
+        };
         v_flex()
             .size_full()
             .relative()
-            .children(column)
+            .child(self.render_git_log(notices, cx))
+            .child(detail)
             .children(self.render_git_menu(cx))
+            .child(look::floating_header(
+                &p,
+                look::STRIP,
+                false,
+                self.render_git_head(status, cx),
+            ))
             .into_any_element()
     }
 
@@ -1167,6 +1180,7 @@ impl Workbench {
         };
         h_flex()
             .flex_none()
+            .h(px(32.))
             .gap(px(6.))
             .px(px(10.))
             .py(px(5.))
@@ -1176,6 +1190,7 @@ impl Workbench {
             .child(
                 div()
                     .id("git-branch")
+                    .on_prepaint(self.popup_triggers.track("git-branches"))
                     .px(px(6.))
                     .rounded(px(RADIUS))
                     .font_weight(FontWeight::MEDIUM)
@@ -1603,6 +1618,7 @@ impl Workbench {
                     )
                     .child(
                         icon_button("git-commit-more", "chevron.down", &p, false)
+                            .on_prepaint(self.popup_triggers.track("git-commit"))
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_git_menu(GitMenu::Commit, cx))),
                     ),
             );
@@ -1610,15 +1626,12 @@ impl Workbench {
             .flex_1()
             .min_h(px(140.))
             .children(state)
-            .child(
-                div()
-                    .id("git-files")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .py(px(4.))
-                    .children(files),
-            )
+            .child(look::PaneScroll::new(
+                "git-files-scroll",
+                0.,
+                4.,
+                div().id("git-files").pb(px(4.)).children(files),
+            ))
             .children(needs_user)
             .child(commit_box)
             .into_any_element()
@@ -2219,7 +2232,16 @@ impl Workbench {
             .max_h(px(420.))
             .overflow_y_scroll()
             .children(rows)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                let trigger = match menu {
+                    GitMenu::Branches | GitMenu::Merge | GitMenu::Rebase => "git-branches",
+                    GitMenu::Stash => "git-stash",
+                    GitMenu::More => "git-more",
+                    GitMenu::Commit => "git-commit",
+                };
+                if this.popup_triggers.contains(trigger, event.position) {
+                    return;
+                }
                 this.git.menu = None;
                 cx.notify();
             }));

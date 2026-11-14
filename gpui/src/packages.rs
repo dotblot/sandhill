@@ -19,7 +19,7 @@ use gpui_kit::*;
 use sandhill_proto::{Call, Package, PackageUpdate, PackageUpdates, Packages as Listed};
 
 use crate::help::HelpRequest;
-use crate::look::{self, Palette, RADIUS, capsule, icon, icon_button};
+use crate::look::{self, Palette, RADIUS, icon, icon_button};
 use crate::workbench::{TopTab, Workbench};
 
 /// How long after a run finishes the list is read again.
@@ -369,7 +369,7 @@ impl Workbench {
     /// Reads the list when the pane shows and it's out of date, or the
     /// session changed. Called while drawing.
     pub(crate) fn sync_packages(&mut self, cx: &mut Context<Self>) {
-        let session = self.active_session().map(str::to_string);
+        let session = self.variables_session().map(str::to_string);
         if session != self.packages.session {
             self.packages.generation += 1;
             self.packages.session = session;
@@ -401,7 +401,7 @@ impl Workbench {
 
     pub(crate) fn refresh_packages(&mut self, cx: &mut Context<Self>) {
         let (Some(daemon), Some(session)) =
-            (self.daemon(), self.active_session().map(str::to_string))
+            (self.daemon(), self.variables_session().map(str::to_string))
         else {
             return;
         };
@@ -436,7 +436,7 @@ impl Workbench {
 
     fn check_updates(&mut self, cx: &mut Context<Self>) {
         let (Some(daemon), Some(session)) =
-            (self.daemon(), self.active_session().map(str::to_string))
+            (self.daemon(), self.variables_session().map(str::to_string))
         else {
             return;
         };
@@ -570,7 +570,7 @@ impl Workbench {
         );
         tools.push(
             icon_button("refresh-packages", "refresh", &p, false)
-                .when(self.active_session().is_none(), |d| d.opacity(0.35))
+                .when(self.variables_session().is_none(), |d| d.opacity(0.35))
                 .on_click(cx.listener(|this, _, _, cx| this.refresh_packages(cx)))
                 .into_any_element(),
         );
@@ -590,6 +590,7 @@ impl Workbench {
         });
         let filter_bar = h_flex()
             .flex_none()
+            .h(px(37.))
             .gap(px(8.))
             .px(px(8.))
             .py(px(6.))
@@ -610,7 +611,7 @@ impl Workbench {
                         .child(c),
                 )
             });
-        let mut top: Vec<AnyElement> = vec![filter_bar.into_any_element()];
+        let mut top: Vec<AnyElement> = Vec::new();
         if self.packages.installing && listed.is_some() {
             top.push(self.render_install(python, cx));
         }
@@ -626,7 +627,7 @@ impl Workbench {
                 .child(text)
                 .into_any_element()
         };
-        if self.active_session().is_none() {
+        if self.variables_session().is_none() {
             body.push(muted_note(
                 "Start R or Python in the Console, and its installed packages show here.".into(),
                 p.muted,
@@ -682,17 +683,15 @@ impl Workbench {
             }
         }
         v_flex()
+            .relative()
             .size_full()
-            .children(top)
-            .child(
-                div()
-                    .id("packages")
-                    .flex_1()
-                    .min_h_0()
-                    .pb(px(4.))
-                    .overflow_y_scroll()
-                    .children(body),
-            )
+            .child(look::PaneScroll::new(
+                "packages-scroll",
+                look::STRIP + 37.,
+                0.,
+                div().id("packages").pb(px(4.)).children(top).children(body),
+            ))
+            .child(look::floating_header(&p, look::STRIP, false, filter_bar))
             .into_any_element()
     }
 
@@ -852,7 +851,7 @@ impl Workbench {
                     )
                     .when(conda_ok, |d| {
                         d.child(
-                            capsule(&p, 22.)
+                            crate::look::tab_capsule(&p)
                                 .gap(px(1.))
                                 .child(choice("install-pip", "pip", false, cx))
                                 .child(choice("install-conda", "conda", true, cx)),

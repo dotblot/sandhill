@@ -1,0 +1,73 @@
+[package]
+name = "gpui-cn"
+description = "shadcn-style components for GPUI, built on gpui-base."
+keywords = ["gpui", "ui", "shadcn", "components", "desktop"]
+categories = ["gui"]
+readme = "../../README.md"
+documentation = "https://docs.rs/gpui-cn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+# docs.rs builds with every feature, so the font and the test helpers
+# show in the documentation.
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["gpui-fast"]
+# GPUI Fast as the GPUI backend instead of gpui-pre, on by default: retained
+# views and cached scroll layers, so unchanged frames cost less.
+gpui-fast = ["gpui-kit/gpui-fast", "gpui-webview?/gpui-fast"]
+# JetBrains Mono as the code font, registered by `init`.
+jetbrains-mono = ["dep:damascene-fonts-jetbrains-mono"]
+# The terminal in `gpui_cn::terminal`, on libghostty-vt: the element, the
+# engine, a local shell in a pty on desktop targets, any other byte source,
+# and parking of idle terminals, which is on by default at runtime.
+# Building it needs Zig 0.17; see the `ghostty-vt-sys` crate.
+ghostty = ["dep:ghostty-vt", "dep:portable-pty", "dep:windows-sys"]
+# `WebFrame` and the embedded web page in `gpui_cn::webview`, on
+# `gpui-webview` and wry. Experimental; see that crate for platform setup.
+webview = ["dep:gpui-webview", "dep:wry"]
+# Headless UI testing through `gpui_kit::test`.
+test-support = ["gpui-kit/test-support"]
+
+[dependencies]
+gpui-kit = { workspace = true, features = ["assets"] }
+damascene-fonts-jetbrains-mono = { version = "0.1", optional = true }
+nucleo-matcher = "0.3"
+smol = "2"
+ghostty-vt = { workspace = true, optional = true }
+gpui-webview = { version = "0.8.1", default-features = false, optional = true }
+wry = { version = "0.53.3", package = "lb-wry", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+# The passwd entry, for the user's default shell, and the terminal's
+# processes.
+libc = "0.2"
+
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+portable-pty = { version = "0.9", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# The job object that ends a terminal's process tree, and the process
+# table for its foreground process.
+windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+# The tests read state that only `test-support` puts in the frame, such as
+# a text field's value, so they always build with it.
+gpui-cn = { path = ".", features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }

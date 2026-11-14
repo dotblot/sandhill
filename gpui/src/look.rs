@@ -1,19 +1,22 @@
-//! Sandhill's look, carried over from the Tauri app (`app/src/styles.css`,
-//! from the UI mockup in `docs/design/ui/`): glass panes 3px apart on a warm
-//! wall under a 31px title bar of capsules, the left pane directly on the
-//! wall, one 12px corner radius, and Maple Mono NF for code. Every text size
-//! is 2px larger than the Tauri app's.
+//! Sandhill's look: the window is frosted glass (on a Mac the system blurs
+//! what is behind it, and a neutral tint goes over the blur), with panes
+//! floating on it as cards 3px apart under a 31px title bar of capsules.
+//! The editor is solid for reading code; the side panels and Console group
+//! are translucent. One 12px corner radius, Maple Mono NF for code, and
+//! every text size 2px larger than the Tauri app's.
 //!
-//! The colours are the Tauri app's tokens, light and dark. They reach
-//! gpui-kit's widgets as a theme (built here, so the tokens are written once)
-//! and Sandhill's own drawing through [`Palette`].
+//! Kit supplies the neutral surfaces; the crane icon's navy supplies interactive
+//! accents, with a lighter counterpart for dark mode. Code keeps Xcode's
+//! Default syntax colours. Kit widgets and custom drawing share these colours.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Read;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
-use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+use gpui_kit::component::highlighter::SyntaxColors;
+use gpui_kit::component::{Colorize, Theme, ThemeColor, ThemeConfig, ThemeMode, ThemeRegistry};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use rust_embed::RustEmbed;
@@ -27,168 +30,26 @@ pub const CODE: f32 = 15.;
 pub const SMALL: f32 = 13.;
 /// Pane tab titles and toolbar buttons: 1pt below the chrome's text.
 pub const TAB_TEXT: f32 = 14.;
-/// A tab's corners, and those of the strip around them (half a pill's).
-pub const TAB_RADIUS: f32 = 4.5;
+/// A tab: a pill in a 24px track, both fully round (Huan, 2026-11-14).
+pub const TAB_H: f32 = 20.;
+/// The track pane tabs sit in: the tab's height and 2px around it.
+pub const TAB_TRACK: f32 = 24.;
+/// Names the hover group of every tab, so a close button can show under the
+/// pointer. Lookups find the nearest enclosing tab.
+pub const TAB_GROUP: &str = "sandhill-tab";
 /// One corner radius for every rounded thing in the window.
 pub const RADIUS: f32 = 12.;
 /// The gap between panes, and between them and the window's top.
 pub const GAP: f32 = 3.;
 /// The room between the side panels and the window's left and right edges.
-pub const EDGE: f32 = 8.;
+pub const EDGE: f32 = 7.;
 pub const TITLE_BAR: f32 = 31.;
 pub const STATUS_BAR: f32 = 26.;
 /// A pane's tab strip.
 pub const STRIP: f32 = 29.;
 pub const MONO: &str = "Maple Mono NF";
 
-/// The colour tokens of one appearance, as `0xRRGGBB`.
-struct Tokens {
-    bg: u32,
-    chrome: u32,
-    panel: u32,
-    line: u32,
-    text: u32,
-    muted: u32,
-    faint: u32,
-    accent: u32,
-    accent_soft: u32,
-    accent_text: u32,
-    busy: u32,
-    busy_soft: u32,
-    ok: u32,
-    err: u32,
-    err_soft: u32,
-    chunk: u32,
-    sel: u32,
-    hover: u32,
-    term: u32,
-    // Syntax: keywords, strings, numbers, comments, functions, operators,
-    // headings, fences and markers, argument names.
-    k: u32,
-    s: u32,
-    n: u32,
-    c: u32,
-    f: u32,
-    o: u32,
-    h: u32,
-    fm: u32,
-    arg: u32,
-    /// The wall: a glow at the top left, one at the bottom right, and the
-    /// gradient under them.
-    glow_top: u32,
-    glow_bottom: u32,
-    wall_from: u32,
-    wall_to: u32,
-    /// How opaque the glass panes are.
-    glass: f32,
-    /// `0xRRGGBBAA`.
-    glass_edge: u32,
-    /// The light along a pane's top edge, `0xRRGGBBAA`.
-    glass_hi: u32,
-    cap_bg: u32,
-    cap_edge: u32,
-    cap_on: u32,
-    shadow: u32,
-    /// The terminal's 16 colours (black, red, green, yellow, blue,
-    /// magenta, cyan, white, then the bright ones), as in the Tauri app.
-    ansi: [u32; 16],
-}
-
-const LIGHT: Tokens = Tokens {
-    bg: 0xffffff,
-    chrome: 0xeeebe7,
-    panel: 0xf7f5f2,
-    line: 0xe0dbd5,
-    text: 0x1f1c1a,
-    muted: 0x6b645e,
-    faint: 0xa39c95,
-    accent: 0xc2570c,
-    accent_soft: 0xfbe6d4,
-    accent_text: 0xffffff,
-    busy: 0x2f6fbf,
-    busy_soft: 0xdde9f7,
-    ok: 0x2e7d4f,
-    err: 0xcc3a2f,
-    err_soft: 0xfbe3e0,
-    chunk: 0xf8f6f3,
-    sel: 0xf6dcc4,
-    hover: 0xe8e4df,
-    term: 0xfbfaf8,
-    k: 0x8f3fa3,
-    s: 0x2f7d32,
-    n: 0xb0560a,
-    c: 0x8b928d,
-    f: 0x1f5fa8,
-    o: 0x59605b,
-    h: 0x1c1f1d,
-    fm: 0x9aa19c,
-    arg: 0x0e6f78,
-    glow_top: 0xf5d2b2,
-    glow_bottom: 0xc9e0da,
-    wall_from: 0xeee7df,
-    wall_to: 0xe3ddd6,
-    glass: 0.76,
-    glass_edge: 0x462d141f,
-    glass_hi: 0xffffffbf,
-    // The text colour at 6% over 40% of the background.
-    cap_bg: 0xffffff5c,
-    cap_edge: 0x3c281429,
-    cap_on: 0xffffffff,
-    shadow: 0x462d1447,
-    ansi: [
-        0x1f1c1a, 0xc4352b, 0x2f7d32, 0x9a6300, 0x1f5fa8, 0x8f3fa3, 0x0e6f78, 0xa39c95, 0x6b645e,
-        0xd9473c, 0x3d9642, 0xb07a10, 0x2f72c0, 0xa552b8, 0x16838d, 0xc9c2bb,
-    ],
-};
-
-const DARK: Tokens = Tokens {
-    bg: 0x1e1b19,
-    chrome: 0x161412,
-    panel: 0x221f1d,
-    line: 0x34302c,
-    text: 0xebe6e1,
-    muted: 0xa49c95,
-    faint: 0x6c655f,
-    accent: 0xf29a45,
-    accent_soft: 0x43291a,
-    accent_text: 0x1e1206,
-    busy: 0x7fb4ff,
-    busy_soft: 0x1d2b3d,
-    ok: 0x6fcf8f,
-    err: 0xff6b5e,
-    err_soft: 0x3d2120,
-    chunk: 0x252220,
-    sel: 0x4a3020,
-    hover: 0x2a2624,
-    term: 0x1c1917,
-    k: 0xd19ae8,
-    s: 0x9fd28f,
-    n: 0xf2b373,
-    c: 0x737b76,
-    f: 0x7fb4ff,
-    o: 0xc3c9c5,
-    h: 0xf2f4f2,
-    fm: 0x5f6763,
-    arg: 0x72d0d8,
-    glow_top: 0x4b2a14,
-    glow_bottom: 0x14322d,
-    wall_from: 0x1b1816,
-    wall_to: 0x110f0e,
-    glass: 0.78,
-    glass_edge: 0x0000008c,
-    glass_hi: 0xffffff12,
-    cap_bg: 0xffffff0f,
-    cap_edge: 0xffffff1a,
-    cap_on: 0xffffff21,
-    shadow: 0x000000b3,
-    ansi: [
-        0x3a3531, 0xff6b5e, 0x9fd28f, 0xf2c46d, 0x7fb4ff, 0xd19ae8, 0x72d0d8, 0xd8d2cc, 0x6c655f,
-        0xff8a7f, 0xb8e3aa, 0xf7d592, 0xa3c9ff, 0xe2b8f2, 0x9ae0e6, 0xf5f1ed,
-    ],
-};
-
-/// Sandhill's colours for the current appearance, for drawing that isn't a
-/// gpui-kit widget. All of the Tauri app's tokens, some not used yet.
+/// Sandhill's colours for drawing that isn't a GPUI Kit widget.
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub struct Palette {
@@ -202,7 +63,8 @@ pub struct Palette {
     pub faint: Hsla,
     pub accent: Hsla,
     pub accent_soft: Hsla,
-    pub accent_text: Hsla,
+    pub primary_text: Hsla,
+    pub danger_text: Hsla,
     pub busy: Hsla,
     pub busy_soft: Hsla,
     pub ok: Hsla,
@@ -213,69 +75,150 @@ pub struct Palette {
     pub hover: Hsla,
     pub term: Hsla,
     pub warn: Hsla,
-    pub glow_top: Hsla,
-    pub glow_bottom: Hsla,
-    pub wall_from: Hsla,
-    pub wall_to: Hsla,
+    /// The tint over the window's blur.
+    pub wall: Hsla,
     pub glass: Hsla,
     pub glass_edge: Hsla,
     pub glass_hi: Hsla,
     pub cap_bg: Hsla,
-    pub cap_edge: Hsla,
     pub cap_on: Hsla,
     pub shadow: Hsla,
     pub ansi: [Hsla; 16],
+    pub chart: [Hsla; 5],
 }
 
 impl Global for Palette {}
 
+/// Derive interactive colours from the crane mark's navy, leaving semantic,
+/// chart, terminal ANSI and neutral surface colours at Kit's defaults.
+fn brand_colors(dark: bool) -> ThemeColor {
+    let mut c = *if dark {
+        ThemeColor::dark()
+    } else {
+        ThemeColor::light()
+    };
+    let color = |value| Hsla::from(rgb(value));
+    let (primary, hover, active, foreground) = if dark {
+        (0x8dacd5, 0xa3bcdf, 0x7198ca, 0x142844)
+    } else {
+        (0x142844, 0x203e64, 0x0d1d32, 0xffffff)
+    };
+    c.primary = color(primary);
+    c.primary_hover = color(hover);
+    c.primary_active = color(active);
+    c.primary_foreground = color(foreground);
+    c.button_primary = c.primary;
+    c.button_primary_hover = c.primary_hover;
+    c.button_primary_active = c.primary_active;
+    c.button_primary_foreground = c.primary_foreground;
+    c.accent = c
+        .background
+        .blend(c.primary.opacity(if dark { 0.16 } else { 0.08 }));
+    c.accent_foreground = c.foreground;
+    c.ring = c.primary;
+    c.link = c.primary;
+    c.link_hover = c.primary_hover;
+    c.link_active = c.primary_active;
+    c.progress_bar = c.primary;
+    c.slider_bar = c.primary;
+    c.slider_thumb = c.primary_foreground;
+    c.selection = c.primary.opacity(if dark { 0.26 } else { 0.18 });
+    c.list_active = c.accent;
+    c.list_active_border = c.primary;
+    c.list_hover = c
+        .background
+        .blend(c.primary.opacity(if dark { 0.08 } else { 0.04 }));
+    c.sidebar_accent = c.accent;
+    c.sidebar_accent_foreground = c.foreground;
+    c.sidebar_primary = c.primary;
+    c.sidebar_primary_foreground = c.primary_foreground;
+    c.tab_active = c.accent;
+    c.table_active = c.accent;
+    c.table_active_border = c.primary;
+    c
+}
+
 impl Palette {
-    fn of(t: &Tokens, dark: bool) -> Self {
-        let c = |v: u32| -> Hsla { rgb(v).into() };
-        let a = |v: u32| -> Hsla { rgba(v).into() };
+    fn new(dark: bool) -> Self {
+        let colors = brand_colors(dark);
+        let c = &colors;
+        // Keep the existing glass/capsule opacities, using Kit's neutral
+        // surfaces and foregrounds instead of a second colour palette.
+        let alpha = |color: Hsla, a: f32| Hsla { a, ..color };
         Self {
             dark,
-            bg: c(t.bg),
-            chrome: c(t.chrome),
-            panel: c(t.panel),
-            line: c(t.line),
-            text: c(t.text),
-            muted: c(t.muted),
-            faint: c(t.faint),
-            accent: c(t.accent),
-            accent_soft: c(t.accent_soft),
-            accent_text: c(t.accent_text),
-            busy: c(t.busy),
-            busy_soft: c(t.busy_soft),
-            ok: c(t.ok),
-            err: c(t.err),
-            err_soft: c(t.err_soft),
-            chunk: c(t.chunk),
-            sel: c(t.sel),
-            hover: c(t.hover),
-            term: c(t.term),
-            warn: c(t.n),
-            glow_top: c(t.glow_top),
-            glow_bottom: c(t.glow_bottom),
-            wall_from: c(t.wall_from),
-            wall_to: c(t.wall_to),
-            glass: c(t.bg).opacity(t.glass),
-            glass_edge: a(t.glass_edge),
-            glass_hi: a(t.glass_hi),
-            cap_bg: a(t.cap_bg),
-            cap_edge: a(t.cap_edge),
-            cap_on: a(t.cap_on),
-            shadow: a(t.shadow),
-            ansi: t.ansi.map(c),
+            bg: c.background,
+            chrome: c.title_bar,
+            panel: c.sidebar,
+            line: c.border,
+            text: c.foreground,
+            muted: c.muted_foreground,
+            faint: c.scrollbar_thumb,
+            accent: c.primary,
+            accent_soft: c.accent,
+            primary_text: c.primary_foreground,
+            danger_text: c.danger_foreground,
+            busy: c.info,
+            busy_soft: c.info_hover,
+            ok: c.success,
+            err: c.danger,
+            err_soft: c.danger_hover,
+            chunk: c.muted,
+            sel: c.selection,
+            hover: c.list_hover,
+            term: c.background,
+            warn: c.warning,
+            wall: alpha(
+                c.title_bar,
+                if cfg!(target_os = "macos") {
+                    166. / 255.
+                } else {
+                    1.
+                },
+            ),
+            glass: alpha(c.background, 0.62),
+            glass_edge: alpha(c.window_border, if dark { 140. / 255. } else { 26. / 255. }),
+            glass_hi: alpha(
+                if dark { c.foreground } else { c.background },
+                if dark { 20. / 255. } else { 191. / 255. },
+            ),
+            // Tracks and title-bar capsules: a neutral wash with no edge; the
+            // picked tab is a solid pill above it.
+            cap_bg: alpha(c.foreground, if dark { 0.075 } else { 0.055 }),
+            cap_on: if dark {
+                alpha(c.foreground, 0.2)
+            } else {
+                c.background
+            },
+            shadow: alpha(
+                if dark { c.background } else { c.foreground },
+                if dark { 179. / 255. } else { 56. / 255. },
+            ),
+            // ANSI hues remain Kit defaults, independent of the brand accent.
+            ansi: [
+                if dark { c.background } else { c.foreground },
+                c.red,
+                c.green,
+                c.yellow,
+                c.blue,
+                c.magenta,
+                c.cyan,
+                if dark {
+                    c.foreground
+                } else {
+                    c.muted_foreground
+                },
+                c.muted_foreground,
+                c.red_light,
+                c.green_light,
+                c.yellow_light,
+                c.blue_light,
+                c.magenta_light,
+                c.cyan_light,
+                if dark { c.foreground } else { c.background },
+            ],
+            chart: [c.chart_1, c.chart_2, c.chart_3, c.chart_4, c.chart_5],
         }
-    }
-
-    pub fn light() -> Self {
-        Self::of(&LIGHT, false)
-    }
-
-    pub fn dark() -> Self {
-        Self::of(&DARK, true)
     }
 
     /// The text colour at `percent`% over what is behind: the Tauri app's
@@ -289,177 +232,206 @@ impl Palette {
     }
 }
 
-fn hex(v: u32) -> String {
-    format!("#{v:06x}")
-}
-
-fn hexa(v: u32) -> String {
-    format!("#{v:08x}")
-}
-
-/// gpui-kit's theme for one appearance, from the same tokens.
-fn theme_config(name: &str, mode: &str, t: &Tokens) -> Value {
-    let glass = (t.glass * 255.) as u32;
+/// Only code syntax is app-owned: Xcode's Default themes, independent of
+/// Kit's interface and editor chrome. Fixed captures keep import/call italics.
+fn xcode_syntax(dark: bool) -> SyntaxColors {
+    let [k, s, n, c, f, o, h, fm, arg, ty] = if dark {
+        [
+            0xfc5fa3, 0xfc6a5d, 0xd0bf69, 0x6c7986, 0x67b7a4, 0xdddddf, 0xffffff, 0x92a1b1,
+            0x41a1c0, 0x5dd8ff,
+        ]
+    } else {
+        [
+            0x9b2393, 0xc41a16, 0x1c00cf, 0x5d6c79, 0x326d74, 0x262626, 0x000000, 0x4a5560,
+            0x0f68a0, 0x0b4f79,
+        ]
+    };
+    let hex = |v: u32| format!("#{v:06x}");
     let style = |v: u32| json!({ "color": hex(v) });
-    json!({
-        "name": name,
-        "mode": mode,
-        "font.size": CHROME,
-        "mono_font.family": MONO,
-        "mono_font.size": CODE,
-        "radius": RADIUS as usize,
-        "radius.lg": RADIUS as usize,
-        "shadow": true,
-        "colors": {
-            "background": hex(t.bg),
-            "foreground": hex(t.text),
-            "border": hex(t.line),
-            "caret": hex(t.text),
-            "ring": hex(t.accent),
-            "selection.background": hex(t.sel),
-            "muted.background": hex(t.panel),
-            "muted.foreground": hex(t.muted),
-            "accent.background": hex(t.hover),
-            "accent.foreground": hex(t.text),
-            "primary.background": hex(t.accent),
-            "primary.hover.background": hex(t.accent),
-            "primary.active.background": hex(t.accent),
-            "primary.foreground": hex(t.accent_text),
-            "secondary.background": hex(t.panel),
-            "secondary.hover.background": hex(t.hover),
-            "secondary.active.background": hex(t.hover),
-            "secondary.foreground": hex(t.text),
-            "danger.background": hex(t.err),
-            "danger.foreground": "#ffffff",
-            "success.background": hex(t.ok),
-            "success.foreground": "#ffffff",
-            "warning.background": hex(t.n),
-            "warning.foreground": "#ffffff",
-            "info.background": hex(t.busy),
-            "info.foreground": "#ffffff",
-            "input.border": hex(t.line),
-            "link.foreground": hex(t.accent),
-            "link.hover.foreground": hex(t.accent),
-            "link.active.foreground": hex(t.accent),
-            "list.background": "#00000000",
-            "list.hover.background": hex(t.hover),
-            "list.active.background": hex(t.sel),
-            "list.active.border": hex(t.accent),
-            "list.even.background": "#00000000",
-            "list.head.background": hex(t.panel),
-            "table.background": hex(t.bg),
-            "table.head.background": hex(t.panel),
-            "table.head.foreground": hex(t.muted),
-            "table.hover.background": hex(t.hover),
-            "table.active.background": hex(t.sel),
-            "table.active.border": hex(t.accent),
-            "table.even.background": hex(t.bg),
-            "table.row.border": hex(t.line),
-            "popover.background": hex(t.bg),
-            "popover.foreground": hex(t.text),
-            "sidebar.background": "#00000000",
-            "sidebar.foreground": hex(t.text),
-            "sidebar.border": hex(t.line),
-            "sidebar.accent.background": hex(t.hover),
-            "sidebar.accent.foreground": hex(t.text),
-            "sidebar.primary.background": hex(t.accent),
-            "sidebar.primary.foreground": hex(t.accent_text),
-            "tab.background": "#00000000",
-            "tab.foreground": hex(t.muted),
-            "tab.active.background": hex(t.bg),
-            "tab.active.foreground": hex(t.text),
-            "tab_bar.background": "#00000000",
-            "tab_bar.segmented.background": hexa(t.cap_bg),
-            "title_bar.background": "#00000000",
-            "title_bar.border": "#00000000",
-            "status_bar.background": "#00000000",
-            "status_bar.border": "#00000000",
-            "scrollbar.background": "#00000000",
-            "scrollbar.thumb.background": hex(t.faint),
-            "scrollbar.thumb.hover.background": hex(t.muted),
-            "skeleton.background": hex(t.hover),
-            "switch.background": hex(t.line),
-            "slider.bar.background": hex(t.accent),
-            "slider.thumb.background": hex(t.bg),
-            "progress_bar.background": hex(t.accent),
-            "drag_border": hex(t.accent),
-            "drop_target.background": format!("#{:06x}40", t.accent),
-            "overlay": "#0000000d",
-            "window.border": hexa(t.glass_edge),
-            "group_box.background": format!("#{:06x}{glass:02x}", t.bg),
-            "group_box.foreground": hex(t.text),
-        },
-        "highlight": {
-            "editor.background": hex(t.chunk),
-            "editor.foreground": hex(t.text),
-            "editor.active_line.background": "#00000000",
-            "editor.line_number": hex(t.faint),
-            "editor.active_line_number": hex(t.muted),
-            "editor.invisible": hex(t.faint),
-            "syntax": {
-                "keyword": style(t.k),
-                "string": style(t.s),
-                "string.escape": style(t.s),
-                "string.special": style(t.s),
-                "string.special.symbol": style(t.s),
-                "number": style(t.n),
-                "boolean": style(t.n),
-                "constant": style(t.n),
-                "comment": { "color": hex(t.c), "font_style": "italic" },
-                "comment.doc": { "color": hex(t.c), "font_style": "italic" },
-                "function": style(t.f),
-                "constructor": style(t.f),
-                "type": style(t.f),
-                "property": style(t.arg),
-                "variable.parameter": style(t.arg),
-                "operator": style(t.o),
-                "punctuation": style(t.o),
-                "punctuation.bracket": style(t.o),
-                "punctuation.delimiter": style(t.o),
-                "punctuation.special": style(t.fm),
-                "punctuation.list_marker": style(t.fm),
-                "title": { "color": hex(t.h), "font_weight": 700 },
-                "emphasis": { "font_style": "italic" },
-                "emphasis.strong": { "font_weight": 700 },
-                "link_text": style(t.f),
-                "link_uri": style(t.f),
-                "text.literal": style(t.s),
-                "embedded": style(t.text),
-                "tag": style(t.k),
-                "attribute": style(t.arg),
-            },
-        },
-    })
+    serde_json::from_value(json!({
+        "keyword": { "color": hex(k), "font_weight": 700 },
+        "primary": { "color": hex(k), "font_weight": 700, "font_style": "italic" },
+        "hint": { "color": hex(f), "font_style": "italic" },
+        "string": style(s),
+        "string.escape": style(s),
+        "string.special": style(s),
+        "string.special.symbol": style(s),
+        "number": style(n),
+        "boolean": style(n),
+        "constant": style(n),
+        "comment": style(c),
+        "comment.doc": style(c),
+        "function": style(f),
+        "constructor": style(ty),
+        "type": style(ty),
+        "property": style(arg),
+        "label": { "color": hex(arg), "font_style": "italic" },
+        "operator": style(o),
+        "punctuation": style(o),
+        "punctuation.bracket": style(o),
+        "punctuation.delimiter": style(o),
+        "punctuation.special": style(fm),
+        "punctuation.list_marker": style(fm),
+        "title": { "color": hex(h), "font_weight": 700 },
+        "emphasis": { "font_style": "italic" },
+        "emphasis.strong": { "font_weight": 700 },
+        "link_text": style(f),
+        "link_uri": style(f),
+        "text.literal": style(s),
+        "embedded": style(o),
+        "tag": style(k),
+        "attribute": style(arg),
+    }))
+    .expect("the built-in Xcode syntax colours are valid")
 }
 
-const LIGHT_NAME: &str = "Sandhill Light";
-const DARK_NAME: &str = "Sandhill Dark";
+/// Kit's neutral base with shared brand accents, existing transparency,
+/// typography, geometry and independent Xcode code syntax.
+fn theme_config(default: &ThemeConfig) -> Rc<ThemeConfig> {
+    let mut config = default.clone();
+    let dark = config.mode.is_dark();
+    let palette = Palette::new(dark);
+    let colors = brand_colors(dark);
+    config.name = if dark {
+        "Sandhill Dark"
+    } else {
+        "Sandhill Light"
+    }
+    .into();
+    config.font_size = Some(CHROME);
+    config.mono_font_family = Some(MONO.into());
+    config.mono_font_size = Some(CODE);
+    config.radius = Some(RADIUS as usize);
+    config.radius_lg = Some(RADIUS as usize);
+    config.shadow = Some(true);
+    for (target, value) in [
+        (&mut config.colors.primary, colors.primary),
+        (&mut config.colors.primary_hover, colors.primary_hover),
+        (&mut config.colors.primary_active, colors.primary_active),
+        (
+            &mut config.colors.primary_foreground,
+            colors.primary_foreground,
+        ),
+        (&mut config.colors.button_primary, colors.button_primary),
+        (
+            &mut config.colors.button_primary_hover,
+            colors.button_primary_hover,
+        ),
+        (
+            &mut config.colors.button_primary_active,
+            colors.button_primary_active,
+        ),
+        (
+            &mut config.colors.button_primary_foreground,
+            colors.button_primary_foreground,
+        ),
+        (&mut config.colors.accent, colors.accent),
+        (
+            &mut config.colors.accent_foreground,
+            colors.accent_foreground,
+        ),
+        (&mut config.colors.ring, colors.ring),
+        (&mut config.colors.link, colors.link),
+        (&mut config.colors.link_hover, colors.link_hover),
+        (&mut config.colors.link_active, colors.link_active),
+        (&mut config.colors.progress_bar, colors.progress_bar),
+        (&mut config.colors.slider_bar, colors.slider_bar),
+        (&mut config.colors.slider_thumb, colors.slider_thumb),
+        (&mut config.colors.selection, colors.selection),
+        (&mut config.colors.list_active, colors.list_active),
+        (
+            &mut config.colors.list_active_border,
+            colors.list_active_border,
+        ),
+        (&mut config.colors.list_hover, colors.list_hover),
+        (&mut config.colors.sidebar_accent, colors.sidebar_accent),
+        (
+            &mut config.colors.sidebar_accent_foreground,
+            colors.sidebar_accent_foreground,
+        ),
+        (&mut config.colors.sidebar_primary, colors.sidebar_primary),
+        (
+            &mut config.colors.sidebar_primary_foreground,
+            colors.sidebar_primary_foreground,
+        ),
+        (&mut config.colors.tab_active, colors.tab_active),
+        (&mut config.colors.table_active, colors.table_active),
+        (
+            &mut config.colors.table_active_border,
+            colors.table_active_border,
+        ),
+    ] {
+        let rgba = Rgba::from(value);
+        *target = Some(
+            format!(
+                "#{:02X}{:02X}{:02X}{:02X}",
+                (rgba.r * 255.).round() as u8,
+                (rgba.g * 255.).round() as u8,
+                (rgba.b * 255.).round() as u8,
+                (rgba.a * 255.).round() as u8,
+            )
+            .into(),
+        );
+    }
+    // These surfaces were already transparent so the existing window blur
+    // and custom glass panes, rather than opaque widget layers, show through.
+    for color in [
+        &mut config.colors.background,
+        &mut config.colors.list,
+        &mut config.colors.list_even,
+        &mut config.colors.sidebar,
+        &mut config.colors.tab,
+        &mut config.colors.tab_bar,
+        &mut config.colors.title_bar,
+        &mut config.colors.title_bar_border,
+        &mut config.colors.status_bar,
+        &mut config.colors.status_bar_border,
+        &mut config.colors.scrollbar,
+    ] {
+        *color = Some("#00000000".into());
+    }
+    config.colors.group_box = Some(colors.group_box.opacity(0.62).to_hex().into());
+    config.colors.tab_bar_segmented = Some(palette.cap_bg.to_hex().into());
+    config.colors.window_border = Some(palette.glass_edge.to_hex().into());
+    // Kit's switch thumb defaults to `background`, transparent above.
+    config.colors.switch_thumb = Some(palette.bg.to_hex().into());
+    let style = config
+        .highlight
+        .as_mut()
+        .expect("Kit's default themes include editor styles");
+    style.syntax = xcode_syntax(dark);
+    // Kit tints diagnostic popovers over `background`, which is transparent
+    // here for the glass, so code showed through the message. Tint the solid
+    // editor surface instead.
+    let mut status = serde_json::to_value(&style.status).unwrap_or_default();
+    for (name, fallback) in [
+        ("error", palette.err),
+        ("warning", palette.warn),
+        ("info", palette.accent),
+        ("success", palette.ok),
+        ("hint", palette.muted),
+    ] {
+        let tint = serde_json::from_value::<Hsla>(status[name].clone()).unwrap_or(fallback);
+        status[format!("{name}.background")] =
+            serde_json::to_value(palette.bg.blend(tint.alpha(0.2))).unwrap_or_default();
+    }
+    if let Ok(status) = serde_json::from_value(status) {
+        style.status = status;
+    }
+    Rc::new(config)
+}
 
-/// Loads the fonts and the light and dark themes, and follows the system's
+/// Loads fonts and Kit's light/dark defaults once, then follows the selected
 /// appearance. Call after `gpui_kit::init`.
 pub fn install(cx: &mut App) {
     add_fonts(cx);
-    let set = json!({
-        "name": "Sandhill",
-        "author": "Sandhill",
-        "themes": [
-            theme_config(LIGHT_NAME, "light", &LIGHT),
-            theme_config(DARK_NAME, "dark", &DARK),
-        ],
+    let registry = ThemeRegistry::global(cx);
+    let light = theme_config(registry.default_light_theme());
+    let dark = theme_config(registry.default_dark_theme());
+    Theme::update(cx, |theme| {
+        theme.light_theme = light;
+        theme.dark_theme = dark;
     });
-    let registry = ThemeRegistry::global_mut(cx);
-    if let Err(err) = registry.load_themes_from_str(&set.to_string()) {
-        tracing::warn!("the Sandhill theme did not load: {err:#}");
-        return;
-    }
-    let themes = registry.themes().clone();
-    let theme = Theme::global_mut(cx);
-    if let Some(light) = themes.get(LIGHT_NAME) {
-        theme.light_theme = light.clone();
-    }
-    if let Some(dark) = themes.get(DARK_NAME) {
-        theme.dark_theme = dark.clone();
-    }
     set_appearance(cx.window_appearance(), cx);
 }
 
@@ -478,22 +450,22 @@ pub fn set_appearance(appearance: WindowAppearance, cx: &mut App) {
             WindowAppearance::Dark | WindowAppearance::VibrantDark
         ),
     };
-    cx.set_global(if dark {
-        Palette::dark()
-    } else {
-        Palette::light()
-    });
+    cx.set_global(Palette::new(dark));
+    LIGHT_ICONS.store(!dark, std::sync::atomic::Ordering::Relaxed);
     // gpui-cn (the terminal's) keeps a theme of its own; it goes first, so
-    // gpui-kit's, set last, is the one the shared base layer draws with.
+    // Kit's supported change API synchronizes components, tokens and Base last.
+    // The shared root stays transparent; terminal colours are set separately
+    // in `terminal::colors`.
     if cx.has_global::<gpui_cn::Theme>() {
-        gpui_cn::Theme::change(
-            if dark {
+        gpui_cn::Theme::update(cx, |theme| {
+            theme.light.surface = transparent_black();
+            theme.dark.surface = transparent_black();
+            theme.mode = if dark {
                 gpui_cn::ThemeMode::Dark
             } else {
                 gpui_cn::ThemeMode::Light
-            },
-            cx,
-        );
+            };
+        });
     }
     Theme::change(
         if dark {
@@ -545,6 +517,7 @@ fn add_fonts(cx: &mut App) {
 #[folder = "../docs/design/ui/icons/"]
 #[include = "*/*.svg"]
 #[include = "registry.json"]
+#[exclude = "vendor/**"]
 struct Icons;
 
 pub struct Assets;
@@ -556,18 +529,7 @@ impl AssetSource for Assets {
         let Some(rest) = path.strip_prefix(PREFIX) else {
             return gpui_kit::assets::Assets.load(path);
         };
-        Ok(Icons::get(rest).map(|file| {
-            // The folder icons cut their emblem out with a CSS variable,
-            // which the SVG renderer doesn't read.
-            match std::str::from_utf8(&file.data) {
-                Ok(svg) if svg.contains("var(--tv-cut") => Cow::Owned(
-                    svg.replace("var(--tv-cut, #fff)", "#fff")
-                        .replace("var(--tv-cut)", "#fff")
-                        .into_bytes(),
-                ),
-                _ => file.data,
-            }
-        }))
+        Ok(Icons::get(rest).map(|file| file.data))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
@@ -595,6 +557,17 @@ pub fn icon(name: &str) -> Icon {
         size: px(16.),
         color: None,
         turned,
+    }
+}
+
+/// A one-colour mark outside `system/` (`path` such as `agents/openscience`),
+/// drawn in the text colour around it so it reads on light and dark.
+pub fn ink_picture(path: &str) -> Icon {
+    Icon {
+        path: format!("{PREFIX}{path}.svg").into(),
+        size: px(16.),
+        color: None,
+        turned: false,
     }
 }
 
@@ -631,10 +604,22 @@ impl RenderOnce for Icon {
     }
 }
 
+/// File and folder icons use their light-theme versions (`*.light.svg`,
+/// darkened for light panes) while the light theme is on.
+static LIGHT_ICONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// A coloured icon (file types, languages, folders, agents): `path` such
-/// as `lang/r` or `bio/fastq`.
+/// as `lang/r` or `bio/fastq`. In the light theme, its light version when
+/// it has one.
 pub fn picture(path: &str) -> Img {
-    img(SharedString::from(format!("{PREFIX}{path}.svg")))
+    let light = format!("{path}.light.svg");
+    let file =
+        if LIGHT_ICONS.load(std::sync::atomic::Ordering::Relaxed) && Icons::get(&light).is_some() {
+            light
+        } else {
+            format!("{path}.svg")
+        };
+    img(SharedString::from(format!("{PREFIX}{file}")))
         .size(px(16.))
         .flex_none()
 }
@@ -726,6 +711,37 @@ pub fn folder_icon(name: &str) -> String {
     format!("folders/{icon}")
 }
 
+/// The built-in folder and file icons a project can use instead of its
+/// folder icon (`folders/…`, then `bio/…`), by path without `.svg`.
+pub fn project_icon_choices() -> Vec<String> {
+    let mut folders = Vec::new();
+    let mut files = Vec::new();
+    for path in Icons::iter() {
+        // `*.light.svg` are the light theme's versions of the same icons.
+        let Some(name) = path
+            .strip_suffix(".svg")
+            .filter(|name| !name.ends_with(".light"))
+        else {
+            continue;
+        };
+        if name.starts_with("folders/") {
+            folders.push(name.to_string());
+        } else if name.starts_with("bio/") {
+            files.push(name.to_string());
+        }
+    }
+    folders.sort();
+    files.sort();
+    folders.extend(files);
+    folders
+}
+
+/// A project's icon on `host`: the one chosen for it, else the project
+/// folder's (Huan, 2026-11-14), whatever the folder is called.
+pub fn project_icon(host: &str, path: &str, _name: &str) -> String {
+    crate::prefs::project_icon(host, path).unwrap_or_else(|| "folders/project".into())
+}
+
 /// The icon for a kernel's language (`lang/…`), when there is one.
 pub fn language_icon(language: &str) -> Option<&'static str> {
     match language.to_lowercase().as_str() {
@@ -736,73 +752,235 @@ pub fn language_icon(language: &str) -> Option<&'static str> {
     }
 }
 
-/// The warm wall the panes sit on: a gradient, with a glow at the top left
-/// and one at the bottom right (radial gradients in the Tauri app, soft
-/// shadows here, which GPUI blurs).
+/// The window between the panes: a neutral tint over the blur of what is
+/// behind the window (see `app_window::open_window`).
 pub fn wall(p: &Palette) -> Div {
-    let glow = |color: Hsla| {
-        div()
-            .absolute()
-            .w(px(700.))
-            .h(px(420.))
-            .rounded_full()
-            .shadow(vec![BoxShadow {
-                color,
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(320.),
-                spread_radius: px(40.),
-                inset: false,
-            }])
-    };
-    div()
-        .relative()
-        .bg(linear_gradient(
-            160.,
-            linear_color_stop(p.wall_from, 0.),
-            linear_color_stop(p.wall_to, 1.),
-        ))
-        .child(glow(p.glow_top).left(px(-420.)).top(px(-360.)))
-        .child(glow(p.glow_bottom).right(px(-400.)).bottom(px(-380.)))
+    div().relative().bg(p.wall)
 }
 
-/// A glass pane: translucent, with a hairline edge and a soft shadow.
+/// A solid pane floating on the glass, for the editor and dialogs.
+/// A hairline edge and a soft shadow.
 pub fn pane(p: &Palette) -> Div {
+    card(p, p.bg).shadow(vec![
+        BoxShadow {
+            color: p.glass_hi,
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        },
+        BoxShadow {
+            color: p.shadow.opacity(0.13),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(2.),
+            spread_radius: px(0.),
+            inset: false,
+        },
+        BoxShadow {
+            color: p.shadow,
+            offset: point(px(0.), px(10.)),
+            blur_radius: px(26.),
+            spread_radius: px(-12.),
+            inset: false,
+        },
+    ])
+}
+
+/// A translucent pane floating on the glass, for the side panels: the
+/// window's blur shows through it. Only a close shadow, which would
+/// otherwise darken it from beneath.
+pub fn side_pane(p: &Palette) -> Div {
+    card(p, p.glass).shadow(vec![
+        BoxShadow {
+            color: p.glass_hi,
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        },
+        BoxShadow {
+            color: p.shadow.opacity(0.13),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(2.),
+            spread_radius: px(0.),
+            inset: false,
+        },
+    ])
+}
+
+/// Headers use the surface's RGB, not its existing alpha: multiplying the
+/// glass's 0.62 alpha by 0.82 would leave the toolbar less opaque than its pane.
+/// The remaining 18% lets scrolling content show through without tinting text.
+pub(crate) fn floating_header(
+    p: &Palette,
+    top: f32,
+    solid: bool,
+    header: impl IntoElement,
+) -> AnyElement {
+    let surface = if solid { p.bg } else { p.glass };
+    div()
+        .absolute()
+        .top(px(top))
+        .left_0()
+        .right_0()
+        .flex()
+        .flex_col()
+        .bg(Hsla { a: 0.82, ..surface })
+        .border_b(px(0.5))
+        .border_color(p.glass_edge)
+        .occlude()
+        .child(header)
+        .into_any_element()
+}
+
+/// A scroll viewport fills the pane, including the area beneath its header.
+/// Padding is inside the scrolling content; the scrollbar is a separate,
+/// inset overlay, so neither its track nor hitbox occupies the header.
+#[derive(IntoElement)]
+pub(crate) struct PaneScroll {
+    id: ElementId,
+    inset: f32,
+    padding: f32,
+    body: Stateful<Div>,
+    handle: Option<ScrollHandle>,
+}
+
+impl PaneScroll {
+    pub(crate) fn new(
+        id: impl Into<ElementId>,
+        inset: f32,
+        padding: f32,
+        body: Stateful<Div>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            inset,
+            padding,
+            body,
+            handle: None,
+        }
+    }
+
+    pub(crate) fn handle(mut self, handle: &ScrollHandle) -> Self {
+        self.handle = Some(handle.clone());
+        self
+    }
+}
+
+impl RenderOnce for PaneScroll {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let handle = self.handle.unwrap_or_else(|| {
+            window
+                .use_keyed_state(self.id.clone(), cx, |_, _| ScrollHandle::new())
+                .read(cx)
+                .clone()
+        });
+        div()
+            .id((self.id, "viewport"))
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .size_full()
+            .overflow_hidden()
+            .child(
+                self.body
+                    .size_full()
+                    .pt(px(self.inset + self.padding))
+                    .overflow_y_scroll()
+                    .track_scroll(&handle),
+            )
+            .child(inset_scrollbar(&handle, self.inset, cx))
+    }
+}
+
+pub(crate) fn inset_scrollbar<H: gpui_kit::component::scroll::ScrollbarHandle + Clone>(
+    handle: &H,
+    inset: f32,
+    cx: &App,
+) -> Div {
+    let thumb = Palette::get(cx).faint;
+    div()
+        .absolute()
+        .top(px(inset))
+        .bottom_0()
+        .left_0()
+        .right_0()
+        .child(
+            gpui_kit::component::scroll::Scrollbar::vertical(handle)
+                .viewport_from_layout()
+                .styles(move |styles| styles.thumb(move |style| style.bg(thumb))),
+        )
+}
+
+/// Minimal scroll to expose a target below an overlaid header. Oversize cells
+/// align at the safe top instead of hiding their beginning behind the toolbar.
+pub(crate) fn header_scroll_offset(
+    offset: Pixels,
+    target_top: Pixels,
+    target_bottom: Pixels,
+    viewport: Pixels,
+    inset: Pixels,
+    maximum: Pixels,
+) -> Pixels {
+    let top = target_top + offset;
+    let bottom = target_bottom + offset;
+    let next = if top < inset || target_bottom - target_top > viewport - inset {
+        inset - target_top
+    } else if bottom > viewport {
+        viewport - target_bottom
+    } else {
+        offset
+    };
+    next.clamp(-maximum, px(0.))
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::header_scroll_offset;
+    use gpui_kit::px;
+
+    #[test]
+    fn header_scroll_offsets_keep_targets_in_the_visible_body() {
+        let scroll = |offset, top, bottom, viewport, max| {
+            header_scroll_offset(
+                px(offset),
+                px(top),
+                px(bottom),
+                px(viewport),
+                px(29.),
+                px(max),
+            )
+        };
+        assert_eq!(scroll(-100., 110., 160., 300., 600.), px(-81.));
+        assert_eq!(scroll(-100., 150., 200., 300., 600.), px(-100.));
+        assert_eq!(scroll(-100., 380., 430., 300., 600.), px(-130.));
+        assert_eq!(scroll(-100., 150., 650., 300., 600.), px(-121.));
+        assert_eq!(scroll(0., 10., 50., 300., 600.), px(0.));
+        assert_eq!(scroll(-500., 900., 950., 300., 600.), px(-600.));
+        for inset in [29. + 37., 29. + 65.] {
+            assert_eq!(
+                header_scroll_offset(px(-100.), px(110.), px(160.), px(300.), px(inset), px(600.),),
+                px(inset - 110.),
+            );
+        }
+    }
+}
+
+fn card(p: &Palette, bg: Hsla) -> Div {
     div()
         .flex()
         .flex_col()
         .min_h_0()
         .min_w_0()
         .overflow_hidden()
-        .bg(p.glass)
+        .bg(bg)
         .border_1()
         .border_color(p.glass_edge)
         .rounded(px(RADIUS))
-        .shadow(vec![
-            BoxShadow {
-                color: p.glass_hi,
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(0.),
-                spread_radius: px(0.),
-                inset: true,
-            },
-            BoxShadow {
-                color: p.shadow.opacity(0.13),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(2.),
-                spread_radius: px(0.),
-                inset: false,
-            },
-            BoxShadow {
-                color: p.shadow,
-                offset: point(px(0.), px(10.)),
-                blur_radius: px(26.),
-                spread_radius: px(-12.),
-                inset: false,
-            },
-        ])
 }
 
-/// A capsule, as in the title bar and over a pane's tabs.
+/// A capsule, as in the title bar and around a pane's tabs: a pill with a
+/// light wash and no edge, so only the picked tab stands out.
 pub fn capsule(p: &Palette, height: f32) -> Div {
     div()
         .flex()
@@ -812,15 +990,6 @@ pub fn capsule(p: &Palette, height: f32) -> Div {
         .px(px(2.))
         .rounded_full()
         .bg(p.cap_bg)
-        .border(px(0.5))
-        .border_color(p.cap_edge)
-        .shadow(vec![BoxShadow {
-            color: hsla(0., 0., 0., 0.07),
-            offset: point(px(0.), px(1.)),
-            blur_radius: px(3.),
-            spread_radius: px(0.),
-            inset: false,
-        }])
 }
 
 /// The line between groups in a capsule.
@@ -833,24 +1002,92 @@ pub fn capsule_divider(p: &Palette) -> Div {
         .bg(p.ink(16.))
 }
 
-/// The picked tab in a capsule: raised.
+/// The picked tab in a capsule: a solid pill on a soft shadow, no edge.
 pub fn raised(d: Stateful<Div>, p: &Palette) -> Stateful<Div> {
-    d.bg(p.cap_on)
-        .text_color(p.text)
-        .border(px(0.5))
-        .border_color(p.cap_edge)
-        .shadow(vec![BoxShadow {
-            color: hsla(0., 0., 0., 0.1),
-            offset: point(px(0.), px(1.)),
-            blur_radius: px(2.),
-            spread_radius: px(0.),
-            inset: false,
-        }])
+    let shade = |a: f32, y: f32, blur: f32, spread: f32| BoxShadow {
+        color: Hsla { a, ..p.shadow },
+        offset: point(px(0.), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(spread),
+        inset: false,
+    };
+    d.bg(p.cap_on).text_color(p.text).shadow(if p.dark {
+        vec![shade(0.35, 1., 2., 0.)]
+    } else {
+        vec![shade(0.06, 0., 0., 0.5), shade(0.1, 1., 3., 0.)]
+    })
 }
 
-/// The rounded strip a pane's tabs sit in.
+/// The track a pane's tabs sit in.
 pub fn tab_capsule(p: &Palette) -> Div {
-    capsule(p, 22.).rounded(px(TAB_RADIUS + 1.))
+    capsule(p, TAB_TRACK)
+}
+
+/// A tab's close button: a 16px circle. `shown` draws the cross always (the
+/// picked tab, after its label); otherwise only while the pointer is over
+/// the enclosing [`TAB_GROUP`], in the icon's place (see [`tab_lead`]).
+pub fn tab_close(id: impl Into<ElementId>, shown: bool, p: &Palette) -> Stateful<Div> {
+    close_circle(id, p).child(
+        div()
+            .flex()
+            .when(!shown, |d| {
+                d.invisible().group_hover(TAB_GROUP, |s| s.visible())
+            })
+            .child(icon("close").size(px(12.))),
+    )
+}
+
+/// The empty 16px circle of a tab's close button, lit under the pointer.
+pub fn close_circle(id: impl Into<ElementId>, p: &Palette) -> Stateful<Div> {
+    let hover = p.ink(8.);
+    let text = p.text;
+    div()
+        .id(id)
+        .size(px(16.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .text_color(p.faint)
+        .cursor_pointer()
+        .hover(move |d| d.bg(hover).text_color(text))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+/// An unpicked tab's icon, with its close button over it: under the pointer
+/// the cross takes the icon's place, as in Finder and Xcode, so hidden
+/// buttons reserve no room and nothing moves.
+pub fn tab_lead(lead: impl IntoElement, close: Stateful<Div>) -> AnyElement {
+    div()
+        .relative()
+        .flex()
+        .flex_none()
+        .size(px(16.))
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .flex()
+                .group_hover(TAB_GROUP, |s| s.invisible())
+                .child(lead),
+        )
+        .child(close.absolute().top_0().left_0())
+        .into_any_element()
+}
+
+/// Puts a tab's close button after its label when `trailing` (the picked
+/// tab, or an unsaved one with its dot), otherwise over its icon.
+pub fn place_close(
+    lead: AnyElement,
+    close: Stateful<Div>,
+    trailing: bool,
+) -> (AnyElement, Option<Stateful<Div>>) {
+    if trailing {
+        (lead, Some(close))
+    } else {
+        (tab_lead(lead, close), None)
+    }
 }
 
 /// A small icon button, as in a pane's head or the title bar.
@@ -912,7 +1149,36 @@ pub fn dot(color: Hsla) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{Icons, file_icon, folder_icon, language_icon};
+    use super::{Icons, file_icon, folder_icon, language_icon, resolve};
+
+    fn luminance(color: gpui_kit::Hsla) -> f32 {
+        let color = gpui_kit::Rgba::from(color);
+        let linear = |channel: f32| {
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    }
+
+    #[test]
+    fn brand_controls_keep_readable_text_in_both_modes_and_press_states() {
+        for dark in [false, true] {
+            let colors = super::brand_colors(dark);
+            for background in [colors.primary, colors.primary_hover, colors.primary_active] {
+                let a = luminance(background);
+                let b = luminance(colors.primary_foreground);
+                assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
+            }
+            for link in [colors.link, colors.link_hover, colors.link_active] {
+                let a = luminance(colors.background);
+                let b = luminance(link);
+                assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
+            }
+        }
+    }
 
     #[test]
     fn picks_icons() {
@@ -921,6 +1187,8 @@ mod tests {
         assert_eq!(file_icon("README.md"), "bio/readme");
         assert_eq!(file_icon("Snakefile"), "bio/snakemake");
         assert_eq!(file_icon("notes.unknown"), "bio/file");
+        assert_eq!(file_icon("figures/umap.pdf"), "bio/pdf");
+        assert_eq!(file_icon("figures/umap.svg"), "bio/svg");
         assert_eq!(folder_icon("Data"), "folders/data");
         assert_eq!(folder_icon("misc"), "folders/other");
         assert_eq!(language_icon("R"), Some("lang/r"));
@@ -934,6 +1202,24 @@ mod tests {
             "system/run",
         ] {
             assert!(Icons::get(&format!("{path}.svg")).is_some(), "{path}");
+        }
+        // Every file and folder icon the rules can name has its light-theme
+        // version, so none falls back to the dark artwork on light panes.
+        let r = resolve();
+        let named = r
+            .extensions
+            .values()
+            .chain(r.names.values())
+            .chain([&r.fallback])
+            .map(|icon| format!("bio/{icon}"))
+            .chain(
+                r.folders
+                    .values()
+                    .chain([&r.folder_fallback])
+                    .map(|icon| format!("folders/{icon}")),
+            );
+        for path in named {
+            assert!(Icons::get(&format!("{path}.light.svg")).is_some(), "{path}");
         }
     }
 }

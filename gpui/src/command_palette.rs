@@ -24,15 +24,18 @@ pub(crate) enum Cmd {
     CloseTab,
     RunAll,
     Preview,
+    RenderDocument,
     RunAsJob,
     Interrupt,
     New(NewKind),
     ToggleFiles,
+    ToggleMiddle,
     ToggleConsole,
     NotebookConsole,
     NotebookPlots,
     ToggleAgents,
     ToggleRight,
+    FocusEditor,
     OpenTerminal,
     ShowJobs,
     RefreshFiles,
@@ -105,7 +108,11 @@ impl Workbench {
             cmd,
         };
         let mut list = Vec::new();
-        if self.explorer_shown || self.diff_shown {
+        if self.objects.is_shown()
+            || self.explorer_shown
+            || self.diff_shown
+            || self.media_shown.is_some()
+        {
             list.push(c("Close tab", "⌘W", Cmd::CloseTab));
         } else if let Some(open) = &self.open {
             list.push(c("Save", "⌘S", Cmd::Save));
@@ -119,6 +126,7 @@ impl Workbench {
             list.push(c(run, "⌥⌘R", Cmd::RunAll));
             if crate::viewer::is_previewable(&open.notebook.path) {
                 list.push(c("Quarto Preview", "⇧⌘K", Cmd::Preview));
+                list.push(c("Render Document", "", Cmd::RenderDocument));
             }
             if crate::jobs::is_job_script(&open.notebook.path) {
                 list.push(c("Run as job", "", Cmd::RunAsJob));
@@ -140,6 +148,11 @@ impl Workbench {
             &show(self.show_files, "left panel"),
             "⌘B",
             Cmd::ToggleFiles,
+        ));
+        list.push(c(
+            &show(self.show_middle, "editor column"),
+            "",
+            Cmd::ToggleMiddle,
         ));
         list.push(c(
             &show(self.show_console, "console"),
@@ -169,6 +182,15 @@ impl Workbench {
             "⌘I",
             Cmd::ToggleAgents,
         ));
+        list.push(c(
+            if self.focus_mode.active() {
+                "Focus Editor: Restore layout"
+            } else {
+                "Focus Editor"
+            },
+            "⌃⌘↩",
+            Cmd::FocusEditor,
+        ));
         list.push(c("Open terminal", "", Cmd::OpenTerminal));
         list.push(c("Show jobs", "", Cmd::ShowJobs));
         list.push(c("Refresh files", "", Cmd::RefreshFiles));
@@ -187,11 +209,13 @@ impl Workbench {
             Cmd::Save => self.save(cx),
             Cmd::SaveAll => self.save_all(cx),
             Cmd::CloseTab => {
-                if self.explorer_shown {
+                if self.objects.is_shown() {
+                    self.close_shown_object_explorer(cx)
+                } else if self.explorer_shown {
                     self.close_explorer(cx)
                 } else if self.diff_shown {
                     self.close_diff(cx)
-                } else if let Some(path) = self.open.as_ref().map(|o| o.notebook.path.clone()) {
+                } else if let Some(path) = self.active_document_path().map(str::to_string) {
                     self.ask_close(path, window, cx)
                 }
             }
@@ -206,11 +230,23 @@ impl Workbench {
                     self.preview_document(path, cx);
                 }
             }
+            Cmd::RenderDocument => self.render_document(cx),
             Cmd::RunAsJob => self.run_open_as_job(cx),
             Cmd::Interrupt => self.interrupt(),
             Cmd::New(kind) => self.start_new(kind, None, window, cx),
-            Cmd::ToggleFiles => self.show_files = !self.show_files,
-            Cmd::ToggleConsole => self.show_console = !self.show_console,
+            Cmd::ToggleFiles => self.toggle_column(crate::panes::Panel::LeftTop, window, cx),
+            Cmd::ToggleMiddle => self.toggle_column(crate::panes::Panel::Editor, window, cx),
+            Cmd::ToggleConsole => {
+                if !self.show_middle || !self.show_console {
+                    self.reveal_middle();
+                    self.show_console = true;
+                } else {
+                    self.show_console = false;
+                    if self.maximized_panel == Some(crate::panes::Panel::Console) {
+                        self.maximized_panel = None;
+                    }
+                }
+            }
             Cmd::NotebookConsole => {
                 self.notebook_console = !self.notebook_console;
                 crate::prefs::save_notebook_console(self.notebook_console);
@@ -222,10 +258,11 @@ impl Workbench {
                 // notebooks'.
                 self.plot_history = Default::default();
             }
-            Cmd::ToggleAgents => self.show_agents = !self.show_agents,
+            Cmd::ToggleAgents => self.toggle_column(crate::panes::Panel::Agents, window, cx),
             // ⌥⌘B, which showed the right column, now shows the AI pane
             // that took its place.
-            Cmd::ToggleRight => self.show_agents = !self.show_agents,
+            Cmd::ToggleRight => self.toggle_column(crate::panes::Panel::Agents, window, cx),
+            Cmd::FocusEditor => self.toggle_focus_editor(cx),
             Cmd::OpenTerminal => self.show_tab(ConsoleTab::Terminal, window, cx),
             Cmd::ShowJobs => self.show_tab(ConsoleTab::Jobs, window, cx),
             Cmd::RefreshFiles => self.refresh_files(cx),
@@ -240,9 +277,9 @@ impl Workbench {
             }),
             Cmd::ProjectSettings => self.show_project_settings(window, cx),
             Cmd::CloseProject => {
-                let host = self.host();
+                let id = cx.entity_id();
                 self.with_shell(window, cx, move |shell, window, cx| {
-                    shell.close_tab(host, window, cx)
+                    shell.close_tab(id, window, cx)
                 });
             }
         }
@@ -295,13 +332,14 @@ impl Workbench {
                         daemon.call::<Vec<DirEntry>>(Call::ListDir {
                             path: crate::tree::join(&project, rel),
                             sizes: false,
+                            marks: false,
                         })
                     })
                     .collect();
                 let mut next = Vec::new();
                 for (rel, call) in batch.into_iter().zip(calls) {
                     for entry in call.await.unwrap_or_default() {
-                        if entry.name.starts_with('.') {
+                        if entry.name.starts_with('.') && entry.kind == EntryKind::Dir {
                             continue;
                         }
                         let path = crate::tree::join(&rel, &entry.name);
@@ -309,12 +347,7 @@ impl Workbench {
                             EntryKind::Dir if !SKIP.contains(&entry.name.as_str()) => {
                                 next.push(path)
                             }
-                            EntryKind::File
-                                if crate::notebook::format_of(&entry.name).is_some()
-                                    || crate::viewer::is_html(&entry.name) =>
-                            {
-                                files.push(path)
-                            }
+                            EntryKind::File => files.push(path),
                             _ => {}
                         }
                     }

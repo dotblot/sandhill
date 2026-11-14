@@ -1,8 +1,9 @@
-//! A tab's connection, as the Tauri app's `Connection.tsx` has it: the
-//! status bar's first item opens a pop-up with what the connection is and
-//! what can be done to it (Reconnect, Disconnect, Connect, or on this
-//! machine Restart sandhilld), and the daemon's log.
+//! A workbench's connection: the status bar's device item opens a pop-up
+//! with what the connection is and what can be done to it (Reconnect,
+//! Disconnect, Connect, or on this machine Restart sandhilld), and the
+//! daemon's log.
 
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -52,8 +53,64 @@ impl Workbench {
         }
     }
 
+    /// The current workbench's device and link state at the status bar's left.
+    pub(crate) fn render_connection_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        let host = self.host();
+        let name = crate::app_window::machine_name(&host);
+        let state = self.state_word();
+        let link = match &self.link {
+            Link::Ready(_) => p.ok,
+            Link::Connecting => p.busy,
+            Link::Failed(_) => p.err,
+        };
+        let hover = p.ink(7.);
+        h_flex()
+            .id("connection-status")
+            .on_prepaint(self.popup_triggers.track("connection"))
+            .min_w_0()
+            .max_w(px(300.))
+            .flex_shrink(1.)
+            .h(px(20.))
+            .px(px(6.))
+            .gap(px(6.))
+            .rounded(px(6.))
+            .text_size(px(look::SMALL))
+            .text_color(p.text)
+            .cursor_pointer()
+            .when(self.connection_menu, |d| d.bg(hover))
+            .hover(move |d| d.bg(hover))
+            .child(
+                icon(if self.local() {
+                    "device.laptop"
+                } else {
+                    "device.server"
+                })
+                .size(px(12.)),
+            )
+            .child(div().min_w_0().overflow_hidden().child(name))
+            .child(crate::look::dot(link).size(px(5.)).flex_none())
+            .tooltip(move |w, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(format!(
+                    "{host}: {state}. Connection details"
+                ))
+                .build(w, cx)
+            })
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.connection_menu = !this.connection_menu;
+                this.main_menu = false;
+                cx.notify();
+            }))
+    }
+
     /// Connects again, reopening the project and the documents open now.
     pub(crate) fn reconnect(&mut self, cx: &mut Context<Self>) {
+        if crate::app_window::quit::active(cx)
+            || !crate::resource_manager::allow_host(&self.host(), cx)
+        {
+            return;
+        }
         let project = self.project.clone().or_else(|| self.last_project.clone());
         if let Some(project) = &project {
             let prefix = format!("{project}/");
@@ -86,6 +143,11 @@ impl Workbench {
     /// Stops this machine's daemon and connects again, which starts a new
     /// one; kernels and agents keep running.
     fn restart_daemon(&mut self, cx: &mut Context<Self>) {
+        if crate::app_window::quit::active(cx)
+            || crate::resource_manager::host_blocked(&self.host(), cx)
+        {
+            return;
+        }
         let Some(daemon) = self.daemon() else {
             return;
         };
@@ -128,36 +190,30 @@ impl Workbench {
         cx.notify();
     }
 
-    /// The status bar's first item: the machine, in its link's colour.
-    pub(crate) fn render_connection_item(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *Palette::get(cx);
-        let color = match &self.link {
-            Link::Connecting => p.busy,
-            Link::Failed(_) => p.err,
-            Link::Ready(_) => p.ok,
-        };
-        let hover = p.ink(8.);
-        h_flex()
-            .id("connection")
-            .gap(px(6.))
-            .px(px(6.))
-            .ml(px(-6.))
-            .h(px(20.))
-            .rounded(px(6.))
-            .cursor_pointer()
-            .when(self.connection_menu, |d| d.bg(hover))
-            .hover(move |d| d.bg(hover))
-            .child(look::dot(color))
-            .child(self.connection_text())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.connection_menu = !this.connection_menu;
-                cx.notify();
-            }))
+    /// Welcome's Resources and Storage page, for this device first.
+    pub(crate) fn manage_resources(&mut self, cx: &mut Context<Self>) {
+        let host = self.host();
+        let shell = self.shell.clone();
+        let handle = self.window_handle;
+        // The manager reads every tab; release this workbench's update first.
+        cx.defer(move |cx| {
+            cx.update_window(handle, |_, window, cx| {
+                shell
+                    .update(cx, |shell, cx| {
+                        shell.show_start(
+                            crate::start_screen::StartMode::Resources(host),
+                            window,
+                            cx,
+                        )
+                    })
+                    .ok();
+            })
+            .ok();
+        });
     }
 
-    /// Above the status bar's item: what the connection is, and what can
-    /// be done to it.
+    /// Above the status bar's device item: what the connection is, and what
+    /// can be done to it.
     pub(crate) fn render_connection_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.connection_menu {
             return None;
@@ -305,6 +361,14 @@ impl Workbench {
             ));
         }
         actions.push(item(
+            "c-resources",
+            "device.server",
+            "Manage resources and storage…",
+            true,
+            cx,
+            Self::manage_resources,
+        ));
+        actions.push(item(
             "c-log",
             "file.new",
             "Open the sandhilld log",
@@ -361,7 +425,10 @@ impl Workbench {
             )
             .child(crate::tree_actions::separator(&p))
             .children(actions)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if this.popup_triggers.contains("connection", event.position) {
+                    return;
+                }
                 this.connection_menu = false;
                 cx.notify();
             }));
@@ -369,7 +436,7 @@ impl Workbench {
             div()
                 .absolute()
                 .bottom(px(look::STATUS_BAR + 2.))
-                .left(px(8.))
+                .left(px(14.))
                 .child(deferred(body).with_priority(3))
                 .into_any_element(),
         )

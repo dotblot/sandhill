@@ -44,6 +44,9 @@ pub(crate) struct Help {
     found: Option<HelpTopics>,
     search_error: Option<String>,
     all: bool,
+    /// Folded to one row once a topic is opened from them, so the page
+    /// starts near the top; a new search unfolds them.
+    results_folded: bool,
     page: Option<HelpPage>,
     page_error: Option<String>,
     loading: bool,
@@ -80,6 +83,7 @@ pub(crate) fn new_help(
         found: None,
         search_error: None,
         all: false,
+        results_folded: false,
         page: None,
         page_error: None,
         loading: false,
@@ -372,6 +376,8 @@ impl Workbench {
     }
 
     fn search_help_soon(&mut self, cx: &mut Context<Self>) {
+        // Typing is a new search: its results show in full.
+        self.help.results_folded = false;
         self.help.generation += 1;
         let generation = self.help.generation;
         cx.spawn(async move |this, cx| {
@@ -398,7 +404,7 @@ impl Workbench {
             return;
         }
         let (Some(daemon), Some(session)) =
-            (self.daemon(), self.active_session().map(str::to_string))
+            (self.daemon(), self.variables_session().map(str::to_string))
         else {
             return;
         };
@@ -441,6 +447,7 @@ impl Workbench {
     /// Enter in the search box: help typed as at the Console, else the
     /// first topic found, else the name typed.
     fn open_typed_help(&mut self, cx: &mut Context<Self>) {
+        self.help.results_folded = true;
         let typed = self.help.query.read(cx).value().trim().to_string();
         let language = self.active_language().unwrap_or_default();
         if let Some(asked) =
@@ -536,7 +543,7 @@ impl Workbench {
     /// Reads a page; `push` adds it to the trail (not for Back and Forward).
     fn open_help(&mut self, asked: HelpRequest, push: bool, cx: &mut Context<Self>) {
         let (Some(daemon), Some(session)) =
-            (self.daemon(), self.active_session().map(str::to_string))
+            (self.daemon(), self.variables_session().map(str::to_string))
         else {
             return;
         };
@@ -603,7 +610,7 @@ impl Workbench {
             && self.help.source.is_none()
             && let (Some(daemon), Some(session), Some(page)) = (
                 self.daemon(),
-                self.active_session().map(str::to_string),
+                self.variables_session().map(str::to_string),
                 self.help.page.clone(),
             )
         {
@@ -660,7 +667,7 @@ impl Workbench {
     /// Runs code in the active session's Console, where its output shows.
     pub(crate) fn run_in_console(&mut self, code: String, cx: &mut Context<Self>) {
         let (Some(daemon), Some(session)) =
-            (self.daemon(), self.active_session().map(str::to_string))
+            (self.daemon(), self.variables_session().map(str::to_string))
         else {
             return;
         };
@@ -692,6 +699,7 @@ impl Workbench {
         let python = self.python();
         let search = h_flex()
             .flex_none()
+            .h(px(37.))
             .gap(px(6.))
             .px(px(8.))
             .py(px(6.))
@@ -710,18 +718,24 @@ impl Workbench {
                         .small()
                         .prefix(icon("package").size(px(13.))),
                 ),
-            );
-        if self.active_session().is_none() {
+            )
+            .map(|row| look::floating_header(&p, look::STRIP, false, row));
+        if self.variables_session().is_none() {
             return v_flex()
+                .relative()
                 .size_full()
-                .child(search)
-                .child(
+                .child(look::PaneScroll::new(
+                    "help-scroll",
+                    look::STRIP + 37.,
+                    8.,
                     div()
+                        .id("help-body")
                         .px(px(14.))
-                        .py(px(8.))
+                        .pb(px(8.))
                         .text_color(p.muted)
                         .child("Start R or Python in the Console, and its help shows here."),
-                )
+                ))
+                .child(search)
                 .into_any_element();
         }
         let typed = !self.help.query.read(cx).value().trim().is_empty()
@@ -731,7 +745,11 @@ impl Workbench {
             body.push(note(err.clone(), p.err, &p));
         }
         if typed && let Some(found) = &self.help.found {
-            body.push(self.render_topics(found, python, cx));
+            if self.help.results_folded && self.help.page.is_some() {
+                body.push(self.render_folded_topics(found, cx));
+            } else {
+                body.push(self.render_topics(found, python, cx));
+            }
         } else if self.help.page.is_none() && self.help.page_error.is_none() {
             body.push(note(
                 if python {
@@ -751,16 +769,15 @@ impl Workbench {
             body.push(self.render_page(page, cx));
         }
         v_flex()
+            .relative()
             .size_full()
+            .child(look::PaneScroll::new(
+                "help-scroll",
+                look::STRIP + 37.,
+                0.,
+                div().id("help-body").child(v_flex().children(body)),
+            ))
             .child(search)
-            .child(
-                div()
-                    .id("help-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(v_flex().children(body)),
-            )
             .into_any_element()
     }
 
@@ -823,9 +840,10 @@ impl Workbench {
                         .text_size(px(look::SMALL))
                         .child(t.package.clone()),
                 )
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.open_help(asked.clone(), true, cx)),
-                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.help.results_folded = true;
+                    this.open_help(asked.clone(), true, cx)
+                }))
         });
         v_flex()
             .pb(px(6.))
@@ -860,6 +878,32 @@ impl Workbench {
                 d.child(note("Vignettes".into(), p.faint, &p))
                     .children(self.render_vignettes(&found.vignettes, cx))
             })
+            .into_any_element()
+    }
+
+    /// The search results as one row above the page they led to.
+    fn render_folded_topics(&self, found: &HelpTopics, cx: &mut Context<Self>) -> AnyElement {
+        let p = *Palette::get(cx);
+        let total = found.topics.len() as u64 + found.more + found.vignettes.len() as u64;
+        h_flex()
+            .id("help-results-folded")
+            .gap(px(6.))
+            .px(px(14.))
+            .py(px(4.))
+            .text_size(px(look::SMALL))
+            .text_color(p.accent)
+            .cursor_pointer()
+            .border_b(px(0.5))
+            .border_color(p.glass_edge)
+            .child(icon("chevron.right").size(px(12.)))
+            .child(format!(
+                "Show {total} search result{}",
+                if total == 1 { "" } else { "s" }
+            ))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.help.results_folded = false;
+                cx.notify();
+            }))
             .into_any_element()
     }
 
@@ -1055,22 +1099,45 @@ impl Workbench {
             match &self.help.source {
                 None => note("Reading the source…".into(), p.faint, &p),
                 Some(Err(err)) => note(format!("No source: {err}"), p.err, &p),
-                Some(Ok(source)) => code_block(source.text.clone(), &p),
+                Some(Ok(source)) => code_view(
+                    format!("help-source-{}-{}", page.package, page.topic),
+                    if page.html.is_some() {
+                        crate::doc_text::r_code_markdown(&source.text)
+                    } else {
+                        crate::doc_text::python_code_markdown(&source.text)
+                    },
+                ),
             }
         } else if let Some(html) = &page.html {
-            let weak = cx.entity().downgrade();
-            TextView::html(
-                SharedString::from(format!("help-{}-{}", page.package, page.topic)),
-                html.clone(),
-            )
-            .style(TextViewStyle::default().paragraph_gap(rems(0.5)))
-            .selectable(true)
-            .on_link_click(move |url, _, _, cx| {
-                let url = url.to_string();
-                weak.update(cx, |this, cx| this.follow_help_link(&url, cx))
-                    .ok();
-            })
-            .into_any_element()
+            // R help: its HTML, with the code in its `<pre>` blocks shown as
+            // R code.
+            let key = format!("help-{}-{}", page.package, page.topic);
+            v_flex()
+                .gap(px(6.))
+                .children(
+                    crate::doc_text::split_pre(html)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(ix, part)| match part {
+                            crate::doc_text::HelpPart::Html(html) => {
+                                let weak = cx.entity().downgrade();
+                                TextView::html(SharedString::from(format!("{key}-{ix}")), html)
+                                    .style(TextViewStyle::default().paragraph_gap(rems(0.5)))
+                                    .selectable(true)
+                                    .on_link_click(move |url, _, _, cx| {
+                                        let url = url.to_string();
+                                        weak.update(cx, |this, cx| this.follow_help_link(&url, cx))
+                                            .ok();
+                                    })
+                                    .into_any_element()
+                            }
+                            crate::doc_text::HelpPart::Code(code) => code_view(
+                                format!("{key}-{ix}"),
+                                crate::doc_text::r_code_markdown(&code),
+                            ),
+                        }),
+                )
+                .into_any_element()
         } else {
             self.render_python_doc(page, cx)
         };
@@ -1092,21 +1159,21 @@ impl Workbench {
         v_flex()
             .gap(px(8.))
             .when_some(page.signature.clone(), |d, sig| {
-                d.child(code_block(signature_lines(&page.topic, &sig, 60), &p))
+                d.child(code_view(
+                    format!("help-sig-{}", page.topic),
+                    crate::doc_text::python_code_markdown(&signature_lines(&page.topic, &sig, 60)),
+                ))
             })
             .when_some(
                 page.text.clone().filter(|t| !t.trim().is_empty()),
                 |d, text| {
                     d.child(
-                        div()
-                            .font_family(look::MONO)
-                            .text_size(px(look::SMALL + 1.))
-                            .whitespace_normal()
-                            .children(
-                                text.lines()
-                                    .map(|l| div().min_h(px(8.)).child(l.to_string()))
-                                    .collect::<Vec<_>>(),
-                            ),
+                        TextView::markdown(
+                            SharedString::from(format!("help-doc-{}", page.topic)),
+                            crate::doc_text::docstring_markdown(&text),
+                        )
+                        .style(TextViewStyle::default().paragraph_gap(rems(0.5)))
+                        .selectable(true),
                     )
                 },
             )
@@ -1167,19 +1234,10 @@ fn note(text: String, color: Hsla, _p: &Palette) -> AnyElement {
         .into_any_element()
 }
 
-fn code_block(text: String, p: &Palette) -> AnyElement {
-    div()
-        .px(px(10.))
-        .py(px(8.))
-        .rounded(px(RADIUS))
-        .bg(p.chunk)
-        .font_family(look::MONO)
-        .text_size(px(look::SMALL + 1.))
-        .children(
-            text.lines()
-                .map(|l| div().min_h(px(8.)).child(l.to_string()))
-                .collect::<Vec<_>>(),
-        )
+/// Code as the AI pane shows it: the code font, its language's colours.
+fn code_view(id: String, markdown: String) -> AnyElement {
+    TextView::markdown(SharedString::from(id), markdown)
+        .selectable(true)
         .into_any_element()
 }
 

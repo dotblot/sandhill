@@ -14,15 +14,17 @@ pub enum NewKind {
     Folder,
     Quarto,
     RScript,
+    PythonScript,
     Notebook,
 }
 
 impl NewKind {
-    pub const ALL: [NewKind; 5] = [
+    pub const ALL: [NewKind; 6] = [
         NewKind::File,
         NewKind::Folder,
         NewKind::Quarto,
         NewKind::RScript,
+        NewKind::PythonScript,
         NewKind::Notebook,
     ];
 
@@ -32,6 +34,7 @@ impl NewKind {
             NewKind::Folder => "New folder",
             NewKind::Quarto => "New Quarto document",
             NewKind::RScript => "New R script",
+            NewKind::PythonScript => "New Python script",
             NewKind::Notebook => "New notebook",
         }
     }
@@ -42,6 +45,7 @@ impl NewKind {
             NewKind::File | NewKind::Folder => "",
             NewKind::Quarto => "untitled.qmd",
             NewKind::RScript => "untitled.R",
+            NewKind::PythonScript => "untitled.py",
             NewKind::Notebook => "untitled.ipynb",
         }
     }
@@ -120,14 +124,23 @@ pub fn copy_name(name: &str, dir: bool, taken: &HashSet<String>) -> String {
     free_name(&format!("{stem} copy{ext}"), taken)
 }
 
-/// What a new file starts with: a Quarto title block and an empty R chunk,
-/// a comment naming an R script, a heading for Markdown, and nothing for
-/// anything else. Notebooks come from [`new_notebook`].
-pub fn template(name: &str) -> String {
+/// New Quarto code uses its initial kernel's language; without a known kernel,
+/// leave only the title block so adding code after kernel selection is unambiguous.
+/// R Markdown keeps its R chunk. Jupyter notebooks come from [`new_notebook`].
+pub fn template(name: &str, language: Option<&str>) -> String {
     let (stem, ext) = split_ext(name);
     let title = stem.replace('"', "\\\"");
     match ext.to_ascii_lowercase().as_str() {
-        ".qmd" => format!("---\ntitle: \"{title}\"\nformat: html\n---\n\n```{{r}}\n\n```\n"),
+        ".qmd" => {
+            let mut text = format!("---\ntitle: \"{title}\"\nformat: html\n---\n");
+            if let Some(language) = language {
+                let language = sandhill_daemon::cells::normalize_language(language);
+                if matches!(language.as_str(), "r" | "python") {
+                    text.push_str(&format!("\n```{{{language}}}\n\n```\n"));
+                }
+            }
+            text
+        }
         ".rmd" => {
             format!("---\ntitle: \"{title}\"\noutput: html_document\n---\n\n```{{r}}\n\n```\n")
         }
@@ -219,7 +232,31 @@ pub fn match_score(text: &str, query: &str) -> Option<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        NewKind, base_name, copy_name, free_name, match_score, name_problem, new_notebook,
+        parent_of, template, within,
+    };
+    use crate::notebook::{CellKind, parse, recover_kernel};
+    use sandhill_proto::KernelspecInfo;
+    use std::collections::HashSet;
+
+    #[test]
+    fn python_creation_reuses_naming_and_document_dispatch() {
+        let kind = NewKind::PythonScript;
+        assert!(NewKind::ALL.contains(&kind));
+        assert_eq!(kind.start_name(), "untitled.py");
+        let taken = HashSet::from(["untitled.py".into()]);
+        let name = free_name(kind.start_name(), &taken);
+        assert_eq!(name, "untitled 2.py");
+        assert_eq!(name_problem(&name, true), None);
+        assert_eq!(
+            crate::notebook::parse(&name, "")
+                .unwrap()
+                .language
+                .as_deref(),
+            Some("python")
+        );
+    }
 
     #[test]
     fn checks_names() {
@@ -245,10 +282,86 @@ mod tests {
     }
 
     #[test]
+    fn quarto_template_matches_initial_kernel_and_added_cells() {
+        let spec = KernelspecInfo {
+            name: "python3".into(),
+            display_name: "Python".into(),
+            language: "python".into(),
+            env: None,
+        };
+        let empty = parse("report.qmd", "").unwrap();
+        let kernel = recover_kernel(&empty, std::slice::from_ref(&spec), None, None, None);
+        assert_eq!(kernel.as_deref(), Some("python3"));
+        let mut notebook =
+            parse("report.qmd", &template("report.qmd", Some(&spec.language))).unwrap();
+        let first = notebook
+            .cells
+            .iter()
+            .position(|cell| cell.kind == CellKind::Code)
+            .unwrap();
+        assert_eq!(notebook.cell_language(first), Some("python"));
+        let mut sources: Vec<_> = notebook
+            .cells
+            .iter()
+            .map(|cell| cell.source.clone())
+            .collect();
+        sources[first] = "import pandas as pd\n\ndf = pd.DataFrame({'value': [1]})".into();
+        let (second, _) = notebook
+            .insert_quarto_cell(
+                notebook.cells.len(),
+                CellKind::Code,
+                Some("python"),
+                &sources,
+            )
+            .unwrap();
+        assert_eq!(notebook.cell_language(second), Some("python"));
+    }
+
+    #[test]
+    fn quarto_templates_preserve_known_languages_and_defer_unknown_ones() {
+        for (language, expected) in [
+            ("python", "python"),
+            ("python3", "python"),
+            ("PYTHON", "python"),
+            ("R", "r"),
+        ] {
+            let notebook = parse("report.qmd", &template("report.qmd", Some(language))).unwrap();
+            assert_eq!(notebook.cell_language(1), Some(expected));
+        }
+        for language in [None, Some("unknown")] {
+            let mut notebook = parse("report.qmd", &template("report.qmd", language)).unwrap();
+            assert!(
+                notebook
+                    .cells
+                    .iter()
+                    .all(|cell| cell.kind != CellKind::Code)
+            );
+            // No kernel was known when opened; choosing Python before + Code
+            // must not leave behind a provisional R chunk.
+            let sources = notebook
+                .cells
+                .iter()
+                .map(|cell| cell.source.clone())
+                .collect::<Vec<_>>();
+            let (at, _) = notebook
+                .insert_quarto_cell(
+                    notebook.cells.len(),
+                    CellKind::Code,
+                    Some("python"),
+                    &sources,
+                )
+                .unwrap();
+            assert_eq!(notebook.cell_language(at), Some("python"));
+        }
+        let rmd = parse("report.Rmd", &template("report.Rmd", Some("python"))).unwrap();
+        assert_eq!(rmd.cell_language(1), Some("r"));
+    }
+
+    #[test]
     fn writes_templates() {
-        assert!(template("fig 3.qmd").starts_with("---\ntitle: \"fig 3\"\nformat: html"));
-        assert_eq!(template("a.R"), "# a.R\n\n");
-        assert_eq!(template("a.csv"), "");
+        assert!(template("fig 3.qmd", None).starts_with("---\ntitle: \"fig 3\"\nformat: html"));
+        assert_eq!(template("a.R", None), "# a.R\n\n");
+        assert_eq!(template("a.csv", None), "");
         let nb: serde_json::Value = serde_json::from_str(&new_notebook(None)).unwrap();
         assert_eq!(nb["nbformat"], 4);
         assert_eq!(nb["cells"].as_array().unwrap().len(), 1);

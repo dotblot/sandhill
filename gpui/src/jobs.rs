@@ -41,6 +41,7 @@ pub(crate) struct Jobs {
     /// A job whose Stop was pressed once: pressing it again stops it.
     confirm_stop: Option<String>,
     error: Option<String>,
+    pub(crate) render: crate::render_document::RenderState,
 }
 
 pub(crate) fn new_jobs(
@@ -70,6 +71,7 @@ pub(crate) fn new_jobs(
         asking: false,
         confirm_stop: None,
         error: None,
+        render: Default::default(),
     };
     (jobs, subscriptions)
 }
@@ -101,6 +103,21 @@ pub(crate) fn job_state(job: &TerminalInfo) -> JobState {
         Some(exit) if exit.code == Some(0) => JobState::Done,
         _ => JobState::Failed,
     }
+}
+
+/// Ignore historical exits from before a restart; keep daemon-produced output
+/// paths with the same completed run as its terminal state.
+fn apply_job_exit(job: &mut TerminalInfo, event: &TerminalEvent) -> bool {
+    let Some(exit) = &event.exit else {
+        return false;
+    };
+    if event.terminal != job.id || exit.ended_ms < job.started_ms {
+        return false;
+    }
+    job.running = false;
+    job.exit = Some(exit.clone());
+    job.output_paths.clone_from(&event.output_paths);
+    true
 }
 
 /// "45s", "12m", "2h 13m", "3d 4h".
@@ -215,6 +232,7 @@ impl Workbench {
         self.jobs.usage.clear();
         self.jobs.picked = None;
         self.jobs.loaded = false;
+        self.jobs.render = Default::default();
     }
 
     pub(crate) fn refresh_jobs(&mut self, cx: &mut Context<Self>) {
@@ -231,6 +249,17 @@ impl Workbench {
                 }
                 match listed {
                     Ok(all) => {
+                        for job in all
+                            .iter()
+                            .filter(|t| t.kind == TERMINAL_JOB && t.project == project)
+                        {
+                            if let Some(notice) = this.jobs.render.observe(job) {
+                                this.notice = Some(notice);
+                            }
+                            if !job.running {
+                                this.irkernel_job_ended(&job.id, cx);
+                            }
+                        }
                         this.jobs.list = all
                             .into_iter()
                             .filter(|t| t.kind == TERMINAL_JOB && t.project == project)
@@ -319,15 +348,17 @@ impl Workbench {
         if let Some(view) = view {
             view.update(cx, |view, cx| {
                 if let Some(data) = &event.data {
-                    view.feed(data, cx);
+                    view.feed(data, event.replay, cx);
                 }
             });
         }
-        if let Some(exit) = &event.exit
-            && let Some(job) = self.jobs.list.iter_mut().find(|j| j.id == event.terminal)
+        if let Some(job) = self.jobs.list.iter_mut().find(|j| j.id == event.terminal)
+            && apply_job_exit(job, event)
         {
-            job.running = false;
-            job.exit = Some(exit.clone());
+            if let Some(notice) = self.jobs.render.observe(job) {
+                self.notice = Some(notice);
+            }
+            self.irkernel_job_ended(&event.terminal, cx);
             cx.notify();
         }
         true
@@ -385,27 +416,26 @@ impl Workbench {
         let Some(daemon) = self.daemon() else {
             return;
         };
+        if self.held_back("run jobs", cx) {
+            return;
+        }
         let project = self.project.clone();
+        let generation = self.generation;
         self.console_tab = ConsoleTab::Jobs;
         self.show_console = true;
         let started = daemon.call::<TerminalInfo>(Call::StartJob {
             job,
             cwd: project.clone(),
-            project,
+            project: project.clone(),
         });
         cx.spawn(async move |this, cx| {
             let started = started.await;
             this.update(cx, |this, cx| {
+                if this.generation != generation || this.project != project {
+                    return;
+                }
                 match started {
-                    Ok(info) => {
-                        this.jobs.picked = Some(info.id.clone());
-                        this.jobs.loaded = true;
-                        if !this.jobs.list.iter().any(|j| j.id == info.id) {
-                            this.jobs.list.push(info);
-                        }
-                        this.follow_picked_job(cx);
-                        this.poll_jobs(cx);
-                    }
+                    Ok(info) => this.jobs_started(info, cx),
                     Err(err) => this.jobs.error = Some(format!("Could not start the job: {err:#}")),
                 }
                 cx.notify();
@@ -414,6 +444,18 @@ impl Workbench {
         })
         .detach();
         cx.notify();
+    }
+
+    /// A job just started: picked in the list, its log followed.
+    pub(crate) fn jobs_started(&mut self, info: TerminalInfo, cx: &mut Context<Self>) {
+        self.jobs.error = None;
+        self.jobs.picked = Some(info.id.clone());
+        self.jobs.loaded = true;
+        if !self.jobs.list.iter().any(|j| j.id == info.id) {
+            self.jobs.list.push(info);
+        }
+        self.follow_picked_job(cx);
+        self.poll_jobs(cx);
     }
 
     /// Run as job, above a script: runs the file as saved.
@@ -668,6 +710,7 @@ impl Workbench {
             .collect();
         let new_job = h_flex()
             .flex_none()
+            .h(px(32.))
             .px(px(8.))
             .py(px(6.))
             .gap(px(6.))
@@ -675,7 +718,7 @@ impl Workbench {
                 Button::new("new-job")
                     .xsmall()
                     .label("New job")
-                    .icon(gpui_kit::component::IconName::Plus)
+                    .icon(gpui_kit::component::Icon::default().path("sandhill/system/add.svg"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.jobs.asking = !this.jobs.asking;
                         if this.jobs.asking {
@@ -701,6 +744,7 @@ impl Workbench {
                 )
         });
         let list = v_flex()
+            .relative()
             .w(relative(0.4))
             .min_w(px(180.))
             .max_w(px(320.))
@@ -708,24 +752,24 @@ impl Workbench {
             .h_full()
             .border_r(px(0.5))
             .border_color(p.glass_edge)
-            .child(new_job)
-            .children(ask)
-            .when_some(self.jobs.error.clone(), |d, err| {
-                d.child(
-                    div()
-                        .px(px(12.))
-                        .py(px(4.))
-                        .text_size(px(look::SMALL))
-                        .text_color(p.err)
-                        .child(err),
-                )
-            })
             .child(
+                look::PaneScroll::new(
+                    "jobs-scroll",
+                    look::STRIP + 32.,
+                    0.,
                 div()
                     .id("jobs-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
+                    .children(ask)
+                    .when_some(self.jobs.error.clone(), |d, err| {
+                        d.child(
+                            div()
+                                .px(px(12.))
+                                .py(px(4.))
+                                .text_size(px(look::SMALL))
+                                .text_color(p.err)
+                                .child(err),
+                        )
+                    })
                     .when(self.jobs.list.is_empty() && self.jobs.loaded, |d| {
                         d.child(
                             div()
@@ -736,7 +780,9 @@ impl Workbench {
                         )
                     })
                     .children(rows),
-            );
+                ),
+            )
+            .child(look::floating_header(&p, look::STRIP, false, new_job));
         let log = self.shown_job().map(|job| {
             let place = if job.project.as_deref() == Some(job.cwd.as_str()) {
                 job.cwd.rsplit('/').next().unwrap_or(&job.cwd).to_string()
@@ -752,6 +798,7 @@ impl Workbench {
                 .flex_1()
                 .min_w_0()
                 .h_full()
+                .pt(px(look::STRIP))
                 .child(
                     h_flex()
                         .flex_none()
@@ -772,6 +819,11 @@ impl Workbench {
                         )
                         .child(div().text_color(p.faint).child(format!("in {place}"))),
                 )
+                .child(self.render_output_actions(
+                    &job.output_paths,
+                    &format!("job-{}", job.id),
+                    cx,
+                ))
                 .child(
                     // Absolute, so the log's height is the pane's, not its
                     // text's.
@@ -846,5 +898,28 @@ mod tests {
         );
         let j = job(serde_json::json!({"job": {"path": "/p/scripts/align.sh", "command": "-t 8"}}));
         assert_eq!(what_runs(&j), "scripts/align.sh -t 8");
+    }
+
+    #[test]
+    fn completed_render_keeps_outputs_and_ignores_pre_restart_exits() {
+        let mut info = job(serde_json::json!({"running": true, "started_ms": 20}));
+        let mut event = sandhill_proto::TerminalEvent {
+            terminal: info.id.clone(),
+            exit: Some(sandhill_proto::TerminalExit {
+                code: Some(0),
+                signal: None,
+                ended_ms: 19,
+                idle: false,
+            }),
+            output_paths: vec!["/p/report.html".into()],
+            ..Default::default()
+        };
+        assert!(!super::apply_job_exit(&mut info, &event));
+        assert!(info.running);
+        assert!(info.output_paths.is_empty());
+        event.exit.as_mut().unwrap().ended_ms = 21;
+        assert!(super::apply_job_exit(&mut info, &event));
+        assert!(!info.running);
+        assert_eq!(info.output_paths, ["/p/report.html"]);
     }
 }

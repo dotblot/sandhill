@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
 use sandhill_link::{Options, Target};
@@ -25,6 +25,7 @@ pub struct Streams {
     pub terminals: UnboundedReceiver<TerminalEvent>,
     /// What the daemon asks of this window: agents' edits to its documents.
     pub requests: UnboundedReceiver<AppRequest>,
+    pub lsp: UnboundedReceiver<sandhill_proto::LspMessage>,
 }
 
 /// A call waiting its turn, and where its reply goes.
@@ -36,6 +37,7 @@ type Queued = (
 pub struct Daemon {
     rt: Arc<Runtime>,
     client: Arc<Client>,
+    pub(crate) language: Arc<crate::language::transport::Transport>,
     /// Calls that must reach the daemon in the order they were made.
     queue: UnboundedSender<Queued>,
     /// Ports on the daemon's machine reached from here (see
@@ -44,7 +46,9 @@ pub struct Daemon {
     /// The tasks carrying them, which end with the connection.
     forwards: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// The `sandhilld attach` process; the connection ends with it.
-    _child: Child,
+    child: Arc<tokio::sync::Mutex<Child>>,
+    /// Cached per connection; hashing bundled payloads never runs on GPUI.
+    bundled_build: Arc<OnceLock<Option<bool>>>,
 }
 
 impl Drop for Daemon {
@@ -53,6 +57,44 @@ impl Drop for Daemon {
             task.abort();
         }
     }
+}
+
+/// Includes attaches whose project window has already closed. Dropping a GPUI
+/// waiter does not cancel the tokio attach task, which may still start a daemon.
+static CONNECTING: LazyLock<Mutex<HashMap<String, usize>>> = LazyLock::new(Mutex::default);
+
+struct PendingConnection(String);
+
+impl PendingConnection {
+    fn new(host: String) -> Self {
+        *CONNECTING.lock().unwrap().entry(host.clone()).or_default() += 1;
+        Self(host)
+    }
+}
+
+impl Drop for PendingConnection {
+    fn drop(&mut self) {
+        let mut connecting = CONNECTING.lock().unwrap();
+        if let Some(count) = connecting.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                connecting.remove(&self.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn pending_attach_blocks_stop_until_every_attach_finishes() {
+    let host = "quit-attach-counter.test";
+    assert!(!Daemon::connecting(host));
+    let first = PendingConnection::new(host.into());
+    let second = PendingConnection::new(host.into());
+    assert!(Daemon::connecting(host));
+    drop(first);
+    assert!(Daemon::connecting(host));
+    drop(second);
+    assert!(!Daemon::connecting(host));
 }
 
 /// How to reach servers: the builds of sandhilld (and Ark) to install on
@@ -78,13 +120,22 @@ fn link_options() -> Options {
 }
 
 impl Daemon {
+    pub(crate) fn connecting(host: &str) -> bool {
+        CONNECTING.lock().unwrap().contains_key(host)
+    }
+
     /// Connects to the daemon on `target`, starting it if needed. Also
     /// returns the stream of session events.
     pub fn connect(
         rt: Arc<Runtime>,
         target: Target,
     ) -> impl Future<Output = Result<(Daemon, Streams)>> + 'static {
+        let pending = PendingConnection::new(match &target {
+            Target::Local => sandhill_link::LOCAL.to_string(),
+            Target::Ssh(destination) => destination.to_string(),
+        });
         let task = rt.spawn(async move {
+            let _pending = pending;
             let progress = |message: &str| tracing::info!("{message}");
             let mut conn = sandhill_link::connect(&target, &link_options(), &progress).await?;
             let events = conn.client.take_events().context("no event stream")?;
@@ -93,18 +144,26 @@ impl Daemon {
                 .take_terminal_events()
                 .context("no terminal stream")?;
             let requests = conn.client.take_requests().context("no request stream")?;
+            let lsp = conn
+                .client
+                .take_lsp_messages()
+                .context("no language stream")?;
             anyhow::Ok((
                 conn,
                 Streams {
                     events,
                     terminals,
                     requests,
+                    lsp,
                 },
             ))
         });
         async move {
             let (conn, streams) = task.await??;
             let client = Arc::new(conn.client);
+            let (language, lsp) =
+                crate::language::transport::Transport::new(client.clone(), streams.lsp, &rt);
+            let streams = Streams { lsp, ..streams };
             let (queue, mut queued) = tokio::sync::mpsc::unbounded_channel::<Queued>();
             let sender = client.clone();
             rt.spawn(async move {
@@ -121,14 +180,22 @@ impl Daemon {
                 Daemon {
                     rt,
                     client,
+                    language,
                     queue,
                     ports: Default::default(),
                     forwards: Default::default(),
-                    _child: conn.child,
+                    child: Arc::new(tokio::sync::Mutex::new(conn.child)),
+                    bundled_build: Default::default(),
                 },
                 streams,
             ))
         }
+    }
+
+    /// Observe EOF without retaining the attach process or stopping its daemon.
+    pub(crate) fn closed(&self) -> impl Future<Output = ()> + Send + 'static {
+        let client = self.client.clone();
+        async move { client.wait_closed().await }
     }
 
     /// Sends one request; the reply arrives on the returned future.
@@ -138,6 +205,52 @@ impl Daemon {
     {
         let client = self.client.clone();
         let task = self.rt.spawn(async move { client.call::<T>(call).await });
+        async move { Ok(task.await??) }
+    }
+
+    /// Whether this device runs one of the daemon builds shipped by this app.
+    pub(crate) fn matches_bundled_build(
+        &self,
+        build: Option<String>,
+    ) -> impl Future<Output = Result<Option<bool>>> + 'static {
+        let cache = self.bundled_build.clone();
+        let client = self.client.clone();
+        let task = self.rt.spawn(async move {
+            if let Some(known) = cache.get() {
+                return Ok(*known);
+            }
+            let build = match build {
+                Some(build) => build,
+                None => client.ping().await?.build,
+            };
+            tokio::task::spawn_blocking(move || {
+                *cache.get_or_init(|| link_options().matches_daemon_build(&build))
+            })
+            .await
+            .map_err(Into::into)
+        });
+        async move { task.await? }
+    }
+
+    /// Runs language transport futures on the connection's tokio reactor.
+    pub(crate) fn language_task<T: Send + 'static>(
+        &self,
+        work: impl Future<Output = Result<T>> + Send + 'static,
+    ) -> impl Future<Output = Result<T>> + 'static {
+        let task = self.rt.spawn(work);
+        async move { task.await? }
+    }
+
+    /// Exact bounded text over `read_bytes`, also supported by older daemons.
+    pub fn read_text_bounded(
+        &self,
+        path: String,
+        max_bytes: u64,
+    ) -> impl Future<Output = Result<sandhill_proto::FileText>> + 'static {
+        let client = self.client.clone();
+        let task = self
+            .rt
+            .spawn(async move { client.read_text_bounded(&path, max_bytes).await });
         async move { Ok(task.await??) }
     }
 
@@ -162,6 +275,30 @@ impl Daemon {
                 Err(_) => Err(anyhow::anyhow!("no answer in {} s", limit.as_secs())),
             }
         }
+    }
+
+    /// A stop reply only acknowledges the request. Every link requires the
+    /// bridge's `--confirm-exit` contract: successful exit proves the daemon's
+    /// exact birth identity is gone, and SSH propagates that status. Legacy
+    /// bridges reject that flag before connecting; socket EOF is not proof.
+    pub(crate) fn stop_confirmed(&self) -> impl Future<Output = Result<()>> + 'static {
+        let client = self.client.clone();
+        let child = self.child.clone();
+        let task = self.rt.spawn(async move {
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                let _: serde_json::Value = client.call(Call::StopDaemon).await?;
+                client.wait_closed().await;
+                let status = child.lock().await.wait().await?;
+                anyhow::ensure!(
+                    status.success(),
+                    "daemon exit was not confirmed: attach exited {status}"
+                );
+                anyhow::Ok(())
+            })
+            .await
+            .context("daemon shutdown did not complete within 30 s")?
+        });
+        async move { task.await? }
     }
 
     /// Sends one request after those made before it with this method have

@@ -224,67 +224,27 @@ fn group(digits: &str, negative: bool) -> String {
     out
 }
 
-/// "Sorted by nCount_RNA, descending, then cluster".
-pub fn sort_text(sort: &[TableSort], columns: &[TableColumn]) -> String {
-    if sort.is_empty() {
-        return "Not sorted; click a column's name to sort by it".into();
-    }
-    let keys: Vec<String> = sort
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let name = columns
-                .get(s.column as usize)
-                .map_or_else(|| s.column.to_string(), |c| c.name.clone());
-            let how = if s.descending {
-                ", descending"
-            } else if i == 0 && sort.len() == 1 {
-                ", ascending"
-            } else {
-                ""
-            };
-            format!("{name}{how}")
-        })
-        .collect();
-    format!("Sorted by {}", keys.join(", then "))
-}
-
-/// What clicking a column's name does to the sort: ascending, then
-/// descending, then off. With `add` (shift-click) it becomes another key.
-pub fn next_sort(sort: &[TableSort], column: u32, add: bool) -> Vec<TableSort> {
-    let at = sort.iter().position(|s| s.column == column);
-    let next = match at.map(|i| &sort[i]) {
-        None => Some(TableSort {
-            column,
-            descending: false,
-        }),
-        Some(s) if !s.descending => Some(TableSort {
-            column,
-            descending: true,
-        }),
-        Some(_) => None,
-    };
+/// The sort after a column's menu asks for `descending` (or ascending)
+/// order: that column alone, or with `add` (⇧ held) one more key after the
+/// others, changing its direction in place when it is one already.
+pub fn sorted_by(sort: &[TableSort], column: u32, descending: bool, add: bool) -> Vec<TableSort> {
+    let key = TableSort { column, descending };
     if !add {
-        return next.into_iter().collect();
+        return vec![key];
     }
-    match (next, at) {
-        (None, _) => sort
-            .iter()
-            .filter(|s| s.column != column)
-            .cloned()
-            .collect(),
-        (Some(n), Some(_)) => sort
+    if sort.iter().any(|s| s.column == column) {
+        return sort
             .iter()
             .map(|s| {
                 if s.column == column {
-                    n.clone()
+                    key.clone()
                 } else {
                     s.clone()
                 }
             })
-            .collect(),
-        (Some(n), None) => sort.iter().cloned().chain([n]).collect(),
+            .collect();
     }
+    sort.iter().cloned().chain([key]).collect()
 }
 
 /// A width for a column, from its name and some of its cells, in px: the
@@ -337,27 +297,74 @@ pub fn export_name(path: &[String]) -> String {
     format!("{}.csv", if name.is_empty() { "table" } else { name })
 }
 
-/// Colours of a category's values, as in the mockup.
-pub const COLORS: [u32; 10] = [
-    0x4e79a7, 0xf28e2b, 0xe15759, 0x76b7b2, 0x59a14f, 0xedc948, 0xb07aa1, 0xff9da7, 0x9c755f,
-    0xbab0ac,
-];
+#[derive(Default)]
+pub struct TableCodeView<'a> {
+    pub sort: &'a [TableSort],
+    pub filters: &'a [TableFilter],
+    pub hidden: &'a [u32],
+    pub search: &'a str,
+}
 
 /// Code that does what the view does, in the session's language: the
-/// filters, then the sort, on the table `code` names.
+/// filters and search, then the sort, on the table `code` names.
 pub fn table_code(
     language: &str,
     code: &str,
     matrix: bool,
     columns: &[TableColumn],
-    sort: &[TableSort],
-    filters: &[TableFilter],
+    view: TableCodeView<'_>,
 ) -> String {
-    if language.eq_ignore_ascii_case("r") {
-        r_code(code, matrix, columns, sort, filters)
+    let TableCodeView {
+        sort,
+        filters,
+        hidden,
+        search,
+    } = view;
+    let mut code = if language.eq_ignore_ascii_case("r") {
+        r_code(code, matrix, columns, sort, filters, search)
     } else {
-        python_code(code, matrix, columns, sort, filters)
+        python_code(code, matrix, columns, sort, filters, search)
+    };
+    if !hidden.is_empty() {
+        let visible: Vec<usize> = (0..columns.len())
+            .filter(|i| !hidden.contains(&(*i as u32)))
+            .collect();
+        if language.eq_ignore_ascii_case("r") {
+            // Positions also handle unnamed matrices and duplicate column names.
+            let selection = if visible.is_empty() {
+                "integer(0)".to_string()
+            } else {
+                format!(
+                    "c({})",
+                    visible
+                        .iter()
+                        .map(|i| (i + 1).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            code.push_str(&format!("x <- x[, {selection}, drop = FALSE]\n"));
+        } else if matrix
+            || columns
+                .iter()
+                .any(|c| c.name.chars().all(|c| c.is_ascii_digit()))
+        {
+            let selection = visible
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            code.push_str(&format!("x = x.iloc[:, [{selection}]]\n"));
+        } else {
+            let selection = visible
+                .iter()
+                .map(|&i| quoted(&columns[i].name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            code.push_str(&format!("x = x[[{selection}]]\n"));
+        }
     }
+    code
 }
 
 fn quoted(s: &str) -> String {
@@ -391,6 +398,7 @@ fn r_code(
     columns: &[TableColumn],
     sort: &[TableSort],
     filters: &[TableFilter],
+    search: &str,
 ) -> String {
     let mut lines = vec![format!("x <- {code}")];
     let col = |i: u32| {
@@ -458,6 +466,15 @@ fn r_code(
             tests.join(" & ")
         ));
     }
+    if !search.is_empty() {
+        lines.push(format!("keyword <- tolower({})", quoted(search)));
+        lines.push("matches <- rep(FALSE, nrow(x))".into());
+        lines.push("for (j in seq_len(ncol(x))) {".into());
+        lines.push("  values <- if (is.matrix(x)) x[, j] else x[[j]]".into());
+        lines.push("  matches <- matches | (!is.na(values) & grepl(keyword, tolower(as.character(values)), fixed = TRUE))".into());
+        lines.push("}".into());
+        lines.push("x <- x[which(matches), , drop = FALSE]".into());
+    }
     if !sort.is_empty() {
         let keys: Vec<String> = sort
             .iter()
@@ -483,12 +500,15 @@ fn python_code(
     columns: &[TableColumn],
     sort: &[TableSort],
     filters: &[TableFilter],
+    search: &str,
 ) -> String {
     let mut lines = if matrix {
         vec![
             "import pandas as pd".to_string(),
             format!("x = pd.DataFrame({code})"),
         ]
+    } else if !search.is_empty() {
+        vec!["import pandas as pd".to_string(), format!("x = {code}")]
     } else {
         vec![format!("x = {code}")]
     };
@@ -567,6 +587,14 @@ fn python_code(
             .collect();
         lines.push(format!("x = x[{}]", parts.join(" & ")));
     }
+    if !search.is_empty() {
+        lines.push(format!("keyword = {}.lower()", quoted(search)));
+        lines.push("matches = pd.Series(False, index=x.index)".into());
+        lines.push("for j in range(x.shape[1]):".into());
+        lines.push("    values = x.iloc[:, j]".into());
+        lines.push("    matches |= values.notna() & values.astype(str).str.lower().str.contains(keyword, regex=False)".into());
+        lines.push("x = x[matches]".into());
+    }
     if !sort.is_empty() {
         let by: Vec<String> = sort
             .iter()
@@ -601,8 +629,8 @@ fn python_code(
 #[cfg(test)]
 mod tests {
     use super::{
-        column_note, export_name, filter_error, filter_text, format_cell, format_number, next_sort,
-        ops_for, sort_text, table_code,
+        TableCodeView, column_note, export_name, filter_error, filter_text, format_cell,
+        format_number, ops_for, sorted_by, table_code,
     };
     use sandhill_proto::{ColumnSummary, TableColumn, TableFilter, TableSort};
     use serde_json::json;
@@ -679,26 +707,19 @@ mod tests {
     }
 
     #[test]
-    fn sorting_cycles_and_adds() {
-        assert_eq!(next_sort(&[], 2, false), vec![sort(2, false)]);
-        assert_eq!(next_sort(&[sort(2, false)], 2, false), vec![sort(2, true)]);
-        assert!(next_sort(&[sort(2, true)], 2, false).is_empty());
+    fn menu_sorting_replaces_or_adds_keys() {
         assert_eq!(
-            next_sort(&[sort(1, false)], 2, true),
+            sorted_by(&[sort(1, false)], 2, true, false),
+            vec![sort(2, true)]
+        );
+        assert_eq!(
+            sorted_by(&[sort(1, false)], 2, false, true),
             vec![sort(1, false), sort(2, false)]
         );
+        // A key already there changes direction where it is.
         assert_eq!(
-            next_sort(&[sort(1, false), sort(2, true)], 2, true),
-            vec![sort(1, false)]
-        );
-        let columns = vec![column("a", "number", "dbl"), column("b", "text", "chr")];
-        assert_eq!(
-            sort_text(&[sort(0, false)], &columns),
-            "Sorted by a, ascending"
-        );
-        assert_eq!(
-            sort_text(&[sort(0, true), sort(1, false)], &columns),
-            "Sorted by a, descending, then b"
+            sorted_by(&[sort(2, false), sort(1, false)], 2, true, true),
+            vec![sort(2, true), sort(1, false)]
         );
     }
 
@@ -715,8 +736,11 @@ mod tests {
                 "seu@meta.data",
                 false,
                 &columns,
-                &[sort(0, true)],
-                &filters
+                TableCodeView {
+                    sort: &[sort(0, true)],
+                    filters: &filters,
+                    ..Default::default()
+                },
             ),
             "x <- seu@meta.data\nx <- x[which(x$percent.mt < 5 & x[[\"cell type\"]] %in% c(\"B\")), , drop = FALSE]\nx <- x[order(-xtfrm(x$percent.mt)), , drop = FALSE]\n"
         );
@@ -726,11 +750,139 @@ mod tests {
                 "adata.obs",
                 false,
                 &columns,
-                &[sort(0, false)],
-                &filters[..1]
+                TableCodeView {
+                    sort: &[sort(0, false)],
+                    filters: &filters[..1],
+                    ..Default::default()
+                },
             ),
             "x = adata.obs\nx = x[x[\"percent.mt\"] < 5]\nx = x.sort_values(\"percent.mt\", ascending=True)\n"
         );
+    }
+
+    #[test]
+    fn hidden_columns_are_selected_after_filters_and_sorting() {
+        let columns = vec![
+            column("a", "number", "dbl"),
+            column("cell type", "text", "chr"),
+        ];
+        assert_eq!(
+            table_code(
+                "r",
+                "df",
+                false,
+                &columns,
+                TableCodeView {
+                    hidden: &[0],
+                    ..Default::default()
+                },
+            ),
+            "x <- df\nx <- x[, c(2), drop = FALSE]\n"
+        );
+        assert_eq!(
+            table_code(
+                "python",
+                "df",
+                false,
+                &columns,
+                TableCodeView {
+                    hidden: &[0],
+                    ..Default::default()
+                },
+            ),
+            "x = df\nx = x[[\"cell type\"]]\n"
+        );
+        assert_eq!(
+            table_code(
+                "r",
+                "m",
+                true,
+                &columns,
+                TableCodeView {
+                    hidden: &[0, 1],
+                    ..Default::default()
+                },
+            ),
+            "x <- m\nx <- x[, integer(0), drop = FALSE]\n"
+        );
+        assert!(
+            table_code(
+                "python",
+                "df",
+                false,
+                &columns,
+                TableCodeView {
+                    sort: &[sort(0, false)],
+                    hidden: &[0],
+                    ..Default::default()
+                },
+            )
+            .ends_with("x = x.sort_values(\"a\", ascending=True)\nx = x[[\"cell type\"]]\n")
+        );
+        assert!(
+            table_code(
+                "python",
+                "m",
+                true,
+                &columns,
+                TableCodeView {
+                    hidden: &[0],
+                    ..Default::default()
+                },
+            )
+            .ends_with("x = x.iloc[:, [1]]\n")
+        );
+    }
+
+    #[test]
+    fn r_search_is_literal_and_precedes_sorting_and_hidden_columns() {
+        let columns = vec![column("a", "number", "dbl"), column("b", "text", "chr")];
+        let code = table_code(
+            "r",
+            "df",
+            false,
+            &columns,
+            TableCodeView {
+                sort: &[sort(0, false)],
+                filters: &[filter(0, ">", &["1"])],
+                hidden: &[1],
+                search: "A\"\\\n[.]",
+            },
+        );
+        assert!(code.contains(r#"keyword <- tolower("A\"\\\n[.]")"#));
+        assert!(code.contains("grepl(keyword, tolower(as.character(values)), fixed = TRUE)"));
+        assert!(code.contains("!is.na(values)"));
+        let filter = code.find("x <- x[which(x$a > 1)").unwrap();
+        let search = code.find("for (j in seq_len(ncol(x)))").unwrap();
+        let sort = code.find("x <- x[order(").unwrap();
+        let hide = code.find("x <- x[, c(1)").unwrap();
+        assert!(filter < search && search < sort && sort < hide);
+    }
+
+    #[test]
+    fn python_search_is_literal_and_precedes_sorting_and_hidden_columns() {
+        let columns = vec![column("a", "number", "dbl"), column("b", "text", "str")];
+        let code = table_code(
+            "python",
+            "df",
+            false,
+            &columns,
+            TableCodeView {
+                sort: &[sort(0, false)],
+                filters: &[filter(0, ">", &["1"])],
+                hidden: &[1],
+                search: "A\"\\\n[.]",
+            },
+        );
+        assert!(code.starts_with("import pandas as pd\nx = df\n"));
+        assert!(code.contains(r#"keyword = "A\"\\\n[.]".lower()"#));
+        assert!(code.contains(".str.lower().str.contains(keyword, regex=False)"));
+        assert!(code.contains("values.notna()"));
+        let filter = code.find("x = x[x[\"a\"] > 1]").unwrap();
+        let search = code.find("for j in range(x.shape[1]):").unwrap();
+        let sort = code.find("x = x.sort_values(").unwrap();
+        let hide = code.find("x = x[[\"a\"]]").unwrap();
+        assert!(filter < search && search < sort && sort < hide);
     }
 
     #[test]

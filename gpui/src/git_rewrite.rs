@@ -393,7 +393,7 @@ impl Workbench {
                                         .border_color(if folds { p.accent } else { p.line })
                                         .when(folds, |d| {
                                             d.bg(p.accent)
-                                                .text_color(p.bg)
+                                                .text_color(p.primary_text)
                                                 .child(crate::look::icon("check").size(px(11.)))
                                         }),
                                 )

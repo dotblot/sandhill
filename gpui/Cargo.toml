@@ -3,11 +3,13 @@ name = "sandhill-gpui"
 description = "Sandhill drawn with GPUI"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 publish = false
 
 # Its own workspace, so the app's dependencies stay out of the main build,
 # its Cargo.lock and CI.
 [workspace]
+exclude = ["vendor/gpui-cn", "vendor/gpui-component"]
 
 [[bin]]
 name = "sandhill-gpui"
@@ -20,18 +22,28 @@ sandhill-link = { path = "../crates/link" }
 sandhill-daemon = { path = "../crates/daemon" }
 # The Terminal: Ghostty's terminal engine (libghostty-vt, built from source
 # with Zig 0.17: set ZIG, or have `zig` on PATH) and gpui-cn's GPUI element for it.
-gpui-cn = { version = "=0.8.0", features = ["ghostty"] }
+# Latest gpui-cn release, adapted locally to GPUI Kit 0.9.1 (see README).
+gpui-cn = { path = "vendor/gpui-cn", version = "=0.8.0", features = ["ghostty"] }
 anyhow = "1"
-base64 = "0.22"
-resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+libc = "0.2"
+base64 = "0.23"
+resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Unpacks the bundled Maple Mono fonts (assets/fonts).
 flate2 = "1"
 # The HTML export of a conversation.
 markdown = "1"
+# Bounded HTTPS Markdown images, without cookies or non-TLS redirects.
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls"] }
+# Validate the same raster formats as the read-only document previews.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico"] }
+# Decode embedded Markdown data images before passing owned bytes to Kit.
+data-url = "=0.3.2"
 # GPUI Fast, gpui-kit's newer drawing engine, lets the web view be clipped
-# by the notebook it scrolls in; both crates must have it.
-gpui-kit = { version = "=0.8.1", features = ["tree-sitter-python", "tree-sitter-markdown", "gpui-fast"] }
-gpui-webview = { version = "=0.8.1", features = ["gpui-fast"] }
+# by the notebook it scrolls in; both crates must have it. JSON's grammar
+# is built in; YAML and TOML colour standalone text files; SQL, diff, HTML,
+# CSS and JavaScript colour code blocks in AI replies.
+gpui-kit = { version = "=0.9.1", features = ["tree-sitter-python", "tree-sitter-markdown", "tree-sitter-bash", "tree-sitter-yaml", "tree-sitter-toml", "tree-sitter-sql", "tree-sitter-diff", "tree-sitter-html", "tree-sitter-css", "tree-sitter-javascript", "gpui-fast"] }
+gpui-webview = { version = "=0.9.1", features = ["gpui-fast"] }
 # The web engine behind gpui-webview (WebKit on the Mac, WebKitGTK on Linux).
 wry = { package = "lb-wry", version = "0.53.3" }
 # The icons drawn in docs/design/ui/icons, put into the binary.
@@ -40,6 +52,7 @@ rust-embed = { version = "8", features = ["include-exclude"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = "1"
 serde_json = "1"
+lsp-types = { version = "0.97.0", features = ["proposed"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 # gpui-kit has no R grammar; Posit's (MIT) is registered at start-up.
@@ -47,5 +60,25 @@ tree-sitter = "0.26"
 tree-sitter-r = "1.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView"] }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry"] }
+
+# `cargo run` builds the dependencies (GPUI, its widgets, tree-sitter...)
+# optimised, so the app draws at a usable speed; Sandhill's own code stays
+# unoptimised, for debugging. Unoptimised, a frame of a big notebook took
+# eight times as long as in a release build.
+[profile.dev.package."*"]
+opt-level = 3
+
 [dev-dependencies]
+gpui-kit = { version = "=0.9.1", features = ["test-support"] }
 tempfile = "3"
+
+# GPUI Component 0.9.1 (Apache-2.0), vendored with one change: caret menus
+# open above the caret when they don't fit below it (the Console input sits
+# at the window's bottom). See vendor/gpui-component/SANDHILL.md; return to
+# the crates.io release once upstream has it.
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }

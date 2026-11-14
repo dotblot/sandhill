@@ -1,9 +1,10 @@
-//! The AI pane's conversations: Claude Code, Codex and Antigravity, each
-//! running unmodified in a terminal that sandhilld keeps, as in the Tauri
-//! app (`app/src/model/terminals.ts`, `app/src/ui/AgentsPane.tsx`). The
-//! daemon records what each agent's hooks report as chat entries; this keeps
-//! them per conversation and sends the user's messages, answers and stops.
-//! Drawing is in `agents_view`.
+//! The AI pane's conversations: Claude Code, Codex, Antigravity,
+//! OpenScience and Posit Assistant, each running unmodified under
+//! sandhilld. The daemon records each agent's events as chat entries;
+//! this keeps them per conversation and sends the user's messages,
+//! answers and stops. OpenScience is chat-only; Posit Assistant reports
+//! nothing, so its conversations show its own screen. Drawing is in
+//! `agents_view`.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -11,9 +12,10 @@ use std::time::Duration;
 
 use gpui_kit::component::input::{EditorState, InputEvent, InputState};
 use gpui_kit::*;
+use sandhill_daemon::terminal::choices::{Ref, refs_text};
 use sandhill_proto::{
-    AgentInfo, AgentOptions, Call, TERMINAL_JOB, TERMINAL_SHELL, TerminalEvent, TerminalInfo,
-    TerminalSubscribed,
+    AgentAccount, AgentInfo, AgentOptions, Call, TERMINAL_JOB, TERMINAL_LOGIN, TERMINAL_SHELL,
+    TerminalEvent, TerminalInfo, TerminalSubscribed,
 };
 use serde_json::{Value, json};
 
@@ -26,6 +28,9 @@ use crate::workbench::Workbench;
 /// What Claude Code needs between a pasted message and the Enter that sends
 /// it, as in the Tauri app.
 pub(crate) const SUBMIT_DELAY: Duration = Duration::from_millis(60);
+/// The same for Posit Assistant, which drops an Enter that comes 60 ms
+/// after the paste.
+const POSIT_SUBMIT_DELAY: Duration = Duration::from_millis(300);
 /// Answering Claude Code's trust question: how many keys at most, and how
 /// long its screen takes to show each.
 const TRUST_TRIES: usize = 4;
@@ -33,6 +38,9 @@ const TRUST_STEP: Duration = Duration::from_millis(250);
 /// A new agent's terminal size, until its view has one.
 pub(crate) const START_COLUMNS: u16 = 100;
 pub(crate) const START_ROWS: u16 = 30;
+/// A bridge handoff must either acknowledge the requested view or leave the
+/// conversation usable with an error, including when its process has ended.
+const VIEW_SWITCH_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// An agent the pane offers, as the Tauri app's `AGENT_KINDS` describes it.
 pub(crate) struct Kind {
@@ -44,7 +52,14 @@ pub(crate) struct Kind {
     pub placeholder: &'static str,
 }
 
-pub(crate) const KINDS: [Kind; 3] = [
+pub(crate) const KINDS: [Kind; 7] = [
+    Kind {
+        kind: "antigravity",
+        name: "Antigravity",
+        short: "Antigravity",
+        plan: "agy headless · your Google sign-in",
+        placeholder: "Ask Antigravity…",
+    },
     Kind {
         kind: "claude",
         name: "Claude Code",
@@ -60,11 +75,32 @@ pub(crate) const KINDS: [Kind; 3] = [
         placeholder: "Ask Codex…",
     },
     Kind {
-        kind: "antigravity",
-        name: "Antigravity",
-        short: "Antigravity",
-        plan: "agy headless · your Google sign-in",
-        placeholder: "Ask Antigravity…",
+        kind: "omp",
+        name: "Oh My Pi",
+        short: "Oh My Pi",
+        plan: "omp acp · your own model accounts",
+        placeholder: "Ask Oh My Pi…",
+    },
+    Kind {
+        kind: "openscience",
+        name: "OpenScience",
+        short: "OpenScience",
+        plan: "OpenScience · your configured models",
+        placeholder: "Ask OpenScience…",
+    },
+    Kind {
+        kind: "pi",
+        name: "pi",
+        short: "pi",
+        plan: "pi RPC · your own model accounts",
+        placeholder: "Ask pi…",
+    },
+    Kind {
+        kind: "posit",
+        name: "Posit Assistant",
+        short: "Posit Assistant",
+        plan: "pa in a terminal · your Posit Assistant providers",
+        placeholder: "Ask Posit Assistant…",
     },
 ];
 
@@ -72,10 +108,68 @@ pub(crate) fn kind_of(kind: &str) -> Option<&'static Kind> {
     KINDS.iter().find(|k| k.kind == kind)
 }
 
-/// Agents whose chat Sandhill drives through a bridge (Codex,
-/// Antigravity): messages go with `tell_terminal`, not as typing.
+/// Agents whose chat Sandhill drives through a bridge: messages go with
+/// `tell_terminal`, not as typing.
 pub(crate) fn drives_chat(kind: &str) -> bool {
-    kind == "codex" || kind == "antigravity"
+    matches!(kind, "codex" | "antigravity" | "openscience" | "omp" | "pi")
+}
+
+/// Agents that report nothing for a chat (Posit Assistant): their
+/// conversations show their own screen, with its own model and mode menus.
+pub(crate) fn terminal_only(kind: &str) -> bool {
+    kind == "posit"
+}
+
+/// OpenScience exposes only its ACP chat, never a native command line.
+pub(crate) fn supports_terminal(kind: &str) -> bool {
+    kind != "openscience"
+}
+
+/// Apply provider view constraints to both requested and restored views.
+pub(crate) fn provider_show(kind: &str, show: Show) -> Show {
+    match show {
+        Show::Chat if terminal_only(kind) => Show::Terminal,
+        Show::Terminal if !supports_terminal(kind) => Show::Chat,
+        show => show,
+    }
+}
+
+/// Whether Posit Assistant's screen takes a message: its empty box shows
+/// "Enter a prompt", and no workspace trust question is up (keys typed then
+/// would answer it).
+fn takes_message(screen: &str) -> bool {
+    screen.contains("Enter a prompt") && !screen.contains("Trust this workspace?")
+}
+
+/// A message for an agent that reports nothing, with what was added to it
+/// written out, as the daemon tells the other agents.
+fn with_refs(text: &str, refs: &[Value]) -> String {
+    let refs: Vec<Ref> = refs
+        .iter()
+        .filter_map(|r| serde_json::from_value(r.clone()).ok())
+        .collect();
+    match refs_text(&refs) {
+        Some(added) if text.is_empty() => added,
+        Some(added) => format!("{text}\n\n{added}"),
+        None => text.to_string(),
+    }
+}
+
+/// Splits a conversation's first message, for starting its agent: what
+/// goes to the daemon as its prompt, and what the app types into the
+/// agent's screen once it takes messages (Posit Assistant's, with what
+/// was added to it, which leaves `options`).
+pub(crate) fn first_message(
+    kind: &str,
+    prompt: Option<String>,
+    options: &mut AgentOptions,
+) -> (Option<String>, Option<String>) {
+    if !terminal_only(kind) {
+        return (prompt, None);
+    }
+    let refs = std::mem::take(&mut options.refs);
+    let text = with_refs(prompt.as_deref().unwrap_or_default(), &refs);
+    (None, Some(text).filter(|t| !t.is_empty()))
 }
 
 /// A menu open over the message box.
@@ -104,7 +198,6 @@ pub(crate) struct Choice {
     pub mode: Option<&'static str>,
     pub console: Option<bool>,
     pub web: Option<bool>,
-    pub context: Option<bool>,
 }
 
 /// What the pane shows.
@@ -119,8 +212,102 @@ pub(crate) enum Show {
     New,
 }
 
+/// A missing `view_mode` describes the live bridge, not the daemon that would
+/// resume it. Only replace an idle legacy bridge after verifying that daemon.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ViewPhase {
+    Checking,
+    Resuming,
+    Switching,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ViewRecovery {
+    Resume,
+    Busy,
+    NoResume,
+    OlderService,
+    UnknownService,
+}
+
+fn legacy_view_recovery(
+    state: Option<&str>,
+    can_resume: bool,
+    bundled_build: Option<bool>,
+) -> ViewRecovery {
+    if state != Some("idle") {
+        return ViewRecovery::Busy;
+    }
+    match bundled_build {
+        Some(false) => ViewRecovery::OlderService,
+        None => ViewRecovery::UnknownService,
+        Some(true) if !can_resume => ViewRecovery::NoResume,
+        Some(true) => ViewRecovery::Resume,
+    }
+}
+
+/// UI requests are separate from the bridge's authoritative `view_mode`.
+#[derive(Clone, Copy)]
+pub(crate) struct ViewSwitch {
+    pub(crate) target: Show,
+    previous: Show,
+    generation: u64,
+    started: bool,
+    phase: ViewPhase,
+}
+
+impl ViewSwitch {
+    fn begin(
+        mode: Option<&str>,
+        target: Show,
+        generation: u64,
+    ) -> Result<Option<Self>, &'static str> {
+        let previous = match mode {
+            Some("chat") => Show::Chat,
+            Some("terminal") => Show::Terminal,
+            None if target == Show::Chat => return Ok(None),
+            Some("switching_chat" | "switching_terminal") => {
+                return Err(
+                    "This conversation is already changing modes. Please wait for it to finish.",
+                );
+            }
+            _ => {
+                return Err(
+                    "The agent reported an unrecognized conversation mode. Resume the conversation before changing modes.",
+                );
+            }
+        };
+        Ok((previous != target).then_some(Self {
+            target,
+            previous,
+            generation,
+            started: false,
+            phase: ViewPhase::Switching,
+        }))
+    }
+
+    fn observe(&mut self, mode: Option<&str>) -> Option<Show> {
+        if self.phase != ViewPhase::Switching {
+            return None;
+        }
+        let show = match mode {
+            Some("switching_chat" | "switching_terminal") => {
+                self.started = true;
+                return None;
+            }
+            Some("chat") => Show::Chat,
+            Some("terminal") => Show::Terminal,
+            _ => return None,
+        };
+        (show == self.target || self.started).then_some(show)
+    }
+}
+
 pub struct Agents {
     pub(crate) daemon: Rc<Daemon>,
+    pub(crate) host: String,
+    pub(crate) accounts: Vec<AgentAccount>,
+    pub(crate) account_switching: Option<String>,
     /// The window it is in, where its terminals start.
     window: AnyWindowHandle,
     pub(crate) project: String,
@@ -138,12 +325,15 @@ pub struct Agents {
     /// once: the next click deletes it.
     pub(crate) confirm_delete: Option<String>,
     pub(crate) show: Show,
+    pub(crate) view_switches: HashMap<String, ViewSwitch>,
+    view_generation: u64,
     /// The agent a new conversation starts with.
     pub(crate) new_kind: &'static str,
     pub(crate) composer: Entity<EditorState>,
     /// The hint the message box shows now.
     pub(crate) hint: &'static str,
     pub(crate) chat_scroll: ScrollHandle,
+    pub(crate) mention_scroll: ScrollHandle,
     /// Steps opened to show their card.
     pub(crate) open_steps: HashSet<String>,
     /// Requests answered here whose answer hasn't come back yet.
@@ -153,6 +343,8 @@ pub struct Agents {
     /// Claude Code conversations whose screen asks whether the user trusts
     /// the folder: the chat shows the question, and holds messages.
     pub(crate) trust_asked: HashSet<String>,
+    /// First messages for Posit Assistant, typed once its screen takes them.
+    pub(crate) typing: HashMap<String, String>,
     /// A conversation starting: its agent's name.
     pub(crate) starting: Option<&'static str>,
     pub(crate) problem: Option<String>,
@@ -161,14 +353,18 @@ pub struct Agents {
     /// What was added to the message with @ and #, shown as chips.
     pub(crate) refs: Vec<Value>,
     pub(crate) menu: Option<Menu>,
+    pub(crate) popup_triggers: crate::popup::PopupTriggers,
     /// The model menu's tab: an agent's kind, or "fav".
     pub(crate) model_tab: Option<String>,
     pub(crate) favourites: Vec<String>,
     /// What a new conversation starts with.
     pub(crate) new_choice: Choice,
+    /// An effort set on another agent's tab of a new conversation's model
+    /// menu, by kind; a model then picked on that tab keeps it.
+    pub(crate) browsed_effort: Option<(String, String)>,
     /// What each conversation's box shows until the agent reports it.
     pub(crate) picked: HashMap<String, Choice>,
-    /// The models Codex and Antigravity list before a conversation.
+    /// The models driven-chat providers list before a conversation.
     pub(crate) listed: HashMap<String, Vec<Value>>,
     /// Unsent text and chips, by conversation ("new" for a new one).
     pub(crate) drafts: HashMap<String, (String, Vec<Value>)>,
@@ -176,8 +372,9 @@ pub struct Agents {
     /// A command typed while the agent waits for an answer, which it would
     /// answer: it goes once the agent stops waiting.
     pub(crate) held: Option<(String, String)>,
-    /// Effort changes settle before they go (the slider can be dragged).
+    /// Effort changes settle before they go (the bar can be dragged).
     pub(crate) effort_generation: u64,
+    pub(crate) effort_bar: crate::effort_bar::Bar,
     pub(crate) workbench: WeakEntity<Workbench>,
     /// Options picked for the agent's questions, by `question_key`.
     pub(crate) picks: HashMap<String, Vec<String>>,
@@ -201,6 +398,7 @@ pub(crate) fn question_key(ask: &str, question: &str) -> String {
 impl Agents {
     pub fn new(
         daemon: Rc<Daemon>,
+        host: String,
         project: String,
         workbench: WeakEntity<Workbench>,
         window: &mut Window,
@@ -227,6 +425,9 @@ impl Agents {
         let mut agents = Agents {
             window: window.window_handle(),
             daemon,
+            host,
+            accounts: Vec::new(),
+            account_switching: None,
             project,
             installed: Vec::new(),
             terminals: Vec::new(),
@@ -236,28 +437,35 @@ impl Agents {
             selected: None,
             confirm_delete: None,
             show: Show::Chat,
+            view_switches: HashMap::new(),
+            view_generation: 0,
             new_kind: KINDS[0].kind,
             composer,
             hint: KINDS[0].placeholder,
             chat_scroll: ScrollHandle::new(),
+            mention_scroll: ScrollHandle::new(),
             open_steps: HashSet::new(),
             sent: HashSet::new(),
             stopped: HashSet::new(),
             trust_asked: HashSet::new(),
+            typing: HashMap::new(),
             starting: None,
             problem: None,
             follow_edits: crate::prefs::follow_agent(),
             refs: Vec::new(),
             menu: None,
+            popup_triggers: crate::popup::PopupTriggers::default(),
             model_tab: None,
             favourites: crate::prefs::favourites(),
             new_choice: Choice::default(),
+            browsed_effort: None,
             picked: HashMap::new(),
             listed: HashMap::new(),
             drafts: HashMap::new(),
             draft_key: "new".into(),
             held: None,
             effort_generation: 0,
+            effort_bar: Default::default(),
             workbench,
             picks: HashMap::new(),
             others: HashMap::new(),
@@ -268,6 +476,7 @@ impl Agents {
             _subscriptions: subscriptions,
         };
         agents.refresh(cx);
+        agents.refresh_accounts(cx);
         agents
     }
 
@@ -288,6 +497,7 @@ impl Agents {
                 this.installed = installed;
                 match listed {
                     Ok(all) => {
+                        this.problem = None;
                         let mut mine: Vec<TerminalInfo> = all
                             .into_iter()
                             .filter(|t| is_agent(t) && t.project.as_deref() == Some(&this.project))
@@ -307,6 +517,30 @@ impl Agents {
                                 .rev()
                                 .find(|t| t.running)
                                 .map(|t| t.id.clone());
+                        }
+                        if let Some(t) = this.current() {
+                            this.show = provider_show(&t.kind, this.show);
+                        }
+                        if matches!(this.show, Show::Chat | Show::Terminal)
+                            && let Some(t) = this.current()
+                            && drives_chat(&t.kind)
+                            && supports_terminal(&t.kind)
+                            && t.agent.as_ref().is_some_and(|a| {
+                                matches!(
+                                    a["view_mode"].as_str(),
+                                    Some("terminal" | "switching_terminal")
+                                )
+                            })
+                        {
+                            this.show = Show::Terminal;
+                            if let Some(view) =
+                                this.selected.as_ref().and_then(|id| this.views.get(id))
+                            {
+                                let focus = view.read(cx).focus_handle();
+                                let _ = this.window.update(cx, move |_, window, cx| {
+                                    window.focus(&focus, cx);
+                                });
+                            }
                         }
                         if this.terminals.is_empty() {
                             this.show = Show::New;
@@ -367,6 +601,18 @@ impl Agents {
             })
             .detach();
         }
+        if terminal_only(&terminal.kind) {
+            let id = id.clone();
+            cx.observe(&view, move |this, view, cx| {
+                if this.typing.contains_key(&id)
+                    && takes_message(&view.read(cx).screen_text(cx))
+                    && let Some(text) = this.typing.remove(&id)
+                {
+                    this.type_message(&id, "posit", &text, cx);
+                }
+            })
+            .detach();
+        }
         if !terminal.running {
             view.update(cx, |view, cx| view.exited("ended".into(), cx));
         }
@@ -422,6 +668,20 @@ impl Agents {
     /// Output, chat entries and reports from a conversation's terminal.
     pub fn on_terminal_event(&mut self, event: TerminalEvent, cx: &mut Context<Self>) {
         let id = event.terminal.clone();
+        if event
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent["status"]["rate_limits"].is_object())
+        {
+            self.refresh_accounts(cx);
+        }
+        if event
+            .chat
+            .as_ref()
+            .is_some_and(|entry| entry.event["kind"] == "account")
+        {
+            self.refresh_accounts(cx);
+        }
         if let Some(data) = &event.data
             && let Some(view) = self.views.get(&id)
         {
@@ -431,7 +691,7 @@ impl Agents {
             // A new subscription can repeat output already shown.
             if start + len > *end || event.offset.is_none() {
                 *end = start + len;
-                view.update(cx, |view, cx| view.feed(data, cx));
+                view.update(cx, |view, cx| view.feed(data, event.replay, cx));
             }
         }
         if let Some(entry) = event.chat {
@@ -467,6 +727,29 @@ impl Agents {
                 self.stopped.remove(&id);
             }
 
+            let previous_view = t
+                .agent
+                .as_ref()
+                .and_then(|a| a["view_mode"].as_str())
+                .map(str::to_owned);
+            let completed = self
+                .view_switches
+                .get_mut(&id)
+                .and_then(|switch| switch.observe(agent["view_mode"].as_str()));
+            if completed.is_some() {
+                self.view_switches.remove(&id);
+                self.problem = None;
+            }
+            // A failed command line says why once, in the notice the user
+            // dismisses, in the report that ends its switch back to chat.
+            if matches!(
+                previous_view.as_deref(),
+                Some("switching_terminal" | "switching_chat")
+            ) && agent["view_mode"] == "chat"
+                && let Some(error) = agent["view_error"].as_str()
+            {
+                self.problem = Some(error.to_owned());
+            }
             // Reports carry what changed; keep the rest.
             let mut merged = t.agent.take().unwrap_or(json!({}));
             if let (Some(old), Some(new)) = (merged.as_object_mut(), agent.as_object()) {
@@ -477,13 +760,60 @@ impl Agents {
                 merged = agent;
             }
             t.agent = Some(merged);
+            if self.selected.as_deref() == Some(&id) {
+                self.show = provider_show(&t.kind, self.show);
+            }
+            if self.selected.as_deref() == Some(&id)
+                && matches!(self.show, Show::Chat | Show::Terminal)
+                && drives_chat(&t.kind)
+                && (completed.is_some()
+                    || t.agent.as_ref().and_then(|a| a["view_mode"].as_str())
+                        != previous_view.as_deref())
+            {
+                match t.agent.as_ref().and_then(|a| a["view_mode"].as_str()) {
+                    Some("chat") => {
+                        self.show = Show::Chat;
+                        let composer = self.composer.clone();
+                        let _ = self.window.update(cx, move |_, window, cx| {
+                            composer.update(cx, |composer, cx| composer.focus(window, cx));
+                        });
+                    }
+                    Some("terminal") => {
+                        self.show = Show::Terminal;
+                        if let Some(view) = self.views.get(&id) {
+                            let focus = view.read(cx).focus_handle();
+                            let _ = self.window.update(cx, move |_, window, cx| {
+                                window.focus(&focus, cx);
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
+        self.continue_resumed_view(&id, cx);
         if let Some(exit) = event.exit
             && let Some(t) = self.terminals.iter_mut().find(|t| t.id == id)
             && exit.ended_ms >= t.started_ms
         {
             t.running = false;
             t.exit = Some(exit);
+            if self
+                .view_switches
+                .get(&id)
+                .is_some_and(|s| s.phase != ViewPhase::Resuming || self.starting.is_none())
+                && let Some(switch) = self.view_switches.remove(&id)
+            {
+                if self.selected.as_deref() == Some(&id)
+                    && matches!(self.show, Show::Chat | Show::Terminal)
+                {
+                    self.show = switch.previous;
+                }
+                self.problem = Some(
+                    "The agent ended while changing modes. Resume the conversation to continue."
+                        .into(),
+                );
+            }
             if let Some(view) = self.views.get(&id) {
                 view.update(cx, |view, cx| view.exited("ended".into(), cx));
             }
@@ -494,6 +824,82 @@ impl Agents {
     pub(crate) fn current(&self) -> Option<&TerminalInfo> {
         let id = self.selected.as_deref()?;
         self.terminals.iter().find(|t| t.id == id)
+    }
+
+    pub(crate) fn account_host(&self, _: &App) -> String {
+        self.host.clone()
+    }
+
+    pub(crate) fn refresh_accounts(&mut self, cx: &mut Context<Self>) {
+        let request = self
+            .daemon
+            .call::<Vec<AgentAccount>>(Call::ListAgentAccounts { refresh: false });
+        cx.spawn(async move |this, cx| {
+            if let Ok(accounts) = request.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.accounts = accounts;
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// An explicit account choice always resumes this conversation, never a new one.
+    pub(crate) fn switch_account(
+        &mut self,
+        account: AgentAccount,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(t) = self.current().cloned().filter(|t| {
+            matches!(self.show, Show::Chat | Show::Terminal)
+                && t.kind == account.kind
+                && (t.running || crate::composer::can_resume(t))
+                && t.options.account.as_deref().unwrap_or(&t.kind) != account.id
+        }) else {
+            return;
+        };
+        if self.account_switching.is_some() || self.starting.is_some() {
+            return;
+        }
+        if self.working(&t) {
+            let answer = window.prompt(
+                PromptLevel::Warning,
+                &format!("Stop the current reply and switch to {}?", account.name),
+                None,
+                &["Stop and Switch", "Cancel"],
+                cx,
+            );
+            self.account_switching = Some(t.id.clone());
+            cx.spawn(async move |this, cx| {
+                let answer = answer.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.account_switching = None;
+                    if matches!(answer, Ok(0))
+                        && let Some(t) = this.terminals.iter().find(|live| live.id == t.id).cloned()
+                    {
+                        this.restart_on_account(&t, &account, cx);
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        } else {
+            self.restart_on_account(&t, &account, cx);
+        }
+    }
+
+    fn restart_on_account(
+        &mut self,
+        t: &TerminalInfo,
+        account: &AgentAccount,
+        cx: &mut Context<Self>,
+    ) {
+        let mut options = self.resume_options(t);
+        options.account = Some(account.id.clone());
+        self.account_switching = Some(t.id.clone());
+        self.restart(t, options, None, cx);
     }
 
     pub(crate) fn view(&self, id: &str) -> Option<Entity<TerminalView>> {
@@ -584,13 +990,43 @@ impl Agents {
 
     pub(crate) fn select(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = Some(id);
-        self.show = Show::Chat;
+        if self.current().is_some_and(|t| terminal_only(&t.kind)) {
+            return self.show(Show::Terminal, window, cx);
+        }
         self.chat_scroll.scroll_to_bottom();
-        self.swap_draft(window, cx);
-        cx.notify();
+        self.show(Show::Chat, window, cx);
     }
 
     pub(crate) fn show(&mut self, show: Show, window: &mut Window, cx: &mut Context<Self>) {
+        let show = self
+            .current()
+            .map_or(show, |t| provider_show(&t.kind, show));
+        if matches!(show, Show::Terminal | Show::Chat)
+            && let Some(t) = self
+                .current()
+                .cloned()
+                .filter(|t| t.running && drives_chat(&t.kind) && supports_terminal(&t.kind))
+        {
+            if self.view_switches.contains_key(&t.id) {
+                return;
+            }
+            let mode = t.agent.as_ref().and_then(|a| a["view_mode"].as_str());
+            self.view_generation += 1;
+            if mode.is_none() && show == Show::Terminal {
+                self.prepare_legacy_view(&t, cx);
+                return;
+            }
+            match ViewSwitch::begin(mode, show, self.view_generation) {
+                Ok(Some(switch)) => self.switch_view(&t, switch, cx),
+                Ok(None) => {}
+                Err(message) => {
+                    self.problem = Some(message.into());
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        self.problem = None;
         self.show = show;
         self.menu = None;
         self.swap_draft(window, cx);
@@ -606,6 +1042,192 @@ impl Agents {
             }
             Show::History => {}
         }
+        cx.notify();
+    }
+
+    /// Check the service before ending anything: restarting on an old daemon
+    /// would merely create another old bridge.
+    fn prepare_legacy_view(&mut self, terminal: &TerminalInfo, cx: &mut Context<Self>) {
+        let id = terminal.id.clone();
+        let generation = self.view_generation;
+        self.view_switches.insert(
+            id.clone(),
+            ViewSwitch {
+                target: Show::Terminal,
+                previous: Show::Chat,
+                generation,
+                started: false,
+                phase: ViewPhase::Checking,
+            },
+        );
+        let (build, device) = self
+            .workbench
+            .upgrade()
+            .map_or((None, "this device".into()), |wb| {
+                let wb = wb.read(cx);
+                (
+                    wb.about.as_ref().map(|about| about.build.clone()),
+                    crate::app_window::machine_name(&wb.host()),
+                )
+            });
+        let checked = self.daemon.matches_bundled_build(build);
+        self.watch_view_switch(id.clone(), generation, cx);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let checked = checked.await;
+            this.update(cx, |this, cx| {
+                if !this.view_switches.get(&id).is_some_and(|s| s.generation == generation) {
+                    return;
+                }
+                let Some(t) = this.terminals.iter().find(|t| t.id == id).cloned() else {
+                    this.view_switches.remove(&id);
+                    return;
+                };
+                let mode = t.agent.as_ref().and_then(|a| a["view_mode"].as_str());
+                // A current bridge may have finished starting during the check.
+                if mode.is_some() {
+                    this.view_switches.remove(&id);
+                    match ViewSwitch::begin(mode, Show::Terminal, generation) {
+                        Ok(Some(switch)) => this.switch_view(&t, switch, cx),
+                        Ok(None) => {
+                            this.problem = None;
+                        }
+                        Err(message) => this.problem = Some(message.into()),
+                    }
+                    cx.notify();
+                    return;
+                }
+                let state = t.agent.as_ref().and_then(|a| a["state"].as_str());
+                let recovery = legacy_view_recovery(
+                    state,
+                    crate::composer::can_resume(&t),
+                    checked.ok().flatten(),
+                );
+                let message = match recovery {
+                    ViewRecovery::Resume if t.running => {
+                        if let Some(switch) = this.view_switches.get_mut(&id) {
+                            switch.phase = ViewPhase::Resuming;
+                        }
+                        let options = this.resume_options(&t);
+                        this.restart(&t, options, None, cx);
+                        return;
+                    }
+                    ViewRecovery::Resume => "The conversation ended before changing modes. Resume it and try again.".into(),
+                    ViewRecovery::Busy => "Wait until this conversation is idle, then try changing modes again.".into(),
+                    ViewRecovery::NoResume => "This older agent bridge cannot switch modes, and this conversation has no resumable session. Start a new conversation to use command-line mode.".into(),
+                    ViewRecovery::OlderService => format!(
+                        "The Sandhill service on {device} is older than this app and cannot switch modes yet. Connect this device from a Sandhill app build that includes server daemons to update it."
+                    ),
+                    ViewRecovery::UnknownService => format!(
+                        "The Sandhill service on {device} cannot switch this conversation's modes, and this app has no matching server daemon to verify an update. Connect this device from a Sandhill app build that includes server daemons to update the service."
+                    ),
+                };
+                this.fail_view_switch(&id, generation, message, cx);
+            }).ok();
+        }).detach();
+    }
+
+    /// RestartTerminal preserves the conversation and options, but its bridge
+    /// becomes ready asynchronously. Send the handoff only after its report.
+    pub(crate) fn continue_resumed_view(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(pending) = self
+            .view_switches
+            .get(id)
+            .copied()
+            .filter(|s| s.phase == ViewPhase::Resuming && self.starting.is_none())
+        else {
+            return;
+        };
+        let Some(t) = self.terminals.iter().find(|t| t.id == id).cloned() else {
+            return;
+        };
+        if !t.running {
+            self.fail_view_switch(
+                id,
+                pending.generation,
+                "The agent ended while resuming the conversation to change modes.".into(),
+                cx,
+            );
+            return;
+        }
+        let Some(mode) = t.agent.as_ref().and_then(|a| a["view_mode"].as_str()) else {
+            return;
+        };
+        match ViewSwitch::begin(Some(mode), pending.target, pending.generation) {
+            Ok(Some(switch)) => self.switch_view(&t, switch, cx),
+            Ok(None) => {
+                self.view_switches.remove(id);
+                self.problem = None;
+            }
+            Err(message) => self.fail_view_switch(id, pending.generation, message.into(), cx),
+        }
+    }
+
+    fn switch_view(&mut self, terminal: &TerminalInfo, switch: ViewSwitch, cx: &mut Context<Self>) {
+        let id = terminal.id.clone();
+        let generation = switch.generation;
+        self.view_switches.insert(id.clone(), switch);
+        self.problem = None;
+        let requested = self.daemon.call::<Value>(Call::TellTerminal {
+            terminal: id.clone(),
+            command: json!({
+                "kind": "view",
+                "mode": if switch.target == Show::Terminal { "terminal" } else { "chat" },
+            }),
+        });
+        let request_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = requested.await {
+                this.update(cx, |this, cx| {
+                    this.fail_view_switch(
+                        &request_id,
+                        generation,
+                        format!("Could not change conversation mode: {err:#}"),
+                        cx,
+                    );
+                })
+                .ok();
+            }
+        })
+        .detach();
+        self.watch_view_switch(id, generation, cx);
+    }
+
+    fn watch_view_switch(&self, id: String, generation: u64, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(VIEW_SWITCH_TIMEOUT).await;
+            this.update(cx, |this, cx| {
+                this.fail_view_switch(
+                    &id,
+                    generation,
+                    "The agent did not finish changing modes. You can try again or end and resume the conversation.".into(),
+                    cx,
+                );
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn fail_view_switch(
+        &mut self,
+        id: &str,
+        generation: u64,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(switch) = self.view_switches.get(id).copied() else {
+            return;
+        };
+        if switch.generation != generation {
+            return;
+        }
+        self.view_switches.remove(id);
+        if self.selected.as_deref() == Some(id) && matches!(self.show, Show::Chat | Show::Terminal)
+        {
+            self.show = switch.previous;
+        }
+        self.problem = Some(message);
         cx.notify();
     }
 
@@ -628,10 +1250,11 @@ impl Agents {
     }
 
     /// Enter in the message box: starts a conversation with the message,
-    /// or sends it to the one shown.
+    /// or sends it to the one shown. Posit Assistant also starts without
+    /// one, as its own screen takes messages.
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).value().trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && !(self.show == Show::New && terminal_only(self.new_kind)) {
             return;
         }
         if matches!(self.menu, Some(Menu::Mention { .. })) {
@@ -660,6 +1283,11 @@ impl Agents {
     ) -> bool {
         match self.show {
             Show::New => {
+                if let Some(reason) = self.model_note() {
+                    self.problem = Some(reason);
+                    cx.notify();
+                    return false;
+                }
                 let options = self.new_options(refs);
                 self.start(self.new_kind, Some(text), options, window, cx);
                 true
@@ -694,6 +1322,39 @@ impl Agents {
         cx.notify();
     }
 
+    /// Notebook shortcuts always start a fresh conversation using the
+    /// agent/model currently selected in the composer.
+    pub(crate) fn start_notebook_conversation(
+        &mut self,
+        action: crate::notebook_ai::NotebookAction,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.starting.is_some() {
+            return;
+        }
+        let current = (self.show != Show::New)
+            .then(|| self.current().cloned())
+            .flatten();
+        let (kind, options) = if let Some(current) = current {
+            let Some(kind) = kind_of(&current.kind) else {
+                return;
+            };
+            (kind.kind, self.resume_options(&current))
+        } else {
+            if let Some(reason) = self.model_note() {
+                self.problem = Some(reason);
+                cx.notify();
+                return;
+            }
+            (self.new_kind, self.new_options(Vec::new()))
+        };
+        let prompt = action.prompt(&path);
+        let options = action.options(options, &path);
+        self.start(kind, Some(prompt), options, window, cx);
+    }
+
     /// The switch for notebooks following the agent's edits.
     pub(crate) fn toggle_follow_edits(&mut self, cx: &mut Context<Self>) {
         self.follow_edits = !self.follow_edits;
@@ -707,7 +1368,7 @@ impl Agents {
         &mut self,
         kind: &'static str,
         prompt: Option<String>,
-        options: AgentOptions,
+        mut options: AgentOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -722,6 +1383,8 @@ impl Agents {
             cx.notify();
             return;
         }
+        options.account = crate::prefs::agent_account(&self.host, kind);
+        let (prompt, first) = first_message(kind, prompt, &mut options);
         self.starting = Some(name);
         self.problem = None;
         let started = self.daemon.call::<TerminalInfo>(Call::StartTerminal {
@@ -740,10 +1403,14 @@ impl Agents {
                 this.starting = None;
                 match started {
                     Ok(info) => {
-                        this.follow(&info, cx);
                         let id = info.id.clone();
+                        if let Some(first) = first {
+                            this.typing.insert(id.clone(), first);
+                        }
+                        this.follow(&info, cx);
                         this.terminals.push(info);
                         this.new_choice = Choice::default();
+                        this.browsed_effort = None;
                         this.select(id, window, cx);
                     }
                     Err(err) => this.problem = Some(format!("Could not start {name}: {err:#}")),
@@ -756,8 +1423,7 @@ impl Agents {
     }
 
     /// Sends a message: to the bridge of an agent Sandhill drives, or as if
-    /// typed into the agent's terminal (one paste, so line breaks don't
-    /// send it early, then Enter).
+    /// typed into the agent's terminal.
     fn send(
         &mut self,
         t: &TerminalInfo,
@@ -766,7 +1432,7 @@ impl Agents {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.trust_asked.contains(&t.id) {
-            self.problem = Some("Answer Claude Code's question above first.".into());
+            self.problem = Some("Answer Claude Code's question first.".into());
             cx.notify();
             return false;
         }
@@ -783,32 +1449,44 @@ impl Agents {
             } else {
                 self.tell(t, json!({"kind": "say", "text": text, "refs": refs}));
             }
+        } else if terminal_only(&t.kind) {
+            self.type_message(&t.id, &t.kind, &with_refs(text, refs), cx);
         } else {
             // The chips go first, so Claude Code's prompt hook finds them.
             if !refs.is_empty() {
                 self.tell(t, json!({"kind": "set", "refs": refs}));
             }
-            let paste = format!("\x1b[200~{}\x1b[201~", text.replace('\n', "\r"));
-            let enter = Call::TerminalInput {
-                terminal: t.id.clone(),
-                data: "\r".into(),
-            };
-            let pasted = self.daemon.call_in_order::<Value>(Call::TerminalInput {
-                terminal: t.id.clone(),
-                data: paste,
-            });
-            let daemon = self.daemon.clone();
-            cx.spawn(async move |_, cx| {
-                if pasted.await.is_ok() {
-                    cx.background_executor().timer(SUBMIT_DELAY).await;
-                    daemon.fire(enter);
-                }
-            })
-            .detach();
+            self.type_message(&t.id, &t.kind, text, cx);
         }
         self.problem = None;
         self.chat_scroll.scroll_to_bottom();
         true
+    }
+
+    /// Types a message into the agent's terminal: one paste, so line breaks
+    /// don't send it early, then Enter.
+    fn type_message(&self, id: &str, kind: &str, text: &str, cx: &mut Context<Self>) {
+        let (text, delay) = if terminal_only(kind) {
+            (text.to_string(), POSIT_SUBMIT_DELAY)
+        } else {
+            (text.replace('\n', "\r"), SUBMIT_DELAY)
+        };
+        let enter = Call::TerminalInput {
+            terminal: id.to_string(),
+            data: "\r".into(),
+        };
+        let pasted = self.daemon.call_in_order::<Value>(Call::TerminalInput {
+            terminal: id.to_string(),
+            data: format!("\x1b[200~{text}\x1b[201~"),
+        });
+        let daemon = self.daemon.clone();
+        cx.spawn(async move |_, cx| {
+            if pasted.await.is_ok() {
+                cx.background_executor().timer(delay).await;
+                daemon.fire(enter);
+            }
+        })
+        .detach();
     }
 
     /// Stops what the agent is doing, as Esc does.
@@ -825,6 +1503,7 @@ impl Agents {
             });
         }
         self.stopped.insert(t.id);
+        self.problem = None;
         cx.notify();
     }
 
@@ -848,14 +1527,18 @@ impl Agents {
         });
         let ask = ask.to_string();
         cx.spawn(async move |this, cx| {
-            if let Err(err) = answered.await {
-                this.update(cx, |this, cx| {
-                    this.sent.remove(&ask);
-                    this.problem = Some(format!("Could not answer: {err:#}"));
-                    cx.notify();
-                })
-                .ok();
-            }
+            let answered = answered.await;
+            this.update(cx, |this, cx| {
+                this.problem = match answered {
+                    Ok(_) => None,
+                    Err(err) => {
+                        this.sent.remove(&ask);
+                        Some(format!("Could not answer: {err:#}"))
+                    }
+                };
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
         cx.notify();
@@ -925,8 +1608,25 @@ impl Agents {
     }
 }
 
+pub(crate) fn account_at_limit(account: &AgentAccount) -> bool {
+    account
+        .usage
+        .as_ref()
+        .and_then(|usage| usage["rate_limits"].as_object())
+        .is_some_and(|windows| {
+            windows.values().any(|window| {
+                window["used_percentage"]
+                    .as_f64()
+                    .is_some_and(|used| used.is_finite() && used >= 100.)
+            })
+        })
+}
+
 fn is_agent(t: &TerminalInfo) -> bool {
-    !matches!(t.kind.as_str(), TERMINAL_SHELL | TERMINAL_JOB | "preview")
+    !matches!(
+        t.kind.as_str(),
+        TERMINAL_SHELL | TERMINAL_JOB | TERMINAL_LOGIN | "preview"
+    )
 }
 
 /// The model the agent last reported, shortened: "Opus 5.5".
@@ -942,4 +1642,231 @@ pub(crate) fn model_label(t: &TerminalInfo) -> Option<String> {
 fn decoded_len(data: &str) -> u64 {
     let padding = data.bytes().rev().take_while(|b| *b == b'=').count();
     (data.len() / 4 * 3).saturating_sub(padding) as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AgentOptions, KINDS, Show, ViewPhase, ViewRecovery, ViewSwitch, drives_chat, first_message,
+        kind_of, legacy_view_recovery, provider_show, supports_terminal, takes_message,
+        terminal_only,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn view_switch_legacy_recovery_requires_idle_resumable_current_service() {
+        assert_eq!(
+            legacy_view_recovery(Some("idle"), true, Some(true)),
+            ViewRecovery::Resume
+        );
+        assert_eq!(
+            legacy_view_recovery(Some("idle"), true, Some(false)),
+            ViewRecovery::OlderService
+        );
+        assert_eq!(
+            legacy_view_recovery(Some("idle"), true, None),
+            ViewRecovery::UnknownService
+        );
+        assert_eq!(
+            legacy_view_recovery(Some("idle"), false, Some(true)),
+            ViewRecovery::NoResume
+        );
+        // A freshly started bridge on an old daemon is not upgraded by
+        // restarting it, even when its terminal is not marked outdated.
+        assert_eq!(
+            legacy_view_recovery(Some("idle"), false, Some(false)),
+            ViewRecovery::OlderService
+        );
+        for state in [Some("busy"), Some("waiting"), None] {
+            for service in [Some(true), Some(false), None] {
+                assert_eq!(
+                    legacy_view_recovery(state, true, service),
+                    ViewRecovery::Busy
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn view_switch_recovery_waits_for_new_bridge_before_handoff() {
+        let mut switch = ViewSwitch {
+            target: Show::Terminal,
+            previous: Show::Chat,
+            generation: 1,
+            started: false,
+            phase: ViewPhase::Checking,
+        };
+        assert!(switch.observe(Some("chat")).is_none());
+        switch.phase = ViewPhase::Resuming;
+        assert!(switch.observe(Some("chat")).is_none());
+        switch.phase = ViewPhase::Switching;
+        assert!(switch.observe(Some("chat")).is_none());
+        assert!(switch.observe(Some("terminal")) == Some(Show::Terminal));
+    }
+
+    #[test]
+    fn view_switch_rejects_legacy_handoff_without_blocking_chat() {
+        assert!(ViewSwitch::begin(None, Show::Terminal, 1).is_err());
+        assert!(ViewSwitch::begin(None, Show::Chat, 1).unwrap().is_none());
+        assert!(
+            ViewSwitch::begin(Some("chat"), Show::Chat, 1)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            ViewSwitch::begin(Some("terminal"), Show::Terminal, 1)
+                .unwrap()
+                .is_none()
+        );
+        assert!(ViewSwitch::begin(Some("switching_terminal"), Show::Chat, 1).is_err());
+    }
+
+    #[test]
+    fn view_switch_completes_in_both_directions_and_on_bridge_failure() {
+        for (previous, target, changing, ready) in [
+            ("chat", Show::Terminal, "switching_terminal", "terminal"),
+            ("terminal", Show::Chat, "switching_chat", "chat"),
+        ] {
+            let mut switch = ViewSwitch::begin(Some(previous), target, 1)
+                .unwrap()
+                .unwrap();
+            assert!(switch.observe(None).is_none());
+            // An unrelated old report must not acknowledge a new request.
+            assert!(switch.observe(Some(previous)).is_none());
+            assert!(switch.observe(Some(changing)).is_none());
+            assert!(switch.observe(Some(ready)) == Some(target));
+            // Failed handoffs report the original mode after switching_*.
+            assert!(switch.observe(Some(previous)) == Some(switch.previous));
+            // Already-running target: no intermediate report is required.
+            let mut switch = ViewSwitch::begin(Some(previous), target, 2)
+                .unwrap()
+                .unwrap();
+            assert!(switch.observe(Some(ready)) == Some(target));
+        }
+    }
+
+    /// Posit Assistant's screen as `pa` 0.1.0 draws it, trimmed.
+    const TRUST: &str = "Posit Assistant\n v0.1.0\n│ Workspace Trust Required │\n│ Trust this workspace? │\n│ Press: t (trust) | r (restricted mode) │\n┌───┐\n│Enter a prompt │\n└───┘";
+    const READY: &str = "Posit Assistant\n v0.1.0\n ⚡ Auto · A classifier reviews tool calls\n┌───┐\n│Enter a prompt │\n└───┘";
+    const TYPED: &str = "Posit Assistant\n┌───┐\n│Plot the UMAP│\n└───┘";
+
+    #[test]
+    fn openscience_is_an_alphabetical_chat_only_provider() {
+        let names: Vec<_> = KINDS.iter().map(|kind| kind.name).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable_by_key(|name| name.to_lowercase());
+        assert_eq!(names, sorted);
+        let kind = kind_of("openscience").unwrap();
+        assert_eq!(kind.name, "OpenScience");
+        assert_eq!(kind.short, "OpenScience");
+        assert_eq!(kind.plan, "OpenScience · your configured models");
+        assert_eq!(kind.placeholder, "Ask OpenScience…");
+        assert!(drives_chat(kind.kind));
+        assert!(!terminal_only(kind.kind));
+        assert!(!supports_terminal(kind.kind));
+        assert!(provider_show(kind.kind, Show::Terminal) == Show::Chat);
+        assert!(provider_show(kind.kind, Show::Chat) == Show::Chat);
+        assert!(provider_show(kind.kind, Show::New) == Show::New);
+        assert!(provider_show(kind.kind, Show::History) == Show::History);
+        assert!(provider_show("codex", Show::Terminal) == Show::Terminal);
+        assert!(provider_show("posit", Show::Chat) == Show::Terminal);
+    }
+
+    #[test]
+    fn oh_my_pi_and_pi_have_chat_and_command_line() {
+        for (kind, name) in [("omp", "Oh My Pi"), ("pi", "pi")] {
+            let provider = kind_of(kind).unwrap();
+            assert_eq!(provider.name, name);
+            assert!(drives_chat(kind));
+            assert!(!terminal_only(kind));
+            assert!(supports_terminal(kind));
+            assert!(provider_show(kind, Show::Terminal) == Show::Terminal);
+            assert!(provider_show(kind, Show::Chat) == Show::Chat);
+        }
+    }
+
+    #[test]
+    fn openscience_first_message_keeps_notebook_references_for_the_bridge() {
+        let reference = json!({"kind": "chunk", "path": "qc.ipynb", "cell": "load"});
+        let mut options = AgentOptions {
+            refs: vec![reference.clone()],
+            ..Default::default()
+        };
+        let (prompt, typed) = first_message(
+            "openscience",
+            Some("Explain this cell".into()),
+            &mut options,
+        );
+        assert_eq!(prompt.as_deref(), Some("Explain this cell"));
+        assert_eq!(typed, None);
+        assert_eq!(options.refs, vec![reference]);
+    }
+
+    #[test]
+    fn posit_assistant_takes_a_message_only_at_its_empty_prompt() {
+        // Keys typed while it asks about trust would answer the question.
+        assert!(!takes_message(TRUST));
+        assert!(takes_message(READY));
+        assert!(!takes_message(TYPED));
+        assert!(!takes_message(""));
+    }
+
+    #[test]
+    fn posit_assistants_first_message_is_typed_with_what_was_added() {
+        let chunk =
+            json!({"kind": "chunk", "name": "qc.ipynb › load", "path": "qc.ipynb", "cell": "load"});
+        let mut options = AgentOptions {
+            refs: vec![chunk.clone()],
+            ..Default::default()
+        };
+        let (prompt, typed) = first_message("posit", Some("Fix this".into()), &mut options);
+        assert_eq!(prompt, None);
+        assert_eq!(
+            typed.as_deref(),
+            Some(
+                "Fix this\n\nSandhill: the user added these to this message:\n\
+                 - the cell `load` of qc.ipynb (get_outputs reads what it showed)"
+            )
+        );
+        assert!(options.refs.is_empty());
+        // Started without a message: nothing to type.
+        let (prompt, typed) = first_message("posit", Some(String::new()), &mut options);
+        assert_eq!((prompt, typed), (None, None));
+        // The other agents get theirs as the daemon's prompt, refs and all.
+        let mut options = AgentOptions {
+            refs: vec![chunk],
+            ..Default::default()
+        };
+        let (prompt, typed) = first_message("claude", Some("Fix this".into()), &mut options);
+        assert_eq!((prompt.as_deref(), typed), (Some("Fix this"), None));
+        assert_eq!(options.refs.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::account_at_limit;
+    use sandhill_proto::AgentAccount;
+    use serde_json::json;
+
+    #[test]
+    fn only_known_exhausted_windows_block_an_account() {
+        let mut account: AgentAccount = serde_json::from_value(json!({
+            "id":"codex:work", "kind":"codex", "name":"Work", "method":"login"
+        }))
+        .unwrap();
+        assert!(!account_at_limit(&account));
+        for (used, expected) in [
+            (None, false),
+            (Some(99.9), false),
+            (Some(100.), true),
+            (Some(105.), true),
+        ] {
+            account.usage = Some(json!({"rate_limits": {
+                "primary":{"used_percentage":used},
+                "secondary":{"used_percentage":12}
+            }}));
+            assert_eq!(account_at_limit(&account), expected);
+        }
+    }
 }

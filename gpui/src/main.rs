@@ -5,14 +5,14 @@
 //! Usage: `sandhill-gpui [--host HOST] [PROJECT_FOLDER]`, where HOST is
 //! `local` (the default) or an ssh destination such as `lab`.
 
-// The theme in `look` is one large `json!`.
-#![recursion_limit = "512"]
-
+mod agent_accounts;
 mod agent_edits;
 mod agents;
 mod agents_box;
 mod agents_view;
+mod app_uninstall;
 mod app_window;
+mod bio_text;
 mod cell_ai;
 mod cell_view;
 mod cells;
@@ -22,10 +22,17 @@ mod composer;
 mod composer_view;
 mod connection;
 mod daemon;
+mod delimited;
+mod doc_text;
+mod documents;
 mod download;
+mod effort_bar;
 mod explorer;
 mod export;
 mod files;
+mod find;
+mod focus_mode;
+mod folder_dialog;
 mod ghost;
 mod git;
 mod git_diff;
@@ -36,25 +43,43 @@ mod help;
 mod html_table;
 mod import_dialog;
 mod imports;
+mod irkernel;
 mod jobs;
 mod kernel_menu;
+mod language;
 mod look;
 mod machine;
 mod main_menu;
+mod md_images;
+mod media;
+mod meter;
 mod notebook;
+mod notebook_ai;
+mod object_explorer;
+mod outline;
+mod output_table;
+mod output_text;
 mod packages;
 mod pages;
 mod panes;
 mod plots;
+mod popup;
 mod prefs;
 mod project_settings;
+mod quota;
+mod r_keys;
+mod rainbow;
+mod render_document;
+mod resource_manager;
 mod shown;
 mod start_screen;
 mod statements;
 mod table;
+mod table_selection;
 mod terminal;
 mod tree;
 mod tree_actions;
+mod trust;
 mod view;
 mod viewer;
 mod workbench;
@@ -111,18 +136,73 @@ actions!(
 /// The key context of a notebook's cells when none is being edited.
 pub const CELLS: &str = "NotebookCells";
 
-/// Highlighting for R, with Posit's tree-sitter grammar (MIT).
+/// Register R and specialize imports and call argument names in R and Python.
 fn register_r() {
     use gpui_kit::component::highlighter::{LanguageConfig, LanguageRegistry};
+    let registry = LanguageRegistry::singleton();
+    // gpui-component accepts only fixed capture names. Reserve `primary` for
+    // Python import keywords, `hint` for R package-loading calls, and `label`
+    // for call argument names. Their styles live in look::xcode_syntax.
+    // Put specializations first: equal-range captures keep the first style.
+    let r_highlights = format!(
+        r#"
+((call function: [
+    (identifier) @hint
+    (namespace_operator rhs: (identifier) @hint)
+]) (#match? @hint "^(library|require)$"))
+(call arguments: (arguments (argument name: (identifier) @label)))
+{}
+"#,
+        tree_sitter_r::HIGHLIGHTS_QUERY
+    );
     let config = LanguageConfig::new(
         "r",
         tree_sitter_r::LANGUAGE.into(),
         vec![],
-        tree_sitter_r::HIGHLIGHTS_QUERY,
+        &r_highlights,
         "",
         tree_sitter_r::LOCALS_QUERY,
     );
-    LanguageRegistry::singleton().register("r", &config);
+    registry.register("r", &config);
+
+    // Keep the built-in grammar, other captures, locals, and injections intact.
+    let mut python = registry
+        .language("python")
+        .expect("the tree-sitter-python feature registers Python");
+    python.highlights = format!(
+        r#"
+(import_statement "import" @primary)
+(import_from_statement ["from" "import"] @primary)
+(future_import_statement ["from" "import"] @primary)
+(aliased_import "as" @primary)
+(call arguments: (argument_list (keyword_argument name: (identifier) @label)))
+; Xcode colours these reserved words (including the `in` of `for`) as keywords.
+["and" "in" "is" "not" "or" "is not" "not in"] @keyword
+{}
+"#,
+        python.highlights
+    )
+    .into();
+    registry.register("python", &python);
+}
+
+/// R's typing rules: brackets, quotes and backtick names close themselves
+/// outside strings and comments; Python keeps Kit's own rules, which do so too.
+fn register_r_editing(cx: &mut App) {
+    use gpui_kit::component::input::language_config::LanguageConfig;
+    use gpui_kit::component::input::{AutoClosingPair, SyntaxContext, set_language_config};
+    let pairs = [
+        ("(", ")"),
+        ("[", "]"),
+        ("{", "}"),
+        ("\"", "\""),
+        ("'", "'"),
+        ("`", "`"),
+    ]
+    .map(|(open, close)| {
+        AutoClosingPair::new(open, close).not_in([SyntaxContext::String, SyntaxContext::Comment])
+    });
+    set_language_config("r", LanguageConfig::default().auto_closing_pairs(pairs), cx);
 }
 
 fn main() -> anyhow::Result<()> {
@@ -164,10 +244,10 @@ fn main() -> anyhow::Result<()> {
             look::install(cx);
             cx.on_action(|_: &Quit, cx| app_window::quit(cx));
             // With no window open, a new one.
-            cx.on_action(|_: &NewWindow, cx| {
-                app_window::open_window(app_window::Places::default(), cx)
-            });
+            // One main window: a new window is Welcome, to open a project.
+            cx.on_action(|_: &NewWindow, cx| app_window::show_welcome(None, cx));
             register_r();
+            register_r_editing(cx);
             main_menu::install_app_actions(cx);
             // The Tauri app's shortcuts: ⌘ on a Mac, Ctrl elsewhere.
             let m = if cfg!(target_os = "macos") {
@@ -230,28 +310,42 @@ fn main() -> anyhow::Result<()> {
             if cfg!(target_os = "macos") {
                 keys.push(KeyBinding::new("cmd-m", Minimize, None));
                 keys.push(KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None));
+                keys.push(KeyBinding::new(
+                    "ctrl-cmd-enter",
+                    crate::focus_mode::FocusEditor,
+                    None,
+                ));
             }
             cx.bind_keys(keys);
             cx.set_menus(main_menu::app_menus());
             // The project named on the command line opens in a window of
             // its own; otherwise the windows open when the app last quit.
             let places = match project.clone() {
-                Some(path) => vec![app_window::Places {
-                    tabs: vec![app_window::Place {
+                Some(path) => {
+                    let place = app_window::Place {
                         host: host.clone(),
                         path,
-                    }],
-                    current: Some(host.clone()),
-                }],
-                None if host != sandhill_link::LOCAL => vec![app_window::Places {
-                    tabs: vec![app_window::Place {
+                    };
+                    vec![app_window::Places {
+                        tabs: vec![place.clone()],
+                        current: Some(place),
+                    }]
+                }
+                None if host != sandhill_link::LOCAL => {
+                    let place = app_window::Place {
                         host: host.clone(),
                         path: String::new(),
-                    }],
-                    current: Some(host.clone()),
-                }],
+                    };
+                    vec![app_window::Places {
+                        tabs: vec![place.clone()],
+                        current: Some(place),
+                    }]
+                }
                 None => prefs::windows(),
             };
+            // Completion menus and their documentation stay clear of the
+            // title and status bars.
+            gpui_kit::component::input::set_popup_insets(px(look::TITLE_BAR), px(look::STATUS_BAR));
             app_window::start(rt.clone(), places, cx);
             cx.activate(true);
         });

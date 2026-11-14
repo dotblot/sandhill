@@ -1,20 +1,25 @@
-//! Drawing the AI pane, in the Tauri app's look (`AgentsPane.tsx`,
-//! `AgentChat.tsx`, the `.chat` rules of `styles.css`), text 2px larger:
-//! the conversation's tab and buttons, then the chat, the terminal, the
-//! history or a new conversation, and the message box.
+//! Drawing the AI pane, laid out as in the Tauri app (`AgentsPane.tsx`,
+//! `AgentChat.tsx`, the `.chat` rules of `styles.css`), text 2px larger, in
+//! a translucent pane on the window's glass: the conversation's tab and
+//! buttons, then the chat, the terminal, the history or a new conversation,
+//! and the message box.
 
 use chrono::{Local, TimeZone};
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::TerminalInfo;
+use sandhill_proto::{Call, TerminalInfo};
 use serde_json::{Value, json};
 
-use crate::agents::{Agents, KINDS, Show, kind_of, model_label, question_key};
+use crate::agents::{
+    Agents, KINDS, Show, kind_of, model_label, provider_show, question_key, supports_terminal,
+    terminal_only,
+};
 use crate::chat::{self, Ask, Item, Step, StepStatus};
-use crate::look::{self, Palette, RADIUS, icon, icon_button, pane, picture};
+use crate::look::{self, Palette, RADIUS, icon, icon_button, picture, side_pane};
 use crate::workbench::Workbench;
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -30,6 +35,16 @@ impl Render for Agents {
         }
         self.question_fields(window, cx);
         let current = self.current().cloned();
+        if let Some(t) = &current {
+            self.show = provider_show(&t.kind, self.show);
+        }
+        let switching = current
+            .as_ref()
+            .and_then(|t| self.view_switches.get(&t.id))
+            .map(|switch| match switch.target {
+                Show::Terminal => "Opening command-line mode…",
+                _ => "Returning to chat…",
+            });
         let body: AnyElement = match (self.show, &current) {
             (Show::History, _) => self.render_history(cx),
             (Show::New, _) => self.render_new(cx),
@@ -37,23 +52,44 @@ impl Render for Agents {
                 &format!("Starting {}…", self.starting.unwrap_or_default()),
                 &p,
             ),
+            _ if switching.is_some() => self.render_note(switching.unwrap_or_default(), &p),
             (Show::Terminal, Some(t)) => self.render_terminal(t, cx),
+            (Show::Chat, Some(t)) if terminal_only(&t.kind) => self.render_terminal(t, cx),
             (Show::Chat, Some(t)) => self.render_chat(t, cx),
             (_, None) => self.render_empty(cx),
         };
         let composer = match (self.show, &current) {
             (Show::New, _) => true,
-            (Show::Chat, Some(t)) => t.running || crate::composer::can_resume(t),
+            (Show::Chat, Some(t)) => {
+                switching.is_none()
+                    && !terminal_only(&t.kind)
+                    && (t.running || crate::composer::can_resume(t))
+            }
             _ => false,
         };
-        pane(&p)
+        let floating = self.show == Show::History
+            || (self.show == Show::Chat
+                && current.as_ref().is_some_and(|t| !terminal_only(&t.kind))
+                && self.starting.is_none()
+                && switching.is_none());
+        let head = self.render_head(current.as_ref(), cx);
+        let head = if floating {
+            look::floating_header(&p, 0., false, head)
+        } else {
+            head.into_any_element()
+        };
+        let mut head = Some(head);
+        side_pane(&p)
+            .relative()
             .size_full()
-            .child(self.render_head(current.as_ref(), cx))
+            .when(!floating, |d| d.children(head.take()))
             .child(div().flex_1().min_h_0().flex().flex_col().child(body))
             .when_some(self.problem.clone(), |d, problem| {
                 d.child(
-                    div()
+                    h_flex()
                         .flex_none()
+                        .items_start()
+                        .gap(px(6.))
                         .mx(px(8.))
                         .mb(px(4.))
                         .px(px(10.))
@@ -61,17 +97,40 @@ impl Render for Agents {
                         .rounded(px(RADIUS))
                         .bg(p.err_soft)
                         .text_size(px(look::SMALL + 1.))
-                        .child(problem),
+                        .child(div().flex_1().min_w_0().child(problem))
+                        .child(
+                            icon_button("agent-error-close", "close", &p, false)
+                                .size(px(20.))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.problem = None;
+                                    cx.notify();
+                                })),
+                        ),
                 )
             })
             .when(composer, |d| {
-                d.child(self.render_composer(current.as_ref(), window, cx))
+                d.when_some(
+                    current.as_ref().filter(|t| {
+                        self.show == Show::Chat && t.running && self.trust_asked.contains(&t.id)
+                    }),
+                    |d, t| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .mx(px(8.))
+                                .mb(px(4.))
+                                .child(self.render_trust(t, cx)),
+                        )
+                    },
+                )
+                .child(self.render_composer(current.as_ref(), window, cx))
             })
+            .children(head)
     }
 }
 
 impl Agents {
-    /// The tab with the conversation's name, then New, History and the
+    /// The conversation's name as plain text, then New, History and the
     /// terminal.
     fn render_head(
         &self,
@@ -117,9 +176,16 @@ impl Agents {
                 .children(current.map(|t| provider(&t.kind)))
                 .child(Input::new(&input).small())
                 .into_any_element(),
-            None => Workbench::tab("agent-title", Some(leading), label, true, &p)
+            // Plain text, not a tab: there is nothing to switch to here.
+            None => h_flex()
+                .id("agent-title")
+                .gap(px(6.))
+                .px(px(6.))
                 .flex_shrink(1.)
                 .min_w(px(0.))
+                .text_color(p.text)
+                .child(div().flex_none().child(leading))
+                .child(div().min_w_0().truncate().child(label))
                 .overflow_hidden()
                 .when(
                     current.is_some() && matches!(self.show, Show::Chat | Show::Terminal),
@@ -163,27 +229,33 @@ impl Agents {
                         this.show(show, window, cx)
                     })),
             )
-            .when(current.is_some(), |d| {
-                let terminal = self.show == Show::Terminal;
-                d.child(
-                    icon_button(
-                        "agent-terminal",
-                        if terminal { "chat" } else { "terminal" },
-                        &p,
-                        false,
+            .when(
+                current.is_some_and(|t| !terminal_only(&t.kind) && supports_terminal(&t.kind)),
+                |d| {
+                    let terminal = self.show == Show::Terminal;
+                    d.child(
+                        icon_button(
+                            "agent-terminal",
+                            if terminal { "chat" } else { "terminal" },
+                            &p,
+                            false,
+                        )
+                        .when(terminal, |d| d.bg(on).text_color(p.text))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                let show = if terminal { Show::Chat } else { Show::Terminal };
+                                this.show(show, window, cx)
+                            },
+                        )),
                     )
-                    .when(terminal, |d| d.bg(on).text_color(p.text))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let show = if terminal { Show::Chat } else { Show::Terminal };
-                        this.show(show, window, cx)
-                    })),
-                )
-            })
+                },
+            )
             .child(
                 div()
                     .relative()
                     .child(
                         icon_button("agent-gear", "settings", &p, false)
+                            .on_prepaint(self.popup_triggers.track("agent-gear"))
                             .when(self.gear && gear_on, |d| d.bg(on).text_color(p.text))
                             .when(!gear_on, |d| d.opacity(0.4))
                             .when(gear_on, |d| {
@@ -192,15 +264,49 @@ impl Agents {
                     )
                     .when(self.gear && gear_on, |d| {
                         d.children(current.map(|t| {
-                            div().absolute().right_0().bottom_0().child(deferred(
-                                anchored()
-                                    .anchor(Anchor::TopRight)
-                                    .snap_to_window_with_margin(px(8.))
-                                    .child(self.render_gear(t, &p, cx)),
-                            ))
+                            div().absolute().right_0().bottom_0().child(
+                                deferred(
+                                    anchored()
+                                        .anchor(Anchor::TopRight)
+                                        .snap_to_window_with_margin(px(8.))
+                                        .child(self.render_gear(t, &p, cx)),
+                                )
+                                .with_priority(3),
+                            )
                         }))
                     }),
             )
+            .child({
+                let panel = crate::panes::Panel::Agents;
+                let maximized = self
+                    .workbench
+                    .upgrade()
+                    .is_some_and(|w| w.read(cx).maximized_panel == Some(panel));
+                icon_button(
+                    "agent-maximize",
+                    if maximized {
+                        "pane.restore"
+                    } else {
+                        "pane.maximize"
+                    },
+                    &p,
+                    false,
+                )
+                .tooltip(move |w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(if maximized {
+                        "Restore"
+                    } else {
+                        "Maximize to the window"
+                    })
+                    .build(w, cx)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let _ = this
+                        .workbench
+                        .update(cx, |w, cx| w.maximize_panel(panel, cx));
+                    cx.notify();
+                }))
+            })
     }
 
     /// The conversation's menu: compact, rename, end.
@@ -261,7 +367,10 @@ impl Agents {
                     .when(self.confirm_end, |d| d.text_color(p.err))
                     .on_click(cx.listener(|this, _, window, cx| this.end_conversation(window, cx))),
             )
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if this.popup_triggers.contains("agent-gear", event.position) {
+                    return;
+                }
                 this.gear = false;
                 this.confirm_end = false;
                 cx.notify();
@@ -299,7 +408,7 @@ impl Agents {
             .child(div().text_color(p.text).font_weight(FontWeight::SEMIBOLD).child("No conversations"))
             .child(
                 div().text_center().line_height(rems(1.45)).child(
-                    "Chat with Claude Code, Codex or Antigravity about this project. They run with your own plan, can run code in your live R and Python sessions, and add cells to your files.",
+                    "Chat with Antigravity, Claude Code, Codex, OpenScience or Posit Assistant about this project. They use your own plans or configured models, can run code in your live R and Python sessions, and add cells to your files.",
                 ),
             )
             .child(
@@ -309,7 +418,7 @@ impl Agents {
             .into_any_element()
     }
 
-    /// Picking the agent; the first message starts it.
+    /// The project-wide conversation; agent/model selection stays in the composer.
     fn render_new(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let project = self
@@ -325,29 +434,6 @@ impl Agents {
             .find(|a| a.kind == chosen.kind)
             .filter(|a| a.path.is_none())
             .map(|a| a.install.clone());
-        let chips = KINDS.iter().map(|k| {
-            let on = k.kind == self.new_kind;
-            let hover = p.ink(7.);
-            let kind = k.kind;
-            h_flex()
-                .id(SharedString::from(format!("new-{}", k.kind)))
-                .gap(px(6.))
-                .h(px(28.))
-                .px(px(10.))
-                .rounded(px(RADIUS))
-                .border_1()
-                .cursor_pointer()
-                .map(|d| {
-                    if on {
-                        d.border_color(p.accent).bg(p.accent_soft)
-                    } else {
-                        d.border_color(p.line).hover(move |d| d.bg(hover))
-                    }
-                })
-                .child(provider(k.kind))
-                .child(k.name)
-                .on_click(cx.listener(move |this, _, _, cx| this.choose_new_kind(kind, cx)))
-        });
         div()
             .id("agent-new-body")
             .flex_1()
@@ -365,7 +451,6 @@ impl Agents {
                     .child(div().text_color(p.muted).child(format!(
                         "It works on the whole {project} project and sees your live sessions. To have it work on a file, name the file in your message."
                     )))
-                    .child(h_flex().flex_wrap().gap(px(6.)).children(chips))
                     .child(
                         div()
                             .text_size(px(look::SMALL + 1.))
@@ -392,10 +477,17 @@ impl Agents {
                                 ),
                         )
                     })
-                    .child(div().text_color(p.faint).child(format!(
-                        "Runs in this project's folder, signed in with your own {} account. Type your first message below.",
-                        chosen.name
-                    ))),
+                    .child(div().text_color(p.faint).child(if terminal_only(chosen.kind) {
+                        format!(
+                            "Opens {}'s own screen here, in this project's folder, with the model providers you set up in it. Type your first message below, or press Enter to start without one.",
+                            chosen.name
+                        )
+                    } else {
+                        format!(
+                            "Runs in this project's folder, signed in with your own {} account. Type your first message below.",
+                            chosen.name
+                        )
+                    })),
             )
             .into_any_element()
     }
@@ -446,12 +538,14 @@ impl Agents {
             }
         }
         if rows.is_empty() {
-            return self.render_note("No conversations yet.", &p);
+            rows.push(self.render_note("No conversations yet.", &p));
         }
-        div()
+        look::PaneScroll::new(
+            "agent-history-scroll",
+            look::STRIP,
+            0.,
+            div()
             .id("agent-history")
-            .flex_1()
-            .overflow_y_scroll()
             .child(
                 v_flex()
                     .p(px(8.))
@@ -464,7 +558,8 @@ impl Agents {
                             .text_color(p.faint)
                             .child("Conversations are kept by sandhilld. Reopening one resumes the agent's own conversation."),
                     ),
-            )
+            ),
+        )
             .into_any_element()
     }
 
@@ -472,10 +567,13 @@ impl Agents {
         let p = *Palette::get(cx);
         let id = t.id.clone();
         let selected = self.selected.as_ref() == Some(&t.id);
+        let idle_stopped = !t.running && t.exit.as_ref().is_some_and(|e| e.idle);
         let state = if self.waiting(t) {
             "waiting for you".to_string()
         } else if self.working(t) {
             "running".to_string()
+        } else if idle_stopped {
+            format!("stopped while idle · {}", time_label(self.last_active(t)))
         } else {
             time_label(self.last_active(t))
         };
@@ -500,7 +598,7 @@ impl Agents {
             .text_size(px(look::SMALL))
             .map(|d| {
                 if asking {
-                    d.bg(p.err_soft).text_color(p.err).child("Delete?")
+                    d.bg(p.err).text_color(gpui_kit::white()).child("Delete?")
                 } else {
                     d.invisible()
                         .group_hover(group.clone(), |d| d.visible())
@@ -516,6 +614,38 @@ impl Agents {
                 cx.stop_propagation();
                 this.delete_from_history(delete_id.clone(), window, cx)
             }));
+        // Stops the agent but keeps the conversation; a message resumes it.
+        let stop = t.running.then(|| {
+            let stop_id = t.id.clone();
+            let resumable = crate::composer::can_resume(t);
+            h_flex()
+                .id(SharedString::from(format!("hist-stop-{}", t.id)))
+                .flex_none()
+                .px(px(5.))
+                .h(px(22.))
+                .rounded(px(6.))
+                .cursor_pointer()
+                .invisible()
+                .group_hover(group.clone(), |d| d.visible())
+                .text_color(p.faint)
+                .hover(|d| d.text_color(p.text))
+                .child(icon("stop").size(px(14.)))
+                .tooltip(move |w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(if resumable {
+                        "Stop the agent. The conversation stays; a message picks it up again."
+                    } else {
+                        "Stop the agent. This conversation cannot be picked up again."
+                    })
+                    .build(w, cx)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.daemon.fire(Call::StopTerminal {
+                        terminal: stop_id.clone(),
+                    });
+                    cx.notify();
+                }))
+        });
         h_flex()
             .id(SharedString::from(format!("hist-{}", t.id)))
             .group(group)
@@ -545,6 +675,8 @@ impl Agents {
                             .child(sub),
                     ),
             )
+            .child(div().flex_1())
+            .children(stop)
             .child(delete)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.confirm_delete = None;
@@ -559,7 +691,23 @@ impl Agents {
             "claude" => "claude",
             "codex" => "codex",
             "antigravity" => "agy",
+            "posit" => "pa",
             other => other,
+        };
+        // An agent without a chat has no chat to go back to; once it ends,
+        // a new conversation starts it again.
+        let button = if !terminal_only(&t.kind) {
+            Some(
+                look::bar_button("back-to-chat", "Back to chat", Some("chat"), &p)
+                    .on_click(cx.listener(|this, _, window, cx| this.show(Show::Chat, window, cx))),
+            )
+        } else if !t.running {
+            Some(
+                look::bar_button("start-again", "Start a new conversation", Some("add"), &p)
+                    .on_click(cx.listener(|this, _, window, cx| this.start_again(window, cx))),
+            )
+        } else {
+            None
         };
         let label = match model_label(t) {
             Some(model) => format!("{program} in a terminal · {model}"),
@@ -585,14 +733,7 @@ impl Agents {
                             .text_ellipsis()
                             .child(label),
                     )
-                    .child(
-                        look::bar_button("back-to-chat", "Back to chat", Some("chat"), &p)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.show(Show::Chat, window, cx)
-                                }),
-                            ),
-                    ),
+                    .children(button),
             )
             .child(
                 div()
@@ -625,8 +766,43 @@ impl Agents {
                     .into_any_element(),
             );
         }
-        if t.running && self.trust_asked.contains(&t.id) {
-            items.push(self.render_trust(t, cx));
+        if (t.running || crate::composer::can_resume(t))
+            && matches!(t.kind.as_str(), "claude" | "codex" | "antigravity")
+        {
+            let account_id = t.options.account.as_deref().unwrap_or(&t.kind);
+            let limited = self
+                .accounts
+                .iter()
+                .find(|account| account.id == account_id)
+                .is_some_and(crate::agents::account_at_limit)
+                || (!self.working(t) && chat::latest_usage_limit(&chat));
+            if limited {
+                let mut alternatives = v_flex().gap(px(6.)).text_size(px(13.));
+                for account in self.accounts.iter().filter(|account| {
+                    account.kind == t.kind
+                        && account.id != account_id
+                        && account.signed_in != Some(false)
+                        && !crate::agents::account_at_limit(account)
+                }) {
+                    let account = account.clone();
+                    alternatives = alternatives.child(
+                        div()
+                            .id(SharedString::from(format!("continue-{}", account.id)))
+                            .px(px(10.))
+                            .py(px(5.))
+                            .rounded(px(RADIUS))
+                            .bg(p.accent_soft)
+                            .text_color(p.accent)
+                            .cursor_pointer()
+                            .hover(move |d| d.bg(p.ink(8.)))
+                            .child(format!("Continue with {}", account.name))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.switch_account(account.clone(), window, cx);
+                            })),
+                    );
+                }
+                items.push(alternatives.into_any_element());
+            }
         }
         if !t.running {
             let resumable = crate::composer::can_resume(t);
@@ -638,7 +814,9 @@ impl Agents {
                     .pt(px(6.))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
-                    .child(if resumable {
+                    .child(if t.exit.as_ref().is_some_and(|e| e.idle) {
+                        format!("{agent} stopped after 30 minutes idle. Send a message to pick this conversation up again.")
+                    } else if resumable {
                         format!("{agent} has stopped. Send a message to pick this conversation up again.")
                     } else {
                         format!("{agent} has stopped.")
@@ -661,21 +839,21 @@ impl Agents {
                     .into_any_element(),
             );
         }
-        div()
-            .id("chat")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.chat_scroll)
-            .child(
+        look::PaneScroll::new(
+            "chat-scroll",
+            look::STRIP,
+            0.,
+            div().id("chat").child(
                 v_flex()
                     .px(px(14.))
                     .pt(px(12.))
                     .pb(px(10.))
                     .gap(px(8.))
                     .children(items),
-            )
-            .into_any_element()
+            ),
+        )
+        .handle(&self.chat_scroll)
+        .into_any_element()
     }
 
     /// Claude Code's question, the first time it works in a folder,
@@ -701,7 +879,7 @@ impl Agents {
                     if primary {
                         d.bg(p.accent)
                             .border_color(p.accent)
-                            .text_color(p.accent_text)
+                            .text_color(p.primary_text)
                             .font_weight(FontWeight::SEMIBOLD)
                     } else {
                         d.bg(p.bg).border_color(p.line).hover(move |d| d.bg(hover))
@@ -758,6 +936,9 @@ impl Agents {
     fn render_item(&self, item: &Item, agent: &str, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         match item {
+            // Only what the user added with @ and #: messages carry no
+            // document of their own, and older ones' recorded `place.file`
+            // isn't shown either.
             Item::User { text, place, .. } => {
                 let refs: Vec<String> = place["refs"]
                     .as_array()
@@ -765,9 +946,6 @@ impl Agents {
                     .flatten()
                     .filter_map(|r| r.as_str().map(str::to_string))
                     .collect();
-                let context = place["file"]
-                    .as_str()
-                    .map(|f| f.rsplit('/').next().unwrap_or(f).to_string());
                 v_flex()
                     .items_end()
                     .gap(px(3.))
@@ -782,16 +960,12 @@ impl Agents {
                             .line_height(rems(1.45))
                             .child(text.clone()),
                     )
-                    .when(!refs.is_empty() || context.is_some(), |d| {
-                        let mut words = refs;
-                        if let Some(file) = context {
-                            words.push(format!("in {file}"));
-                        }
+                    .when(!refs.is_empty(), |d| {
                         d.child(
                             div()
                                 .text_size(px(look::SMALL))
                                 .text_color(p.faint)
-                                .child(words.join(" · ")),
+                                .child(refs.join(" · ")),
                         )
                     })
                     .into_any_element()
@@ -801,6 +975,9 @@ impl Agents {
                 .child(
                     TextView::markdown(SharedString::from(format!("md-{key}")), text.clone())
                         .selectable(true)
+                        // New words fade in one after another as the reply streams.
+                        .stream_fade(true)
+                        .code_block_actions(code_copy_button)
                         .style(
                             TextViewStyle::default()
                                 .paragraph_gap(rems(0.4))
@@ -832,6 +1009,15 @@ impl Agents {
                 .text_size(px(look::SMALL))
                 .text_color(p.faint)
                 .child(text.clone())
+                .into_any_element(),
+            Item::Account { name, .. } => h_flex()
+                .gap(px(8.))
+                .my(px(6.))
+                .text_size(px(13.))
+                .text_color(p.muted)
+                .child(div().flex_1().h(px(1.)).bg(p.line))
+                .child(format!("Switched to {name}"))
+                .child(div().flex_1().h(px(1.)).bg(p.line))
                 .into_any_element(),
             Item::Error { text, .. } => h_flex()
                 .items_start()
@@ -1073,14 +1259,19 @@ impl Agents {
                         .collect::<Vec<_>>()
                         .join("; ")
                 });
-            let text = match (answers, answer) {
-                (Some(answers), _) => answers,
-                (None, Some("allow")) if view.plan.is_some() => "Carried out".into(),
-                (None, Some("allow")) => "Allowed".into(),
-                (None, Some("deny")) if !view.questions.is_empty() => "Skipped".into(),
-                (None, Some("deny")) if view.plan.is_some() => "Kept planning".into(),
-                (None, Some("deny")) => "Denied".into(),
-                _ => "No longer waiting".to_string(),
+            let option = ask.answered_option();
+            let text = if let Some(option) = option {
+                option.name.clone()
+            } else {
+                match (answers, answer) {
+                    (Some(answers), _) => answers,
+                    (None, Some("allow")) if view.plan.is_some() => "Carried out".into(),
+                    (None, Some("allow")) => "Allowed".into(),
+                    (None, Some("deny")) if !view.questions.is_empty() => "Skipped".into(),
+                    (None, Some("deny")) if view.plan.is_some() => "Kept planning".into(),
+                    (None, Some("deny")) => "Denied".into(),
+                    _ => "No longer waiting".to_string(),
+                }
             };
             return card
                 .child(
@@ -1195,7 +1386,7 @@ impl Agents {
                             .items_center()
                             .rounded(px(RADIUS))
                             .bg(p.accent)
-                            .text_color(p.accent_text)
+                            .text_color(p.primary_text)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(look::SMALL + 1.))
                             .cursor_pointer()
@@ -1249,7 +1440,7 @@ impl Agents {
                         if primary {
                             d.bg(p.accent)
                                 .border_color(p.accent)
-                                .text_color(p.accent_text)
+                                .text_color(p.primary_text)
                                 .font_weight(FontWeight::SEMIBOLD)
                         } else {
                             d.bg(p.bg)
@@ -1260,6 +1451,24 @@ impl Agents {
                     })
                     .child(label.to_string())
             };
+            if let Some(options) = &ask.options {
+                for (index, option) in options.iter().enumerate() {
+                    buttons = buttons.child(
+                        button(
+                            &format!("approval-{index}"),
+                            &option.name,
+                            option.kind == "allow_once",
+                            option.rejects(),
+                        )
+                        .on_click(Self::reply(
+                            ask.id.clone(),
+                            option.answer(),
+                            cx,
+                        )),
+                    );
+                }
+                return card.child(buttons).into_any_element();
+            }
             let id = &ask.id;
             buttons = buttons.child(
                 button(
@@ -1353,13 +1562,46 @@ impl Agents {
     }
 }
 
-/// The agent's own mark: Claude Code's, Codex's, Antigravity's.
-fn provider(kind: &str) -> Img {
+/// Shared integration artwork, including the user-supplied provider marks.
+/// One-colour marks (OpenAI's for Codex, Synthetic Sciences' for
+/// OpenScience) follow the text colour, so they read on light and dark
+/// without a background; the rest keep their colours.
+pub(crate) fn provider(kind: &str) -> Provider {
     let name = match kind {
-        "claude" | "codex" | "antigravity" => kind,
+        "claude" | "codex" | "antigravity" | "openscience" | "omp" | "pi" | "posit" => kind,
         _ => "generic",
     };
-    picture(&format!("agents/{name}")).size(px(14.))
+    Provider {
+        path: format!("agents/{name}"),
+        ink: matches!(name, "codex" | "openscience"),
+        size: px(14.),
+    }
+}
+
+#[derive(IntoElement)]
+pub(crate) struct Provider {
+    path: String,
+    ink: bool,
+    size: Pixels,
+}
+
+impl Provider {
+    pub(crate) fn size(mut self, size: Pixels) -> Self {
+        self.size = size;
+        self
+    }
+}
+
+impl RenderOnce for Provider {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        if self.ink {
+            crate::look::ink_picture(&self.path)
+                .size(self.size)
+                .into_any_element()
+        } else {
+            picture(&self.path).size(self.size).into_any_element()
+        }
+    }
 }
 
 /// A step's icon by what it does.
@@ -1452,6 +1694,26 @@ fn step_card(view: &chat::StepView, p: &Palette) -> AnyElement {
     card.into_any_element()
 }
 
+/// The copy button in the corner of a reply's code block.
+fn code_copy_button(
+    block: &gpui_kit::base::text::CodeBlock,
+    _: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    use std::hash::{Hash as _, Hasher as _};
+    let code = block.code();
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hash);
+    icon_button(
+        ("chat-code-copy", hash.finish()),
+        "edit.copy",
+        Palette::get(cx),
+        false,
+    )
+    .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new("Copy").build(w, cx))
+    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(code.to_string())))
+}
+
 fn primary_button(id: &'static str, label: &'static str, p: &Palette) -> Stateful<Div> {
     h_flex()
         .id(id)
@@ -1460,7 +1722,7 @@ fn primary_button(id: &'static str, label: &'static str, p: &Palette) -> Statefu
         .py(px(4.))
         .rounded(px(RADIUS))
         .bg(p.accent)
-        .text_color(p.accent_text)
+        .text_color(p.primary_text)
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
         .child(icon("add").size(px(14.)))

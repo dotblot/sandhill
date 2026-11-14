@@ -255,10 +255,75 @@ pub fn variable_name(path: &str) -> String {
     }
 }
 
+/// Guard the assignment in the actual kernel, not just against a cached
+/// Variables list. This also closes the race between preview and execution.
+pub fn non_overwriting_code(language: &str, name: &str, code: &str) -> String {
+    if language.eq_ignore_ascii_case("r") {
+        format!(
+            "if (exists({}, envir = .GlobalEnv, inherits = FALSE)) stop(\"Import would replace an existing variable; choose a different name\")\n{code}",
+            q(name)
+        )
+    } else {
+        format!(
+            "if {} in globals():\n    raise ValueError(\"Import would replace an existing variable; choose a different name\")\n{code}",
+            q(name)
+        )
+    }
+}
+
+/// One source for the preview, execution, clipboard and document insertion.
+pub fn generated_import_code(
+    language: &str,
+    kind: &ImportKind,
+    path: &str,
+    cwd: Option<&str>,
+    name: &str,
+) -> String {
+    let code = kind.code(&code_path(path, cwd), name);
+    if kind.named(path) {
+        non_overwriting_code(language, name, &code)
+    } else {
+        code
+    }
+}
+
 /// Whether `name` can be assigned to as is.
 pub fn valid_variable(name: &str, language: &str) -> bool {
     let mut chars = name.chars();
     let rest_ok = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let reserved = if language.eq_ignore_ascii_case("r") {
+        &[
+            "if",
+            "else",
+            "repeat",
+            "while",
+            "function",
+            "for",
+            "in",
+            "next",
+            "break",
+            "TRUE",
+            "FALSE",
+            "NULL",
+            "Inf",
+            "NaN",
+            "NA",
+            "NA_integer_",
+            "NA_real_",
+            "NA_complex_",
+            "NA_character_",
+        ][..]
+    } else {
+        &[
+            "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
+            "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
+            "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise",
+            "return", "try", "while", "with", "yield",
+        ][..]
+    };
+    if reserved.contains(&name) {
+        return false;
+    }
     if language.eq_ignore_ascii_case("r") {
         if name == "." {
             return true;
@@ -315,6 +380,24 @@ mod tests {
             "import pandas as pd\na = pd.read_csv(\"a.tsv.gz\", sep=\"\\t\")"
         );
         assert!(imports_for("julia").is_empty());
+    }
+
+    #[test]
+    fn every_import_action_uses_the_guarded_preview_code() {
+        for language in ["r", "python"] {
+            let kind = &imports_for(language)[0];
+            let code =
+                super::generated_import_code(language, kind, "/p/data/a.tsv", Some("/p"), "a");
+            assert_eq!(
+                code,
+                super::non_overwriting_code(language, "a", &kind.code("data/a.tsv", "a"))
+            );
+        }
+        let kind = &imports_for("r")[6];
+        assert_eq!(
+            super::generated_import_code("r", kind, "/p/a.RData", Some("/p"), "a"),
+            "load(\"a.RData\")"
+        );
     }
 
     #[test]

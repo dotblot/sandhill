@@ -24,10 +24,18 @@ pub struct Models {
     pub efforts: Vec<String>,
     /// The level a session gets when none is picked: the CLI's own.
     pub recommended: String,
+    /// Actual returned IDs grouped by effort, only for Antigravity families.
+    pub effort_families: Vec<Vec<(String, String)>>,
 }
 
 fn strings(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| s.to_string()).collect()
+}
+
+/// Agents with the user's own configured models (OpenScience, Oh My Pi,
+/// pi): effort levels only where a listed model has them.
+pub fn configured_models(kind: &str) -> bool {
+    matches!(kind, "openscience" | "omp" | "pi")
 }
 
 /// What an agent offers before it lists its own models.
@@ -49,6 +57,7 @@ pub fn known_models(kind: &str) -> Models {
             start: 1,
             efforts: strings(&["low", "medium", "high", "xhigh", "max"]),
             recommended: "medium".into(),
+            effort_families: Vec::new(),
         },
         "codex" => Models {
             models: vec![ModelChoice {
@@ -58,65 +67,225 @@ pub fn known_models(kind: &str) -> Models {
             start: 0,
             efforts: strings(&["low", "medium", "high", "xhigh"]),
             recommended: "medium".into(),
+            effort_families: Vec::new(),
+        },
+        "openscience" | "omp" | "pi" => Models {
+            models: vec![ModelChoice {
+                id: None,
+                label: match kind {
+                    "omp" => "Oh My Pi's default model",
+                    "pi" => "pi's default model",
+                    _ => "OpenScience's configured model",
+                }
+                .into(),
+            }],
+            start: 0,
+            efforts: Vec::new(),
+            recommended: String::new(),
+            effort_families: Vec::new(),
         },
         _ => Models {
             models: vec![ModelChoice {
                 id: None,
-                label: "Antigravity's default model".into(),
+                label: "Antigravity models not loaded".into(),
             }],
             start: 0,
             efforts: strings(&["low", "medium", "high"]),
             recommended: "medium".into(),
+            effort_families: Vec::new(),
         },
     }
 }
 
-/// An agent's models as it listed them (`agent_models`, or a running
-/// agent's report): `[{id, label, efforts?, effort?, default?}]`, with the
-/// efforts of the one `chosen` (else its default).
+/// Only exact, returned sibling IDs form an effort family. A lone suffix
+/// (or a similarly named model) is not evidence of interchangeable models.
+fn variant(id: &str) -> Option<(&str, &str)> {
+    let (base, effort) = id.rsplit_once('-')?;
+    ["low", "medium", "high", "xhigh", "max"]
+        .contains(&effort)
+        .then_some((base, effort))
+}
+
+impl Models {
+    fn family(&self, id: Option<&str>) -> Option<&Vec<(String, String)>> {
+        let id = id?;
+        self.effort_families
+            .iter()
+            .find(|family| family.iter().any(|(_, model)| model == id))
+    }
+
+    pub fn same_model(&self, a: Option<&str>, b: Option<&str>) -> bool {
+        a == b
+            || self
+                .family(a)
+                .is_some_and(|family| family.iter().any(|(_, model)| Some(model.as_str()) == b))
+    }
+
+    /// Keep a stored favourite's actual ID, with the family's display label.
+    pub fn choice(&self, id: &str) -> ModelChoice {
+        self.models
+            .iter()
+            .find(|m| self.same_model(m.id.as_deref(), Some(id)))
+            .map(|m| ModelChoice {
+                id: Some(id.into()),
+                label: m.label.clone(),
+            })
+            .unwrap_or_else(|| ModelChoice {
+                id: Some(id.into()),
+                label: format!("{id} (unavailable)"),
+            })
+    }
+
+    pub fn effort_model(&self, id: Option<&str>, effort: &str) -> Option<ModelChoice> {
+        self.family(id)?
+            .iter()
+            .find(|(level, _)| level == effort)
+            .map(|(_, model)| self.choice(model))
+    }
+
+    pub fn variant_effort(&self, id: Option<&str>) -> Option<&str> {
+        self.family(id)?
+            .iter()
+            .find(|(_, model)| Some(model.as_str()) == id)
+            .map(|(effort, _)| effort.as_str())
+    }
+
+    /// Whether `id` is already one of the rows, itself or an effort sibling.
+    fn lists(&self, id: &str) -> bool {
+        self.models
+            .iter()
+            .any(|m| self.same_model(m.id.as_deref(), Some(id)))
+    }
+
+    /// The effort a conversation starts with: exactly the one the box
+    /// shows, picked or else the model's recommended level. Sent even when
+    /// it is the recommended one, as a CLI left to itself takes its own saved
+    /// default (Claude Code's per-model `effortLevel`, Codex's
+    /// `model_reasoning_effort`), which may be another. None when the
+    /// model's ID carries its effort, or it has no levels.
+    pub fn start_effort(&self, model: Option<&str>, picked: Option<&str>) -> Option<String> {
+        if self.variant_effort(model).is_some() {
+            return None;
+        }
+        let offered = |e: &&str| self.efforts.iter().any(|level| level == e);
+        picked
+            .filter(offered)
+            .or(Some(self.recommended.as_str()).filter(offered))
+            .map(str::to_string)
+    }
+}
+
+/// Keep listing order. Antigravity's first actual ID, not its CLI default
+/// marker, is the new-conversation default.
 pub fn listed_models(kind: &str, listed: &[Value], chosen: Option<&str>) -> Models {
     let mut models = known_models(kind);
     if listed.is_empty() {
+        if let Some(id) = chosen
+            && !models.lists(id)
+        {
+            models.models.push(models.choice(id));
+        }
         return models;
     }
-    let start = listed
-        .iter()
-        .position(|m| m["default"] == true)
-        .unwrap_or(0);
-    let model = chosen
-        .and_then(|id| listed.iter().find(|m| m["id"] == id))
-        .unwrap_or(&listed[start]);
-    models.models = listed
-        .iter()
-        .map(|m| ModelChoice {
-            id: m["id"].as_str().map(str::to_string),
-            label: m["label"]
-                .as_str()
-                .or(m["id"].as_str())
-                .unwrap_or_default()
-                .to_string(),
-        })
-        .collect();
-    models.start = start;
-    if let Some(efforts) = model["efforts"].as_array().filter(|e| !e.is_empty()) {
-        models.efforts = efforts
+    let start = if kind == "antigravity" {
+        0
+    } else {
+        listed
             .iter()
-            .filter_map(|e| e.as_str().map(str::to_string))
-            .collect();
+            .position(|m| m["default"] == true)
+            .unwrap_or(0)
+    };
+    let selected = chosen.or_else(|| listed[start]["id"].as_str());
+    models.models.clear();
+    for m in listed {
+        let id = m["id"].as_str();
+        if models
+            .models
+            .iter()
+            .any(|row| models.same_model(row.id.as_deref(), id))
+        {
+            continue;
+        }
+        let mut choice = ModelChoice {
+            id: id.map(str::to_string),
+            label: m["label"].as_str().or(id).unwrap_or_default().to_string(),
+        };
+        if kind == "antigravity"
+            && let Some((base, _)) = id.and_then(variant)
+        {
+            let mut family: Vec<(String, String)> = listed
+                .iter()
+                .filter_map(|m| {
+                    let id = m["id"].as_str()?;
+                    let (stem, effort) = variant(id)?;
+                    (stem == base).then(|| (effort.into(), id.into()))
+                })
+                .collect();
+            family.sort_by_key(|(level, _)| {
+                ["low", "medium", "high", "xhigh", "max"]
+                    .iter()
+                    .position(|e| e == level)
+                    .unwrap()
+            });
+            family.dedup_by(|a, b| a.0 == b.0);
+            if family.len() > 1 {
+                let suffix = variant(id.unwrap()).unwrap().1;
+                let title = effort_name(suffix);
+                choice.label = choice
+                    .label
+                    .strip_suffix(&format!(" ({title})"))
+                    .or_else(|| choice.label.strip_suffix(&format!(" {title}")))
+                    .unwrap_or(&choice.label)
+                    .to_string();
+                models.effort_families.push(family);
+            }
+        }
+        models.models.push(choice);
     }
-    if let Some(effort) = model["effort"].as_str() {
-        models.recommended = effort.to_string();
+    models.start = models
+        .models
+        .iter()
+        .position(|m| models.same_model(m.id.as_deref(), listed[start]["id"].as_str()))
+        .unwrap_or(0);
+    if let Some(family) = models.family(selected) {
+        let efforts = family.iter().map(|(level, _)| level.clone()).collect();
+        let recommended = models.variant_effort(selected).unwrap().to_string();
+        models.efforts = efforts;
+        models.recommended = recommended;
+    } else if let Some(model) = listed.iter().find(|m| m["id"].as_str() == selected) {
+        if let Some(efforts) = model["efforts"].as_array().filter(|e| !e.is_empty()) {
+            models.efforts = efforts
+                .iter()
+                .filter_map(|e| e.as_str().map(str::to_string))
+                .collect();
+        }
+        if let Some(effort) = model["effort"].as_str() {
+            models.recommended = effort.into();
+        }
+    }
+    if let Some(id) = chosen
+        && !models.lists(id)
+    {
+        models.models.push(models.choice(id));
     }
     models
 }
 
 /// What a running agent offers: the models it reported, else the known ones.
-pub fn running_models(t: &TerminalInfo) -> Models {
+pub fn running_models(t: &TerminalInfo, chosen: Option<&str>) -> Models {
     let listed = report(t, "models")
         .and_then(Value::as_array)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
-    listed_models(&t.kind, &listed, model_id(t).as_deref())
+    listed_models(
+        &t.kind,
+        listed,
+        chosen.or_else(|| {
+            report(t, "status")
+                .and_then(|s| s["model_id"].as_str())
+                .or(t.options.model.as_deref())
+        }),
+    )
 }
 
 fn report<'a>(t: &'a TerminalInfo, key: &str) -> Option<&'a Value> {
@@ -387,29 +556,28 @@ pub fn code_to_console(t: &TerminalInfo) -> bool {
     }
 }
 
-/// Web search, or session context, on: unless the agent or its start said off.
-pub fn switch_on(t: &TerminalInfo, key: &str) -> bool {
-    let started = if key == "web" {
-        t.options.web
-    } else {
-        t.options.context
-    };
-    report(t, key).and_then(Value::as_bool).or(started) != Some(false)
+/// Web search on: unless the agent or its start said off.
+pub fn web_on(t: &TerminalInfo) -> bool {
+    report(t, "web").and_then(Value::as_bool).or(t.options.web) != Some(false)
 }
 
 /// What the agent runs with now, as it last reported: what it starts again
 /// with. Conversations are about the whole project, so no documents or pin.
 pub fn live_options(t: &TerminalInfo) -> AgentOptions {
+    let model = model_id(t);
+    let encoded = running_models(t, model.as_deref())
+        .variant_effort(model.as_deref())
+        .is_some();
     AgentOptions {
-        model: model_id(t),
-        effort: effort_of(t),
+        model,
+        effort: effort_of(t).filter(|_| !encoded),
         permission: Some(current_mode(t).permission.to_string()),
         code: code_to_console(t).then(|| "console".to_string()),
         documents: Vec::new(),
         pin: None,
-        web: (!switch_on(t, "web")).then_some(false),
-        context: (!switch_on(t, "context")).then_some(false),
+        web: (!web_on(t)).then_some(false),
         refs: Vec::new(),
+        account: t.options.account.clone(),
     }
 }
 
@@ -642,6 +810,226 @@ mod tests {
     use super::*;
 
     #[test]
+    fn openscience_models_preserve_configured_ids_labels_and_selection() {
+        let known = known_models("openscience");
+        assert_eq!(known.models[0].label, "OpenScience's configured model");
+        assert!(known.efforts.is_empty());
+        let listing = vec![
+            json!({"id": "local/model-high", "label": "Local model High"}),
+            json!({"id": "cloud/model", "label": "My configured model", "default": true}),
+            json!({"id": "local/model-low", "label": "Local model Low"}),
+        ];
+        let listed = listed_models("openscience", &listing, Some("local/model-high"));
+        assert_eq!(listed.models.len(), 3);
+        assert_eq!(
+            listed.models[listed.start].id.as_deref(),
+            Some("cloud/model")
+        );
+        assert_eq!(listed.choice("local/model-high").label, "Local model High");
+        assert!(listed.effort_families.is_empty());
+        assert!(listed.efforts.is_empty());
+        let terminal: TerminalInfo = serde_json::from_value(json!({
+            "id": "os1", "kind": "openscience", "title": "OpenScience", "cwd": "/p",
+            "created_ms": 0, "running": false, "end": 0,
+            "options": {"model": "local/model-high", "permission": "supervised"},
+            "agent": {
+                "thread": "acp-session",
+                "models": listing,
+                "permission": "ask",
+                "status": {"model_id": "cloud/model", "model": "My configured model"}
+            }
+        }))
+        .unwrap();
+        assert!(can_resume(&terminal));
+        assert_eq!(model_id(&terminal).as_deref(), Some("cloud/model"));
+        assert_eq!(model_label(&terminal), "My configured model");
+        assert_eq!(current_mode(&terminal).id, "ask");
+        let options = live_options(&terminal);
+        assert_eq!(options.model.as_deref(), Some("cloud/model"));
+        assert_eq!(options.permission.as_deref(), Some("ask"));
+        assert_eq!(options.effort, None);
+        assert_eq!(
+            running_models(&terminal, None).choice("cloud/model").label,
+            "My configured model"
+        );
+    }
+
+    fn antigravity_listing() -> Vec<Value> {
+        vec![
+            json!({"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High)"}),
+            json!({"id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium)"}),
+            json!({"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)"}),
+            json!({"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6", "default": true}),
+        ]
+    }
+
+    #[test]
+    fn antigravity_groups_actual_variants_and_routes_every_effort_to_a_returned_id() {
+        let listed = antigravity_listing();
+        let models = listed_models("antigravity", &listed, None);
+        assert_eq!(models.models.len(), 2);
+        assert_eq!(models.models[0].label, "Gemini 3.8 Flash");
+        assert_eq!(
+            models.models[0].id.as_deref(),
+            Some("gemini-3.8-flash-high")
+        );
+        assert_eq!(models.efforts, ["low", "medium", "high"]);
+        assert_eq!(models.recommended, "high");
+        for level in ["low", "medium", "high"] {
+            let choice = models
+                .effort_model(models.models[0].id.as_deref(), level)
+                .unwrap();
+            assert_eq!(choice.id, Some(format!("gemini-3.8-flash-{level}")));
+            assert!(
+                listed
+                    .iter()
+                    .any(|m| m["id"].as_str() == choice.id.as_deref())
+            );
+            assert!(models.same_model(choice.id.as_deref(), models.models[0].id.as_deref()));
+            let changed = listed_models("antigravity", &listed, choice.id.as_deref());
+            assert_eq!(changed.recommended, level);
+        }
+        assert!(
+            models
+                .effort_model(models.models[0].id.as_deref(), "max")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn only_antigravity_sibling_effort_ids_collapse_not_singletons_or_similar_names() {
+        let listed = vec![
+            json!({"id": "gemini-3.8-flash-high"}),
+            json!({"id": "gemini-3.8-flash-lite-low"}),
+            json!({"id": "gemini-3.8-flash-high-preview"}),
+            json!({"id": "gpt-oss-120b-medium", "efforts": ["medium", "high"], "effort": "high"}),
+        ];
+        let models = listed_models("antigravity", &listed, Some("gpt-oss-120b-medium"));
+        assert_eq!(models.models.len(), listed.len());
+        assert!(models.effort_families.is_empty());
+        assert_eq!(models.efforts, ["medium", "high"]);
+        assert_eq!(models.recommended, "high");
+        let codex = listed_models("codex", &antigravity_listing(), None);
+        assert_eq!(codex.models.len(), 4);
+        assert!(codex.effort_families.is_empty());
+    }
+
+    #[test]
+    fn first_returned_antigravity_model_wins_but_other_providers_keep_cli_default() {
+        let listed = antigravity_listing();
+        let antigravity = listed_models("antigravity", &listed, None);
+        assert_eq!(
+            antigravity.models[antigravity.start].id,
+            Some("gemini-3.8-flash-high".into())
+        );
+        let codex = listed_models("codex", &listed, None);
+        assert_eq!(
+            codex.models[codex.start].id,
+            Some("claude-sonnet-4-6".into())
+        );
+        let low = listed_models("antigravity", &listed, Some("gemini-3.8-flash-low"));
+        assert_eq!(low.recommended, "low");
+        assert_eq!(
+            low.choice("gemini-3.8-flash-low").id.as_deref(),
+            Some("gemini-3.8-flash-low")
+        );
+        let stale = listed_models("antigravity", &listed, Some("removed-model"));
+        assert_eq!(
+            stale.models.last().unwrap().id.as_deref(),
+            Some("removed-model")
+        );
+        assert!(stale.models.last().unwrap().label.contains("unavailable"));
+    }
+
+    #[test]
+    fn live_options_preserve_actual_reported_variant_without_a_conflicting_effort() {
+        let mut terminal: TerminalInfo = serde_json::from_value(json!({
+            "id": "t1", "kind": "antigravity", "title": "Antigravity", "cwd": "/p",
+            "created_ms": 0, "running": true, "end": 0,
+            "options": {"model": "gemini-3.8-flash-high", "effort": "medium"},
+            "agent": {
+                "models": antigravity_listing(),
+                "status": {"model_id": "gemini-3.8-flash-low", "effort": "low"}
+            }
+        }))
+        .unwrap();
+        let options = live_options(&terminal);
+        assert_eq!(options.model.as_deref(), Some("gemini-3.8-flash-low"));
+        assert_eq!(options.effort, None);
+        let models = running_models(&terminal, Some("gemini-3.8-flash-medium"));
+        assert_eq!(models.recommended, "medium");
+        terminal.agent.as_mut().unwrap()["status"] =
+            json!({"model_id": "claude-sonnet-4-6", "effort": "high"});
+        let options = live_options(&terminal);
+        assert_eq!(options.model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(options.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn a_running_conversations_listed_model_is_its_row_not_a_second_one() {
+        // Claude Code lists no models: its running model is one of the known rows.
+        let terminal: TerminalInfo = serde_json::from_value(json!({
+            "id": "t1", "kind": "claude", "title": "Claude", "cwd": "/p",
+            "created_ms": 0, "running": true, "end": 0,
+            "agent": {"status": {"model_id": "claude-haiku-5-5", "effort": "medium"}}
+        }))
+        .unwrap();
+        let models = running_models(&terminal, None);
+        assert_eq!(models.models, known_models("claude").models);
+        let current = model_id(&terminal);
+        let matching: Vec<_> = models
+            .models
+            .iter()
+            .filter(|m| models.same_model(m.id.as_deref(), current.as_deref()))
+            .collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].label, "Haiku 5.5");
+        // A model no row has is still offered, once.
+        let other = listed_models("claude", &[], Some("claude-opus-4-1"));
+        assert_eq!(other.models.len(), known_models("claude").models.len() + 1);
+        // Listed providers: a returned ID or an effort sibling is never added again.
+        let listed = antigravity_listing();
+        for chosen in ["claude-sonnet-4-6", "gemini-3.8-flash-low"] {
+            let models = listed_models("antigravity", &listed, Some(chosen));
+            assert_eq!(models.models.len(), 2, "{chosen}");
+        }
+    }
+
+    #[test]
+    fn a_new_conversation_starts_with_exactly_the_effort_shown() {
+        let claude = known_models("claude");
+        let opus = Some("claude-opus-5-5");
+        // Nothing picked: the recommended level the slider shows, sent so the
+        // CLI's own saved default can't replace it.
+        assert_eq!(claude.start_effort(opus, None).as_deref(), Some("medium"));
+        assert_eq!(
+            claude.start_effort(opus, Some("high")).as_deref(),
+            Some("high")
+        );
+        // A level this model doesn't offer shows (and starts) as recommended.
+        let codex = listed_models(
+            "codex",
+            &[json!({"id": "a", "efforts": ["low", "high"], "effort": "high", "default": true})],
+            None,
+        );
+        assert_eq!(
+            codex.start_effort(Some("a"), Some("medium")).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            codex.start_effort(Some("a"), Some("low")).as_deref(),
+            Some("low")
+        );
+        // An ID that carries its effort gets no second one; no levels, none.
+        let antigravity = listed_models("antigravity", &antigravity_listing(), None);
+        assert_eq!(
+            antigravity.start_effort(Some("gemini-3.8-flash-high"), Some("low")),
+            None
+        );
+        assert_eq!(known_models("openscience").start_effort(None, None), None);
+    }
+
+    #[test]
     fn finds_the_sign_being_typed() {
         assert_eq!(
             typed_mention("look at @an", 11),
@@ -770,5 +1158,29 @@ mod tests {
         assert_eq!(models.efforts, vec!["low", "high"]);
         assert_eq!(models.recommended, "high");
         assert_eq!(listed_models("codex", &listed, None).efforts.len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::live_options;
+    use sandhill_proto::TerminalInfo;
+    use serde_json::json;
+
+    #[test]
+    fn resumed_options_keep_the_conversations_account() {
+        let terminal: TerminalInfo = serde_json::from_value(json!({
+            "id":"chat", "kind":"codex", "title":"Codex", "cwd":"/project",
+            "created_ms":1, "running":true, "end":0,
+            "options":{"account":"codex:work"}
+        }))
+        .unwrap();
+        assert_eq!(
+            live_options(&terminal).account.as_deref(),
+            Some("codex:work")
+        );
+        let mut default = terminal;
+        default.options.account = None;
+        assert_eq!(live_options(&default).account, None);
     }
 }

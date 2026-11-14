@@ -67,6 +67,9 @@ impl Workbench {
     /// preview that stopped.
     pub(crate) fn preview_document(&mut self, path: String, cx: &mut Context<Self>) {
         let Some(daemon) = self.daemon() else { return };
+        if self.held_back("render documents", cx) {
+            return;
+        }
         let key = format!("preview:{path}");
         let name = file_name(&path);
         self.add_extra(Extra {
@@ -129,7 +132,7 @@ impl Workbench {
         let html = format!(
             "<!doctype html><meta charset=\"utf-8\"><style>body{{margin:0;padding:12px 16px;\
              font:13px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}}\
-             @media (prefers-color-scheme: dark){{body{{background:#1d1c1a;color:#e8e4dc}}}}</style>{escaped}"
+             @media (prefers-color-scheme: dark){{body{{background:#1f1f24;color:#dddddf}}}}</style>{escaped}"
         );
         self.add_extra(Extra {
             key,

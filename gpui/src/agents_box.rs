@@ -16,7 +16,7 @@ use sandhill_proto::{
 use serde_json::{Value, json};
 
 use crate::agents::{
-    Agents, Choice, Menu, START_COLUMNS, START_ROWS, SUBMIT_DELAY, Show, drives_chat,
+    Agents, Choice, Menu, START_COLUMNS, START_ROWS, SUBMIT_DELAY, Show, drives_chat, terminal_only,
 };
 use crate::composer::{
     self, ATTACHMENTS, Mention, Mode, ModelChoice, Models, cell_documents, cell_mentions,
@@ -126,6 +126,7 @@ impl Agents {
             if *q != query {
                 *q = query;
                 *active = 0;
+                self.mention_scroll.scroll_to_item(0);
             }
             cx.notify();
             return;
@@ -136,6 +137,7 @@ impl Agents {
             items: None,
             active: 0,
         });
+        self.mention_scroll.scroll_to_item(0);
         cx.notify();
         if sign == '#' {
             self.load_cells(cx);
@@ -477,9 +479,10 @@ impl Agents {
             .collect()
     }
 
-    /// Arrows in the open @ menu.
+    /// Arrows in either mention menu, including headings in the scroll index.
     pub(crate) fn move_mention(&mut self, down: bool, cx: &mut Context<Self>) {
-        let n = self.shown_mentions().len();
+        let groups = self.mention_groups();
+        let n = groups.iter().map(|(_, items)| items.len()).sum::<usize>();
         if let Some(Menu::Mention { active, .. }) = &mut self.menu
             && n > 0
         {
@@ -488,6 +491,17 @@ impl Agents {
             } else {
                 (*active + n - 1) % n
             };
+            let mut remaining = *active;
+            let mut row = 0;
+            for (_, items) in &groups {
+                row += 1; // Group heading.
+                if remaining < items.len() {
+                    self.mention_scroll.scroll_to_item(row + remaining);
+                    break;
+                }
+                remaining -= items.len();
+                row += items.len();
+            }
             cx.notify();
         }
     }
@@ -522,6 +536,7 @@ impl Agents {
     }
 
     pub(crate) fn add_ref(&mut self, item: Value) {
+        self.problem = None;
         if !self.refs.iter().any(|r| same_ref(r, &item)) {
             self.refs.push(item);
         }
@@ -543,6 +558,8 @@ impl Agents {
     }
 
     pub(crate) fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
+        self.gear = false;
+        self.confirm_end = false;
         let same = self
             .menu
             .as_ref()
@@ -597,7 +614,7 @@ impl Agents {
         .detach();
     }
 
-    /// The models Codex and Antigravity offer before a conversation.
+    /// The models driven-chat providers offer before a conversation.
     pub(crate) fn list_models(&mut self, kind: String, cx: &mut Context<Self>) {
         let listed = self
             .daemon
@@ -635,9 +652,26 @@ impl Agents {
     /// The models of an agent, as the box offers them.
     pub(crate) fn models_of(&self, kind: &str) -> Models {
         if let Some(t) = self.box_terminal().filter(|t| t.kind == kind) {
-            return composer::running_models(t);
+            let chosen = self
+                .picked
+                .get(&t.id)
+                .and_then(|c| c.model.as_ref())
+                .and_then(|m| m.id.as_deref());
+            if t.agent
+                .as_ref()
+                .and_then(|a| a["models"].as_array())
+                .is_none_or(Vec::is_empty)
+                && let Some(listed) = self.listed.get(kind)
+            {
+                let id = composer::model_id(t);
+                return composer::listed_models(kind, listed, chosen.or(id.as_deref()));
+            }
+            return composer::running_models(t, chosen);
         }
-        let chosen = self.new_choice.model.as_ref().and_then(|m| m.id.as_deref());
+        let chosen = (kind == self.new_kind)
+            .then_some(&self.new_choice)
+            .and_then(|c| c.model.as_ref())
+            .and_then(|m| m.id.as_deref());
         match self.listed.get(kind) {
             Some(listed) => composer::listed_models(kind, listed, chosen),
             None => composer::known_models(kind),
@@ -646,13 +680,30 @@ impl Agents {
 
     /// The model the box shows.
     pub(crate) fn box_model(&self) -> String {
+        let models = self.models_of(self.box_kind());
         match self.box_terminal() {
-            Some(t) => self
-                .picked_for(t)
-                .model
-                .map(|m| m.label)
-                .unwrap_or_else(|| composer::model_label(t)),
-            None => self.new_model().label,
+            Some(t) => {
+                let picked = self.picked_for(t).model;
+                let id = picked
+                    .as_ref()
+                    .and_then(|m| m.id.clone())
+                    .or_else(|| composer::model_id(t));
+                if let Some(id) = id.as_deref()
+                    && models.variant_effort(Some(id)).is_some()
+                {
+                    return models.choice(id).label;
+                }
+                picked
+                    .map(|m| m.label)
+                    .unwrap_or_else(|| composer::model_label(t))
+            }
+            None => {
+                let model = self.new_model();
+                model
+                    .id
+                    .as_deref()
+                    .map_or(model.label.clone(), |id| models.choice(id).label)
+            }
         }
     }
 
@@ -666,9 +717,47 @@ impl Agents {
 
     /// The effort the box shows; `None` is the agent's own default.
     pub(crate) fn box_effort(&self) -> Option<String> {
+        let id = match self.box_terminal() {
+            Some(t) => self
+                .picked_for(t)
+                .model
+                .and_then(|m| m.id)
+                .or_else(|| composer::model_id(t)),
+            None => self.new_model().id,
+        };
+        if let Some(level) = self
+            .models_of(self.box_kind())
+            .variant_effort(id.as_deref())
+        {
+            return Some(level.to_string());
+        }
         match self.box_terminal() {
             Some(t) => self.picked_for(t).effort.or_else(|| composer::effort_of(t)),
             None => self.new_choice.effort.clone(),
+        }
+    }
+
+    /// The agent whose thinking effort the model menu shows: the open tab's,
+    /// or with Favourites the box's own.
+    pub(crate) fn effort_kind(&self) -> String {
+        let tab = self.open_model_tab();
+        if tab == "fav" {
+            self.box_kind().to_string()
+        } else {
+            tab
+        }
+    }
+
+    /// The effort the menu shows for `kind`; `None` is the agent's own
+    /// default. Another agent's tab (new conversations only) shows the level
+    /// set there, else the one a model picked there would keep.
+    pub(crate) fn effort_shown(&self, kind: &str) -> Option<String> {
+        if kind == self.box_kind() {
+            return self.box_effort();
+        }
+        match &self.browsed_effort {
+            Some((k, level)) if k == kind => Some(level.clone()),
+            _ => self.new_choice.effort.clone(),
         }
     }
 
@@ -690,12 +779,14 @@ impl Agents {
         }
     }
 
-    /// Web search (`"web"`) or session context (`"context"`), on or off.
-    pub(crate) fn box_switch(&self, key: &str) -> bool {
-        let pick = |c: &Choice| if key == "web" { c.web } else { c.context };
+    /// Web search on or off.
+    pub(crate) fn box_web(&self) -> bool {
         match self.box_terminal() {
-            Some(t) => pick(&self.picked_for(t)).unwrap_or_else(|| composer::switch_on(t, key)),
-            None => pick(&self.new_choice).unwrap_or(true),
+            Some(t) => self
+                .picked_for(t)
+                .web
+                .unwrap_or_else(|| composer::web_on(t)),
+            None => self.new_choice.web.unwrap_or(true),
         }
     }
 
@@ -714,18 +805,15 @@ impl Agents {
             return false;
         }
         match self.box_terminal() {
-            Some(t) => match self.picked_for(t).model {
-                Some(picked) => picked.id == model.id,
-                None => {
-                    let id = composer::model_id(t);
-                    if id.is_some() {
-                        model.id == id
-                    } else {
-                        model.label == composer::model_label(t)
-                    }
-                }
-            },
-            None => self.new_model().id == model.id,
+            Some(t) => {
+                let picked = self.picked_for(t).model.and_then(|m| m.id);
+                let id = picked.or_else(|| composer::model_id(t));
+                self.models_of(kind)
+                    .same_model(model.id.as_deref(), id.as_deref())
+            }
+            None => self
+                .models_of(kind)
+                .same_model(self.new_model().id.as_deref(), model.id.as_deref()),
         }
     }
 
@@ -737,6 +825,27 @@ impl Agents {
 
     /// Why the box's choices wait, if they do.
     pub(crate) fn model_note(&self) -> Option<String> {
+        if self.box_terminal().is_none() {
+            let name = crate::agents::kind_of(self.new_kind).map_or(self.new_kind, |k| k.name);
+            if self.installed.is_empty() {
+                return Some(format!("Checking {name} availability…"));
+            }
+            if !self
+                .installed
+                .iter()
+                .any(|a| a.kind == self.new_kind && a.path.is_some())
+            {
+                return Some(format!(
+                    "{name} is not installed. Choose another provider or install its CLI."
+                ));
+            }
+            if self.new_kind == "antigravity" && self.new_model().id.is_none() {
+                return Some(
+                    "Waiting for Antigravity's model list. Refresh agents if it does not load."
+                        .into(),
+                );
+            }
+        }
         let t = self.box_terminal()?;
         let who = crate::agents::kind_of(&t.kind).map_or("the agent", |k| k.short);
         if !t.running {
@@ -758,22 +867,28 @@ impl Agents {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if kind == "antigravity" && model.id.is_none() {
+            return;
+        }
+        self.effort_generation += 1;
+        let encoded = self
+            .models_of(kind)
+            .variant_effort(model.id.as_deref())
+            .is_some();
         let Some(t) = self.box_terminal().cloned() else {
-            if kind != self.new_kind {
-                let Some(k) = crate::agents::kind_of(kind) else {
-                    return;
-                };
-                // Another agent keeps the effort if it has that level.
-                let keep = self
-                    .new_choice
-                    .effort
-                    .clone()
-                    .filter(|e| self.models_of(k.kind).efforts.contains(e));
-                self.new_kind = k.kind;
-                self.new_choice.effort = keep;
-            }
+            let Some(k) = crate::agents::kind_of(kind) else {
+                return;
+            };
+            self.new_kind = k.kind;
             self.new_choice.model = Some(model);
+            let carried = match self.browsed_effort.take() {
+                Some((k, level)) if k == kind => Some(level),
+                _ => self.new_choice.effort.take(),
+            };
+            self.new_choice.effort =
+                carried.filter(|e| !encoded && self.models_of(kind).efforts.contains(e));
             self.menu = None;
+            self.problem = None;
             cx.notify();
             return;
         };
@@ -781,12 +896,23 @@ impl Agents {
             return;
         }
         let pick = |this: &mut Self, model: ModelChoice| {
-            this.picked.entry(t.id.clone()).or_default().model = Some(model);
+            let choice = this.picked.entry(t.id.clone()).or_default();
+            choice.model = Some(model);
+            if encoded {
+                choice.effort = None;
+            }
         };
         if !t.running {
             pick(self, model);
         } else if drives_chat(&t.kind) {
-            self.tell(&t, json!({"kind": "set", "model": model.id}));
+            self.tell(
+                &t,
+                if encoded {
+                    json!({"kind": "set", "model": model.id, "effort": null})
+                } else {
+                    json!({"kind": "set", "model": model.id})
+                },
+            );
             pick(self, model);
         } else if let Some(id) = model.id.clone() {
             pick(self, model);
@@ -796,16 +922,50 @@ impl Agents {
             self.show(Show::Terminal, window, cx);
         }
         self.menu = None;
+        self.problem = None;
         cx.notify();
     }
 
-    pub(crate) fn choose_effort(&mut self, level: String, cx: &mut Context<Self>) {
+    pub(crate) fn choose_effort(&mut self, kind: &str, level: String, cx: &mut Context<Self>) {
+        let models = self.models_of(kind);
+        if !models.efforts.contains(&level) {
+            return;
+        }
+        if kind != self.box_kind() {
+            if self.box_terminal().is_none() {
+                self.browsed_effort = Some((kind.to_string(), level));
+                cx.notify();
+            }
+            return;
+        }
+        self.problem = None;
+        let current = match self.box_terminal() {
+            Some(t) => self
+                .picked_for(t)
+                .model
+                .and_then(|m| m.id)
+                .or_else(|| composer::model_id(t)),
+            None => self.new_model().id,
+        };
+        let variant = models.effort_model(current.as_deref(), &level);
         let Some(t) = self.box_terminal().cloned() else {
+            if let Some(model) = variant {
+                self.new_choice.model = Some(model);
+                self.new_choice.effort = None;
+                cx.notify();
+                return;
+            }
             self.new_choice.effort = Some(level);
             cx.notify();
             return;
         };
-        self.picked.entry(t.id.clone()).or_default().effort = Some(level.clone());
+        let choice = self.picked.entry(t.id.clone()).or_default();
+        if let Some(model) = &variant {
+            choice.model = Some(model.clone());
+            choice.effort = None;
+        } else {
+            choice.effort = Some(level.clone());
+        }
         cx.notify();
         if !t.running {
             return;
@@ -819,7 +979,14 @@ impl Agents {
                     return;
                 }
                 if drives_chat(&t.kind) {
-                    this.tell(&t, json!({"kind": "set", "effort": level}));
+                    this.tell(
+                        &t,
+                        if let Some(model) = &variant {
+                            json!({"kind": "set", "model": model.id, "effort": null})
+                        } else {
+                            json!({"kind": "set", "effort": level})
+                        },
+                    );
                 } else {
                     this.command(&t, format!("/effort {level}"), cx);
                 }
@@ -870,6 +1037,7 @@ impl Agents {
         self.menu = None;
         let Some(t) = self.box_terminal().cloned() else {
             self.new_choice.mode = Some(mode.id);
+            self.problem = None;
             cx.notify();
             return;
         };
@@ -877,6 +1045,7 @@ impl Agents {
             cx.notify();
             return;
         }
+        self.problem = None;
         if !t.running {
             self.picked.entry(t.id.clone()).or_default().mode = Some(mode.id);
         } else if t.kind == "claude" && mode.id == "yolo" {
@@ -909,6 +1078,7 @@ impl Agents {
                     this.update(cx, |this, cx| {
                         this.picked.entry(t.id.clone()).or_default().mode = Some(mode.id);
                         this.tell(&t, json!({"kind": "set", "permission": mode.permission}));
+                        this.problem = None;
                         cx.notify();
                     })
                     .ok();
@@ -935,21 +1105,15 @@ impl Agents {
         .detach();
     }
 
-    /// Web search or session context switched in the box.
-    pub(crate) fn set_switch(&mut self, key: &'static str, on: bool, cx: &mut Context<Self>) {
-        let set = |c: &mut Choice| {
-            if key == "web" {
-                c.web = Some(on)
-            } else {
-                c.context = Some(on)
-            }
-        };
+    /// Web search switched in the box.
+    pub(crate) fn set_web(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.problem = None;
         match self.box_terminal().cloned() {
-            None => set(&mut self.new_choice),
+            None => self.new_choice.web = Some(on),
             Some(t) => {
-                set(self.picked.entry(t.id.clone()).or_default());
+                self.picked.entry(t.id.clone()).or_default().web = Some(on);
                 if t.running {
-                    self.tell(&t, json!({"kind": "set", key: on}));
+                    self.tell(&t, json!({"kind": "set", "web": on}));
                 }
             }
         }
@@ -988,11 +1152,16 @@ impl Agents {
     }
 
     pub(crate) fn star(&mut self, kind: &str, model: &ModelChoice, cx: &mut Context<Self>) {
-        let key = favourite_key(kind, model);
-        if let Some(at) = self.favourites.iter().position(|k| *k == key) {
-            self.favourites.remove(at);
+        let models = self.models_of(kind);
+        let matching = |key: &str| {
+            key.split_once(':').is_some_and(|(k, id)| {
+                k == kind && models.same_model(Some(id), model.id.as_deref())
+            })
+        };
+        if self.favourites.iter().any(|key| matching(key)) {
+            self.favourites.retain(|key| !matching(key));
         } else {
-            self.favourites.push(key);
+            self.favourites.push(favourite_key(kind, model));
         }
         crate::prefs::save_favourites(&self.favourites);
         cx.notify();
@@ -1027,16 +1196,24 @@ impl Agents {
         .detach();
     }
 
-    /// What a new conversation starts with.
+    /// What a new conversation starts with: the model and effort the box
+    /// shows (see [`Models::start_effort`]).
     pub(crate) fn new_options(&self, refs: Vec<Value>) -> AgentOptions {
         let c = &self.new_choice;
+        let model = self.new_model().id;
+        let effort = if terminal_only(self.new_kind) {
+            None
+        } else {
+            self.models_of(self.new_kind)
+                .start_effort(model.as_deref(), c.effort.as_deref())
+        };
         AgentOptions {
-            model: self.new_model().id,
-            effort: c.effort.clone(),
+            model,
+            effort,
             permission: Some(self.box_mode_for_new().permission.into()),
             code: c.console.unwrap_or(false).then(|| "console".into()),
             web: (c.web == Some(false)).then_some(false),
-            context: (c.context == Some(false)).then_some(false),
+            account: crate::prefs::agent_account(&self.host, self.new_kind),
             refs,
             ..AgentOptions::default()
         }
@@ -1071,8 +1248,11 @@ impl Agents {
         if let Some(web) = c.web {
             options.web = (!web).then_some(false);
         }
-        if let Some(context) = c.context {
-            options.context = (!context).then_some(false);
+        if composer::running_models(t, options.model.as_deref())
+            .variant_effort(options.model.as_deref())
+            .is_some()
+        {
+            options.effort = None;
         }
         options
     }
@@ -1082,12 +1262,13 @@ impl Agents {
     pub(crate) fn restart(
         &mut self,
         t: &TerminalInfo,
-        options: AgentOptions,
+        mut options: AgentOptions,
         prompt: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let id = t.id.clone();
         let name = crate::agents::kind_of(&t.kind).map_or("the agent", |k| k.name);
+        let (prompt, first) = crate::agents::first_message(&t.kind, prompt, &mut options);
         let restarted = self.daemon.call::<TerminalInfo>(Call::RestartTerminal {
             terminal: id.clone(),
             options: Some(options),
@@ -1101,9 +1282,14 @@ impl Agents {
             let restarted = restarted.await;
             this.update(cx, |this, cx| {
                 this.starting = None;
+                this.account_switching = None;
                 match restarted {
                     Ok(info) => {
+                        this.problem = None;
                         this.picked.remove(&id);
+                        if let Some(first) = first {
+                            this.typing.insert(id.clone(), first);
+                        }
                         if let Some(view) = this.view(&id) {
                             view.update(cx, |v, cx| v.revive(cx));
                         }
@@ -1111,8 +1297,10 @@ impl Agents {
                             *t = info;
                         }
                         this.follow_again(&id, cx);
+                        this.continue_resumed_view(&id, cx);
                     }
                     Err(err) => {
+                        this.view_switches.remove(&id);
                         this.problem = Some(format!("Could not start {name} again: {err:#}"))
                     }
                 }
@@ -1125,9 +1313,21 @@ impl Agents {
 }
 
 impl Agents {
+    pub(crate) fn dismiss_popups(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let open = self.menu.is_some() || self.gear;
+        if open {
+            self.close_menu(window, cx);
+            self.gear = false;
+            self.confirm_end = false;
+            cx.notify();
+        }
+        open
+    }
+
     pub(crate) fn toggle_gear(&mut self, cx: &mut Context<Self>) {
         self.gear = !self.gear;
         self.confirm_end = false;
+        self.menu = None;
         cx.notify();
     }
 
@@ -1177,13 +1377,14 @@ impl Agents {
             name: (!name.is_empty()).then_some(name),
         });
         cx.spawn(async move |this, cx| {
-            if let Err(err) = renamed.await {
-                this.update(cx, |this, cx| {
-                    this.problem = Some(format!("Could not rename the conversation: {err:#}"));
-                    cx.notify();
-                })
-                .ok();
-            }
+            let renamed = renamed.await;
+            this.update(cx, |this, cx| {
+                this.problem = renamed
+                    .err()
+                    .map(|err| format!("Could not rename the conversation: {err:#}"));
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
         cx.notify();

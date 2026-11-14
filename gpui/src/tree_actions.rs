@@ -125,7 +125,7 @@ impl Workbench {
     }
 
     /// Opens a folder and every folder above it in the tree.
-    fn open_to(&mut self, dir: &str, cx: &mut Context<Self>) {
+    pub(crate) fn open_to(&mut self, dir: &str, cx: &mut Context<Self>) {
         let mut at = String::new();
         for part in dir.split('/').filter(|p| !p.is_empty()) {
             at = join(&at, part);
@@ -220,7 +220,20 @@ impl Workbench {
                             .or_else(|| self.kernels.first());
                         new_notebook(spec)
                     } else {
-                        template(base_name(&value))
+                        // New paths have no live session. Resolve a remembered
+                        // choice before the project default for the fallback
+                        // kernel's language, then the first installed kernel.
+                        let fallback = self.kernels.first();
+                        let project_kernel =
+                            fallback.and_then(|spec| self.project_kernel(Some(&spec.language)));
+                        let kernel = self
+                            .remembered_kernel(&path)
+                            .or(project_kernel.as_deref())
+                            .or_else(|| fallback.map(|spec| spec.name.as_str()));
+                        let language = kernel
+                            .and_then(|name| self.kernels.iter().find(|spec| spec.name == name))
+                            .map(|spec| spec.language.as_str());
+                        template(base_name(&value), language)
                     };
                     Call::WriteFile {
                         path,
@@ -339,11 +352,10 @@ impl Workbench {
     /// changes.
     fn release(&mut self, path: &str, cx: &mut Context<Self>) -> Result<Vec<String>, String> {
         let open: Vec<(String, bool)> = self
-            .open
+            .tabs
             .iter()
-            .chain(&self.others)
-            .filter(|o| within(&o.notebook.path, path))
-            .map(|o| (o.notebook.path.clone(), o.dirty))
+            .filter(|p| within(p, path))
+            .map(|p| (p.clone(), self.tab_dirty(p)))
             .collect();
         if let Some((dirty, _)) = open.iter().find(|(_, dirty)| *dirty) {
             return Err(format!(
@@ -377,6 +389,7 @@ impl Workbench {
         let listed = daemon.call::<Vec<DirEntry>>(Call::ListDir {
             path: parent.clone(),
             sizes: false,
+            marks: false,
         });
         cx.spawn(async move |this, cx| {
             let done = async {
@@ -526,20 +539,33 @@ impl Workbench {
         let local = self.target == Target::Local;
         let mut rows: Vec<AnyElement> = Vec::new();
         if !dir {
-            let openable =
-                crate::notebook::format_of(&rel).is_some() || crate::viewer::is_html(&rel);
+            let openable = crate::notebook::can_open(&rel);
             if openable {
                 let r = rel.clone();
                 rows.push(menu_item(
                     "tm-open",
                     None,
-                    "Open",
+                    "Open in Sandhill",
                     "",
                     &p,
                     cx,
                     move |this, _, cx| this.open_file(r.clone(), cx),
                 ));
             }
+            let external_path = path.clone();
+            rows.push(menu_item(
+                "tm-open-external",
+                None,
+                if local {
+                    "Open with Default App"
+                } else {
+                    "Download to This Mac and Open"
+                },
+                "",
+                &p,
+                cx,
+                move |this, _, cx| this.open_external(external_path.clone(), cx),
+            ));
             if crate::jobs::is_job_script(&rel) {
                 let path = path.clone();
                 rows.push(menu_item(
@@ -713,7 +739,10 @@ impl Workbench {
             .occlude()
             .min_w(px(250.))
             .children(rows)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if this.popup_triggers.contains("files-new", event.position) {
+                    return;
+                }
                 this.files_ui.new_menu = false;
                 cx.notify();
             }));
@@ -751,7 +780,10 @@ impl Workbench {
             .occlude()
             .min_w(px(240.))
             .children(rows)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if this.popup_triggers.contains("files-sort", event.position) {
+                    return;
+                }
                 this.files_ui.sort_menu = false;
                 cx.notify();
             }));

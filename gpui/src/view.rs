@@ -1,11 +1,11 @@
-//! Drawing the window, in the Tauri app's look (see `look`): the title bar,
-//! files on the wall, the notebook (or the Data Explorer) in a glass pane,
-//! and on the right the Console, Terminal or Viewer above Variables.
+//! Drawing the window (see `look`): the title bar over the frosted glass,
+//! the side panels and Console group as translucent panes on it, and the
+//! editor (or the Data Explorer) in a solid pane.
 
-use gpui_kit::base::SelectableText;
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{self, Editor};
-use gpui_kit::component::text::{TextView, TextViewStyle};
+use gpui_kit::component::text::TextViewStyle;
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -15,10 +15,12 @@ use serde_json::Value;
 use crate::command_palette::Cmd;
 use crate::explorer::Explorer;
 use crate::look::{
-    self, EDGE, GAP, Palette, RADIUS, bar_button, capsule, capsule_divider, dot, icon, icon_button,
-    pane, picture, raised, wall,
+    self, EDGE, GAP, Palette, RADIUS, bar_button, capsule_divider, dot, icon, icon_button, pane,
+    picture, raised, wall,
 };
 use crate::notebook::{self, CellKind};
+use crate::output_text::OutputText;
+use crate::panes::Panel;
 use crate::shown::{Shown, show};
 use crate::workbench::{Link, Open, Plot, Run, Session, Split, Workbench, is_script, plot_key};
 use crate::{Interrupt, RunAll, RunCell, RunLine, Save, ToggleConsole};
@@ -30,30 +32,50 @@ const EDITOR_PADDING: f32 = 20.;
 const PLOT_MAX_WIDTH: f32 = 720.;
 /// How tall a cell's outputs grow before they scroll.
 const OUTPUT_MAX_HEIGHT: f32 = 480.;
-/// Whether a box of outputs takes a wheel turn of `dy` (negative moves
-/// down) itself, rather than letting the notebook scroll: only while it
-/// can still move that way. Its scroll listener runs first, so `offset`
-/// already holds the turn; `max` is how far down it can go.
+/// Whether a box of outputs took a wheel turn of `dy` (negative moves
+/// down), so the notebook must not scroll too. Its own scroll listener runs
+/// first: it adds a turn that can move it, unclamped, and skips one that
+/// can't (at its top or bottom, or when it fits), leaving `offset` where it
+/// was. `max` is how far down it can go. A turn that lands exactly on an
+/// end reads as skipped, so the notebook moves once with it.
 fn box_takes(offset: Pixels, max: Pixels, dy: Pixels) -> bool {
-    let before = offset - dy;
-    if dy < px(0.) {
-        before > -max + px(0.5)
-    } else if dy > px(0.) {
-        before < px(-0.5)
-    } else {
-        max > px(0.)
-    }
+    !dy.is_zero() && (offset + dy).clamp(-max, px(0.)) != offset
 }
 
 /// Height of a web page under a cell.
 const PAGE_HEIGHT: f32 = 420.;
 
+/// Use the actual source icon key, including special names and compressed types.
+fn collapsed_file_groups(paths: &[String]) -> Vec<(String, Vec<usize>)> {
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (ix, path) in paths.iter().enumerate() {
+        let key = look::file_icon(path);
+        if let Some((_, files)) = groups.iter_mut().find(|(icon, _)| *icon == key) {
+            files.push(ix);
+        } else {
+            groups.push((key, vec![ix]));
+        }
+    }
+    groups
+}
+
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A disconnected/removed AI pane cannot leave an empty workspace.
+        if !self.show_files && !self.show_middle && !self.agents_available() {
+            self.show_middle = true;
+        }
+        if self.maximized_panel == Some(Panel::Agents) && !self.agents_available() {
+            self.maximized_panel = None;
+        }
         self.report_focus(window, cx);
+        self.sync_find_document(cx);
         if window.focused(cx).is_none() {
             window.focus(&self.focus, cx);
         }
+        self.place_cells(window);
+        self.fetch_notebook_plots(cx);
+        self.sync_markdown_images(cx);
         self.sync_pages(window, cx);
         self.sync_plots(cx);
         self.sync_packages(cx);
@@ -82,15 +104,100 @@ impl Render for Workbench {
                     cx.stop_propagation();
                     return;
                 }
+                if event.keystroke.key == "escape" && this.dismiss_signature(cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                if event.keystroke.key == "escape" && this.outline.open {
+                    this.outline.open = false;
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                if this.r_shortcut(event, window, cx) || this.find_keys(event, window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if event.keystroke.key != "escape" {
                     return;
                 }
-                if this.plot_history.zoom.take().is_some()
-                    || this.log.take().is_some()
-                    || this.git.rewrite.take().is_some()
-                {
+                if this.dismiss_zoom_units() {
                     cx.stop_propagation();
                     cx.notify();
+                    return;
+                }
+                let mut dismissed = this.plot_history.zoom.take().is_some();
+                dismissed |= this.dismiss_plot_size_menu();
+                dismissed |= this.log.take().is_some();
+                dismissed |= this.git.rewrite.take().is_some();
+                dismissed |= this.notebook_ai_menu;
+                this.notebook_ai_menu = false;
+                dismissed |= this.main_menu
+                    || this.connection_menu
+                    || this.kernel_menu
+                    || this.console_sessions.history_open
+                    || this.files_ui.new_menu
+                    || this.files_ui.sort_menu
+                    || this.import.menu;
+                this.main_menu = false;
+                this.connection_menu = false;
+                this.kernel_menu = false;
+                this.console_sessions.history_open = false;
+                this.files_ui.new_menu = false;
+                this.files_ui.sort_menu = false;
+                this.import.menu = false;
+                dismissed |= this.files_ui.menu.take().is_some();
+                dismissed |= this.machine.resource.take().is_some();
+                dismissed |= this.git.menu.take().is_some();
+                dismissed |= this.delimited.take().is_some();
+                dismissed |= this.dismiss_settings_menu(cx);
+                if let Some(agents) = this.agents.clone() {
+                    dismissed |= agents.update(cx, |a, cx| a.dismiss_popups(window, cx));
+                }
+                if let Some(quota) = this.quota.clone() {
+                    dismissed |= quota.update(cx, |quota, cx| quota.dismiss_popup(cx));
+                }
+                if dismissed {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            // Bubble only after focused editors, dropdowns and dialogs have
+            // had their chance to consume Escape.
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape"
+                    && this.maximized_panel.is_some()
+                    && !this.palette.shown
+                    && this.setup.dialog.is_none()
+                    && this.import.dialog.is_none()
+                    && this.trust.state != crate::trust::Trust::Asking
+                {
+                    this.maximized_panel = None;
+                    if let Some(agents) = this.agents.clone() {
+                        agents.update(cx, |_, cx| cx.notify());
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .when(!self.find.replaying, |d| {
+                d.capture_action(cx.listener(|this, _: &input::Undo, window, cx| {
+                    if this.notebook_find_history(false, window, cx) {
+                        cx.stop_propagation();
+                    }
+                }))
+                .capture_action(cx.listener(
+                    |this, _: &input::Redo, window, cx| {
+                        if this.notebook_find_history(true, window, cx) {
+                            cx.stop_propagation();
+                        }
+                    },
+                ))
+            })
+            // Tab after a name opens completions in R and Python code.
+            .capture_action(cx.listener(|this, _: &input::IndentInline, window, cx| {
+                if this.complete_on_tab(window, cx) {
+                    cx.stop_propagation();
                 }
             }))
             .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
@@ -129,56 +236,28 @@ impl Render for Workbench {
                     .items_stretch()
                     .pt(px(GAP))
                     .px(px(EDGE))
-                    .when(self.show_files, |d| {
-                        d.child(self.render_left(cx))
-                            .child(self.splitter(Split::Files, cx))
-                    })
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w(px(320.))
-                            .h_full()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_h(px(120.))
-                                    .flex()
-                                    .child(self.render_notebook(window, cx)),
-                            )
-                            .when(self.show_console, |d| {
-                                d.child(self.splitter(Split::Console, cx))
-                                    .child(self.render_console_pane(cx))
-                            }),
-                    )
-                    .when_some(
-                        self.agents.clone().filter(|_| self.show_agents),
-                        |d, agents| {
-                            d.child(self.splitter(Split::Agents, cx)).child(
-                                div()
-                                    .w(px(self.agents_width))
-                                    .flex_shrink(1.)
-                                    .min_w(px(300.))
-                                    .h_full()
-                                    .child(agents),
-                            )
-                        },
-                    ),
+                    .child(self.render_workspace(window, cx)),
             )
+            .children(self.render_document_notice(cx))
             .child(self.render_status(cx))
             .children(self.render_resource_popup(cx))
             .children(self.render_zoom(cx))
             .children(self.render_settings_dialog(cx))
+            .children(self.render_trust_dialog(cx))
+            .children(self.render_irkernel_dialog(cx))
             .children(self.render_import_dialog(cx))
+            .children(self.render_delimited_dialog(cx))
             .children(self.render_main_menu(cx))
             .children(self.render_connection_menu(cx))
             .children(self.render_log_dialog(cx))
             .children(self.render_rewrite(cx))
             .children(self.render_tree_menu(cx))
             .children(self.render_palette(cx))
+            .children(self.render_signature(cx))
     }
 }
 
-/// Where the title bar's first capsule starts; on a Mac the window buttons
+/// Where the title bar's flat controls start; on a Mac the window buttons
 /// come first.
 pub(crate) const TITLE_BAR_LEFT: f32 = if cfg!(target_os = "macos") { 78. } else { 6. };
 
@@ -194,15 +273,189 @@ fn panel_room(width: f32) -> f32 {
     (width - 2. * EDGE - 2. * GAP).max(0.)
 }
 
+/// Shares refer to the normal three-column room, even with a column hidden.
+fn column_widths(
+    width: f32,
+    left: bool,
+    middle: bool,
+    agents: bool,
+    left_share: f32,
+    agents_share: f32,
+) -> (f32, f32, f32) {
+    let count = left as u8 + middle as u8 + agents as u8;
+    let available = (width - 2. * EDGE - GAP * count.saturating_sub(1) as f32).max(0.);
+    if count == 0 {
+        return (0., 0., 0.);
+    }
+    if !middle && !agents {
+        return (available, 0., 0.);
+    }
+    if !middle {
+        let l = if left {
+            (panel_room(width) * left_share)
+                .max(220.)
+                .min((available - 300.).max(0.))
+        } else {
+            0.
+        };
+        return (l, 0., available - l);
+    }
+    let normal = (width - 2. * EDGE - GAP * (left as u8 + agents as u8) as f32).max(0.);
+    let side_room = (normal - 360.).max(0.);
+    let ai_min = if agents { 300_f32.min(side_room) } else { 0. };
+    let l = if left {
+        (panel_room(width) * left_share)
+            .max(220.)
+            .min((side_room - ai_min).max(0.))
+    } else {
+        0.
+    };
+    let a = if agents {
+        (panel_room(width) * agents_share)
+            .max(300.)
+            .min((side_room - l).max(0.))
+    } else {
+        0.
+    };
+    (l, (available - l - a).max(0.), a)
+}
+
 impl Workbench {
+    pub(crate) fn agents_available(&self) -> bool {
+        self.agents.is_some() && !self.restricted()
+    }
+
+    pub(crate) fn reveal_middle(&mut self) {
+        self.show_middle = true;
+        if self
+            .maximized_panel
+            .is_some_and(|panel| panel != Panel::Editor)
+        {
+            self.maximized_panel = None;
+        }
+    }
+
+    pub(crate) fn toggle_column(&mut self, panel: Panel, window: &Window, cx: &mut Context<Self>) {
+        let agents = self.show_agents && self.agents_available();
+        let can_hide = match panel {
+            Panel::LeftTop => self.show_middle || agents,
+            Panel::Editor => self.show_files || agents,
+            Panel::Agents => self.show_files || self.show_middle,
+            _ => return,
+        };
+        let keep_left = panel == Panel::Editor && self.show_middle && self.show_files;
+        let shown = match panel {
+            Panel::LeftTop => &mut self.show_files,
+            Panel::Editor => &mut self.show_middle,
+            Panel::Agents => &mut self.show_agents,
+            _ => return,
+        };
+        if !*shown || can_hide {
+            // Preserve the actual left width, including any narrow-window
+            // clamping, when the middle hands its room to the AI pane.
+            if keep_left {
+                self.left_share =
+                    self.files_width / panel_room(f32::from(window.viewport_size().width)).max(1.);
+            }
+            *shown = !*shown;
+            self.maximized_panel = None;
+            self.dragging = None;
+            if let Some(agents) = self.agents.clone() {
+                agents.update(cx, |_, cx| cx.notify());
+            }
+            cx.notify();
+        }
+    }
+
+    fn render_agents_pane(&self, _cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .size_full()
+            .children(self.agents.clone())
+            .into_any_element()
+    }
+
+    fn render_workspace(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(panel) = self.maximized_panel {
+            return match panel {
+                Panel::LeftTop | Panel::LeftBottom => self.render_left(cx).into_any_element(),
+                Panel::Editor => div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .child(self.render_notebook(window, cx))
+                    .into_any_element(),
+                Panel::Console => self.render_console_pane(window, cx).into_any_element(),
+                Panel::Agents => div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(self.render_agents_pane(cx))
+                    .into_any_element(),
+            };
+        }
+        let agents = self.show_agents && self.agents_available();
+        h_flex()
+            .size_full()
+            .items_stretch()
+            .when(self.show_files, |d| d.child(self.render_left(cx)))
+            .when(self.show_files && (self.show_middle || agents), |d| {
+                d.child(self.splitter(Split::Files, cx))
+            })
+            .when(self.show_middle, |d| {
+                d.child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_h(px(look::STRIP))
+                                .flex()
+                                .child(self.render_notebook(window, cx)),
+                        )
+                        .when(self.show_console, |d| {
+                            d.child(self.splitter(Split::Console, cx))
+                                .child(self.render_console_pane(window, cx))
+                        }),
+                )
+            })
+            .when(agents, |d| {
+                d.when(self.show_middle, |d| {
+                    d.child(self.splitter(Split::Agents, cx))
+                })
+                .child(
+                    div()
+                        .w(px(self.agents_width))
+                        .flex_none()
+                        .h_full()
+                        .child(self.render_agents_pane(cx)),
+                )
+            })
+            .into_any_element()
+    }
+
     /// The left and AI panels' widths from their shares of the window: a
     /// quarter each at first (1:2:1), the middle taking what is left.
     fn size_panels(&mut self, window: &Window) {
-        let room = panel_room(f32::from(window.viewport_size().width));
-        self.files_width = (room * self.left_share).max(220.);
-        self.agents_width = (room * self.agents_share).max(300.);
-        self.variables_height =
-            (left_column(f32::from(window.viewport_size().height)) * self.variables_share).max(90.);
+        let width = f32::from(window.viewport_size().width);
+        let (left, _, agents) = column_widths(
+            width,
+            self.show_files,
+            self.show_middle,
+            self.show_agents && self.agents_available(),
+            self.left_share,
+            self.agents_share,
+        );
+        self.files_width = left;
+        self.agents_width = agents;
+        let height = left_column(f32::from(window.viewport_size().height));
+        self.variables_height = self.left_vertical.heights(height, self.variables_share).0;
+        self.console_height = self
+            .middle_vertical
+            .heights(height, 1. - self.console_share)
+            .1;
     }
 
     /// A gap between panes that can be dragged; an accent line shows under
@@ -264,29 +517,34 @@ impl Workbench {
     ) {
         let (x, y) = (f32::from(at.x), f32::from(at.y));
         let (width, height) = (f32::from(window.width), f32::from(window.height));
-        // The middle keeps at least this much room.
-        let middle = 360.;
-        let room = panel_room(width);
-        let agents = if self.show_agents && self.agents.is_some() {
-            self.agents_width
-        } else {
-            0.
-        };
-        let files = if self.show_files {
-            self.files_width
-        } else {
-            0.
-        };
+        let agents_shown = self.show_agents && self.agents_available();
+        let visible = self.show_files as u8 + self.show_middle as u8 + agents_shown as u8;
+        let available = (width - 2. * EDGE - GAP * visible.saturating_sub(1) as f32).max(0.);
+        let room = panel_room(width).max(1.);
+        let middle = if self.show_middle { 360. } else { 0. };
         match split {
             Split::Files => {
-                let most = (width - agents - middle).max(220.);
-                self.left_share = (x - EDGE).clamp(220., most) / room;
+                let other = if self.show_middle {
+                    if agents_shown { self.agents_width } else { 0. }
+                } else if agents_shown {
+                    300.
+                } else {
+                    0.
+                };
+                let most = (available - other - middle).max(0.);
+                self.left_share = (x - EDGE).clamp(220_f32.min(most), most) / room;
             }
             Split::Agents => {
-                let most = (width - files - middle).max(300.);
-                self.agents_share = (width - x - EDGE).clamp(300., most) / room;
+                let files = if self.show_files {
+                    self.files_width
+                } else {
+                    0.
+                };
+                let most = (available - files - middle).max(0.);
+                self.agents_share = (width - x - EDGE).clamp(300_f32.min(most), most) / room;
             }
             Split::Variables => {
+                self.left_vertical = crate::panes::Vertical::Split;
                 // The top pane's height, from the top of the column.
                 let top = look::TITLE_BAR + GAP;
                 let most = (height - look::STATUS_BAR - top - 120.).max(90.);
@@ -294,30 +552,28 @@ impl Workbench {
                 self.variables_share = self.variables_height / left_column(height).max(1.);
             }
             Split::Console => {
+                self.middle_vertical = crate::panes::Vertical::Split;
                 let bottom = height - look::STATUS_BAR;
                 let most = (bottom - look::TITLE_BAR - 160.).max(80.);
                 self.console_height = (bottom - y).clamp(80., most);
+                self.console_share = self.console_height / left_column(height).max(1.);
             }
         }
         cx.notify();
     }
 
-    /// The title bar: a capsule of window buttons after the Mac's own, and
-    /// the theme button and the edit capsule at the right; the window draws the machine tabs
-    /// between them.
+    /// The title bar: window buttons directly on the glass after the Mac's
+    /// own, and the theme button at the right; the window draws the project
+    /// tabs between them.
     fn render_top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let edit = |id: &'static str, name: &str, action: Box<dyn Action>| {
-            icon_button(id, name, &p, true)
-                .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
-        };
         div()
             .relative()
             .flex_none()
             .h(px(look::TITLE_BAR))
             .w_full()
             .child(
-                // Behind the capsules: dragging here moves the window, and a
+                // Behind the controls: dragging here moves the window, and a
                 // double click zooms it, as a title bar does.
                 div()
                     .id("title-drag")
@@ -349,13 +605,34 @@ impl Workbench {
                     .pr(px(6.))
                     .gap(px(6.))
                     .child(
-                        capsule(&p, 25.)
+                        h_flex()
+                            .flex_none()
+                            .h(px(25.))
+                            .px(px(2.))
                             .child(
                                 icon_button("toggle-files", "sidebar.left", &p, true)
                                     .when(self.show_files, |d| d.text_color(p.text))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_files = !this.show_files;
-                                        cx.notify();
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(
+                                            "Show or hide the left panes",
+                                        )
+                                        .build(w, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_column(Panel::LeftTop, window, cx);
+                                    })),
+                            )
+                            .child(
+                                icon_button("toggle-editor", "sidebar.middle", &p, true)
+                                    .when(self.show_middle, |d| d.text_color(p.text))
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(
+                                            "Show or hide the editor",
+                                        )
+                                        .build(w, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_column(Panel::Editor, window, cx);
                                     })),
                             )
                             .child({
@@ -375,9 +652,14 @@ impl Workbench {
                                                 .right(px(5.)),
                                         )
                                     })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_agents = !this.show_agents;
-                                        cx.notify();
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(
+                                            "Show or hide the AI pane",
+                                        )
+                                        .build(w, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_column(Panel::Agents, window, cx);
                                     }))
                             })
                             .child(capsule_divider(&p))
@@ -395,6 +677,7 @@ impl Workbench {
                             )
                             .child(
                                 icon_button("main-menu", "menu", &p, true)
+                                    .on_prepaint(self.popup_triggers.track("main-menu"))
                                     .when(self.main_menu, |d| d.text_color(p.text))
                                     .tooltip(|w, cx| {
                                         gpui_kit::component::tooltip::Tooltip::new("Menu")
@@ -411,65 +694,46 @@ impl Workbench {
                     )
                     .child(div().flex_1())
                     .child(
-                        capsule(&p, 25.).child(
-                            icon_button(
-                                "theme",
-                                if p.dark { "theme.light" } else { "theme.dark" },
-                                &p,
-                                true,
-                            )
-                            .tooltip(move |w, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(if p.dark {
-                                    "Switch to the light theme"
-                                } else {
-                                    "Switch to the dark theme"
+                        h_flex()
+                            .flex_none()
+                            .h(px(25.))
+                            .px(px(2.))
+                            .child(
+                                icon_button(
+                                    "theme",
+                                    if p.dark { "theme.light" } else { "theme.dark" },
+                                    &p,
+                                    true,
+                                )
+                                .tooltip(move |w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(if p.dark {
+                                        "Switch to the light theme"
+                                    } else {
+                                        "Switch to the dark theme"
+                                    })
+                                    .build(w, cx)
                                 })
-                                .build(w, cx)
-                            })
-                            .on_click(|_, window, cx| look::toggle_appearance(window, cx)),
-                        ),
-                    )
-                    .child(
-                        capsule(&p, 25.)
-                            .child(edit("undo", "edit.undo", Box::new(input::Undo)))
-                            .child(edit("redo", "edit.redo", Box::new(input::Redo)))
-                            .child(capsule_divider(&p))
-                            .child(edit("cut", "edit.cut", Box::new(input::Cut)))
-                            .child(edit("copy", "edit.copy", Box::new(input::Copy)))
-                            .child(edit("paste", "edit.paste", Box::new(input::Paste)))
-                            .child(capsule_divider(&p))
-                            .child(
-                                edit("save", "doc.save", Box::new(Save))
-                                    .when(!self.open.as_ref().is_some_and(|o| o.dirty), |d| {
-                                        d.opacity(0.4)
-                                    }),
+                                .on_click(|_, window, cx| look::toggle_appearance(window, cx)),
                             )
                             .child(
-                                edit("save-all", "doc.save-all", Box::new(crate::SaveAll))
-                                    .when(!self.any_dirty(), |d| d.opacity(0.4)),
+                                icon_button("welcome", "welcome", &p, true)
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new("Welcome")
+                                            .build(w, cx)
+                                    })
+                                    .on_click(|_, _, cx| crate::app_window::show_welcome(None, cx)),
                             ),
                     ),
             )
     }
 
-    pub(crate) fn connection_text(&self) -> String {
-        match (&self.link, &self.about) {
-            (Link::Connecting, _) => "Connecting…".into(),
-            (Link::Failed(_), _) => "Not connected".into(),
-            (Link::Ready(_), Some(about)) => {
-                format!("{} · sandhilld {}", about.hostname, about.daemon_version)
-            }
-            (Link::Ready(_), None) => "Connected".into(),
-        }
-    }
-
-    /// The Files tab: the project's name, then its folders and files as a
-    /// tree.
+    /// The Files tab: the project's folders and files as a tree, right
+    /// under the tab strip (its buttons are in the strip: `files_tools`).
     pub(crate) fn render_files(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let count = self.file_lines().len();
         let project = self.project.clone().unwrap_or_default();
-        let open_path = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let open_path = self.active_document_path().map(str::to_owned);
         let list = uniform_list(
             "files",
             count,
@@ -573,8 +837,28 @@ impl Workbench {
                                 }))
                                 .into_any_element();
                         }
-                        let openable = notebook::format_of(&row.name).is_some();
-                        let is_open = open_path.as_deref() == Some(&format!("{project}/{rel}"));
+                        let openable = notebook::can_open(&row.name);
+                        let full = format!("{project}/{rel}");
+                        let is_open = open_path.as_deref() == Some(full.as_str());
+                        let document = this
+                            .open
+                            .iter()
+                            .chain(&this.others)
+                            .find(|o| o.notebook.path == full);
+                        let dirty = document.is_some_and(|o| o.dirty);
+                        // Open in a tab: a hollow ring, or the kernel's dot
+                        // (green once it runs) when the document has one.
+                        let opened = this.tabs.contains(&full).then(|| match document {
+                            Some(o) if !matches!(o.session, Session::None) => {
+                                Self::session_dot(&o.session, &p)
+                            }
+                            _ => div()
+                                .size(px(7.))
+                                .flex_none()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(p.faint),
+                        });
                         line.pl(px(indent + 20.))
                             .when(!openable, |d| d.text_color(p.muted))
                             .when(is_open, |d| d.bg(p.accent.opacity(0.2)))
@@ -582,89 +866,98 @@ impl Workbench {
                             .when(!is_open, |d| d.hover(move |d| d.bg(hover)))
                             .cursor_pointer()
                             .child(picture(&look::file_icon(&row.name)))
-                            .child(name)
-                            .children(meta(!openable && !crate::viewer::is_html(&rel)))
+                            .map(|d| {
+                                if dirty {
+                                    d.child(
+                                        h_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap(px(4.))
+                                            .child(name.flex_initial())
+                                            .child(dot(p.muted).size(px(4.))),
+                                    )
+                                } else {
+                                    d.child(name)
+                                }
+                            })
+                            .children(meta(true))
+                            .children(opened)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.files_ui.selected = Some((rel.clone(), false));
-                                if openable || crate::viewer::is_html(&rel) {
-                                    this.open_file(rel.clone(), cx)
-                                } else {
-                                    cx.notify()
-                                }
+                                this.open_file(rel.clone(), cx)
                             }))
                             .into_any_element()
                     })
                     .collect::<Vec<_>>()
             }),
         )
+        .track_scroll(&self.render_output_file_scroll())
+        // UniformList positions and reveals rows relative to its padded bounds.
+        .pt(px(look::STRIP + 4.))
         .size_full();
         v_flex()
+            .id("files-pane")
             .relative()
             .size_full()
-            .child(
-                h_flex()
-                    .h(px(30.))
-                    .flex_none()
-                    .pl(px(14.))
-                    .pr(px(8.))
-                    .gap(px(6.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .whitespace_nowrap()
-                    .child(self.render_project_button(cx))
-                    .when_some(self.tree.top_count(), |d, n| {
-                        d.child(
-                            div()
-                                .font_weight(FontWeight::NORMAL)
-                                .text_color(p.faint)
-                                .text_size(px(look::SMALL))
-                                .child(n.to_string()),
-                        )
-                    })
-                    .child(div().flex_1())
-                    .when(self.project.is_some(), |d| {
-                        let sort = self.tree.sort;
-                        d.child(
-                            icon_button("sort-files", "sort", &p, false)
-                                .when(self.files_ui.sort_menu, |d| d.text_color(p.text))
-                                .tooltip(move |w, cx| {
-                                    gpui_kit::component::tooltip::Tooltip::new(format!(
-                                        "Sort by {}",
-                                        sort.label().to_lowercase()
-                                    ))
-                                    .build(w, cx)
-                                })
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.files_ui.sort_menu = !this.files_ui.sort_menu;
-                                    this.files_ui.new_menu = false;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            icon_button("new-item", "add", &p, false)
-                                .when(self.files_ui.new_menu, |d| d.text_color(p.text))
-                                .tooltip(|w, cx| {
-                                    gpui_kit::component::tooltip::Tooltip::new("New file or folder")
-                                        .build(w, cx)
-                                })
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.files_ui.new_menu = !this.files_ui.new_menu;
-                                    this.files_ui.sort_menu = false;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            icon_button("refresh-files", "refresh", &p, false)
-                                .on_click(cx.listener(|this, _, _, cx| this.refresh_files(cx))),
-                        )
-                    }),
-            )
-            .children(self.render_name_error(cx))
+            .when(self.files_ui.error.is_some(), |d| {
+                d.child(
+                    div()
+                        .pt(px(look::STRIP + 4.))
+                        .children(self.render_name_error(cx)),
+                )
+            })
             .child(div().flex_1().min_h_0().px(px(6.)).pb(px(10.)).child(list))
+            .child(look::inset_scrollbar(
+                &self.render_output_file_scroll(),
+                look::STRIP,
+                cx,
+            ))
             .children(self.render_new_menu(cx))
             .children(self.render_sort_menu(cx))
-            .children(self.render_project_menu(cx))
+    }
+
+    /// The Files tab's sort, new and refresh buttons, in its pane's strip.
+    pub(crate) fn files_tools(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if self.project.is_none() {
+            return Vec::new();
+        }
+        let p = *Palette::get(cx);
+        let sort = self.tree.sort;
+        vec![
+            icon_button("sort-files", "sort", &p, false)
+                .on_prepaint(self.popup_triggers.track("files-sort"))
+                .when(self.files_ui.sort_menu, |d| d.text_color(p.text))
+                .tooltip(move |w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(format!(
+                        "Sort by {}",
+                        sort.label().to_lowercase()
+                    ))
+                    .build(w, cx)
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.files_ui.sort_menu = !this.files_ui.sort_menu;
+                    this.files_ui.new_menu = false;
+                    cx.notify();
+                }))
+                .into_any_element(),
+            icon_button("new-item", "add", &p, false)
+                .on_prepaint(self.popup_triggers.track("files-new"))
+                .when(self.files_ui.new_menu, |d| d.text_color(p.text))
+                .tooltip(|w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("New file or folder").build(w, cx)
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.files_ui.new_menu = !this.files_ui.new_menu;
+                    this.files_ui.sort_menu = false;
+                    cx.notify();
+                }))
+                .into_any_element(),
+            icon_button("refresh-files", "refresh", &p, false)
+                .on_click(cx.listener(|this, _, _, cx| this.refresh_files(cx)))
+                .into_any_element(),
+        ]
     }
 
     /// A pane's tab strip: its tabs in a capsule, then anything else.
@@ -679,7 +972,7 @@ impl Workbench {
             .overflow_hidden()
     }
 
-    /// One tab in a strip's capsule.
+    /// One tab in a strip's capsule: a pill, raised when picked.
     pub(crate) fn tab(
         id: impl Into<ElementId>,
         leading: Option<AnyElement>,
@@ -691,12 +984,12 @@ impl Workbench {
         let text = p.text;
         let tab = h_flex()
             .id(id)
+            .group(look::TAB_GROUP)
             .flex_none()
-            .h(px(18.))
+            .h(px(look::TAB_H))
             .gap(px(5.))
-            .pl(px(9.))
-            .pr(px(8.))
-            .rounded(px(look::TAB_RADIUS))
+            .px(px(10.))
+            .rounded_full()
             .text_size(px(look::TAB_TEXT))
             .whitespace_nowrap()
             .text_color(p.muted)
@@ -710,10 +1003,78 @@ impl Workbench {
         }
     }
 
+    /// The notebook and source jumps share the same unobscured viewport edge.
+    /// Find has a 24px input, 12px padding and 1px edge; Replace adds 28px.
+    pub(crate) fn notebook_header_height(&self) -> f32 {
+        look::STRIP
+            + if self.find.open {
+                if self.find.replace { 65. } else { 37. }
+            } else {
+                0.
+            }
+    }
+
     fn render_notebook(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
+        if self.panel_collapsed(crate::panes::Panel::Editor) {
+            return pane(&p)
+                .flex_1()
+                .h_full()
+                .child(self.render_tabs(cx))
+                .into_any_element();
+        }
+        if let Some(path) = &self.opening_shown
+            && !self.objects.is_shown()
+            && !self.explorer_shown
+            && !self.diff_shown
+        {
+            return pane(&p)
+                .flex_1()
+                .h_full()
+                .child(self.render_tabs(cx))
+                .child(
+                    gpui_kit::component::progress::Progress::new("document-opening")
+                        .loading(true)
+                        .color(p.accent)
+                        .h(px(2.))
+                        .accessibility_label("Opening document"),
+                )
+                .child(
+                    h_flex()
+                        .px(px(16.))
+                        .py(px(14.))
+                        .gap(px(8.))
+                        .text_size(px(look::SMALL))
+                        .text_color(p.muted)
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .child(crate::files::base_name(path).to_string()),
+                        )
+                        .child(div().flex_none().child("Opening…")),
+                )
+                .into_any_element();
+        }
+        if let Some(browser) = self.render_object_explorer(cx) {
+            return browser;
+        }
         if self.diff_shown && self.diff.is_some() {
             return self.render_diff(cx);
+        }
+        if !self.diff_shown
+            && !self.explorer_shown
+            && let Some(media) = self
+                .media_shown
+                .as_ref()
+                .and_then(|path| self.media.get(path))
+        {
+            return pane(&p)
+                .flex_1()
+                .h_full()
+                .child(self.render_tabs(cx))
+                .child(div().flex_1().min_h_0().child(media.clone()))
+                .into_any_element();
         }
         if let Some(explorer) = self
             .explorer
@@ -725,13 +1086,14 @@ impl Workbench {
         let Some(open) = &self.open else {
             return self.render_start(cx);
         };
-        if open.is_script() {
+        if open.single_editor() {
             return pane(&p)
                 .flex_1()
                 .h_full()
                 .child(self.render_tabs(cx))
-                .child(self.render_notebook_bar(open, cx))
-                .child(self.render_script(open, cx))
+                .children(self.render_find(cx))
+                .children(self.render_truncated_note(open, cx))
+                .child(self.render_source_document(open, cx))
                 .into_any_element();
         }
         let bodies = open
@@ -739,112 +1101,225 @@ impl Workbench {
             .cells
             .iter()
             .enumerate()
-            .map(|(ix, cell)| match cell.kind {
-                // As in the Tauri app, a notebook's Markdown shows
-                // formatted; a Quarto document's prose stays text.
-                CellKind::Text => {
-                    if open.notebook.format != notebook::Format::Ipynb
-                        || open.editing.contains(&cell.id)
-                        || cell_text(open, ix, cx).trim().is_empty()
-                    {
-                        self.render_cell_editor(open, ix, false, window, cx)
-                    } else {
-                        self.render_markdown(open, ix, cx)
-                    }
+            .map(|(ix, cell)| {
+                if !self.placed.shows(ix) {
+                    return None;
                 }
-                CellKind::Code => self.render_code_cell(open, ix, window, cx),
+                Some(match cell.kind {
+                    // As in the Tauri app, a notebook's Markdown shows
+                    // formatted; a Quarto document's prose stays text.
+                    CellKind::Text => {
+                        if open.notebook.format != notebook::Format::Ipynb
+                            || open.editing.contains(&cell.id)
+                            || self.find.replaying
+                            || cell_text(open, ix, cx).trim().is_empty()
+                        {
+                            self.render_cell_editor(open, ix, false, window, cx)
+                        } else {
+                            self.render_markdown(open, ix, cx)
+                        }
+                    }
+                    CellKind::Code => self.render_code_cell(open, ix, window, cx),
+                })
             })
             .collect::<Vec<_>>();
         let cells = self.render_cells(open, bodies, window, cx);
         let commanding = self.cells_focus.is_focused(window);
+        let header_height = self.notebook_header_height();
+        let target = self.notebook_scroll_target.take();
+        let scroll = self.notebook_scroll.clone();
+        let anchor = (scroll.children_count() > 0).then(|| scroll.logical_scroll_top());
+        let original_offset = scroll.offset();
         let scroller = div()
+            .on_children_prepainted(move |_, window, _| {
+                if let Some(item) = target
+                    && let Some(bounds) = scroll.bounds_for_item(item)
+                {
+                    let y = look::header_scroll_offset(
+                        scroll.offset().y,
+                        bounds.top() - scroll.bounds().top(),
+                        bounds.bottom() - scroll.bounds().top(),
+                        scroll.bounds().size.height,
+                        px(header_height),
+                        scroll.max_offset().y,
+                    );
+                    scroll.set_offset(Point {
+                        x: original_offset.x,
+                        y,
+                    });
+                    window.refresh();
+                    return;
+                }
+                // Replacing an estimated row above the viewport must not move
+                // the visible cell. Child bounds include the header padding,
+                // so this anchor correction preserves it without adding it twice.
+                // Explicit wheel/jump requests remain authoritative.
+                if scroll.offset() != original_offset {
+                    return;
+                }
+                if let Some((item, within)) = anchor
+                    && let Some(bounds) = scroll.bounds_for_item(item)
+                {
+                    let y = (scroll.bounds().top() + within - bounds.top())
+                        .clamp(-scroll.max_offset().y, px(0.));
+                    if (y - original_offset.y).abs() > px(0.5) {
+                        scroll.set_offset(Point {
+                            x: original_offset.x,
+                            y,
+                        });
+                        window.refresh();
+                    }
+                }
+            })
             .id("cells")
-            .flex_1()
-            .min_h_0()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
-            .track_scroll(&self.notebook_scroll)
+            .on_scroll(cx.listener(|this, _, _, cx| {
+                // Hover geometry belongs to the pre-scroll editor layout.
+                this.clear_language_popovers(None, cx);
+            }))
             .track_focus(&self.cells_focus)
             .when(commanding, |d| d.key_context(crate::CELLS))
-            .pt(px(10.))
             .pb(px(200.))
             .pl(px(6.))
             .pr(px(24.))
             // Between cells that can be added to, the rows that add them.
-            .when(!open.notebook.can_restructure(), |d| {
+            .when(!open.notebook.can_add_cells(), |d| {
                 d.gap(px(crate::cell_view::TOOLS_HEIGHT + 4.))
             })
             .children(cells);
         pane(&p)
+            .relative()
             .flex_1()
             .h_full()
-            .child(self.render_tabs(cx))
-            .child(self.render_notebook_bar(open, cx))
-            .child(self.cell_keys(scroller, cx))
+            .child(
+                look::PaneScroll::new(
+                    "notebook-scroll",
+                    header_height,
+                    10.,
+                    self.cell_keys(scroller, cx),
+                )
+                .handle(&self.notebook_scroll),
+            )
+            .child(look::floating_header(
+                &p,
+                0.,
+                true,
+                v_flex()
+                    .child(self.render_tabs(cx))
+                    .children(self.render_find(cx)),
+            ))
             .into_any_element()
     }
 
     /// The middle pane's tabs: the open notebooks, in the order they were
     /// opened, then the Data Explorer.
-    pub(crate) fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
+    pub(crate) fn render_document_tabs(
+        &self,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let p = *Palette::get(cx);
-        let shown = match (&self.open, self.explorer_shown || self.diff_shown) {
-            (_, true) => None,
-            (Some(open), false) => Some(open.notebook.path.clone()),
-            (None, false) => None,
+        let shown = if self.objects.is_shown() || self.explorer_shown || self.diff_shown {
+            None
+        } else {
+            self.active_document_path()
         };
-        let mut tabs: Vec<AnyElement> = self
-            .tabs
-            .iter()
-            .enumerate()
-            .map(|(ix, path)| {
-                let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let groups = if expanded {
+            self.tabs
+                .iter()
+                .enumerate()
+                .map(|(ix, path)| (look::file_icon(path), vec![ix]))
+                .collect()
+        } else {
+            collapsed_file_groups(&self.tabs)
+        };
+        let mut tabs: Vec<AnyElement> = groups
+            .into_iter()
+            .map(|(file_icon, files)| {
+                let ix = files[0];
+                let path = &self.tabs[ix];
+                let name = if expanded {
+                    crate::files::base_name(path).to_string()
+                } else if files.len() > 1 {
+                    files.len().to_string()
+                } else {
+                    String::new()
+                };
                 let show = path.clone();
-                Self::tab(
-                    ("file-tab", ix),
-                    Some(
-                        picture(&look::file_icon(path))
-                            .size(px(14.))
-                            .into_any_element(),
-                    ),
-                    name,
-                    shown.as_deref() == Some(path),
-                    &p,
-                )
-                .child(self.close_button(ix, path.clone(), self.tab_dirty(path), cx))
-                .on_click(cx.listener(move |this, _, _, cx| this.show_file_tab(&show, cx)))
-                .into_any_element()
+                let tip = files
+                    .iter()
+                    .map(|ix| self.tabs[*ix].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let dirty = files.iter().any(|ix| self.tab_dirty(&self.tabs[*ix]));
+                let picked = expanded && shown == Some(path.as_str());
+                let lead = picture(&file_icon).size(px(14.)).into_any_element();
+                let (lead, trailing) = if expanded {
+                    look::place_close(
+                        lead,
+                        self.close_button(ix, path.clone(), dirty, picked, cx),
+                        picked || dirty,
+                    )
+                } else {
+                    (lead, None)
+                };
+                Self::tab(("file-tab", ix), Some(lead), name, picked, &p)
+                    .flex_none()
+                    .when(!expanded, |d| d.px(px(5.)).gap(px(3.)))
+                    .tooltip(move |w, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                    })
+                    .when_some(trailing, |d, close| d.pr(px(3.)).child(close))
+                    .when(!expanded && dirty, |d| d.child(dot(p.muted).size(px(4.))))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.show_file_tab(&show, cx);
+                        if this.panel_collapsed(crate::panes::Panel::Editor) {
+                            this.middle_vertical = crate::panes::Vertical::Split;
+                        }
+                    }))
+                    .into_any_element()
             })
             .collect();
         if let Some(explorer) = &self.explorer {
-            let hover = p.ink(8.);
-            let text = p.text;
+            let picked =
+                expanded && self.explorer_shown && !self.diff_shown && !self.objects.is_shown();
+            let lead = icon("table").size(px(14.)).into_any_element();
+            let (lead, trailing) = if expanded {
+                look::place_close(
+                    lead,
+                    look::tab_close("explorer-close", picked, &p).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_explorer(cx)
+                        },
+                    )),
+                    picked,
+                )
+            } else {
+                (lead, None)
+            };
             tabs.push(
                 Self::tab(
                     "explorer-tab",
-                    Some(icon("table").size(px(14.)).into_any_element()),
-                    explorer.read(cx).name(),
-                    self.explorer_shown && !self.diff_shown,
+                    Some(lead),
+                    if expanded {
+                        explorer.read(cx).name()
+                    } else {
+                        String::new()
+                    },
+                    picked,
                     &p,
                 )
-                .child(
-                    div()
-                        .id("explorer-close")
-                        .size(px(16.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .text_color(p.faint)
-                        .hover(move |d| d.bg(hover).text_color(text))
-                        .child(icon("close").size(px(12.)))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.close_explorer(cx)
-                        })),
-                )
+                .flex_none()
+                .when(!expanded, |d| d.px(px(5.)).gap_0())
+                .tooltip(|w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("Data Explorer").build(w, cx)
+                })
+                .when_some(trailing, |d, close| d.pr(px(3.)).child(close))
                 .on_click(cx.listener(|this, _, _, cx| {
+                    this.reveal_middle();
+                    this.hide_object_explorer();
                     this.explorer_shown = true;
                     this.diff_shown = false;
                     cx.notify();
@@ -852,59 +1327,92 @@ impl Workbench {
                 .into_any_element(),
             );
         }
-        tabs.extend(self.diff_tab_element(cx));
-        Self::strip(&p).child(
-            crate::look::tab_capsule(&p)
-                .gap(px(1.))
-                .min_w_0()
-                .children(tabs),
-        )
+        tabs.extend(self.diff_tab_element(expanded, cx));
+        tabs.extend(self.object_tab_elements(expanded, cx));
+        tabs
     }
 
-    /// A tab's close button; unsaved, a dot that turns into it under the
-    /// pointer.
+    /// The editor's actions and pane controls share one row. File labels
+    /// remain in the project's titlebar capsule.
+    pub(crate) fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
+        let p = *Palette::get(cx);
+        let document = self.open.as_ref().filter(|_| {
+            !self.panel_collapsed(crate::panes::Panel::Editor)
+                && !self.diff_shown
+                && !self.explorer_shown
+                && !self.objects.is_shown()
+                && self.media_shown.is_none()
+        });
+        let media = self
+            .media_shown
+            .as_ref()
+            .filter(|_| {
+                !self.panel_collapsed(crate::panes::Panel::Editor)
+                    && !self.diff_shown
+                    && !self.explorer_shown
+                    && !self.objects.is_shown()
+            })
+            .and_then(|path| self.media.get(path));
+        let explorer = self.explorer.as_ref().filter(|_| {
+            self.explorer_shown
+                && !self.diff_shown
+                && !self.objects.is_shown()
+                && !self.panel_collapsed(crate::panes::Panel::Editor)
+        });
+        Self::strip(&p)
+            .child(
+                h_flex()
+                    .id("editor-actions")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_x_scroll()
+                    .restrict_scroll_to_axis()
+                    .when_some(document, |d, open| {
+                        d.child(self.render_notebook_bar(open, cx))
+                    })
+                    .when_some(media, |d, media| {
+                        d.child(media.update(cx, |media, cx| media.render_toolbar(cx)))
+                    })
+                    .when_some(explorer, |d, explorer| d.child(explorer.read(cx).toolbar())),
+            )
+            .when(document.is_some(), |d| d.child(self.outline_button(cx)))
+            .child(self.panel_buttons(crate::panes::Panel::Editor, cx))
+    }
+
+    /// A document tab's close button. Unsaved, a dot that stays after the
+    /// label and turns into the cross under the pointer.
     fn close_button(
         &self,
         ix: usize,
         path: String,
         dirty: bool,
+        picked: bool,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Stateful<Div> {
         let p = *Palette::get(cx);
-        let hover = p.ink(8.);
-        let text = p.text;
-        let group: SharedString = format!("close-tab-{ix}").into();
-        div()
-            .id(("close-tab", ix))
-            .group(group.clone())
-            .size(px(16.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .text_color(p.faint)
-            .hover(move |d| d.bg(hover).text_color(text))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                this.ask_close(path.clone(), window, cx)
-            }))
-            .map(|d| {
-                if dirty {
-                    d.child(
-                        dot(p.muted)
-                            .group_hover(group.clone(), |d| d.invisible())
-                            .absolute(),
-                    )
-                    .child(
-                        div()
-                            .invisible()
-                            .group_hover(group, |d| d.visible())
-                            .child(icon("close").size(px(12.))),
-                    )
-                } else {
-                    d.child(icon("close").size(px(12.)))
-                }
-            })
+        let close = if dirty {
+            let group: SharedString = format!("close-tab-{ix}").into();
+            look::close_circle(("close-tab", ix), &p)
+                .group(group.clone())
+                .child(
+                    dot(p.muted)
+                        .group_hover(group.clone(), |d| d.invisible())
+                        .absolute(),
+                )
+                .child(
+                    div()
+                        .invisible()
+                        .group_hover(group, |d| d.visible())
+                        .child(icon("close").size(px(12.))),
+                )
+        } else {
+            look::tab_close(("close-tab", ix), picked, &p)
+        };
+        close.on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.ask_close(path.clone(), window, cx)
+        }))
     }
 
     fn render_explorer(&self, explorer: &Entity<Explorer>, cx: &mut Context<Self>) -> AnyElement {
@@ -912,7 +1420,7 @@ impl Workbench {
         pane(&p)
             .flex_1()
             .h_full()
-            .child(self.render_tabs(cx).child(div().flex_1()))
+            .child(self.render_tabs(cx))
             .child(div().flex_1().min_h_0().child(explorer.clone()))
             .into_any_element()
     }
@@ -932,10 +1440,12 @@ impl Workbench {
                         .child(format!("Could not reach sandhilld: {err}")),
                 )
                 .child(div().child(
-                    "Right-click the machine's tab at the top to close it, then connect again from the Start screen.",
+                    "Right-click the project's capsule at the top to close it, then connect again from the Start screen.",
                 ))
                 .into_any_element(),
             Link::Ready(_) if self.project.is_some() => div()
+                .max_w(px(420.))
+                .text_center()
                 .child("Pick a notebook (.ipynb, .qmd, .Rmd) or a script (.R, .py) on the left, or use the Console.")
                 .into_any_element(),
             Link::Ready(_) => v_flex()
@@ -956,12 +1466,19 @@ impl Workbench {
         pane(&p)
             .flex_1()
             .h_full()
-            .px_6()
-            .items_center()
-            .justify_center()
-            .text_color(p.muted)
-            .line_height(rems(1.4))
-            .child(body)
+            .child(self.render_tabs(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .px_6()
+                    .items_center()
+                    .justify_center()
+                    .text_color(p.muted)
+                    .line_height(rems(1.4))
+                    .child(body),
+            )
             .into_any_element()
     }
 
@@ -997,7 +1514,7 @@ impl Workbench {
         )
     }
 
-    fn session_text(session: &Session) -> String {
+    pub(crate) fn session_text(session: &Session) -> String {
         match session {
             Session::None => "Kernel not started".into(),
             Session::Starting => "Starting kernel…".into(),
@@ -1006,13 +1523,35 @@ impl Workbench {
         }
     }
 
-    fn session_dot(session: &Session, p: &Palette) -> Div {
+    pub(crate) fn session_dot(session: &Session, p: &Palette) -> Div {
         dot(match session {
             Session::None => p.faint,
             Session::Starting => p.busy,
             Session::Ready(_) => p.ok,
             Session::Failed(_) => p.err,
         })
+    }
+
+    fn render_source_document(&self, open: &Open, cx: &mut Context<Self>) -> AnyElement {
+        if open.notebook.format == notebook::Format::Delimited {
+            return self.render_delimited(open, cx);
+        }
+        if open.notebook.format == notebook::Format::Markdown && open.markdown_preview {
+            return div()
+                .id("markdown-document-preview")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&self.notebook_scroll)
+                .px(px(18.))
+                .py(px(12.))
+                .child(
+                    crate::md_images::markdown(open, 0, "markdown-document", cx)
+                        .style(TextViewStyle::default().paragraph_gap(rems(0.5))),
+                )
+                .into_any_element();
+        }
+        self.render_script(open, cx).into_any_element()
     }
 
     /// A script: one editor with line numbers, filling the pane. ⌘↵ runs
@@ -1027,6 +1566,7 @@ impl Workbench {
             .on_action(cx.listener(|this, _: &RunCell, window, cx| this.run_statement(window, cx)))
             .child(
                 Editor::new(&open.editors[0])
+                    .readonly(open.notebook.truncated)
                     .bordered(false)
                     .appearance(false)
                     .line_height(px(LINE_HEIGHT))
@@ -1038,7 +1578,6 @@ impl Workbench {
     /// double click edits it, and Shift+Enter or leaving it shows it formatted
     /// again.
     fn render_markdown(&self, open: &Open, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let source = cell_text(open, ix, cx);
         let editor = open.editors[ix].clone();
         let path = open.notebook.path.clone();
         div()
@@ -1061,7 +1600,7 @@ impl Workbench {
                 }
             }))
             .child(
-                TextView::markdown(("md", ix), source).style(
+                crate::md_images::markdown(open, ix, ("md", ix), cx).style(
                     TextViewStyle::default()
                         .paragraph_gap(rems(0.5))
                         .heading_font_size(|level, _| {
@@ -1078,21 +1617,100 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// The bar under the notebook's tab: the kernels, then actions.
-    fn render_notebook_bar(&self, open: &Open, cx: &mut Context<Self>) -> impl IntoElement {
-        let kernels = self.kernel_picker(cx);
+    /// Document actions inside the editor's single header row.
+    fn render_notebook_bar(&self, open: &Open, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
+        let wrap_button = Self::editor_wrap_type(open).map(|kind| {
+            icon_button("editor-wrap", "editor.wrap", &p, false)
+                .when(crate::prefs::editor_soft_wrap(kind), |button| {
+                    button.bg(p.accent_soft).text_color(p.accent)
+                })
+                .tooltip(|window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("Wrap long lines").build(window, cx)
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_editor_wrap(window, cx);
+                }))
+        });
+        if open.notebook.is_text_document() {
+            return h_flex()
+                .flex_none()
+                .gap(px(4.))
+                .when(open.notebook.quarto_source(), |bar| {
+                    bar.child(
+                        bar_button("quarto-view", "Notebook", Some("doc"), &p)
+                            .tooltip(|w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(
+                                    "Switch to Notebook view",
+                                )
+                                .build(w, cx)
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_quarto_view(window, cx);
+                            })),
+                    )
+                })
+                .when(open.notebook.format == notebook::Format::Markdown, |bar| {
+                    bar.child(
+                        bar_button(
+                            "markdown-view",
+                            if open.markdown_preview {
+                                "Edit source"
+                            } else {
+                                "Rendered view"
+                            },
+                            Some("doc"),
+                            &p,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(open) = this.open.as_mut() {
+                                open.markdown_preview = !open.markdown_preview;
+                                cx.notify();
+                            }
+                        })),
+                    )
+                })
+                .when(crate::jobs::is_job_script(&open.notebook.path), |bar| {
+                    bar.child(
+                        bar_button("run-job", "Run as job", Some("terminal"), &p)
+                            .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
+                    )
+                })
+                .children(wrap_button)
+                .child(
+                    bar_button("save", "Save", Some("doc.save"), &p)
+                        .when(!open.dirty, |d| d.opacity(0.45))
+                        .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                )
+                .into_any_element();
+        }
         h_flex()
             .flex_none()
-            .h(px(30.))
-            .px(px(4.))
             .gap(px(4.))
-            .border_b(px(0.5))
-            .border_color(p.glass_edge)
             .whitespace_nowrap()
-            .overflow_hidden()
-            .child(kernels)
-            .child(div().w(px(8.)))
+            .when(open.notebook.format == notebook::Format::Quarto, |bar| {
+                bar.child(
+                    bar_button("quarto-view", "Source", Some("doc"), &p)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Switch to Source view")
+                                .build(w, cx)
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_quarto_view(window, cx);
+                        })),
+                )
+            })
+            .child(self.kernel_picker(true, cx))
+            .children(self.language_status(&open.notebook.path).map(|reason| {
+                div()
+                    .id("language-status")
+                    .text_size(px(11.))
+                    .text_color(p.muted)
+                    .child("Analysis unavailable")
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(reason.clone()).build(window, cx)
+                    })
+            }))
             .when(open.is_script(), |bar| {
                 bar.child(
                     bar_button("run-line", "Run line", Some("run"), &p).on_click(
@@ -1131,6 +1749,7 @@ impl Workbench {
                             this.preview_document(path.clone(), cx)
                         })),
                 )
+                .child(self.render_document_button(cx))
             })
             .when(crate::jobs::is_job_script(&open.notebook.path), |bar| {
                 bar.child(
@@ -1155,27 +1774,30 @@ impl Workbench {
                 )
             })
             .when(!open.is_script(), |bar| {
+                // Icon-only so Save stays visible beside Render and AI at
+                // the default window width.
                 bar.child(
-                    bar_button("clear-all", "Clear outputs", Some("outputs.clear"), &p)
+                    icon_button("clear-all", "outputs.clear", &p, false)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Clear all outputs")
+                                .build(w, cx)
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.clear_outputs(None, cx))),
                 )
             })
-            .child(
-                bar_button("save", "Save", Some("doc.save"), &p)
-                    .when(!open.dirty, |d| d.opacity(0.45))
-                    .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
-            )
-            .child(div().flex_1())
-            .child(
-                h_flex()
-                    .gap(px(6.))
-                    .pr(px(6.))
-                    .text_size(px(look::SMALL))
-                    .text_color(p.muted)
-                    .child(Self::session_dot(&open.session, &p))
-                    .child(Self::session_text(&open.session))
-                    .children(self.session_buttons(open.session.id().is_some(), cx)),
-            )
+            .when(!open.is_script(), |bar| {
+                bar.child(self.notebook_ai_button(cx))
+            })
+            .children(wrap_button)
+            .when(!open.notebook.truncated, |bar| {
+                bar.child(
+                    bar_button("save", "Save", Some("doc.save"), &p)
+                        .when(!open.dirty, |d| d.opacity(0.45))
+                        .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                )
+            })
+            .children(self.session_buttons(open.session.id().is_some(), cx))
+            .into_any_element()
     }
 
     /// A cell's editor, as tall as its text, so the notebook scrolls and
@@ -1190,11 +1812,22 @@ impl Workbench {
     ) -> AnyElement {
         let p = *Palette::get(cx);
         let editor = &open.editors[ix];
-        let lines = editor.read(cx).value().split('\n').count().max(1);
-        let focused = editor
-            .read(cx)
-            .focus_handle(cx)
-            .contains_focused(window, cx)
+        let state = editor.read(cx);
+        let line_count = state.value().split('\n').count().max(1);
+        let lines = if state.display_map().folded_ranges().is_empty() {
+            line_count
+        } else {
+            (0..line_count)
+                .filter(|line| !state.display_map().is_buffer_line_hidden(*line))
+                .count()
+                .max(1)
+        };
+        let focused = open.current == Some(ix)
+            || (open.current.is_none()
+                && editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx))
             // A cell the agent just added or changed lights up.
             || open
                 .lit
@@ -1202,6 +1835,9 @@ impl Workbench {
                 .is_some_and(|(id, _)| *id == open.notebook.cells[ix].id);
         div()
             .w_full()
+            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                this.clear_language_popovers(Some(ix), cx);
+            }))
             .when(boxed, |d| {
                 d.bg(p.chunk)
                     .border_1()
@@ -1266,11 +1902,20 @@ impl Workbench {
                 .enumerate()
                 .map(|(n, s)| {
                     let id = SharedString::from(format!("out-{}-{n}", cell.id));
-                    self.render_output(s, id, PLOT_MAX_WIDTH, Some(ix), cx)
+                    self.render_output(s, id, PLOT_MAX_WIDTH, Some(ix), None, cx)
                 })
                 .collect()
         };
-        let border = if busy {
+        let selected = open.current == Some(ix)
+            || (open.current.is_none()
+                && open.editors[ix]
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx))
+            || open.lit.as_ref().is_some_and(|(id, _)| *id == cell.id);
+        let border = if selected {
+            p.accent
+        } else if busy {
             p.busy
         } else if errored || failed.is_some() {
             p.err
@@ -1278,84 +1923,100 @@ impl Workbench {
             p.line
         };
         let fixable = (errored || error_shown) && !busy && !folded;
+        let line = self.run_line(open, ix, cx);
+        let framed = line.is_some() || count > 0 || busy || failed.is_some();
         v_flex()
             .w_full()
             .child(self.render_cell_editor(open, ix, true, window, cx))
-            .children(self.run_line(open, ix, cx))
-            .children(self.render_agent_change(open, ix, cx))
-            .when(folded && count > 0, |d| {
-                d.child(
-                    div()
-                        .id(("unfold", ix))
-                        .mt(px(4.))
-                        .pl(px(12.))
-                        .border_l_2()
-                        .border_color(border)
-                        .text_size(px(look::SMALL))
-                        .text_color(p.faint)
-                        .cursor_pointer()
-                        .hover(|d| d.text_color(p.accent))
-                        .child(if count == 1 {
-                            "1 output hidden: show".to_string()
-                        } else {
-                            format!("{count} outputs hidden: show")
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_outputs(ix, cx))),
-                )
-            })
-            .when(
-                !outputs.is_empty() || failed.is_some() || busy && !folded,
-                |d| {
-                    let scroll = self
-                        .output_scrolls
-                        .borrow_mut()
-                        .entry(cell.id.clone())
-                        .or_default()
-                        .clone();
-                    let inner = scroll.clone();
-                    d.child(
-                        // While its outputs can still move the wheel's
-                        // way, the box takes the turn and the notebook
-                        // stays put; at the box's top or bottom the
-                        // notebook scrolls on.
-                        div()
-                            .id(("outputs-wheel", ix))
-                            .w_full()
-                            .on_scroll(move |event, window, cx| {
-                                let dy = event.delta.pixel_delta(window.line_height()).y;
-                                if box_takes(inner.offset().y, inner.max_offset().y, dy) {
-                                    cx.stop_propagation();
-                                }
-                            })
-                            .child(
-                                v_flex()
-                                    .id(("outputs", ix))
-                                    .track_scroll(&scroll)
-                                    .mt(px(4.))
-                                    .my(px(2.))
-                                    .pl(px(12.))
-                                    .py(px(2.))
-                                    .gap_1()
-                                    .border_l_2()
-                                    .border_color(border)
-                                    // Long outputs scroll in their box, so the cells
-                                    // below stay near; web pages keep their own height.
-                                    .when(!pages, |d| {
-                                        d.max_h(px(OUTPUT_MAX_HEIGHT)).overflow_y_scroll()
+            .child(
+                v_flex()
+                    .when(framed, |d| {
+                        // Start at the code box's lower edge, including the
+                        // run metadata, so the two side lines stay connected.
+                        d.mx(px(8.))
+                            .mb(px(2.))
+                            .border_l_1()
+                            .border_r_1()
+                            .border_b_1()
+                            .rounded_b(px(RADIUS))
+                            .border_color(border)
+                    })
+                    .children(line)
+                    .children(self.render_agent_change(open, ix, cx))
+                    .when(folded && count > 0, |d| {
+                        d.child(
+                            div()
+                                .id(("unfold", ix))
+                                .py(px(4.))
+                                .px(px(12.))
+                                .text_size(px(look::SMALL))
+                                .text_color(p.faint)
+                                .cursor_pointer()
+                                .hover(|d| d.text_color(p.accent))
+                                .child(if count == 1 {
+                                    "1 output hidden: show".to_string()
+                                } else {
+                                    format!("{count} outputs hidden: show")
+                                })
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.toggle_outputs(ix, cx)),
+                                ),
+                        )
+                    })
+                    .when(
+                        !outputs.is_empty() || failed.is_some() || busy && !folded,
+                        |d| {
+                            let scroll = self
+                                .output_scrolls
+                                .borrow_mut()
+                                .entry(cell.id.clone())
+                                .or_default()
+                                .clone();
+                            let inner = scroll.clone();
+                            d.child(
+                                // The wheel capture area exactly matches the
+                                // scroll box. Metadata and borders outside it
+                                // leave the wheel to the notebook.
+                                div()
+                                    .id(("outputs-wheel", ix))
+                                    .w_full()
+                                    .on_scroll(move |event, window, cx| {
+                                        let dy = event.delta.pixel_delta(window.line_height()).y;
+                                        if box_takes(inner.offset().y, inner.max_offset().y, dy) {
+                                            cx.stop_propagation();
+                                        }
                                     })
-                                    .children(outputs)
-                                    .when_some(failed, |d, s| {
-                                        d.child(
-                                            div()
-                                                .text_color(p.err)
-                                                .child(format!("Run ended: {s}")),
-                                        )
-                                    }),
-                            ),
+                                    .child(
+                                        v_flex()
+                                            .id(("outputs", ix))
+                                            .track_scroll(&scroll)
+                                            .w_full()
+                                            .px(px(12.))
+                                            .pt(px(2.))
+                                            .pb(px(8.))
+                                            .gap_1()
+                                            // Long outputs scroll, while web pages
+                                            // keep their own height.
+                                            .when(!pages, |d| {
+                                                d.max_h(px(OUTPUT_MAX_HEIGHT)).overflow_y_scroll()
+                                            })
+                                            .children(outputs)
+                                            .when_some(failed, |d, s| {
+                                                d.child(
+                                                    div().text_color(p.err).cursor_text().child(
+                                                        OutputText::new(
+                                                            ("failed-output", ix),
+                                                            format!("Run ended: {s}"),
+                                                        ),
+                                                    ),
+                                                )
+                                            }),
+                                    ),
+                            )
+                        },
                     )
-                },
+                    .when(fixable, |d| d.children(self.render_error_actions(ix, cx))),
             )
-            .when(fixable, |d| d.children(self.render_error_actions(ix, cx)))
             .into_any_element()
     }
 
@@ -1368,6 +2029,7 @@ impl Workbench {
         id: SharedString,
         max_width: f32,
         cell: Option<usize>,
+        console_run: Option<&str>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
@@ -1379,12 +2041,20 @@ impl Workbench {
                 .font_family(look::MONO)
                 .text_size(px(look::CODE))
                 .line_height(px(LINE_HEIGHT))
-                .child(SelectableText::new(
+                .when(cell.is_some(), |d| d.cursor_text())
+                .child(OutputText::new(
                     text_id.clone(),
                     s.trim_end_matches('\n').to_string(),
                 ))
         };
-        let note = |s: String| div().text_color(p.faint).child(s).into_any_element();
+        let note_id = id.clone();
+        let note = move |s: String| {
+            div()
+                .text_color(p.faint)
+                .when(cell.is_some(), |d| d.cursor_text())
+                .child(OutputText::new(note_id.clone(), s))
+                .into_any_element()
+        };
         match shown {
             Shown::Text(s) => text(s).into_any_element(),
             Shown::Warning(s) => text(s).text_color(p.warn).into_any_element(),
@@ -1407,7 +2077,15 @@ impl Workbench {
                     let key = plot_key(&value);
                     let group: SharedString = format!("{id}-plot").into();
                     let copied = image.clone();
-                    let tools = cell.map(|ix| {
+                    let run = console_run.map(str::to_string);
+                    let sent_run = run.clone();
+                    let sent_key = key.clone();
+                    let zoom_key = key.clone();
+                    let zoom_run = run.clone();
+                    let bounds_key = format!("{id}-image");
+                    let zoom_bounds_key = bounds_key.clone();
+                    let save_bounds_key = bounds_key.clone();
+                    let tools = Some(
                         h_flex()
                             .absolute()
                             .top(px(6.))
@@ -1422,6 +2100,39 @@ impl Workbench {
                             .group_hover(group.clone(), |d| d.visible())
                             .child(
                                 icon_button(
+                                    SharedString::from(format!("{id}-zoom")),
+                                    "zoom",
+                                    &p,
+                                    false,
+                                )
+                                .tooltip(|w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("Enlarge the image")
+                                        .build(w, cx)
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        if let Some(ix) = cell {
+                                            this.open_cell_plot(
+                                                ix,
+                                                &zoom_key,
+                                                &zoom_bounds_key,
+                                                window,
+                                                cx,
+                                            );
+                                        } else if let Some(run) = &zoom_run {
+                                            this.open_console_plot(
+                                                run,
+                                                &zoom_key,
+                                                &zoom_bounds_key,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    },
+                                )),
+                            )
+                            .child(
+                                icon_button(
                                     SharedString::from(format!("{id}-save")),
                                     "doc.save",
                                     &p,
@@ -1433,7 +2144,23 @@ impl Workbench {
                                 })
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
-                                        this.open_cell_plot(ix, &key, window, cx)
+                                        if let Some(ix) = cell {
+                                            this.open_cell_plot(
+                                                ix,
+                                                &key,
+                                                &save_bounds_key,
+                                                window,
+                                                cx,
+                                            );
+                                        } else if let Some(run) = &run {
+                                            this.open_console_plot(
+                                                run,
+                                                &key,
+                                                &save_bounds_key,
+                                                window,
+                                                cx,
+                                            );
+                                        }
                                     },
                                 )),
                             )
@@ -1452,12 +2179,32 @@ impl Workbench {
                                     cx.listener(move |this, _, _, cx| this.copy_image(&copied, cx)),
                                 ),
                             )
-                    });
+                            .when_some(sent_run, |d, run| {
+                                d.child(
+                                    icon_button(
+                                        SharedString::from(format!("{id}-send")),
+                                        "send",
+                                        &p,
+                                        false,
+                                    )
+                                    .tooltip(|w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new("Send to Plots")
+                                            .build(w, cx)
+                                    })
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.send_console_plot(&run, &sent_key, cx);
+                                        },
+                                    )),
+                                )
+                            }),
+                    );
                     div()
                         .id(SharedString::from(format!("{id}-box")))
                         .group(group)
                         .relative()
                         .max_w(px(max_width))
+                        .on_prepaint(self.track_plot_bounds(bounds_key, image.clone()))
                         // No wider than the notebook, however wide drawn.
                         .child(
                             img(image.clone())
@@ -1473,8 +2220,91 @@ impl Workbench {
         }
     }
 
-    pub(crate) fn render_console(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_console_tools(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
+        let state = &self.loose;
+        h_flex()
+            .id("console-tools")
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .justify_end()
+            .gap(px(4.))
+            .text_color(p.muted)
+            .when(self.project.is_some(), |d| {
+                d.child(self.console_kernel_picker(cx))
+            })
+            .when(state.id().is_some(), |d| {
+                d.child(
+                    h_flex()
+                        .flex_none()
+                        .child(
+                            icon_button("console-restart", "refresh", &p, false)
+                                .tooltip(|w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(
+                                        "Restart: a new kernel, with nothing defined",
+                                    )
+                                    .build(w, cx)
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.restart_console_session(cx)),
+                                ),
+                        )
+                        .child(
+                            icon_button("console-stop", "power", &p, false)
+                                .tooltip(|w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(
+                                        "Shut down this session",
+                                    )
+                                    .build(w, cx)
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.stop_console_session(cx)),
+                                ),
+                        )
+                        .child(
+                            icon_button("console-send-plots", "send", &p, false)
+                                .tooltip(|w, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(
+                                        "Send all plots to Plots",
+                                    )
+                                    .build(w, cx)
+                                })
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.send_all_console_plots(cx)),
+                                ),
+                        ),
+                )
+            })
+            .when(self.console_target().is_some(), |d| {
+                d.child(
+                    icon_button("interrupt", "interrupt", &p, false).on_click(cx.listener(
+                        |this, _, _, _| {
+                            if let (Some(daemon), Some(session)) =
+                                (this.daemon(), this.console_target())
+                            {
+                                daemon.fire(sandhill_proto::Call::Interrupt {
+                                    session: session.to_string(),
+                                });
+                            }
+                        },
+                    )),
+                )
+            })
+    }
+
+    pub(crate) fn render_console(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = *Palette::get(cx);
+        let focused = self
+            .console_input
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        let edge = if focused {
+            p.accent.opacity(0.6)
+        } else {
+            p.ink(if p.dark { 26. } else { 22. })
+        };
         let entries = self
             .console
             .iter()
@@ -1518,7 +2348,7 @@ impl Workbench {
                                     .flex_1()
                                     .min_w_0()
                                     .text_color(p.muted)
-                                    .child(run.code.trim_end().to_string()),
+                                    .child(run.highlighted_code(self.run_language(run), cx)),
                             ),
                     )
                     .children(run.outputs.iter().enumerate().map(|(n, o)| {
@@ -1532,12 +2362,18 @@ impl Workbench {
                                     id,
                                     0.,
                                     None,
+                                    Some(run_id),
                                     cx,
                                 )
                             }
-                            shown => {
-                                self.render_output(shown, id, self.files_width - 40., None, cx)
-                            }
+                            shown => self.render_output(
+                                shown,
+                                id,
+                                self.files_width - 40.,
+                                None,
+                                Some(run_id),
+                                cx,
+                            ),
                         }
                     }))
                     .when_some(failed, |d, s| {
@@ -1548,56 +2384,6 @@ impl Workbench {
                     })
             })
             .collect::<Vec<_>>();
-        let state = self.active_state();
-        let header = h_flex()
-            .flex_none()
-            .min_h(px(30.))
-            .px(px(4.))
-            .gap(px(4.))
-            .flex_wrap()
-            .border_b(px(0.5))
-            .border_color(p.glass_edge)
-            .text_color(p.muted)
-            .when(self.open.is_none() && self.project.is_some(), |d| {
-                d.child(self.kernel_picker(cx)).when(
-                    matches!(self.loose, Session::None | Session::Failed(_)),
-                    |d| {
-                        d.child(
-                            Button::new("start-console")
-                                .xsmall()
-                                .primary()
-                                .label("Start")
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.start_console_kernel(cx)),
-                                ),
-                        )
-                    },
-                )
-            })
-            .when_some(self.open.as_ref(), |d, open| {
-                d.child(
-                    h_flex()
-                        .pl(px(6.))
-                        .gap(px(6.))
-                        .child(picture(&look::file_icon(&open.notebook.path)).size(px(14.)))
-                        .child(open.notebook.name().to_string()),
-                )
-            })
-            .child(div().flex_1())
-            .child(
-                h_flex()
-                    .gap(px(6.))
-                    .text_size(px(look::SMALL))
-                    .child(Self::session_dot(state, &p))
-                    .child(Self::session_text(state))
-                    .children(self.session_buttons(state.id().is_some(), cx)),
-            )
-            .when(self.active_session().is_some(), |d| {
-                d.child(
-                    icon_button("interrupt", "interrupt", &p, false)
-                        .on_click(cx.listener(|this, _, _, _| this.interrupt())),
-                )
-            });
         let lines = self
             .console_input
             .read(cx)
@@ -1607,34 +2393,48 @@ impl Workbench {
             .clamp(1, 8);
         v_flex()
             .size_full()
-            .child(header)
             .child(
-                div()
-                    .id("console")
-                    .flex_1()
-                    .min_h_0()
-                    .px(px(14.))
-                    .pt(px(6.))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.console_scroll)
-                    .when(entries.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .text_color(p.muted)
-                                .child("Code run in this kernel shows here."),
-                        )
-                    })
-                    .children(entries),
+                look::PaneScroll::new(
+                    "console-scroll",
+                    look::STRIP,
+                    6.,
+                    div()
+                        .id("console")
+                        .px(px(14.))
+                        .when(entries.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .text_color(p.muted)
+                                    .child("Code run in this kernel shows here."),
+                            )
+                        })
+                        .children(entries),
+                )
+                .handle(&self.console_scroll),
             )
             .child(
                 div()
                     .flex_none()
-                    .border_t(px(0.5))
-                    .border_color(p.glass_edge)
+                    .m(px(6.))
+                    .rounded(px(RADIUS))
+                    .border_1()
+                    .border_color(edge)
                     .px(px(4.))
+                    .overflow_hidden()
                     .on_action(
                         cx.listener(|this, _: &RunCell, window, cx| this.run_console(window, cx)),
                     )
+                    // History walk; otherwise Up/Down reach the editor.
+                    .capture_action(cx.listener(|this, _: &input::MoveUp, window, cx| {
+                        if this.console_history_step(true, window, cx) {
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .capture_action(cx.listener(|this, _: &input::MoveDown, window, cx| {
+                        if this.console_history_step(false, window, cx) {
+                            cx.stop_propagation();
+                        }
+                    }))
                     .child(
                         Editor::new(&self.console_input)
                             .bordered(false)
@@ -1778,30 +2578,47 @@ impl Workbench {
     /// The Variables tab's body.
     pub(crate) fn render_variables(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
+        let session = self.variables_session();
+        // A list from a kernel that has gone, or from another one, is not shown.
+        let live = session.is_some() && self.vars.session.as_deref() == session;
+        let list: &[Variable] = if live { &self.vars.list } else { &[] };
         let mut rows = Vec::new();
         let filter = self.vars_filter.read(cx).value().to_string();
-        let shown = filter_variables(&self.vars.list, &filter);
+        let shown = filter_variables(list, &filter);
         self.variable_rows(&shown, &[], &mut rows, cx);
-        let status = if self.active_session().is_none() {
+        let status = if session.is_none() {
             Some("No kernel running.".to_string())
         } else if let Some(err) = &self.vars.error {
             Some(err.clone())
-        } else if self.vars.list.is_empty() && !self.vars.loading {
+        } else if list.is_empty() && !self.vars.loading {
             Some("No variables yet.".into())
-        } else if shown.is_empty() && !self.vars.list.is_empty() {
+        } else if shown.is_empty() && !list.is_empty() {
             Some(format!("No variables match “{}”.", filter.trim()))
         } else {
             None
         };
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
+            .child(look::PaneScroll::new(
+                "variables-scroll",
+                look::STRIP + if session.is_some() { 36. } else { 0. },
+                4.,
+                div()
+                    .id("variables")
+                    .pb(px(4.))
+                    .when_some(status, |d, s| {
+                        d.child(div().px(px(14.)).text_color(p.muted).child(s))
+                    })
+                    .children(rows),
+            ))
             // The filter, Import and refresh, while a kernel runs.
-            .when(self.active_session().is_some(), |d| {
+            .when(session.is_some(), |d| {
                 d.child(
                     h_flex()
-                        .flex_none()
+                        .h(px(36.))
                         .gap(px(4.))
                         .pl(px(10.))
                         .pr(px(6.))
@@ -1814,23 +2631,18 @@ impl Workbench {
                         )
                         .child(self.import_button(cx))
                         .child(
-                            icon_button("refresh-variables", "refresh", &p, false)
-                                .on_click(cx.listener(|this, _, _, cx| this.refresh_variables(cx))),
-                        ),
+                            icon_button("refresh-variables", "refresh", &p, false).on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    if let Some(session) = this.vars.session.clone() {
+                                        this.refresh_object_explorers(&session, cx);
+                                    }
+                                    this.refresh_variables(cx);
+                                }),
+                            ),
+                        )
+                        .map(|row| look::floating_header(&p, look::STRIP, false, row)),
                 )
             })
-            .child(
-                div()
-                    .id("variables")
-                    .flex_1()
-                    .min_h_0()
-                    .py(px(4.))
-                    .overflow_y_scroll()
-                    .when_some(status, |d, s| {
-                        d.child(div().px(px(14.)).text_color(p.muted).child(s))
-                    })
-                    .children(rows),
-            )
             .into_any_element()
     }
 
@@ -1912,6 +2724,7 @@ impl Workbench {
                             )),
                         )
                     })
+                    .child(self.variable_object_actions(variable, &path, cx))
                     .into_any_element(),
             );
             if open && let Some(children) = self.vars.children.get(&path) {
@@ -1920,8 +2733,8 @@ impl Workbench {
         }
     }
 
-    /// The status bar: the connection, then the latest problem or a hint,
-    /// and the machine's resources at the right.
+    /// The status bar: the current device and its resources, then the
+    /// latest problem or notice.
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         h_flex()
@@ -1933,30 +2746,25 @@ impl Workbench {
             .gap(px(14.))
             .whitespace_nowrap()
             .overflow_hidden()
-            .text_color(p.muted)
-            .child(self.render_connection_item(cx))
-            .child(
-                div()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .when(self.problem.is_some(), |d| d.text_color(p.err))
-                    .child(
-                        self.problem
-                            .clone()
-                            .or_else(|| self.notice.clone())
-                            .unwrap_or_else(|| {
-                                if self.open.as_ref().is_some_and(|o| o.is_script()) {
-                                    "⌘↵ runs the line · ⇧⌘↵ runs the file · ⌘S saves".into()
-                                } else {
-                                    "Shift+Enter runs a cell · ⌘↵ runs it in place · ⌘S saves"
-                                        .into()
-                                }
-                            }),
-                    ),
+            .text_color(p.text)
+            .child(self.render_connection_status(cx))
+            .children(self.render_restricted_chip(cx))
+            .children(self.render_resources(cx))
+            .children(
+                self.problem
+                    .clone()
+                    .or_else(|| self.notice.clone())
+                    .map(|text| {
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .when(self.problem.is_some(), |d| d.text_color(p.err))
+                            .child(text)
+                    }),
             )
             .child(div().flex_1())
-            .children(self.render_resources(cx))
+            .when_some(self.quota.clone(), |bar, quota| bar.child(quota))
     }
 }
 
@@ -1985,23 +2793,85 @@ pub(crate) fn filter_variables(list: &[Variable], filter: &str) -> Vec<Variable>
 
 #[cfg(test)]
 mod tests {
-    use super::{box_takes, filter_variables};
+    use super::{box_takes, collapsed_file_groups, column_widths, filter_variables};
     use gpui_kit::px;
+
+    #[test]
+    fn visible_columns_share_all_available_room() {
+        for width in [1000., 1440., 1920.] {
+            for mask in 1u8..8 {
+                let (left, middle, agents) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0);
+                let (l, m, a) = column_widths(width, left, middle, agents, 0.25, 0.25);
+                let gaps = (mask.count_ones() - 1) as f32 * crate::look::GAP;
+                assert!((l + m + a + gaps + 2. * crate::look::EDGE - width).abs() < 0.01);
+                assert_eq!(l > 0., left);
+                assert_eq!(m > 0., middle);
+                assert_eq!(a > 0., agents);
+                if middle {
+                    assert!(m >= 360.);
+                }
+            }
+            let normal = column_widths(width, true, true, true, 0.25, 0.25);
+            let hidden = column_widths(width, true, false, true, 0.25, 0.25);
+            assert_eq!(normal.0, hidden.0);
+            assert!(hidden.2 > normal.2);
+        }
+    }
+
+    #[test]
+    fn side_only_split_can_use_the_former_middle_width() {
+        let (left, middle, agents) = column_widths(1440., true, false, true, 0.7, 0.25);
+        assert!(left > 900.);
+        assert_eq!(middle, 0.);
+        assert!(agents >= 300.);
+        let (_, middle, _) = column_widths(1000., true, true, true, 0.9, 0.9);
+        assert!(middle >= 360.);
+        assert_eq!(
+            column_widths(0., true, true, true, 0.25, 0.25),
+            (0., 0., 0.)
+        );
+    }
+
+    #[test]
+    fn collapsed_file_icons_group_by_source_type_in_first_occurrence_order() {
+        let paths = [
+            "first.R",
+            "a.py",
+            "second.r",
+            "reads.fastq.gz",
+            "reads.fastq",
+            "notes.md",
+        ]
+        .map(str::to_string);
+        let groups = collapsed_file_groups(&paths);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|(_, files)| files.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![0, 2], vec![1], vec![3, 4], vec![5]]
+        );
+        assert_eq!(groups[0].0, crate::look::file_icon("first.R"));
+        assert_eq!(groups[2].0, crate::look::file_icon("reads.fastq.gz"));
+    }
 
     #[test]
     fn outputs_hand_the_wheel_on_at_their_ends() {
         let max = px(300.);
-        // At the top: up goes to the notebook, down stays in the box.
-        assert!(!box_takes(px(10.), max, px(10.)));
+        // At the top: up was skipped and goes to the notebook; down moved it.
+        assert!(!box_takes(px(0.), max, px(10.)));
         assert!(box_takes(px(-10.), max, px(-10.)));
         // In the middle the box takes both ways.
         assert!(box_takes(px(-90.), max, px(10.)));
         assert!(box_takes(px(-110.), max, px(-10.)));
-        // At the bottom: down goes on to the notebook, up stays.
-        assert!(!box_takes(px(-310.), max, px(-10.)));
+        // Past the bottom by a turn that moved it: kept.
+        assert!(box_takes(px(-305.), max, px(-10.)));
+        // At the bottom: down was skipped and goes on; up moved it.
+        assert!(!box_takes(px(-300.), max, px(-10.)));
         assert!(box_takes(px(-290.), max, px(10.)));
-        // A box that fits never takes it.
-        assert!(!box_takes(px(-10.), px(0.), px(-10.)));
+        // A box that fits never takes it, nor a sideways turn.
+        assert!(!box_takes(px(0.), px(0.), px(-10.)));
+        assert!(!box_takes(px(-100.), max, px(0.)));
     }
     use sandhill_proto::Variable;
 
@@ -2015,6 +2885,7 @@ mod tests {
             children: false,
             table: true,
             summary: String::new(),
+            accessor: None,
         };
         let list = [var("seu"), var("Markers"), var("counts")];
         let names = |filter| {

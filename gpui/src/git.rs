@@ -464,28 +464,17 @@ pub(crate) fn layout_graph(commits: &[(String, Vec<String>)]) -> (Vec<GraphRow>,
     (out, width)
 }
 
-/// Lane colours, as in the mockup: blue, then violet, and on.
-pub(crate) const LANE_COLORS: [u32; 6] =
-    [0x4b8df0, 0xa274e8, 0x2fb39a, 0xe0843c, 0xd9567a, 0x8a9a2a];
-
 pub(crate) struct Avatar {
     pub initials: String,
-    /// A gradient, top-left to bottom-right.
-    pub colors: (u32, u32),
+    /// Theme chart indices for a top-left to bottom-right gradient.
+    pub chart_indices: (usize, usize),
     /// Who the tooltip names: "Huan Yang", or "Huan Yang with Claude Code".
     pub who: String,
 }
 
-const PEOPLE: [(u32, u32); 6] = [
-    (0x2aa6c9, 0x2fc7a0),
-    (0xe2a33c, 0xd9672f),
-    (0x5aa469, 0x2e8b7a),
-    (0xc75bb0, 0x7b6cf0),
-    (0x3f8cf0, 0x2aa6c9),
-    (0xd9467a, 0xe2a33c),
-];
-const CLAUDE: (u32, u32) = (0xe0743c, 0xd9467a);
-const CODEX: (u32, u32) = (0x7b6cf0, 0x3f8cf0);
+const PEOPLE: [(usize, usize); 6] = [(0, 1), (2, 3), (1, 4), (3, 0), (4, 2), (0, 2)];
+const CLAUDE: (usize, usize) = (2, 3);
+const CODEX: (usize, usize) = (3, 4);
 
 /// Which agent helped write a commit, from its author and co-authors.
 pub(crate) fn commit_agent(
@@ -529,7 +518,7 @@ pub(crate) fn avatar(author: &str, email: &str, coauthors: &[String]) -> Avatar 
         let human = !name.to_lowercase().contains(agent);
         return Avatar {
             initials: if agent == "claude" { "CC" } else { "CX" }.into(),
-            colors: if agent == "claude" { CLAUDE } else { CODEX },
+            chart_indices: if agent == "claude" { CLAUDE } else { CODEX },
             who: if human {
                 format!("{name} with {label}")
             } else {
@@ -559,7 +548,7 @@ pub(crate) fn avatar(author: &str, email: &str, coauthors: &[String]) -> Avatar 
     }
     Avatar {
         initials,
-        colors: PEOPLE[hash.unsigned_abs() as usize % PEOPLE.len()],
+        chart_indices: PEOPLE[hash.unsigned_abs() as usize % PEOPLE.len()],
         who: name,
     }
 }

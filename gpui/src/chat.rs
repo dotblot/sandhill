@@ -25,6 +25,36 @@ pub struct Ask {
     pub remember: Vec<String>,
     /// For how long it can be allowed (`chat`, `project`); both when `None`.
     pub scopes: Option<Vec<String>>,
+    /// Exact approval choices offered by ACP, not Sandhill permission scopes.
+    pub options: Option<Vec<ApprovalOption>>,
+}
+
+impl Ask {
+    pub fn answered_option(&self) -> Option<&ApprovalOption> {
+        let id = self.answer.as_ref()?["option_id"].as_str()?;
+        self.options
+            .as_ref()?
+            .iter()
+            .find(|option| option.option_id == id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct ApprovalOption {
+    #[serde(rename = "optionId")]
+    pub option_id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+impl ApprovalOption {
+    pub fn answer(&self) -> Value {
+        serde_json::json!({"option_id": self.option_id})
+    }
+
+    pub fn rejects(&self) -> bool {
+        matches!(self.kind.as_str(), "reject_once" | "reject_always")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +110,10 @@ pub enum Item {
     Note {
         key: String,
         text: String,
+    },
+    Account {
+        key: String,
+        name: String,
     },
     /// Something went wrong: a turn couldn't start, or failed.
     Error {
@@ -138,7 +172,7 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
             continue;
         }
         let Some(turn_id) = str_of(event, "turn") else {
-            if kind == "session" || kind == "error" {
+            if matches!(kind, "session" | "error" | "account") {
                 order.push(Part::Loose(entry.clone()));
             }
             continue;
@@ -170,6 +204,11 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
                     chat.items.push(Item::Error {
                         key: format!("e{}", entry.seq),
                         text: str_of(&entry.event, "text").unwrap_or_default().into(),
+                    });
+                } else if str_of(&entry.event, "kind") == Some("account") {
+                    chat.items.push(Item::Account {
+                        key: format!("account{}", entry.seq),
+                        name: str_of(&entry.event, "name").unwrap_or("account").into(),
                     });
                 } else if let Some(text) = session_note(&entry.event) {
                     chat.items.push(Item::Note {
@@ -212,6 +251,14 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
             match kind {
                 "step" => {
                     let id = str_of(&event, "id").map_or(format!("s{seq}"), str::to_string);
+                    // Streamed steps (ACP and pi reasoning) repeat the same id
+                    // with more text: update that row rather than add another.
+                    if let Some(&(_, at)) = steps.iter().find(|(s, _)| *s == id)
+                        && let Item::Step { step, .. } = &mut chat.items[at]
+                    {
+                        step.input = object_or_empty(&event["input"]);
+                        continue;
+                    }
                     steps.push((id.clone(), chat.items.len()));
                     chat.items.push(Item::Step {
                         key: format!("s{id}"),
@@ -274,6 +321,9 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
                         input: object_or_empty(&event["input"]),
                         remember: strings(&event["remember"]).unwrap_or_default(),
                         scopes: strings(&event["scopes"]),
+                        options: event
+                            .get("options")
+                            .and_then(|options| serde_json::from_value(options.clone()).ok()),
                     };
                     if ask.answer.is_none() && !ended {
                         chat.waiting.push(ask.clone());
@@ -357,6 +407,48 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
     chat
 }
 
+/// Only the latest reply/error turn can offer continuation after a usage limit.
+pub fn latest_usage_limit(chat: &Chat) -> bool {
+    chat.items
+        .iter()
+        .rev()
+        .take_while(|item| !matches!(item, Item::User { .. } | Item::Account { .. }))
+        .any(|item| match item {
+            Item::Reply { text, .. } | Item::Error { text, .. } => usage_limit_text(text),
+            _ => false,
+        })
+}
+
+fn usage_limit_text(text: &str) -> bool {
+    let text = text.to_lowercase();
+    [
+        "usage limit reached",
+        "usage limit exceeded",
+        "you've hit your usage limit",
+        "you’ve hit your usage limit",
+        "you've reached your usage limit",
+        "you have reached your usage limit",
+        "you have exceeded your usage limit",
+        "usage_limit_reached",
+        "you've hit your limit",
+        "you’ve hit your limit",
+        "you've reached your limit",
+        "you have reached your limit",
+        "rate limit reached",
+        "rate limit exceeded",
+        "quota exceeded",
+        "quota has been exceeded",
+        "you have reached the quota limit",
+        "quota exhausted",
+        "resource_exhausted",
+        "exhausted your capacity",
+        "out of extra usage",
+    ]
+    .iter()
+    .any(|wording| text.contains(wording))
+        || text.trim() == "usage limit"
+}
+
 fn object_or_empty(value: &Value) -> Value {
     if value.is_null() {
         Value::Object(Default::default())
@@ -401,7 +493,9 @@ fn step_status(step: &Step, ended: bool) -> StepStatus {
         return StepStatus::Fail;
     }
     if let Some(ask) = &step.ask {
-        if ask.answer.as_ref().and_then(|a| a["behavior"].as_str()) == Some("deny") {
+        if ask.answer.as_ref().and_then(|a| a["behavior"].as_str()) == Some("deny")
+            || ask.answered_option().is_some_and(ApprovalOption::rejects)
+        {
             return StepStatus::Deny;
         }
         if ended {
@@ -531,8 +625,11 @@ pub fn content_text(value: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Array(items) => items
             .iter()
-            .filter(|c| c["type"] == "text")
-            .filter_map(|c| c["text"].as_str())
+            .filter_map(|c| match c["type"].as_str() {
+                Some("text") => c["text"].as_str(),
+                Some("content") if c["content"]["type"] == "text" => c["content"]["text"].as_str(),
+                _ => None,
+            })
             // Claude Code adds where it saved each image.
             .filter(|t| !(t.starts_with("[Image: source: ") && t.ends_with(']')))
             .collect::<Vec<_>>()
@@ -606,6 +703,24 @@ pub fn step_view(
     output: Option<&Value>,
     linked: Option<&str>,
 ) -> StepView {
+    // ACP keeps its display metadata around the tool's original input.
+    if input["title"].is_string() && input.get("rawInput").is_some() {
+        let mut view = step_view(tool, &input["rawInput"], output, linked);
+        view.desc = s(&input["title"]).unwrap_or_default();
+        if view.file.is_none() {
+            view.file = input["locations"]
+                .as_array()
+                .and_then(|locations| locations.first())
+                .and_then(|location| s(&location["path"]));
+        }
+        if output.is_none() {
+            let content = content_text(&input["content"]);
+            if !content.is_empty() {
+                view.output = Some(content);
+            }
+        }
+        return view;
+    }
     let mut view = StepView {
         name: display_name(tool),
         ..Default::default()
@@ -1193,6 +1308,12 @@ pub fn ask_view(ask: &Ask, linked: Option<&str>, agent: &str) -> AskView {
         view,
         ..Default::default()
     };
+    if ask.options.is_some() {
+        let title = s(&input["title"])
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| format!("Allow {}?", view.name));
+        return plain(title, None, view);
+    }
     if ask.tool == "AskUserQuestion" {
         let questions = input["questions"]
             .as_array()
@@ -1361,6 +1482,7 @@ mod tests {
                 Item::Ask { .. } => "ask",
                 Item::Footer { .. } => "footer",
                 Item::Note { .. } => "note",
+                Item::Account { .. } => "account",
                 Item::Error { .. } => "error",
                 Item::Thinking { .. } => "thinking",
             })
@@ -1375,6 +1497,119 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn acp_approval_options_keep_agent_labels_and_round_trip_every_choice() {
+        let options = json!([
+            {"optionId": "permit-once", "name": "Run just this time", "kind": "allow_once"},
+            {"optionId": "permit-session", "name": "Allow in this session", "kind": "allow_always"},
+            {"optionId": "decline-once", "name": "Do not run", "kind": "reject_once"},
+            {"optionId": "decline-always", "name": "Never run this tool", "kind": "reject_always"}
+        ]);
+        let mut recorded = entries(vec![
+            json!({"turn": "t", "kind": "prompt", "text": "Check my data"}),
+            json!({"turn": "t", "kind": "step", "id": "tool", "tool": "execute",
+                "input": {"title": "Inspect the dataset", "kind": "execute"}}),
+            json!({"turn": "t", "kind": "ask", "id": "permission", "step": "tool",
+                "tool": "execute", "input": {"title": "Inspect the dataset", "kind": "execute"},
+                "options": options}),
+        ]);
+        let chat = build(&recorded, true);
+        let ask = &chat.waiting[0];
+        assert_eq!(
+            ask_view(ask, None, "OpenScience").title,
+            "Inspect the dataset"
+        );
+        let offered = ask.options.as_ref().unwrap();
+        assert_eq!(offered.len(), 4);
+        assert_eq!(steps(&chat)[0].ask.as_ref().unwrap().options, ask.options);
+        for (index, option) in offered.iter().enumerate() {
+            assert_eq!(
+                Some(option.option_id.as_str()),
+                options[index]["optionId"].as_str()
+            );
+            assert_eq!(Some(option.name.as_str()), options[index]["name"].as_str());
+            assert_eq!(Some(option.kind.as_str()), options[index]["kind"].as_str());
+            assert_eq!(option.rejects(), index >= 2);
+            let answer = option.answer();
+            assert_eq!(answer, json!({"option_id": options[index]["optionId"]}));
+            recorded.push(Entry {
+                seq: recorded.len() as u64,
+                event: json!({"kind": "answered", "id": "permission", "answer": answer}),
+            });
+            let answered = build(&recorded, true);
+            assert!(answered.waiting.is_empty());
+            let answered_steps = steps(&answered);
+            let saved = answered_steps[0].ask.as_ref().unwrap();
+            assert_eq!(saved.answer.as_ref().unwrap(), &option.answer());
+            assert_eq!(saved.options.as_ref().unwrap()[index].name, option.name);
+            assert_eq!(saved.answered_option(), Some(option));
+            assert_eq!(
+                answered_steps[0].status,
+                if option.rejects() {
+                    StepStatus::Deny
+                } else {
+                    StepStatus::Run
+                }
+            );
+            recorded.pop();
+        }
+    }
+
+    #[test]
+    fn acp_empty_options_do_not_become_legacy_permission_scopes() {
+        let chat = build(
+            &entries(vec![
+                json!({"turn": "t", "kind": "prompt", "text": "Check"}),
+                json!({"turn": "t", "kind": "ask", "id": "acp", "tool": "Read", "options": []}),
+                json!({"turn": "t", "kind": "ask", "id": "legacy", "tool": "Read",
+                    "scopes": ["chat"], "remember": ["Read"]}),
+            ]),
+            true,
+        );
+        assert_eq!(chat.waiting[0].options, Some(Vec::new()));
+        assert_eq!(chat.waiting[1].options, None);
+        assert_eq!(chat.waiting[1].scopes, Some(vec!["chat".into()]));
+        assert_eq!(chat.waiting[1].remember, ["Read"]);
+    }
+
+    #[test]
+    fn acp_tool_metadata_preserves_original_input_and_location() {
+        let view = step_view(
+            "Bash",
+            &json!({
+                "title": "Inspect the dataset",
+                "kind": "execute",
+                "locations": [{"path": "/p/data.csv", "line": 1}],
+                "rawInput": {"command": "wc -l data.csv"},
+                "content": [{"type": "content", "content": {"type": "text", "text": "Count rows"}}]
+            }),
+            None,
+            None,
+        );
+        assert_eq!(view.desc, "Inspect the dataset");
+        assert_eq!(view.code.as_deref(), Some("wc -l data.csv"));
+        assert_eq!(view.file.as_deref(), Some("/p/data.csv"));
+        assert_eq!(view.output.as_deref(), Some("Count rows"));
+    }
+
+    #[test]
+    fn a_streamed_step_repeated_with_more_text_stays_one_row() {
+        let chat = build(
+            &entries(vec![
+                json!({"turn": "t", "kind": "prompt", "text": "hi", "at_ms": 1}),
+                json!({"turn": "t", "kind": "step", "id": "r", "tool": "reasoning", "input": {"text": "The"}, "at_ms": 2}),
+                json!({"turn": "t", "kind": "step", "id": "r", "tool": "reasoning", "input": {"text": "The user"}, "at_ms": 3}),
+                json!({"turn": "t", "kind": "step_done", "id": "r", "tool": "reasoning", "output": {"text": "The user asks"}, "at_ms": 4}),
+                json!({"turn": "t", "kind": "stop", "at_ms": 5}),
+            ]),
+            false,
+        );
+        let steps = steps(&chat);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].input["text"], "The user");
+        assert!(steps[0].output.is_some() && steps[0].error.is_none());
     }
 
     #[test]
@@ -1561,5 +1796,63 @@ mod tests {
             "Write from the DE notebook"
         );
         assert_eq!(title_of("data.csv"), "New conversation");
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::{Chat, Entry, Item, build, latest_usage_limit};
+    use serde_json::{Value, json};
+
+    fn conversation(events: Vec<Value>) -> Chat {
+        build(
+            &events
+                .into_iter()
+                .enumerate()
+                .map(|(seq, event)| Entry {
+                    seq: seq as u64,
+                    event,
+                })
+                .collect::<Vec<_>>(),
+            false,
+        )
+    }
+
+    #[test]
+    fn account_divider_preserves_order_and_ends_old_limit_offer() {
+        let chat = conversation(vec![
+            json!({"kind":"prompt","turn":"one","text":"Hello"}),
+            json!({"kind":"error","turn":"one","text":"Usage limit reached"}),
+            json!({"kind":"stop","turn":"one"}),
+            json!({"kind":"account","account":"claude:work","name":"Work"}),
+        ]);
+        assert!(matches!(chat.items.last(), Some(Item::Account { name, .. }) if name == "Work"));
+        assert!(!latest_usage_limit(&chat));
+    }
+
+    #[test]
+    fn latest_turn_only_matches_agents_limit_messages() {
+        for text in [
+            "You've hit your limit · resets 5pm",
+            "You've reached your usage limit",
+            "You have exhausted your capacity on this model",
+            "RESOURCE_EXHAUSTED: quota exceeded",
+        ] {
+            let mut events = vec![
+                json!({"kind":"prompt","turn":"one","text":"Hello"}),
+                json!({"kind":"text","turn":"one","text":text}),
+                json!({"kind":"stop","turn":"one"}),
+            ];
+            assert!(latest_usage_limit(&conversation(events.clone())), "{text}");
+            events.extend([
+                json!({"kind":"prompt","turn":"two","text":"Try again"}),
+                json!({"kind":"text","turn":"two","text":"Done"}),
+                json!({"kind":"stop","turn":"two"}),
+            ]);
+            assert!(!latest_usage_limit(&conversation(events)));
+        }
+        assert!(!latest_usage_limit(&conversation(vec![
+            json!({"kind":"error","text":"Connection refused"}),
+        ])));
     }
 }

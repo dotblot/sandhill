@@ -60,6 +60,7 @@ pub fn app_menus() -> Vec<Menu> {
             MenuItem::action("Left Panel", ToggleFiles),
             MenuItem::action("AI Panel", ToggleAgents),
             MenuItem::action("Console", ToggleConsole),
+            MenuItem::action("Focus Editor", crate::focus_mode::FocusEditor),
         ]),
         Menu::new("Run").items([MenuItem::action("Run All", RunAll)]),
         Menu::new("Window").items([
@@ -112,6 +113,11 @@ impl Workbench {
             .on_action(
                 cx.listener(|this, _: &ToggleRight, w, cx| {
                     this.run_command(Cmd::ToggleRight, w, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::focus_mode::FocusEditor, w, cx| {
+                    this.run_command(Cmd::FocusEditor, w, cx)
                 }),
             )
             .on_action(cx.listener(|this, _: &TogglePalette, w, cx| this.toggle_palette(w, cx)))
@@ -183,7 +189,13 @@ impl Workbench {
                     "",
                     &p,
                     cx,
-                    move |this, _, cx| this.open_project(path.clone(), cx),
+                    move |this, window, cx| {
+                        let host = this.host();
+                        let path = path.clone();
+                        this.with_shell(window, cx, move |shell, window, cx| {
+                            shell.open_place(host, path, window, cx);
+                        });
+                    },
                 ));
             }
         }
@@ -210,6 +222,15 @@ impl Workbench {
         }
         rows.push(separator(&p));
         rows.push(menu_item(
+            "mm-middle",
+            check(self.show_middle),
+            "Show editor",
+            "",
+            &p,
+            cx,
+            |this, w, cx| this.run_command(Cmd::ToggleMiddle, w, cx),
+        ));
+        rows.push(menu_item(
             "mm-console",
             check(self.show_console),
             "Show console",
@@ -217,6 +238,15 @@ impl Workbench {
             &p,
             cx,
             |this, w, cx| this.run_command(Cmd::ToggleConsole, w, cx),
+        ));
+        rows.push(menu_item(
+            "mm-focus-editor",
+            check(self.focus_mode.active()),
+            "Focus Editor",
+            "⌃⌘↩",
+            &p,
+            cx,
+            |this, w, cx| this.run_command(Cmd::FocusEditor, w, cx),
         ));
         rows.push(separator(&p));
         rows.push(
@@ -246,12 +276,24 @@ impl Workbench {
             cx,
             |this, w, cx| this.run_command(Cmd::NotebookPlots, w, cx),
         ));
+        rows.push(menu_item(
+            "mm-console-plots",
+            check(self.plot_history.console_auto),
+            "Send Console plots automatically",
+            "",
+            &p,
+            cx,
+            |this, _, cx| this.toggle_console_plots(cx),
+        ));
         let body = crate::composer_view::popup(&p)
             .id("main-menu")
             .occlude()
             .w(px(280.))
             .children(rows)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if this.popup_triggers.contains("main-menu", event.position) {
+                    return;
+                }
                 this.main_menu = false;
                 cx.notify();
             }));

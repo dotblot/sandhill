@@ -1,0 +1,8 @@
+# `cargo run` and `cargo test` here use the sandhilld built at the repo root
+# (`cargo build -p sandhill-daemon`): this project builds into its own
+# `gpui/target/`, so the daemon isn't next to the app as it is in the bundle.
+# A SANDHILL_DAEMON already set (as in CI) wins.
+[env]
+SANDHILL_DAEMON = { value = "../target/debug/sandhilld", relative = true }
+# Matching Linux payloads for development, separate from any signed app bundle.
+SANDHILL_DAEMON_BUILDS = { value = "target/debug/daemons", relative = true }

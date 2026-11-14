@@ -1,32 +1,60 @@
 //! The machine a tab is connected to, as the Tauri app's left pane shows it
-//! (`LeftPane.tsx`, `model/machine.ts`): the project's name, which switches
-//! to another project on the machine; the project's running kernels, each
+//! (`LeftPane.tsx`, `model/machine.ts`): the project's running kernels, each
 //! with its memory and a Shut down that asks first; and the machine's CPU,
 //! memory, GPUs and disk. Polled every few seconds while connected.
 
 use std::time::Duration;
 
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::{Call, KernelspecInfo, ProjectInfo, SessionInfo, SessionStatus, SystemStats};
+use sandhill_proto::{Call, KernelspecInfo, SessionInfo, SessionStatus, SystemStats};
 
-use crate::app_window::short_path;
 use crate::look::{self, Palette, icon, picture};
-use crate::start_screen::StartMode;
 use crate::workbench::{Link, Workbench};
 
 const POLL: Duration = Duration::from_secs(5);
 /// What `asking` holds while "Shut down the unused sessions" asks.
 const UNUSED: &str = "unused";
+const MEMORY_WARNING: &str = "Kernels are using more than 80% of this device's memory. Shut down kernels you no longer need.";
+
+#[derive(Default)]
+struct MemoryWarnings(std::collections::HashMap<String, bool>);
+
+impl MemoryWarnings {
+    fn update(&mut self, host: &str, high: bool) -> bool {
+        let previous = self.0.insert(host.to_string(), high).unwrap_or(false);
+        high && !previous
+    }
+}
+
+fn kernel_memory_high(stats: &SystemStats, sessions: &[SessionInfo]) -> Option<bool> {
+    let total = stats.memory.as_ref()?.total;
+    if total == 0 {
+        return None;
+    }
+    let used: u128 = stats
+        .sessions
+        .iter()
+        .filter(|memory| {
+            sessions.iter().any(|session| {
+                session.id == memory.session && session.status == SessionStatus::Running
+            })
+        })
+        .map(|memory| u128::from(memory.rss))
+        .sum();
+    Some(used * 5 > u128::from(total) * 4)
+}
+
+static MEMORY_WARNINGS: std::sync::LazyLock<std::sync::Mutex<MemoryWarnings>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(MemoryWarnings::default()));
 
 #[derive(Default)]
 pub(crate) struct MachineUi {
     pub stats: Option<SystemStats>,
     /// Every session the daemon knows, as last listed.
     pub sessions: Vec<SessionInfo>,
-    /// The project menu is open, with the machine's projects once read.
-    pub project_menu: Option<Vec<ProjectInfo>>,
     /// The kernel row (a session id, or UNUSED) asking to shut down.
     pub asking: Option<String>,
     /// The resource whose details show above the status bar.
@@ -49,12 +77,21 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn percent_of(part: u64, whole: u64) -> u32 {
-    if whole == 0 {
-        0
-    } else {
-        (part as f64 / whole as f64 * 100.).round() as u32
-    }
+fn percent_of(part: u64, whole: u64) -> Option<u32> {
+    (whole > 0).then(|| (part as f64 / whole as f64 * 100.).round().clamp(0., 100.) as u32)
+}
+
+fn known_percent(value: Option<f64>) -> Option<u32> {
+    value
+        .filter(|p| p.is_finite() && (0.0..=100.0).contains(p))
+        .map(|p| p.round() as u32)
+}
+
+fn temperature_label(value: Option<f64>) -> String {
+    value.filter(|v| v.is_finite()).map_or_else(
+        || "Temperature unavailable".into(),
+        |v| format!("Temperature {v:.0} °C"),
+    )
 }
 
 /// "R", "Python", or the language as the kernel names it.
@@ -110,24 +147,12 @@ pub(crate) fn session_label(session: &SessionInfo, specs: &[KernelspecInfo]) -> 
     with_env(text, session, specs)
 }
 
-/// "3.12 (omicverse)": the row's name beside the language's icon.
-fn version_label(session: &SessionInfo, specs: &[KernelspecInfo]) -> String {
-    let version = language_version(session);
-    let text = if version.is_empty() {
-        language_label(&session.language)
-    } else {
-        version
-    };
-    with_env(text, session, specs)
-}
-
-/// One of the machine's resources, as a row with a bar.
+/// One host resource, including explicitly unavailable measurements.
 pub(crate) struct Resource {
     pub key: &'static str,
     pub icon: &'static str,
-    pub label: &'static str,
     pub name: String,
-    pub percent: u32,
+    pub percent: Option<u32>,
     pub main: String,
     pub detail: String,
 }
@@ -143,15 +168,21 @@ pub(crate) fn resource_rows(
     rows.push(Resource {
         key: "cpu",
         icon: "cpu",
-        label: "CPU",
         name: "CPU".into(),
-        percent: cpu.percent.round().clamp(0., 100.) as u32,
+        percent: known_percent(cpu.percent),
         main: if cpu.model.is_empty() {
             format!("{} cores", cpu.cores)
         } else {
             format!("{} · {} cores", cpu.model, cpu.cores)
         },
-        detail: format!("Load {:.1}", cpu.load),
+        detail: format!(
+            "{} · {}",
+            cpu.load.map_or_else(
+                || "Load unavailable".into(),
+                |load| format!("Load {load:.1}")
+            ),
+            temperature_label(cpu.temperature_celsius)
+        ),
     });
     let kernels: Vec<String> = stats
         .sessions
@@ -168,13 +199,14 @@ pub(crate) fn resource_rows(
     rows.push(Resource {
         key: "mem",
         icon: "memory",
-        label: "MEM",
         name: "Memory".into(),
-        percent: percent_of(stats.memory.used, stats.memory.total),
-        main: format!(
-            "{} of {} used",
-            format_bytes(stats.memory.used),
-            format_bytes(stats.memory.total)
+        percent: stats
+            .memory
+            .as_ref()
+            .and_then(|m| percent_of(m.used, m.total)),
+        main: stats.memory.as_ref().filter(|m| m.total > 0).map_or_else(
+            || "Memory unavailable".into(),
+            |m| format!("{} of {} used", format_bytes(m.used), format_bytes(m.total)),
         ),
         detail: if kernels.is_empty() {
             "No kernels running".into()
@@ -182,47 +214,68 @@ pub(crate) fn resource_rows(
             format!("Kernels: {}", kernels.join(" · "))
         },
     });
-    if let Some(busiest) = stats
-        .gpus
-        .iter()
-        .max_by(|a, b| a.percent.total_cmp(&b.percent))
-    {
+    if !stats.gpus.is_empty() || stats.gpu_status != sandhill_proto::GpuStatus::Absent {
+        // Only available measurements participate. An unknown device never
+        // wins over a measured device, nor becomes a fabricated zero.
+        let busiest = stats
+            .gpus
+            .iter()
+            .filter_map(|g| known_percent(g.percent))
+            .max();
         let n = stats.gpus.len();
+        let mut details: Vec<String> = stats
+            .gpus
+            .iter()
+            .map(|g| {
+                let busy = known_percent(g.percent).map_or_else(
+                    || "Utilization unavailable".into(),
+                    |p| format!("{p}% busy"),
+                );
+                let memory = match (g.memory_used, g.memory_total) {
+                    (Some(used), Some(total)) => {
+                        format!("VRAM {} of {}", format_bytes(used), format_bytes(total))
+                    }
+                    (Some(used), None) => {
+                        format!("GPU memory {} · capacity unavailable", format_bytes(used))
+                    }
+                    _ => "VRAM unavailable".into(),
+                };
+                format!(
+                    "{}: {busy}\n{memory} · {}",
+                    g.name,
+                    temperature_label(g.temperature_celsius)
+                )
+            })
+            .collect();
+        if let Some(error) = &stats.gpu_error {
+            details.push(error.clone());
+        }
+        if details.is_empty() {
+            details.push("GPU discovery unavailable".into());
+        }
         rows.push(Resource {
             key: "gpu",
             icon: "gpu",
-            label: "GPU",
             name: if n > 1 {
                 format!("GPU ({n})")
             } else {
                 "GPU".into()
             },
-            percent: busiest.percent.round().clamp(0., 100.) as u32,
+            percent: busiest,
             main: if n > 1 {
-                format!("{n} × {}", busiest.name)
+                format!("{n} devices · busiest measured utilization")
+            } else if let Some(device) = stats.gpus.first() {
+                device.name.clone()
             } else {
-                busiest.name.clone()
+                "GPU availability unknown".into()
             },
-            detail: stats
-                .gpus
-                .iter()
-                .map(|g| {
-                    format!(
-                        "{}% busy · {} of {}",
-                        g.percent.round(),
-                        format_bytes(g.memory_used),
-                        format_bytes(g.memory_total)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
+            detail: details.join("\n\n"),
         });
     }
     if let Some(disk) = &stats.disk {
         rows.push(Resource {
             key: "disk",
             icon: "disk",
-            label: "Disk",
             name: "Disk".into(),
             percent: percent_of(disk.used, disk.used + disk.available),
             main: format!(
@@ -231,6 +284,15 @@ pub(crate) fn resource_rows(
                 format_bytes(disk.total)
             ),
             detail: format!("{} free for {}", format_bytes(disk.available), disk.path),
+        });
+    } else {
+        rows.push(Resource {
+            key: "disk",
+            icon: "disk",
+            name: "Disk".into(),
+            percent: None,
+            main: "Disk unavailable".into(),
+            detail: "The daemon could not read the project's filesystem capacity.".into(),
         });
     }
     rows
@@ -282,6 +344,18 @@ impl Workbench {
                     if let Ok(sessions) = sessions {
                         this.machine.sessions = sessions;
                     }
+                    if let Some(high) = this
+                        .machine
+                        .stats
+                        .as_ref()
+                        .and_then(|stats| kernel_memory_high(stats, &this.machine.sessions))
+                        && MEMORY_WARNINGS
+                            .lock()
+                            .unwrap_or_else(|err| err.into_inner())
+                            .update(&this.host(), high)
+                    {
+                        this.notice = Some(MEMORY_WARNING.into());
+                    }
                     cx.notify();
                     true
                 });
@@ -312,14 +386,14 @@ impl Workbench {
             .filter(|o| o.session.id() == Some(session))
             .map(|o| crate::files::base_name(&o.notebook.path).to_string())
             .collect();
-        if self.loose.id() == Some(session) {
+        if self.loose.id() == Some(session) || self.console_sessions.retained.contains(session) {
             names.push("Console".into());
         }
         names
     }
 
     /// Stops sessions for good; documents using them see their kernel stop.
-    fn shut_down(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+    pub(crate) fn shut_down(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
         self.machine.asking = None;
         let Some(daemon) = self.daemon() else {
             return;
@@ -329,245 +403,6 @@ impl Workbench {
             daemon.fire(Call::Shutdown { session: id });
         }
         cx.notify();
-    }
-
-    fn toggle_project_menu(&mut self, cx: &mut Context<Self>) {
-        if self.machine.project_menu.take().is_some() {
-            cx.notify();
-            return;
-        }
-        let Some(daemon) = self.daemon() else {
-            return;
-        };
-        self.machine.project_menu = Some(Vec::new());
-        let recent = daemon.call::<Vec<ProjectInfo>>(Call::ListRecentProjects);
-        cx.spawn(async move |this, cx| {
-            let recent = recent.await.unwrap_or_default();
-            this.update(cx, |this, cx| {
-                if let Some(menu) = &mut this.machine.project_menu {
-                    *menu = recent;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    /// The left pane's head: the project's name, a button that lists the
-    /// machine's projects.
-    pub(crate) fn render_project_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *Palette::get(cx);
-        let name = self
-            .project
-            .as_deref()
-            .map(|p| crate::files::base_name(p).to_string())
-            .unwrap_or_else(|| "No project".into());
-        let hover = p.ink(7.);
-        let open = self.machine.project_menu.is_some();
-        h_flex()
-            .id("projbtn")
-            .min_w_0()
-            .h(px(24.))
-            .ml(px(-6.))
-            .px(px(6.))
-            .gap(px(6.))
-            .rounded(px(look::RADIUS - 4.))
-            .cursor_pointer()
-            .when(open, |d| d.bg(hover))
-            .hover(move |d| d.bg(hover))
-            .child(icon("folder").size(px(15.)).text_color(p.muted))
-            .child(
-                div()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(name),
-            )
-            .child(icon("chevron.down").size(px(11.)).text_color(p.faint))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_project_menu(cx)))
-    }
-
-    /// The project menu: the open project, then the machine's others most
-    /// recent first; picking one switches this tab to it.
-    pub(crate) fn render_project_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let recent = self.machine.project_menu.as_ref()?;
-        let p = *Palette::get(cx);
-        let host = self.host();
-        let home = self.about.as_ref().map(|a| a.home.clone());
-        let current = self.project.clone().unwrap_or_default();
-        let mut projects: Vec<ProjectInfo> = recent
-            .iter()
-            .filter(|r| r.exists && r.path != current)
-            .cloned()
-            .collect();
-        if !current.is_empty() {
-            projects.insert(
-                0,
-                ProjectInfo {
-                    name: crate::files::base_name(&current).to_string(),
-                    path: current.clone(),
-                    opened_ms: 0,
-                    exists: true,
-                    state: Default::default(),
-                },
-            );
-        }
-        let live = |path: &str| {
-            self.machine
-                .sessions
-                .iter()
-                .filter(|s| s.status != SessionStatus::Ended && s.project.as_deref() == Some(path))
-                .count()
-        };
-        let hover = p.ink(8.);
-        let mut rows: Vec<AnyElement> = vec![
-            div()
-                .px(px(8.))
-                .py(px(4.))
-                .text_color(p.faint)
-                .child(format!("Projects on {}", host_name(&host)))
-                .into_any_element(),
-        ];
-        for (ix, project) in projects.into_iter().enumerate() {
-            let here = project.path == current;
-            let n = live(&project.path);
-            let right: AnyElement = if here {
-                icon("check").size(px(13.)).into_any_element()
-            } else if n > 0 {
-                div()
-                    .child(if n == 1 {
-                        "1 kernel".to_string()
-                    } else {
-                        format!("{n} kernels")
-                    })
-                    .into_any_element()
-            } else {
-                div()
-                    .child(when_opened(project.opened_ms))
-                    .into_any_element()
-            };
-            let path = project.path.clone();
-            rows.push(
-                h_flex()
-                    .id(("pj", ix))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .gap(px(8.))
-                    .rounded(px(look::RADIUS - 4.))
-                    .cursor_pointer()
-                    .hover(move |d| d.bg(hover))
-                    .child(icon("folder").size(px(13.)).text_color(p.muted))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .child(project.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_color(p.faint)
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .child(short_path(&project.path, home.as_deref())),
-                            ),
-                    )
-                    .child(div().flex_none().text_color(p.faint).child(right))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.machine.project_menu = None;
-                        if !here {
-                            this.open_project(path.clone(), cx);
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        rows.push(crate::tree_actions::separator(&p));
-        let item =
-            |id: &'static str,
-             name: &'static str,
-             label: &'static str,
-             keys: &'static str,
-             cx: &mut Context<Self>,
-             run: fn(&mut Workbench, &mut Window, &mut Context<Workbench>)| {
-                h_flex()
-                    .id(id)
-                    .h(px(26.))
-                    .px(px(8.))
-                    .gap(px(8.))
-                    .rounded(px(look::RADIUS - 4.))
-                    .cursor_pointer()
-                    .hover(move |d| d.bg(hover))
-                    .child(icon(name).size(px(13.)).text_color(p.muted))
-                    .child(div().flex_1().child(label))
-                    .child(div().text_color(p.faint).child(keys))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.machine.project_menu = None;
-                        run(this, window, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element()
-            };
-        rows.push(item(
-            "pj-settings",
-            "settings",
-            "Project settings…",
-            "",
-            cx,
-            |this, window, cx| this.show_project_settings(window, cx),
-        ));
-        rows.push(item(
-            "pj-open",
-            "folder",
-            "Open project…",
-            "⌘O",
-            cx,
-            |this, window, cx| {
-                let host = this.host();
-                this.with_shell(window, cx, move |shell, window, cx| {
-                    shell.show_start(StartMode::Picking(host), window, cx)
-                });
-            },
-        ));
-        rows.push(item(
-            "pj-new",
-            "add",
-            "New project…",
-            "⇧⌘N",
-            cx,
-            |this, window, cx| {
-                let host = this.host();
-                this.with_shell(window, cx, move |shell, window, cx| {
-                    shell.show_start(StartMode::Picking(host), window, cx)
-                });
-            },
-        ));
-        let body = crate::composer_view::popup(&p)
-            .id("project-menu")
-            .occlude()
-            .w(px(280.))
-            .children(rows)
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.machine.project_menu = None;
-                cx.notify();
-            }));
-        Some(
-            div()
-                .absolute()
-                .top(px(28.))
-                .left(px(8.))
-                .child(deferred(body).with_priority(3))
-                .into_any_element(),
-        )
     }
 
     /// The project's kernels, the Kernels tab: one row each, with its
@@ -584,10 +419,16 @@ impl Workbench {
                 .into_any_element()
         };
         if !matches!(self.link, Link::Ready(_)) {
-            return note("Not connected");
+            return div()
+                .pt(px(look::STRIP))
+                .child(note("Not connected"))
+                .into_any_element();
         }
         if self.project.is_none() {
-            return note("Open a project to see its kernels");
+            return div()
+                .pt(px(look::STRIP))
+                .child(note("Open a project to see its kernels"))
+                .into_any_element();
         }
         let sessions = self.project_sessions();
         let memory = |id: &str| {
@@ -599,6 +440,22 @@ impl Workbench {
                 .unwrap_or_default()
         };
         let mut list = v_flex().pt(px(4.));
+        if self
+            .machine
+            .stats
+            .as_ref()
+            .and_then(|stats| kernel_memory_high(stats, &self.machine.sessions))
+            == Some(true)
+        {
+            list = list.child(
+                div()
+                    .px(px(14.))
+                    .py(px(6.))
+                    .text_size(px(look::SMALL))
+                    .text_color(p.warn)
+                    .child(MEMORY_WARNING),
+            );
+        }
         if sessions.is_empty() {
             list = list.child(note("No kernels running"));
         }
@@ -609,7 +466,7 @@ impl Workbench {
             let lang = look::language_icon(&s.language);
             let row = h_flex()
                 .id(("krow", ix))
-                .h(px(34.))
+                .h(px(28.))
                 .pl(px(14.))
                 .pr(px(6.))
                 .gap(px(8.))
@@ -637,36 +494,41 @@ impl Workbench {
                 continue;
             }
             let id = s.id.clone();
+            let selected = id.clone();
             let busy = s.pending_runs > 0;
             list = list.child(
-                row.hover(move |d| d.bg(hover))
+                row.cursor_pointer()
+                    .hover(move |d| d.bg(hover))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_console_session(&selected, cx);
+                        this.show_tab(crate::workbench::ConsoleTab::Console, window, cx);
+                    }))
+                    // "Python 3.12 (omicverse) · qc.ipynb": the kernel, then
+                    // the open files using it; the files give way first.
                     .child(
-                        v_flex()
+                        h_flex()
                             .flex_1()
                             .min_w_0()
-                            .child(
-                                h_flex()
-                                    .gap(px(5.))
-                                    .child(
-                                        div()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .when(used.is_empty(), |d| d.text_color(p.muted))
-                                            .child(version_label(s, &self.kernels)),
-                                    )
-                                    .when(busy, |d| d.child(look::dot(p.busy).size(px(6.)))),
-                            )
+                            .gap(px(5.))
+                            .whitespace_nowrap()
                             .child(
                                 div()
-                                    .text_color(p.faint)
+                                    .flex_none()
+                                    .when(used.is_empty(), |d| d.text_color(p.muted))
+                                    .child(label.clone()),
+                            )
+                            .when(busy, |d| d.child(look::dot(p.busy).size(px(6.))))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
-                                    .whitespace_nowrap()
+                                    .text_color(p.faint)
                                     .child(if used.is_empty() {
-                                        "not used by an open file".to_string()
+                                        "· unused".to_string()
                                     } else {
-                                        used.join(", ")
+                                        format!("· {}", used.join(", "))
                                     }),
                             ),
                     )
@@ -678,6 +540,7 @@ impl Workbench {
                                     .build(w, cx)
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
                                 this.machine.asking = Some(id.clone());
                                 cx.notify();
                             })),
@@ -734,16 +597,17 @@ impl Workbench {
                 );
             }
         }
-        div()
-            .id("kernels")
-            .size_full()
-            .overflow_y_scroll()
-            .child(list.px(px(6.)))
-            .into_any_element()
+        look::PaneScroll::new(
+            "kernels-scroll",
+            look::STRIP,
+            0.,
+            div().id("kernels").child(list.px(px(6.))),
+        )
+        .into_any_element()
     }
 
-    /// The machine's CPU, memory, GPUs and disk at the right of the status
-    /// bar: a short bar each; clicking one shows its details above it.
+    /// The machine's CPU, memory, GPUs and disk after the status connection:
+    /// a tiny ring each; clicking one shows its details above it.
     pub(crate) fn render_resources(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let stats = self.machine.stats.as_ref()?;
         if !matches!(self.link, Link::Ready(_)) {
@@ -759,19 +623,31 @@ impl Workbench {
                 let picked = self.machine.resource == Some(key);
                 h_flex()
                     .id(SharedString::from(format!("res-{key}")))
+                    .on_prepaint(self.popup_triggers.track(key))
                     .flex_none()
                     .h(px(20.))
                     .px(px(6.))
                     .gap(px(5.))
                     .rounded(px(6.))
                     .text_size(px(look::SMALL))
-                    .text_color(if r.percent >= 80 { p.err } else { p.muted })
+                    .text_color(if r.percent.is_some_and(|p| p >= 80) {
+                        p.err
+                    } else {
+                        p.text
+                    })
                     .cursor_pointer()
                     .when(picked, |d| d.bg(hover))
                     .hover(move |d| d.bg(hover))
-                    .child(icon(r.icon).size(px(12.)))
-                    .child(r.label)
-                    .child(div().w(px(36.)).flex().child(bar(r.percent, &p)))
+                    .child(icon(r.icon).size(px(13.)))
+                    .child(crate::meter::ring(
+                        r.percent.map(|v| v as f32 / 100.),
+                        if r.percent.is_some_and(|v| v >= 80) {
+                            p.err
+                        } else {
+                            p.accent
+                        },
+                        p.ink(24.),
+                    ))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.machine.resource = if this.machine.resource == Some(key) {
@@ -793,8 +669,7 @@ impl Workbench {
         )
     }
 
-    /// The details of the resource picked in the status bar, above it at
-    /// the window's right.
+    /// The resource details open above their status-bar trigger.
     pub(crate) fn render_resource_popup(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let stats = self.machine.stats.as_ref()?;
         let picked = self.machine.resource?;
@@ -804,6 +679,8 @@ impl Workbench {
         let body = crate::composer_view::popup(&p)
             .id("res-pop")
             .occlude()
+            .max_h(px(420.))
+            .overflow_y_scroll()
             .w(px(260.))
             .p(px(10.))
             .gap(px(6.))
@@ -824,13 +701,31 @@ impl Workbench {
                         div()
                             .text_size(px(20.))
                             .font_weight(FontWeight::BOLD)
-                            .child(format!("{}%", r.percent)),
+                            .child(
+                                r.percent
+                                    .map_or_else(|| "Unavailable".into(), |v| format!("{v}%")),
+                            ),
                     )
-                    .child(bar(r.percent, &p)),
+                    .child(crate::meter::ring(
+                        r.percent.map(|v| v as f32 / 100.),
+                        if r.percent.is_some_and(|v| v >= 80) {
+                            p.err
+                        } else {
+                            p.accent
+                        },
+                        p.ink(24.),
+                    )),
             )
             .child(div().child(r.main.clone()))
             .child(div().text_color(p.muted).child(r.detail.clone()))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if this
+                    .machine
+                    .resource
+                    .is_some_and(|key| this.popup_triggers.contains(key, event.position))
+                {
+                    return;
+                }
                 this.machine.resource = None;
                 cx.notify();
             }));
@@ -838,40 +733,23 @@ impl Workbench {
             div()
                 .absolute()
                 .bottom(px(look::STATUS_BAR + 2.))
-                .right(px(look::EDGE))
-                .child(deferred(body).with_priority(3))
+                .left(
+                    self.popup_triggers
+                        .bounds(picked)
+                        .map_or(px(look::EDGE), |bounds| bounds.origin.x),
+                )
+                .child(
+                    deferred(
+                        anchored()
+                            .anchor(Anchor::BottomLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(body),
+                    )
+                    .with_priority(3),
+                )
                 .into_any_element(),
         )
     }
-}
-
-/// "16:42" today, or "Oct 9".
-fn when_opened(ms: i64) -> String {
-    use chrono::TimeZone;
-    let Some(at) = chrono::Local.timestamp_millis_opt(ms).single() else {
-        return String::new();
-    };
-    if at.date_naive() == chrono::Local::now().date_naive() {
-        at.format("%H:%M").to_string()
-    } else {
-        at.format("%b %-d").to_string()
-    }
-}
-
-fn bar(percent: u32, p: &Palette) -> impl IntoElement {
-    let hot = percent >= 80;
-    div()
-        .flex_1()
-        .h(px(4.))
-        .rounded_full()
-        .bg(p.ink(12.))
-        .child(
-            div()
-                .h_full()
-                .rounded_full()
-                .w(relative(percent.min(100) as f32 / 100.))
-                .bg(if hot { p.err } else { p.accent }),
-        )
 }
 
 /// A kernel row asking before it shuts down: the question, then Cancel and
@@ -927,7 +805,7 @@ fn small_button(id: &'static str, label: &'static str, danger: bool, p: &Palette
         .cursor_pointer()
         .map(|d| {
             if danger {
-                d.bg(p.err).text_color(p.accent_text)
+                d.bg(p.err).text_color(p.danger_text)
             } else {
                 d.border_1()
                     .border_color(p.line)
@@ -939,8 +817,74 @@ fn small_button(id: &'static str, label: &'static str, danger: bool, p: &Palette
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes, language_version};
+    use super::{
+        MemoryWarnings, format_bytes, kernel_memory_high, language_version, resource_rows,
+    };
     use sandhill_proto::{SessionInfo, SessionStatus};
+
+    #[test]
+    fn memory_threshold_is_strict_device_scoped_and_rearms() {
+        let mut stats: sandhill_proto::SystemStats = serde_json::from_value(serde_json::json!({
+            "cpu": {"cores": 8}, "memory": {"total": 100, "used": 99},
+            "sessions": [{"session": "s", "rss": 80}, {"session": "ended", "rss": 999}]
+        }))
+        .unwrap();
+        let live = vec![session("r", "4.6")];
+        assert_eq!(kernel_memory_high(&stats, &live), Some(false));
+        stats.sessions[0].rss = 81;
+        assert_eq!(kernel_memory_high(&stats, &live), Some(true));
+        let mut warnings = MemoryWarnings::default();
+        assert!(warnings.update("local", true));
+        assert!(!warnings.update("local", true));
+        assert!(warnings.update("remote", true));
+        assert!(!warnings.update("local", false));
+        assert!(warnings.update("local", true));
+        stats.memory = None;
+        assert_eq!(kernel_memory_high(&stats, &live), None);
+    }
+
+    #[test]
+    fn unavailable_resources_and_mixed_gpu_capabilities_remain_truthful() {
+        let mut stats: sandhill_proto::SystemStats = serde_json::from_value(serde_json::json!({
+            "cpu": {"cores":8}, "memory":null,
+            "gpu_status":"unavailable", "gpu_error":"NVIDIA driver mismatch",
+            "gpus":[
+                {"name":"Unknown NVIDIA", "percent":null},
+                {"name":"AMD", "percent":32.0, "memory_used":100, "memory_total":200, "temperature_celsius":51.0},
+                {"name":"Idle Intel", "percent":0.0}
+            ]
+        })).unwrap();
+        let rows = resource_rows(&stats, &[], &[]);
+        assert_eq!(rows.iter().find(|r| r.key == "cpu").unwrap().percent, None);
+        assert_eq!(rows.iter().find(|r| r.key == "mem").unwrap().percent, None);
+        assert_eq!(rows.iter().find(|r| r.key == "disk").unwrap().percent, None);
+        let gpu = rows.iter().find(|r| r.key == "gpu").unwrap();
+        assert_eq!(gpu.percent, Some(32));
+        assert!(
+            gpu.detail
+                .contains("Unknown NVIDIA: Utilization unavailable")
+        );
+        assert!(gpu.detail.contains("Idle Intel: 0% busy"));
+        assert!(gpu.detail.contains("Temperature 51 °C"));
+        assert!(gpu.detail.contains("NVIDIA driver mismatch"));
+        stats.gpus.clear();
+        stats.gpu_status = sandhill_proto::GpuStatus::Absent;
+        stats.gpu_error = None;
+        assert!(
+            !resource_rows(&stats, &[], &[])
+                .iter()
+                .any(|r| r.key == "gpu")
+        );
+        stats.gpu_status = sandhill_proto::GpuStatus::Unavailable;
+        assert_eq!(
+            resource_rows(&stats, &[], &[])
+                .iter()
+                .find(|r| r.key == "gpu")
+                .unwrap()
+                .percent,
+            None
+        );
+    }
 
     fn session(language: &str, version: &str) -> SessionInfo {
         SessionInfo {

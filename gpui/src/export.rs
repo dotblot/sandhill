@@ -184,7 +184,7 @@ fn blocks(entries: &[Entry], info: &Info) -> Vec<Block> {
         };
         let user = match item {
             Item::User { .. } => Some(true),
-            Item::Note { .. } => None,
+            Item::Note { .. } | Item::Account { .. } => None,
             _ => Some(false),
         };
         if let Some(user) = user {
@@ -211,10 +211,13 @@ fn item_block(item: &Item, agent: &str) -> Option<Block> {
             Some(Block::text(format!(
                 "**{agent} asked:** {} · {}",
                 one_line(&title),
-                answer_text(ask.answer.as_ref())
+                answer_text(ask)
             )))
         }
         Item::Note { text, .. } => Some(Block::text(format!("*{text}*"))),
+        Item::Account { name, .. } => {
+            Some(Block::text(format!("---\n\nSwitched to {name}\n\n---")))
+        }
         Item::Error { text, .. } => Some(Block::text(format!("> **Error:** {text}"))),
         Item::Footer { .. } | Item::Thinking { .. } => None,
     }
@@ -296,8 +299,11 @@ fn content_images(value: &Value) -> Vec<String> {
         .collect()
 }
 
-fn answer_text(answer: Option<&Value>) -> &'static str {
-    match answer {
+fn answer_text(ask: &chat::Ask) -> &str {
+    if let Some(option) = ask.answered_option() {
+        return &option.name;
+    }
+    match ask.answer.as_ref() {
         None => "no answer",
         Some(Value::Null) => "it stopped waiting",
         Some(answer) if answer["behavior"] == "allow" => "you allowed it",
@@ -469,6 +475,44 @@ mod tests {
             at: "2 Nov 2026, 10:41".into(),
             at_iso: "2026-11-02T10:41:00Z".into(),
         }
+    }
+
+    #[test]
+    fn account_switches_remain_in_exported_history() {
+        let entries = vec![Entry {
+            seq: 1,
+            event: json!({"kind":"account","account":"claude:work","name":"Work"}),
+        }];
+        let markdown = export(Format::Markdown, &entries, &info());
+        assert!(markdown.contains("---\n\nSwitched to Work\n\n---"));
+    }
+
+    #[test]
+    fn exported_acp_approval_uses_the_selected_option_label() {
+        let entries = vec![
+            Entry {
+                seq: 1,
+                event: json!({"kind": "prompt", "text": "Inspect data", "turn": "t"}),
+            },
+            Entry {
+                seq: 2,
+                event: json!({"kind": "ask", "id": "permission", "turn": "t",
+                    "tool": "inspect", "input": {"title": "Inspect data"},
+                    "options": [{"optionId": "session", "name": "Allow in this session",
+                        "kind": "allow_always"}]}),
+            },
+            Entry {
+                seq: 3,
+                event: json!({"kind": "answered", "id": "permission",
+                    "answer": {"option_id": "session"}}),
+            },
+        ];
+        let mut info = info();
+        info.agent = "OpenScience".into();
+        info.kind = "openscience".into();
+        let md = export(Format::Markdown, &entries, &info);
+        assert!(md.contains("**OpenScience asked:** Inspect data · Allow in this session"));
+        assert!(!md.contains("you said no"));
     }
 
     #[test]

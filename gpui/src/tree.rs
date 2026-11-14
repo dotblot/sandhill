@@ -228,19 +228,6 @@ impl Tree {
         }
     }
 
-    /// How many files and folders the project's own folder holds.
-    pub fn top_count(&self) -> Option<usize> {
-        match self.folders.get("") {
-            Some(Folder::Ready(entries)) => Some(
-                entries
-                    .iter()
-                    .filter(|e| !HIDDEN.contains(&e.name.as_str()))
-                    .count(),
-            ),
-            _ => None,
-        }
-    }
-
     /// The folders to read again on Refresh: those read and still shown.
     pub fn loaded(&self) -> Vec<String> {
         let mut dirs: Vec<String> = self
@@ -278,6 +265,8 @@ mod tests {
             kind: if dir { EntryKind::Dir } else { EntryKind::File },
             size: 0,
             mtime_ms: 0,
+            git: false,
+            sandhill: false,
         }
     }
 
@@ -327,7 +316,6 @@ mod tests {
                 ("qc.qmd".into(), 0),
             ]
         );
-        assert_eq!(tree.top_count(), Some(3));
         assert_eq!(tree.loaded(), ["", "data", "data/raw"]);
         tree.open.remove("data");
         assert_eq!(tree.loaded(), [""]);

@@ -178,12 +178,124 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = self.open.as_mut().filter(|o| o.notebook.can_restructure()) else {
+        let language = self
+            .open
+            .as_ref()
+            .and_then(|open| open.session.id())
+            .and_then(|session| self.session_language(session))
+            .or_else(|| {
+                self.active_kernel()
+                    .and_then(|kernel| self.kernels.iter().find(|spec| spec.name == kernel))
+                    .map(|spec| spec.language.as_str())
+            })
+            .map(str::to_string);
+        let Some(open) = self.open.as_mut().filter(|o| o.notebook.can_add_cells()) else {
             return;
         };
-        let at = at.min(open.notebook.cells.len());
-        let id = open.notebook.insert_cell(at, kind);
-        let nb = DocKind::of(&open.notebook);
+        let requested = at.min(open.notebook.cells.len());
+        let quarto = open.notebook.format == notebook::Format::Quarto;
+        let old_ids: Vec<_> = if quarto {
+            open.notebook
+                .cells
+                .iter()
+                .map(|cell| cell.id.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let (at, split) = if quarto {
+            let sources: Vec<_> = open
+                .editors
+                .iter()
+                .map(|editor| editor.read(cx).value().to_string())
+                .collect();
+            match open
+                .notebook
+                .insert_quarto_cell(requested, kind, language.as_deref(), &sources)
+            {
+                Ok(inserted) => inserted,
+                Err(err) => {
+                    self.problem = Some(format!("Adding cell failed: {err:#}"));
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            open.notebook.insert_cell(requested, kind);
+            (requested, false)
+        };
+        let id = open.notebook.cells[at].id.clone();
+        let renames: std::collections::HashMap<_, _> = old_ids
+            .into_iter()
+            .zip(
+                open.notebook
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .filter(|(ix, _)| *ix != at && !(split && *ix == at + 1))
+                    .map(|(_, cell)| cell.id.clone()),
+            )
+            .filter(|(old, new)| old != new)
+            .collect();
+        if !renames.is_empty() {
+            let rename = |id: String| renames.get(&id).cloned().unwrap_or(id);
+            open.editing = std::mem::take(&mut open.editing)
+                .into_iter()
+                .map(rename)
+                .collect();
+            open.collapsed = std::mem::take(&mut open.collapsed)
+                .into_iter()
+                .map(rename)
+                .collect();
+            open.sending = std::mem::take(&mut open.sending)
+                .into_iter()
+                .map(rename)
+                .collect();
+            open.waiting = std::mem::take(&mut open.waiting)
+                .into_iter()
+                .map(rename)
+                .collect();
+            open.cell_runs = std::mem::take(&mut open.cell_runs)
+                .into_iter()
+                .map(|(id, run)| (rename(id), run))
+                .collect();
+            open.agent_changes = std::mem::take(&mut open.agent_changes)
+                .into_iter()
+                .map(|(id, change)| (rename(id), change))
+                .collect();
+            if let Some((id, _)) = &mut open.lit {
+                *id = rename(std::mem::take(id));
+            }
+            if let Some(id) = &mut open.ghost_after {
+                *id = rename(std::mem::take(id));
+            }
+            if let Some(ghost) = &mut open.ghost {
+                ghost.after = rename(std::mem::take(&mut ghost.after));
+            }
+            for run in self.runs.values_mut() {
+                if let Some((path, id)) = &mut run.cell
+                    && *path == open.notebook.path
+                {
+                    *id = rename(std::mem::take(id));
+                }
+            }
+        }
+        let mut nb = DocKind::of(&open.notebook);
+        nb.language = open.notebook.cell_language(at).map(str::to_string);
+        let header = (requested == 0 && at == 1).then(|| open.notebook.cells[0].source.clone());
+        let tail = split.then(|| open.notebook.cells[at + 1].source.clone());
+        if let Some(header) = header {
+            let (editor, subscription) = self.cell_editor(&nb, CellKind::Text, header, window, cx);
+            let open = self.open.as_mut().expect("checked above");
+            open.editors[0] = editor;
+            open._subscriptions.push(subscription);
+        }
+        if let Some(tail) = tail {
+            let (editor, subscription) = self.cell_editor(&nb, CellKind::Text, tail, window, cx);
+            let open = self.open.as_mut().expect("checked above");
+            open.editors.insert(at, editor);
+            open._subscriptions.push(subscription);
+        }
         let (editor, subscription) = self.cell_editor(&nb, kind, source, window, cx);
         let open = self.open.as_mut().expect("checked above");
         open.editors.insert(at, editor.clone());
@@ -193,19 +305,112 @@ impl Workbench {
         }
         open.current = Some(at);
         open.dirty = true;
+        let path = open.notebook.path.clone();
+        self.language_event(&path, &gpui_kit::component::input::InputEvent::Change, cx);
         editor.update(cx, |e, cx| e.focus(window, cx));
         cx.notify();
+    }
+
+    pub(crate) fn rename_quarto_cells(
+        &mut self,
+        renames: &std::collections::HashMap<String, String>,
+    ) {
+        let Some(open) = self.open.as_mut() else {
+            return;
+        };
+        if renames.is_empty() {
+            return;
+        }
+        let rename = |id: String| renames.get(&id).cloned().unwrap_or(id);
+        open.editing = std::mem::take(&mut open.editing)
+            .into_iter()
+            .map(rename)
+            .collect();
+        open.collapsed = std::mem::take(&mut open.collapsed)
+            .into_iter()
+            .map(rename)
+            .collect();
+        open.sending = std::mem::take(&mut open.sending)
+            .into_iter()
+            .map(rename)
+            .collect();
+        open.waiting = std::mem::take(&mut open.waiting)
+            .into_iter()
+            .map(rename)
+            .collect();
+        open.cell_runs = std::mem::take(&mut open.cell_runs)
+            .into_iter()
+            .map(|(id, run)| (rename(id), run))
+            .collect();
+        open.agent_changes = std::mem::take(&mut open.agent_changes)
+            .into_iter()
+            .map(|(id, change)| (rename(id), change))
+            .collect();
+        if let Some((id, _)) = &mut open.lit {
+            *id = rename(std::mem::take(id));
+        }
+        if let Some(id) = &mut open.ghost_after {
+            *id = rename(std::mem::take(id));
+        }
+        if let Some(ghost) = &mut open.ghost {
+            ghost.after = rename(std::mem::take(&mut ghost.after));
+        }
+        for run in self.runs.values_mut() {
+            if let Some((path, id)) = &mut run.cell
+                && *path == open.notebook.path
+            {
+                *id = rename(std::mem::take(id));
+            }
+        }
     }
 
     /// Removes cell `ix`; the cell after it, or else before it, becomes the
     /// current one.
     pub(crate) fn delete_cell(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(open) = self.open.as_mut().filter(|o| o.notebook.can_restructure()) else {
+        let Some(open) = self.open.as_mut().filter(|o| o.notebook.can_delete_cells()) else {
             return;
         };
-        let Some(cell) = open.notebook.remove_cell(ix) else {
+        if ix >= open.editors.len() {
             return;
+        }
+        let quarto = open.notebook.format == notebook::Format::Quarto;
+        let old_ids: Vec<_> = open
+            .notebook
+            .cells
+            .iter()
+            .map(|cell| cell.id.clone())
+            .collect();
+        let mut cell = if quarto {
+            let sources: Vec<_> = open
+                .editors
+                .iter()
+                .map(|editor| editor.read(cx).value().to_string())
+                .collect();
+            match open.notebook.remove_quarto_cell(ix, &sources) {
+                Ok(cell) => cell,
+                Err(error) => {
+                    self.problem = Some(format!("Deleting cell failed: {error:#}"));
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            open.notebook.remove_cell(ix).expect("checked above")
         };
+        let mut renames = std::collections::HashMap::new();
+        if quarto {
+            let deleted_id = format!("deleted-{}-{}", open.deleted.len(), cell.id);
+            renames.insert(cell.id.clone(), deleted_id.clone());
+            cell.id = deleted_id;
+            renames.extend(
+                old_ids
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(at, _)| *at != ix)
+                    .map(|(_, id)| id)
+                    .zip(open.notebook.cells.iter().map(|cell| cell.id.clone())),
+            );
+        }
         let editor = open.editors.remove(ix);
         let source = editor.read(cx).value().to_string();
         open.editing.remove(&cell.id);
@@ -215,12 +420,19 @@ impl Workbench {
         let count = open.notebook.cells.len();
         open.current = (count > 0).then(|| ix.min(count - 1));
         open.dirty = true;
+        let path = open.notebook.path.clone();
+        self.rename_quarto_cells(&renames);
+        self.language_event(&path, &gpui_kit::component::input::InputEvent::Change, cx);
         cx.notify();
     }
 
     /// Brings back the cell deleted last, where it was.
     pub(crate) fn undo_delete_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.open.as_mut() else {
+        let Some(open) = self
+            .open
+            .as_mut()
+            .filter(|open| !open.notebook.quarto_source())
+        else {
             return;
         };
         let Some((ix, cell, source)) = open.deleted.pop() else {
@@ -242,15 +454,56 @@ impl Workbench {
             return;
         };
         let kind = cell.kind;
-        open.notebook.restore_cell(ix, cell);
-        let ix = ix.min(open.notebook.cells.len() - 1);
-        let doc = DocKind::of(&open.notebook);
+        let quarto = open.notebook.format == notebook::Format::Quarto;
+        let old_ids: Vec<_> = open
+            .notebook
+            .cells
+            .iter()
+            .map(|cell| cell.id.clone())
+            .collect();
+        let deleted_id = cell.id.clone();
+        let ix = ix.min(open.notebook.cells.len());
+        if quarto {
+            let sources: Vec<_> = open
+                .editors
+                .iter()
+                .map(|editor| editor.read(cx).value().to_string())
+                .collect();
+            if let Err(error) = open
+                .notebook
+                .restore_quarto_cell(ix, cell.clone(), &sources)
+            {
+                open.deleted.push((ix, cell, source));
+                self.problem = Some(format!("Restoring cell failed: {error:#}"));
+                cx.notify();
+                return;
+            }
+        } else {
+            open.notebook.restore_cell(ix, cell);
+        }
+        let mut renames: std::collections::HashMap<_, _> = old_ids
+            .into_iter()
+            .zip(
+                open.notebook
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .filter(|(at, _)| *at != ix)
+                    .map(|(_, cell)| cell.id.clone()),
+            )
+            .collect();
+        renames.insert(deleted_id, open.notebook.cells[ix].id.clone());
+        let mut doc = DocKind::of(&open.notebook);
+        doc.language = open.notebook.cell_language(ix).map(str::to_string);
         let (editor, subscription) = self.cell_editor(&doc, kind, source, window, cx);
         let open = self.open.as_mut().expect("checked above");
         open.editors.insert(ix, editor);
         open._subscriptions.push(subscription);
         open.current = Some(ix);
         open.dirty = true;
+        let path = open.notebook.path.clone();
+        self.rename_quarto_cells(&renames);
+        self.language_event(&path, &gpui_kit::component::input::InputEvent::Change, cx);
         cx.notify();
     }
 
@@ -268,6 +521,8 @@ impl Workbench {
         open.editors.insert(to, editor);
         open.current = Some(to);
         open.dirty = true;
+        let path = open.notebook.path.clone();
+        self.language_event(&path, &gpui_kit::component::input::InputEvent::Change, cx);
         cx.notify();
     }
 
@@ -294,13 +549,16 @@ impl Workbench {
         open.cell_runs.remove(&id);
         open.collapsed.remove(&id);
         open.editing.remove(&id);
-        let nb = DocKind::of(&open.notebook);
+        let mut nb = DocKind::of(&open.notebook);
+        nb.language = open.notebook.cell_language(ix).map(str::to_string);
         let (editor, subscription) = self.cell_editor(&nb, kind, source, window, cx);
         let open = self.open.as_mut().expect("checked above");
         open.editors[ix] = editor;
         open._subscriptions.push(subscription);
         open.current = Some(ix);
         open.dirty = true;
+        let path = open.notebook.path.clone();
+        self.language_event(&path, &gpui_kit::component::input::InputEvent::Change, cx);
         cx.notify();
     }
 
