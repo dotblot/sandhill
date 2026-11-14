@@ -1,6 +1,7 @@
 # Splitting the daemon's `server.rs`
 
-Plan (Huan asked for it on 2026-11-14; not built until approved). It follows
+Plan (Huan asked for it on 2026-11-14 and approved it the same day; built,
+see "As built" at the end). It follows
 `docs/design/file-split-plan.md`, which left this file out because it cannot
 be split by moving code alone.
 
@@ -69,3 +70,19 @@ to code and not a move:
 
 ## Not in this change
 `handle` (120 lines), the connection loop and the tests in `server.rs`.
+
+## As built (2026-11-14)
+- 36 bodies moved (every arm over 8 lines, and the cell suggestion), into
+  `server/session_calls.rs`, `table_calls.rs`, `help_calls.rs`,
+  `document_calls.rs`, `terminal_calls.rs` and `system_calls.rs`, 108 to 198
+  lines each. They are named `…_calls` because `server.rs` already uses the
+  crate's `tables` and `help` modules, which child modules of those names
+  would hide.
+- `server.rs` is 1,678 lines and `call` about 540, not the 1,400 and 330
+  estimated: a call with several parameters still takes a line for each in
+  the `match`, twice (once to take them from the call, once to pass them
+  on). The work itself is out of the function; what is left is the table.
+- The guarded pairs stayed two arms each: `redraw_plot_shown` and
+  `redraw_plot_saved`, `restart_terminal_job` and `restart_terminal_agent`.
+- The only changes to the bodies: the last expression is wrapped in `Ok(…)`,
+  and rustfmt dropped braces around two one-expression closures.

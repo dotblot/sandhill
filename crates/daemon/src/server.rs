@@ -34,6 +34,13 @@ use crate::{
     tables, variables, windows,
 };
 
+mod document_calls;
+mod help_calls;
+mod session_calls;
+mod system_calls;
+mod table_calls;
+mod terminal_calls;
+
 const REPLAY_PAGE: u32 = 500;
 /// How much of its log `read_log` returns unless asked for another amount.
 const LOG_TAIL: u64 = 64 * 1024;
@@ -695,24 +702,7 @@ impl Daemon {
             Call::UninstallComponents { delete_data } => {
                 self.uninstall_components(delete_data).await?
             }
-            Call::Ping => serde_json::to_value(PingReply {
-                protocol_version: PROTOCOL_VERSION,
-                daemon_version: env!("CARGO_PKG_VERSION").to_string(),
-                home: std::env::var("HOME").unwrap_or_default(),
-                hostname: hostname(),
-                build: crate::build_id().to_string(),
-                user: self.user.clone(),
-                started_ms: self.started_ms,
-                started_by: self.options.started_by.clone(),
-                lifecycle: if self.stopping.load(Ordering::Acquire) {
-                    "stopping"
-                } else if self.maintenance.load(Ordering::Acquire) {
-                    "stopped"
-                } else {
-                    "ready"
-                }
-                .into(),
-            })?,
+            Call::Ping => self.ping()?,
             Call::ListKernelspecs => {
                 serde_json::to_value(crate::kernel::list_kernelspecs(None).await)?
             }
@@ -720,73 +710,13 @@ impl Daemon {
                 let root = PathBuf::from(projects::normalize(&path)?);
                 serde_json::to_value(crate::kernel::list_kernelspecs(Some(root)).await)?
             }
-            Call::ListRWithoutIrkernel { project } => {
-                let root = project.map(|p| projects::normalize(&p)).transpose()?;
-                let found = blocking(move || {
-                    let search = crate::kernelspecs::Search::from_env()
-                        .in_project(root.as_deref().map(Path::new));
-                    Ok(crate::irkernel::find(&search)
-                        .iter()
-                        .map(|candidate| candidate.info(&search))
-                        .collect::<Vec<_>>())
-                })
-                .await?;
-                serde_json::to_value(found)?
-            }
-            Call::InstallIrkernel { r, project } => {
-                let project = project.map(|p| projects::normalize(&p)).transpose()?;
-                let root = project.clone();
-                let (mut launch, trust) = blocking(move || {
-                    let search = crate::kernelspecs::Search::from_env()
-                        .in_project(root.as_deref().map(Path::new));
-                    crate::irkernel::launch(&r, &search)
-                })
-                .await?;
-                // pixi reads the project's manifest; plain R and conda don't
-                // act on the project's files.
-                if let Some(folder) = trust {
-                    self.trusted(vec![folder], "install IRkernel with pixi")
-                        .await?;
-                }
-                // Listed with the project's jobs.
-                launch.project = project;
-                let started = self.terminals.start(launch).await?;
-                self.keep_awake(&started.id);
-                serde_json::to_value(started)?
-            }
+            Call::ListRWithoutIrkernel { project } => self.list_r_without_irkernel(project).await?,
+            Call::InstallIrkernel { r, project } => self.install_irkernel(r, project).await?,
             Call::StartSession {
                 kernel,
                 cwd,
                 project,
-            } => {
-                let cwd = match cwd {
-                    Some(cwd) => PathBuf::from(cwd),
-                    None => std::env::var_os("HOME")
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| PathBuf::from("/")),
-                };
-                if !cwd.is_dir() {
-                    anyhow::bail!("{} is not a directory", cwd.display());
-                }
-                let project = project.map(|p| projects::normalize(&p)).transpose()?;
-                let env = match project.clone() {
-                    Some(root) => {
-                        blocking(move || Ok(projects::kernel_env(Path::new(&root)))).await?
-                    }
-                    None => Vec::new(),
-                };
-                let handle = SessionHandle::start(
-                    self.journal.clone(),
-                    &self.state.kernels_dir(),
-                    &kernel,
-                    &cwd,
-                    session::Start { project, env },
-                )
-                .await?;
-                let id = handle.id.clone();
-                self.insert(handle);
-                serde_json::to_value(self.session_info(&id)?)?
-            }
+            } => self.start_session(kernel, cwd, project).await?,
             Call::ListSessions => {
                 let infos = self
                     .journal
@@ -832,56 +762,12 @@ impl Daemon {
                         .await?,
                 )?
             }
-            Call::PreviewDocument { path, project } => {
-                let file = files::resolve(&path)?;
-                if !crate::preview::previewable(&file) {
-                    bail!("{} is not a Quarto document (.qmd or .Rmd)", file.display());
-                }
-                if !file.is_file() {
-                    bail!("{} does not exist", file.display());
-                }
-                let project = project.map(|p| projects::normalize(&p)).transpose()?;
-                let (id, port) = match crate::preview::running(&self.terminals, &file) {
-                    Some(found) => found,
-                    None => {
-                        let quarto = blocking(|| {
-                            Ok(crate::preview::find_quarto(
-                                &crate::kernelspecs::Search::from_env(),
-                            ))
-                        })
-                        .await?
-                        .with_context(crate::preview::install_advice)?;
-                        let port = crate::preview::free_port()?;
-                        let mut launch =
-                            crate::preview::launch(&quarto, &file, port, project.clone());
-                        if let Some(root) = project {
-                            launch.env =
-                                blocking(move || Ok(crate::preview::env(Path::new(&root)))).await?;
-                        }
-                        (self.terminals.start(launch).await?.id, port)
-                    }
-                };
-                serde_json::to_value(crate::preview::ready(&self.terminals, &id, port).await?)?
-            }
+            Call::PreviewDocument { path, project } => self.preview_document(path, project).await?,
             Call::ServePage { path } => {
                 let path = files::resolve(&path)?;
                 serde_json::to_value(self.pages.serve(&path).await?)?
             }
-            Call::ServeHtml { html, blob } => {
-                let html = match (html, blob) {
-                    (Some(html), _) => html,
-                    (None, Some(hash)) => {
-                        let bytes = self
-                            .journal
-                            .blobs()
-                            .get(&hash)
-                            .with_context(|| format!("no blob {hash}"))?;
-                        String::from_utf8_lossy(&bytes).into_owned()
-                    }
-                    (None, None) => bail!("give html or a blob"),
-                };
-                serde_json::to_value(self.pages.serve_html(&html).await?)?
-            }
+            Call::ServeHtml { html, blob } => self.serve_html(html, blob).await?,
             Call::OpenTunnel { .. } | Call::TunnelWrite { .. } | Call::CloseTunnel { .. } => {
                 bail!("tunnels are handled by the connection")
             }
@@ -892,37 +778,12 @@ impl Daemon {
                     blocking(move || Ok(outputs::session_runs(&journal, &session, limit)?)).await?,
                 )?
             }
-            Call::ListVariables { session, path } => {
-                let printed = self
-                    .quietly(&session, "list the variables", |language| {
-                        variables::list_code(language, &path)
-                    })
-                    .await?;
-                let (list, more) = variables::parse(&printed.stdout);
-                serde_json::to_value(Variables {
-                    session,
-                    path,
-                    variables: list,
-                    more,
-                })?
-            }
+            Call::ListVariables { session, path } => self.list_variables(session, path).await?,
             Call::FindVariables {
                 session,
                 query,
                 root,
-            } => {
-                let printed = self
-                    .quietly(&session, "search the variables", |language| {
-                        crate::variable_search::code(language, &query, &root)
-                    })
-                    .await?;
-                let (matches, complete) = crate::variable_search::parse(&printed.stdout);
-                serde_json::to_value(sandhill_proto::VariableMatches {
-                    session,
-                    matches,
-                    complete,
-                })?
-            }
+            } => self.find_variables(session, query, root).await?,
             Call::DeleteVariables { session, names } => {
                 if !names.is_empty() {
                     self.quietly(&session, "delete variables", |language| {
@@ -945,52 +806,20 @@ impl Daemon {
                 column_limit,
                 cells_only,
             } => {
-                if columns
-                    .as_ref()
-                    .is_some_and(|cols| cols.len() > tables::MAX_COLUMNS as usize)
-                {
-                    bail!(
-                        "at most {} projected columns can be requested",
-                        tables::MAX_COLUMNS
-                    );
-                }
-                let ask = tables::Ask {
-                    mode: tables::Mode::Rows,
-                    path: &path,
-                    sort: &sort,
-                    filters: &filters,
-                    search: &search,
-                    offset,
-                    limit: limit.unwrap_or(tables::ROWS).min(tables::MAX_ROWS),
-                    column_offset,
-                    column_limit: column_limit
-                        .unwrap_or(tables::COLUMNS)
-                        .min(tables::MAX_COLUMNS),
-                    columns: columns.as_deref(),
-                    headers: !cells_only,
-                    file: "",
-                };
-                let printed = self
-                    .quietly(&session, "read the table", |language| {
-                        tables::code(language, &ask)
-                    })
-                    .await?;
-                let rows = tables::parse_rows(&printed.stdout);
-                serde_json::to_value(TableRows {
+                self.table_rows(
                     session,
                     path,
-                    code: rows.code,
-                    matrix: rows.matrix,
-                    columns: rows.columns,
-                    column_indices: columns,
-                    column_offset,
-                    width: rows.width,
-                    total: rows.total,
-                    rows: rows.rows,
                     offset,
-                    labels: rows.labels,
-                    values: rows.values,
-                })?
+                    limit,
+                    sort,
+                    filters,
+                    search,
+                    columns,
+                    column_offset,
+                    column_limit,
+                    cells_only,
+                )
+                .await?
             }
             Call::TableSummary {
                 session,
@@ -1000,153 +829,27 @@ impl Daemon {
                 column_offset,
                 column_limit,
             } => {
-                let ask = tables::Ask {
-                    mode: tables::Mode::Summary,
-                    path: &path,
-                    sort: &[],
-                    filters: &filters,
-                    search: &search,
-                    offset: 0,
-                    limit: 0,
-                    column_offset,
-                    column_limit: column_limit
-                        .unwrap_or(tables::COLUMNS)
-                        .min(tables::MAX_COLUMNS),
-                    columns: None,
-                    headers: false,
-                    file: "",
-                };
-                let printed = self
-                    .quietly(&session, "summarize the table", |language| {
-                        tables::code(language, &ask)
-                    })
-                    .await?;
-                let summary = tables::parse_summary(&printed.stdout);
-                serde_json::to_value(TableSummary {
-                    session,
-                    path,
-                    rows: summary.rows,
-                    columns: summary.columns,
-                })?
+                self.table_summary(session, path, filters, search, column_offset, column_limit)
+                    .await?
             }
             Call::HelpTopics {
                 session,
                 query,
                 package,
                 limit,
-            } => {
-                let ask = help::Ask {
-                    mode: help::Mode::Topics,
-                    query: query.trim(),
-                    package: package.as_deref().unwrap_or("").trim(),
-                    topic: "",
-                    limit: limit.unwrap_or(help::TOPICS).min(help::MAX_TOPICS),
-                };
-                let printed = self
-                    .quietly(&session, "search the help", |language| {
-                        help::code(language, &ask)
-                    })
-                    .await?;
-                let found = help::parse_topics(&printed.stdout);
-                serde_json::to_value(HelpTopics {
-                    session,
-                    more: found.matched.saturating_sub(found.topics.len() as u64),
-                    topics: found.topics,
-                    vignettes: found.vignettes,
-                })?
-            }
+            } => self.help_topics(session, query, package, limit).await?,
             Call::HelpPage {
                 session,
                 topic,
                 package,
-            } => {
-                let ask = help::Ask {
-                    mode: help::Mode::Page,
-                    query: "",
-                    package: package.as_deref().unwrap_or("").trim(),
-                    topic: topic.trim(),
-                    limit: 0,
-                };
-                let printed = self
-                    .quietly(&session, "read the help", |language| {
-                        help::code(language, &ask)
-                    })
-                    .await?;
-                let page = help::parse_page(&printed.stdout)
-                    .with_context(|| format!("no help for {topic}"))?;
-                serde_json::to_value(HelpPage {
-                    session,
-                    topic: page.topic,
-                    package: page.package,
-                    title: page.title,
-                    version: page.version,
-                    html: page.html,
-                    kind: page.kind,
-                    signature: page.signature,
-                    text: page.text,
-                    members: page.members,
-                    alternatives: page.alternatives,
-                })?
-            }
+            } => self.help_page(session, topic, package).await?,
             Call::HelpSource {
                 session,
                 topic,
                 package,
-            } => {
-                let ask = help::Ask {
-                    mode: help::Mode::Source,
-                    query: "",
-                    package: package.as_deref().unwrap_or("").trim(),
-                    topic: topic.trim(),
-                    limit: 0,
-                };
-                let printed = self
-                    .quietly(&session, "read the source", |language| {
-                        help::code(language, &ask)
-                    })
-                    .await?;
-                let source = help::parse_source(&printed.stdout)
-                    .with_context(|| format!("no source for {topic}"))?;
-                serde_json::to_value(HelpSource {
-                    session,
-                    topic: source.topic,
-                    package: source.package,
-                    text: source.text,
-                    file: source.file,
-                    line: source.line,
-                })?
-            }
-            Call::ListPackages { session } => {
-                let printed = self
-                    .quietly(&session, "list the packages", packages::code)
-                    .await?;
-                let listed = packages::parse(&printed.stdout);
-                serde_json::to_value(Packages {
-                    session,
-                    packages: listed.packages,
-                    libraries: listed.libraries,
-                    cran: listed.cran,
-                    bioconductor: listed.bioconductor,
-                    conda: listed.conda,
-                })?
-            }
-            Call::PackageUpdates { session } => {
-                let printed = self
-                    .quietly_for(
-                        &session,
-                        "check for updates",
-                        packages::UPDATES_TIMEOUT,
-                        packages::updates_code,
-                    )
-                    .await?;
-                let found = packages::parse_updates(&printed.stdout);
-                serde_json::to_value(PackageUpdates {
-                    session,
-                    updates: found.updates,
-                    repos: found.repos,
-                    unreached: found.unreached,
-                })?
-            }
+            } => self.help_source(session, topic, package).await?,
+            Call::ListPackages { session } => self.list_packages(session).await?,
+            Call::PackageUpdates { session } => self.package_updates(session).await?,
             Call::SuggestCell {
                 agent,
                 cwd,
@@ -1154,13 +857,8 @@ impl Daemon {
                 cells,
                 output,
             } => {
-                let (kind, program) = crate::ghost::choose(agent.as_deref())?;
-                let prompt = crate::ghost::prompt(&language, &cells, &output);
-                let reply = crate::ghost::ask(kind, &program, Path::new(&cwd), &prompt).await?;
-                serde_json::to_value(sandhill_proto::CellSuggestion {
-                    agent: kind.into(),
-                    code: crate::ghost::parse(&reply),
-                })?
+                self.suggest_cell(agent, cwd, language, cells, output)
+                    .await?
             }
             Call::GitStatus { path } => serde_json::to_value(crate::git::status(&path).await?)?,
             Call::GitLog { path, skip, limit } => {
@@ -1199,28 +897,8 @@ impl Daemon {
                 dpi,
                 show,
             } if show => {
-                // Drawn to a file of the daemon's, then sent back and removed.
-                let dir = self.state.root().join("redraw");
-                std::fs::create_dir_all(&dir)?;
-                let path = dir.join(format!("{}.png", uuid::Uuid::new_v4().simple()));
-                let file = path.to_string_lossy().into_owned();
-                let save = redraw::Save {
-                    file: &file,
-                    format: "png",
-                    width,
-                    height,
-                    dpi,
-                };
-                let drawn = self
-                    .redraw_plot(&session, &run, image.as_deref(), index, Some(save))
-                    .await;
-                let bytes = std::fs::read(&path);
-                let _ = std::fs::remove_file(&path);
-                let mut drawn = drawn?;
-                if drawn.can {
-                    drawn.png = Some(BASE64.encode(bytes?));
-                }
-                serde_json::to_value(drawn)?
+                self.redraw_plot_shown(session, run, image, index, width, height, dpi)
+                    .await?
             }
             Call::RedrawPlot {
                 session,
@@ -1234,17 +912,8 @@ impl Daemon {
                 dpi,
                 show: _,
             } => {
-                let save = file.as_deref().map(|file| redraw::Save {
-                    file,
-                    format: &format,
-                    width,
-                    height,
-                    dpi,
-                });
-                serde_json::to_value(
-                    self.redraw_plot(&session, &run, image.as_deref(), index, save)
-                        .await?,
-                )?
+                self.redraw_plot_saved(session, run, image, index, file, format, width, height, dpi)
+                    .await?
             }
             Call::TableExport {
                 session,
@@ -1254,35 +923,8 @@ impl Daemon {
                 search,
                 file,
             } => {
-                let resolved = files::resolve(&file)?.to_string_lossy().into_owned();
-                let ask = tables::Ask {
-                    mode: tables::Mode::Export,
-                    path: &path,
-                    sort: &sort,
-                    filters: &filters,
-                    search: &search,
-                    offset: 0,
-                    limit: 0,
-                    column_offset: 0,
-                    column_limit: 0,
-                    columns: None,
-                    headers: false,
-                    file: &resolved,
-                };
-                let printed = self
-                    .quietly(&session, "export the table", |language| {
-                        tables::code(language, &ask)
-                    })
-                    .await?;
-                if tables::parse_written(&printed.stdout).is_none() {
-                    bail!("could not export the table: nothing was written");
-                }
-                let meta = std::fs::metadata(&resolved)
-                    .with_context(|| format!("could not export the table to {file}"))?;
-                serde_json::to_value(FileWritten {
-                    path: file,
-                    mtime_ms: files::mtime_ms(&meta),
-                })?
+                self.table_export(session, path, sort, filters, search, file)
+                    .await?
             }
             Call::Interrupt { session } => {
                 self.live(&session)?.interrupt().await?;
@@ -1304,50 +946,16 @@ impl Daemon {
                 let next_seq = events.last().map_or(since_seq, |e| e.seq);
                 serde_json::to_value(HistoryPage { events, next_seq })?
             }
-            Call::GetBlob { hash, near } => {
-                let mut bytes = self.journal.blobs().get(&hash);
-                if bytes.is_err()
-                    && let Some(path) = near
-                        .and_then(|n| files::resolve(&n).ok())
-                        .and_then(|doc| sidecar::blob_path(&doc, &hash))
-                {
-                    bytes = std::fs::read(path);
-                }
-                let bytes = bytes.with_context(|| format!("no blob {hash}"))?;
-                serde_json::to_value(Blob {
-                    hash,
-                    data: String::from_utf8_lossy(&bytes).into_owned(),
-                })?
-            }
+            Call::GetBlob { hash, near } => self.get_blob(hash, near)?,
             Call::ReadFile { path } => {
                 serde_json::to_value(blocking(move || files::read_text(&path)).await?)?
             }
-            Call::ReadNotebook { path } => {
-                let journal = self.journal.clone();
-                let file = blocking(move || {
-                    let file = notebook::read_notebook(&path, journal.blobs());
-                    memory::release_free_memory();
-                    file
-                })
-                .await?;
-                serde_json::to_value(file)?
-            }
+            Call::ReadNotebook { path } => self.read_notebook(path).await?,
             Call::WriteNotebook {
                 path,
                 text,
                 expected_mtime_ms,
-            } => {
-                let journal = self.journal.clone();
-                let written = blocking(move || {
-                    let written =
-                        notebook::write_notebook(&path, &text, expected_mtime_ms, journal.blobs());
-                    drop(text);
-                    memory::release_free_memory();
-                    written
-                })
-                .await?;
-                serde_json::to_value(written)?
-            }
+            } => self.write_notebook(path, text, expected_mtime_ms).await?,
             Call::WriteFile {
                 path,
                 text,
@@ -1355,22 +963,8 @@ impl Daemon {
                 base64,
                 create,
             } => {
-                let bytes = if base64 {
-                    sandhill_proto::decode_base64(&text)
-                        .context("the file's bytes are not valid base64")?
-                } else {
-                    text.into_bytes()
-                };
-                serde_json::to_value(
-                    blocking(move || {
-                        if create {
-                            fileops::create_file(&path, &bytes)
-                        } else {
-                            files::write_bytes(&path, &bytes, expected_mtime_ms)
-                        }
-                    })
-                    .await?,
-                )?
+                self.write_file(path, text, expected_mtime_ms, base64, create)
+                    .await?
             }
             Call::ListDir { path, sizes, marks } => {
                 serde_json::to_value(blocking(move || files::list_dir(&path, sizes, marks)).await?)?
@@ -1398,25 +992,9 @@ impl Daemon {
             } => serde_json::to_value(
                 blocking(move || fileops::read_bytes(&path, offset, limit)).await?,
             )?,
-            Call::FileOutputs { file } => {
-                let journal = self.journal.clone();
-                serde_json::to_value(
-                    blocking(move || {
-                        let file = files::resolve(&file)?.to_string_lossy().into_owned();
-                        Ok(outputs::file_outputs(&journal, &file)?)
-                    })
-                    .await?,
-                )?
-            }
+            Call::FileOutputs { file } => self.file_outputs(file).await?,
             Call::ClearCellOutputs { file, cell_ids } => {
-                let journal = self.journal.clone();
-                serde_json::to_value(
-                    blocking(move || {
-                        let file = files::resolve(&file)?.to_string_lossy().into_owned();
-                        Ok(journal.clear_cell_outputs(&file, &cell_ids)?)
-                    })
-                    .await?,
-                )?
+                self.clear_cell_outputs(file, cell_ids).await?
             }
             Call::OpenProject { path } => {
                 let journal = self.journal.clone();
@@ -1442,23 +1020,7 @@ impl Daemon {
                 serde_json::to_value(blocking(move || Ok(projects::setup(&root))).await?)?
             }
             Call::SaveProjectSettings { path, settings } => {
-                let root = PathBuf::from(projects::normalize(&path)?);
-                if !root.is_dir() {
-                    anyhow::bail!("{} is not a folder", root.display());
-                }
-                let machine = settings.chat_history == ChatHistory::Machine;
-                let setup = blocking({
-                    let root = root.clone();
-                    move || {
-                        projects::settings::write(&root, &settings)?;
-                        Ok(projects::setup(&root))
-                    }
-                })
-                .await?;
-                if machine {
-                    chats::move_out(&self.terminals, &root)?;
-                }
-                serde_json::to_value(setup)?
+                self.save_project_settings(path, settings).await?
             }
             Call::ForgetProject { path } => {
                 let journal = self.journal.clone();
@@ -1479,46 +1041,8 @@ impl Daemon {
                 let journal = self.journal.clone();
                 serde_json::to_value(blocking(move || projects::trust::list(&journal)).await?)?
             }
-            Call::SystemStats { path } => {
-                let journal = self.journal.clone();
-                let jobs: Vec<(String, u32)> = self
-                    .terminals
-                    .list()
-                    .into_iter()
-                    .filter(|t| t.kind == TERMINAL_JOB && t.running)
-                    .filter_map(|t| Some((t.id.clone(), self.terminals.pid(&t.id)?)))
-                    .collect();
-                serde_json::to_value(
-                    blocking(move || {
-                        let path = match path {
-                            Some(path) => files::resolve(&path)?,
-                            None => PathBuf::from(std::env::var_os("HOME").unwrap_or("/".into())),
-                        };
-                        let kernels: Vec<(String, u32)> = journal
-                            .sessions()?
-                            .into_iter()
-                            .filter(|s| s.status != SessionStatus::Ended)
-                            .filter_map(|s| Some((s.id, s.pid?)))
-                            .collect();
-                        Ok(crate::system::stats(&path, &kernels, &jobs))
-                    })
-                    .await?,
-                )?
-            }
-            Call::ReadLog { bytes } => {
-                let path = self.state.log_path();
-                let tail = blocking(move || crate::logfile::tail(&path, bytes.unwrap_or(LOG_TAIL)))
-                    .await
-                    .map_err(|err| match self.options.started_by.as_str() {
-                        // Then the service manager keeps the log.
-                        "launchd" | "systemd" => anyhow!(
-                            "{err:#}; sandhilld runs under {}, which keeps its log",
-                            self.options.started_by
-                        ),
-                        _ => err,
-                    })?;
-                serde_json::to_value(tail)?
-            }
+            Call::SystemStats { path } => self.system_stats(path).await?,
+            Call::ReadLog { bytes } => self.read_log(bytes).await?,
             Call::PrepareAttach { build } => self.prepare_attach(&build)?,
             Call::StopDaemon => {
                 tracing::info!("daemon shutdown accepted; waiting for reply flush");
@@ -1554,18 +1078,7 @@ impl Daemon {
                 Value::Null
             }
             Call::SignInAgentAccount { id, cols, rows } => {
-                // Finished sign-ins leave nothing worth keeping; clear them.
-                for ended in self
-                    .terminals
-                    .list()
-                    .into_iter()
-                    .filter(|t| t.kind == sandhill_proto::TERMINAL_LOGIN && !t.running)
-                {
-                    let _ = self.terminals.remove(&ended.id);
-                }
-                let mut launch = crate::accounts::Registry::from_env().sign_in(&id)?;
-                launch.size = cols.zip(rows);
-                serde_json::to_value(self.terminals.start(launch).await?)?
+                self.sign_in_agent_account(id, cols, rows).await?
             }
             Call::UseAgentReset { id, credit } => {
                 crate::accounts::Registry::from_env()
@@ -1581,39 +1094,10 @@ impl Daemon {
                 options,
                 prompt,
             } => {
-                let project = project.map(|p| projects::normalize(&p)).transpose()?;
-                let cwd = match cwd.or_else(|| project.clone()) {
-                    Some(cwd) => files::resolve(&cwd)?,
-                    None => PathBuf::from(std::env::var_os("HOME").unwrap_or("/".into())),
-                };
-                if !cwd.is_dir() {
-                    anyhow::bail!("{} is not a directory", cwd.display());
-                }
-                let context = crate::agents::Context {
-                    executable: &self.options.executable,
-                    socket: &self.options.socket,
-                    project: project.as_deref(),
-                    cwd: &cwd,
-                    prompt: prompt.as_deref(),
-                    resume: None,
-                };
-                let mut launch = crate::agents::launch(&kind, &options, &context).await?;
-                launch.size = cols.zip(rows);
-                self.name_trust(&mut launch).await?;
-                serde_json::to_value(self.terminals.start(launch).await?)?
+                self.start_terminal(kind, cwd, project, cols, rows, options, prompt)
+                    .await?
             }
-            Call::StartJob { job, cwd, project } => {
-                let project = project.map(|p| projects::normalize(&p)).transpose()?;
-                let cwd = cwd.map(|cwd| files::resolve(&cwd)).transpose()?;
-                let launch =
-                    blocking(move || crate::jobs::launch(&job, cwd.as_deref(), project.as_deref()))
-                        .await?;
-                // A job with no folder given runs in its script's.
-                self.trusted(vec![launch.cwd.clone()], "run jobs").await?;
-                let started = self.terminals.start(launch).await?;
-                self.keep_awake(&started.id);
-                serde_json::to_value(started)?
-            }
+            Call::StartJob { job, cwd, project } => self.start_job(job, cwd, project).await?,
             Call::StopTerminal { terminal } => {
                 self.terminals.stop(&terminal).await?;
                 Value::Null
@@ -1629,17 +1113,7 @@ impl Daemon {
                 .info(&terminal)
                 .is_ok_and(|t| t.kind == TERMINAL_JOB) =>
             {
-                // A job runs again as it was asked to, in the same place.
-                let info = self.terminals.info(&terminal)?;
-                let job = info.job.unwrap_or_default();
-                let cwd = PathBuf::from(&info.cwd);
-                let project = info.project;
-                let launch =
-                    blocking(move || crate::jobs::launch(&job, Some(&cwd), project.as_deref()))
-                        .await?;
-                let started = self.terminals.restart(&terminal, launch, &[]).await?;
-                self.keep_awake(&started.id);
-                serde_json::to_value(started)?
+                self.restart_terminal_job(terminal).await?
             }
             Call::RestartTerminal {
                 terminal,
@@ -1648,28 +1122,8 @@ impl Daemon {
                 rows,
                 prompt,
             } => {
-                let info = self.terminals.info(&terminal)?;
-                // It may have run on another machine, or have to start afresh.
-                let resume = chats::prepare(&info, &self.homes, &self.machine)?;
-                let prompt = match &resume.note {
-                    Some(note) => Some(chats::with_note(note, prompt.as_deref())),
-                    None => prompt,
-                };
-                let cwd = PathBuf::from(&info.cwd);
-                let context = crate::agents::Context {
-                    executable: &self.options.executable,
-                    socket: &self.options.socket,
-                    project: info.project.as_deref(),
-                    cwd: &cwd,
-                    prompt: prompt.as_deref(),
-                    resume: resume.id.as_deref(),
-                };
-                let options = options.unwrap_or_else(|| info.options.clone());
-                let mut launch = crate::agents::launch(&info.kind, &options, &context).await?;
-                launch.size = cols.zip(rows);
-                self.name_trust(&mut launch).await?;
-                let keep = &crate::agents::RESUME_KEYS;
-                serde_json::to_value(self.terminals.restart(&terminal, launch, keep).await?)?
+                self.restart_terminal_agent(terminal, options, cols, rows, prompt)
+                    .await?
             }
             Call::RenameTerminal { terminal, name } => {
                 serde_json::to_value(self.terminals.rename(&terminal, name.as_deref())?)?
@@ -1731,28 +1185,8 @@ impl Daemon {
                 project,
                 by,
             } => {
-                let path = windows::normalize(&files::resolve(&file)?);
-                let file = path.to_string_lossy().into_owned();
-                let mut params = json!({"file": file, "code": code, "language": language, "after": after, "run": run, "by": by});
-                // Left out, not null: no `after` means after the last cell.
-                if let Some(map) = params.as_object_mut() {
-                    map.retain(|_, v| !v.is_null());
-                }
-                let edited = match self.ask_window(&path, project, "add_cell", params).await? {
-                    Some(edited) => edited,
-                    None => {
-                        let edited = blocking({
-                            let file = file.clone();
-                            move || {
-                                cells::add_cell(&file, &code, language.as_deref(), after.as_deref())
-                            }
-                        })
-                        .await?;
-                        on_disk(file, edited)
-                    }
-                };
-                self.windows.moved_to(&path, &edited.cell_id);
-                serde_json::to_value(edited)?
+                self.add_cell(file, code, language, after, run, project, by)
+                    .await?
             }
             Call::EditCell {
                 file,
@@ -1762,48 +1196,15 @@ impl Daemon {
                 project,
                 by,
             } => {
-                let path = windows::normalize(&files::resolve(&file)?);
-                let file = path.to_string_lossy().into_owned();
-                let params =
-                    json!({"file": file, "cell_id": cell_id, "code": code, "run": run, "by": by});
-                let edited = match self.ask_window(&path, project, "edit_cell", params).await? {
-                    Some(edited) => edited,
-                    None => {
-                        let edited = blocking({
-                            let file = file.clone();
-                            move || cells::edit_cell(&file, &cell_id, &code)
-                        })
-                        .await?;
-                        on_disk(file, edited)
-                    }
-                };
-                serde_json::to_value(edited)?
+                self.edit_cell(file, cell_id, code, run, project, by)
+                    .await?
             }
             Call::DeleteCell {
                 file,
                 cell_id,
                 project,
                 by,
-            } => {
-                let path = windows::normalize(&files::resolve(&file)?);
-                let file = path.to_string_lossy().into_owned();
-                let params = json!({"file": file, "cell_id": cell_id, "by": by});
-                let edited = match self
-                    .ask_window(&path, project, "delete_cell", params)
-                    .await?
-                {
-                    Some(edited) => edited,
-                    None => {
-                        let edited = blocking({
-                            let file = file.clone();
-                            move || cells::delete_cell(&file, &cell_id)
-                        })
-                        .await?;
-                        on_disk(file, edited)
-                    }
-                };
-                serde_json::to_value(edited)?
-            }
+            } => self.delete_cell(file, cell_id, project, by).await?,
             Call::Answer { id, result, error } => {
                 let answer = match (result, error) {
                     (_, Some(error)) => Err(error),

@@ -68,11 +68,11 @@ By the same rules:
 `console`: a child module of that name would hide `crate::notebook` and the
 workbench's `console` inside `view.rs`.
 
-## Not split
-`crates/daemon/src/server.rs` (2,277 lines): half of it is one function,
-`Daemon::call`, a single `match` over every call. Splitting it means giving
-each group of calls its own function, which changes code rather than moving
-it, so it needs its own plan.
+## `server.rs`
+`crates/daemon/src/server.rs` (2,277 lines) could not be split by moving
+alone: half of it was one function, `Daemon::call`, a single `match` over
+every call. It has its own plan, built the same day:
+`docs/design/server-split-plan.md`.
 
 ## Risk
 A moved function that used a `use` from the top of the old file needs that
