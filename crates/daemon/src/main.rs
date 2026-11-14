@@ -471,10 +471,13 @@ async fn attach(
 async fn prepare_daemon(socket: &Path) -> Result<bool> {
     let stream = match UnixStream::connect(socket).await {
         Ok(stream) => stream,
+        // Reset: a daemon closing its socket as it exits, seen on Linux.
         Err(error)
             if matches!(
                 error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                std::io::ErrorKind::NotFound
+                    | std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::ConnectionReset
             ) =>
         {
             return Ok(false);
@@ -484,11 +487,38 @@ async fn prepare_daemon(socket: &Path) -> Result<bool> {
     let peer = peer_identity(&stream)?;
     let (read, write) = stream.into_split();
     let client = Client::new(read, write);
+    match ask_daemon(&client, &peer).await {
+        // The daemon went away while being asked: an older one finishing its
+        // own exit. Like one found stopping, wait for that exact process to
+        // be gone; the caller then reuses or starts one under its lock.
+        Err(error) if went_away(&error) => {
+            wait_for_exit(&peer).await?;
+            Ok(false)
+        }
+        asked => asked,
+    }
+}
+
+/// Whether `error` is the connection to the daemon breaking, rather than
+/// the daemon answering.
+fn went_away(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<sandhill_proto::client::ClientError>(),
+            Some(
+                sandhill_proto::client::ClientError::Io(_)
+                    | sandhill_proto::client::ClientError::Disconnected
+            )
+        )
+    })
+}
+
+async fn ask_daemon(client: &Client, peer: &ProcessIdentity) -> Result<bool> {
     let running = tokio::time::timeout(Duration::from_secs(10), client.ping())
         .await
         .context("the running sandhilld did not answer")??;
     if running.lifecycle == "stopping" {
-        wait_for_exit(&peer).await?;
+        wait_for_exit(peer).await?;
         return Ok(false);
     }
     let ours = build_id();
@@ -551,7 +581,7 @@ async fn prepare_daemon(socket: &Path) -> Result<bool> {
         }
     }
     tracing::info!(pid = peer.pid, "waiting for replaced daemon to exit");
-    wait_for_exit(&peer).await?;
+    wait_for_exit(peer).await?;
     Ok(false)
 }
 
