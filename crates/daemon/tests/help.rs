@@ -276,8 +276,10 @@ async fn python_updates_are_asked_of_the_index() {
     .await;
     let listed = client.list_packages(&session).await.unwrap();
     let found = client.package_updates(&session).await.unwrap();
-    assert_eq!(found.repos, std::slice::from_ref(&index));
-    assert!(found.unreached.is_empty());
+    // A conda environment is asked of conda's channels as well; this test is
+    // about the index.
+    assert!(found.repos.contains(&index), "{:?}", found.repos);
+    assert!(!found.unreached.contains(&index), "{:?}", found.unreached);
     // What pip installed, from an index, is asked about; pip itself isn't on
     // this one.
     let asked: Vec<_> = listed
@@ -285,16 +287,28 @@ async fn python_updates_are_asked_of_the_index() {
         .iter()
         .filter(|p| p.installer != "conda" && p.name != "pip")
         .collect();
-    assert!(!found.updates.is_empty(), "{listed:?}");
-    for update in &found.updates {
-        assert_eq!(update.available, "999.0", "{update:?}");
+    // Conda may know newer versions of its own; the index's are all 999.0.
+    let from_index: Vec<_> = found
+        .updates
+        .iter()
+        .filter(|u| u.available == "999.0")
+        .collect();
+    assert!(!from_index.is_empty(), "{listed:?}");
+    for update in &from_index {
         assert!(
             asked
                 .iter()
-                .any(|p| p.name == update.name && p.version == update.installed)
+                .any(|p| p.name == update.name && p.version == update.installed),
+            "{update:?}"
         );
     }
-    assert!(!found.updates.iter().any(|u| u.name == "pip"));
+    let pips_pip = listed
+        .packages
+        .iter()
+        .any(|p| p.name == "pip" && p.installer != "conda");
+    if pips_pip {
+        assert!(!found.updates.iter().any(|u| u.name == "pip"));
+    }
 
     // An index that can't be reached says so.
     run(
@@ -303,15 +317,23 @@ async fn python_updates_are_asked_of_the_index() {
         "__import__('os').environ['SANDHILL_PYPI_URL'] = 'http://127.0.0.1:9/pypi'",
     )
     .await;
-    let err = client
-        .package_updates(&session)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        err.contains("couldn't reach http://127.0.0.1:9/pypi"),
-        "{err}"
-    );
+    // Alone it fails the call; beside conda's channels it is named as missed.
+    match client.package_updates(&session).await {
+        Err(err) => {
+            let err = err.to_string();
+            assert!(
+                err.contains("couldn't reach http://127.0.0.1:9/pypi"),
+                "{err}"
+            );
+        }
+        Ok(found) => assert!(
+            found
+                .unreached
+                .iter()
+                .any(|r| r.contains("127.0.0.1:9/pypi")),
+            "{found:?}"
+        ),
+    }
     client.shutdown(&session).await.unwrap();
 }
 

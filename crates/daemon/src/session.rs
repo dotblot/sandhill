@@ -38,6 +38,8 @@ const JOURNALED: &[&str] = &[
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// How long a kernel has to stop of itself before a run in it is interrupted.
+const SHUTDOWN_INTERRUPT: Duration = Duration::from_secs(1);
 const LIVENESS_INTERVAL: Duration = Duration::from_secs(2);
 const COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
 const ARK_LSP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -84,7 +86,7 @@ enum Command {
 
 /// What a new session belongs to and starts with, besides its kernel and
 /// folder.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Start {
     /// The project's folder. R starts there so its `.Rprofile` and
     /// `.Renviron` apply, and kernels of the environments inside it count.
@@ -103,7 +105,33 @@ pub struct SessionHandle {
 
 impl SessionHandle {
     /// Starts a new kernel and waits until it is ready for code.
+    ///
+    /// A kernel is given free ports to bind, and they are only its own once
+    /// it has: something else (another kernel starting, any connection going
+    /// out) can take one in between. That says nothing against the kernel,
+    /// so it is started again with other ports.
     pub async fn start(
+        journal: Arc<Journal>,
+        kernels_dir: &Path,
+        kernel: &str,
+        cwd: &Path,
+        start: Start,
+    ) -> Result<SessionHandle> {
+        let mut tries = 0;
+        loop {
+            let attempt =
+                Self::start_once(journal.clone(), kernels_dir, kernel, cwd, start.clone()).await;
+            match attempt {
+                Err(err) if tries < 2 && err.to_string().contains("Address already in use") => {
+                    tracing::info!("a kernel's port was taken before it bound it; starting again");
+                    tries += 1;
+                }
+                done => return done,
+            }
+        }
+    }
+
+    async fn start_once(
         journal: Arc<Journal>,
         kernels_dir: &Path,
         kernel: &str,
@@ -800,7 +828,16 @@ impl Actor {
         let msg = JupyterMessage::new(ShutdownRequest { restart: false }, None);
         // A vanished/disconnected kernel must not hang management forever.
         let _ = tokio::time::timeout_at(deadline, self.conn.control.send(msg)).await;
+        // A kernel in the middle of a run gets to the request only when the
+        // run ends: interrupt it, as stopping the kernel gives the run up
+        // anyway. An interrupt is not a kill, so this is still graceful.
+        let interrupt_at = tokio::time::Instant::now() + SHUTDOWN_INTERRUPT;
+        let mut interrupted = false;
         while self.kernel_alive() && tokio::time::Instant::now() < deadline {
+            if !interrupted && tokio::time::Instant::now() >= interrupt_at {
+                interrupted = true;
+                let _ = tokio::time::timeout_at(deadline, self.interrupt()).await;
+            }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         if self.kernel_alive() {

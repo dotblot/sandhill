@@ -172,6 +172,10 @@ These plans are history: where they differ from this file, this file wins.
 - Every kernel output is journaled by the daemon so clients can disconnect and
   replay. Never make output delivery depend on a client being connected.
 - Kernels are started in their own process group and must outlive the daemon.
+  Shutting one down asks it to stop and, if a run keeps it busy, interrupts
+  that run after a second; that is still graceful, and killing it stays a
+  separately confirmed choice. A kernel that loses one of its ports to
+  something else before binding it is started again, up to twice (2026-11-14).
 - Window layout (Huan, 2026-11-02): three columns, 1:2:1. Left: Variables,
   Help, Packages, Kernels in one group; Files, Git, Plots, Viewer in the
   other (the two groups split 1:1). Middle: the editor, with Console,

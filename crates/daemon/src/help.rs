@@ -153,7 +153,10 @@ const R: &str = r#"local({
     if (length(.top)) writeLines(paste("SANDHILL_TOPIC", .esc(.ix$alias[.top]), .ix$package[.top], .esc(.ix$title[.top]), sep = "\t"))
     # Vignettes: a package's, or those whose name or title has the words.
     .v <- .ix$vignettes
-    .vin <- if (nzchar(.package)) .v[, 1] %in% .wanted(.v[, 1]) else rep(TRUE, nrow(.v))
+    # The package is matched as the topics' is, among every package: one
+    # without vignettes (grid) mustn't fall through to those it starts
+    # (gridExtra).
+    .vin <- if (nzchar(.package)) .v[, 1] %in% .wanted(c(.ix$package, .v[, 1])) else rep(TRUE, nrow(.v))
     if (nzchar(.q)) .vin <- .vin & (grepl(.q, tolower(.v[, 3]), fixed = TRUE) | grepl(.q, tolower(.v[, 2]), fixed = TRUE))
     if (!nzchar(.package) && !nzchar(.q)) .vin <- rep(FALSE, nrow(.v))
     .v <- .v[.vin, , drop = FALSE]

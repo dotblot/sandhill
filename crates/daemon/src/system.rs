@@ -113,6 +113,15 @@ fn cpu_percent() -> Option<f64> {
             std::mem::replace(&mut now, cpu_times()?)
         }
     };
+    // macOS now and then publishes its counters late: nothing has moved,
+    // then twice as much. Wait for them instead of reporting no reading.
+    for _ in 0..3 {
+        if now.total > from.total {
+            break;
+        }
+        std::thread::sleep(CPU_SAMPLE);
+        now = cpu_times()?;
+    }
     *LAST_CPU.lock().unwrap() = Some((Instant::now(), now));
     let total = now.total.saturating_sub(from.total);
     let busy = now.busy.saturating_sub(from.busy);

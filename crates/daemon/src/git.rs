@@ -134,6 +134,12 @@ async fn run(dir: &Path, args: &[&str], input: Option<&str>, timeout: Duration) 
         .env("GIT_TERMINAL_PROMPT", "0")
         // Reading the status mustn't take the index lock from the user's own git.
         .env("GIT_OPTIONAL_LOCKS", "0")
+        // The editors named by `-c core.editor` and `-c sequence.editor`
+        // must be the ones used: git prefers these variables to them, so
+        // one inherited from the user's shell would hang on an editor, or
+        // (set to `true`) leave a rewrite's list of commits as it was.
+        .env_remove("GIT_EDITOR")
+        .env_remove("GIT_SEQUENCE_EDITOR")
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
