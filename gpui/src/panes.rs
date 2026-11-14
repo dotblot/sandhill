@@ -289,15 +289,17 @@ impl Workbench {
             };
         let bottom_tab =
             |id: &'static str, label: &'static str, which: BottomTab, cx: &mut Context<Self>| {
-                Self::tab(id, None, label, self.bottom_tab == which, &p).on_click(cx.listener(
-                    move |this, _, _, cx| {
+                // As above: with the Plots tools beside them, wider tabs cut
+                // "Viewer" short.
+                Self::tab(id, None, label, self.bottom_tab == which, &p)
+                    .px(px(7.))
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.bottom_tab = which;
                         if this.panel_collapsed(Panel::LeftBottom) {
                             this.left_vertical = Vertical::Split;
                         }
                         cx.notify();
-                    },
-                ))
+                    }))
             };
         let restricted = self.restricted();
         let (top, refresh): (AnyElement, Vec<AnyElement>) = match self.top_tab {
