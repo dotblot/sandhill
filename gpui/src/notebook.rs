@@ -791,8 +791,9 @@ pub fn format_of(path: &str) -> Option<Format> {
             | "fa" | "fasta" | "fna" | "faa" | "ffn" | "frn" | "fas" | "afa" | "aln" | "fq"
             | "fastq" | "vcf" | "gvcf" | "maf" | "bed" | "bedgraph" | "bedpe" | "narrowpeak"
             | "broadpeak" | "gappedpeak" | "interval_list" | "wig" | "gff" | "gff3" | "gtf" | "sam"
-            | "paf" | "psl" | "blast" | "fai" | "dict" | "counts" | "tpm" | "mtx" | "nwk"
-            | "newick" | "tree" | "treefile" | "nex" | "nexus" | "nf" | "wdl" | "bib",
+            | "paf" | "psl" | "blast" | "fai" | "dict" | "counts" | "tpm" | "mtx" | "bim" | "fam"
+            | "pvar" | "psam" | "nwk" | "newick" | "tree" | "treefile" | "nex" | "nexus" | "nf"
+            | "wdl" | "bib",
         ) => Some(Format::Text),
         _ => None,
     }
@@ -835,8 +836,15 @@ pub(crate) fn is_binary(path: &str) -> bool {
                 | "cool"
                 | "mcool"
                 | "qs"
+                | "pgen"
         )
     )
+}
+
+/// Extensions that binary formats share with a text one: PLINK's genotypes
+/// are `.bed` files, as BED intervals are. Their first bytes decide.
+pub(crate) fn shared_with_binary(path: &str) -> bool {
+    extension(path).as_deref() == Some("bed")
 }
 
 /// Unknown files are candidates too: their daemon-read prefix decides.
@@ -864,7 +872,8 @@ fn text_language(path: &str) -> &'static str {
         Some(
             "vcf" | "gvcf" | "maf" | "bed" | "bedgraph" | "bedpe" | "narrowpeak" | "broadpeak"
             | "gappedpeak" | "interval_list" | "wig" | "gff" | "gff3" | "gtf" | "sam" | "paf"
-            | "psl" | "blast" | "fai" | "dict" | "counts" | "tpm" | "mtx",
+            | "psl" | "blast" | "fai" | "dict" | "counts" | "tpm" | "mtx" | "bim" | "fam" | "pvar"
+            | "psam",
         ) => "bio-table",
         Some("nwk" | "newick" | "tree" | "treefile" | "nex" | "nexus") => "tree",
         Some("nf") => "nextflow",

@@ -88,7 +88,14 @@ embedded asset set; only normalized output SVGs and the registry are embedded.
   wiggle) a coverage curve, and phylogenetic trees a rooted tree. One icon
   covers a family of extensions (`catalog.json`): PAF, PSL and BLAST use the
   alignment icon, gVCF and MAF the variant one, peaks and BEDPE the interval
-  one, h5mu AnnData's, cool/mcool HDF5's.
+  one, h5mu AnnData's, cool/mcool HDF5's, PLINK's `.bim`, `.fam`, `.pgen`,
+  `.pvar` and `.psam` the variant one.
+- Two rules look beyond a file's own name. A folder whose extension is in
+  `resolve.folderExtensions` (`.zarr`) is one data set and shows that
+  format's file icon instead of a folder. PLINK's binary genotypes are
+  `.bed` files, as BED intervals are: a `.bed` with a `.bim` or `.fam` of
+  the same name beside it shows the variant icon (`look::file_icon_beside`,
+  in the Files pane, where the neighbours are known).
 - Developer logos keep a small white rounded backplate by default so dark
   artwork stays visible on dark panes. Claude and Codex are transparent:
   Claude retains its source orange, and Codex uses blue `#2F80ED` instead of

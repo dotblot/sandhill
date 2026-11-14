@@ -2122,6 +2122,11 @@
    "bcf": "variants",
    "gvcf": "variants",
    "maf": "variants",
+   "bim": "variants",
+   "fam": "variants",
+   "pgen": "variants",
+   "pvar": "variants",
+   "psam": "variants",
    "gff": "annotation",
    "gff3": "annotation",
    "gtf": "annotation",
@@ -2219,6 +2224,9 @@
    "tmp": "cache",
    "work": "cache",
    ".github": "other"
+  },
+  "folderExtensions": {
+   "zarr": "hdf5"
   },
   "folderFallback": "other"
  },

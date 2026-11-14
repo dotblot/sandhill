@@ -1037,6 +1037,12 @@ preview and R's imports weren't seen.
     `.tab` opens as tab-separated; indexes and bigWig count as binary.
 - **More files split** (see `docs/design/file-split-plan.md`): `view.rs`,
   `plots.rs`, `git_pane.rs` and the protocol's `lib.rs`.
+- **Zarr folders and PLINK files** (Huan, 2026-11-14): `look::folder_icon`
+  gives a `.zarr` folder its format's icon; `look::file_icon_beside` tells
+  PLINK's `.bed` from BED intervals in the Files pane.
+  `documents.rs::opens_as_text` reads a `.bed`'s first bytes before opening
+  it (`notebook::shared_with_binary`), so genotypes are offered to the
+  default app instead of failing as text.
 
 
 ## Running it

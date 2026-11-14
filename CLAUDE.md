@@ -308,7 +308,10 @@ These plans are history: where they differ from this file, this file wins.
   (`vendor/sandhill`, GPL like Sandhill: FASTA, FASTQ, BAM, VCF, GFF, BED,
   h5ad, mtx, HDF5, Parquet, RDS, Nextflow, WDL, CWL, index files, signal
   tracks, phylogenetic trees); one icon covers a family of extensions
-  (`catalog.json`); keep generic artwork
+  (`catalog.json`). A folder that is one data set (`.zarr`) shows its
+  format's file icon. PLINK's binary `.bed` is told from BED intervals by
+  the `.bim`/`.fam` beside it (icon) and by its first bytes (opening);
+  keep generic artwork
   to the fallback. A project's default icon is the project folder's.
   Vendor pinned sources with upstream licenses and notices. Keep Sandhill's
   crane: navy `#142844` with the palette's teal feather and red crown on

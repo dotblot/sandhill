@@ -151,7 +151,11 @@ impl Workbench {
                             .when(!is_open && is_selected, |d| d.bg(p.ink(9.)))
                             .when(!is_open, |d| d.hover(move |d| d.bg(hover)))
                             .cursor_pointer()
-                            .child(picture(&look::file_icon(&row.name)))
+                            .child(picture(&look::file_icon_beside(&row.rel, |path| {
+                                lines.iter().any(|line| {
+                                    matches!(line, crate::tree_actions::Line::Row(r) if r.rel == path)
+                                })
+                            })))
                             .map(|d| {
                                 if dirty {
                                     d.child(

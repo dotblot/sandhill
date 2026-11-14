@@ -26,6 +26,16 @@ fn text_prefix(bytes: &[u8], complete: bool) -> bool {
         }
 }
 
+/// PLINK's binary genotypes begin with these two bytes. They are `.bed`
+/// files, as BED intervals are, and small ones can be free of NULs and
+/// invalid UTF-8, so the prefix alone would pass for text.
+const PLINK_BED: [u8; 2] = [0x6c, 0x1b];
+
+/// Whether a file beginning with `bytes` opens as text.
+fn opens_as_text(bytes: &[u8], complete: bool) -> bool {
+    !bytes.starts_with(&PLINK_BED) && text_prefix(bytes, complete)
+}
+
 fn trim_preview(bytes: &mut Vec<u8>) -> Result<()> {
     let end = match std::str::from_utf8(bytes) {
         Ok(_) => bytes.len(),
@@ -140,7 +150,10 @@ impl Workbench {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let read: Result<Option<(notebook::Notebook, i64)>> = async {
-                if !known {
+                // A file of a known text type is read as text unasked, but
+                // one whose extension binary files share is looked at first.
+                let unsure = notebook::shared_with_binary(&path);
+                if !known || unsure {
                     let prefix: FileBytes = daemon
                         .call(Call::ReadBytes {
                             path: path.clone(),
@@ -160,8 +173,9 @@ impl Workbench {
                         bytes.len() as u64 == prefix.size.min(8192),
                         "Incomplete file prefix response"
                     );
-                    if prefix.size > TEXT_LIMIT
-                        || !text_prefix(&bytes, prefix.size <= bytes.len() as u64)
+                    // A known type over the limit still shows its first part.
+                    if (!known && prefix.size > TEXT_LIMIT)
+                        || !opens_as_text(&bytes, prefix.size <= bytes.len() as u64)
                     {
                         return Ok(None);
                     }
@@ -296,7 +310,16 @@ impl Workbench {
 
 #[cfg(test)]
 mod tests {
-    use super::{text_prefix, trim_preview};
+    use super::{opens_as_text, text_prefix, trim_preview};
+
+    #[test]
+    fn plink_genotypes_are_not_text_but_bed_intervals_are() {
+        // Magic, the SNP-major mode, then genotypes that are valid ASCII.
+        assert!(!opens_as_text(&[0x6c, 0x1b, 0x01, 0x55, 0x55], true));
+        assert!(opens_as_text(b"chr1\t10\t20\n", true));
+        assert!(opens_as_text(b"track name=l\n", true));
+        assert!(!opens_as_text(&[0xff, 0xfe], true));
+    }
 
     #[test]
     fn prefix_accepts_text_and_only_a_cut_final_codepoint() {

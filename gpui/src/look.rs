@@ -633,6 +633,8 @@ struct Resolve {
     extensions: HashMap<String, String>,
     fallback: String,
     folders: HashMap<String, String>,
+    /// Folders that are one data set, by extension: shown with a file icon.
+    folder_extensions: HashMap<String, String>,
     folder_fallback: String,
 }
 
@@ -666,6 +668,7 @@ fn resolve() -> &'static Resolve {
             extensions: map(&r["extensions"]),
             fallback: r["fallback"].as_str().unwrap_or("file").to_string(),
             folders: map(&r["folders"]),
+            folder_extensions: map(&r["folderExtensions"]),
             folder_fallback: r["folderFallback"].as_str().unwrap_or("other").to_string(),
         }
     })
@@ -701,13 +704,37 @@ pub fn file_icon(path: &str) -> String {
     format!("bio/{icon}")
 }
 
-/// The icon for a folder (`folders/…`), by its name.
+/// The icon for a file among those of its folder. PLINK's binary genotypes
+/// are `.bed` files too: what tells them from BED intervals is the `.bim`
+/// or `.fam` of the same name beside them. `beside` says whether a path
+/// (as `path` is given) is there.
+pub fn file_icon_beside(path: &str, beside: impl Fn(&str) -> bool) -> String {
+    let stem = path
+        .get(path.len().saturating_sub(4)..)
+        .filter(|end| end.eq_ignore_ascii_case(".bed"))
+        .map(|_| &path[..path.len() - 4]);
+    if let Some(stem) = stem
+        && [".bim", ".fam"]
+            .iter()
+            .any(|ext| beside(&format!("{stem}{ext}")))
+    {
+        return file_icon("genotypes.bim");
+    }
+    file_icon(path)
+}
+
+/// The icon for a folder, by its name (`folders/…`); a folder that is one
+/// data set, such as a Zarr store, has its format's file icon (`bio/…`).
 pub fn folder_icon(name: &str) -> String {
     let r = resolve();
-    let icon = r
-        .folders
-        .get(&name.to_lowercase())
-        .unwrap_or(&r.folder_fallback);
+    let name = name.to_lowercase();
+    if let Some(icon) = name
+        .rsplit_once('.')
+        .and_then(|(_, ext)| r.folder_extensions.get(ext))
+    {
+        return format!("bio/{icon}");
+    }
+    let icon = r.folders.get(&name).unwrap_or(&r.folder_fallback);
     format!("folders/{icon}")
 }
 
@@ -1149,7 +1176,7 @@ pub fn dot(color: Hsla) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{Icons, file_icon, folder_icon, language_icon, resolve};
+    use super::{Icons, file_icon, file_icon_beside, folder_icon, language_icon, resolve};
 
     fn luminance(color: gpui_kit::Hsla) -> f32 {
         let color = gpui_kit::Rgba::from(color);
@@ -1191,6 +1218,13 @@ mod tests {
         assert_eq!(file_icon("figures/umap.svg"), "bio/svg");
         assert_eq!(folder_icon("Data"), "folders/data");
         assert_eq!(folder_icon("misc"), "folders/other");
+        // A Zarr store is a folder that is one data set.
+        assert_eq!(folder_icon("atlas.zarr"), "bio/hdf5");
+        // PLINK genotypes are told from BED intervals by their companions.
+        let beside = |path: &str| path == "gwas/Cohort.fam";
+        assert_eq!(file_icon_beside("gwas/Cohort.BED", beside), "bio/variants");
+        assert_eq!(file_icon_beside("gwas/peaks.bed", beside), "bio/intervals");
+        assert_eq!(file_icon_beside("gwas/Cohort.fam", beside), "bio/variants");
         assert_eq!(language_icon("R"), Some("lang/r"));
         // Every icon these name is bundled.
         for path in [
@@ -1211,6 +1245,7 @@ mod tests {
             .values()
             .chain(r.names.values())
             .chain([&r.fallback])
+            .chain(r.folder_extensions.values())
             .map(|icon| format!("bio/{icon}"))
             .chain(
                 r.folders
