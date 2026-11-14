@@ -56,9 +56,10 @@ const CATEGORY_ANSI: [usize; 10] = [4, 3, 1, 6, 2, 5, 12, 11, 9, 14];
 const BUSY: &str = "the session is busy running code";
 
 /// What the table's first answer said about it.
-/// A table's sorting and filters as a project keeps them between launches,
-/// each with its column's name, so they follow their columns if the table
-/// changed meanwhile.
+/// A table's sorting, filters, hidden and pinned columns and the widths the
+/// user gave columns, as a project keeps them between launches, each with
+/// its column's name, so they follow their columns if the table changed
+/// meanwhile.
 #[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SavedView {
     #[serde(default)]
@@ -67,6 +68,10 @@ struct SavedView {
     filters: Vec<Named<TableFilter>>,
     #[serde(default)]
     hidden: Vec<HiddenColumn>,
+    #[serde(default)]
+    pinned: Vec<HiddenColumn>,
+    #[serde(default)]
+    widths: Vec<ColumnWidth>,
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -80,6 +85,25 @@ struct Named<T> {
 struct HiddenColumn {
     name: String,
     column: u32,
+}
+
+/// A width the user dragged a column to.
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct ColumnWidth {
+    name: String,
+    column: u32,
+    width: f32,
+}
+
+/// Where the column called `name`, once at `was`, is now.
+fn column_now(columns: &[TableColumn], name: &str, was: u32) -> Option<u32> {
+    if columns.get(was as usize).is_some_and(|c| c.name == name) {
+        return Some(was);
+    }
+    columns
+        .iter()
+        .position(|c| c.name == name)
+        .map(|i| i as u32)
 }
 
 impl SavedView {
@@ -117,7 +141,47 @@ impl SavedView {
                     column,
                 })
                 .collect(),
+            pinned: Vec::new(),
+            widths: Vec::new(),
         }
+    }
+
+    /// With the pinned columns, in their order, and the widths given.
+    fn with_layout(
+        mut self,
+        columns: &[TableColumn],
+        pinned: &[u32],
+        widths: &[(u32, f32)],
+    ) -> SavedView {
+        let name = |column: u32| columns.get(column as usize).map(|c| c.name.clone());
+        self.pinned = pinned
+            .iter()
+            .filter_map(|&column| {
+                Some(HiddenColumn {
+                    name: name(column)?,
+                    column,
+                })
+            })
+            .collect();
+        self.widths = widths
+            .iter()
+            .filter_map(|&(column, width)| {
+                Some(ColumnWidth {
+                    name: name(column)?,
+                    column,
+                    width,
+                })
+            })
+            .collect();
+        self
+    }
+
+    fn is_empty(&self) -> bool {
+        self.sort.is_empty()
+            && self.filters.is_empty()
+            && self.hidden.is_empty()
+            && self.pinned.is_empty()
+            && self.widths.is_empty()
     }
 
     /// The sorting and filters on the table's columns now: each moved to
@@ -158,19 +222,21 @@ impl SavedView {
     fn hidden_on(&self, columns: &[TableColumn]) -> Vec<u32> {
         self.hidden
             .iter()
-            .filter_map(|h| {
-                if columns
-                    .get(h.column as usize)
-                    .is_some_and(|c| c.name == h.name)
-                {
-                    Some(h.column)
-                } else {
-                    columns
-                        .iter()
-                        .position(|c| c.name == h.name)
-                        .map(|i| i as u32)
-                }
-            })
+            .filter_map(|h| column_now(columns, &h.name, h.column))
+            .collect()
+    }
+
+    fn pinned_on(&self, columns: &[TableColumn]) -> Vec<u32> {
+        self.pinned
+            .iter()
+            .filter_map(|p| column_now(columns, &p.name, p.column))
+            .collect()
+    }
+
+    fn widths_on(&self, columns: &[TableColumn]) -> Vec<(u32, f32)> {
+        self.widths
+            .iter()
+            .filter_map(|w| Some((column_now(columns, &w.name, w.column)?, w.width)))
             .collect()
     }
 }
@@ -242,6 +308,8 @@ pub struct Explorer {
     saved: Option<SavedView>,
     blocks: HashMap<u64, Block>,
     widths: Vec<f32>,
+    /// The columns whose width the user set, which the project keeps.
+    resized: Vec<u32>,
     /// A column being resized by its header's right edge: the column, where
     /// the drag began and the width then.
     resizing: Option<(usize, Pixels, f32)>,
@@ -437,6 +505,7 @@ impl Explorer {
             saved,
             blocks: HashMap::new(),
             widths: Vec::new(),
+            resized: Vec::new(),
             resizing: None,
             label_width: 60.,
             summary: HashMap::new(),
@@ -643,6 +712,7 @@ impl Explorer {
         } else {
             self.pinned.push(column);
         }
+        self.save_view();
         self.selection.clear();
         cx.emit(FocusChanged);
         cx.notify();
@@ -690,6 +760,7 @@ impl Explorer {
     fn reset_view(&mut self, cx: &mut Context<Self>) {
         self.settings_menu = None;
         self.pinned.clear();
+        self.resized.clear();
         self.hidden.clear();
         self.expanded.clear();
         self.filters.clear();
@@ -837,13 +908,10 @@ impl Explorer {
                     .all(|(a, b)| a.name == b.name && a.kind == b.kind)
         });
         let previous = (!same)
-            .then(|| {
-                self.shape
-                    .as_ref()
-                    .map(|s| SavedView::of(&self.sort, &self.filters, &s.columns, &self.hidden))
-            })
+            .then(|| self.shape.as_ref().map(|s| self.view_of(&s.columns)))
             .flatten();
         if !same {
+            self.resized.clear();
             self.widths = rows
                 .columns
                 .iter()
@@ -886,6 +954,13 @@ impl Explorer {
         };
         let (sort, filters) = saved.on(&rows.columns);
         self.hidden = saved.hidden_on(&rows.columns);
+        self.pinned = saved.pinned_on(&rows.columns);
+        for (column, width) in saved.widths_on(&rows.columns) {
+            if let Some(slot) = self.widths.get_mut(column as usize) {
+                *slot = width.clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+                self.resized.push(column);
+            }
+        }
         if sort == self.sort && filters == self.filters {
             return false;
         }
@@ -895,15 +970,28 @@ impl Explorer {
         true
     }
 
-    /// Keeps the sorting and filters for the next time this table opens in
-    /// the project.
+    /// The view as it is now, on `columns`.
+    fn view_of(&self, columns: &[TableColumn]) -> SavedView {
+        let widths: Vec<(u32, f32)> = self
+            .resized
+            .iter()
+            .filter_map(|&c| Some((c, *self.widths.get(c as usize)?)))
+            .collect();
+        SavedView::of(&self.sort, &self.filters, columns, &self.hidden).with_layout(
+            columns,
+            &self.pinned,
+            &widths,
+        )
+    }
+
+    /// Keeps the view for the next time this table opens in the project.
     fn save_view(&self) {
         let (Some(project), Some(shape)) = (self.project.as_deref(), self.shape.as_ref()) else {
             return;
         };
         let key = view_key(&self.language, &self.path);
-        let view = (!self.sort.is_empty() || !self.filters.is_empty() || !self.hidden.is_empty())
-            .then(|| SavedView::of(&self.sort, &self.filters, &shape.columns, &self.hidden))
+        let view = Some(self.view_of(&shape.columns))
+            .filter(|v| !v.is_empty())
             .and_then(|v| serde_json::to_value(v).ok());
         crate::prefs::save_table_view(project, &key, view);
     }
@@ -1332,5 +1420,27 @@ mod view_tests {
         let saved: SavedView =
             serde_json::from_value(serde_json::json!({"sort": [], "filters": []})).unwrap();
         assert!(saved.hidden_on(&columns(&["a", "b"])).is_empty());
+    }
+
+    #[test]
+    fn kept_pins_and_widths_follow_their_columns() {
+        let was = columns(&["cell", "n_genes", "pct_mt"]);
+        let saved =
+            SavedView::of(&[], &[], &was, &[]).with_layout(&was, &[2, 0], &[(1, 220.), (2, 90.)]);
+        assert!(!saved.is_empty());
+        let back: SavedView =
+            serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();
+        // Same table: the pins in the order given, the widths as dragged.
+        assert_eq!(back.pinned_on(&was), vec![2, 0]);
+        assert_eq!(back.widths_on(&was), vec![(1, 220.), (2, 90.)]);
+        // A column added at the front and one gone: moved along, dropped.
+        let now = columns(&["batch", "cell", "n_genes"]);
+        assert_eq!(back.pinned_on(&now), vec![1]);
+        assert_eq!(back.widths_on(&now), vec![(2, 220.)]);
+        // A view saved before pins and widths were kept has none.
+        let old: SavedView =
+            serde_json::from_value(serde_json::json!({"sort": [], "filters": []})).unwrap();
+        assert!(old.pinned_on(&was).is_empty() && old.widths_on(&was).is_empty());
+        assert!(old.is_empty());
     }
 }

@@ -640,10 +640,14 @@ impl Explorer {
                             };
                             if !event.dragging() {
                                 this.resizing = None;
+                                this.save_view();
                             } else if let Some(w) = this.widths.get_mut(column) {
                                 *w = (width + f32::from(event.position.x - start))
                                     .clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
                                     .round();
+                                if !this.resized.contains(&(column as u32)) {
+                                    this.resized.push(column as u32);
+                                }
                             }
                             cx.stop_propagation();
                             cx.notify();
@@ -656,6 +660,7 @@ impl Explorer {
                         released
                             .update(cx, |this, cx| {
                                 if this.resizing.take().is_some() {
+                                    this.save_view();
                                     cx.stop_propagation();
                                     cx.notify();
                                 }
