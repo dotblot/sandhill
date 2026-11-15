@@ -213,11 +213,12 @@ pub struct Found {
     pub duplicate: bool,
 }
 
-/// The kernels to offer, without duplicates, sorted by name.
+/// The kernels to offer, without duplicates or kernels whose program is
+/// gone, sorted by name.
 pub fn list(search: &Search) -> Vec<KernelspecInfo> {
     let mut specs: Vec<KernelspecInfo> = discover(search)
         .into_iter()
-        .filter(|k| !k.duplicate)
+        .filter(|k| !k.duplicate && runnable(&k.dir.kernelspec, search))
         .map(|k| KernelspecInfo {
             name: k.dir.kernel_name,
             display_name: shown_name(&k.dir.kernelspec),
@@ -227,6 +228,32 @@ pub fn list(search: &Search) -> Vec<KernelspecInfo> {
         .collect();
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     specs
+}
+
+/// Whether a kernel's program is there to run: a path must be a file, a
+/// bare name must be on the `PATH` kernels run with (the kernel's own, if
+/// it sets one). Kernels left behind by an upgraded or removed R or Python
+/// (`/opt/homebrew/Cellar/r/4.4.2_2/lib/R/bin/R`) are not offered (Huan,
+/// 2026-11-15); `find` still names them, so a notebook that chose one
+/// gets a clear error rather than a different kernel.
+fn runnable(spec: &JupyterKernelspec, search: &Search) -> bool {
+    let Some(program) = spec.argv.first() else {
+        return false;
+    };
+    // `{resource_dir}` and the like are filled in at launch.
+    if program.contains('{') {
+        return true;
+    }
+    if program.contains('/') {
+        return Path::new(program).is_file();
+    }
+    let path = spec
+        .env
+        .as_ref()
+        .and_then(|env| env.get("PATH"))
+        .map(OsString::from)
+        .or_else(|| search.path.clone());
+    path.is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
 /// Ark is "Ark R" however it was registered: `ark --install` writes "Ark R
@@ -1093,15 +1120,21 @@ mod tests {
 
         // Ark registered by the user (`ark --install`) keeps the name.
         let user = tmp.path().join("Jupyter");
+        let registered = tmp.path().join("opt/ark");
+        std::fs::create_dir_all(registered.parent().unwrap()).unwrap();
+        std::fs::write(&registered, "").unwrap();
         kernel(
             &user,
             "ark",
-            json!({"argv": ["/opt/ark", "--connection_file", "{connection_file}"], "display_name": "Ark R Kernel", "language": "R"}),
+            json!({"argv": [registered, "--connection_file", "{connection_file}"], "display_name": "Ark R Kernel", "language": "R"}),
         );
         search.user_dir = Some(user);
         let found = discover(&search);
         assert_eq!(names(&found), [("ark", false)]);
-        assert_eq!(found[0].dir.kernelspec.argv[0], "/opt/ark");
+        assert_eq!(
+            found[0].dir.kernelspec.argv[0],
+            registered.to_str().unwrap()
+        );
         // Its "Ark R Kernel" is offered under the same short name.
         assert_eq!(list(&search)[0].display_name, "Ark R");
 
@@ -1109,6 +1142,38 @@ mod tests {
         search.user_dir = None;
         search.path = Some("/nowhere/bin".into());
         assert!(discover(&search).is_empty());
+    }
+
+    #[test]
+    fn kernels_whose_program_is_gone_are_not_offered_but_still_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let user = tmp.path().join("Jupyter");
+        let r = tmp.path().join("r/bin");
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(r.join("R"), "").unwrap();
+        let irkernel = |program: serde_json::Value| json!({"argv": [program, "--slave", "-e", "IRkernel::main()", "--args", "{connection_file}"], "display_name": "R", "language": "R"});
+        // Left behind when Homebrew upgraded R 4.4.2.
+        kernel(
+            &user,
+            "ir",
+            irkernel(json!("/opt/homebrew/Cellar/r/4.4.2_2/lib/R/bin/R")),
+        );
+        kernel(&user, "ir-4.6.2", irkernel(json!(r.join("R"))));
+        // A bare name runs from PATH: offered while R is on it.
+        kernel(&user, "ir-path", irkernel(json!("R")));
+        let mut search = Search {
+            user_dir: Some(user),
+            path: Some(format!("/nowhere/bin:{}", r.display()).into()),
+            ..Search::default()
+        };
+        let listed =
+            |search: &Search| -> Vec<String> { list(search).into_iter().map(|k| k.name).collect() };
+        assert_eq!(listed(&search), ["ir-4.6.2", "ir-path"]);
+        // A notebook that chose it is told it's missing, not moved elsewhere.
+        assert!(find(&search, "ir").is_some());
+
+        search.path = Some("/nowhere/bin".into());
+        assert_eq!(listed(&search), ["ir-4.6.2"]);
     }
 
     #[test]

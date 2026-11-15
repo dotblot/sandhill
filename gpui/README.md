@@ -1184,6 +1184,13 @@ preview and R's imports weren't seen.
   `button_danger_foreground` to `#450a0a` in dark mode (about 6:1), as
   navy labels the light blue. Kernels' Shut down, Stop All and Quit, and
   Kit's red tags use it.
+- **Kernels whose program is gone** (Huan, 2026-11-15): a Homebrew R
+  upgrade left an IRkernel `kernel.json` naming
+  `/opt/homebrew/Cellar/r/4.4.2_2/lib/R/bin/R`, listed as "New R" and
+  failing to start. The daemon's `kernelspecs::list` now drops kernels
+  whose program is missing (`runnable`: a path must be a file, a bare name
+  must be on the kernel's `PATH`); `find` still resolves them, so a
+  document that chose one gets the clear "wasn't found" error.
 
 
 ## Running it

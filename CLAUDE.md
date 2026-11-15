@@ -226,7 +226,10 @@ These plans are history: where they differ from this file, this file wins.
   Full status/errors remain in tooltips. Ark is named "Ark R" however it was
   registered (Huan, 2026-11-14). List only runnable kernels, including
   conda/mamba kernels; do not add a separate environment inventory or disabled
-  rows for environments without a kernel (Huan, 2026-11-08). An R without
+  rows for environments without a kernel (Huan, 2026-11-08). Kernels whose
+  program is gone (left behind by an upgraded or removed R or Python) are
+  not listed; a document that chose one still gets the "wasn't found" error
+  rather than another kernel (Huan, 2026-11-15). An R without
   IRkernel (Ark doesn't count) gets an "Install IRkernel for R x.y…" action
   below the picker's kernels and in project settings; a confirmation says
   what changes, it runs as a job, and Sandhill never uninstalls it (Huan,
