@@ -1,7 +1,7 @@
 //! A temporary editor-only layout. Never written to project preferences.
 use gpui_kit::*;
 
-use crate::panes::Vertical;
+use crate::shell::pane_sizes::Vertical;
 use crate::workbench::Workbench;
 
 gpui_kit::actions!(sandhill, [FocusEditor]);
@@ -12,7 +12,7 @@ pub(crate) struct Layout {
     pub agents: bool,
     pub console: bool,
     pub editor: bool,
-    pub maximized: Option<crate::panes::Panel>,
+    pub maximized: Option<crate::shell::pane_sizes::Panel>,
     pub left: Vertical,
     pub middle: Vertical,
     pub left_share: f32,
@@ -90,7 +90,7 @@ mod tests {
             agents: true,
             console: true,
             editor: false,
-            maximized: Some(crate::panes::Panel::Console),
+            maximized: Some(crate::shell::pane_sizes::Panel::Console),
             left: Vertical::Bottom,
             middle: Vertical::Bottom,
             left_share: 0.19,

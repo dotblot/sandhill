@@ -457,8 +457,8 @@ impl Workbench {
     }
 
     pub(crate) fn sync_media(&self, cx: &mut App) {
-        let visible = self.panel_visible(crate::panes::Panel::Editor)
-            && !self.panel_collapsed(crate::panes::Panel::Editor)
+        let visible = self.panel_visible(crate::shell::pane_sizes::Panel::Editor)
+            && !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
             && !self.explorer_shown
             && !self.diff_shown;
         for (path, view) in &self.media {

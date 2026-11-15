@@ -12,7 +12,6 @@ use gpui_kit::*;
 use sandhill_proto::Variable;
 use serde_json::Value;
 
-use crate::command_palette::Cmd;
 use crate::editor::notebook::{self, CellKind};
 use crate::editor::output_text::OutputText;
 use crate::editor::shown::{Shown, show};
@@ -21,7 +20,8 @@ use crate::look::{
     self, EDGE, GAP, Palette, RADIUS, bar_button, capsule_divider, dot, icon, icon_button, pane,
     picture, raised, wall,
 };
-use crate::panes::Panel;
+use crate::shell::command_palette::Cmd;
+use crate::shell::pane_sizes::Panel;
 use crate::workbench::{Link, Open, Plot, Run, Session, Split, Workbench, is_script, plot_key};
 use crate::{Interrupt, RunAll, RunCell, RunLine, Save, ToggleConsole};
 

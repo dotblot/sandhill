@@ -666,7 +666,7 @@ impl Workbench {
                     .when(picked, |d| d.bg(hover))
                     .hover(move |d| d.bg(hover))
                     .child(icon(r.icon).size(px(13.)))
-                    .child(crate::meter::ring(
+                    .child(crate::shell::meter::ring(
                         r.percent.map(|v| v as f32 / 100.),
                         if r.percent.is_some_and(|v| v >= 80) {
                             p.err
@@ -733,7 +733,7 @@ impl Workbench {
                                     .map_or_else(|| "Unavailable".into(), |v| format!("{v}%")),
                             ),
                     )
-                    .child(crate::meter::ring(
+                    .child(crate::shell::meter::ring(
                         r.percent.map(|v| v as f32 / 100.),
                         if r.percent.is_some_and(|v| v >= 80) {
                             p.err

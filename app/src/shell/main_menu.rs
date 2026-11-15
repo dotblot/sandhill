@@ -7,8 +7,8 @@ use gpui_kit::component::input;
 use gpui_kit::*;
 use sandhill_link::Target;
 
-use crate::command_palette::Cmd;
 use crate::look::{self, Palette};
+use crate::shell::command_palette::Cmd;
 use crate::tree_actions::{menu_item, separator};
 use crate::workbench::Workbench;
 use crate::{
@@ -60,7 +60,7 @@ pub fn app_menus() -> Vec<Menu> {
             MenuItem::action("Left Panel", ToggleFiles),
             MenuItem::action("AI Panel", ToggleAgents),
             MenuItem::action("Console", ToggleConsole),
-            MenuItem::action("Focus Editor", crate::focus_mode::FocusEditor),
+            MenuItem::action("Focus Editor", crate::shell::focus_mode::FocusEditor),
         ]),
         Menu::new("Run").items([MenuItem::action("Run All", RunAll)]),
         Menu::new("Window").items([
@@ -116,7 +116,7 @@ impl Workbench {
                 }),
             )
             .on_action(
-                cx.listener(|this, _: &crate::focus_mode::FocusEditor, w, cx| {
+                cx.listener(|this, _: &crate::shell::focus_mode::FocusEditor, w, cx| {
                     this.run_command(Cmd::FocusEditor, w, cx)
                 }),
             )

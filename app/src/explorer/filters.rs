@@ -51,7 +51,7 @@ impl Explorer {
             ticked: filter.values,
             tried: false,
             columns_open: false,
-            popup_triggers: crate::popup::PopupTriggers::default(),
+            popup_triggers: crate::shell::popup::PopupTriggers::default(),
         });
         cx.notify();
     }

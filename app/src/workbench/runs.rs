@@ -404,7 +404,7 @@ impl Workbench {
     /// The runs show in the Console.
     pub(crate) fn run_script(&mut self, code: String, cx: &mut Context<Self>) {
         self.reveal_middle();
-        let collapsed = self.panel_collapsed(crate::panes::Panel::Console);
+        let collapsed = self.panel_collapsed(crate::shell::pane_sizes::Panel::Console);
         let Some(open) = self.open.as_mut() else {
             return;
         };
@@ -414,7 +414,7 @@ impl Workbench {
         self.console_tab = ConsoleTab::Console;
         self.show_console = true;
         if collapsed {
-            self.middle_vertical = crate::panes::Vertical::Split;
+            self.middle_vertical = crate::shell::pane_sizes::Vertical::Split;
         }
         match &open.session {
             Session::Ready(_) => {

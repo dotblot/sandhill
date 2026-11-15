@@ -45,7 +45,7 @@ pub(crate) struct QuotaMonitor {
     manager: Entity<AccountManager>,
     agents: Option<Entity<Agents>>,
     agents_observation: Option<Subscription>,
-    popup_triggers: crate::popup::PopupTriggers,
+    popup_triggers: crate::shell::popup::PopupTriggers,
     quota_open: Option<QuotaPopup>,
     enabled: BTreeMap<String, bool>,
     reset_confirm: Option<ResetConfirmation>,
@@ -357,7 +357,7 @@ impl QuotaMonitor {
             manager,
             agents: None,
             agents_observation: None,
-            popup_triggers: crate::popup::PopupTriggers::default(),
+            popup_triggers: crate::shell::popup::PopupTriggers::default(),
             quota_open: None,
             enabled,
             reset_confirm: None,
@@ -860,7 +860,7 @@ impl Render for QuotaMonitor {
                     }) && now >= account.observed_at)
                         .then(|| window.remaining(now))
                         .flatten();
-                    item = item.child(crate::meter::labelled_ring(
+                    item = item.child(crate::shell::meter::labelled_ring(
                         value.map(|left| left / 100.),
                         value.map_or(p.faint, |left| remaining_color(left, &p)),
                         p.faint,
@@ -982,7 +982,7 @@ impl Render for QuotaMonitor {
                                     .child("Manage…")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.dismiss_popup(cx);
-                                        crate::app_window::show_welcome(
+                                        crate::shell::app_window::show_welcome(
                                             Some(crate::start_screen::StartMode::Accounts(
                                                 this.host.clone(),
                                             )),

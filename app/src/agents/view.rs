@@ -285,7 +285,7 @@ impl Agents {
                     }),
             )
             .child({
-                let panel = crate::panes::Panel::Agents;
+                let panel = crate::shell::pane_sizes::Panel::Agents;
                 let maximized = self
                     .workbench
                     .upgrade()

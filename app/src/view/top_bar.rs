@@ -180,7 +180,9 @@ impl Workbench {
                                         gpui_kit::component::tooltip::Tooltip::new("Welcome")
                                             .build(w, cx)
                                     })
-                                    .on_click(|_, _, cx| crate::app_window::show_welcome(None, cx)),
+                                    .on_click(|_, _, cx| {
+                                        crate::shell::app_window::show_welcome(None, cx)
+                                    }),
                             ),
                     ),
             )
@@ -291,8 +293,8 @@ impl Workbench {
                     .when(!expanded && dirty, |d| d.child(dot(p.muted).size(px(4.))))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.show_file_tab(&show, cx);
-                        if this.panel_collapsed(crate::panes::Panel::Editor) {
-                            this.middle_vertical = crate::panes::Vertical::Split;
+                        if this.panel_collapsed(crate::shell::pane_sizes::Panel::Editor) {
+                            this.middle_vertical = crate::shell::pane_sizes::Vertical::Split;
                         }
                     }))
                     .into_any_element()
@@ -354,7 +356,7 @@ impl Workbench {
     pub(crate) fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
         let p = *Palette::get(cx);
         let document = self.open.as_ref().filter(|_| {
-            !self.panel_collapsed(crate::panes::Panel::Editor)
+            !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
                 && !self.diff_shown
                 && !self.explorer_shown
                 && !self.objects.is_shown()
@@ -364,7 +366,7 @@ impl Workbench {
             .media_shown
             .as_ref()
             .filter(|_| {
-                !self.panel_collapsed(crate::panes::Panel::Editor)
+                !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
                     && !self.diff_shown
                     && !self.explorer_shown
                     && !self.objects.is_shown()
@@ -374,7 +376,7 @@ impl Workbench {
             self.explorer_shown
                 && !self.diff_shown
                 && !self.objects.is_shown()
-                && !self.panel_collapsed(crate::panes::Panel::Editor)
+                && !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
         });
         Self::strip(&p)
             .child(
@@ -398,7 +400,7 @@ impl Workbench {
                 |d, size| d.child(size),
             )
             .when(document.is_some(), |d| d.child(self.outline_button(cx)))
-            .child(self.panel_buttons(crate::panes::Panel::Editor, cx))
+            .child(self.panel_buttons(crate::shell::pane_sizes::Panel::Editor, cx))
     }
 
     /// A document tab's close button. Unsaved, a dot that stays after the

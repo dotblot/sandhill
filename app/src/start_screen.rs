@@ -17,10 +17,10 @@ use sandhill_proto::{
 };
 
 use crate::agents::accounts::AccountManager;
-use crate::app_window::AppWindow;
 use crate::daemon::{Daemon, Streams};
 use crate::folder_dialog::{FolderDialog, FolderDialogDone, Place as FolderPlace};
 use crate::look::{self, Palette, icon, icon_button, side_pane, wall};
+use crate::shell::app_window::AppWindow;
 
 mod devices;
 mod projects;

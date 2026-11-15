@@ -335,8 +335,8 @@ pub struct Workbench {
     pub(crate) console_height: f32,
     /// Normal height shares survive temporary collapse/vertical expansion.
     pub(crate) console_share: f32,
-    pub(crate) left_vertical: crate::panes::Vertical,
-    pub(crate) middle_vertical: crate::panes::Vertical,
+    pub(crate) left_vertical: crate::shell::pane_sizes::Vertical,
+    pub(crate) middle_vertical: crate::shell::pane_sizes::Vertical,
     /// The Plots pane's history.
     pub(crate) plot_history: crate::plots::History,
     pub(crate) help: crate::help::Help,
@@ -382,7 +382,7 @@ pub struct Workbench {
     /// The Data Explorer's tab is the one shown.
     pub(crate) explorer_shown: bool,
     pub(crate) objects: crate::object_explorer::ObjectExplorers,
-    pub(crate) focus_mode: crate::focus_mode::FocusMode,
+    pub(crate) focus_mode: crate::shell::focus_mode::FocusMode,
     pub(crate) notebook_ai_menu: bool,
     /// The open text file's colouring menu (`colouring.rs`).
     pub(crate) colouring_menu: bool,
@@ -391,10 +391,10 @@ pub struct Workbench {
     /// A short note in the status bar, such as "Saved in …".
     pub(crate) notice: Option<String>,
     /// Compressions and extractions under way, shown in the status bar.
-    pub(crate) archive_tasks: Vec<crate::archive_tasks::ArchiveTask>,
+    pub(crate) archive_tasks: Vec<crate::shell::archive_tasks::ArchiveTask>,
     /// The question shown while closing a file with a live kernel or
     /// AI conversations.
-    pub(crate) closing: Option<crate::close_file::CloseAsk>,
+    pub(crate) closing: Option<crate::shell::close_file::CloseAsk>,
     /// The project's settings (`.sandhill/project.toml`) and their dialog.
     pub(crate) setup: crate::project_settings::Setup,
     pub(crate) settings_env: Entity<InputState>,
@@ -403,13 +403,13 @@ pub struct Workbench {
     /// Variables' Import menu and dialog.
     pub(crate) import: crate::editor::import_dialog::Import,
     pub(crate) delimited: Option<crate::editor::delimited::DelimitedDialog>,
-    pub(crate) popup_triggers: crate::popup::PopupTriggers,
+    pub(crate) popup_triggers: crate::shell::popup::PopupTriggers,
     pub(crate) import_name: Entity<InputState>,
     /// The left panel is shown (the title bar's first button).
     pub(crate) show_files: bool,
     /// Middle-column visibility and full-workspace pane expansion are session-only.
     pub(crate) show_middle: bool,
-    pub(crate) maximized_panel: Option<crate::panes::Panel>,
+    pub(crate) maximized_panel: Option<crate::shell::pane_sizes::Panel>,
     /// The AI pane, the right panel.
     pub(crate) show_agents: bool,
     pub(crate) agents: Option<Entity<Agents>>,
@@ -443,7 +443,7 @@ pub struct Workbench {
     pub(crate) files_ui: crate::tree_actions::FilesUi,
     pub(crate) name_input: Entity<InputState>,
     /// ⌘K.
-    pub(crate) palette: crate::command_palette::CommandPalette,
+    pub(crate) palette: crate::shell::command_palette::CommandPalette,
     pub(crate) palette_input: Entity<InputState>,
     pub(crate) find: crate::editor::find::Find,
     pub(crate) outline: crate::editor::outline::Outline,
@@ -453,7 +453,7 @@ pub struct Workbench {
     /// else is clicked.
     pub(crate) focus: FocusHandle,
     /// The window, with its machine tabs and Start screen.
-    pub(crate) shell: WeakEntity<crate::app_window::AppWindow>,
+    pub(crate) shell: WeakEntity<crate::shell::app_window::AppWindow>,
     /// The machine's kernels and resources, and the left pane's menus.
     pub(crate) machine: crate::machine::MachineUi,
     /// The connection's pop-up is open, and the daemon's log dialog.
@@ -473,7 +473,7 @@ impl Workbench {
         rt: Arc<Runtime>,
         target: Target,
         project: Option<String>,
-        shell: WeakEntity<crate::app_window::AppWindow>,
+        shell: WeakEntity<crate::shell::app_window::AppWindow>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -499,7 +499,7 @@ impl Workbench {
             crate::editor::import_dialog::new_import_input(window, cx);
         let (name_input, name_subscription) = crate::tree_actions::new_name_input(window, cx);
         let (palette_input, palette_subscription) =
-            crate::command_palette::new_palette_input(window, cx);
+            crate::shell::command_palette::new_palette_input(window, cx);
         let (find, find_subscriptions) = crate::editor::find::new_find(window, cx);
         let (outline, outline_subscription) = crate::editor::outline::new_outline(window, cx);
         let vars_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
@@ -700,9 +700,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
         f: impl FnOnce(
-            &mut crate::app_window::AppWindow,
+            &mut crate::shell::app_window::AppWindow,
             &mut Window,
-            &mut Context<crate::app_window::AppWindow>,
+            &mut Context<crate::shell::app_window::AppWindow>,
         ) + 'static,
     ) {
         let shell = self.shell.clone();
@@ -737,7 +737,7 @@ impl Workbench {
         if !crate::resource_manager::host_blocked(&self.host(), cx)
             && let Some(daemon) = self.daemon()
         {
-            crate::app_window::quit::retain_daemon(self.host(), daemon, cx);
+            crate::shell::app_window::quit::retain_daemon(self.host(), daemon, cx);
         }
         if self.project.is_some() {
             self.last_project = self.project.clone();
@@ -799,7 +799,7 @@ impl Workbench {
         project: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if crate::app_window::quit::active(cx) {
+        if crate::shell::app_window::quit::active(cx) {
             return;
         }
         let host = match &target {

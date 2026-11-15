@@ -57,7 +57,7 @@ impl Workbench {
     pub(crate) fn render_connection_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let host = self.host();
-        let name = crate::app_window::machine_name(&host);
+        let name = crate::shell::app_window::machine_name(&host);
         let state = self.state_word();
         let link = match &self.link {
             Link::Ready(_) => p.ok,
@@ -106,7 +106,7 @@ impl Workbench {
 
     /// Connects again, reopening the project and the documents open now.
     pub(crate) fn reconnect(&mut self, cx: &mut Context<Self>) {
-        if crate::app_window::quit::active(cx)
+        if crate::shell::app_window::quit::active(cx)
             || !crate::resource_manager::allow_host(&self.host(), cx)
         {
             return;
@@ -143,7 +143,7 @@ impl Workbench {
     /// Stops this machine's daemon and connects again, which starts a new
     /// one; kernels and agents keep running.
     fn restart_daemon(&mut self, cx: &mut Context<Self>) {
-        if crate::app_window::quit::active(cx)
+        if crate::shell::app_window::quit::active(cx)
             || crate::resource_manager::host_blocked(&self.host(), cx)
         {
             return;

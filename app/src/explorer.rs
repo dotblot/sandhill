@@ -283,7 +283,7 @@ struct FilterEdit {
     tried: bool,
     /// Whether the column list is open.
     columns_open: bool,
-    popup_triggers: crate::popup::PopupTriggers,
+    popup_triggers: crate::shell::popup::PopupTriggers,
 }
 
 /// Exporting as CSV: the name asked for, then whether to replace a file.
@@ -333,7 +333,7 @@ pub struct Explorer {
     selection: Selection,
     focus: FocusHandle,
     toolbar: Entity<ExplorerToolbar>,
-    popup_triggers: crate::popup::PopupTriggers,
+    popup_triggers: crate::shell::popup::PopupTriggers,
     search_input: Entity<InputState>,
     search: String,
     search_generation: u64,
@@ -539,7 +539,7 @@ impl Explorer {
             selection: Selection::default(),
             focus: cx.focus_handle(),
             toolbar,
-            popup_triggers: crate::popup::PopupTriggers::default(),
+            popup_triggers: crate::shell::popup::PopupTriggers::default(),
             search_input,
             search: String::new(),
             search_generation: 0,

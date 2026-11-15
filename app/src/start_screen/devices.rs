@@ -11,7 +11,7 @@ impl AppWindow {
     }
 
     pub(super) fn connect_machine(&mut self, host: &str, cx: &mut Context<Self>) {
-        if crate::app_window::quit::active(cx)
+        if crate::shell::app_window::quit::active(cx)
             || crate::resource_manager::host_blocked(host, cx)
             || self.resource_manager.is_some()
             || self.start.machines.contains_key(host)
@@ -120,7 +120,7 @@ impl AppWindow {
     }
 
     pub(super) fn disconnect_welcome(&mut self, host: &str, cx: &mut Context<Self>) {
-        if host == sandhill_link::LOCAL || crate::app_window::host_has_project(host, cx) {
+        if host == sandhill_link::LOCAL || crate::shell::app_window::host_has_project(host, cx) {
             return;
         }
         // Dropping the attach process closes only this link, not the daemon.
@@ -220,7 +220,7 @@ impl AppWindow {
         let link = self.start.machines.get(&host).map(|m| &m.link);
         let connected = matches!(link, Some(MachineLink::Ready(_)));
         let connecting = matches!(link, Some(MachineLink::Connecting));
-        let project_open = connected && crate::app_window::host_has_project(&host, cx);
+        let project_open = connected && crate::shell::app_window::host_has_project(&host, cx);
         Button::new(id)
             .small()
             .label(if connected {
@@ -256,7 +256,7 @@ impl AppWindow {
             self.start.machines.get(&host).map(|m| &m.link),
             Some(MachineLink::Connecting)
         );
-        let blocked = connected && crate::app_window::host_has_project(&host, cx);
+        let blocked = connected && crate::shell::app_window::host_has_project(&host, cx);
         let connect_host = host.clone();
         let rename_host = host.clone();
         let local = host == sandhill_link::LOCAL;

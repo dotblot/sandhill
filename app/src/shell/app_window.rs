@@ -23,7 +23,6 @@ use crate::{
     About, CloseWindow, ConnectServer, Minimize, NewProject, OpenProject, ToggleFullScreen, Zoom,
 };
 
-#[path = "quit.rs"]
 pub(crate) mod quit;
 
 /// Something to do once a project has closed.

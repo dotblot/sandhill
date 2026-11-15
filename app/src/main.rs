@@ -7,17 +7,11 @@
 
 mod agents;
 mod app_uninstall;
-mod app_window;
-mod archive_tasks;
-mod close_file;
-mod command_palette;
 mod connection;
 mod daemon;
-mod download;
 mod editor;
 mod explorer;
 mod files;
-mod focus_mode;
 mod folder_dialog;
 mod git;
 mod git_diff;
@@ -30,16 +24,13 @@ mod jobs;
 mod kernel_menu;
 mod look;
 mod machine;
-mod main_menu;
-mod meter;
 mod object_explorer;
 mod packages;
-mod panes;
 mod plots;
-mod popup;
 mod prefs;
 mod project_settings;
 mod resource_manager;
+mod shell;
 mod start_screen;
 mod terminal;
 mod tree;
@@ -50,6 +41,8 @@ mod viewer;
 mod workbench;
 
 use std::sync::Arc;
+
+use shell::{app_window, main_menu};
 
 use gpui_kit::*;
 use tracing_subscriber::EnvFilter;
@@ -277,7 +270,7 @@ fn main() -> anyhow::Result<()> {
                 keys.push(KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None));
                 keys.push(KeyBinding::new(
                     "ctrl-cmd-enter",
-                    crate::focus_mode::FocusEditor,
+                    crate::shell::focus_mode::FocusEditor,
                     None,
                 ));
             }

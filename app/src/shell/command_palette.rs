@@ -234,15 +234,19 @@ impl Workbench {
             Cmd::RunAsJob => self.run_open_as_job(cx),
             Cmd::Interrupt => self.interrupt(),
             Cmd::New(kind) => self.start_new(kind, None, window, cx),
-            Cmd::ToggleFiles => self.toggle_column(crate::panes::Panel::LeftTop, window, cx),
-            Cmd::ToggleMiddle => self.toggle_column(crate::panes::Panel::Editor, window, cx),
+            Cmd::ToggleFiles => {
+                self.toggle_column(crate::shell::pane_sizes::Panel::LeftTop, window, cx)
+            }
+            Cmd::ToggleMiddle => {
+                self.toggle_column(crate::shell::pane_sizes::Panel::Editor, window, cx)
+            }
             Cmd::ToggleConsole => {
                 if !self.show_middle || !self.show_console {
                     self.reveal_middle();
                     self.show_console = true;
                 } else {
                     self.show_console = false;
-                    if self.maximized_panel == Some(crate::panes::Panel::Console) {
+                    if self.maximized_panel == Some(crate::shell::pane_sizes::Panel::Console) {
                         self.maximized_panel = None;
                     }
                 }
@@ -258,10 +262,14 @@ impl Workbench {
                 // notebooks'.
                 self.plot_history = Default::default();
             }
-            Cmd::ToggleAgents => self.toggle_column(crate::panes::Panel::Agents, window, cx),
+            Cmd::ToggleAgents => {
+                self.toggle_column(crate::shell::pane_sizes::Panel::Agents, window, cx)
+            }
             // ⌥⌘B, which showed the right column, now shows the AI pane
             // that took its place.
-            Cmd::ToggleRight => self.toggle_column(crate::panes::Panel::Agents, window, cx),
+            Cmd::ToggleRight => {
+                self.toggle_column(crate::shell::pane_sizes::Panel::Agents, window, cx)
+            }
             Cmd::FocusEditor => self.toggle_focus_editor(cx),
             Cmd::OpenTerminal => self.show_tab(ConsoleTab::Terminal, window, cx),
             Cmd::ShowJobs => self.show_tab(ConsoleTab::Jobs, window, cx),

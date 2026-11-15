@@ -12,9 +12,9 @@ use sandhill_link::Target;
 use sandhill_proto::Call;
 use serde_json::{Value, json};
 
-use crate::app_window::{AppWindow, quit};
 use crate::daemon::Daemon;
 use crate::look::{self, Palette, icon};
+use crate::shell::app_window::{AppWindow, quit};
 
 #[derive(Default)]
 struct Maintenance {

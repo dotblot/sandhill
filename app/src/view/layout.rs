@@ -278,7 +278,7 @@ impl Workbench {
                 self.agents_share = (width - x - EDGE).clamp(300_f32.min(most), most) / room;
             }
             Split::Variables => {
-                self.left_vertical = crate::panes::Vertical::Split;
+                self.left_vertical = crate::shell::pane_sizes::Vertical::Split;
                 // The top pane's height, from the top of the column.
                 let top = look::TITLE_BAR + GAP;
                 let most = (height - look::STATUS_BAR - top - 120.).max(90.);
@@ -286,7 +286,7 @@ impl Workbench {
                 self.variables_share = self.variables_height / left_column(height).max(1.);
             }
             Split::Console => {
-                self.middle_vertical = crate::panes::Vertical::Split;
+                self.middle_vertical = crate::shell::pane_sizes::Vertical::Split;
                 let bottom = height - look::STATUS_BAR;
                 let most = (bottom - look::TITLE_BAR - 160.).max(80.);
                 self.console_height = (bottom - y).clamp(80., most);

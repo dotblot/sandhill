@@ -516,7 +516,7 @@ fn windows_file() -> Option<PathBuf> {
     file().map(|f| f.with_file_name("gpui-windows.json"))
 }
 
-pub fn windows() -> Vec<crate::app_window::Places> {
+pub fn windows() -> Vec<crate::shell::app_window::Places> {
     windows_file()
         .and_then(|f| std::fs::read_to_string(f).ok())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
@@ -524,7 +524,7 @@ pub fn windows() -> Vec<crate::app_window::Places> {
         .unwrap_or_default()
 }
 
-pub fn save_windows(windows: &[crate::app_window::Places]) {
+pub fn save_windows(windows: &[crate::shell::app_window::Places]) {
     if SAVES_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }

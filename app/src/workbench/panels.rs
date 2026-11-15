@@ -94,8 +94,8 @@ impl Workbench {
         self.reveal_middle();
         self.console_tab = tab;
         self.show_console = true;
-        if self.panel_collapsed(crate::panes::Panel::Console) {
-            self.middle_vertical = crate::panes::Vertical::Split;
+        if self.panel_collapsed(crate::shell::pane_sizes::Panel::Console) {
+            self.middle_vertical = crate::shell::pane_sizes::Vertical::Split;
         }
         if tab == ConsoleTab::Terminal {
             self.ensure_terminal(cx);
@@ -134,8 +134,8 @@ impl Workbench {
     pub(crate) fn sync_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_media(cx);
         let mut wanted: Vec<Page> = Vec::new();
-        if self.panel_visible(crate::panes::Panel::Editor)
-            && !self.panel_collapsed(crate::panes::Panel::Editor)
+        if self.panel_visible(crate::shell::pane_sizes::Panel::Editor)
+            && !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
             && !self.objects.is_shown()
             && self.explorer.is_none()
             && let Some(open) = &self.open
@@ -156,8 +156,8 @@ impl Workbench {
                 }));
             }
         }
-        let viewer_page = (self.panel_visible(crate::panes::Panel::LeftBottom)
-            && !self.panel_collapsed(crate::panes::Panel::LeftBottom)
+        let viewer_page = (self.panel_visible(crate::shell::pane_sizes::Panel::LeftBottom)
+            && !self.panel_collapsed(crate::shell::pane_sizes::Panel::LeftBottom)
             && self.bottom_tab == BottomTab::Viewer)
             .then(|| self.viewer_page())
             .flatten()
@@ -301,7 +301,7 @@ impl Workbench {
         self.explorer_shown = false;
         explorer.update(cx, |e, cx| e.set_popped(cx));
         let weak = explorer.downgrade();
-        if let Some(handle) = crate::app_window::open_explorer_window(explorer, cx) {
+        if let Some(handle) = crate::shell::app_window::open_explorer_window(explorer, cx) {
             self.popped_explorers.push((handle, weak));
         }
         cx.notify();

@@ -181,7 +181,7 @@ impl AppWindow {
         let (icon_host, icon_path) = (menu.host.clone(), menu.path.clone());
         let unsaved = menu.open.map_or(0, |id| {
             if self.welcome {
-                crate::app_window::main_unsaved(id, cx)
+                crate::shell::app_window::main_unsaved(id, cx)
             } else {
                 self.tabs
                     .iter()
@@ -214,7 +214,7 @@ impl AppWindow {
                         this.start.project_menu = None;
                         if let Some(id) = save_open {
                             if this.welcome {
-                                crate::app_window::with_main(cx, move |main, _, cx| {
+                                crate::shell::app_window::with_main(cx, move |main, _, cx| {
                                     main.save_tab(id, cx)
                                 });
                             } else {
@@ -380,7 +380,7 @@ impl AppWindow {
             if let Ok(0) = answer.await {
                 this.update_in(cx, |this, window, cx| {
                     let forget = Box::new(move |cx: &mut App| {
-                        crate::app_window::with_welcome(cx, move |welcome, _, cx| {
+                        crate::shell::app_window::with_welcome(cx, move |welcome, _, cx| {
                             welcome.forget_project(host, path, cx)
                         });
                     });

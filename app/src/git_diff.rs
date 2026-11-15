@@ -602,7 +602,7 @@ impl Workbench {
                             .restrict_scroll_to_axis()
                             .child(bar),
                     )
-                    .child(self.panel_buttons(crate::panes::Panel::Editor, cx)),
+                    .child(self.panel_buttons(crate::shell::pane_sizes::Panel::Editor, cx)),
             )
             .child(
                 div()

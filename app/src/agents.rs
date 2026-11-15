@@ -384,7 +384,7 @@ pub struct Agents {
     /// What a new conversation's screen knows of the project.
     pub(crate) start: crate::agents::start::StartContext,
     pub(crate) menu: Option<Menu>,
-    pub(crate) popup_triggers: crate::popup::PopupTriggers,
+    pub(crate) popup_triggers: crate::shell::popup::PopupTriggers,
     /// The model menu's tab: an agent's kind, or "fav".
     pub(crate) model_tab: Option<String>,
     pub(crate) favourites: Vec<String>,
@@ -486,7 +486,7 @@ impl Agents {
             refs: Vec::new(),
             start: Default::default(),
             menu: None,
-            popup_triggers: crate::popup::PopupTriggers::default(),
+            popup_triggers: crate::shell::popup::PopupTriggers::default(),
             model_tab: None,
             favourites: crate::prefs::favourites(),
             new_choice: Choice::default(),
@@ -1103,7 +1103,7 @@ impl Agents {
                 let wb = wb.read(cx);
                 (
                     wb.about.as_ref().map(|about| about.build.clone()),
-                    crate::app_window::machine_name(&wb.host()),
+                    crate::shell::app_window::machine_name(&wb.host()),
                 )
             });
         let checked = self.daemon.matches_bundled_build(build);

@@ -31,7 +31,7 @@ impl Workbench {
 
     pub(super) fn render_notebook(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        if self.panel_collapsed(crate::panes::Panel::Editor) {
+        if self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor) {
             return pane(&p)
                 .flex_1()
                 .h_full()

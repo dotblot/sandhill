@@ -696,7 +696,7 @@ mod tests {
     use gpui_kit::{AppContext, TestAppContext, WindowOptions};
     use std::sync::Arc;
 
-    use crate::app_window::{AppWindow, Place, Places, Windows};
+    use crate::shell::app_window::{AppWindow, Place, Places, Windows};
 
     #[gpui_kit::test]
     fn statusbar_resources_release_workbench_before_reading_connections(cx: &mut TestAppContext) {
