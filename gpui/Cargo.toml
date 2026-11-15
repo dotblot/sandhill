@@ -27,7 +27,9 @@ gpui-cn = { path = "vendor/gpui-cn", version = "=0.8.0", features = ["ghostty"] 
 anyhow = "1"
 libc = "0.2"
 base64 = "0.23"
-resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+# raster-images draws the PNG/JPEG pictures plots embed in an SVG
+# (matplotlib, scanpy); outside files and URLs stay unread (media.rs).
+resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
 # Unpacks the bundled Maple Mono fonts (assets/fonts).
 flate2 = "1"
 # The HTML export of a conversation.

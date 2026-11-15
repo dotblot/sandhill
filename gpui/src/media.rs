@@ -447,7 +447,7 @@ impl Workbench {
 
 #[cfg(test)]
 mod tests {
-    use super::{MediaFile, download, is_media, rasterize_svg};
+    use super::{MediaFile, download, is_media, rasterize_svg, rasterize_svg_bytes};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
@@ -473,6 +473,27 @@ mod tests {
         assert_eq!(
             std::fs::read(&raster.0).unwrap(),
             std::fs::read(&baseline.0).unwrap()
+        );
+    }
+
+    /// Plotting libraries (matplotlib, scanpy's spatial plots) put each
+    /// picture in an SVG as an embedded PNG; only the axes are vectors.
+    #[test]
+    fn svg_embedded_pictures_are_drawn() {
+        use base64::Engine;
+        let mut red = resvg::tiny_skia::Pixmap::new(1, 1).unwrap();
+        red.fill(resvg::tiny_skia::Color::from_rgba8(255, 0, 0, 255));
+        let png = base64::engine::general_purpose::STANDARD.encode(red.encode_png().unwrap());
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="4" height="4"><image width="4" height="4" xlink:href="data:image/png;base64,{png}"/></svg>"#
+        );
+        let drawn =
+            resvg::tiny_skia::Pixmap::decode_png(&rasterize_svg_bytes(svg.as_bytes()).unwrap())
+                .unwrap();
+        let pixel = drawn.pixel(2, 2).unwrap();
+        assert_eq!(
+            (pixel.red(), pixel.green(), pixel.blue(), pixel.alpha()),
+            (255, 0, 0, 255)
         );
     }
 

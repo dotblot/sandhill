@@ -1080,6 +1080,10 @@ preview and R's imports weren't seen.
 - **Pane height icons** (Huan, 2026-11-14): restoring the split now uses
   `window.restore` (Lucide `rows-2`), not the opposite fold/unfold icon,
   which matched the button beside it.
+- **SVG pictures** (Huan, 2026-11-14): resvg was built without
+  `raster-images`, so the PNGs that matplotlib and scanpy embed in an SVG
+  (each spatial plot) were skipped and only axes and text showed. The
+  feature is on; outside files and URLs are still never read.
 
 
 ## Running it
