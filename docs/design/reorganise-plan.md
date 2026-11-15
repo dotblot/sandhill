@@ -288,11 +288,14 @@ App built 2026-11-15. All seven app parents are under about 1,000 lines; nothing
 4. Part 5, file by file.
 5. The UI consistency work resumes.
 
-## Questions for Huan
+## Status (2026-11-15)
 
-1. Part 2: are you content that helpers must open the topic files, in
-   exchange for a `CLAUDE.md` you can read in a minute?
-2. Part 3: keep the program's inner name `sandhill-gpui`, or rename it
-   `sandhill` too? (Renaming touches the bundle recipe as well.)
-3. Part 4: are the six folder names right? `shell/` means the window's
-   frame; `frame/` or `window/` would also do.
+All five parts are built, one commit per step, with the workspace and
+app checks passing after each. Still open:
+
+- The click-through in the app (Welcome, a notebook run, the Console,
+  Git, the AI pane): the Mac's screen was locked, and the app draws
+  nothing new while it is, so this waits for Huan to be back.
+- A push, to prove the renamed GitHub build recipe (`mac-app.yml`).
+
+Huan's answers to the plan's questions are at the top.
