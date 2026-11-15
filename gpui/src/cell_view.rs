@@ -347,7 +347,7 @@ impl Workbench {
     }
 
     /// The line between a code cell and its outputs: the cell's number
-    /// (`Cell #3`, as the Agents pane names it), its run's number as Jupyter
+    /// (`#3`, as the Agents pane names cells; Huan, 2026-11-14), its run's number as Jupyter
     /// counts it (`Output [5]`), and how long it took (or has been running,
     /// or that it waits).
     pub(crate) fn run_line(
@@ -398,7 +398,7 @@ impl Workbench {
                 .font_family(look::MONO)
                 .text_size(px(look::SMALL))
                 .text_color(p.faint)
-                .child(format!("Cell #{}", ix + 1))
+                .child(format!("#{}", ix + 1))
                 .when_some(count, |d, n| d.child(format!("Output [{n}]")))
                 .when_some(text, |d, t| d.child(div().text_color(color).child(t)))
                 .into_any_element(),

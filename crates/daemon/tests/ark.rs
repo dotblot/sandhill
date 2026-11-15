@@ -68,7 +68,7 @@ async fn the_installed_ark_runs_r() {
         .iter()
         .find(|k| k.name == "ark")
         .unwrap_or_else(|| panic!("the installed Ark is not listed: {specs:?}"));
-    assert_eq!(spec.display_name, "R (Ark)");
+    assert_eq!(spec.display_name, "Ark R");
 
     let session = client.start_session("ark", None).await.unwrap().id;
     client.subscribe(&session, None).await.unwrap();

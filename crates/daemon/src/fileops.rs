@@ -270,8 +270,10 @@ fn remove_tree(path: &Path) -> Result<()> {
 /// things back from.
 #[derive(Debug)]
 enum Trash {
-    /// `~/.Trash`: files go in under their own name.
-    Mac(PathBuf),
+    /// macOS's own Move to Trash: the Trash of the disk the item is on, so
+    /// flash drives and other volumes work too (Huan, 2026-11-14), and
+    /// Finder's Put Back knows where it came from.
+    Mac,
     /// The freedesktop.org trash: `files/` and an `info/<name>.trashinfo`
     /// saying where each came from and when.
     Freedesktop(PathBuf),
@@ -279,37 +281,34 @@ enum Trash {
 
 impl Trash {
     fn here() -> Result<Trash> {
-        let home = || {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .context("HOME is not set")
-        };
         if cfg!(target_os = "macos") {
-            return Ok(Trash::Mac(home()?.join(".Trash")));
+            return Ok(Trash::Mac);
         }
         let data = match std::env::var_os("XDG_DATA_HOME") {
             Some(dir) if Path::new(&dir).is_absolute() => PathBuf::from(dir),
-            _ => home()?.join(".local/share"),
+            _ => std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .context("HOME is not set")?
+                .join(".local/share"),
         };
         Ok(Trash::Freedesktop(data.join("Trash")))
     }
 
     /// Moves `path` into the Trash and returns where it went.
     fn put(&self, path: &Path) -> Result<PathBuf> {
+        let dir = match self {
+            Trash::Mac => return mac_trash(path),
+            Trash::Freedesktop(dir) => dir,
+        };
         let name = path
             .file_name()
             .with_context(|| format!("cannot move {} to the Trash", path.display()))?
             .to_string_lossy()
             .into_owned();
-        let (files, info) = match self {
-            Trash::Mac(dir) => (dir.clone(), None),
-            Trash::Freedesktop(dir) => (dir.join("files"), Some(dir.join("info"))),
-        };
+        let (files, info) = (dir.join("files"), dir.join("info"));
         fs::create_dir_all(&files)
             .with_context(|| format!("cannot make the Trash at {}", files.display()))?;
-        if let Some(info) = &info {
-            fs::create_dir_all(info)?;
-        }
+        fs::create_dir_all(&info)?;
         for n in 1.. {
             let candidate = numbered(&name, n);
             let target = files.join(&candidate);
@@ -317,31 +316,25 @@ impl Trash {
                 continue;
             }
             // The info file claims the name, so two deletes can't take the same one.
-            let info_file = match &info {
-                Some(info) => {
-                    let file = info.join(format!("{candidate}.trashinfo"));
-                    match OpenOptions::new().write(true).create_new(true).open(&file) {
-                        Ok(mut f) => {
-                            write!(
-                                f,
-                                "[Trash Info]\nPath={}\nDeletionDate={}\n",
-                                url_path(path),
-                                local_time_now()
-                            )?;
-                            Some(file)
-                        }
-                        Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
-                        Err(err) => return Err(err.into()),
-                    }
-                }
-                None => None,
-            };
+            let info_file = info.join(format!("{candidate}.trashinfo"));
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&info_file)
+            {
+                Ok(mut f) => write!(
+                    f,
+                    "[Trash Info]\nPath={}\nDeletionDate={}\n",
+                    url_path(path),
+                    local_time_now()
+                )?,
+                Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(err.into()),
+            }
             return match fs::rename(path, &target) {
                 Ok(()) => Ok(target),
                 Err(err) => {
-                    if let Some(file) = info_file {
-                        let _ = fs::remove_file(file);
-                    }
+                    let _ = fs::remove_file(info_file);
                     if err.kind() == ErrorKind::CrossesDevices {
                         bail!(
                             "cannot move {} to the Trash: it is on another disk. Delete it instead.",
@@ -354,6 +347,34 @@ impl Trash {
         }
         unreachable!()
     }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_trash(path: &Path) -> Result<PathBuf> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    let text = path
+        .to_str()
+        .with_context(|| format!("cannot move {} to the Trash", path.display()))?;
+    let url = NSURL::fileURLWithPath(&NSString::from_str(text));
+    let mut trashed = None;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut trashed))
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "cannot move {} to the Trash: {}",
+                path.display(),
+                err.localizedDescription()
+            )
+        })?;
+    Ok(trashed
+        .and_then(|url| url.path())
+        .map(|path| PathBuf::from(path.to_string()))
+        .unwrap_or_default())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mac_trash(path: &Path) -> Result<PathBuf> {
+    bail!("cannot move {} to the Trash: not on macOS", path.display())
 }
 
 /// "name", then "name 2.ext", "name 3.ext" and so on, as Finder numbers copies.
@@ -466,19 +487,6 @@ mod tests {
             )),
             "{info}"
         );
-    }
-
-    #[test]
-    fn the_mac_trash_takes_folders_by_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let trash = Trash::Mac(dir.path().join(".Trash"));
-        let folder = dir.path().join("results");
-        fs::create_dir_all(folder.join("deep")).unwrap();
-        assert_eq!(
-            trash.put(&folder).unwrap(),
-            dir.path().join(".Trash/results")
-        );
-        assert!(dir.path().join(".Trash/results/deep").is_dir());
     }
 
     #[test]

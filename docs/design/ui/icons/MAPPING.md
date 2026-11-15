@@ -25,9 +25,9 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `device.cloud` | i-cloud | `lucide/icons/cloud.svg` |  |
 | `folder` | i-folder | `lucide/icons/folder.svg` |  |
 | `settings` | i-gear | `lucide/icons/settings.svg` |  |
-| `window.minimize` | i-minw | `lucide/icons/fold-vertical.svg` | Fold: collapse the pane to its title row (Huan, 2026-11-13). |
-| `window.maximize` | i-maxw | `lucide/icons/unfold-vertical.svg` | Unfold: the pane fills its column. |
-| `window.restore` | i-restw | `lucide/icons/rows-2.svg` | Two rows: back to the split, from a folded or unfolded pane; the opposite fold/unfold icon matched its neighbour (Huan, 2026-11-14). |
+| `window.minimize` | i-minw | `sandhill/icons/pane-collapse.svg` | A pane folded to its title row: a short window (Huan, 2026-11-14). |
+| `window.maximize` | i-maxw | `sandhill/icons/pane-fill.svg` | A pane filling its column: a tall window with its title bar. |
+| `window.restore` | i-restw | `sandhill/icons/pane-restore.svg` | Two overlapping windows: back to the split, from a folded or filled pane. |
 | `preview.hand` |  | `lucide/icons/hand.svg` | Hand tool for panning PDF, SVG and image previews. |
 | `theme.light` |  | `lucide/icons/sun.svg` |  |
 | `theme.dark` |  | `lucide/icons/moon.svg` |  |

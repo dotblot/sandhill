@@ -28,7 +28,7 @@
   },
   "sandhill": {
     "name": "Sandhill",
-    "source": "Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14): bioinformatics, workflow and spreadsheet formats Gruvbox has no artwork for.",
+    "source": "Drawn for Sandhill (Huan, 2026-11-14): in Gruvbox Material's document style, bioinformatics, workflow and spreadsheet formats Gruvbox has no artwork for; in Lucide's stroke style, the pane height controls.",
     "license": "GPL-3.0-or-later, as Sandhill"
   }
 }

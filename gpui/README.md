@@ -1077,9 +1077,10 @@ preview and R's imports weren't seen.
   quota chips and Welcome's accounts, skips its model listing, and `say`
   refuses its messages, old conversations included. `default_kind()` is
   Codex, which new conversations and cell suggestions start with.
-- **Pane height icons** (Huan, 2026-11-14): restoring the split now uses
-  `window.restore` (Lucide `rows-2`), not the opposite fold/unfold icon,
-  which matched the button beside it.
+- **Pane height icons** (Huan, 2026-11-14): Sandhill draws them in Lucide's
+  stroke style (`vendor/sandhill/icons/pane-*.svg`): a short window
+  collapses, a tall one fills the column, two overlapping windows restore
+  the split. They replace Lucide's fold/unfold and `rows-2`.
 - **SVG pictures** (Huan, 2026-11-14): resvg was built without
   `raster-images`, so the PNGs that matplotlib and scanpy embed in an SVG
   (each spatial plot) were skipped and only axes and text showed. The
@@ -1101,6 +1102,15 @@ preview and R's imports weren't seen.
     transparent overlay added only while the hand is on, drags the PDF or
     image scroll view and sets open/closed hand cursors. Dragging was not
     tested in the running app: injected mouse events do not reach it.
+- **Trash, counts, names** (Huan, 2026-11-14):
+  - Move to Trash on macOS goes through `NSFileManager trashItemAtURL`
+    (`fileops.rs::mac_trash`): each disk's own Trash, so files on flash
+    drives no longer fail as "on another disk", and Finder can Put Back.
+    Checked with a temporary exFAT disk image.
+  - The action row starts with `document_size` (lines; CSV/TSV columns
+    from the pinned header, `delimited::column_count`).
+  - The run line reads `#3`, without "Cell".
+  - The daemon lists every Ark kernel as "Ark R" (`kernelspecs::shown_name`).
 
 
 ## Running it

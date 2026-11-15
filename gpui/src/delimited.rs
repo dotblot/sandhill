@@ -141,6 +141,18 @@ pub(crate) fn separator(language: Option<&str>) -> u8 {
     if language == Some("csv") { b',' } else { b'\t' }
 }
 
+/// How many columns a delimited document has: the fields of its first
+/// logical record (the pinned header).
+pub(crate) fn column_count(header: &str, sep: u8) -> usize {
+    let (fields, _) = fields(header, sep);
+    fields
+        .iter()
+        .filter(|field| field.header)
+        .map(|field| field.column + 1)
+        .max()
+        .unwrap_or(0)
+}
+
 pub(crate) fn decorate_editor(
     editor: &Entity<EditorState>,
     sep: u8,

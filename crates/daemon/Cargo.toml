@@ -35,6 +35,9 @@ zeromq.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 # Apache-2.0/MIT, compatible with GPL-3.0-or-later.
 security-framework = "3.7"
+# The system's own Move to Trash (each disk has its Trash). MIT/Apache-2.0.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
 
 [dev-dependencies]
 sandhill-link.workspace = true

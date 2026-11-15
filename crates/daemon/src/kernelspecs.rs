@@ -220,7 +220,7 @@ pub fn list(search: &Search) -> Vec<KernelspecInfo> {
         .filter(|k| !k.duplicate)
         .map(|k| KernelspecInfo {
             name: k.dir.kernel_name,
-            display_name: k.dir.kernelspec.display_name,
+            display_name: shown_name(&k.dir.kernelspec),
             language: k.dir.kernelspec.language,
             env: k.env,
         })
@@ -228,6 +228,22 @@ pub fn list(search: &Search) -> Vec<KernelspecInfo> {
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     specs
 }
+
+/// Ark is "Ark R" however it was registered: `ark --install` writes "Ark R
+/// Kernel" (Huan, 2026-11-14).
+fn shown_name(spec: &JupyterKernelspec) -> String {
+    let program = spec.argv.first().map(Path::new);
+    if program
+        .and_then(|p| p.file_name())
+        .is_some_and(|name| name == "ark")
+    {
+        ARK_NAME.into()
+    } else {
+        spec.display_name.clone()
+    }
+}
+
+const ARK_NAME: &str = "Ark R";
 
 pub fn find(search: &Search, name: &str) -> Option<KernelspecDir> {
     discover(search)
@@ -319,7 +335,7 @@ fn ark_kernel(search: &Search) -> Option<KernelspecDir> {
         path: ark.parent()?.to_path_buf(),
         kernelspec: JupyterKernelspec {
             argv: argv.map(String::from).to_vec(),
-            display_name: "R (Ark)".into(),
+            display_name: ARK_NAME.into(),
             language: "R".into(),
             metadata: None,
             interrupt_mode: None,
@@ -1073,7 +1089,7 @@ mod tests {
         let spec = &found[0].dir.kernelspec;
         assert_eq!(spec.argv[0], ark.to_str().unwrap());
         assert_eq!(spec.language, "R");
-        assert_eq!(spec.display_name, "R (Ark)");
+        assert_eq!(spec.display_name, "Ark R");
 
         // Ark registered by the user (`ark --install`) keeps the name.
         let user = tmp.path().join("Jupyter");
@@ -1086,6 +1102,8 @@ mod tests {
         let found = discover(&search);
         assert_eq!(names(&found), [("ark", false)]);
         assert_eq!(found[0].dir.kernelspec.argv[0], "/opt/ark");
+        // Its "Ark R Kernel" is offered under the same short name.
+        assert_eq!(list(&search)[0].display_name, "Ark R");
 
         // Without R there is nothing for Ark to run.
         search.user_dir = None;

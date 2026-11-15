@@ -115,10 +115,10 @@ impl Workbench {
         let p = *Palette::get(cx);
         let collapsed = self.panel_collapsed(panel);
         let expanded = self.vertical(panel).expanded(panel.top());
-        // Each icon shows what a click does: fold (collapse to the title
-        // row), unfold (fill the column), or two rows (back to the split),
-        // so a folded or unfolded pane never shows two alike (Huan,
-        // 2026-11-14).
+        // Each icon shows what a click does: a short window (collapse to
+        // the title row), a tall one (fill the column), or two overlapping
+        // windows (back to the split), so a pane never shows two alike
+        // (Huan, 2026-11-14).
         let button = |maximize: bool, restore: bool| {
             let tip = if restore {
                 "Restore pane heights"

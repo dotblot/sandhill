@@ -265,9 +265,9 @@
     "i-minw"
    ],
    "source": {
-    "library": "lucide",
-    "path": "icons/fold-vertical.svg",
-    "note": "Fold: collapse the pane to its title row (Huan, 2026-11-13)."
+    "library": "sandhill",
+    "path": "icons/pane-collapse.svg",
+    "note": "A pane folded to its title row: a short window (Huan, 2026-11-14)."
    }
   },
   "window.maximize": {
@@ -279,9 +279,9 @@
     "i-maxw"
    ],
    "source": {
-    "library": "lucide",
-    "path": "icons/unfold-vertical.svg",
-    "note": "Unfold: the pane fills its column."
+    "library": "sandhill",
+    "path": "icons/pane-fill.svg",
+    "note": "A pane filling its column: a tall window with its title bar."
    }
   },
   "window.restore": {
@@ -293,9 +293,9 @@
     "i-restw"
    ],
    "source": {
-    "library": "lucide",
-    "path": "icons/rows-2.svg",
-    "note": "Two rows: back to the split, from a folded or unfolded pane; the opposite fold/unfold icon matched its neighbour (Huan, 2026-11-14)."
+    "library": "sandhill",
+    "path": "icons/pane-restore.svg",
+    "note": "Two overlapping windows: back to the split, from a folded or filled pane."
    }
   },
   "preview.hand": {
@@ -2323,7 +2323,7 @@
   },
   "sandhill": {
    "name": "Sandhill",
-   "source": "Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14): bioinformatics, workflow and spreadsheet formats Gruvbox has no artwork for.",
+   "source": "Drawn for Sandhill (Huan, 2026-11-14): in Gruvbox Material's document style, bioinformatics, workflow and spreadsheet formats Gruvbox has no artwork for; in Lucide's stroke style, the pane height controls.",
    "license": "GPL-3.0-or-later, as Sandhill"
   }
  }

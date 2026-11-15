@@ -1,6 +1,7 @@
 //! The notebook, script and Markdown documents: cells, their editors and outputs.
 
 use super::*;
+use gpui_kit::component::input::RopeExt as _;
 
 /// Whether a box of outputs took a wheel turn of `dy` (negative moves
 /// down), so the notebook must not scroll too. Its own scroll listener runs
@@ -311,9 +312,64 @@ impl Workbench {
             .into_any_element()
     }
 
+    /// "1,204 lines", and for CSV/TSV "· 41 columns" (Huan, 2026-11-14), as
+    /// the text stands now: single-editor documents only, not notebooks.
+    fn document_size(&self, open: &Open, p: &Palette, cx: &App) -> Option<AnyElement> {
+        if !open.notebook.single_editor() {
+            return None;
+        }
+        let text = open.editors.first()?.read(cx).text();
+        let mut lines = text.lines_len();
+        // A final newline ends the last line rather than starting another.
+        if lines > 1 && text.len() > 0 && text.char_at(text.len() - 1) == Some('\n') {
+            lines -= 1;
+        }
+        let mut label = format!(
+            "{}{} {}",
+            Self::grouped(lines),
+            if open.notebook.truncated { "+" } else { "" },
+            if lines == 1 { "line" } else { "lines" }
+        );
+        if open.notebook.format == notebook::Format::Delimited
+            && let Some(header) = &open.delimited_header
+        {
+            let sep = crate::delimited::separator(open.notebook.language.as_deref());
+            let columns = crate::delimited::column_count(&header.read(cx).value(), sep);
+            label.push_str(&format!(
+                " · {} {}",
+                Self::grouped(columns),
+                if columns == 1 { "column" } else { "columns" }
+            ));
+        }
+        Some(
+            div()
+                .flex_none()
+                .px(px(6.))
+                .text_size(px(look::SMALL))
+                .text_color(p.faint)
+                .whitespace_nowrap()
+                .child(label)
+                .into_any_element(),
+        )
+    }
+
+    /// 30001 as "30,001".
+    fn grouped(n: usize) -> String {
+        let digits = n.to_string();
+        let mut out = String::new();
+        for (i, digit) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(digit);
+        }
+        out
+    }
+
     /// Document actions inside the editor's single header row.
     pub(super) fn render_notebook_bar(&self, open: &Open, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
+        let size = self.document_size(open, &p, cx);
         let wrap_button = Self::editor_wrap_type(open).map(|kind| {
             icon_button("editor-wrap", "editor.wrap", &p, false)
                 .when(crate::prefs::editor_soft_wrap(kind), |button| {
@@ -330,6 +386,7 @@ impl Workbench {
             return h_flex()
                 .flex_none()
                 .gap(px(4.))
+                .children(size)
                 .when(open.notebook.quarto_source(), |bar| {
                     bar.child(
                         bar_button("quarto-view", "Notebook", Some("doc"), &p)
@@ -383,6 +440,7 @@ impl Workbench {
             .flex_none()
             .gap(px(4.))
             .whitespace_nowrap()
+            .children(size)
             .when(open.notebook.format == notebook::Format::Quarto, |bar| {
                 bar.child(
                     bar_button("quarto-view", "Source", Some("doc"), &p)

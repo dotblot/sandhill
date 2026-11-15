@@ -4,8 +4,9 @@ Sandhill's 171 shared interface, file, folder, language and integration icons
 use [Gruvbox Material Icons](https://github.com/navernoedenis/gruvbox-material-icons),
 [Lucide](https://github.com/lucide-icons/lucide) and
 [Developer Icons](https://github.com/xandemon/developer-icons), selected by
-Huan on 2026-11-06, and 18 file icons drawn for Sandhill in Gruvbox's
-document style (Huan, 2026-11-14). Posit Assistant and Antigravity use Huan's supplied brand
+Huan on 2026-11-06, 18 file icons drawn for Sandhill in Gruvbox's
+document style (Huan, 2026-11-14), and three pane-height controls drawn in
+Lucide's stroke style (Huan, 2026-11-14). Posit Assistant and Antigravity use Huan's supplied brand
 references, and Oh My Pi and pi their official MIT-licensed marks, instead of
 generic symbols. This replaces Atom Material completely.
 Sandhill's crane and macOS app icon remain separate in
@@ -58,7 +59,9 @@ embedded asset set; only normalized output SVGs and the registry are embedded.
 
 - Original geometry is proportionally fitted into a 16px viewBox, including
   source files with negative viewBox origins.
-- Lucide supplies all 106 interface icons. They use `currentColor` and follow
+- Lucide supplies 103 of the 106 interface icons; Sandhill draws the pane
+  height controls (collapse to the title row, fill the column, restore the
+  split) in the same stroke style. They use `currentColor` and follow
   the control's normal, hovered, selected and disabled text colours. The
   selected favourite star fills the same upstream star geometry via the
   source map's `filled` flag. No new interaction or animation is introduced.

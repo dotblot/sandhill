@@ -132,7 +132,9 @@ These plans are history: where they differ from this file, this file wins.
   text cells) shows tables and images: project images through the daemon
   (none outside the project), `https://` images, notebook attachments.
 - Editor actions and pane height controls share one 29px row, not a second
-  toolbar beneath the pane title. Kernel status is a dot inside the picker,
+  toolbar beneath the pane title. It starts with the document's size for
+  single-editor documents ("1,204 lines", CSV/TSV "· 41 columns"; Huan,
+  2026-11-14). Kernel status is a dot inside the picker,
   after the kernel name. The Console's picker shows its bound file and kernel
   together; it lists the bound file's kernel, the device's other sessions and
   new kernels. Activating or running a document, or clicking a Kernels row,
@@ -173,7 +175,8 @@ These plans are history: where they differ from this file, this file wins.
   an icon-only gear (summary panel by default, Reset View). The summary
   panel shows each column's missing share (count on hover), folds its
   statistics under it, and clicking a column scrolls the table to it.
-  Full status/errors remain in tooltips. List only runnable kernels, including
+  Full status/errors remain in tooltips. Ark is named "Ark R" however it was
+  registered (Huan, 2026-11-14). List only runnable kernels, including
   conda/mamba kernels; do not add a separate environment inventory or disabled
   rows for environments without a kernel (Huan, 2026-11-08). An R without
   IRkernel (Ark doesn't count) gets an "Install IRkernel for R x.y…" action
@@ -186,8 +189,8 @@ These plans are history: where they differ from this file, this file wins.
   changing width or showing a left selection stripe. Text outputs use I-beam
   and retain selection/copy. Console and AI inputs remain transparent with a
   slightly stronger neutral inactive border and brand accent when focused.
-  The line between a code cell and its outputs reads `Cell #3  Output [5]
-  0.2s`; the gutter holds no number (Huan, 2026-11-14). The wheel over an
+  The line between a code cell and its outputs reads `#3  Output [5]
+  0.2s` (no "Cell" word; Huan, 2026-11-14); the gutter holds no number. The wheel over an
   output box scrolls the box while it can move, then the notebook.
 - Every kernel output is journaled by the daemon so clients can disconnect and
   replay. Never make output delivery depend on a client being connected.
@@ -208,10 +211,11 @@ These plans are history: where they differ from this file, this file wins.
   Terminal and Jobs); the AI pane takes its width, or the left column when the
   AI pane is hidden; one column always stays, and opening or running a
   document shows the middle again (Huan, 2026-11-13). Pane height and size
-  icons (Huan, 2026-11-13): fold collapses a pane to its title row, unfold
-  fills its column, and a folded or unfolded pane shows two rows (Lucide
-  `rows-2`) to restore the split, never the same icon twice (Huan,
-  2026-11-14); corners out/in
+  icons (Huan, 2026-11-13, redrawn 2026-11-14 after his RStudio-like
+  references): a short window (title row only) collapses a pane to its
+  title row, a tall window with a title bar fills its column, and two
+  overlapping windows restore the split, so the two buttons never match;
+  corners out/in
   maximize to and restore from the window. The left and middle toggles keep
   plain outline icons. The AI pane's header shows the conversation's name as
   plain text, not a tab; AI replies colour code blocks in Python, R, shell,
