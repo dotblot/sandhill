@@ -2,7 +2,7 @@
 
 Plan (Huan asked for it on 2026-11-14 and approved it the same day; built,
 see "As built" at the end). It follows
-`docs/design/file-split-plan.md`, which left this file out because it cannot
+`docs/design/done/file-split-plan.md`, which left this file out because it cannot
 be split by moving code alone.
 
 ## What is there

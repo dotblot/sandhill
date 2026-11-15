@@ -770,9 +770,9 @@ omp.
   capsules. The title-bar project `+` is absent on Welcome, retained in projects.
   Since 2026-11-12 Welcome draws no capsules at all; its Projects page lists
   Pinned, Open and Running projects, and Resources and Storage is a page too
-  (plan in `docs/design/welcome-projects-resources-plan.md`). Later that day
+  (plan in `docs/design/done/welcome-projects-resources-plan.md`). Later that day
   Welcome became its own window, as wide as its sidebar and widest page and half the display's height (at least 800×600), opening on This Mac's page, beside one
-  maximized main window (`docs/design/idle-agents-welcome-window-plan.md`).
+  maximized main window (`docs/design/done/idle-agents-welcome-window-plan.md`).
 - **Unified interface colours** (Huan, 2026-11-08): use GPUI Kit's bundled
   Default Light/Dark colours in both Kit controls and custom views, including
   its neutral primary instead of the old orange or macOS system accent.

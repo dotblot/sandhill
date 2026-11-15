@@ -74,7 +74,7 @@ The `sandhill-link` crate (`crates/link`) is how the app reaches a daemon, on th
 - **R with no setup (Ark).** The app also carries Linux builds of Ark, Posit's R kernel (MIT), downloaded from its GitHub releases when the app is built. The check reports whether R is on the login `PATH` and the SHA-256 of `~/.local/share/sandhill/bin/ark`; when the server has R and not this Ark, the app copies Ark there the same way, after sandhilld. The daemon offers that file as the `ark` kernel ("R (Ark)") whenever R is on `PATH`, without registering it with Jupyter, and a kernel the user registered as `ark` wins. Ark stays off `PATH` because KDE has a program called `ark` too. Ark links to glibc, so unlike sandhilld it needs a glibc Linux, which any Linux with R from the usual packages is. If copying Ark fails, the connection goes ahead and R needs a kernel installed on the server, such as IRkernel.
 - **Nothing to set up on the server.** No root, no open ports, no systemd unit: `attach --start` starts the daemon as the user and it keeps running after ssh disconnects. The systemd unit in `packaging/` stays optional, for starting the daemon at boot.
 - **Reconnecting.** When the connection drops, the app retries with backoff and the UI resubscribes from the last event it saw, so output printed while disconnected appears once it is back.
-- **The start screen** is laid out like a macOS settings window (Huan, 2026-11-11; plan in [design/welcome-sidebar-plan.md](design/welcome-sidebar-plan.md)). A glass sidebar lists Devices (This Mac first, then saved servers, each with a status dot), a "+ Connect to Server…" row, Projects, Manage → Resources and Storage and Trusted Folders, and the crane with the version and "Elegance in discovery." at the bottom; it has no Recent section. Since 2026-11-12 ([design/idle-agents-welcome-window-plan.md](design/idle-agents-welcome-window-plan.md)) Welcome is its own window, half the width and height of the display (at least 800×600), beside one maximized main window, opening on This Mac's page; Projects lists pinned, open and running projects of every connected device ([design/welcome-projects-resources-plan.md](design/welcome-projects-resources-plan.md)); devices can be renamed and projects given built-in icons, as this Mac's settings. Resources and Storage is a page, not a dialog. A device's page shows: a left-aligned title with Connect/Disconnect for servers, a state subtitle, a per-server "Connect automatically" switch (default on), the projects as one grouped inset list, a right-aligned "Open Folder…" and the note about kernels surviving. Connection state is shown by dots and buttons, never by a switch; Disconnect drops only Welcome's link and never stops server work. Earlier the same day it was one panel with device tabs; before that, a card per device. Connect to Server opens a centred dialog. Choosing a folder (Huan, 2026-11-14; [design/folder-chooser-plan.md](design/folder-chooser-plan.md)): on this Mac, Open Folder and the plot window's folder choice use the system's folder window, since the app and the daemon see the same files, and the chosen path still goes to the daemon to open; folders dragged from Finder onto Welcome open the same way. For servers, the folder dialog (`folder_dialog.rs`, reading folders through the daemon, which marks Git and Sandhill folders when `ListDir` asks) has places, a clickable path, filtering, keyboard use and New Folder; a start folder that does not exist yet opens its nearest parent. The server list is kept in the app's `servers.json`. A window showing a project on a server is titled "project — server".
+- **The start screen** is laid out like a macOS settings window (Huan, 2026-11-11; plan in [design/done/welcome-sidebar-plan.md](design/done/welcome-sidebar-plan.md)). A glass sidebar lists Devices (This Mac first, then saved servers, each with a status dot), a "+ Connect to Server…" row, Projects, Manage → Resources and Storage and Trusted Folders, and the crane with the version and "Elegance in discovery." at the bottom; it has no Recent section. Since 2026-11-12 ([design/done/idle-agents-welcome-window-plan.md](design/done/idle-agents-welcome-window-plan.md)) Welcome is its own window, half the width and height of the display (at least 800×600), beside one maximized main window, opening on This Mac's page; Projects lists pinned, open and running projects of every connected device ([design/done/welcome-projects-resources-plan.md](design/done/welcome-projects-resources-plan.md)); devices can be renamed and projects given built-in icons, as this Mac's settings. Resources and Storage is a page, not a dialog. A device's page shows: a left-aligned title with Connect/Disconnect for servers, a state subtitle, a per-server "Connect automatically" switch (default on), the projects as one grouped inset list, a right-aligned "Open Folder…" and the note about kernels surviving. Connection state is shown by dots and buttons, never by a switch; Disconnect drops only Welcome's link and never stops server work. Earlier the same day it was one panel with device tabs; before that, a card per device. Connect to Server opens a centred dialog. Choosing a folder (Huan, 2026-11-14; [design/done/folder-chooser-plan.md](design/done/folder-chooser-plan.md)): on this Mac, Open Folder and the plot window's folder choice use the system's folder window, since the app and the daemon see the same files, and the chosen path still goes to the daemon to open; folders dragged from Finder onto Welcome open the same way. For servers, the folder dialog (`folder_dialog.rs`, reading folders through the daemon, which marks Git and Sandhill folders when `ListDir` asks) has places, a clickable path, filtering, keyboard use and New Folder; a start folder that does not exist yet opens its nearest parent. The server list is kept in the app's `servers.json`. A window showing a project on a server is titled "project — server".
 
 Not yet: password prompts, forwarding ports for the Viewer pane, Mac servers (the app would need to ship its own Mac build as one), and a server that can't reach `~/.local/bin` (a read-only home).
 
@@ -234,7 +234,7 @@ publishing, extensions, `.RData` and multi-root workspaces are not included.
 Huan accepted the plan's defaults: outline as an editor-action-row popup, ty
 and ruff for Python (Sandhill-owned pinned copies only when absent), and new
 conversations for notebook Explain/Improve. The implementation plan is in
-[design/rstudio-positron-borrowing-plan.md](design/rstudio-positron-borrowing-plan.md).
+[design/done/rstudio-positron-borrowing-plan.md](design/done/rstudio-positron-borrowing-plan.md).
 
 Implemented 2026-11-11. Decisions made while building:
 - Python language hosts are shared per project; R hosts are keyed by the Ark
@@ -255,7 +255,7 @@ Implemented 2026-11-11. Decisions made while building:
 ### Huan's 2026-11-11 feedback (approved)
 
 The plan is in
-[design/ui-feedback-2026-11-11-plan.md](design/ui-feedback-2026-11-11-plan.md).
+[design/done/ui-feedback-2026-11-11-plan.md](design/done/ui-feedback-2026-11-11-plan.md).
 Decisions made while building:
 - Console plots stay inline. Sending a plot (or all of a session's plots) to
   Plots is explicit; auto-send is an opt-in switch per device. Sent plots are
@@ -275,7 +275,7 @@ Decisions made while building:
 ### Huan's 2026-11-11 feedback, third batch (approved)
 
 The plan is in
-[design/ui-feedback-2026-11-11-batch3-plan.md](design/ui-feedback-2026-11-11-batch3-plan.md).
+[design/done/ui-feedback-2026-11-11-batch3-plan.md](design/done/ui-feedback-2026-11-11-batch3-plan.md).
 Decisions made while building:
 - A new `.qmd` takes its first chunk's language from the kernel the document
   will use (remembered choice, project default, first installed kernel), or
@@ -608,7 +608,7 @@ second local-only file reader.
   windows retain it. Prefix each expanded/collapsed project capsule's name
   with the existing local-device or remote-server icon. *2026-11-12:* Welcome
   draws no capsules; its Projects page lists pinned, open and running
-  projects (`docs/design/welcome-projects-resources-plan.md`).
+  projects (`docs/design/done/welcome-projects-resources-plan.md`).
 - Every dropdown trigger toggles its own popup. Fix outside-mousedown and
   trigger-click ordering so a second click closes rather than reopens it;
   clicking another trigger switches menus, outside clicks and Escape close.
@@ -937,7 +937,7 @@ With an API key, the subscription restrictions above no longer apply, which open
   session (Console "run by OpenScience", Variables updated) and answered 42.
   OpenScience's "Ask always" project mode asks even for read-only tools.
 - **Oh My Pi in the chat and command line (Huan, 2026-11-12; plan in
-  [design/pi-omp-plan.md](design/pi-omp-plan.md)).** Run the unmodified
+  [design/done/pi-omp-plan.md](design/done/pi-omp-plan.md)).** Run the unmodified
   `omp acp` through the same `sandhilld acp-chat` bridge. Sandhill's tools
   reach it from the bridge's loopback HTTP MCP server, named in the ACP
   session request (omp 18 accepts `http` servers there), so no omp file is

@@ -1,6 +1,8 @@
 # Tidying files and folders
 
-Huan, 2026-11-15. Status: proposed, waiting for Huan's approval.
+Huan, 2026-11-15. Status: approved, all five parts. Huan's answers: the
+topic files are worth helpers having to open them; the program inside
+the app is renamed `sandhill` as well; the six folder names stand.
 
 Huan: "The framework and most of the details are fixed. No big changes in
 the future." So the layout can now be made to fit what Sandhill became.
@@ -25,19 +27,21 @@ Stay at the top of `docs/design/` (still in use):
 - `bioinfo-ide-framework.md`, `agents-v2-plan.md`, `gpui-plan.md`:
   `CLAUDE.md` names them as the main design documents.
 
-Move to `docs/design/done/` (built; kept as history): the other 23 plans
-(`agent-accounts`, `bioinformatics-assistance`, `close-file`,
-`completion-console`, `data-explorer-redesign`, `file-opening`,
-`file-split`, `folder-chooser`, `folder-trust`,
-`idle-agents-welcome-window`, `irkernel-install`, `markdown-images`,
-`new-conversation`, `open-files-polish`, `openscience`, `pi-omp`,
-`plot-save-window`, `rstudio-positron-borrowing`, `server-split`, both
-`ui-feedback-2026-11-11`, and the four `welcome-*`).
+Move to `docs/design/done/` (built; kept as history): the other 24 plans
+(`agent-accounts`, `close-file`, `completion-console`,
+`data-explorer-redesign`, `file-opening`, `file-split`, `folder-chooser`,
+`folder-trust`, `idle-agents-welcome-window`, `irkernel-install`,
+`markdown-images`, `new-conversation`, `open-files-polish`, `openscience`,
+`pi-omp`, `plot-save-window`, `rstudio-positron-borrowing`,
+`server-split`, both `ui-feedback-2026-11-11`, and the four `welcome-*`).
 
-Before moving each one I check it really is built; any that is not stays
-at the top and is listed for Huan. The 25 links to them in `CLAUDE.md`,
-`gpui/README.md` and the other documents are updated in the same commit.
-A short `done/README.md` says these are history and may use old names.
+Built 2026-11-15. `bioinformatics-assistance-plan.md` stays at the top:
+its status says the PBMC3k end-to-end check was still running and its
+guides await a domain expert's review, so it is not finished. Every link
+to a moved plan (code comments, `CLAUDE.md`, `docs/design.md`, the UI
+spec, the app's notes, the two plans that name each other) was updated,
+and a check found no link to a missing plan. `done/README.md` says these
+are history and may use old names.
 
 ## Part 2: `CLAUDE.md` split by topic
 

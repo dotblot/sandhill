@@ -81,7 +81,7 @@ These plans are history: where they differ from this file, this file wins.
   Keep Running and Quit (default), Stop All and Quit, Cancel. A stop failure
   shows one red line, per-device reasons behind "Show details", and Force
   Stop and Quit in place of Stop All. No paragraph or keyboard hint.
-  Closing a file (Huan, 2026-11-15; `docs/design/close-file-plan.md`)
+  Closing a file (Huan, 2026-11-15; `docs/design/done/close-file-plan.md`)
   whose kernel or AI conversations still run shows a card in the same
   style: "Close x?", one sentence, a box to shut the kernel down (naming a
   busy kernel and its other files/Console) and one box per running
@@ -114,7 +114,7 @@ These plans are history: where they differ from this file, this file wins.
   kernel or executes on opening. CSV/TSV first offers text or import into an
   existing live R/Python session; text is limited to 5,000,000 bytes, with
   coloured columns and a pinned logical header. File reads remain daemon-only.
-  That dialog (Huan, 2026-11-14; `docs/design/open-files-polish-plan.md`):
+  That dialog (Huan, 2026-11-14; `docs/design/done/open-files-polish-plan.md`):
   the file's icon, name, then folder · size in KB/MB · kind; two choices,
   View as text and Import into a live session (sessions listed under it,
   Copy Code and Insert into Document as links there); one primary button
@@ -135,7 +135,7 @@ These plans are history: where they differ from this file, this file wins.
   Actual Size, and a hand button that toggles dragging the page or picture
   (Huan, 2026-11-14).
   Every file type in the icon catalog has a defined way to open (Huan,
-  2026-11-13; `docs/design/file-opening-plan.md`): text kinds open with
+  2026-11-13; `docs/design/done/file-opening-plan.md`): text kinds open with
   grammar, bioinformatics (FASTA/FASTQ, tab-separated VCF/BED/GFF/SAM/PAF…,
   Newick and Nexus trees) or
   keyword (Nextflow, WDL, BibTeX) highlighting; binary kinds ask to use the
@@ -171,7 +171,7 @@ These plans are history: where they differ from this file, this file wins.
   "IRkernel R 4.6.2" (Huan, 2026-11-15). Above 80% of device memory used by
   kernels, warn once per crossing. Console plots stay inline unless sent to
   Plots (per plot or all; auto-send is an opt-in switch). The plot zoom and
-  save window (Huan, 2026-11-14; `docs/design/plot-save-window-plan.md`)
+  save window (Huan, 2026-11-14; `docs/design/done/plot-save-window-plan.md`)
   keeps the preview full height with a 260px settings column on the right
   (under it when narrow), hidden or shown by a title-row button remembered
   on this Mac; a PDF can be saved rasterized (matplotlib's data layers, R's
@@ -211,7 +211,7 @@ These plans are history: where they differ from this file, this file wins.
   replaces click-to-sort; pinned columns stay left while scrolling sideways.
   The project keeps each table's pins and dragged widths with its sorting,
   filters and hidden columns, by column name; Reset View forgets them.
-  The action row (Huan, 2026-11-14; `docs/design/data-explorer-redesign-plan.md`)
+  The action row (Huan, 2026-11-14; `docs/design/done/data-explorer-redesign-plan.md`)
   holds, left, the column panel toggle, the table's name (code on hover) and
   a status dot (green live, amber running, red error); right, in a fixed
   order, Search, Filter ("Filter · 2" with filters on), one Export menu
@@ -239,7 +239,7 @@ These plans are history: where they differ from this file, this file wins.
   IRkernel (Ark doesn't count) gets an "Install IRkernel for R x.y…" action
   below the picker's kernels and in project settings; a confirmation says
   what changes, it runs as a job, and Sandhill never uninstalls it (Huan,
-  2026-11-14; `docs/design/irkernel-install-plan.md`).
+  2026-11-14; `docs/design/done/irkernel-install-plan.md`).
   Kernel recovery: live session, then the document's remembered choice, then
   project default. Missing remembered choices never silently change environment.
 - Clicking notebook code or output strengthens both frame borders without
@@ -333,7 +333,7 @@ These plans are history: where they differ from this file, this file wins.
   (and brings its output). No @ symbol is shown in the composer box.
   Messages carry no implicit document context (open file, cell or
   selection); only what the user adds with @ and # (Huan, 2026-11-12).
-  A new conversation (Huan, 2026-11-14; `docs/design/new-conversation-plan.md`)
+  A new conversation (Huan, 2026-11-14; `docs/design/done/new-conversation-plan.md`)
   shows the agent centred (mark, name, model and account, the project's live
   sessions as chips), then over the message box "Start with" rows that only
   fill the box (an open file or a live table as @ chips, never sent by
@@ -356,7 +356,7 @@ These plans are history: where they differ from this file, this file wins.
   (ACP session request, per-run extensions/overlays); never edit `~/.omp`,
   and touch `~/.pi` only to add a `sandhill` entry to `agent/mcp.json` if pi
   cannot take MCP per run.
-- Agent accounts (Huan, 2026-11-13; `docs/design/agent-accounts-plan.md`):
+- Agent accounts (Huan, 2026-11-13; `docs/design/done/agent-accounts-plan.md`):
   Claude Code, Codex and Antigravity can each have several accounts per
   device, switched by hand inside a conversation, which resumes with its
   context. Claude/Codex accounts are folders of Sandhill's own

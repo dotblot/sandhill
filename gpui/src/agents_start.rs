@@ -1,4 +1,4 @@
-//! A new conversation's screen (`docs/design/new-conversation-plan.md`): the
+//! A new conversation's screen (`docs/design/done/new-conversation-plan.md`): the
 //! agent it starts with, the project's live sessions, ways to start that
 //! fill the message box, and the latest conversations to go on with.
 

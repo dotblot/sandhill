@@ -1,5 +1,5 @@
 //! Trusting a project folder (Huan, 2026-11-12; plan in
-//! `docs/design/folder-trust-plan.md`).
+//! `docs/design/done/folder-trust-plan.md`).
 //!
 //! The daemon says whether the folder is trusted when it opens the project,
 //! and refuses to start anything in one that is not. Here: the question the

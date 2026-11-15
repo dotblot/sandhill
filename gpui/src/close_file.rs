@@ -2,7 +2,7 @@
 //! the quit card's style, asks whether to shut the kernel down and which
 //! conversations to stop, with the save question folded in. Nothing is
 //! ticked at first, so closing keeps background work, as quitting does by
-//! default (Huan, 2026-11-15; `docs/design/close-file-plan.md`).
+//! default (Huan, 2026-11-15; `docs/design/done/close-file-plan.md`).
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;

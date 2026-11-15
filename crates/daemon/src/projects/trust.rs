@@ -1,4 +1,4 @@
-//! Trusting a project folder (Huan, 2026-11-12; `docs/design/folder-trust-plan.md`).
+//! Trusting a project folder (Huan, 2026-11-12; `docs/design/done/folder-trust-plan.md`).
 //!
 //! Starting R, Python or an agent acts on files in the folder it starts in
 //! (`.Rprofile`, env files, `CLAUDE.md`, hooks, a repository's own Git

@@ -736,7 +736,7 @@ preview and R's imports weren't seen.
   since Kit draws them over the transparent glass `background`.
 
 - **Huan's 2026-11-11 feedback, third batch** (plan in
-  `docs/design/ui-feedback-2026-11-11-batch3-plan.md`): Welcome's device tabs are
+  `docs/design/done/ui-feedback-2026-11-11-batch3-plan.md`): Welcome's device tabs are
   larger, Connect to Server… ends the tab bar, Open Folder… ends the Projects
   row, Resources and storage… sits under the panel, and the first two open
   centred dialogs (`folder_dialog.rs`, shared with the plot window). Project
@@ -764,7 +764,7 @@ preview and R's imports weren't seen.
   select by drag, rows, columns or ⌘A and copy TSV without headers.
 
 - **Welcome as a settings-style window** (2026-11-11, plan in
-  `docs/design/welcome-sidebar-plan.md`): a glass sidebar of Devices (status
+  `docs/design/done/welcome-sidebar-plan.md`): a glass sidebar of Devices (status
   dots, right-click Connect/Disconnect/Remove), "+ Connect to Server…",
   Manage → Resources and Storage and the crane; the content shows the device
   with a left-aligned title, Connect/Disconnect, a per-server "Connect
@@ -772,7 +772,7 @@ preview and R's imports weren't seen.
   project list and Open Folder…. The window's minimum size is 720×480.
 
 - **Oh My Pi and pi in the AI pane** (2026-11-12, plan in
-  `docs/design/pi-omp-plan.md`): two more agents in the provider picker,
+  `docs/design/done/pi-omp-plan.md`): two more agents in the provider picker,
   each with chat and command-line modes, its models and thinking levels in
   the model popup (listed without a model turn), resume, approval cards,
   Sandhill's tools, its official mark, and no quota chip. Oh My Pi (`omp`)
@@ -794,14 +794,14 @@ preview and R's imports weren't seen.
   of adding one per update.
 
 - **Welcome lists projects** (2026-11-12, plan in
-  `docs/design/welcome-projects-plan.md`): Welcome draws no capsules; its
+  `docs/design/done/welcome-projects-plan.md`): Welcome draws no capsules; its
   sidebar and content reach the window top. Above Devices, Open lists this
   window's projects (click to switch, right-click to close) and Running the
   not-open projects with live kernels on connected devices (click to open),
   noting servers that aren't connected.
 
 - **Trusting a folder** (2026-11-12, plan in
-  `docs/design/folder-trust-plan.md`; `trust.rs`): the first open of a folder
+  `docs/design/done/folder-trust-plan.md`; `trust.rs`): the first open of a folder
   asks "Do you trust the files in …?". Trust Folder is remembered on that
   device, with the folders inside; Open in Restricted Mode shows files, saved
   outputs and previews, starts nothing (kernels, Terminal, Jobs, Git, code
@@ -812,7 +812,7 @@ preview and R's imports weren't seen.
   keep their own question.
 
 - **Welcome's Projects and Resources pages** (2026-11-12, plan in
-  `docs/design/welcome-projects-resources-plan.md`): the sidebar is
+  `docs/design/done/welcome-projects-resources-plan.md`): the sidebar is
   Projects, Devices and Manage, one row selected, its page on the right.
   Welcome opens on Projects: Pinned (the star on any device's or this
   page's rows), Open and Running, each project once with its status.
@@ -823,7 +823,7 @@ preview and R's imports weren't seen.
   is dropped when another page is shown, unless an action runs.
 
 - **Idle agents, and Welcome as its own window** (2026-11-12, plan in
-  `docs/design/idle-agents-welcome-window-plan.md`): the daemon stops a
+  `docs/design/done/idle-agents-welcome-window-plan.md`): the daemon stops a
   resumable conversation idle for 30 minutes (`exit.idle`), and the next
   message resumes it; History rows of running conversations have a stop
   button. Welcome is its own window, as wide as its sidebar and widest page
@@ -892,7 +892,7 @@ preview and R's imports weren't seen.
   credits an undrawn terminal's next frame itself, every 100ms at most.
 
 - **Markdown images and every catalog file type** (Huan, 2026-11-13; plans
-  `docs/design/markdown-images-plan.md`, `file-opening-plan.md`):
+  `docs/design/done/markdown-images-plan.md`, `file-opening-plan.md`):
   `md_images.rs` rewrites a rendered copy of the Markdown so Kit only gets
   owned images (daemon `ReadBytes` for project files, `ureq` for `https://`,
   notebook attachments, `data:`), with placeholders giving the reason.
@@ -916,7 +916,7 @@ preview and R's imports weren't seen.
   typing a new search shows them in full.
 
 - **Completion, signature hints and Console history** (Huan, 2026-11-13;
-  `docs/design/completion-console-plan.md`): `language/providers.rs` filters
+  `docs/design/done/completion-console-plan.md`): `language/providers.rs` filters
   and ranks every answer itself (prefix, any-case prefix, word starts,
   subsequence; call arguments and `library(` packages first) and asks from
   the first letter and after `$ @ . [ :: ( ,`; Tab opens the list;
@@ -979,7 +979,7 @@ preview and R's imports weren't seen.
   - Checked in the app with real Python and Ark.
 
 - **Welcome project actions, notebook margins, data explorer** (Huan,
-  2026-11-14; plan in `docs/design/welcome-actions-explorer-plan.md`):
+  2026-11-14; plan in `docs/design/done/welcome-actions-explorer-plan.md`):
   - Welcome rows get a ⋯ menu (`start_screen.rs::render_project_menu`).
     `app_window.rs::ask_close_tab_then` asks once about unsaved files and
     running kernels, then runs an optional follow-up (the list removal),
@@ -1035,7 +1035,7 @@ preview and R's imports weren't seen.
     `track`/`fixedStep` lines as headers in tables. `notebook.rs` maps the
     new extensions (PAF, PSL, gVCF, BEDPE, peaks, wiggle, `.fai`, trees…);
     `.tab` opens as tab-separated; indexes and bigWig count as binary.
-- **More files split** (see `docs/design/file-split-plan.md`): `view.rs`,
+- **More files split** (see `docs/design/done/file-split-plan.md`): `view.rs`,
   `plots.rs`, `git_pane.rs` and the protocol's `lib.rs`.
 - **Zarr folders and PLINK files** (Huan, 2026-11-14): `look::folder_icon`
   gives a `.zarr` folder its format's icon; `look::file_icon_beside` tells
@@ -1050,7 +1050,7 @@ preview and R's imports weren't seen.
   `OFL.txt` into `Resources/licenses`; Ark's `LICENSE` and `NOTICE` go
   beside it as `daemons/ark-<triple>.notices`.
 - **New conversation screen** (Huan, 2026-11-14; plan in
-  `docs/design/new-conversation-plan.md`): `agents_start.rs` replaces
+  `docs/design/done/new-conversation-plan.md`): `agents_start.rs` replaces
   `render_new`. `Agents::start` (`StartContext`) holds the project's live
   sessions, the open document and a table in a session, read by
   `refresh_start` when the screen shows (again after 15 s). A starter fills
@@ -1086,7 +1086,7 @@ preview and R's imports weren't seen.
   (each spatial plot) were skipped and only axes and text showed. The
   feature is on; outside files and URLs are still never read.
 - **Opening files polish** (Huan, 2026-11-14;
-  `docs/design/open-files-polish-plan.md`):
+  `docs/design/done/open-files-polish-plan.md`):
   - The delimited dialog (`delimited.rs::render_delimited_dialog`) has a
     `Choice` (Text or Import, `first_choice`), sizes from `git::file_size`.
   - `colouring.rs`: the action row's colouring menu. `notebook::COLOURINGS`
@@ -1114,7 +1114,7 @@ preview and R's imports weren't seen.
     the selection or length changes.
   - The run line reads `#3`, without "Cell".
   - The daemon lists every Ark kernel as "Ark R" (`kernelspecs::shown_name`).
-- **Plot window** (Huan, 2026-11-14; `docs/design/plot-save-window-plan.md`):
+- **Plot window** (Huan, 2026-11-14; `docs/design/done/plot-save-window-plan.md`):
   `plots/zoom_view.rs` lays the preview out full height with a 260px
   settings column (under the preview below 720px), toggled by a title-row
   button (`Zoom::settings`, `prefs::plot_settings_shown`). PDF has a
@@ -1123,7 +1123,7 @@ preview and R's imports weren't seen.
   data artists, and R's whole plot through a base-R BMP read back into
   `grid.raster`. Checked in the app: a saved PDF holds an image and fonts.
 - **Data explorer redesign** (Huan, 2026-11-14;
-  `docs/design/data-explorer-redesign-plan.md`): `Explorer::render_top`
+  `docs/design/done/data-explorer-redesign-plan.md`): `Explorer::render_top`
   is the action row (name, status dot, Search, Filter, Export menu, icons);
   `render_filter_row` puts filter and sort chips over the table only while
   some are on; `render_side` is the column panel (heading, `column_find`,
@@ -1151,7 +1151,7 @@ preview and R's imports weren't seen.
   The app asks four times a second (`archive_tasks.rs`) and draws the bar,
   percentage and Cancel in the status bar; a cancelled task reads
   "Stopped …", not an error. Checked on a 600 MB file.
-- **Closing a file** (Huan, 2026-11-15; `docs/design/close-file-plan.md`):
+- **Closing a file** (Huan, 2026-11-15; `docs/design/done/close-file-plan.md`):
   `ask_close` asks `close_ask` for the file's live kernel (with its other
   users from `used_by`) and the running conversations `close_file::mentions`
   ties to it (pin, starting refs, the report's `document`, or a prompt's

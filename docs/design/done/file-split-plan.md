@@ -72,7 +72,7 @@ workbench's `console` inside `view.rs`.
 `crates/daemon/src/server.rs` (2,277 lines) could not be split by moving
 alone: half of it was one function, `Daemon::call`, a single `match` over
 every call. It has its own plan, built the same day:
-`docs/design/server-split-plan.md`.
+`docs/design/done/server-split-plan.md`.
 
 ## Risk
 A moved function that used a `use` from the top of the old file needs that
