@@ -213,6 +213,16 @@ The existing history, native-terminal and usage children stay in place.
 Built 2026-11-15. All five daemon parents are under about 1,000 lines;
 nothing was left whole. The server's single dispatch match remains intact.
 
+### App `editor/notebook.rs`
+
+Keeps document types, parsing, serialization and the main notebook entry points.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `editor/notebook/quarto_cells.rs` | Lossless Quarto cell editing and source-view conversion | 440 |
+| `editor/notebook/tests.rs` | Notebook parsing, editing, saving and kernel-selection tests | 710 |
+
+
 ## Order
 
 1. Part 1 (plans), Part 2 (`CLAUDE.md`): documents only.
