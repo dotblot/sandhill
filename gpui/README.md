@@ -1159,6 +1159,17 @@ preview and R's imports weren't seen.
   shut down (`shut_down`) or stopped (`StopTerminal`, which keeps them
   resumable) as the tab closes. Checked with a live kernel and a Codex
   conversation @-mentioning the file.
+- **Documentation text** (Huan, 2026-11-15): hover, completion and Help
+  documentation show prose in the interface font and code a pixel smaller
+  in the code font (the vendored popovers' `DOC_TEXT`/`DOC_CODE`,
+  `help.rs::help_style`); the hover popup's corner drags to resize it.
+  Completion items without documentation get it when selected:
+  `providers.rs` registers `Provider::docs` with `set_completion_docs`;
+  Ark's items go back to it as `completionItem/resolve`, Python kernel
+  items carry their dotted name (`sandhill_help`) for `Call::HelpPage`.
+  Answers are kept per editor and filled in on the next answer. Kernel
+  items no longer say "Live kernel". Checked with Ark R (`read.cs`, hover
+  on `read.csv`) and the Python Console (`sc.Ann`).
 
 
 ## Running it

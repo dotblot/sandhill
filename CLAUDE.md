@@ -187,7 +187,12 @@ These plans are history: where they differ from this file, this file wins.
   corner), so browsing never moves either; neither enters the title or
   status bar. Documentation and Help pages show prose in the interface font
   and code in the code font with highlighting, as AI replies do (plain
-  docstrings are converted; R help `<pre>` blocks are R code). Kernel
+  docstrings are converted; R help `<pre>` blocks are R code). Code is one
+  pixel smaller than the prose beside it (popups 13/12px, Help 15/14px), as
+  the code font is wider (Huan, 2026-11-15). The hover popup's corner away
+  from the text drags to resize it for the session. Every suggestion shows
+  its documentation: items that come without it (Ark's, kernels') are
+  looked up once selected; no "Live kernel" label. Kernel
   pickers drop the grey environment line when the name already shows it.
   The data explorer's column edges drag to resize (Huan, 2026-11-14): no
   type line under names; each header's ⋮ menu (Copy, Select, Pin/Unpin,

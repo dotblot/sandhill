@@ -1122,7 +1122,7 @@ impl Workbench {
                             crate::doc_text::HelpPart::Html(html) => {
                                 let weak = cx.entity().downgrade();
                                 TextView::html(SharedString::from(format!("{key}-{ix}")), html)
-                                    .style(TextViewStyle::default().paragraph_gap(rems(0.5)))
+                                    .style(help_style())
                                     .selectable(true)
                                     .on_link_click(move |url, _, _, cx| {
                                         let url = url.to_string();
@@ -1172,7 +1172,7 @@ impl Workbench {
                             SharedString::from(format!("help-doc-{}", page.topic)),
                             crate::doc_text::docstring_markdown(&text),
                         )
-                        .style(TextViewStyle::default().paragraph_gap(rems(0.5)))
+                        .style(help_style())
                         .selectable(true),
                     )
                 },
@@ -1234,9 +1234,18 @@ fn note(text: String, color: Hsla, _p: &Palette) -> AnyElement {
         .into_any_element()
 }
 
+/// Help's prose and code: the code font is wider than the interface font,
+/// so code a pixel smaller looks the same size as the prose beside it.
+fn help_style() -> TextViewStyle {
+    TextViewStyle::default()
+        .paragraph_gap(rems(0.5))
+        .code_block(StyleRefinement::default().text_size(px(look::CHROME - 1.)))
+}
+
 /// Code as the AI pane shows it: the code font, its language's colours.
 fn code_view(id: String, markdown: String) -> AnyElement {
     TextView::markdown(SharedString::from(id), markdown)
+        .style(help_style())
         .selectable(true)
         .into_any_element()
 }

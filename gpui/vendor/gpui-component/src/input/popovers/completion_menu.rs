@@ -1,15 +1,15 @@
-use std::{cell::Cell, ops::Range, rc::Rc};
+use std::{cell::Cell, ops::Range, rc::Rc, time::Duration};
 
 use gpui::{
     Action, AnyElement, App, AppContext, Context, CursorStyle, DismissEvent, DispatchPhase, Empty,
-    Entity, EventEmitter, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement,
-    MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, RenderOnce,
-    SharedString, Size, StatefulInteractiveElement as _, Styled, StyledText, Subscription,
-    WeakEntity, Window, canvas, deferred, div, prelude::FluentBuilder, px, rems,
+    Entity, EntityId, EventEmitter, FontWeight, HighlightStyle, InteractiveElement as _,
+    IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
+    RenderOnce, SharedString, Size, StatefulInteractiveElement as _, Styled, StyledText,
+    Subscription, WeakEntity, Window, canvas, deferred, div, prelude::FluentBuilder, px, rems,
 };
 use gpui_base::TestSupportExt as _;
 use gpui_base::input::CompletionHighlighter;
-use lsp_types::{CompletionItem, CompletionItemKind};
+use lsp_types::{CompletionItem, CompletionItemKind, Documentation, MarkupContent, MarkupKind};
 
 const MAX_MENU_HEIGHT: Pixels = px(240.);
 const MAX_MENU_WIDTH: Pixels = px(520.);
@@ -54,7 +54,8 @@ use crate::{
     input::{
         self, EditorState,
         popovers::{
-            CaretAnchoredPopup, editor_popover, render_markdown, side_bounds, tag_fences,
+            CaretAnchoredPopup, DOC_TEXT, completion_docs, editor_popover, render_markdown,
+            side_bounds, tag_fences,
         },
     },
     list::{List, ListDelegate, ListEvent, ListState},
@@ -64,10 +65,16 @@ use crate::{
 struct ContextMenuDelegate {
     query: SharedString,
     menu: Entity<CompletionMenu>,
+    /// Sandhill: whose `CompletionDocs` fill in missing documentation.
+    editor: EntityId,
     items: Vec<Rc<CompletionItem>>,
     selected_ix: usize,
     highlight: Rc<CompletionHighlighter>,
 }
+
+/// Sandhill: how long an item stays selected before its documentation is
+/// asked for, so arrowing through the list asks only where it stops.
+const DOCS_PAUSE: Duration = Duration::from_millis(120);
 
 impl ContextMenuDelegate {
     fn set_items(&mut self, items: Vec<CompletionItem>) {
@@ -77,6 +84,50 @@ impl ContextMenuDelegate {
 
     fn selected_item(&self) -> Option<&Rc<CompletionItem>> {
         self.items.get(self.selected_ix)
+    }
+
+    /// Sandhill: asks the editor's `CompletionDocs` for the selected item's
+    /// documentation when it came without any, once it has stayed selected
+    /// for `DOCS_PAUSE`. An answer of none is kept as empty documentation,
+    /// so the item isn't asked about again.
+    fn ask_docs(&self, cx: &mut Context<ListState<Self>>) {
+        let Some(item) = self.selected_item().cloned() else {
+            return;
+        };
+        if item.documentation.is_some() {
+            return;
+        }
+        let Some(docs) = completion_docs(self.editor) else {
+            return;
+        };
+        cx.spawn(async move |list, cx| {
+            cx.background_executor().timer(DOCS_PAUSE).await;
+            let task = list
+                .update(cx, |list, cx| {
+                    let still = list
+                        .delegate()
+                        .selected_item()
+                        .is_some_and(|selected| Rc::ptr_eq(selected, &item));
+                    if still { docs(&item, cx) } else { None }
+                })
+                .ok()
+                .flatten()?;
+            let markdown = task.await.unwrap_or_default();
+            list.update(cx, |list, cx| {
+                let items = &mut list.delegate_mut().items;
+                if let Some(slot) = items.iter_mut().find(|slot| Rc::ptr_eq(slot, &item)) {
+                    let mut filled = (**slot).clone();
+                    filled.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }));
+                    *slot = Rc::new(filled);
+                    cx.notify();
+                }
+            })
+            .ok()
+        })
+        .detach();
     }
 }
 
@@ -270,6 +321,7 @@ impl ListDelegate for ContextMenuDelegate {
         cx: &mut Context<ListState<Self>>,
     ) {
         self.selected_ix = ix.map(|i| i.row).unwrap_or(0);
+        self.ask_docs(cx);
         cx.notify();
     }
 
@@ -311,6 +363,7 @@ impl CompletionMenu {
             let menu = ContextMenuDelegate {
                 query: SharedString::default(),
                 menu: view,
+                editor: editor.entity_id(),
                 items: vec![],
                 selected_ix: 0,
                 highlight: Rc::new(gpui_base::input::highlight_prefix),
@@ -586,7 +639,7 @@ fn doc_panel(
         .p_0()
         .w(size.width)
         .h(size.height)
-        .text_sm()
+        .text_size(DOC_TEXT)
         .font_family(cx.theme().font_family.clone())
         .child(
             div()

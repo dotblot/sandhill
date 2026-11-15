@@ -18,10 +18,17 @@ used through `[patch.crates-io]` in `gpui/Cargo.toml` (Huan, 2026-11-13).
   coloured badge before each item says its kind. The documentation is a
   side panel of one size for every item (scrolling inside), so browsing
   never moves the list or the panel; its corner drags to resize it for the
-  session. Clicks in it don't dismiss the menu.
+  session. Clicks in it don't dismiss the menu. (2026-11-15) An item
+  selected without documentation asks the editor's `CompletionDocs`
+  (`set_completion_docs`) after 120 ms and shows the answer.
 - `src/input/popovers/mod.rs` (2026-11-14): documentation renders as the AI
-  pane's replies do, prose in the interface font and code blocks at their
-  usual size; fences that name no language take the editor's.
+  pane's replies do, prose in the interface font and code blocks in the
+  code font; fences that name no language take the editor's. (2026-11-15)
+  Prose is 13px and code 12px.
+- `src/input/popovers/hover_popover.rs` (2026-11-15): the hover popup
+  sets the interface font (it inherited the editor's code font) and the
+  popups' 13px, and its corner away from the text drags to resize it for
+  the session.
 
 Everything else is unchanged. Return to the crates.io release once upstream
 offers the same, and remove the patch.

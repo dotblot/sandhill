@@ -5,7 +5,7 @@ use crate::workbench::Workbench;
 use anyhow::Result;
 use gpui_kit::component::input::{
     CompletionProvider, DefinitionProvider, EditorState, HoverProvider, InputEvent, Rope,
-    highlight_characters,
+    highlight_characters, set_completion_docs,
 };
 use gpui_kit::*;
 use lsp_types::{
@@ -13,7 +13,7 @@ use lsp_types::{
     Documentation, Hover, InsertTextFormat, Location, LocationLink, MarkupContent, MarkupKind,
     Position, Range, TextEdit,
 };
-use sandhill_proto::{Call, CompletionReply, InspectReply, Packages};
+use sandhill_proto::{Call, CompletionReply, HelpPage, InspectReply, Packages};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -28,6 +28,10 @@ const LIBRARY: &[&str] = &["library", "require", "requireNamespace"];
 const TYPING_PAUSE: Duration = Duration::from_secs(3);
 /// Accepts kept across answers (the menu may show an earlier one).
 const MAX_ACCEPTS: usize = 512;
+/// Documentation kept per editor before the store starts over.
+const MAX_DOCS: usize = 512;
+/// The key in a kernel item's `data` naming its help topic (`sc.AnnData`).
+const HELP_TOPIC: &str = "sandhill_help";
 
 #[derive(Clone)]
 struct Provider {
@@ -42,6 +46,21 @@ struct Provider {
     /// Bumped by every keystroke and request; a waiting show that sees
     /// another value was overtaken.
     pause: Rc<Cell<u64>>,
+    /// Who answered the last completion request, asked again for the
+    /// documentation of items that came without it.
+    asked: Rc<RefCell<Option<Asked>>>,
+    /// Documentation found for items (by `docs_key`); `None` when there
+    /// is none, so it isn't asked again.
+    docs: Rc<RefCell<HashMap<String, Option<String>>>>,
+}
+
+#[derive(Clone)]
+struct Asked {
+    daemon: Rc<Daemon>,
+    project: String,
+    document: Option<Document>,
+    session: Option<String>,
+    language: String,
 }
 
 /// An item whose text Kit inserts with the cursor at its end although the
@@ -116,7 +135,20 @@ pub(super) fn install(
         accepts,
         menu_open,
         pause: Rc::new(Cell::new(0)),
+        asked: Rc::new(RefCell::new(None)),
+        docs: Rc::new(RefCell::new(HashMap::new())),
     });
+    // The completion menu asks for the documentation items came without.
+    let id = editor.entity_id();
+    let documents = provider.clone();
+    set_completion_docs(
+        id,
+        Some(Rc::new(move |item: &CompletionItem, cx: &mut App| {
+            documents.docs(item, cx)
+        })),
+    );
+    cx.observe_release(editor, move |_, _, _| set_completion_docs(id, None))
+        .detach();
     editor.update(cx, |editor, _| {
         let lsp = editor.lsp_mut();
         lsp.completion_provider = Some(provider.clone());
@@ -270,6 +302,90 @@ fn context(
 }
 
 impl Provider {
+    /// The documentation of `item` (which came without it), as markdown: a
+    /// kernel item's from its help page, a language server item's from the
+    /// server (`completionItem/resolve`; Ark sends R's help only so).
+    /// `None` when the item can't be asked about.
+    fn docs(&self, item: &CompletionItem, cx: &mut App) -> Option<Task<Option<String>>> {
+        let key = docs_key(item)?;
+        if let Some(known) = self.docs.borrow().get(&key) {
+            return Some(Task::ready(known.clone()));
+        }
+        let asked = self.asked.borrow().clone()?;
+        let topic = item
+            .data
+            .as_ref()
+            .and_then(|data| data.get(HELP_TOPIC))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let item = item.clone();
+        let store = self.docs.clone();
+        Some(cx.spawn(async move |_| {
+            let found = match topic {
+                Some(topic) => {
+                    let page = asked
+                        .daemon
+                        .call_within::<HelpPage>(
+                            Call::HelpPage {
+                                session: asked.session?,
+                                topic,
+                                package: None,
+                            },
+                            Duration::from_secs(3),
+                        )
+                        .await;
+                    page.map(|page| help_markdown(&page))
+                }
+                None => {
+                    let document = asked.document?;
+                    let transport = asked.daemon.language.clone();
+                    let params = serde_json::to_value(&item).ok()?;
+                    let python = asked.language == "python";
+                    asked
+                        .daemon
+                        .language_task(async move {
+                            transport
+                                .request(asked.project, document, "completionItem/resolve", params)
+                                .await
+                        })
+                        .await
+                        .map(|value| {
+                            serde_json::from_value::<CompletionItem>(value)
+                                .ok()
+                                .and_then(|mut resolved| {
+                                    if python {
+                                        plain_docs_as_markdown(&mut resolved);
+                                    }
+                                    docs_markdown(&resolved)
+                                })
+                        })
+                }
+            };
+            // A busy kernel or a slow server may answer next time.
+            let found = found.ok()?;
+            let mut store = store.borrow_mut();
+            if store.len() >= MAX_DOCS {
+                store.clear();
+            }
+            store.insert(key, found.clone());
+            found
+        }))
+    }
+
+    /// Gives items without documentation what was found for them before,
+    /// so the menu shows it at once.
+    fn known_docs(&self, items: &mut [CompletionItem]) {
+        let store = self.docs.borrow();
+        for item in items.iter_mut().filter(|item| item.documentation.is_none()) {
+            if let Some(known) = docs_key(item).and_then(|key| store.get(&key)) {
+                item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: known.clone().unwrap_or_default(),
+                }));
+            }
+        }
+    }
+
     fn context(&self, text: &str, cx: &mut App) -> Option<Context> {
         context(&self.workbench, &self.editor, self.console, text, cx)
     }
@@ -374,6 +490,13 @@ impl CompletionProvider for Provider {
             let Some(context) = cx.update(|cx| provider.context(&text, cx)) else {
                 return Ok(CompletionResponse::Array(vec![]));
             };
+            *provider.asked.borrow_mut() = Some(Asked {
+                daemon: context.daemon.clone(),
+                project: context.project.clone(),
+                document: context.document.clone(),
+                session: context.session.clone(),
+                language: context.language.clone(),
+            });
             let offset = text.floor_char_boundary(offset.min(text.len()));
             let r = context.language == "r";
             let start = word_start(&text, offset, r);
@@ -485,7 +608,7 @@ impl CompletionProvider for Provider {
                 }
             }
             if let Some(reply) = reply {
-                items.extend(kernel_items(&text, reply));
+                items.extend(kernel_items(&text, reply, context.language == "python"));
             }
             // Ark offers installed packages in `library(`; other R kernels
             // don't, so ask the session for its list.
@@ -526,6 +649,7 @@ impl CompletionProvider for Provider {
                 let excess = accepts.len().saturating_sub(MAX_ACCEPTS);
                 accepts.drain(..excess);
             }
+            provider.known_docs(&mut items);
             Ok(CompletionResponse::Array(items))
         })
     }
@@ -727,31 +851,71 @@ fn plain_docs_as_markdown(item: &mut CompletionItem) {
     }));
 }
 
-fn kernel_items(text: &str, reply: CompletionReply) -> Vec<CompletionItem> {
+/// The kernel's matches as items. A Python item names its help topic: the
+/// dotted name it completes (`sc.` + `AnnData`), asked once it is selected.
+fn kernel_items(text: &str, reply: CompletionReply, python: bool) -> Vec<CompletionItem> {
     let kinds = kernel_kinds(&reply.metadata);
     let scalar_byte = |scalar| {
         text.char_indices()
             .nth(scalar)
             .map_or(text.len(), |(byte, _)| byte)
     };
+    let start = scalar_byte(reply.cursor_start);
     let range = Range::new(
-        component_position(text, scalar_byte(reply.cursor_start)),
+        component_position(text, start),
         component_position(text, scalar_byte(reply.cursor_end)),
     );
+    let owner_start = text[..start]
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_' || *ch == '.')
+        .last()
+        .map_or(start, |(at, _)| at);
+    let owner = &text[owner_start..start];
     reply
         .matches
         .into_iter()
         .map(|label| CompletionItem {
             kind: kinds.get(&label).copied(),
+            data: (python && !owner.starts_with(|ch: char| ch == '.' || ch.is_ascii_digit()))
+                .then(|| json!({ HELP_TOPIC: format!("{owner}{label}") })),
             label: label.clone(),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range,
                 new_text: label,
             })),
-            detail: Some("Live kernel".into()),
             ..Default::default()
         })
         .collect()
+}
+
+/// What an item's documentation is stored under: its label and the data
+/// its source needs to find it again. Items without data can't be asked.
+fn docs_key(item: &CompletionItem) -> Option<String> {
+    Some(format!("{}\u{0}{}", item.label, item.data.as_ref()?))
+}
+
+/// An item's documentation as markdown, if it has any.
+fn docs_markdown(item: &CompletionItem) -> Option<String> {
+    let text = match item.documentation.as_ref()? {
+        Documentation::String(text) => text.clone(),
+        Documentation::MarkupContent(content) => content.value.clone(),
+    };
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// A Python help page as markdown: how it is called, then its docstring.
+fn help_markdown(page: &HelpPage) -> Option<String> {
+    let mut parts = vec![];
+    if let Some(signature) = page.signature.as_deref().filter(|sig| !sig.is_empty()) {
+        parts.push(crate::doc_text::python_code_markdown(
+            &crate::help::signature_lines(&page.topic, signature, 60),
+        ));
+    }
+    if let Some(text) = page.text.as_deref().filter(|text| !text.trim().is_empty()) {
+        parts.push(crate::doc_text::docstring_markdown(text));
+    }
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 /// Moves a server item into cell coordinates. A primary edit that leaves the
@@ -1479,8 +1643,8 @@ impl Workbench {
 mod tests {
     use super::{
         CompletionItem, CompletionItemKind, CompletionReply, CompletionTextEdit, Document,
-        InsertTextFormat, Position, Range, TextEdit, Value, coalesce_edits, finish, kernel_items,
-        map_completion, match_tier, pauses, rank, snippet_text, trigger,
+        HELP_TOPIC, InsertTextFormat, Position, Range, TextEdit, Value, coalesce_edits, finish,
+        kernel_items, map_completion, match_tier, pauses, rank, snippet_text, trigger,
     };
     fn labels(items: &[CompletionItem]) -> Vec<&str> {
         items.iter().map(|item| item.label.as_str()).collect()
@@ -1789,6 +1953,7 @@ mod tests {
                 cursor_end: 5,
                 metadata: Value::Null,
             },
+            false,
         );
         let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit else {
             panic!("expected edit");
@@ -1800,6 +1965,30 @@ mod tests {
                 lsp_types::Position::new(0, 5)
             )
         );
+    }
+    #[test]
+    fn python_kernel_items_name_the_dotted_topic_they_complete() {
+        let topic = |text: &str, start: usize, label: &str| {
+            let items = kernel_items(
+                text,
+                CompletionReply {
+                    matches: vec![label.into()],
+                    cursor_start: start,
+                    cursor_end: text.chars().count(),
+                    metadata: Value::Null,
+                },
+                true,
+            );
+            items[0].data.as_ref().map(|data| data[HELP_TOPIC].clone())
+        };
+        assert_eq!(topic("x = sc.Ann", 7, "AnnData"), Some("sc.AnnData".into()));
+        assert_eq!(
+            topic("print(sc.pp.ne", 12, "neighbors"),
+            Some("sc.pp.neighbors".into())
+        );
+        assert_eq!(topic("sc.Ann", 0, "sc.AnnData"), Some("sc.AnnData".into()));
+        // After an index or call, there is no name to look up.
+        assert_eq!(topic("x[0].sh", 5, "shape"), None);
     }
     #[test]
     fn accepting_import_completion_preserves_all_edits() {
