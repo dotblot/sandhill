@@ -224,7 +224,7 @@ fn item_block(item: &Item, agent: &str) -> Option<Block> {
 }
 
 fn step_block(step: &Step) -> Block {
-    let view = chat::step_view(&step.tool, &step.input, step.output.as_ref(), None);
+    let view = chat::step_details::step_view(&step.tool, &step.input, step.output.as_ref(), None);
     let images = step.output.as_ref().map(content_images).unwrap_or_default();
     if view.name == "thinking" {
         let text = view.output.as_deref().map(str::trim).unwrap_or_default();

@@ -984,7 +984,8 @@ impl Agents {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
-        let view = chat::step_view(&step.tool, &step.input, step.output.as_ref(), None);
+        let view =
+            chat::step_details::step_view(&step.tool, &step.input, step.output.as_ref(), None);
         let open = self.open_steps.contains(key);
         let (icon_name, color) = match step.status {
             StepStatus::Fail => ("step.failed", p.err),

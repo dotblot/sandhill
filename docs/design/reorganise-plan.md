@@ -241,6 +241,16 @@ Keeps agent types, state, construction, refresh and conversation/account queries
 | `agents/view_switching.rs` | View handoff state methods, switching and legacy bridge recovery | 280 |
 | `agents/messages.rs` | Starting conversations, submitting messages, interrupts and question answers | 380 |
 
+### App `agents/chat.rs`
+
+Keeps chat types, conversation assembly, request views and account-limit handling.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `agents/chat/step_details.rs` | Tool-step descriptions, outputs, patches and tool-name helpers | 610 |
+| `agents/chat/tests.rs` | Conversation assembly, request and step-description tests | 350 |
+
+
 
 
 
