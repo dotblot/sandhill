@@ -10,7 +10,7 @@ use std::time::Duration;
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    BLOB_KEY, CONFLICT_ERROR, Call, CellRef, Deleted, DirEntry, EVENT_RUN_FINISHED,
+    ArchiveFormat, BLOB_KEY, CONFLICT_ERROR, Call, CellRef, Deleted, DirEntry, EVENT_RUN_FINISHED,
     EVENT_RUN_STARTED, EVENT_SESSION_ENDED, EXISTS_ERROR, EntryKind, Event, FileBytes, FileWritten,
     RunFinished, SessionStatus,
 };
@@ -708,6 +708,114 @@ async fn the_file_tree_makes_renames_copies_and_deletes() {
         .await
         .unwrap();
     assert_eq!((part.data.as_str(), part.size), ("cmF3", 6));
+}
+
+#[tokio::test]
+async fn the_file_tree_compresses_beside_the_original() {
+    use std::io::Read;
+    let dir = common::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(work.join("results/sub")).unwrap();
+    std::fs::write(work.join("results/counts.csv"), "gene,n\nA,3\n").unwrap();
+    std::fs::write(work.join("results/sub/notes.txt"), "deep\n").unwrap();
+    std::os::unix::fs::symlink("counts.csv", work.join("results/latest.csv")).unwrap();
+    let reads = "@r1\nACGT\n+\nIIII\n".repeat(1000);
+    std::fs::write(work.join("reads.fastq"), &reads).unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let client = daemon.client().await;
+    let at = |rel: &str| work.join(rel).to_string_lossy().into_owned();
+    let compress = |path: String, format| {
+        let client = &client;
+        async move {
+            let written: FileWritten = client
+                .call(Call::CompressPath { path, format })
+                .await
+                .unwrap();
+            let path = PathBuf::from(written.path);
+            path.file_name().unwrap().to_string_lossy().into_owned()
+        }
+    };
+
+    // A folder as zip: the folder is the top entry, links stay links, and
+    // a second one is numbered rather than replacing the first.
+    assert_eq!(
+        compress(at("results"), ArchiveFormat::Zip).await,
+        "results.zip"
+    );
+    assert_eq!(
+        compress(at("results"), ArchiveFormat::Zip).await,
+        "results 2.zip"
+    );
+    let mut zip =
+        zip::ZipArchive::new(std::fs::File::open(work.join("results.zip")).unwrap()).unwrap();
+    let mut names: Vec<String> = zip.file_names().map(|n| n.unwrap().into_owned()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "results/",
+            "results/counts.csv",
+            "results/latest.csv",
+            "results/sub/",
+            "results/sub/notes.txt"
+        ]
+    );
+    let mut counts = String::new();
+    zip.by_name("results/counts.csv")
+        .unwrap()
+        .read_to_string(&mut counts)
+        .unwrap();
+    assert_eq!(counts, "gene,n\nA,3\n");
+    assert!(zip.by_name("results/latest.csv").unwrap().is_symlink());
+
+    // A folder with gzip is a .tar.gz, its link kept as a link.
+    assert_eq!(
+        compress(at("results"), ArchiveFormat::Gzip).await,
+        "results.tar.gz"
+    );
+    let tarball =
+        flate2::read::GzDecoder::new(std::fs::File::open(work.join("results.tar.gz")).unwrap());
+    let mut tar = tar::Archive::new(tarball);
+    let mut entries: Vec<(String, bool)> = tar
+        .entries()
+        .unwrap()
+        .map(|e| {
+            let e = e.unwrap();
+            let name = e
+                .path()
+                .unwrap()
+                .to_string_lossy()
+                .trim_end_matches('/')
+                .to_string();
+            (name, e.header().entry_type().is_symlink())
+        })
+        .collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        [
+            ("results".to_string(), false),
+            ("results/counts.csv".to_string(), false),
+            ("results/latest.csv".to_string(), true),
+            ("results/sub".to_string(), false),
+            ("results/sub/notes.txt".to_string(), false),
+        ]
+    );
+
+    // A file with gzip is name.gz, smaller and the same once unpacked; the
+    // original stays.
+    assert_eq!(
+        compress(at("reads.fastq"), ArchiveFormat::Gzip).await,
+        "reads.fastq.gz"
+    );
+    let packed = std::fs::read(work.join("reads.fastq.gz")).unwrap();
+    assert!(packed.len() < reads.len() / 10);
+    let mut unpacked = String::new();
+    flate2::read::GzDecoder::new(&packed[..])
+        .read_to_string(&mut unpacked)
+        .unwrap();
+    assert_eq!(unpacked, reads);
+    assert!(work.join("reads.fastq").exists() && work.join("results/counts.csv").exists());
 }
 
 #[tokio::test]

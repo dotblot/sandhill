@@ -31,6 +31,11 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 zeromq.workspace = true
+# Compressing files and folders from the file tree; pure Rust, so server
+# builds need no C libraries. MIT, MIT/Apache-2.0.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+tar = { version = "0.4", default-features = false }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Apache-2.0/MIT, compatible with GPL-3.0-or-later.

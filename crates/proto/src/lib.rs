@@ -601,6 +601,14 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         trash: bool,
     },
+    /// Packs a file or folder into an archive beside it, keeping the
+    /// original: `name.zip`, `name.gz` or (a folder) `name.tar.gz`, or
+    /// "name 2.zip" and so on when that's taken. Links inside folders stay
+    /// links. Returns [`FileWritten`] for the archive.
+    CompressPath {
+        path: String,
+        format: ArchiveFormat,
+    },
     /// Up to `limit` bytes of a file from `offset` (at most
     /// [`MAX_READ_BYTES`]), for downloading it. Returns [`FileBytes`].
     /// With `limit: 0`, returns full-file size and mtime without file contents.

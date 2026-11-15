@@ -1135,6 +1135,13 @@ preview and R's imports weren't seen.
   Category colours no longer go missing when the summary arrives before
   the first rows (`summary_generation`). Checked in the app in light and
   dark; typing into Find column could not be driven by the test tool.
+- **Compress** (Huan, 2026-11-14): the Files menu's Compress to .zip and
+  .gz/.tar.gz (`tree_actions.rs::compress`) send `Call::CompressPath`; the
+  daemon's `compress.rs` writes the archive beside the original under a
+  free name (claimed with `create_new`), with zip, flate2 and tar in pure
+  Rust (zlib-rs) so server builds need no C libraries, and removes a
+  half-written archive on failure. Links inside folders stay links; zip64
+  is used for files from 4 GiB. A notice shows "Compressing …" meanwhile.
 
 
 ## Running it

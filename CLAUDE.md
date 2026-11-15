@@ -129,7 +129,11 @@ These plans are history: where they differ from this file, this file wins.
   (Word, Excel, PowerPoint, with their own icons) among them. Unknown files under 5 MB that
   look like text open as plain text; text over 5 MB opens its first 5 MB
   read-only. The Files right-click menu offers "Open in Sandhill" and the
-  default app for every file. Rendered Markdown (files, notebook and Quarto
+  default app for every file, and Compress to .zip or .gz (.tar.gz for a
+  folder) for files and folders (Huan, 2026-11-14): the daemon writes the
+  archive beside the original, which stays, numbered "name 2.zip" when
+  taken; links inside stay links; archives aren't offered the same format
+  again. Rendered Markdown (files, notebook and Quarto
   text cells) shows tables and images: project images through the daemon
   (none outside the project), `https://` images, notebook attachments.
 - Editor actions and pane height controls share one 29px row, not a second

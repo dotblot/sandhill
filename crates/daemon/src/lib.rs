@@ -10,6 +10,7 @@ pub mod bio;
 pub mod blobs;
 pub mod cells;
 pub mod chats;
+pub mod compress;
 pub mod fileops;
 pub mod files;
 pub mod ghost;

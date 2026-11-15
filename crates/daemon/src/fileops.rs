@@ -229,7 +229,7 @@ fn refuse_inside(from: &Path, to: &Path, what: &str) -> Result<()> {
     Ok(())
 }
 
-fn written(path: &Path) -> Result<FileWritten> {
+pub(crate) fn written(path: &Path) -> Result<FileWritten> {
     let meta = fs::symlink_metadata(path)?;
     Ok(FileWritten {
         path: path.to_string_lossy().into_owned(),

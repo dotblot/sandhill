@@ -985,6 +985,9 @@ impl Daemon {
             Call::DeletePath { path, trash } => {
                 serde_json::to_value(blocking(move || fileops::delete_path(&path, trash)).await?)?
             }
+            Call::CompressPath { path, format } => serde_json::to_value(
+                blocking(move || crate::compress::compress(&path, format)).await?,
+            )?,
             Call::ListFiles { path, limit } => {
                 let limit = limit.map_or(fileops::LIST_FILES, |l| l as usize);
                 serde_json::to_value(blocking(move || fileops::list_files(&path, limit)).await?)?

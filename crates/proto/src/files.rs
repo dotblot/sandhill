@@ -32,6 +32,16 @@ pub struct Deleted {
     pub trashed_to: Option<String>,
 }
 
+/// How [`Call::CompressPath`] packs a file or folder.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ArchiveFormat {
+    /// `name.zip`, for a file or a folder.
+    Zip,
+    /// `name.gz` for a file, `name.tar.gz` for a folder.
+    Gzip,
+}
+
 /// The most [`Call::ReadBytes`] returns at once.
 pub const MAX_READ_BYTES: u64 = 4 * 1024 * 1024;
 

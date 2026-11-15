@@ -10,7 +10,7 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::*;
 use sandhill_link::Target;
-use sandhill_proto::{Call, Deleted, DirEntry, FileWritten};
+use sandhill_proto::{ArchiveFormat, Call, Deleted, DirEntry, FileWritten};
 
 use crate::files::{
     NewKind, base_name, copy_name, join_path, name_problem, new_notebook, parent_of, template,
@@ -423,6 +423,41 @@ impl Workbench {
         .detach();
     }
 
+    /// Packs it into an archive beside it in the daemon, keeping it; large
+    /// data takes a while, so a notice says so meanwhile.
+    fn compress(&mut self, rel: String, format: ArchiveFormat, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
+            return;
+        };
+        let path = join_path(&project, &rel);
+        let name = base_name(&path).to_string();
+        self.notice = Some(format!("Compressing {name}…"));
+        cx.notify();
+        let packed = daemon.call::<FileWritten>(Call::CompressPath { path, format });
+        cx.spawn(async move |this, cx| {
+            let packed = packed.await;
+            this.update(cx, |this, cx| {
+                match packed {
+                    Ok(written) => {
+                        let archive = base_name(&written.path).to_string();
+                        this.notice = Some(format!("Compressed {name} to {archive}"));
+                        if let Some(rel) = written.path.strip_prefix(&format!("{project}/")) {
+                            this.files_ui.selected = Some((rel.to_string(), false));
+                        }
+                        this.refresh_files(cx);
+                    }
+                    Err(err) => {
+                        this.notice = None;
+                        this.problem = Some(format!("Could not compress {name}: {err:#}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Moves it to the Trash on this machine; on a server, deletes it once
     /// you say so.
     fn remove(&mut self, rel: String, dir: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -637,6 +672,38 @@ impl Workbench {
                 cx,
                 move |this, _, cx| this.duplicate(r.clone(), dir, cx),
             ));
+            let lower = rel.to_ascii_lowercase();
+            // Packing an archive again gains nothing.
+            let zipped = lower.ends_with(".zip");
+            let gzipped = [".gz", ".tgz", ".bgz"].iter().any(|e| lower.ends_with(e));
+            if !zipped {
+                let r = rel.clone();
+                rows.push(menu_item(
+                    "tm-zip",
+                    None,
+                    "Compress to .zip",
+                    "",
+                    &p,
+                    cx,
+                    move |this, _, cx| this.compress(r.clone(), ArchiveFormat::Zip, cx),
+                ));
+            }
+            if !gzipped {
+                let r = rel.clone();
+                rows.push(menu_item(
+                    "tm-gzip",
+                    None,
+                    if dir {
+                        "Compress to .tar.gz"
+                    } else {
+                        "Compress to .gz"
+                    },
+                    "",
+                    &p,
+                    cx,
+                    move |this, _, cx| this.compress(r.clone(), ArchiveFormat::Gzip, cx),
+                ));
+            }
         }
         rows.push(separator(&p));
         if local {
