@@ -21,14 +21,12 @@ use crate::terminal::TerminalView;
 pub(crate) enum Ask {
     Nobody,
     Accounts(Vec<String>),
-    Everyone,
 }
 
 impl Ask {
     /// Two waiting listings as one that asks everything either would.
     fn with(self, other: Ask) -> Ask {
         match (self, other) {
-            (Ask::Everyone, _) | (_, Ask::Everyone) => Ask::Everyone,
             (Ask::Nobody, ask) | (ask, Ask::Nobody) => ask,
             (Ask::Accounts(mut ids), Ask::Accounts(more)) => {
                 for id in more {
@@ -112,7 +110,6 @@ impl AccountManager {
         let (refresh, ids) = match ask {
             Ask::Nobody => (false, None),
             Ask::Accounts(ids) => (true, Some(ids)),
-            Ask::Everyone => (true, None),
         };
         let listed = self
             .daemon
@@ -779,7 +776,10 @@ impl Render for AccountManager {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let mut groups = v_flex().w_full().gap(px(20.));
-        for kind in ["claude", "codex", "antigravity"] {
+        for kind in ["claude", "codex", "antigravity"]
+            .into_iter()
+            .filter(|kind| !crate::agents::turned_off(kind))
+        {
             let mut rows = v_flex().w_full().gap(px(4.));
             let mut count = 0;
             for account in self.accounts.iter().filter(|account| account.kind == kind) {
@@ -918,9 +918,16 @@ impl Render for AccountManager {
                                 "Refresh"
                             })
                             .disabled(self.refreshing)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.refresh(Ask::Everyone, cx)),
-                            ),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                // Every account shown: none of an agent turned off.
+                                let ids = this
+                                    .accounts
+                                    .iter()
+                                    .filter(|account| !crate::agents::turned_off(&account.kind))
+                                    .map(|account| account.id.clone())
+                                    .collect();
+                                this.refresh(Ask::Accounts(ids), cx)
+                            })),
                     ),
             )
             .when_some(self.error.clone(), |d, error| {
@@ -941,7 +948,6 @@ mod tests {
         assert_eq!(ids(&["a"]).with(ids(&["b", "a"])), ids(&["a", "b"]));
         assert_eq!(Ask::Nobody.with(ids(&["a"])), ids(&["a"]));
         assert_eq!(ids(&["a"]).with(Ask::Nobody), ids(&["a"]));
-        assert_eq!(ids(&["a"]).with(Ask::Everyone), Ask::Everyone);
         assert_eq!(Ask::Nobody.with(Ask::Nobody), Ask::Nobody);
     }
 }

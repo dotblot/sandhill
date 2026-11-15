@@ -108,6 +108,21 @@ pub(crate) fn kind_of(kind: &str) -> Option<&'static Kind> {
     KINDS.iter().find(|k| k.kind == kind)
 }
 
+/// Agents turned off for now (Huan, 2026-11-14, after Google suspended the
+/// Antigravity account): not offered for new conversations, never asked for
+/// models, accounts or quota, and their conversations take no messages.
+/// Remove an entry to turn the agent back on.
+const TURNED_OFF: [&str; 1] = ["antigravity"];
+
+pub(crate) fn turned_off(kind: &str) -> bool {
+    TURNED_OFF.contains(&kind)
+}
+
+/// The agent a new conversation starts with (Huan, 2026-11-14).
+pub(crate) fn default_kind() -> &'static Kind {
+    kind_of("codex").unwrap_or(&KINDS[0])
+}
+
 /// Agents whose chat Sandhill drives through a bridge: messages go with
 /// `tell_terminal`, not as typing.
 pub(crate) fn drives_chat(kind: &str) -> bool {
@@ -413,7 +428,7 @@ impl Agents {
                 .folding(false)
                 .soft_wrap(true)
                 .submit_on_enter(true)
-                .placeholder(KINDS[0].placeholder)
+                .placeholder(default_kind().placeholder)
         });
         let subscriptions = vec![cx.subscribe_in(
             &composer,
@@ -441,9 +456,9 @@ impl Agents {
             show: Show::Chat,
             view_switches: HashMap::new(),
             view_generation: 0,
-            new_kind: KINDS[0].kind,
+            new_kind: default_kind().kind,
             composer,
-            hint: KINDS[0].placeholder,
+            hint: default_kind().placeholder,
             chat_scroll: ScrollHandle::new(),
             mention_scroll: ScrollHandle::new(),
             open_steps: HashSet::new(),
@@ -493,7 +508,8 @@ impl Agents {
             let listed = listed.await;
             this.update(cx, |this, cx| {
                 for agent in &installed {
-                    if agent.path.is_some() && drives_chat(&agent.kind) {
+                    if agent.path.is_some() && drives_chat(&agent.kind) && !turned_off(&agent.kind)
+                    {
                         this.list_models(agent.kind.clone(), cx);
                     }
                 }
@@ -1287,6 +1303,15 @@ impl Agents {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let kind = match self.show {
+            Show::New => Some(self.new_kind),
+            _ => self.current().map(|t| t.kind.as_str()),
+        };
+        if let Some(off) = kind.filter(|kind| turned_off(kind)).and_then(kind_of) {
+            self.problem = Some(format!("{} is turned off for now.", off.name));
+            cx.notify();
+            return false;
+        }
         match self.show {
             Show::New => {
                 if let Some(reason) = self.model_note() {

@@ -245,8 +245,10 @@ These plans are history: where they differ from this file, this file wins.
   glows, and the strongest level is warm. No explanatory paragraph.
   Model popup: fixed 380×360px, icon-only provider tabs on a 32px left rail in
   alphabetical order with Favorites first, names in hover tooltips; the right
-  model list scrolls. New conversation initially
-  uses Antigravity's first listed actual model. Returned effort-variant siblings
+  model list scrolls. New conversation starts with Codex (Huan, 2026-11-14).
+  Antigravity is turned off for now (`agents::TURNED_OFF`): not offered, never
+  asked for models, accounts or quota, its old chats take no messages; remove
+  it from that list to turn it back on. Returned effort-variant siblings
   share one row and slider levels map to real IDs, without a second `--effort`.
   Preserve explicit provider/model selections and existing chats on refresh.
 - AI conversations belong to the whole project, not to one file. `@file`

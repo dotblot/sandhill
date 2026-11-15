@@ -25,10 +25,12 @@ use crate::look::{self, Palette};
 
 /// OpenScience, Oh My Pi and pi use the user's own model accounts and keys,
 /// and Posit Assistant manages its own models: none has a quota to show.
+/// Agents turned off for now are never asked.
 fn quota_providers() -> impl Iterator<Item = &'static crate::agents::Kind> {
-    crate::agents::KINDS
-        .iter()
-        .filter(|provider| !matches!(provider.kind, "openscience" | "omp" | "pi" | "posit"))
+    crate::agents::KINDS.iter().filter(|provider| {
+        !matches!(provider.kind, "openscience" | "omp" | "pi" | "posit")
+            && !crate::agents::turned_off(provider.kind)
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

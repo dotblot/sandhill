@@ -1066,11 +1066,16 @@ preview and R's imports weren't seen.
 - **No automatic quota checks** (Huan, 2026-11-14, after Google suspended
   an Antigravity account): `QuotaMonitor` lost its 60-second poll, and
   opening the panel no longer asks the agents. `agent_accounts::Ask` says
-  whom a listing asks: `Nobody` (the saved answers), `Accounts(ids)` (a
-  provider's Refresh button, or the account a sign-in was for) or
-  `Everyone` (Welcome's Refresh); `ListAgentAccounts` gained `ids`. Saved
+  whom a listing asks: `Nobody` (the saved answers) or `Accounts(ids)` (a
+  provider's Refresh button, Welcome's Refresh for every account shown, or
+  the account a sign-in was for); `ListAgentAccounts` gained `ids`. Saved
   measurements no longer expire after five minutes, only when their
   window resets; cards say when they were checked.
+- **Antigravity turned off; Codex by default** (Huan, 2026-11-14):
+  `agents::turned_off` hides an agent from the model rail, favourites,
+  quota chips and Welcome's accounts, skips its model listing, and `say`
+  refuses its messages, old conversations included. `default_kind()` is
+  Codex, which new conversations and cell suggestions start with.
 
 
 ## Running it
