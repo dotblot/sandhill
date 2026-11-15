@@ -238,7 +238,8 @@ Keeps agent types, state, construction, refresh and conversation/account queries
 | New file | What it holds | About how many lines |
 |---|---|---|
 | `agents/terminal_events.rs` | Terminal subscriptions, output and chat event handling | 260 |
-| `agents/view_switching.rs` | View handoff state methods, switching and legacy bridge recovery | 280 |
+| `agents/view_switching.rs` | View handoff state methods, switching and legacy bridge recovery | 290 |
+| `agents/view_switching/tests.rs` | View handoff and legacy bridge recovery tests | 90 |
 | `agents/messages.rs` | Starting conversations, submitting messages, interrupts and question answers | 380 |
 
 ### App `agents/chat.rs`
@@ -269,11 +270,15 @@ Keeps explorer types, state, construction, selection, layout and render entry po
 | `panes/explorer/row_loading.rs` | Block requests, row caching, invalidation and shape updates | 210 |
 | `panes/explorer/toolbar.rs` | Action row, menu state and status-note rendering | 200 |
 
+### App `agents/input_box.rs`
 
+Keeps drafts, mentions, attachments and conversation commands/lifecycle entry points.
 
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `agents/input_box/model_choices.rs` | Model lists and selection, effort, modes, web/Console choices and favourites | 560 |
 
-
-
+App built 2026-11-15. All seven app parents are under about 1,000 lines; nothing was left whole. Each split passed format, clippy and all 291 app tests.
 
 ## Order
 
