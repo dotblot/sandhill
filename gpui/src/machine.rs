@@ -135,9 +135,36 @@ fn with_env(text: String, session: &SessionInfo, specs: &[KernelspecInfo]) -> St
     }
 }
 
-/// "R 4.4.1", "Python 3.12 (omicverse)".
+/// Which R kernel runs a session, when it is R: Ark or IRkernel (Huan,
+/// 2026-11-15: their sessions otherwise read the same). Conda's R kernels
+/// (`conda-env-…-r`) are IRkernel.
+fn r_kernel(session: &SessionInfo, specs: &[KernelspecInfo]) -> Option<&'static str> {
+    if language_label(&session.language) != "R" {
+        return None;
+    }
+    let spec = specs.iter().find(|k| k.name == session.kernel);
+    let name = session.kernel.to_ascii_lowercase();
+    let display = spec.map_or(String::new(), |k| k.display_name.to_ascii_lowercase());
+    if name.contains("ark") || display.contains("ark") {
+        Some("Ark")
+    } else if display.contains("irkernel")
+        || name == "ir"
+        || name.starts_with("ir-")
+        || name.starts_with("ir_")
+        || (name.starts_with("conda-") && name.ends_with("-r"))
+    {
+        Some("IRkernel")
+    } else {
+        None
+    }
+}
+
+/// "Ark R 4.4.1", "IRkernel R 4.6.2", "Python 3.12 (omicverse)".
 pub(crate) fn session_label(session: &SessionInfo, specs: &[KernelspecInfo]) -> String {
-    let name = language_label(&session.language);
+    let mut name = language_label(&session.language);
+    if let Some(kernel) = r_kernel(session, specs) {
+        name = format!("{kernel} {name}");
+    }
     let version = language_version(session);
     let text = if version.is_empty() {
         name
@@ -819,8 +846,9 @@ fn small_button(id: &'static str, label: &'static str, danger: bool, p: &Palette
 mod tests {
     use super::{
         MemoryWarnings, format_bytes, kernel_memory_high, language_version, resource_rows,
+        session_label,
     };
-    use sandhill_proto::{SessionInfo, SessionStatus};
+    use sandhill_proto::{KernelspecInfo, SessionInfo, SessionStatus};
 
     #[test]
     fn memory_threshold_is_strict_device_scoped_and_rearms() {
@@ -913,5 +941,34 @@ mod tests {
         assert_eq!(format_bytes(56 * 1024), "56 KB");
         assert_eq!(format_bytes(412 * 1024 * 1024), "412 MB");
         assert_eq!(format_bytes(2_254_857_830), "2.1 GB");
+    }
+
+    #[test]
+    fn ark_and_irkernel_sessions_are_told_apart() {
+        let spec = |name: &str, display: &str| KernelspecInfo {
+            name: name.into(),
+            display_name: display.into(),
+            language: "R".into(),
+            env: None,
+        };
+        let specs = [
+            spec("ark", "Ark R Kernel"),
+            spec("ir", "R 4.6.2 (IRkernel)"),
+            spec("conda-env-omicverse-r", "R [conda env:omicverse]"),
+        ];
+        let on = |kernel: &str| SessionInfo {
+            kernel: kernel.into(),
+            ..session("R", "4.6.2")
+        };
+        assert_eq!(session_label(&on("ark"), &specs), "Ark R 4.6.2");
+        assert_eq!(session_label(&on("ir"), &specs), "IRkernel R 4.6.2");
+        assert_eq!(
+            session_label(&on("conda-env-omicverse-r"), &specs),
+            "IRkernel R 4.6.2"
+        );
+        assert_eq!(
+            session_label(&session("python", "3.12.4"), &specs),
+            "Python 3.12"
+        );
     }
 }

@@ -20,7 +20,9 @@ used through `[patch.crates-io]` in `gpui/Cargo.toml` (Huan, 2026-11-13).
   never moves the list or the panel; its corner drags to resize it for the
   session. Clicks in it don't dismiss the menu. (2026-11-15) An item
   selected without documentation asks the editor's `CompletionDocs`
-  (`set_completion_docs`) after 120 ms and shows the answer.
+  (`set_completion_docs`) after 120 ms and shows the answer. The panel
+  itself shows only 3 s after the last new items (typing), or at once
+  where `show_completion_docs_now` (Tab) asked.
 - `src/input/popovers/mod.rs` (2026-11-14): documentation renders as the AI
   pane's replies do, prose in the interface font and code blocks in the
   code font; fences that name no language take the editor's. (2026-11-15)

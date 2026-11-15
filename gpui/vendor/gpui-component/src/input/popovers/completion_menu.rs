@@ -346,7 +346,29 @@ pub struct CompletionMenu {
     /// The offset of the first character that triggered the completion.
     pub(crate) trigger_start_offset: Option<usize>,
     query: SharedString,
+    /// Sandhill: whether the documentation beside the menu shows: after
+    /// `DOCS_DELAY` without typing, or at once for Tab.
+    docs_shown: bool,
+    /// Bumped by every new set of items; a delay that sees another value
+    /// was overtaken by typing.
+    docs_generation: u64,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Sandhill: how long the menu waits after typing before its documentation
+/// shows (Huan, 2026-11-15); Tab shows it at once.
+const DOCS_DELAY: Duration = Duration::from_secs(3);
+
+thread_local! {
+    /// Sandhill: the caret offset where Tab asked for documentation at once.
+    static DOCS_NOW: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+/// Sandhill: Tab with the caret at `offset`: the completion menu there shows
+/// its documentation at once, whether it is open or about to open. Typing
+/// afterwards hides it again until the next pause.
+pub fn show_completion_docs_now(offset: usize) {
+    DOCS_NOW.with(|now| now.set(Some(offset)));
 }
 
 impl CompletionMenu {
@@ -391,6 +413,8 @@ impl CompletionMenu {
                 open: false,
                 trigger_start_offset: None,
                 query: SharedString::default(),
+                docs_shown: false,
+                docs_generation: 0,
                 _subscriptions,
             }
         })
@@ -496,6 +520,24 @@ impl CompletionMenu {
         let items = items.into();
         self.offset = offset;
         self.open = true;
+        // Sandhill: new items come from typing (documentation waits for a
+        // pause) unless Tab asked for them here.
+        self.docs_generation += 1;
+        self.docs_shown = DOCS_NOW.with(Cell::take) == Some(offset);
+        if !self.docs_shown {
+            let generation = self.docs_generation;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(DOCS_DELAY).await;
+                this.update(cx, |this, cx| {
+                    if this.docs_generation == generation && this.open {
+                        this.docs_shown = true;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
         self.list.update(cx, |this, cx| {
             let longest_ix = items
                 .iter()
@@ -552,6 +594,7 @@ impl Render for CompletionMenu {
         let list = self.list.clone();
         let docs = self.list.clone();
         let menu = cx.weak_entity();
+        let shown = menu.clone();
 
         deferred(
             CaretAnchoredPopup::new(self.editor.clone(), move |anchor, window, cx| {
@@ -585,6 +628,11 @@ impl Render for CompletionMenu {
                     .into_any_element()
             })
             .side(move |most, window, cx| {
+                let menu = shown.upgrade()?;
+                let menu = menu.read(cx);
+                if !menu.docs_shown && DOCS_NOW.with(Cell::get) != Some(menu.offset) {
+                    return None;
+                }
                 let delegate = docs.read(cx).delegate();
                 let ix = delegate.selected_ix;
                 let text = match delegate.selected_item()?.documentation.clone()? {

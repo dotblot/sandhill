@@ -12,7 +12,9 @@ mod number_input;
 mod otp_input;
 mod overlay;
 pub(crate) mod popovers;
-pub use popovers::{CompletionDocs, set_completion_docs, set_popup_insets};
+pub use popovers::{
+    CompletionDocs, set_completion_docs, set_popup_insets, show_completion_docs_now,
+};
 mod search;
 mod syntax_context;
 

@@ -5,6 +5,7 @@ mod diagnostic_popover;
 mod hover_popover;
 
 pub use caret_anchored::set_popup_insets;
+pub use completion_menu::show_completion_docs_now;
 pub(crate) use caret_anchored::*;
 pub(crate) use code_action_menu::*;
 pub(crate) use completion_menu::*;

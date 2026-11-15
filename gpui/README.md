@@ -1170,6 +1170,14 @@ preview and R's imports weren't seen.
   Answers are kept per editor and filled in on the next answer. Kernel
   items no longer say "Live kernel". Checked with Ark R (`read.cs`, hover
   on `read.csv`) and the Python Console (`sc.Ann`).
+- **Documentation delay, kernel names, F1** (Huan, 2026-11-15): the
+  completion menu's documentation shows 3 s after the last keystroke, or at
+  once on Tab (`complete_on_tab` calls `show_completion_docs_now`). R
+  sessions are labelled by kernel (`machine::r_kernel`: Ark, or IRkernel
+  for `ir`, `ir-…` and conda's `…-r`) everywhere `session_label` is used.
+  F1 (`help_at_cursor`) now also works in the Console, takes the language
+  from the focused editor, moves the Console to the file's live session
+  first, and says so in Help when no session of that language runs.
 
 
 ## Running it

@@ -1602,7 +1602,8 @@ impl Workbench {
     }
 
     /// Tab after a name, `$`, `.`, `::`, `(`, `,` or `[` in an R or Python
-    /// editor or the Console opens completions; elsewhere it indents.
+    /// editor or the Console opens completions with their documentation at
+    /// once (typing waits three seconds for it); elsewhere it indents.
     pub(crate) fn complete_on_tab(
         &mut self,
         window: &mut Window,
@@ -1634,7 +1635,10 @@ impl Workbench {
         {
             return false;
         }
+        gpui_kit::component::input::show_completion_docs_now(cursor);
         editor.update(cx, |editor, cx| editor.show_completions(window, cx));
+        // An open menu shows its documentation now.
+        window.refresh();
         true
     }
 }

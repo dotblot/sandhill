@@ -161,7 +161,8 @@ These plans are history: where they differ from this file, this file wins.
   moves the Console to that session; Variables, Help and Packages show the
   Console's kernel, so opening a file without one keeps them (Huan,
   2026-11-13). A Kernels row is one line: icon, name and version, then the
-  open files using it. Above 80% of device memory used by
+  open files using it; R sessions name their kernel, "Ark R 4.6.2" or
+  "IRkernel R 4.6.2" (Huan, 2026-11-15). Above 80% of device memory used by
   kernels, warn once per crossing. Console plots stay inline unless sent to
   Plots (per plot or all; auto-send is an opt-in switch). The plot zoom and
   save window (Huan, 2026-11-14; `docs/design/plot-save-window-plan.md`)
@@ -192,7 +193,11 @@ These plans are history: where they differ from this file, this file wins.
   the code font is wider (Huan, 2026-11-15). The hover popup's corner away
   from the text drags to resize it for the session. Every suggestion shows
   its documentation: items that come without it (Ark's, kernels') are
-  looked up once selected; no "Live kernel" label. Kernel
+  looked up once selected; no "Live kernel" label. While typing, the
+  documentation beside the list waits until 3 seconds pass without typing;
+  Tab shows it at once (Huan, 2026-11-15). F1 (fn+F1) on a name in a
+  script, cell or the Console opens its page in Help, from the file's own
+  kernel (the Console moves to it), else the Console's. Kernel
   pickers drop the grey environment line when the name already shows it.
   The data explorer's column edges drag to resize (Huan, 2026-11-14): no
   type line under names; each header's ⋮ menu (Copy, Select, Pin/Unpin,

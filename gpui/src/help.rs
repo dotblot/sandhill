@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{EditorState, Input, InputEvent, InputState};
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -472,38 +472,73 @@ impl Workbench {
         }
     }
 
-    /// F1: help for the name under the cursor in a script or cell, in the
-    /// language of the session in front.
+    /// F1 (fn+F1 on a Mac keyboard): help for the name under the cursor (or
+    /// the selected name) in a script, a cell or the Console, read from a
+    /// live session of the code's language: the file's own (the Console
+    /// moves to it, as running the file does), else the Console's.
     pub(crate) fn help_at_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(open) = self.open.as_ref() else {
+        let focused = |editor: &Entity<EditorState>, cx: &App| {
+            editor.read(cx).focus_handle(cx).is_focused(window)
+        };
+        let console = focused(&self.console_input, cx);
+        let editor = if console {
+            Some(self.console_input.clone())
+        } else {
+            self.open
+                .as_ref()
+                .and_then(|open| open.editors.iter().find(|e| focused(e, cx)).cloned())
+        };
+        let Some(editor) = editor else {
             return;
         };
-        let Some(editor) = open
-            .editors
-            .iter()
-            .find(|e| e.read(cx).focus_handle(cx).is_focused(window))
-            .cloned()
-        else {
-            return;
-        };
-        let language = self.active_language().unwrap_or_else(|| "r".into());
-        let (selected, text, at) = {
+        let (language, selected, text, at) = {
             let e = editor.read(cx);
             (
+                e.language_name().to_ascii_lowercase(),
                 e.selected_value().to_string(),
                 e.value().to_string(),
                 e.cursor_position(),
             )
         };
+        if !matches!(language.as_str(), "r" | "python") {
+            return;
+        }
         let asked = if !selected.trim().is_empty() {
             name_at(selected.trim(), 0, &language)
         } else {
             let line = text.split('\n').nth(at.line as usize).unwrap_or("");
             name_at(line, at.character as usize, &language)
         };
-        if let Some(asked) = asked {
-            self.ask_help(asked, window, cx);
+        let Some(asked) = asked else {
+            return;
+        };
+        if !console
+            && let Some(path) = self
+                .open
+                .as_ref()
+                .filter(|open| open.session.id().is_some())
+                .map(|open| open.notebook.path.clone())
+            && self.console_bound_file() != Some(path.as_str())
+        {
+            self.bind_console_document(&path, cx);
         }
+        let live = self
+            .variables_session()
+            .and_then(|session| self.session_language(session))
+            .is_some_and(|l| l.to_ascii_lowercase().starts_with(&language));
+        if !live {
+            self.top_tab = TopTab::Help;
+            self.show_files = true;
+            self.help.page = None;
+            self.help.page_error = Some(format!(
+                "Help for {} comes from a running {} session. Run some code first, then press F1 again.",
+                asked.topic,
+                if language == "r" { "R" } else { "Python" }
+            ));
+            cx.notify();
+            return;
+        }
+        self.ask_help(asked, window, cx);
     }
 
     /// Help asked for elsewhere (the Console, Packages): the Help tab comes
