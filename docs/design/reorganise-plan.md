@@ -1,0 +1,146 @@
+# Tidying files and folders
+
+Huan, 2026-11-15. Status: proposed, waiting for Huan's approval.
+
+Huan: "The framework and most of the details are fixed. No big changes in
+the future." So the layout can now be made to fit what Sandhill became.
+Huan asked for all five parts below.
+
+## Rules for every step
+
+- **Moving and renaming only.** No behaviour, wording, layout or look
+  changes. A function reads the same before and after.
+- One part at a time, one commit per step, each after the usual checks
+  (`cargo fmt`, clippy, tests; for the app, inside its folder).
+- The UI consistency work (`ui-consistency-plan.md`) pauses until parts 3
+  and 4 are done, so the two never touch the same files at once.
+- After parts 3 to 5: open the app once and click through Welcome, a
+  notebook run, the Console, Git and the AI pane.
+
+## Part 1: finished plans move to `docs/design/done/`
+
+Stay at the top of `docs/design/` (still in use):
+
+- `ui-consistency-plan.md` (in progress), this plan, and `ui/`.
+- `bioinfo-ide-framework.md`, `agents-v2-plan.md`, `gpui-plan.md`:
+  `CLAUDE.md` names them as the main design documents.
+
+Move to `docs/design/done/` (built; kept as history): the other 23 plans
+(`agent-accounts`, `bioinformatics-assistance`, `close-file`,
+`completion-console`, `data-explorer-redesign`, `file-opening`,
+`file-split`, `folder-chooser`, `folder-trust`,
+`idle-agents-welcome-window`, `irkernel-install`, `markdown-images`,
+`new-conversation`, `open-files-polish`, `openscience`, `pi-omp`,
+`plot-save-window`, `rstudio-positron-borrowing`, `server-split`, both
+`ui-feedback-2026-11-11`, and the four `welcome-*`).
+
+Before moving each one I check it really is built; any that is not stays
+at the top and is listed for Huan. The 25 links to them in `CLAUDE.md`,
+`gpui/README.md` and the other documents are updated in the same commit.
+A short `done/README.md` says these are history and may use old names.
+
+## Part 2: `CLAUDE.md` split by topic
+
+`CLAUDE.md` is 478 lines; "Decisions that are settled" alone is 400, with
+some single bullets 80 lines long. It becomes:
+
+- `CLAUDE.md` (about 80 lines): who Huan is and how to work, the
+  conventions, and a list: "before touching X, read `docs/decisions/Y.md`".
+  `AGENTS.md` stays a link to it.
+- `docs/decisions/`, one file per topic, the same sentences moved, each
+  under a short heading so a rule can be found and corrected:
+
+  | File | Holds (today's bullets) |
+  |---|---|
+  | `look.md` | Look, tabs and capsules, consistency, popups and dropdowns, icons |
+  | `window.md` | Window layout, title bar, Welcome, panes' size buttons |
+  | `editor-and-kernels.md` | Editor row, kernels, Console, completion, Help, data explorer, notebook cells |
+  | `files.md` | Notebook formats, standalone files, previews, compress/extract |
+  | `agents.md` | AI conversations, agents, accounts, model and effort pickers |
+  | `devices.md` | Daemon, wire protocol, quitting, closing files, device management, folder trust, journaling |
+  | `licences.md` | Open source, Positron/Ark, brand marks, fonts |
+
+  Nothing is reworded or dropped; a check counts that every sentence of
+  today's file is in exactly one new file.
+
+One cost to know: AI helpers are handed `CLAUDE.md` automatically, but the
+topic files only when they open them. The list in `CLAUDE.md` tells them
+which to read first; a helper that skips it could miss a rule. The gain is
+that Huan can read and correct one topic at a time.
+
+## Part 3: the Mac app's folder is named `app/`
+
+`gpui/` is named after the toolkit. It becomes `app/` (free since the
+Tauri app was retired).
+
+Changes with it: the root `Cargo.toml`, `notices/make.sh`,
+`docs/design/ui/brand/build.py`, `README.md`, `CLAUDE.md`,
+`docs/design.md`, `docs/protocol.md`, three comments in the daemon, the
+app's own `README.md` and scripts, and the GitHub build recipe
+`.github/workflows/gpui-mac.yml`, which is renamed `mac-app.yml`.
+Finished plans in `done/` keep the old name (they are history).
+
+Not renamed: the program inside the app stays `sandhill-gpui`, and the
+toolkit's own names (`gpui-kit`, `vendor/gpui-component`) are theirs.
+
+Two things to know: the first build afterwards starts from nothing (a few
+minutes), and the GitHub build recipe can only be proven by a push, so
+Huan will be asked to push after this part.
+
+## Part 4: the app's 84 loose files go into folders
+
+Today `src/` has 84 files side by side. After: 7 at the top and 6 folders
+named after the part of the window they draw. Files that repeat their
+folder's name lose the prefix (`agents_view.rs` becomes `agents/view.rs`).
+
+Stay at the top: `main.rs`, `workbench.rs` (+ `workbench/`), `view.rs`
+(+ `view/`), `look.rs`, `prefs.rs`, `daemon.rs`, `connection.rs`.
+
+| Folder | Files moving in |
+|---|---|
+| `agents/` (14) | `agents.rs` stays as its head; `agents_box` → `input_box`, `agents_start` → `start`, `agents_view` → `view`, `agent_accounts` → `accounts`, `agent_edits` → `edits`, `chat`, `composer`, `composer_view`, `effort_bar`, `quota`, `cell_ai`, `notebook_ai`, `ghost` |
+| `editor/` (27) | `notebook`, `cells`, `cell_view`, `documents`, `render_document`, `statements`, `r_keys`, `rainbow`, `colouring`, `bio_text`, `find`, `outline`, `language/`, `output_text`, `output_table`, `html_table`, `table`, `table_selection`, `shown`, `md_images`, `doc_text`, `delimited`, `media` (+ `media/`), `pages`, `export`, `imports`, `import_dialog` |
+| `panes/` (15) | `console`, `terminal`, `jobs`, `machine` (Kernels and resources), `kernel_menu`, `irkernel`, `help`, `packages`, `files`, `tree`, `tree_actions`, `plots` (+ `plots/`), `viewer`, `explorer` (+ `explorer/`), `object_explorer` |
+| `git/` (5) | `git.rs` stays as its head; `git_diff` → `diff`, `git_log` → `log`, `git_pane` (+ folder) → `pane`, `git_rewrite` → `rewrite` |
+| `welcome/` (6) | `start_screen` (+ folder), `folder_dialog`, `trust`, `resource_manager`, `app_uninstall`, `project_settings` |
+| `shell/` (11) | `app_window`, `quit`, `main_menu`, `command_palette`, `focus_mode`, `popup`, `panes.rs` → `pane_sizes`, `meter`, `archive_tasks`, `close_file`, `download` |
+
+How: each folder is one commit. Inside the code, a file's address changes
+with its place (`crate::chat` becomes `crate::agents::chat`); those lines
+are updated by the same commit and the compiler proves none was missed.
+No forwarding names are left behind. `gpui/README.md`'s file names are
+updated to match.
+
+## Part 5: the few oversized files are split
+
+Only files over 1,500 lines, split the way `file-split-plan.md` did it
+(child files that can still see their parent's private parts; code moves
+unchanged; tests move with their code):
+
+- App: `notebook.rs` (2,035), `language/providers.rs` (2,024),
+  `agents.rs` (1,903), `chat.rs` (1,858), `agents/view.rs` (1,687),
+  `explorer.rs` (1,553), `agents/input_box.rs` (1,529).
+- Daemon: `git.rs` (1,734), `lifecycle.rs` (1,696), `server.rs` (1,694),
+  `terminal/antigravity.rs` (1,545).
+
+Where each one is cut is decided by reading it, so before each split its
+table (new file, what it holds, about how many lines) is added to this
+plan for Huan to see. A file that turns out to be one long thing that
+doesn't divide naturally is left whole and noted here.
+
+## Order
+
+1. Part 1 (plans), Part 2 (`CLAUDE.md`): documents only.
+2. Part 3 (`app/`), then a push to prove the GitHub build.
+3. Part 4, folder by folder.
+4. Part 5, file by file.
+5. The UI consistency work resumes.
+
+## Questions for Huan
+
+1. Part 2: are you content that helpers must open the topic files, in
+   exchange for a `CLAUDE.md` you can read in a minute?
+2. Part 3: keep the program's inner name `sandhill-gpui`, or rename it
+   `sandhill` too? (Renaming touches the bundle recipe as well.)
+3. Part 4: are the six folder names right? `shell/` means the window's
+   frame; `frame/` or `window/` would also do.
