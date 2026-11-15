@@ -222,6 +222,16 @@ Keeps document types, parsing, serialization and the main notebook entry points.
 | `editor/notebook/quarto_cells.rs` | Lossless Quarto cell editing and source-view conversion | 440 |
 | `editor/notebook/tests.rs` | Notebook parsing, editing, saving and kernel-selection tests | 710 |
 
+### App `editor/language/providers.rs`
+
+Keeps provider state, installation, requests and language-service entry points.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `editor/language/providers/completion_items.rs` | Completion mapping, documentation, ranking, triggers, snippets and acceptance helpers | 700 |
+| `editor/language/providers/completion_items/tests.rs` | Completion-item helper tests | 380 |
+
+
 
 ## Order
 
