@@ -231,6 +231,17 @@ Keeps provider state, installation, requests and language-service entry points.
 | `editor/language/providers/completion_items.rs` | Completion mapping, documentation, ranking, triggers, snippets and acceptance helpers | 700 |
 | `editor/language/providers/completion_items/tests.rs` | Completion-item helper tests | 380 |
 
+### App `agents.rs`
+
+Keeps agent types, state, construction, refresh and conversation/account queries.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `agents/terminal_events.rs` | Terminal subscriptions, output and chat event handling | 260 |
+| `agents/view_switching.rs` | View handoff state methods, switching and legacy bridge recovery | 280 |
+| `agents/messages.rs` | Starting conversations, submitting messages, interrupts and question answers | 380 |
+
+
 
 
 ## Order
