@@ -1,10 +1,10 @@
 # Sandhill icons
 
-Sandhill's 167 shared interface, file, folder, language and integration icons
+Sandhill's 171 shared interface, file, folder, language and integration icons
 use [Gruvbox Material Icons](https://github.com/navernoedenis/gruvbox-material-icons),
 [Lucide](https://github.com/lucide-icons/lucide) and
 [Developer Icons](https://github.com/xandemon/developer-icons), selected by
-Huan on 2026-11-06, and 17 file icons drawn for Sandhill in Gruvbox's
+Huan on 2026-11-06, and 18 file icons drawn for Sandhill in Gruvbox's
 document style (Huan, 2026-11-14). Posit Assistant and Antigravity use Huan's supplied brand
 references, and Oh My Pi and pi their official MIT-licensed marks, instead of
 generic symbols. This replaces Atom Material completely.
@@ -16,8 +16,8 @@ Open [`preview.html`](preview.html) for every icon in light and dark themes;
 
 | Output folder | Purpose | Count |
 |---|---|---|
-| `system/` | Window, toolbar, editor, run, resources, Git and agent controls | 105 |
-| `bio/` | File types, including bioinformatics formats | 40 |
+| `system/` | Window, toolbar, editor, run, resources, Git and agent controls | 106 |
+| `bio/` | File types, including bioinformatics formats | 43 |
 | `folders/` | Project, data, results, figures, notebooks and other folders | 10 |
 | `agents/` | Agent integrations | 8 |
 | `lang/` | R, Python, Nextflow and shell runtimes | 4 |
@@ -38,7 +38,7 @@ package, icon font or network connection is needed to rebuild the assets.
   the light logo backing; `recolor` maps source paint colours to replacements
   in fill/stroke attributes and inline styles without changing vendor originals;
   `viewBox` crops an original with empty margins to its mark.
-- `vendor/`: 167 selected SVGs: pinned library originals, Sandhill's own
+- `vendor/`: 170 selected SVGs: pinned library originals, Sandhill's own
   drawings (`vendor/sandhill/`), the supplied Antigravity and Synthetic
   Sciences SVGs, a trace of the supplied Posit Assistant mark, and the
   official Oh My Pi and pi marks.
@@ -58,12 +58,12 @@ embedded asset set; only normalized output SVGs and the registry are embedded.
 
 - Original geometry is proportionally fitted into a 16px viewBox, including
   source files with negative viewBox origins.
-- Lucide supplies all 105 interface icons. They use `currentColor` and follow
+- Lucide supplies all 106 interface icons. They use `currentColor` and follow
   the control's normal, hovered, selected and disabled text colours. The
   selected favourite star fills the same upstream star geometry via the
   source map's `filled` flag. No new interaction or animation is introduced.
-- Gruvbox supplies 33 file and folder icons and Sandhill's drawings the other
-  17. Their shapes are kept and their colours replaced (Huan, 2026-11-14):
+- Gruvbox supplies 35 file and folder icons and Sandhill's drawings the other
+  18. Their shapes are kept and their colours replaced (Huan, 2026-11-14):
   Gruvbox's warm palette did not sit with Sandhill's cool glass, navy and
   Xcode code colours. `build.py` (`PALETTE`, `in_palette`) moves each Gruvbox
   hue family to the matching Xcode Default (Dark) or Apple system colour,
@@ -85,7 +85,8 @@ embedded asset set; only normalized output SVGs and the registry are embedded.
   a sparse matrix, HDF5/Loom a tree of groups, Parquet columns, RDS/RData a
   box, Nextflow, WDL and CWL workflows that join, chain and fan out, index
   files (BAI, FAI, TBI…) a list of entries in grey, signal tracks (bigWig,
-  wiggle) a coverage curve, and phylogenetic trees a rooted tree. One icon
+  wiggle) a coverage curve, phylogenetic trees a rooted tree, and Excel a
+  spreadsheet grid in green. One icon
   covers a family of extensions (`catalog.json`): PAF, PSL and BLAST use the
   alignment icon, gVCF and MAF the variant one, peaks and BEDPE the interval
   one, h5mu AnnData's, cool/mcool HDF5's, PLINK's `.bim`, `.fam`, `.pgen`,
@@ -115,6 +116,13 @@ Gruvbox includes dedicated Jupyter, Quarto, Snakemake, PDF, SVG and agent
 artwork (the last for CLAUDE.md and AGENTS.md). Formats Gruvbox has no
 artwork for are drawn for Sandhill; only unknown files keep the generic
 document. A project's own icon is the project folder unless one is chosen.
+
+Word (`doc`, `docx`, `docm`, `dot`, `dotx`) and PowerPoint (`ppt`, `pptx`,
+`pptm`, `pps`, `ppsx`, `potx`) use Gruvbox's dedicated drawings. Excel
+(`xls`, `xlsx`, `xlsm`, `xlsb`, `xltx`) uses Sandhill's green spreadsheet
+document, not Microsoft's logo; Gruvbox's table drawing stays with CSV/TSV.
+All these Office files open only with the default app, not in Sandhill.
+
 Developer Icons supplies the R, Python, Bash, Claude and OpenAI integration
 and runtime logos; OpenAI's logo identifies Codex. Agent marks are drawn
 without a background (Huan). Codex's OpenAI logo and OpenScience's Synthetic

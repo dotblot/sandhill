@@ -22,6 +22,7 @@
   "window.minimize": {"library": "lucide", "path": "icons/fold-vertical.svg", "note": "Fold: collapse the pane to its title row (Huan, 2026-11-13)."},
   "window.maximize": {"library": "lucide", "path": "icons/unfold-vertical.svg", "note": "Unfold: the pane fills its column."},
   "window.restore": {"library": "lucide", "path": "icons/rows-2.svg", "note": "Two rows: back to the split, from a folded or unfolded pane; the opposite fold/unfold icon matched its neighbour (Huan, 2026-11-14)."},
+  "preview.hand": {"library": "lucide", "path": "icons/hand.svg", "note": "Hand tool for panning PDF, SVG and image previews."},
   "theme.light": {"library": "lucide", "path": "icons/sun.svg"},
   "theme.dark": {"library": "lucide", "path": "icons/moon.svg"},
   "edit.undo": {"library": "lucide", "path": "icons/undo-2.svg"},

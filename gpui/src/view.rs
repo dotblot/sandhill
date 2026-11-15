@@ -113,8 +113,9 @@ impl Render for Workbench {
                 dismissed |= this.dismiss_plot_size_menu();
                 dismissed |= this.log.take().is_some();
                 dismissed |= this.git.rewrite.take().is_some();
-                dismissed |= this.notebook_ai_menu;
+                dismissed |= this.notebook_ai_menu || this.colouring_menu;
                 this.notebook_ai_menu = false;
+                this.colouring_menu = false;
                 dismissed |= this.main_menu
                     || this.connection_menu
                     || this.kernel_menu

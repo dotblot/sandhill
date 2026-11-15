@@ -171,6 +171,19 @@
     "library": "gruvbox",
     "path": "icons/svg.svg"
   },
+  "file.word": {
+    "library": "gruvbox",
+    "path": "icons/word.svg"
+  },
+  "file.excel": {
+    "library": "sandhill",
+    "path": "icons/excel.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Excel workbooks, a spreadsheet grid cut out of a green document, not Microsoft's logo. Gruvbox has no Excel artwork; its table icon remains for delimited text."
+  },
+  "file.powerpoint": {
+    "library": "gruvbox",
+    "path": "icons/powerpoint.svg"
+  },
   "file.bibliography": {
     "library": "gruvbox",
     "path": "icons/bibliography.svg"

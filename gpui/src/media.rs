@@ -7,6 +7,7 @@ use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context as _, Result, ensure};
 use gpui_kit::component::h_flex;
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_link::Target;
 use sandhill_proto::{Call, PageUrl};
@@ -14,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::runtime::Runtime;
 
 use crate::daemon::Daemon;
-use crate::look::{Palette, bar_button};
+use crate::look::{Palette, bar_button, icon_button};
 use crate::workbench::Workbench;
 
 pub(crate) mod cache;
@@ -150,6 +151,7 @@ pub(crate) struct MediaView {
     pages: usize,
     /// None means fit, otherwise an absolute scale (1 = actual size).
     zoom: Option<f64>,
+    hand: bool,
     owner: WeakEntity<Workbench>,
 }
 
@@ -199,6 +201,7 @@ impl MediaView {
                         Ok(preview) => {
                             this.pages = preview.pages();
                             preview.hide(this.hidden);
+                            preview.set_hand(this.hand);
                             State::Ready(Rc::new(preview))
                         }
                         #[cfg(not(target_os = "macos"))]
@@ -248,6 +251,7 @@ impl MediaView {
             page: 0,
             pages: 0,
             zoom: None,
+            hand: false,
             owner,
         }
     }
@@ -282,6 +286,15 @@ impl MediaView {
         if let State::Ready(view) = &self.state {
             self.set_zoom(Some((view.scale() * factor).clamp(0.05, 16.)), cx);
         }
+    }
+
+    fn toggle_hand(&mut self, cx: &mut Context<Self>) {
+        self.hand = !self.hand;
+        #[cfg(target_os = "macos")]
+        if let State::Ready(view) = &self.state {
+            view.set_hand(self.hand);
+        }
+        self.changed(cx);
     }
 
     fn turn_page(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -342,20 +355,50 @@ impl MediaView {
             bar = bar
                 .child(
                     bar_button("media-zoom-out", "−", None, &p)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Zoom out").build(w, cx)
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.step_zoom(1. / 1.25, cx))),
                 )
                 .child(
                     bar_button("media-fit", "Fit", None, &p)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Fit to pane").build(w, cx)
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.set_zoom(None, cx))),
                 )
                 .children(self.zoom.map(|z| div().child(format!("{:.0}%", z * 100.))))
                 .child(
-                    bar_button("media-actual-size", "100%", None, &p)
+                    bar_button("media-actual-size", "Actual Size", None, &p)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Actual size").build(w, cx)
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.set_zoom(Some(1.), cx))),
                 )
                 .child(
                     bar_button("media-zoom-in", "+", None, &p)
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Zoom in").build(w, cx)
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.step_zoom(1.25, cx))),
+                )
+                .child(
+                    icon_button("media-hand", "preview.hand", &p, false)
+                        .when(self.hand, |button| {
+                            button.bg(p.accent_soft).text_color(p.accent)
+                        })
+                        .tooltip({
+                            let hand = self.hand;
+                            move |w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(if hand {
+                                    "Back to the pointer"
+                                } else {
+                                    "Move the picture"
+                                })
+                                .build(w, cx)
+                            }
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_hand(cx))),
                 );
         }
         bar.into_any_element()

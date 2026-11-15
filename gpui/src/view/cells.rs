@@ -370,6 +370,7 @@ impl Workbench {
                             .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
                     )
                 })
+                .children(self.colouring_button(cx))
                 .children(wrap_button)
                 .child(
                     bar_button("save", "Save", Some("doc.save"), &p)

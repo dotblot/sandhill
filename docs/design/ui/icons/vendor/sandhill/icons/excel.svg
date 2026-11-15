@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- Sandhill: Excel workbooks: a spreadsheet grid, not Microsoft's logo. Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14). -->
+<mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+<rect width="24" height="24" fill="white"/>
+<g fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="12" width="10" height="7" rx="0.4"/><path d="M7 15.5h10M10.3 12v7M13.7 12v7"/></g>
+</mask>
+<path fill="#a9b665" mask="url(#cut)" d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5z"/>
+</svg>

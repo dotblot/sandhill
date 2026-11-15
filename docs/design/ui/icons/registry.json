@@ -298,6 +298,18 @@
     "note": "Two rows: back to the split, from a folded or unfolded pane; the opposite fold/unfold icon matched its neighbour (Huan, 2026-11-14)."
    }
   },
+  "preview.hand": {
+   "file": "system/preview.hand.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Pan preview",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/hand.svg",
+    "note": "Hand tool for panning PDF, SVG and image previews."
+   }
+  },
   "theme.light": {
    "file": "system/theme.light.svg",
    "kind": "system",
@@ -1784,6 +1796,40 @@
    },
    "light": "bio/svg.light.svg"
   },
+  "file.word": {
+   "file": "bio/word.svg",
+   "kind": "file",
+   "family": "docs",
+   "label": "Word document",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/word.svg"
+   },
+   "light": "bio/word.light.svg"
+  },
+  "file.excel": {
+   "file": "bio/excel.svg",
+   "kind": "file",
+   "family": "docs",
+   "label": "Excel workbook",
+   "source": {
+    "library": "sandhill",
+    "path": "icons/excel.svg",
+    "note": "Drawn for Sandhill in Gruvbox Material's document style: Excel workbooks, a spreadsheet grid cut out of a green document, not Microsoft's logo. Gruvbox has no Excel artwork; its table icon remains for delimited text."
+   },
+   "light": "bio/excel.light.svg"
+  },
+  "file.powerpoint": {
+   "file": "bio/powerpoint.svg",
+   "kind": "file",
+   "family": "docs",
+   "label": "PowerPoint presentation",
+   "source": {
+    "library": "gruvbox",
+    "path": "icons/powerpoint.svg"
+   },
+   "light": "bio/powerpoint.light.svg"
+  },
   "file.bibliography": {
    "file": "bio/bibliography.svg",
    "kind": "file",
@@ -2195,6 +2241,22 @@
    "jpeg": "image",
    "svg": "svg",
    "pdf": "pdf",
+   "doc": "word",
+   "docx": "word",
+   "docm": "word",
+   "dot": "word",
+   "dotx": "word",
+   "xls": "excel",
+   "xlsx": "excel",
+   "xlsm": "excel",
+   "xlsb": "excel",
+   "xltx": "excel",
+   "ppt": "powerpoint",
+   "pptx": "powerpoint",
+   "pptm": "powerpoint",
+   "pps": "powerpoint",
+   "ppsx": "powerpoint",
+   "potx": "powerpoint",
    "tif": "image",
    "tiff": "image",
    "bib": "bibliography"
@@ -2261,7 +2323,7 @@
   },
   "sandhill": {
    "name": "Sandhill",
-   "source": "Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14): bioinformatics and workflow formats Gruvbox has no artwork for.",
+   "source": "Drawn for Sandhill in Gruvbox Material's document style (Huan, 2026-11-14): bioinformatics, workflow and spreadsheet formats Gruvbox has no artwork for.",
    "license": "GPL-3.0-or-later, as Sandhill"
   }
  }

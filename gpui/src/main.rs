@@ -18,6 +18,7 @@ mod cell_ai;
 mod cell_view;
 mod cells;
 mod chat;
+mod colouring;
 mod command_palette;
 mod composer;
 mod composer_view;

@@ -1084,6 +1084,23 @@ preview and R's imports weren't seen.
   `raster-images`, so the PNGs that matplotlib and scanpy embed in an SVG
   (each spatial plot) were skipped and only axes and text showed. The
   feature is on; outside files and URLs are still never read.
+- **Opening files polish** (Huan, 2026-11-14;
+  `docs/design/open-files-polish-plan.md`):
+  - The delimited dialog (`delimited.rs::render_delimited_dialog`) has a
+    `Choice` (Text or Import, `first_choice`), sizes from `git::file_size`.
+  - `colouring.rs`: the action row's colouring menu. `notebook::COLOURINGS`
+    lists the choices; `Notebook::recoloured` sets the format (comma/tab →
+    `Delimited`) and language; `show_notebook` applies
+    `prefs::text_colouring`, and saving keeps it. A delimited document's
+    separator now comes from its language (`delimited::separator`), not its
+    file name. `notebook::looks_tab_separated` opens a tab table saved as
+    `.txt` as `Delimited`.
+  - Office files are binary (`notebook::is_binary`) with Word, Excel
+    (Sandhill-drawn) and PowerPoint icons.
+  - Previews: `Actual Size` replaces `100%`; `media/native.rs::HandView`, a
+    transparent overlay added only while the hand is on, drags the PDF or
+    image scroll view and sets open/closed hand cursors. Dragging was not
+    tested in the running app: injected mouse events do not reach it.
 
 
 ## Running it

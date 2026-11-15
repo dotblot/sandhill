@@ -28,6 +28,7 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `window.minimize` | i-minw | `lucide/icons/fold-vertical.svg` | Fold: collapse the pane to its title row (Huan, 2026-11-13). |
 | `window.maximize` | i-maxw | `lucide/icons/unfold-vertical.svg` | Unfold: the pane fills its column. |
 | `window.restore` | i-restw | `lucide/icons/rows-2.svg` | Two rows: back to the split, from a folded or unfolded pane; the opposite fold/unfold icon matched its neighbour (Huan, 2026-11-14). |
+| `preview.hand` |  | `lucide/icons/hand.svg` | Hand tool for panning PDF, SVG and image previews. |
 | `theme.light` |  | `lucide/icons/sun.svg` |  |
 | `theme.dark` |  | `lucide/icons/moon.svg` |  |
 | `edit.undo` | i-undo | `lucide/icons/undo-2.svg` |  |
@@ -148,6 +149,9 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `file.image` |  | `gruvbox/icons/image.svg` |  |
 | `file.pdf` |  | `gruvbox/icons/pdf.svg` |  |
 | `file.svg` |  | `gruvbox/icons/svg.svg` |  |
+| `file.word` |  | `gruvbox/icons/word.svg` |  |
+| `file.excel` |  | `sandhill/icons/excel.svg` | Drawn for Sandhill in Gruvbox Material's document style: Excel workbooks, a spreadsheet grid cut out of a green document, not Microsoft's logo. Gruvbox has no Excel artwork; its table icon remains for delimited text. |
+| `file.powerpoint` |  | `gruvbox/icons/powerpoint.svg` |  |
 | `file.bibliography` |  | `gruvbox/icons/bibliography.svg` |  |
 | `file.file` |  | `gruvbox/icons/document.svg` |  |
 | `folder.project` |  | `gruvbox/icons/folder-project.svg` |  |

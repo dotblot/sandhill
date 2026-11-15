@@ -714,6 +714,11 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.reveal_middle();
+        // A colouring chosen for this file on this Mac wins over its type's.
+        let nb = match crate::prefs::text_colouring(&self.host(), &nb.path) {
+            Some(choice) if nb.can_recolour() => nb.recoloured(&choice),
+            _ => nb,
+        };
         let project = self.project_kernel(nb.language.as_deref());
         let kernel = notebook::recover_kernel(
             &nb,
@@ -731,8 +736,12 @@ impl Workbench {
             ));
         }
         let delimited_header = if nb.format == Format::Delimited {
-            let (header, header_subscriptions) =
-                crate::delimited::decorate_editor(&editors[0], &nb.path, window, cx);
+            let (header, header_subscriptions) = crate::delimited::decorate_editor(
+                &editors[0],
+                crate::delimited::separator(nb.language.as_deref()),
+                window,
+                cx,
+            );
             subscriptions.extend(header_subscriptions);
             Some(header)
         } else {
@@ -989,7 +998,13 @@ impl Workbench {
                             };
                             match notebook::parse_as(&path, &text, open.notebook.format) {
                                 Ok(_) if open.notebook.quarto_source() => {}
-                                Ok(nb) if ids(&nb) == ids(&open.notebook) => {
+                                Ok(mut nb) if ids(&nb) == ids(&open.notebook) => {
+                                    // A chosen colouring is the document's,
+                                    // not the file name's.
+                                    if nb.can_recolour() {
+                                        nb.format = open.notebook.format;
+                                        nb.language = open.notebook.language.clone();
+                                    }
                                     // Cleared outputs stay cleared.
                                     open.notebook = nb
                                 }

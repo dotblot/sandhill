@@ -140,6 +140,37 @@ pub(crate) fn save_project_icon(host: &str, path: &str, icon: Option<&str>) {
     write("projectIcons", json!(icons));
 }
 
+/// How a text file is coloured when chosen in its editor rather than taken
+/// from its type (Huan, 2026-11-14), per device and file, on this Mac only.
+static TEXT_COLOURINGS: std::sync::RwLock<Option<ProjectIcons>> = std::sync::RwLock::new(None);
+
+pub(crate) fn text_colouring(host: &str, path: &str) -> Option<String> {
+    if let Some(choices) = TEXT_COLOURINGS.read().unwrap().as_ref() {
+        return choices.get(host).and_then(|m| m.get(path)).cloned();
+    }
+    let choices: ProjectIcons =
+        serde_json::from_value(read()["textColourings"].clone()).unwrap_or_default();
+    let choice = choices.get(host).and_then(|m| m.get(path)).cloned();
+    *TEXT_COLOURINGS.write().unwrap() = Some(choices);
+    choice
+}
+
+/// `None` goes back to the file type's own colouring.
+pub(crate) fn save_text_colouring(host: &str, path: &str, choice: Option<&str>) {
+    text_colouring(host, path);
+    let mut cached = TEXT_COLOURINGS.write().unwrap();
+    let choices = cached.get_or_insert_default();
+    let device = choices.entry(host.to_string()).or_default();
+    match choice {
+        Some(choice) => device.insert(path.to_string(), choice.to_string()),
+        None => device.remove(path),
+    };
+    if device.is_empty() {
+        choices.remove(host);
+    }
+    write("textColourings", json!(choices));
+}
+
 #[cfg(test)]
 mod local_settings_tests {
     use super::{ProjectPins, editor_soft_wrap_in, project_pins_in};

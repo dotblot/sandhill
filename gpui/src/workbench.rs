@@ -117,7 +117,7 @@ pub(crate) struct Open {
     /// Notebook editors stay alive while the whole Quarto source is shown.
     pub(crate) quarto_view: Option<QuartoView>,
     pub(crate) delimited_header: Option<Entity<EditorState>>,
-    mtime_ms: i64,
+    pub(crate) mtime_ms: i64,
     pub kernel: Option<String>,
     pub session: Session,
     /// Cells (by id) waiting for the kernel to start.
@@ -384,6 +384,8 @@ pub struct Workbench {
     pub(crate) objects: crate::object_explorer::ObjectExplorers,
     pub(crate) focus_mode: crate::focus_mode::FocusMode,
     pub(crate) notebook_ai_menu: bool,
+    /// The open text file's colouring menu (`colouring.rs`).
+    pub(crate) colouring_menu: bool,
     /// The latest problem, shown at the bottom.
     pub(crate) problem: Option<String>,
     /// A short note in the status bar, such as "Saved in …".
@@ -626,6 +628,7 @@ impl Workbench {
             objects: Default::default(),
             focus_mode: Default::default(),
             notebook_ai_menu: false,
+            colouring_menu: false,
             problem: None,
             notice: None,
             setup: Default::default(),

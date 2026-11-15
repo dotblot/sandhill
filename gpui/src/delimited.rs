@@ -22,8 +22,26 @@ pub(crate) struct DelimitedDialog {
     size: Option<u64>,
     sessions: Vec<SessionInfo>,
     selected: Option<String>,
+    choice: Choice,
     loading: bool,
     error: Option<String>,
+}
+
+/// What the dialog's main button does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Choice {
+    Text,
+    Import,
+}
+
+/// Up to 5 MB the text opens editable, so it comes first; above that it
+/// is a read-only start, and a live session can read the whole file.
+fn first_choice(size: Option<u64>, sessions: usize) -> Choice {
+    if size.is_some_and(|size| size > TEXT_LIMIT) && sessions > 0 {
+        Choice::Import
+    } else {
+        Choice::Text
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -118,13 +136,17 @@ fn decorations(text: &str, sep: u8, p: &Palette) -> (Vec<TextDecoration>, usize)
     (marks, header_end)
 }
 
+/// A delimited document's separator, by its colouring (`notebook::COLOURINGS`).
+pub(crate) fn separator(language: Option<&str>) -> u8 {
+    if language == Some("csv") { b',' } else { b'\t' }
+}
+
 pub(crate) fn decorate_editor(
     editor: &Entity<EditorState>,
-    path: &str,
+    sep: u8,
     window: &mut Window,
     cx: &mut Context<Workbench>,
 ) -> (Entity<EditorState>, Vec<Subscription>) {
-    let sep = delimiter(path);
     let p = *Palette::get(cx);
     let text = editor.read(cx).value().to_string();
     let (marks, header_end) = decorations(&text, sep, &p);
@@ -241,6 +263,7 @@ impl Workbench {
             size: None,
             sessions: Vec::new(),
             selected: None,
+            choice: Choice::Text,
             loading: true,
             error: None,
         });
@@ -294,6 +317,7 @@ impl Workbench {
                         dialog.error = Some(format!("Could not list live sessions: {err:#}"))
                     }
                 }
+                dialog.choice = first_choice(dialog.size, dialog.sessions.len());
                 cx.notify();
             })
             .ok();
@@ -493,54 +517,246 @@ impl Workbench {
         }
     }
 
+    fn choose_delimited(&mut self, choice: Choice, cx: &mut Context<Self>) {
+        if let Some(dialog) = &mut self.delimited
+            && (choice == Choice::Text || !dialog.sessions.is_empty())
+        {
+            dialog.choice = choice;
+            cx.notify();
+        }
+    }
+
     pub(crate) fn render_delimited_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dialog = self.delimited.as_ref()?;
         let p = *Palette::get(cx);
         let text_ok = !dialog.loading && dialog.size.is_some();
         let import_ok = !dialog.loading && dialog.selected.is_some();
         let hover = p.ink(8.);
-        let card = v_flex().id("delimited-card").occlude().w(px(520.)).max_h(relative(0.9))
-            .p(px(20.)).gap(px(12.)).rounded(px(look::RADIUS)).bg(p.panel)
-            .border_1().border_color(p.glass_edge).shadow_lg()
+        let name = crate::files::base_name(&dialog.rel).to_string();
+        let mut facts = Vec::new();
+        if let Some((folder, _)) = dialog.rel.rsplit_once('/') {
+            facts.push(folder.to_string());
+        }
+        facts.push(match dialog.size {
+            Some(size) => crate::git::file_size(size),
+            None if dialog.loading => "Checking…".into(),
+            None => "Size unavailable".into(),
+        });
+        facts.push(
+            if delimiter(&dialog.path) == b'\t' {
+                "Tab-separated"
+            } else {
+                "Comma-separated"
+            }
+            .into(),
+        );
+        let large = dialog.size.is_some_and(|size| size > TEXT_LIMIT);
+        let no_sessions = !dialog.loading && dialog.sessions.is_empty();
+        // One selectable row per choice: a radio mark, a title, one line.
+        let option = |id: &'static str, choice: Choice, title: &'static str, detail: String| {
+            let picked = dialog.choice == choice;
+            let enabled = choice == Choice::Text || !no_sessions;
+            v_flex()
+                .id(id)
+                .w_full()
+                .p(px(10.))
+                .gap(px(2.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(if picked { p.accent } else { p.line })
+                .when(!enabled, |d| d.opacity(0.5))
+                .when(enabled, |d| {
+                    d.cursor_pointer().hover(move |d| d.bg(hover)).on_click(
+                        cx.listener(move |this, _, _, cx| this.choose_delimited(choice, cx)),
+                    )
+                })
+                .child(
+                    h_flex()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .size(px(12.))
+                                .flex_none()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(if picked { p.accent } else { p.muted })
+                                .when(picked, |d| d.bg(p.accent)),
+                        )
+                        .child(div().text_color(p.text).child(title)),
+                )
+                .child(div().pl(px(20.)).text_color(p.muted).child(detail))
+        };
+        let sessions = v_flex()
+            .id("delimited-sessions")
+            .pl(px(20.))
+            .pt(px(6.))
+            .gap(px(2.))
+            .max_h(px(180.))
+            .overflow_y_scroll()
+            .children(dialog.sessions.iter().enumerate().map(|(i, session)| {
+                let id = session.id.clone();
+                let selected = dialog.selected.as_deref() == Some(id.as_str());
+                let label = import_session_label(session, &dialog.sessions, &self.kernels);
+                let language = if session.language.eq_ignore_ascii_case("r") {
+                    "lang/r"
+                } else {
+                    "lang/python"
+                };
+                h_flex()
+                    .id(("delimited-session", i))
+                    .w_full()
+                    .min_w_0()
+                    .px(px(8.))
+                    .py(px(5.))
+                    .gap(px(8.))
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .when(selected, |d| d.bg(p.sel))
+                    .hover(move |d| d.bg(hover))
+                    .child(look::picture(language).size(px(14.)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .text_color(p.text)
+                            .child(label),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_delimited_session(&id, cx);
+                    }))
+            }));
+        let link = |id: &'static str, label: &'static str, enabled: bool| {
+            div()
+                .id(id)
+                .text_color(if enabled { p.accent } else { p.faint })
+                .when(enabled, |d| d.cursor_pointer())
+                .child(label)
+        };
+        let import_detail = if no_sessions {
+            "No live R or Python session. Start one in the Console first.".to_string()
+        } else {
+            "Reads the whole file into R or Python.".to_string()
+        };
+        let import = option(
+            "delimited-choose-import",
+            Choice::Import,
+            "Import into a live session",
+            import_detail,
+        )
+        .when(dialog.choice == Choice::Import, |d| {
+            d.child(sessions).child(
+                h_flex()
+                    .pl(px(20.))
+                    .pt(px(4.))
+                    .gap(px(14.))
+                    .child(
+                        link("delimited-copy", "Copy Code", import_ok).when(import_ok, |d| {
+                            d.on_click(
+                                cx.listener(|this, _, _, cx| this.copy_delimited_import_code(cx)),
+                            )
+                        }),
+                    )
+                    .child({
+                        let enabled = import_ok && self.can_insert_into_active_document(cx);
+                        link("delimited-insert", "Insert into Document", enabled).when(
+                            enabled,
+                            |d| {
+                                d.on_click(cx.listener(|this, _, window, cx| {
+                                    this.insert_delimited_import_code(window, cx)
+                                }))
+                            },
+                        )
+                    }),
+            )
+        });
+        let (primary, primary_ok) = match dialog.choice {
+            Choice::Text => ("Open Text", text_ok),
+            Choice::Import => ("Import…", import_ok),
+        };
+        let card = v_flex()
+            .id("delimited-card")
+            .occlude()
+            .w(px(520.))
+            .max_h(relative(0.9))
+            .p(px(20.))
+            .gap(px(10.))
+            .rounded(px(look::RADIUS))
+            .bg(p.panel)
+            .border_1()
+            .border_color(p.glass_edge)
+            .shadow_lg()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Open delimited file"))
-            .child(div().text_color(p.muted).overflow_hidden().text_ellipsis().child(dialog.rel.clone()))
-            .child(div().text_color(p.muted).child(match dialog.size {
-                Some(size) if size > TEXT_LIMIT => format!("{size} bytes. Text opens the first 5 MB read-only; import reads the full file."),
-                Some(size) => format!("{size} bytes. Edit the original text, or import into a live session."),
-                None if dialog.loading => "Checking file and live sessions…".into(),
-                None => "File size unavailable".into(),
-            }))
-            .child(div().text_color(p.muted).child("Import into an existing session"))
-            .child(v_flex().id("delimited-sessions").max_h(px(200.)).overflow_y_scroll()
-                .when(dialog.sessions.is_empty(), |d| d.child(div().py(px(6.)).text_color(p.faint)
-                    .child("No live R or Python session. Import is disabled; no kernel will be started.")))
-                .children(dialog.sessions.iter().enumerate().map(|(i, session)| {
-                    let id = session.id.clone();
-                    let selected = dialog.selected.as_deref() == Some(id.as_str());
-                    let label = import_session_label(session, &dialog.sessions, &self.kernels);
-                    h_flex().id(("delimited-session", i)).w_full().min_w_0().p(px(7.)).gap(px(8.)).rounded(px(4.))
-                        .cursor_pointer().when(selected, |d| d.bg(p.sel)).hover(move |d| d.bg(hover))
-                        .child(div().flex_shrink_0().child(if selected { "●" } else { "○" }))
-                        .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(label))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.select_delimited_session(&id, cx);
-                        }))
-                })))
-            .when_some(dialog.error.clone(), |d, error| d.child(div().text_color(p.err).child(error)))
-            .child(h_flex().justify_end().flex_wrap().gap(px(8.))
-                .child(Button::new("delimited-copy").small().label("Copy Code").disabled(!import_ok)
-                    .on_click(cx.listener(|this, _, _, cx| this.copy_delimited_import_code(cx))))
-                .child(Button::new("delimited-insert").small().label("Insert into Document")
-                    .disabled(!import_ok || !self.can_insert_into_active_document(cx))
-                    .on_click(cx.listener(|this, _, window, cx| this.insert_delimited_import_code(window, cx))))
-                .child(Button::new("delimited-cancel").small().label("Cancel").on_click(cx.listener(|this, _, _, cx| {
-                    this.delimited = None; cx.notify();
-                })))
-                .child(Button::new("delimited-text").small().label("Text").disabled(!text_ok)
-                    .on_click(cx.listener(|this, _, _, cx| this.open_delimited_text(cx))))
-                .child(Button::new("delimited-import").small().primary().label("Import…").disabled(!import_ok)
-                    .on_click(cx.listener(|this, _, window, cx| this.import_delimited_file(window, cx)))));
+            .child(
+                h_flex()
+                    .gap(px(12.))
+                    .pb(px(4.))
+                    .child(look::picture(&look::file_icon(&dialog.path)).size(px(32.)))
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .text_size(px(16.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .text_color(p.muted)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(facts.join(" · ")),
+                            ),
+                    ),
+            )
+            .child(option(
+                "delimited-choose-text",
+                Choice::Text,
+                "View as text",
+                if large {
+                    "First 5 MB, read-only.".into()
+                } else {
+                    "Edit the file.".into()
+                },
+            ))
+            .child(import)
+            .when_some(dialog.error.clone(), |d, error| {
+                d.child(div().text_color(p.err).child(error))
+            })
+            .child(
+                h_flex()
+                    .pt(px(6.))
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("delimited-cancel")
+                            .small()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.delimited = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("delimited-open")
+                            .small()
+                            .primary()
+                            .label(primary)
+                            .disabled(!primary_ok)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                match this.delimited.as_ref().map(|d| d.choice) {
+                                    Some(Choice::Text) => this.open_delimited_text(cx),
+                                    Some(Choice::Import) => this.import_delimited_file(window, cx),
+                                    None => {}
+                                }
+                            })),
+                    ),
+            );
         Some(
             deferred(
                 div()

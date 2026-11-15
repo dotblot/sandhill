@@ -7,12 +7,12 @@ use std::rc::Rc;
 use anyhow::{Context as _, Result, anyhow, ensure};
 use gpui_kit::*;
 use objc2::{
-    msg_send,
+    DefinedClass, MainThreadOnly, define_class, msg_send,
     rc::{Allocated, Retained},
     runtime::{AnyClass, AnyObject},
 };
 use objc2_app_kit::NSView;
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 
 use super::MediaFile;
 
@@ -32,6 +32,8 @@ pub(super) struct Preview {
     viewport: Cell<NSSize>,
     zoom: Cell<Option<f64>>,
     scale: Cell<f64>,
+    hand: Cell<bool>,
+    hand_view: Retained<HandView>,
     _file: MediaFile,
 }
 
@@ -61,6 +63,134 @@ unsafe fn view(name: &'static std::ffi::CStr) -> Result<Retained<AnyObject>> {
     let initialized: Option<Retained<AnyObject>> =
         unsafe { msg_send![allocated, initWithFrame: NSRect::ZERO] };
     initialized.context("the system could not create the preview view")
+}
+
+#[derive(Default)]
+struct HandIvars {
+    /// Window coordinates remain stable while the clip view scrolls.
+    last: Cell<Option<NSPoint>>,
+}
+
+define_class!(
+    // SAFETY: This transparent NSView only handles pointing events and cursor
+    // rects. Its ivars and AppKit calls stay on the main thread.
+    #[unsafe(super = NSView)]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = HandIvars]
+    struct HandView;
+
+    unsafe impl NSObjectProtocol for HandView {}
+
+    impl HandView {
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self, _event: Option<&AnyObject>) -> bool {
+            true
+        }
+
+        #[unsafe(method(resetCursorRects))]
+        fn reset_cursor_rects(&self) {
+            unsafe {
+                let bounds: NSRect = msg_send![self, bounds];
+                let _: () = msg_send![self, addCursorRect: bounds, cursor: &*self.cursor()];
+            }
+        }
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &AnyObject) {
+            let point: NSPoint = unsafe { msg_send![event, locationInWindow] };
+            self.ivars().last.set(Some(point));
+            self.update_cursor();
+        }
+
+        #[unsafe(method(mouseDragged:))]
+        fn mouse_dragged(&self, event: &AnyObject) {
+            let point: NSPoint = unsafe { msg_send![event, locationInWindow] };
+            let Some(previous) = self.ivars().last.replace(Some(point)) else {
+                return;
+            };
+            self.update_cursor();
+            unsafe {
+                let root: Option<Retained<AnyObject>> = msg_send![self, superview];
+                let Some(root) = root else { return };
+                // Both PDFView and NSScrollView expose their document view.
+                // Resolve this on each drag because PDFKit can replace its
+                // document hierarchy when changing pages or display layout.
+                let document: Option<Retained<AnyObject>> = msg_send![&*root, documentView];
+                let Some(document) = document else { return };
+                let scroll: Option<Retained<AnyObject>> =
+                    msg_send![&*document, enclosingScrollView];
+                let Some(scroll) = scroll else { return };
+                let clip: Retained<AnyObject> = msg_send![&*scroll, contentView];
+                let bounds: NSRect = msg_send![&*clip, bounds];
+                // Convert both window positions using the current clip
+                // transform, handling flipped PDF/image coordinates and zoom.
+                let from: NSPoint = msg_send![&*clip, convertPoint: previous, fromView: None::<&NSView>];
+                let to: NSPoint = msg_send![&*clip, convertPoint: point, fromView: None::<&NSView>];
+                let proposed = NSRect::new(
+                    NSPoint::new(
+                        bounds.origin.x - (to.x - from.x),
+                        bounds.origin.y - (to.y - from.y),
+                    ),
+                    bounds.size,
+                );
+                let constrained: NSRect = msg_send![&*clip, constrainBoundsRect: proposed];
+                let _: () = msg_send![&*clip, scrollToPoint: constrained.origin];
+                let _: () = msg_send![&*scroll, reflectScrolledClipView: &*clip];
+            }
+        }
+
+        #[unsafe(method(mouseUp:))]
+        fn mouse_up(&self, event: &AnyObject) {
+            self.ivars().last.set(None);
+            self.update_cursor();
+            unsafe {
+                let point: NSPoint = msg_send![event, locationInWindow];
+                let point: NSPoint = msg_send![self, convertPoint: point, fromView: None::<&NSView>];
+                let visible: NSRect = msg_send![self, visibleRect];
+                let inside: bool = msg_send![self, mouse: point, inRect: visible];
+                if !inside {
+                    let cursor: Retained<AnyObject> =
+                        msg_send![class(c"NSCursor").expect("AppKit provides NSCursor"), arrowCursor];
+                    let _: () = msg_send![&*cursor, set];
+                }
+            }
+        }
+    }
+);
+
+impl HandView {
+    fn new() -> Result<Retained<Self>> {
+        let mtm = MainThreadMarker::new().context("previews require the AppKit main thread")?;
+        let allocated = Self::alloc(mtm).set_ivars(HandIvars::default());
+        let view: Retained<Self> =
+            unsafe { msg_send![super(allocated), initWithFrame: NSRect::ZERO] };
+        unsafe {
+            // NSViewWidthSizable | NSViewHeightSizable.
+            let _: () = msg_send![&*view, setAutoresizingMask: 18usize];
+        }
+        Ok(view)
+    }
+
+    fn cursor(&self) -> Retained<AnyObject> {
+        let cursor = class(c"NSCursor").expect("AppKit provides NSCursor");
+        unsafe {
+            if self.ivars().last.get().is_some() {
+                msg_send![cursor, closedHandCursor]
+            } else {
+                msg_send![cursor, openHandCursor]
+            }
+        }
+    }
+
+    fn update_cursor(&self) {
+        unsafe {
+            let _: () = msg_send![&*self.cursor(), set];
+            let window: Option<Retained<AnyObject>> = msg_send![self, window];
+            if let Some(window) = window {
+                let _: () = msg_send![&*window, invalidateCursorRectsForView: self];
+            }
+        }
+    }
 }
 
 impl Preview {
@@ -143,6 +273,7 @@ impl Preview {
                 )
             }
         };
+        let hand_view = HandView::new()?;
         let composition = window.enable_window_composition()?;
         let surface = composition.create_native_surface()?;
         let attached = (|| -> Result<()> {
@@ -173,6 +304,8 @@ impl Preview {
             viewport: Cell::new(NSSize::ZERO),
             zoom: Cell::new(None),
             scale: Cell::new(1.),
+            hand: Cell::new(false),
+            hand_view,
             _file: file,
         })
     }
@@ -211,10 +344,44 @@ impl Preview {
     pub(super) fn hide(&self, hidden: bool) {
         self.hidden.set(hidden);
         if hidden {
+            self.show_hand(false);
             let _ = self
                 .surface
                 .platform_surface()
                 .and_then(|s| s.set_visible(false));
+        }
+    }
+
+    pub(super) fn set_hand(&self, hand: bool) {
+        self.hand.set(hand);
+        self.show_hand(hand && !self.hidden.get());
+    }
+
+    fn show_hand(&self, visible: bool) {
+        unsafe {
+            let parent: *mut AnyObject = msg_send![&*self.hand_view, superview];
+            if visible && parent.is_null() {
+                let bounds: NSRect = msg_send![&*self.root, bounds];
+                let _: () = msg_send![&*self.hand_view, setFrame: bounds];
+                let _: () = msg_send![&*self.root, addSubview: &*self.hand_view, positioned: 1isize, relativeTo: None::<&NSView>];
+            } else if !visible && !parent.is_null() {
+                self.hand_view.ivars().last.set(None);
+                let _: () = msg_send![&*self.hand_view, removeFromSuperview];
+                let cursor: Retained<AnyObject> = msg_send![
+                    class(c"NSCursor").expect("AppKit provides NSCursor"),
+                    arrowCursor
+                ];
+                let _: () = msg_send![&*cursor, set];
+            } else {
+                return;
+            }
+            let window: Option<Retained<AnyObject>> = msg_send![&*self.root, window];
+            if let Some(window) = window {
+                let _: () = msg_send![&*window, invalidateCursorRectsForView: &*self.root];
+                if visible {
+                    let _: () = msg_send![&*window, invalidateCursorRectsForView: &*self.hand_view];
+                }
+            }
         }
     }
 
@@ -281,6 +448,7 @@ impl Preview {
     fn geometry(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) -> Result<()> {
         let clip = bounds.intersect(&window.content_mask().bounds);
         if self.hidden.get() || clip.is_empty() {
+            self.show_hand(false);
             self.surface.platform_surface()?.set_visible(false)?;
             return Ok(());
         }
@@ -324,6 +492,7 @@ impl Preview {
                 let _: () = msg_send![&*self.root, setBackgroundColor: &*color];
             }
         }
+        self.show_hand(self.hand.get());
         self.surface.platform_surface()?.set_visible(true)?;
         window.insert_hitbox(clip, HitboxBehavior::BlockMouse);
         Ok(())

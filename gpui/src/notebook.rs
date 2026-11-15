@@ -837,6 +837,23 @@ pub(crate) fn is_binary(path: &str) -> bool {
                 | "mcool"
                 | "qs"
                 | "pgen"
+                // Microsoft Office: only the default app opens them.
+                | "doc"
+                | "docx"
+                | "docm"
+                | "dot"
+                | "dotx"
+                | "xls"
+                | "xlsx"
+                | "xlsm"
+                | "xlsb"
+                | "xltx"
+                | "ppt"
+                | "pptx"
+                | "pptm"
+                | "pps"
+                | "ppsx"
+                | "potx"
         )
     )
 }
@@ -885,8 +902,80 @@ fn text_language(path: &str) -> &'static str {
 
 pub fn parse(path: &str, text: &str) -> Result<Notebook> {
     anyhow::ensure!(!is_binary(path), "binary files open with the default app");
-    let format = format_of(path).unwrap_or(Format::Text);
+    let mut format = format_of(path).unwrap_or(Format::Text);
+    if format == Format::Text
+        && extension(path).as_deref() == Some("txt")
+        && looks_tab_separated(text)
+    {
+        format = Format::Delimited;
+    }
     parse_as(path, text, format)
+}
+
+/// A table saved as `.txt` (Huan, 2026-11-14): its first lines, at least
+/// two and at most 20 non-empty ones, all have the same number of tabs,
+/// at least one. A last line cut off by a 5 MB preview is not counted.
+pub(crate) fn looks_tab_separated(text: &str) -> bool {
+    let complete = text.rfind('\n').map_or("", |end| &text[..end]);
+    let mut tabs = complete
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(20)
+        .map(|line| line.matches('\t').count());
+    let Some(first) = tabs.next().filter(|&count| count > 0) else {
+        return false;
+    };
+    let mut lines = 1;
+    for count in tabs {
+        if count != first {
+            return false;
+        }
+        lines += 1;
+    }
+    lines >= 2
+}
+
+/// What a standalone text file can be coloured as, chosen in its editor:
+/// its key (the document's language) and its name.
+pub(crate) const COLOURINGS: [(&str, &str); 16] = [
+    ("text", "Plain text"),
+    ("csv", "Comma-separated"),
+    ("tsv", "Tab-separated"),
+    ("json", "JSON"),
+    ("yaml", "YAML"),
+    ("toml", "TOML"),
+    ("bash", "Shell"),
+    ("python", "Python"),
+    ("r", "R"),
+    ("fasta", "FASTA"),
+    ("fastq", "FASTQ"),
+    ("bio-table", "Genomics table"),
+    ("tree", "Tree (Newick, Nexus)"),
+    ("nextflow", "Nextflow"),
+    ("wdl", "WDL"),
+    ("bibtex", "BibTeX"),
+];
+
+impl Notebook {
+    /// Whether its colouring can be chosen: plain text and delimited files,
+    /// not notebooks, Quarto, scripts or Markdown, whose type decides.
+    pub(crate) fn can_recolour(&self) -> bool {
+        matches!(self.format, Format::Text | Format::Delimited)
+    }
+
+    /// Coloured as `choice` (a `COLOURINGS` key); colour only, nothing runs.
+    pub(crate) fn recoloured(mut self, choice: &str) -> Notebook {
+        if !self.can_recolour() || !COLOURINGS.iter().any(|(key, _)| *key == choice) {
+            return self;
+        }
+        self.format = if matches!(choice, "csv" | "tsv") {
+            Format::Delimited
+        } else {
+            Format::Text
+        };
+        self.language = Some(choice.into());
+        self
+    }
 }
 
 pub(crate) fn parse_as(path: &str, text: &str, format: Format) -> Result<Notebook> {
@@ -1086,6 +1175,16 @@ fn parse_text(path: &str, text: &str, format: Format) -> Notebook {
             }
             .into(),
         ),
+        // Its separator: comma for `.csv`, a tab for `.tsv`, `.tab` and a
+        // `.txt` found tab-separated.
+        Format::Delimited => Some(
+            if extension(path).as_deref() == Some("csv") {
+                "csv"
+            } else {
+                "tsv"
+            }
+            .into(),
+        ),
         _ => None,
     };
     nb
@@ -1229,11 +1328,48 @@ fn sort_keys(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::{
-        CellKind, Format, Notebook, format_of, is_binary, parse, parse_as, pick_kernel,
-        recover_kernel, shell_shebang,
+        CellKind, Format, Notebook, format_of, is_binary, looks_tab_separated, parse, parse_as,
+        pick_kernel, recover_kernel, shell_shebang,
     };
     use sandhill_proto::KernelspecInfo;
     use serde_json::Value;
+
+    #[test]
+    fn txt_tables_are_found_by_consistent_tabs() {
+        assert!(looks_tab_separated("gene\tcount\nCD3E\t12\nMS4A1\t7\n"));
+        // A preview's last line may be cut mid-row.
+        assert!(looks_tab_separated("a\tb\tc\n1\t2\t3\n4\t5"));
+        assert!(!looks_tab_separated("one line\twith a tab\n"));
+        assert!(!looks_tab_separated("a\tb\n1\t2\t3\n"));
+        assert!(!looks_tab_separated("plain\nnotes\n"));
+        let nb = parse("/p/counts.txt", "gene\tcount\nCD3E\t12\n").unwrap();
+        assert_eq!(
+            (nb.format, nb.language.as_deref()),
+            (Format::Delimited, Some("tsv"))
+        );
+        let nb = parse("/p/notes.txt", "a, b\nc, d\n").unwrap();
+        assert_eq!(nb.format, Format::Text);
+    }
+
+    #[test]
+    fn recolouring_changes_only_text_documents() {
+        let text = parse("/p/data.txt", "a,b\n1,2\n")
+            .unwrap()
+            .recoloured("csv");
+        assert_eq!(
+            (text.format, text.language.as_deref()),
+            (Format::Delimited, Some("csv"))
+        );
+        let back = text.recoloured("json");
+        assert_eq!(
+            (back.format, back.language.as_deref()),
+            (Format::Text, Some("json"))
+        );
+        let script = parse("/p/run.py", "x = 1\n").unwrap().recoloured("csv");
+        assert_eq!(script.format, Format::Script);
+        let unknown = parse("/p/a.txt", "x\n").unwrap().recoloured("nonsense");
+        assert_eq!(unknown.language.as_deref(), Some("text"));
+    }
 
     #[test]
     fn mixed_quarto_languages_and_labels_use_the_chunk_parser() {

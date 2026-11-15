@@ -200,6 +200,13 @@
         "i-restw"
       ]
     },
+    "preview.hand": {
+      "file": "system/preview.hand.svg",
+      "kind": "system",
+      "group": "window",
+      "label": "Pan preview",
+      "v31": []
+    },
     "theme.light": {
       "file": "system/theme.light.svg",
       "kind": "system",
@@ -1135,6 +1142,24 @@
       "family": "media",
       "label": "SVG drawing"
     },
+    "file.word": {
+      "file": "bio/word.svg",
+      "kind": "file",
+      "family": "docs",
+      "label": "Word document"
+    },
+    "file.excel": {
+      "file": "bio/excel.svg",
+      "kind": "file",
+      "family": "docs",
+      "label": "Excel workbook"
+    },
+    "file.powerpoint": {
+      "file": "bio/powerpoint.svg",
+      "kind": "file",
+      "family": "docs",
+      "label": "PowerPoint presentation"
+    },
     "file.bibliography": {
       "file": "bio/bibliography.svg",
       "kind": "file",
@@ -1408,6 +1433,22 @@
       "jpeg": "image",
       "svg": "svg",
       "pdf": "pdf",
+      "doc": "word",
+      "docx": "word",
+      "docm": "word",
+      "dot": "word",
+      "dotx": "word",
+      "xls": "excel",
+      "xlsx": "excel",
+      "xlsm": "excel",
+      "xlsb": "excel",
+      "xltx": "excel",
+      "ppt": "powerpoint",
+      "pptx": "powerpoint",
+      "pptm": "powerpoint",
+      "pps": "powerpoint",
+      "ppsx": "powerpoint",
+      "potx": "powerpoint",
       "tif": "image",
       "tiff": "image",
       "bib": "bibliography"
