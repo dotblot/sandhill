@@ -596,7 +596,7 @@ fn badge(text: String, color: Hsla) -> Div {
         .child(text)
 }
 
-impl crate::git_pane::Git {
+impl crate::git::pane::Git {
     pub(crate) fn status_error(&mut self, err: String) {
         self.set_note(err, true);
     }

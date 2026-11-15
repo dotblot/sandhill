@@ -1,6 +1,12 @@
 //! What the Git pane shows, worked out from what the daemon reports, as the
 //! Tauri app's `model/git.ts` does: file marks, line counts, diff lines,
-//! commit messages, branch names, the commit graph and avatars.
+//! commit messages, branch names, the commit graph and avatars. The pane
+//! itself (`pane`), its diff view, log and history rewriting are its children.
+
+pub(crate) mod diff;
+pub(crate) mod log;
+pub(crate) mod pane;
+pub(crate) mod rewrite;
 
 use sandhill_proto::{GitCommit, GitFile, GitStatus};
 

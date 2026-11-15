@@ -342,8 +342,8 @@ pub struct Workbench {
     pub(crate) packages: crate::panes::packages::Packages,
     pub(crate) jobs: crate::panes::jobs::Jobs,
     pub(crate) irkernel: crate::panes::irkernel::IrkernelOffers,
-    pub(crate) git: crate::git_pane::Git,
-    pub(crate) diff: Option<crate::git_diff::DiffTab>,
+    pub(crate) git: crate::git::pane::Git,
+    pub(crate) diff: Option<crate::git::diff::DiffTab>,
     pub(crate) diff_shown: bool,
     pub(crate) terminal: Option<Entity<TerminalView>>,
     pub(crate) terminal_problem: Option<String>,
@@ -491,7 +491,7 @@ impl Workbench {
         let (help, help_subscriptions) = crate::panes::help::new_help(window, cx);
         let (packages, package_subscriptions) = crate::panes::packages::new_packages(window, cx);
         let (jobs, job_subscriptions) = crate::panes::jobs::new_jobs(window, cx);
-        let (git, git_subscriptions) = crate::git_pane::new_git(window, cx);
+        let (git, git_subscriptions) = crate::git::pane::new_git(window, cx);
         let (settings_env, settings_subscription) =
             crate::project_settings::new_env_input(window, cx);
         let (import_name, import_subscription) =
