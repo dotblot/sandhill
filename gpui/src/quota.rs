@@ -272,6 +272,18 @@ fn countdown(seconds: i64) -> String {
     }
 }
 
+/// How old an agent's shown numbers are: from its last Refresh, or for
+/// Claude Code from its conversations, which report them.
+fn checked_label(observed_at: i64, now: i64) -> String {
+    if observed_at <= 0 {
+        "Not checked yet".into()
+    } else if now - observed_at < 60_000 {
+        "Updated just now".into()
+    } else {
+        format!("Updated {} ago", countdown((now - observed_at) / 1000))
+    }
+}
+
 /// Codex's banked resets for an account, from its last usage read:
 /// how many are left and when the first expires. `None` when Codex has not
 /// reported them.
@@ -583,12 +595,6 @@ impl QuotaMonitor {
             for window in snapshot.windows.values() {
                 card = card.child(window.row(now, p));
             }
-            if snapshot.observed_at > 0 && now >= snapshot.observed_at {
-                card = card.child(div().text_color(p.muted).child(format!(
-                    "Checked {} ago",
-                    countdown((now - snapshot.observed_at) / 1000)
-                )));
-            }
         }
         if kind == "codex" && entry.method == "login" {
             let credits = entry
@@ -884,23 +890,39 @@ impl Render for QuotaMonitor {
                                 .child(div().font_weight(FontWeight::BOLD).child(provider.short)),
                         )
                         .child(
-                            Button::new(SharedString::from(format!("quota-refresh-{kind}")))
-                                .small()
-                                .icon(
-                                    gpui_kit::component::Icon::default()
-                                        .path("sandhill/system/refresh.svg"),
-                                )
-                                .ghost()
-                                .loading(refreshing)
-                                .disabled(refreshing)
-                                .tooltip(if refreshing {
-                                    "Refreshing…"
-                                } else {
-                                    "Refresh quota"
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.refresh_accounts(Some(kind), cx)
-                                })),
+                            h_flex()
+                                .gap(px(6.))
+                                .text_color(p.muted)
+                                .child(checked_label(
+                                    managed_accounts
+                                        .iter()
+                                        .filter(|account| account.kind == kind)
+                                        .map(|account| Account::from_agent(account).observed_at)
+                                        .max()
+                                        .unwrap_or(0),
+                                    now,
+                                ))
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "quota-refresh-{kind}"
+                                    )))
+                                    .small()
+                                    .icon(
+                                        gpui_kit::component::Icon::default()
+                                            .path("sandhill/system/refresh.svg"),
+                                    )
+                                    .ghost()
+                                    .loading(refreshing)
+                                    .disabled(refreshing)
+                                    .tooltip(if refreshing {
+                                        "Refreshing…"
+                                    } else {
+                                        "Refresh quota"
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.refresh_accounts(Some(kind), cx)
+                                    })),
+                                ),
                         ),
                 );
             let switchable = shown.as_ref().filter(|(_, can_switch)| *can_switch);

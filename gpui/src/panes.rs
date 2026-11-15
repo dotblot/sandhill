@@ -116,8 +116,9 @@ impl Workbench {
         let collapsed = self.panel_collapsed(panel);
         let expanded = self.vertical(panel).expanded(panel.top());
         // Each icon shows what a click does: fold (collapse to the title
-        // row) or unfold (fill the column). Restoring the split from either
-        // state uses the opposite motion.
+        // row), unfold (fill the column), or two rows (back to the split),
+        // so a folded or unfolded pane never shows two alike (Huan,
+        // 2026-11-14).
         let button = |maximize: bool, restore: bool| {
             let tip = if restore {
                 "Restore pane heights"
@@ -128,10 +129,12 @@ impl Workbench {
             };
             icon_button(
                 SharedString::from(format!("panel-{}-{maximize}", panel.id())),
-                if maximize == restore {
-                    "window.minimize"
-                } else {
+                if restore {
+                    "window.restore"
+                } else if maximize {
                     "window.maximize"
+                } else {
+                    "window.minimize"
                 },
                 &p,
                 false,

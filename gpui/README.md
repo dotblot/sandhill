@@ -1070,12 +1070,16 @@ preview and R's imports weren't seen.
   provider's Refresh button, Welcome's Refresh for every account shown, or
   the account a sign-in was for); `ListAgentAccounts` gained `ids`. Saved
   measurements no longer expire after five minutes, only when their
-  window resets; cards say when they were checked.
+  window resets; each provider's Refresh button says how old they are
+  (`checked_label`, from its accounts' newest `observed_at`).
 - **Antigravity turned off; Codex by default** (Huan, 2026-11-14):
   `agents::turned_off` hides an agent from the model rail, favourites,
   quota chips and Welcome's accounts, skips its model listing, and `say`
   refuses its messages, old conversations included. `default_kind()` is
   Codex, which new conversations and cell suggestions start with.
+- **Pane height icons** (Huan, 2026-11-14): restoring the split now uses
+  `window.restore` (Lucide `rows-2`), not the opposite fold/unfold icon,
+  which matched the button beside it.
 
 
 ## Running it

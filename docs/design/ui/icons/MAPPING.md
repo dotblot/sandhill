@@ -25,9 +25,9 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `device.cloud` | i-cloud | `lucide/icons/cloud.svg` |  |
 | `folder` | i-folder | `lucide/icons/folder.svg` |  |
 | `settings` | i-gear | `lucide/icons/settings.svg` |  |
-| `window.minimize` | i-minw | `lucide/icons/fold-vertical.svg` | Fold: collapse the pane to its title row; also restores a pane filling its column (Huan, 2026-11-13). |
-| `window.maximize` | i-maxw | `lucide/icons/unfold-vertical.svg` | Unfold: the pane fills its column; also restores a collapsed pane. |
-| `window.restore` | i-restw | `lucide/icons/minimize.svg` | Mockup only; the app restores pane heights with the opposite fold/unfold icon. |
+| `window.minimize` | i-minw | `lucide/icons/fold-vertical.svg` | Fold: collapse the pane to its title row (Huan, 2026-11-13). |
+| `window.maximize` | i-maxw | `lucide/icons/unfold-vertical.svg` | Unfold: the pane fills its column. |
+| `window.restore` | i-restw | `lucide/icons/rows-2.svg` | Two rows: back to the split, from a folded or unfolded pane; the opposite fold/unfold icon matched its neighbour (Huan, 2026-11-14). |
 | `theme.light` |  | `lucide/icons/sun.svg` |  |
 | `theme.dark` |  | `lucide/icons/moon.svg` |  |
 | `edit.undo` | i-undo | `lucide/icons/undo-2.svg` |  |

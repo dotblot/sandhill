@@ -267,7 +267,7 @@
    "source": {
     "library": "lucide",
     "path": "icons/fold-vertical.svg",
-    "note": "Fold: collapse the pane to its title row; also restores a pane filling its column (Huan, 2026-11-13)."
+    "note": "Fold: collapse the pane to its title row (Huan, 2026-11-13)."
    }
   },
   "window.maximize": {
@@ -281,7 +281,7 @@
    "source": {
     "library": "lucide",
     "path": "icons/unfold-vertical.svg",
-    "note": "Unfold: the pane fills its column; also restores a collapsed pane."
+    "note": "Unfold: the pane fills its column."
    }
   },
   "window.restore": {
@@ -294,8 +294,8 @@
    ],
    "source": {
     "library": "lucide",
-    "path": "icons/minimize.svg",
-    "note": "Mockup only; the app restores pane heights with the opposite fold/unfold icon."
+    "path": "icons/rows-2.svg",
+    "note": "Two rows: back to the split, from a folded or unfolded pane; the opposite fold/unfold icon matched its neighbour (Huan, 2026-11-14)."
    }
   },
   "theme.light": {

@@ -38,7 +38,7 @@ package, icon font or network connection is needed to rebuild the assets.
   the light logo backing; `recolor` maps source paint colours to replacements
   in fill/stroke attributes and inline styles without changing vendor originals;
   `viewBox` crops an original with empty margins to its mark.
-- `vendor/`: 166 selected SVGs: pinned library originals, Sandhill's own
+- `vendor/`: 167 selected SVGs: pinned library originals, Sandhill's own
   drawings (`vendor/sandhill/`), the supplied Antigravity and Synthetic
   Sciences SVGs, a trace of the supplied Posit Assistant mark, and the
   official Oh My Pi and pi marks.

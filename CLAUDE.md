@@ -195,7 +195,9 @@ These plans are history: where they differ from this file, this file wins.
   AI pane is hidden; one column always stays, and opening or running a
   document shows the middle again (Huan, 2026-11-13). Pane height and size
   icons (Huan, 2026-11-13): fold collapses a pane to its title row, unfold
-  fills its column (restoring uses the opposite motion), corners out/in
+  fills its column, and a folded or unfolded pane shows two rows (Lucide
+  `rows-2`) to restore the split, never the same icon twice (Huan,
+  2026-11-14); corners out/in
   maximize to and restore from the window. The left and middle toggles keep
   plain outline icons. The AI pane's header shows the conversation's name as
   plain text, not a tab; AI replies colour code blocks in Python, R, shell,
@@ -305,7 +307,8 @@ These plans are history: where they differ from this file, this file wins.
   had been checking every minute): only a Refresh click (that provider's
   accounts, or every account on Welcome) or a finished sign-in (that
   account) asks. Otherwise the status bar shows what the last check saved
-  on the device, until its window resets, with "Checked … ago" in the panel.
+  on the device, until its window resets; the panel says beside each Refresh
+  button how old the numbers are ("Updated 3h ago").
 - Positron and Kallichore are Elastic License 2.0: do not copy their code.
   Ark and Air are MIT and may be used.
 - Open source and non-commercial (Huan, 2026-11-06): Sandhill is under
