@@ -196,7 +196,7 @@ impl AppWindow {
         let save_open = menu.open;
         let close_open = menu.open;
         let (stop_host, stop_path) = (menu.host.clone(), menu.path.clone());
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("start-project-menu")
             .track_focus(&self.start.dialog_focus)
             .occlude()

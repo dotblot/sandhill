@@ -4,7 +4,21 @@
 //! this keeps them per conversation and sends the user's messages,
 //! answers and stops. OpenScience is chat-only; Posit Assistant reports
 //! nothing, so its conversations show its own screen. Drawing is in
-//! `agents_view`.
+//! `agents::view`.
+
+pub(crate) mod accounts;
+pub(crate) mod cell_ai;
+pub(crate) mod chat;
+pub(crate) mod composer;
+pub(crate) mod composer_view;
+pub(crate) mod edits;
+pub(crate) mod effort_bar;
+pub(crate) mod ghost;
+pub(crate) mod input_box;
+pub(crate) mod notebook_ai;
+pub(crate) mod quota;
+pub(crate) mod start;
+pub(crate) mod view;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -19,11 +33,11 @@ use sandhill_proto::{
 };
 use serde_json::{Value, json};
 
-use crate::chat::{self, Chat, Entry};
-use crate::composer::{Mention, ModelChoice};
 use crate::daemon::Daemon;
 use crate::terminal::TerminalView;
 use crate::workbench::Workbench;
+use chat::{Chat, Entry};
+use composer::{Mention, ModelChoice};
 
 /// What Claude Code needs between a pasted message and the Enter that sends
 /// it, as in the Tauri app.
@@ -368,7 +382,7 @@ pub struct Agents {
     /// What was added to the message with @ and #, shown as chips.
     pub(crate) refs: Vec<Value>,
     /// What a new conversation's screen knows of the project.
-    pub(crate) start: crate::agents_start::StartContext,
+    pub(crate) start: crate::agents::start::StartContext,
     pub(crate) menu: Option<Menu>,
     pub(crate) popup_triggers: crate::popup::PopupTriggers,
     /// The model menu's tab: an agent's kind, or "fav".
@@ -391,7 +405,7 @@ pub struct Agents {
     pub(crate) held: Option<(String, String)>,
     /// Effort changes settle before they go (the bar can be dragged).
     pub(crate) effort_generation: u64,
-    pub(crate) effort_bar: crate::effort_bar::Bar,
+    pub(crate) effort_bar: crate::agents::effort_bar::Bar,
     pub(crate) workbench: WeakEntity<Workbench>,
     /// Options picked for the agent's questions, by `question_key`.
     pub(crate) picks: HashMap<String, Vec<String>>,
@@ -607,8 +621,8 @@ impl Agents {
         if terminal.kind == "claude" {
             let id = id.clone();
             cx.observe(&view, move |this, view, cx| {
-                let asks =
-                    crate::composer::trust_question(&view.read(cx).screen_text(cx)).is_some();
+                let asks = crate::agents::composer::trust_question(&view.read(cx).screen_text(cx))
+                    .is_some();
                 let changed = if asks {
                     this.trust_asked.insert(id.clone())
                 } else {
@@ -877,7 +891,7 @@ impl Agents {
         let Some(t) = self.current().cloned().filter(|t| {
             matches!(self.show, Show::Chat | Show::Terminal)
                 && t.kind == account.kind
-                && (t.running || crate::composer::can_resume(t))
+                && (t.running || crate::agents::composer::can_resume(t))
                 && t.options.account.as_deref().unwrap_or(&t.kind) != account.id
         }) else {
             return;
@@ -964,7 +978,7 @@ impl Agents {
         cx.spawn(async move |_, cx| {
             for _ in 0..TRUST_TRIES {
                 let shown = view.read_with(cx, |v, cx| {
-                    crate::composer::trust_question(&v.screen_text(cx))
+                    crate::agents::composer::trust_question(&v.screen_text(cx))
                 });
                 let key = match shown {
                     None => return,
@@ -1122,7 +1136,7 @@ impl Agents {
                 let state = t.agent.as_ref().and_then(|a| a["state"].as_str());
                 let recovery = legacy_view_recovery(
                     state,
-                    crate::composer::can_resume(&t),
+                    crate::agents::composer::can_resume(&t),
                     checked.ok().flatten(),
                 );
                 let message = match recovery {
@@ -1357,7 +1371,7 @@ impl Agents {
     /// agent/model currently selected in the composer.
     pub(crate) fn start_notebook_conversation(
         &mut self,
-        action: crate::notebook_ai::NotebookAction,
+        action: crate::agents::notebook_ai::NotebookAction,
         path: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1666,7 +1680,7 @@ pub(crate) fn model_label(t: &TerminalInfo) -> Option<String> {
         .agent
         .as_ref()
         .is_some_and(|a| a["status"]["model"].is_string());
-    (reported || t.options.model.is_some()).then(|| crate::composer::model_label(t))
+    (reported || t.options.model.is_some()).then(|| crate::agents::composer::model_label(t))
 }
 
 /// The number of bytes base64 `data` holds.

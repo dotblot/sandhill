@@ -260,7 +260,7 @@ impl AppWindow {
         let connect_host = host.clone();
         let rename_host = host.clone();
         let local = host == sandhill_link::LOCAL;
-        let menu = crate::composer_view::popup(&p)
+        let menu = crate::agents::composer_view::popup(&p)
             .id("start-device-menu")
             .track_focus(&self.start.dialog_focus)
             .occlude()

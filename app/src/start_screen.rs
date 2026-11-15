@@ -16,7 +16,7 @@ use sandhill_proto::{
     Call, PingReply, ProjectInfo, SessionInfo, SessionStatus, TerminalInfo, TrustedFolder,
 };
 
-use crate::agent_accounts::AccountManager;
+use crate::agents::accounts::AccountManager;
 use crate::app_window::AppWindow;
 use crate::daemon::{Daemon, Streams};
 use crate::folder_dialog::{FolderDialog, FolderDialogDone, Place as FolderPlace};

@@ -703,7 +703,7 @@ impl Workbench {
         let p = *Palette::get(cx);
         let rows = resource_rows(stats, &self.machine.sessions, &self.kernels);
         let r = rows.iter().find(|r| r.key == picked)?;
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("res-pop")
             .occlude()
             .max_h(px(420.))

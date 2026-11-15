@@ -82,7 +82,7 @@ impl Workbench {
                 move |this, window, cx| this.set_text_colouring(Some(key), window, cx),
             ));
         }
-        crate::composer_view::popup(&p)
+        crate::agents::composer_view::popup(&p)
             .id("colouring-menu")
             .occlude()
             .min_w(px(220.))

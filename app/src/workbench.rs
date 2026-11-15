@@ -137,14 +137,14 @@ pub(crate) struct Open {
     /// for bringing them back.
     pub deleted: Vec<(usize, notebook::Cell, String)>,
     /// Cells (by id) an agent changed, until the user keeps or undoes it.
-    pub agent_changes: HashMap<String, crate::cell_ai::AgentChange>,
+    pub agent_changes: HashMap<String, crate::agents::cell_ai::AgentChange>,
     /// Cells an agent deleted, shown where they were with Undo.
-    pub agent_deleted: Vec<crate::cell_ai::AgentDeleted>,
+    pub agent_deleted: Vec<crate::agents::cell_ai::AgentDeleted>,
     /// The cell an agent just added or changed, lit up for a moment.
     pub lit: Option<(String, std::time::Instant)>,
     /// The suggested next cell, and the cell the user ran last, which gets
     /// one when its run ends well.
-    pub ghost: Option<crate::ghost::Ghost>,
+    pub ghost: Option<crate::agents::ghost::Ghost>,
     pub ghost_after: Option<String>,
     /// A script's next journal slot (`console-<n>`).
     next_slot: usize,
@@ -164,7 +164,7 @@ pub(crate) struct QuartoView {
 
 impl Open {
     /// The code cells as the # menu names them, with their text as edited.
-    pub(crate) fn code_cells(&self, cx: &App) -> Vec<crate::composer::DocCell> {
+    pub(crate) fn code_cells(&self, cx: &App) -> Vec<crate::agents::composer::DocCell> {
         let mut chunks = 0;
         self.notebook
             .cells
@@ -179,7 +179,7 @@ impl Open {
                     _ if cell.id.starts_with("chunk-") => format!("chunk {chunks}"),
                     _ => cell.id.clone(),
                 };
-                crate::composer::DocCell {
+                crate::agents::composer::DocCell {
                     id: cell.id.clone(),
                     name,
                     code: editor.read(cx).value().to_string(),
@@ -416,7 +416,7 @@ pub struct Workbench {
     /// Whether the open project's folder is trusted (see `trust.rs`).
     pub(crate) trust: crate::trust::FolderTrust,
     /// Account limits belong to the connected device, not an open project.
-    pub(crate) quota: Option<Entity<crate::quota::QuotaMonitor>>,
+    pub(crate) quota: Option<Entity<crate::agents::quota::QuotaMonitor>>,
     quota_observation: Option<Subscription>,
     /// The left and right panels' shares of the window's width (a quarter
     /// each; the middle takes the rest), set by dragging the gaps.
@@ -929,7 +929,7 @@ impl Workbench {
         let daemon = Rc::new(daemon);
         self.link = Link::Ready(daemon.clone());
         let host = self.host();
-        let quota = cx.new(|cx| crate::quota::QuotaMonitor::new(daemon.clone(), host, cx));
+        let quota = cx.new(|cx| crate::agents::quota::QuotaMonitor::new(daemon.clone(), host, cx));
         self.quota_observation = Some(cx.observe(&quota, |_, _, cx| cx.notify()));
         self.quota = Some(quota);
         self.connected_ms = Some(chrono::Utc::now().timestamp_millis());
@@ -967,7 +967,11 @@ impl Workbench {
     }
 
     /// The code cells of a document open in a tab, as edited there.
-    pub(crate) fn open_cells(&self, path: &str, cx: &App) -> Option<Vec<crate::composer::DocCell>> {
+    pub(crate) fn open_cells(
+        &self,
+        path: &str,
+        cx: &App,
+    ) -> Option<Vec<crate::agents::composer::DocCell>> {
         self.open
             .iter()
             .chain(&self.others)

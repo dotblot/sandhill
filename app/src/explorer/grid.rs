@@ -49,7 +49,7 @@ impl Explorer {
             gpui_kit::component::tooltip::Tooltip::new("Hold ⇧ to add it to the current sort")
                 .build(w, cx)
         };
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("de-column-menu-popup")
             .occlude()
             .min_w(px(220.))
@@ -169,7 +169,7 @@ impl Explorer {
         let at = self.settings_menu?;
         let p = *Palette::get(cx);
         let side_default = crate::prefs::column_stats();
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("de-settings-popup")
             .occlude()
             .min_w(px(250.))
@@ -215,7 +215,7 @@ impl Explorer {
         let at = self.export_menu?;
         let p = *Palette::get(cx);
         let filtered = !self.filters.is_empty();
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("de-export-popup")
             .occlude()
             .min_w(px(240.))
@@ -268,7 +268,7 @@ impl Explorer {
     pub(super) fn render_columns_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let at = self.columns_menu?;
         let p = *Palette::get(cx);
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("de-columns-popup")
             .occlude()
             .min_w(px(180.))

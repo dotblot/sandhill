@@ -10,7 +10,7 @@ use gpui_kit::*;
 use sandhill_proto::{Call, CellSuggestion};
 use serde_json::Value;
 
-use crate::cell_ai::pill;
+use crate::agents::cell_ai::pill;
 use crate::look::{self, Palette, icon};
 use crate::notebook::CellKind;
 use crate::shown::{Shown, show};

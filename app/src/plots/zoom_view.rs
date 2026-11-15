@@ -106,7 +106,7 @@ impl Workbench {
                 d.child(
                     div().absolute().top(px(28.)).left_0().child(
                         deferred(
-                            crate::composer_view::popup(&p)
+                            crate::agents::composer_view::popup(&p)
                                 .id("zoom-units")
                                 .occlude()
                                 .w(px(78.))

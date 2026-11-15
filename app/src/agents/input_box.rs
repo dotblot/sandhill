@@ -15,12 +15,12 @@ use sandhill_proto::{
 };
 use serde_json::{Value, json};
 
-use crate::agents::{
-    Agents, Choice, Menu, START_COLUMNS, START_ROWS, SUBMIT_DELAY, Show, drives_chat, terminal_only,
-};
-use crate::composer::{
+use crate::agents::composer::{
     self, ATTACHMENTS, Mention, Mode, ModelChoice, Models, cell_documents, cell_mentions,
     document_cells, filter_cells, filter_mentions, same_ref, typed_mention,
+};
+use crate::agents::{
+    Agents, Choice, Menu, START_COLUMNS, START_ROWS, SUBMIT_DELAY, Show, drives_chat, terminal_only,
 };
 
 /// How long the @ menu waits for a session's variables and plots.

@@ -12,7 +12,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::agents::Agents;
-use crate::composer::{Models, effort_name};
+use crate::agents::composer::{Models, effort_name};
 use crate::look::{self, Palette};
 
 const HEIGHT: f32 = 22.;

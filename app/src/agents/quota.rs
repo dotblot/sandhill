@@ -18,7 +18,7 @@ use sandhill_proto::{AgentAccount, Call, TerminalEvent};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::agent_accounts::{AccountManager, Ask};
+use crate::agents::accounts::{AccountManager, Ask};
 use crate::agents::{Agents, Show};
 use crate::daemon::Daemon;
 use crate::look::{self, Palette};
@@ -413,7 +413,7 @@ impl QuotaMonitor {
         let terminal = agents.current().filter(|terminal| terminal.kind == kind)?;
         Some((
             terminal.options.account.as_deref().unwrap_or(kind).into(),
-            terminal.running || crate::composer::can_resume(terminal),
+            terminal.running || crate::agents::composer::can_resume(terminal),
         ))
     }
 
@@ -751,7 +751,7 @@ impl Render for QuotaMonitor {
             .text_size(px(look::SMALL))
             .text_color(p.muted);
         let mut visible = false;
-        let mut details = crate::composer_view::popup(&p)
+        let mut details = crate::agents::composer_view::popup(&p)
             .id("account-quota-details")
             .text_size(px(13.))
             .w(px(460.))
@@ -849,7 +849,7 @@ impl Render for QuotaMonitor {
                         }
                         cx.notify();
                     }))
-                    .child(crate::agents_view::provider(kind).size(px(14.)));
+                    .child(crate::agents::view::provider(kind).size(px(14.)));
                 for window in windows.iter().take(if kind == "antigravity" {
                     windows.len()
                 } else {
@@ -886,7 +886,7 @@ impl Render for QuotaMonitor {
                         .child(
                             h_flex()
                                 .gap(px(6.))
-                                .child(crate::agents_view::provider(kind).size(px(18.)))
+                                .child(crate::agents::view::provider(kind).size(px(18.)))
                                 .child(div().font_weight(FontWeight::BOLD).child(provider.short)),
                         )
                         .child(

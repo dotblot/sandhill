@@ -988,7 +988,7 @@ impl Workbench {
                     div().absolute().right_0().top(px(24.)).child(
                         deferred(
                             anchored().snap_to_window_with_margin(px(8.)).child(
-                                crate::composer_view::popup(&p)
+                                crate::agents::composer_view::popup(&p)
                                     .id("console-history-menu")
                                     .occlude()
                                     .w(px(360.))

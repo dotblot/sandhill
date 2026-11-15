@@ -67,7 +67,7 @@ impl Workbench {
             .flex_none()
             .child(button)
             .when(self.notebook_ai_menu, |d| {
-                let mut popup = crate::composer_view::popup(&p)
+                let mut popup = crate::agents::composer_view::popup(&p)
                     .id("notebook-ai-menu")
                     .occlude()
                     .w(px(232.))

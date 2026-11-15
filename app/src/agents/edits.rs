@@ -14,7 +14,7 @@ use sandhill_daemon::cells;
 use sandhill_proto::{AppRequest, Call, Focus};
 use serde_json::json;
 
-use crate::cell_ai::{AgentChange, AgentDeleted};
+use crate::agents::cell_ai::{AgentChange, AgentDeleted};
 use crate::notebook::{self, CellKind, Format};
 use crate::workbench::Workbench;
 

@@ -390,7 +390,7 @@ impl Explorer {
                 .small()
                 .label(text)
         };
-        let popup = crate::composer_view::popup(&p)
+        let popup = crate::agents::composer_view::popup(&p)
             .id("de-filter")
             .occlude()
             .w(px(340.))

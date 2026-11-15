@@ -171,7 +171,7 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("import-menu")
             .occlude()
             .min_w(px(300.))

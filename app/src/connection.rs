@@ -376,7 +376,7 @@ impl Workbench {
             cx,
             |this, cx| this.read_log(cx),
         ));
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("connection-menu")
             .occlude()
             .w(px(320.))

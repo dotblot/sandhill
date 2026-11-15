@@ -326,7 +326,7 @@ impl Workbench {
         }
         let bottom = menu == GitMenu::Commit;
         let left = matches!(menu, GitMenu::Branches | GitMenu::Merge | GitMenu::Rebase);
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("git-menu")
             .occlude()
             .min_w(px(220.))

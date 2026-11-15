@@ -7,8 +7,8 @@ use gpui_kit::*;
 use sandhill_proto::{Call, EXISTS_ERROR};
 use serde_json::{Value, json};
 
+use crate::agents::chat::{self, Entry, Item, Step, StepStatus};
 use crate::agents::{Agents, kind_of};
-use crate::chat::{self, Entry, Item, Step, StepStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Format {
@@ -463,7 +463,7 @@ mod tests {
     use serde_json::json;
 
     use super::{Format, Info, export, fence, file_name};
-    use crate::chat::Entry;
+    use crate::agents::chat::Entry;
 
     fn info() -> Info {
         Info {

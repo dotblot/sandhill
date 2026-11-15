@@ -124,7 +124,7 @@ impl Workbench {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_plot_sizing(sizing, cx))),
             );
         }
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("plot-size-menu")
             .occlude()
             .w(px(310.))

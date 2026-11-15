@@ -11,9 +11,9 @@ use gpui_kit::*;
 use sandhill_proto::{Call, SessionInfo, SessionStatus, TerminalInfo, Variables};
 use serde_json::{Value, json};
 
+use crate::agents::composer::Mention;
+use crate::agents::view::{provider, time_label};
 use crate::agents::{Agents, KINDS, Kind, kind_of, terminal_only};
-use crate::agents_view::{provider, time_label};
-use crate::composer::Mention;
 use crate::look::{self, Palette, RADIUS, dot};
 
 /// The context is read again once it is this old.
@@ -406,13 +406,13 @@ impl Agents {
                     .rounded(px(7.))
                     .bg(p.ink(8.))
                     .text_size(px(look::SMALL))
-                    .child(crate::composer_view::ref_icon(&item))
+                    .child(crate::agents::composer_view::ref_icon(&item))
                     .child(
                         div()
                             .min_w_0()
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .child(crate::composer::ref_name(&item).to_string()),
+                            .child(crate::agents::composer::ref_name(&item).to_string()),
                     )
             }))
             .when(!after.is_empty(), |d| d.child(after))

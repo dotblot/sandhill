@@ -47,7 +47,7 @@ struct ConversationLink {
 /// Whether a conversation is about the file: pinned to it, given it at
 /// the start, working in it now, or with it @-mentioned in any message.
 /// `names` are the file's path relative to the project and in full.
-fn mentions(t: &TerminalInfo, entries: &[crate::chat::Entry], names: &[&str]) -> bool {
+fn mentions(t: &TerminalInfo, entries: &[crate::agents::chat::Entry], names: &[&str]) -> bool {
     let is = |v: &Value| v.as_str().is_some_and(|s| names.contains(&s));
     let report = t.agent.as_ref();
     let pinned = report.is_some_and(|a| is(&a["pin"]))
@@ -359,7 +359,7 @@ impl Workbench {
 #[cfg(test)]
 mod tests {
     use super::mentions;
-    use crate::chat::Entry;
+    use crate::agents::chat::Entry;
     use sandhill_proto::TerminalInfo;
     use serde_json::json;
 

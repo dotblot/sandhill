@@ -299,7 +299,7 @@ impl Workbench {
                         }
                     }
                 }
-                let popup = crate::composer_view::popup(&p)
+                let popup = crate::agents::composer_view::popup(&p)
                     .id("outline-popup")
                     .occlude()
                     .w(px(300.))

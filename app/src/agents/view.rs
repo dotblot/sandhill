@@ -14,11 +14,11 @@ use gpui_kit::*;
 use sandhill_proto::{Call, TerminalInfo};
 use serde_json::{Value, json};
 
+use crate::agents::chat::{self, Ask, Item, Step, StepStatus};
 use crate::agents::{
     Agents, Show, kind_of, model_label, provider_show, question_key, supports_terminal,
     terminal_only,
 };
-use crate::chat::{self, Ask, Item, Step, StepStatus};
 use crate::look::{self, Palette, RADIUS, icon, icon_button, picture, side_pane};
 use crate::workbench::Workbench;
 
@@ -66,7 +66,7 @@ impl Render for Agents {
             (Show::Chat, Some(t)) => {
                 switching.is_none()
                     && !terminal_only(&t.kind)
-                    && (t.running || crate::composer::can_resume(t))
+                    && (t.running || crate::agents::composer::can_resume(t))
             }
             _ => false,
         };
@@ -341,7 +341,7 @@ impl Agents {
         } else {
             "End conversation".to_string()
         };
-        crate::composer_view::popup(p)
+        crate::agents::composer_view::popup(p)
             .mt(px(4.))
             .w(px(220.))
             .occlude()
@@ -552,7 +552,7 @@ impl Agents {
         // Stops the agent but keeps the conversation; a message resumes it.
         let stop = t.running.then(|| {
             let stop_id = t.id.clone();
-            let resumable = crate::composer::can_resume(t);
+            let resumable = crate::agents::composer::can_resume(t);
             h_flex()
                 .id(SharedString::from(format!("hist-stop-{}", t.id)))
                 .flex_none()
@@ -701,7 +701,7 @@ impl Agents {
                     .into_any_element(),
             );
         }
-        if (t.running || crate::composer::can_resume(t))
+        if (t.running || crate::agents::composer::can_resume(t))
             && matches!(t.kind.as_str(), "claude" | "codex" | "antigravity")
         {
             let account_id = t.options.account.as_deref().unwrap_or(&t.kind);
@@ -740,7 +740,7 @@ impl Agents {
             }
         }
         if !t.running {
-            let resumable = crate::composer::can_resume(t);
+            let resumable = crate::agents::composer::can_resume(t);
             items.push(
                 v_flex()
                     .self_center()

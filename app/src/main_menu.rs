@@ -285,7 +285,7 @@ impl Workbench {
             cx,
             |this, _, cx| this.toggle_console_plots(cx),
         ));
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("main-menu")
             .occlude()
             .w(px(280.))

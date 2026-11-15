@@ -743,7 +743,7 @@ impl Workbench {
                 move |this, window, cx| this.remove(r.clone(), dir, window, cx),
             ));
         }
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("tree-menu")
             .occlude()
             .min_w(px(250.))
@@ -785,7 +785,7 @@ impl Workbench {
                 move |this, window, cx| this.start_new(kind, Some(dir.clone()), window, cx),
             ));
         }
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("new-menu")
             .occlude()
             .min_w(px(250.))
@@ -826,7 +826,7 @@ impl Workbench {
                 move |this, _, cx| this.set_sort(by, cx),
             ));
         }
-        let body = crate::composer_view::popup(&p)
+        let body = crate::agents::composer_view::popup(&p)
             .id("sort-menu")
             .occlude()
             .min_w(px(240.))

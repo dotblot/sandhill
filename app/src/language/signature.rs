@@ -617,7 +617,7 @@ impl Element for AboveCaret {
             .min(MAX_HINT_WIDTH)
             .min(viewport.width - px(16.))
             .max(px(0.));
-        let mut content = crate::composer_view::popup(&self.palette)
+        let mut content = crate::agents::composer_view::popup(&self.palette)
             .id("signature-hint")
             .w(width)
             .px(px(8.))

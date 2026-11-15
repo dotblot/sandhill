@@ -16,11 +16,11 @@ use sandhill_proto::TerminalInfo;
 use serde_json::Value;
 
 use crate::RunCell;
-use crate::agents::{Agents, KINDS, Menu, Show, kind_of, terminal_only};
-use crate::agents_view::provider;
-use crate::composer::{
+use crate::agents::composer::{
     self, MODES, ModelChoice, effort_name, ref_kind, ref_name, short_model, tokens,
 };
+use crate::agents::view::provider;
+use crate::agents::{Agents, KINDS, Menu, Show, kind_of, terminal_only};
 use crate::look::{self, Palette, RADIUS, icon, picture};
 
 const LINE: f32 = 20.;

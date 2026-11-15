@@ -470,7 +470,7 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        crate::composer_view::popup(&p)
+        crate::agents::composer_view::popup(&p)
             .id("kernel-menu")
             .occlude()
             .min_w(px(240.))
