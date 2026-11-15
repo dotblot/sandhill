@@ -181,6 +181,17 @@ Keeps ownership/resource types and the daemon's lifecycle entry points.
 | `lifecycle/components.rs` | Component manifests, MCP registration helpers, uninstall and their tests | 300 |
 | `lifecycle/storage.rs` | Descriptor-relative storage access, accounting, removal and their tests | 340 |
 
+### Daemon `server.rs`
+
+Keeps daemon state, opening/serving and the complete call-dispatch match.
+The earlier `server/` call modules stay in place; no match arms are extracted.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `server/connections.rs` | Client handling, subscriptions, event forwarding, reply flushing and their tests | 490 |
+| `server/request_helpers.rs` | Account reports, Git credentials, language server startup and trust checks | 230 |
+| `server/session_helpers.rs` | Session lookup, quiet execution, redraw and job-awake helpers | 140 |
+
 
 ## Order
 
