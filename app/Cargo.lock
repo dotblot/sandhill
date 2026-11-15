@@ -7717,40 +7717,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sandhill-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "clap",
- "flate2",
- "jupyter-protocol",
- "jupyter-zmq-client",
- "libc",
- "noodles-bgzf",
- "objc2 0.6.5",
- "objc2-foundation 0.3.2",
- "rusqlite",
- "sandhill-proto",
- "scraper",
- "security-framework",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tar",
- "thiserror 2.0.21",
- "tokio",
- "toml 1.2.1+spec-1.1.0",
- "toml_edit 0.25.19+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "zeromq",
- "zip",
-]
-
-[[package]]
-name = "sandhill-gpui"
+name = "sandhill-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7783,6 +7750,39 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-r",
  "ureq",
+]
+
+[[package]]
+name = "sandhill-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "clap",
+ "flate2",
+ "jupyter-protocol",
+ "jupyter-zmq-client",
+ "libc",
+ "noodles-bgzf",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "rusqlite",
+ "sandhill-proto",
+ "scraper",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml 1.2.1+spec-1.1.0",
+ "toml_edit 0.25.19+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "zeromq",
+ "zip",
 ]
 
 [[package]]

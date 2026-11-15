@@ -1,14 +1,14 @@
 name: Mac app
 
-# Checks the app in gpui/ and builds Sandhill.app, with sandhilld for this
+# Checks the app in app/ and builds Sandhill.app, with sandhilld for this
 # Mac and Linux builds of it (and Ark) to install on servers. The daemon's
 # own tests are in ci.yml.
 on:
   push:
     branches: [main]
-    paths: ["gpui/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/gpui-mac.yml"]
+    paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/mac-app.yml"]
   pull_request:
-    paths: ["gpui/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/gpui-mac.yml"]
+    paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/mac-app.yml"]
   # Can also be started by hand from the Actions tab.
   workflow_dispatch:
 
@@ -47,17 +47,17 @@ jobs:
         with:
           workspaces: |
             . -> target
-            gpui -> target
+            app -> target
       - name: Build sandhilld
         run: cargo build --release -p sandhill-daemon
-      - name: Check the GPUI app
-        working-directory: gpui
+      - name: Check the Mac app
+        working-directory: app
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           SANDHILL_DAEMON="$GITHUB_WORKSPACE/target/release/sandhilld" cargo test
-      - name: Build the GPUI app
-        working-directory: gpui
+      - name: Build the Mac app
+        working-directory: app
         env:
           # The build About Sandhill shows: the branch's own commit rather
           # than the merge commit a pull request's checkout is.
@@ -69,7 +69,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bash gpui/build-server-daemons.sh "$PWD/daemons"
+          bash app/build-server-daemons.sh "$PWD/daemons"
           # Ark, Posit's R kernel (MIT), so R runs on servers with no setup.
           # Its Linux builds link to glibc, so they are named for gnu triples.
           # Ark marks no release as "latest", so take the newest one, as ci.yml does.
@@ -98,13 +98,13 @@ jobs:
         run: |
           app="Sandhill.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp gpui/target/release/sandhill-gpui "$app/Contents/MacOS/"
+          cp app/target/release/sandhill "$app/Contents/MacOS/"
           # The app finds sandhilld next to itself.
           cp target/release/sandhilld "$app/Contents/MacOS/"
-          cp gpui/assets/icon/icon.icns "$app/Contents/Resources/"
+          cp app/assets/icon/icon.icns "$app/Contents/Resources/"
           # The icon macOS 26 and later draw for light, dark, tinted and clear
           # (CFBundleIconName); older macOS keeps icon.icns.
-          cp gpui/assets/icon/Assets.car "$app/Contents/Resources/"
+          cp app/assets/icon/Assets.car "$app/Contents/Resources/"
           cp -R daemons "$app/Contents/Resources/daemons"
           mkdir -p "$app/Contents/Resources/licenses/icons"
           cp docs/design/ui/icons/vendor/NOTICE.txt "$app/Contents/Resources/licenses/icons/"
@@ -114,10 +114,10 @@ jobs:
           cp docs/design/ui/icons/vendor/brands/oh-my-pi.LICENSE "$app/Contents/Resources/licenses/icons/Oh-My-Pi-LICENSE"
           cp docs/design/ui/icons/vendor/brands/pi.LICENSE "$app/Contents/Resources/licenses/icons/pi-LICENSE"
           mkdir -p "$app/Contents/Resources/licenses/gpui-cn"
-          cp gpui/vendor/gpui-cn/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-cn/"
-          cp gpui/vendor/gpui-cn/LICENSE-MUXY "$app/Contents/Resources/licenses/gpui-cn/"
+          cp app/vendor/gpui-cn/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-cn/"
+          cp app/vendor/gpui-cn/LICENSE-MUXY "$app/Contents/Resources/licenses/gpui-cn/"
           mkdir -p "$app/Contents/Resources/licenses/gpui-component"
-          cp gpui/vendor/gpui-component/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-component/"
+          cp app/vendor/gpui-component/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-component/"
           # Sandhill's own licence, the open-source Rust libraries built into
           # the app and the daemon, the terminal engine's C/C++/Zig
           # libraries, and the code font.
@@ -125,7 +125,7 @@ jobs:
           cp notices-out/sandhill-app.txt notices-out/sandhilld.txt "$app/Contents/Resources/licenses/"
           mkdir -p "$app/Contents/Resources/licenses/libghostty-vt" "$app/Contents/Resources/licenses/fonts"
           cp notices/libghostty-vt/*-LICENSE* "$app/Contents/Resources/licenses/libghostty-vt/"
-          cp gpui/assets/fonts/OFL.txt "$app/Contents/Resources/licenses/fonts/Maple-Mono-OFL.txt"
+          cp app/assets/fonts/OFL.txt "$app/Contents/Resources/licenses/fonts/Maple-Mono-OFL.txt"
           cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -134,7 +134,7 @@ jobs:
             <key>CFBundleName</key><string>Sandhill</string>
             <key>CFBundleDisplayName</key><string>Sandhill</string>
             <key>CFBundleIdentifier</key><string>dev.sandhill.ide</string>
-            <key>CFBundleExecutable</key><string>sandhill-gpui</string>
+            <key>CFBundleExecutable</key><string>sandhill</string>
             <key>CFBundleIconFile</key><string>icon.icns</string>
             <key>CFBundleIconName</key><string>Sandhill</string>
             <key>CFBundlePackageType</key><string>APPL</string>
@@ -157,13 +157,15 @@ jobs:
           app="$dir/Sandhill.app"
           codesign --verify --deep --strict --verbose=2 "$app"
           open "$app"
+          # The app is MacOS/sandhill; the pattern stops sandhilld beside it
+          # from counting.
           for _ in $(seq 30); do
-            pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null && break
+            pgrep -f "$app/Contents/MacOS/sandhill( |\$)" >/dev/null && break
             sleep 1
           done
           pgrep -fl "$app/Contents/MacOS/" || { echo "Sandhill.app did not start"; exit 1; }
           sleep 8
-          pgrep -f "$app/Contents/MacOS/sandhill-gpui" >/dev/null || { echo "Sandhill.app quit soon after starting"; exit 1; }
+          pgrep -f "$app/Contents/MacOS/sandhill( |\$)" >/dev/null || { echo "Sandhill.app quit soon after starting"; exit 1; }
           screencapture -x start-window.png || echo "could not take a screenshot"
           pkill -f "$app/Contents/MacOS/" || true
       # Kept a week: every push stores a 50 MB app, and the account's

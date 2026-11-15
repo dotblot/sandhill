@@ -34,7 +34,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         # Ark marks no release as "latest", so take the newest one, as the
-        # app's bundle does (gpui-mac.yml).
+        # app's bundle does (mac-app.yml).
         run: |
           tag=$(gh api 'repos/posit-dev/ark/releases?per_page=30' \
             --jq '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + .)[0].tag_name')
@@ -61,7 +61,7 @@ jobs:
 
   macos:
     name: macOS (Apple silicon, Python)
-    # The app itself is checked and bundled by gpui-mac.yml.
+    # The app itself is checked and bundled by mac-app.yml.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4

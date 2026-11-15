@@ -1,7 +1,7 @@
 // Makes the app icon, icon.icns, from the Sandhill crane, and the picture
 // the Start screen shows (../brand/icon.png):
 //
-//   node gpui/assets/icon/make.mjs
+//   node app/assets/icon/make.mjs
 //
 // source.svg is the app icon (an 824 px rounded tile on Apple's 1024 px
 // grid, with the crane) and source-small.svg the version drawn for 16 and

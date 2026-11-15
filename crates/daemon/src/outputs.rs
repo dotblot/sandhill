@@ -1,7 +1,7 @@
 //! Turns a run's journaled kernel messages into nbformat 4 output objects,
 //! the form notebooks store and the app renders.
 //!
-//! The app (`gpui/`) uses this module for live events too, so both follow
+//! The app (`app/`) uses this module for live events too, so both follow
 //! the same rules; `tests/fixtures/outputs.json` holds the cases.
 
 use sandhill_proto::{CellOutputs, FileOutputs, Plot, SessionPlots, SessionRun, SessionRuns};

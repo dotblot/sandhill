@@ -4,7 +4,7 @@
 set -eu
 
 repo=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
-destination=${1:-"$repo/gpui/target/debug/Sandhill.app/Contents/Resources/daemons"}
+destination=${1:-"$repo/app/target/debug/Sandhill.app/Contents/Resources/daemons"}
 mkdir -p "$destination"
 
 for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do

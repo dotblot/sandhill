@@ -625,7 +625,7 @@ subcommand has no `--python` flag). User environments are never modified.
 
 The payload builder pins [ty 0.0.102](https://github.com/astral-sh/ty/releases/tag/0.0.102)
 and [Ruff 0.17.5](https://github.com/astral-sh/ruff/releases/tag/0.17.5), with official
-release archive SHA-256 values recorded in `gpui/build-server-daemons.sh`.
+release archive SHA-256 values recorded in `app/build-server-daemons.sh`.
 Linux x86_64/aarch64 musl and Mac aarch64 payloads are verified before extraction.
 SSH and local Mac attachment install into Sandhill's own bin directory with the
 same per-component provenance/checksum ownership rules as Ark; uninstall

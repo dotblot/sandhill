@@ -571,7 +571,7 @@ an icon column, 16px per level and plain guide lines. New files and folders
 are named in a field in the tree, from the + menu (in the selected folder),
 a folder's hover buttons, the right-click menu, ⌘N and ⌥⌘N; a name such as
 `raw/samples.csv` makes the folder too, and new Quarto documents, R scripts
-and notebooks start from a template (`gpui/src/files.rs`). The right-click
+and notebooks start from a template (`app/src/files.rs`). The right-click
 menu renames, duplicates, copies the path and moves to the Trash, plus
 Reveal in Finder on this Mac, and Download to this Mac and Delete… on a
 server. These go through the daemon (`make_dir`, `move_path`, `copy_path`,
@@ -590,7 +590,7 @@ as in RStudio: for R, text (base and readr), Excel, SPSS, SAS, Stata, R data
 and 10x Genomics; for Python, pandas, Parquet, AnnData and 10x. Each opens a
 dialog that browses the daemon's machine for files it reads, names the
 variable after the file and shows the code before running it in the session,
-so the run shows in the Console (`gpui/src/imports.rs`). The Data
+so the run shows in the Console (`app/src/imports.rs`). The Data
 Explorer's column list and stats hide with **Hide column stats**, remembered
 on the Mac.
 
@@ -603,7 +603,7 @@ second local-only file reader.
   marks for the current model/provider's available levels. No explanatory
   paragraph. Dense labels must not overlap or widen the fixed model menu.
   *Superseded 2026-11-12 (Huan):* one segmented bar after a Dribbble
-  reference, the chosen level's name in its fill (`gpui/src/effort_bar.rs`).
+  reference, the chosen level's name in its fill (`app/src/effort_bar.rs`).
 - Hide the title-bar project `+` on the welcome screen only; existing project
   windows retain it. Prefix each expanded/collapsed project capsule's name
   with the existing local-device or remote-server icon. *2026-11-12:* Welcome
@@ -699,13 +699,13 @@ system font. Code ligatures are on, so `<-` shows as an arrow while the file
 keeps what was typed. Plots stay white in dark mode. The panes themselves
 don't blur: behind them is already the window's blur, so a second one would
 change nothing you can see and cost a window-sized compositing layer per
-pane. Styles are in `gpui/src/look.rs`, which also draws the icons from
+pane. Styles are in `app/src/look.rs`, which also draws the icons from
 `docs/design/ui/icons`.
 
 **GPUI dependency upgrade (Huan, 2026-11-06; 0.9.1 on 2026-11-13).** Kit,
 Base, Component, assets and WebView use the latest released 0.9.1 stack; GPUI
 Fast is 0.1.15 and GPUI Pre is 0.3.12. `gpui-cn`'s latest release, 0.8.0, still targets the
-older Kit. Its source and licenses are retained in `gpui/vendor/gpui-cn`,
+older Kit. Its source and licenses are retained in `app/vendor/gpui-cn`,
 with only the dependency pins and new non-exhaustive theme construction
 adapted. This keeps the Ghostty terminal without loading two Kit versions.
 
@@ -1204,7 +1204,7 @@ How notebooks stay small in the app (decided October 2026, after measuring three
 
 Notebooks of 100 MB and more (October 2026, measured in Chromium on a 106 MB notebook of 528 cells with 440 plots and 220 tables): a notebook's outputs are drawn only once their cell comes within two screens of view, so opening it with every output shown, or pressing Show outputs, draws only a few (Show outputs went from a 2.9 s freeze to 0.3 s). Each cell's code and outputs skip layout and paint far from view (`content-visibility` on `.nb-body`), taking a height the app guesses from the cell until first drawn, then their last height; scrolling the whole notebook went from 223 to 50 slow frames (over 50 ms) of 2220, and from 10.4 s to 2.6 s of blocked time. Containment sits on the body, not the cell, so the insert buttons that hang below a cell aren't cut off, and a cell being edited drops it so the editor's pop-ups aren't either; a `:has(.cm-editor)` selector did this at first and cost more than everything it saved. A plot keeps the shape it loaded with when its pixels are let go, without reading layout. Tables over 200 rows show the first 200 and a button for the rest. `content-visibility` needs Safari 18; older versions ignore it and still get the rest.
 
-In the GPUI app (2026-11-05, measured on Huan's 190 MB notebook of 136 cells and 68 plots, 272 megapixels): GPUI lays out, prepaints and paints the whole element tree each frame, and a wheel turn redraws the window, so with every cell in the tree each frame cost the same wherever the view was, 28 ms in a release build and 221 ms in `cargo run`'s unoptimised one. The plots were not the cost (0.5% of the frame); the 136 editors (28%) and the cells' frames and outputs were. Now only the cells within a screen of the view are drawn (`cell_view::Placed`, `Workbench::place_cells`); each other cell is space of its height at the last layout, read from the scroll handle's child bounds, so the children, and scrolling to a cell, stay as they were. The cell being edited, run or lit up is always drawn, and a web page under a cell not drawn is put away like one scrolled out of view. A cell not laid out yet is drawn, which measures it, so opening a notebook still draws it whole once. A cell that changes height far from view (a run's last output) jumps into place when it comes near. Scrolling the whole notebook went to the display's 16.7 ms a frame in both builds, with about 9 ms of work in the unoptimised one; `gpui/Cargo.toml` also builds the dependencies optimised in dev builds.
+In the GPUI app (2026-11-05, measured on Huan's 190 MB notebook of 136 cells and 68 plots, 272 megapixels): GPUI lays out, prepaints and paints the whole element tree each frame, and a wheel turn redraws the window, so with every cell in the tree each frame cost the same wherever the view was, 28 ms in a release build and 221 ms in `cargo run`'s unoptimised one. The plots were not the cost (0.5% of the frame); the 136 editors (28%) and the cells' frames and outputs were. Now only the cells within a screen of the view are drawn (`cell_view::Placed`, `Workbench::place_cells`); each other cell is space of its height at the last layout, read from the scroll handle's child bounds, so the children, and scrolling to a cell, stay as they were. The cell being edited, run or lit up is always drawn, and a web page under a cell not drawn is put away like one scrolled out of view. A cell not laid out yet is drawn, which measures it, so opening a notebook still draws it whole once. A cell that changes height far from view (a run's last output) jumps into place when it comes near. Scrolling the whole notebook went to the display's 16.7 ms a frame in both builds, with about 9 ms of work in the unoptimised one; `app/Cargo.toml` also builds the dependencies optimised in dev builds.
 
 Saved outputs start hidden (decided October 2026, Huan's call). Each shows as its status line with a summary ("plot", "2 plots, table") and opens on a click; Show outputs and Hide outputs act on the whole document, and running a cell shows its output. A hidden output is not rendered at all, so its plots are never fetched or decoded. Which outputs are shown is kept per document in the project state, not in the file. A notebook cell shows syntax-highlighted code until it is clicked or focused, and only then gets a CodeMirror editor; far from view it gives the editor up again, keeping its state (text, selection, undo history) for the next one. Making an editor for every cell that scrolled by cost the web view about 30 MB in a 91-cell notebook, mostly CodeMirror code compiled by WebKit's JIT; the measurement that showed it was turning the JIT off (`JSC_useJIT=false`), which removed the growth.
 

@@ -14,7 +14,7 @@ use std::{
 use tokio::net::UnixListener;
 
 #[allow(dead_code)]
-#[path = "../../../gpui/src/imports.rs"]
+#[path = "../../../app/src/imports.rs"]
 mod imports;
 
 struct TestDaemon {

@@ -1,6 +1,6 @@
 [package]
-name = "sandhill-gpui"
-description = "Sandhill drawn with GPUI"
+name = "sandhill-app"
+description = "Sandhill's Mac app, drawn with GPUI"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
@@ -11,8 +11,9 @@ publish = false
 [workspace]
 exclude = ["vendor/gpui-cn", "vendor/gpui-component"]
 
+# Inside Sandhill.app it is Contents/MacOS/sandhill (Huan, 2026-11-15).
 [[bin]]
-name = "sandhill-gpui"
+name = "sandhill"
 path = "src/main.rs"
 
 [dependencies]

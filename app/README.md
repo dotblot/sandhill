@@ -2,9 +2,11 @@
 
 Sandhill.app, drawn with [GPUI](https://gpui.rs), Zed's UI toolkit. It
 started as a trial (milestones 1 to 4 below); on 2026-11-01 it was chosen to
-replace the first app, built with Tauri in `app/`, and on 2026-11-02, once it
-did everything that app did, the Tauri app was deleted (it is in the git
-history, last in commit d3ff9f6). It kept the Tauri app's look, with fonts
+replace the first app, built with Tauri (then also in `app/`), and on
+2026-11-02, once it did everything that app did, the Tauri app was deleted
+(it is in the git history, last in commit d3ff9f6). This folder was `gpui/`
+until 2026-11-15, and its program `sandhill-gpui`; notes below from before
+then use the old file names. It kept the Tauri app's look, with fonts
 2px larger, until 2026-11-05, when the window became frosted glass in
 macOS's own colours (see the last entry below). "The Tauri app" in
 comments here means that app.
@@ -1197,7 +1199,7 @@ preview and R's imports weren't seen.
 
 ```sh
 cargo build -p sandhill-daemon        # at the repo root, once
-cd gpui
+cd app
 cargo run -- /path/to/project         # the folder is optional
 ```
 
@@ -1208,17 +1210,17 @@ matching server daemons before signing it:
 # From the repository root. Zig must be on PATH.
 cargo install cargo-zigbuild --locked       # once
 rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl  # once
-bash gpui/build-server-daemons.sh
+bash app/build-server-daemons.sh
 ```
 
 The default output is the debug app's `Contents/Resources/daemons`; an optional
 first argument selects another output directory, as the Mac build workflow does.
 This builds/copies files only, without connecting to servers. The packaged app
 uses bundled payloads on its next SSH connection. For `cargo run`, build to
-`gpui/target/debug/daemons` instead:
+`app/target/debug/daemons` instead:
 
 ```sh
-bash gpui/build-server-daemons.sh gpui/target/debug/daemons
+bash app/build-server-daemons.sh app/target/debug/daemons
 ```
 
 The development Cargo config selects that directory and the root workspace's

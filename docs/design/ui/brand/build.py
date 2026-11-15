@@ -146,8 +146,8 @@ FILES = {
     "app-icon/app-icon-light-small.svg": app_icon(False, small=True),
 }
 
-# the app's icon sources; gpui/assets/icon/make.mjs makes the bundle icon from them
-APP_ICONS = HERE.parents[3] / "gpui" / "assets" / "icon"
+# the app's icon sources; app/assets/icon/make.mjs makes the bundle icon from them
+APP_ICONS = HERE.parents[3] / "app" / "assets" / "icon"
 APP_FILES = {"source.svg": FILES["app-icon/app-icon-dark.svg"], "source-small.svg": FILES["app-icon/app-icon-dark-small.svg"]}
 APP_FILES.update({f"Sandhill.icon/{rel}": text for rel, text in icon_package().items()})
 

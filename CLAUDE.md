@@ -54,10 +54,10 @@ its date.
   notices.
 
 ## Conventions
-- `gpui/` is its own Cargo project (`[workspace]` of its own, own
+- `app/` is its own Cargo project (`[workspace]` of its own, own
   `Cargo.lock`, pinned `gpui-kit`/`gpui-webview` versions), so a root
   `cargo build` doesn't build it. Check it with `cargo fmt`, `cargo clippy
-  --all-targets -- -D warnings` and `cargo test` inside `gpui/`. On Linux it
+  --all-targets -- -D warnings` and `cargo test` inside `app/`. On Linux it
   needs `libxkbcommon-dev libxkbcommon-x11-dev libwebkit2gtk-4.1-dev` and X11.
   The terminal links Ghostty's libghostty-vt, built from source by
   `ghostty-vt-sys`: it needs Zig 0.17 (`ZIG=...` or `zig` on PATH) and
@@ -65,15 +65,15 @@ its date.
   Where those hosts are blocked, `DOCS_RS=1 cargo clippy` still checks the
   code (it skips building the library, so nothing links).
   Current stack: Kit/Base/Component/WebView 0.9.1, Fast 0.1.15, Pre 0.3.12.
-  `gpui/vendor/gpui-cn` retains the latest terminal library release (0.8.0),
+  `app/vendor/gpui-cn` retains the latest terminal library release (0.8.0),
   adapted to Kit 0.9; keep its upstream licences and recorded provenance.
-  `gpui/vendor/gpui-component` is Component 0.9.1 through `[patch.crates-io]`
+  `app/vendor/gpui-component` is Component 0.9.1 through `[patch.crates-io]`
   with one change (caret menus open above the caret when they don't fit
   below; Huan, 2026-11-13; `SANDHILL.md`); drop it when upstream has it.
   `tree-sitter` stays at 0.26, Kit's own version, until Kit moves (Huan,
   2026-11-13): Cargo allows only one copy of it.
 - Rust workspace at the repo root; crates live in `crates/`. The app is not
-  part of it (see `gpui/` above).
+  part of it (see `app/` above).
 - Keep crates small and focused; prefer adding a module over growing `main.rs`.
 - Errors: `anyhow` in binaries, `thiserror` in libraries.
 - Every daemon feature gets an integration test that uses a real kernel.
@@ -90,11 +90,11 @@ its date.
   the two source maps and pinned original SVGs under `vendor/`. Change those
   inputs, not generated SVGs; the app embeds the output, and the mockup uses
   the same art. The crane and app icon sources remain in
-  `docs/design/ui/brand/build.py`; then `node gpui/assets/icon/make.mjs`.
+  `docs/design/ui/brand/build.py`; then `node app/assets/icon/make.mjs`.
 - Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` and
-  `cargo test --workspace` before committing, and the `gpui/` checks above
+  `cargo test --workspace` before committing, and the `app/` checks above
   when the app changed.
 - The version stays 0.1.0 until Huan judges Sandhill stable, with no
   obvious bugs (2026-11-13). It is written in `Cargo.toml`,
-  `gpui/Cargo.toml` and the bundle `Info.plist` in
-  `.github/workflows/gpui-mac.yml`; change all three together.
+  `app/Cargo.toml` and the bundle `Info.plist` in
+  `.github/workflows/mac-app.yml`; change all three together.

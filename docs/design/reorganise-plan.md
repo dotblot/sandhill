@@ -92,12 +92,20 @@ app's own `README.md` and scripts, and the GitHub build recipe
 `.github/workflows/gpui-mac.yml`, which is renamed `mac-app.yml`.
 Finished plans in `done/` keep the old name (they are history).
 
-Not renamed: the program inside the app stays `sandhill-gpui`, and the
-toolkit's own names (`gpui-kit`, `vendor/gpui-component`) are theirs.
+The program inside the app is renamed too (Huan's answer): it is
+`Contents/MacOS/sandhill`, built from the Cargo package `sandhill-app`.
+The toolkit's own names (`gpui-kit`, `vendor/gpui-component`) are theirs.
 
-Two things to know: the first build afterwards starts from nothing (a few
-minutes), and the GitHub build recipe can only be proven by a push, so
-Huan will be asked to push after this part.
+Built 2026-11-15. Also changed: the app's "remove Sandhill" check of its
+own bundle looks for `sandhill`, the bundle's launch check stops counting
+`sandhilld` (whose name begins the same), the old Tauri lines left in
+`.gitignore` went, and `docs/decisions/look.md` notes the new names.
+`docs/design/gpui-plan.md` and the 2026-11-01 note in `docs/design.md`
+keep `gpui/` as history. Checked: the app's 291 tests, the daemon test
+that reads `app/src/imports.rs`, a release bundle that starts. The
+GitHub recipe is proven only by a push. One thing to know: the
+command-line client in `crates/cli` is also called `sandhill`; it is not
+in the app bundle, and the two never share a folder.
 
 ## Part 4: the app's 84 loose files go into folders
 

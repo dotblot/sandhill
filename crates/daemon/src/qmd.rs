@@ -1,6 +1,6 @@
 //! The executable chunks of a Quarto (`.qmd`) or R Markdown (`.Rmd`)
 //! document: fenced blocks whose info string is in braces, like ```` ```{r} ````.
-//! The app (`gpui/`) uses this module to find them too, so a chunk gets the
+//! The app (`app/`) uses this module to find them too, so a chunk gets the
 //! same id in both, as outputs are saved under it; `tests/fixtures/chunks.json`
 //! holds the cases.
 

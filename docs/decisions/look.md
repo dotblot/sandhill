@@ -4,9 +4,10 @@ Settled decisions about how Sandhill looks. Moved here unchanged from
 `CLAUDE.md` on 2026-11-15; where an older plan differs, this wins.
 
 ## The Mac app
-- Mac app: GPUI (Rust, in `gpui/`), Sandhill.app with bundle id
-  `dev.sandhill.ide`. It replaced the Tauri 2 app (TypeScript UI in `app/`,
-  decided 2026-11-01, retired 2026-11-02; it is in the git history). It keeps
+- Mac app: GPUI (Rust, in `app/`; `gpui/` until 2026-11-15), Sandhill.app
+  with bundle id `dev.sandhill.ide`; its program is `sandhill`. It replaced
+  the Tauri 2 app (TypeScript UI, then also in `app/`, decided 2026-11-01,
+  retired 2026-11-02; it is in the git history). It keeps
   the Tauri app's sizes, with every font size 2px larger. No Electron.
 
 ## Glass, colours and tabs

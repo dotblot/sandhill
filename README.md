@@ -30,7 +30,7 @@ The full design, including the reasoning behind each choice, is in
 
 | Path | What |
 |---|---|
-| `gpui/` | The Mac app, drawn with GPUI (its own Cargo project; see [gpui/README.md](gpui/README.md)) |
+| `app/` | The Mac app, drawn with GPUI (its own Cargo project; see [app/README.md](app/README.md)) |
 | `crates/daemon` | `sandhilld`: kernel sessions, output journal, socket server |
 | `crates/proto` | Wire protocol types and the async client the app and CLI share |
 | `crates/link` | How the app reaches sandhilld: on this Mac, or over ssh (installing it there) |
@@ -47,7 +47,7 @@ need `python -m ipykernel install --user`), and for R,
 
 ```sh
 cargo build -p sandhill-daemon        # at the repo root, once
-cd gpui
+cd app
 cargo run -- /path/to/project         # the folder is optional
 ```
 
@@ -57,7 +57,7 @@ on servers: open the **Mac app** run on GitHub's Actions tab and download
 **Sandhill-macos-arm64** under Artifacts (to build one without a push, pick
 **Mac app** there, then **Run workflow**). The app isn't notarized, so after
 unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once, or macOS
-will refuse to open it. `.github/workflows/gpui-mac.yml` shows how the bundle
+will refuse to open it. `.github/workflows/mac-app.yml` shows how the bundle
 is put together.
 
 The app opens on a start window: open a folder with your analysis as a
@@ -160,7 +160,7 @@ Against a server, copy `sandhilld` to `~/.local/bin` there and add
 `--ssh yourserver --remote-daemon '~/.local/bin/sandhilld'` to any `sandhill`
 command; the daemon starts on first use.
 
-Run the tests with `cargo test --workspace`, and `cargo test` in `gpui/` for
+Run the tests with `cargo test --workspace`, and `cargo test` in `app/` for
 the app (on Linux it needs `libxkbcommon-dev libxkbcommon-x11-dev
 libwebkit2gtk-4.1-dev` and X11). Kernel tests skip when a kernel isn't
 installed.
@@ -182,7 +182,7 @@ may use, change and share it, and a changed version you share must be under
 the same license, with its source code.
 
 The Maple Mono NF font the app ships is under the SIL Open Font License
-([gpui/assets/fonts/OFL.txt](gpui/assets/fonts/OFL.txt)), and the libraries
+([app/assets/fonts/OFL.txt](app/assets/fonts/OFL.txt)), and the libraries
 Sandhill builds on keep their own licenses (MIT, Apache-2.0 and similar).
 The interface and file/integration artwork comes from Gruvbox Material Icons,
 Lucide and Developer Icons under their upstream MIT/ISC licenses; see the

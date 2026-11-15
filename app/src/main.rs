@@ -2,7 +2,7 @@
 //! view. It reaches sandhilld exactly as the Tauri app does, so kernels,
 //! saved outputs and servers behave the same.
 //!
-//! Usage: `sandhill-gpui [--host HOST] [PROJECT_FOLDER]`, where HOST is
+//! Usage: `sandhill [--host HOST] [PROJECT_FOLDER]`, where HOST is
 //! `local` (the default) or an ssh destination such as `lab`.
 
 mod agent_accounts;

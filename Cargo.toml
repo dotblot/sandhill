@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-# The Mac app is its own Cargo project, in gpui/.
+# The Mac app is its own Cargo project, in app/.
 members = ["crates/proto", "crates/link", "crates/daemon", "crates/cli"]
 
 [workspace.package]

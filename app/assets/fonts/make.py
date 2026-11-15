@@ -4,7 +4,7 @@ Maple Mono's NF releases). GPUI's text systems read TrueType, not WOFF2, so
 they are stored as gzipped TTF and unpacked when the app starts.
 
 Needs fontTools and brotli: pip install fonttools brotli
-Run from anywhere: python3 gpui/assets/fonts/make.py [folder with the .woff2 files]
+Run from anywhere: python3 app/assets/fonts/make.py [folder with the .woff2 files]
 """
 
 import gzip

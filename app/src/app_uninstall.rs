@@ -20,9 +20,7 @@ fn bundle_for_executable(executable: &Path) -> Result<Option<PathBuf>> {
         || bundle
             .extension()
             .is_none_or(|extension| extension != "app")
-        || executable
-            .file_name()
-            .is_none_or(|name| name != "sandhill-gpui")
+        || executable.file_name().is_none_or(|name| name != "sandhill")
     {
         return Ok(None);
     }
@@ -102,7 +100,7 @@ fn bundle_identity_matches(bundle: &Path) -> Result<bool> {
         };
         for (key, expected) in [
             ("CFBundleIdentifier", "dev.sandhill.ide"),
-            ("CFBundleExecutable", "sandhill-gpui"),
+            ("CFBundleExecutable", "sandhill"),
             ("CFBundlePackageType", "APPL"),
         ] {
             let key = NSString::from_str(key);
@@ -207,12 +205,12 @@ mod tests {
     #[test]
     fn development_executable_is_not_an_application() {
         assert!(
-            bundle_for_executable(Path::new("/project/target/debug/sandhill-gpui"))
+            bundle_for_executable(Path::new("/project/target/debug/sandhill"))
                 .unwrap()
                 .is_none()
         );
         assert!(
-            bundle_for_executable(Path::new("/project.app/target/debug/sandhill-gpui"))
+            bundle_for_executable(Path::new("/project.app/target/debug/sandhill"))
                 .unwrap()
                 .is_none()
         );
@@ -225,8 +223,8 @@ mod tests {
         let bundle = root.join("Sandhill.app");
         let macos = bundle.join("Contents/MacOS");
         std::fs::create_dir_all(&macos).unwrap();
-        std::fs::write(bundle.join("Contents/Info.plist"), br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.sandhill.ide</string><key>CFBundleExecutable</key><string>sandhill-gpui</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"#).unwrap();
-        let executable = macos.join("sandhill-gpui");
+        std::fs::write(bundle.join("Contents/Info.plist"), br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.sandhill.ide</string><key>CFBundleExecutable</key><string>sandhill</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"#).unwrap();
+        let executable = macos.join("sandhill");
         std::fs::write(&executable, b"test fixture").unwrap();
         assert_eq!(
             bundle_for_executable(&executable).unwrap(),
@@ -235,7 +233,7 @@ mod tests {
         assert!(executable.exists());
         let linked = root.join("Linked.app");
         std::os::unix::fs::symlink(&bundle, &linked).unwrap();
-        assert!(bundle_for_executable(&linked.join("Contents/MacOS/sandhill-gpui")).is_err());
+        assert!(bundle_for_executable(&linked.join("Contents/MacOS/sandhill")).is_err());
         let wrong_executable = macos.join("other-app");
         std::fs::write(&wrong_executable, b"not Sandhill").unwrap();
         assert!(bundle_for_executable(&wrong_executable).unwrap().is_none());
@@ -248,9 +246,9 @@ mod tests {
         let bundle = tmp.path().canonicalize().unwrap().join("Other.app");
         let macos = bundle.join("Contents/MacOS");
         std::fs::create_dir_all(&macos).unwrap();
-        let executable = macos.join("sandhill-gpui");
+        let executable = macos.join("sandhill");
         std::fs::write(&executable, b"not Sandhill").unwrap();
-        std::fs::write(bundle.join("Contents/Info.plist"), br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.other</string><key>CFBundleExecutable</key><string>sandhill-gpui</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"#).unwrap();
+        std::fs::write(bundle.join("Contents/Info.plist"), br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.other</string><key>CFBundleExecutable</key><string>sandhill</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>"#).unwrap();
         assert!(bundle_for_executable(&executable).unwrap().is_none());
     }
 }

@@ -2,7 +2,7 @@
 
 Source: the crates.io release `gpui-component` 0.9.1
 (<https://github.com/longbridge/gpui-kit>), Apache-2.0 (`LICENSE-APACHE`),
-used through `[patch.crates-io]` in `gpui/Cargo.toml` (Huan, 2026-11-13).
+used through `[patch.crates-io]` in `app/Cargo.toml` (Huan, 2026-11-13).
 
 ## Sandhill changes
 
