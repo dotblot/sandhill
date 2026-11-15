@@ -201,7 +201,17 @@ Keeps bridge state, process startup, account queries and the public entry points
 | `terminal/codex/commands.rs` | Chat commands, turn submission, interrupts, login and plan decisions | 275 |
 | `terminal/codex/events.rs` | RPC reading, notifications, items/replies, approval requests and chat reports | 500 |
 
+### Daemon `terminal/antigravity.rs`
 
+Keeps state, startup, model/account settings, queued commands and public entry points.
+The existing history, native-terminal and usage children stay in place.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `terminal/antigravity/turns.rs` | Turn submission/execution, streamed events, tool/error translation and their tests | 650 |
+
+Built 2026-11-15. All five daemon parents are under about 1,000 lines;
+nothing was left whole. The server's single dispatch match remains intact.
 
 ## Order
 
