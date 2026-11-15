@@ -291,11 +291,11 @@ App built 2026-11-15. All seven app parents are under about 1,000 lines; nothing
 ## Status (2026-11-15)
 
 All five parts are built, one commit per step, with the workspace and
-app checks passing after each. Still open:
-
-- The click-through in the app (Welcome, a notebook run, the Console,
-  Git, the AI pane): the Mac's screen was locked, and the app draws
-  nothing new while it is, so this waits for Huan to be back.
-- A push, to prove the renamed GitHub build recipe (`mac-app.yml`).
+app checks passing after each. Once the screen was unlocked, a test copy
+was clicked through: trusting a folder, Files, opening a notebook and
+running its cell, the Console (its variable in Variables), Kernels, Git
+(branch, commit, a changed file), Welcome, and the AI pane with its
+History; all worked. Still open: a push, to prove the renamed GitHub
+build recipe (`mac-app.yml`).
 
 Huan's answers to the plan's questions are at the top.
