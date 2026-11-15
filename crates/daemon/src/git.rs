@@ -24,6 +24,16 @@ use tokio::io::AsyncWriteExt;
 use crate::files;
 use crate::patch::{self, Way};
 
+mod action_helpers;
+mod history_read;
+mod message_helpers;
+mod status_read;
+
+use action_helpers::{apply_lines, check_branch, check_files, check_tag, rewrite, stops};
+use history_read::{own, parse_log, parse_name_status};
+use message_helpers::{ask_claude, ask_codex, shorten_patch, split_message};
+use status_read::{count_lines, parse_numstat, parse_status};
+
 /// Files a status lists, at most.
 const MAX_FILES: usize = 2000;
 /// Commits in a page of the log, unless asked, and at most.
@@ -39,10 +49,6 @@ const COUNT_MAX: u64 = 4 * 1024 * 1024;
 const MAX_OWN: usize = 50;
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(300);
-/// What an agent sees of the staged changes when writing a message.
-const PROMPT_FILE: usize = 4000;
-const PROMPT_TOTAL: usize = 40_000;
-const AGENT_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Set as git's and ssh's askpass program, `sandhilld` asks the daemon at
 /// [`ASKPASS_SOCKET`] for what the user types, for the run [`ASKPASS_TOKEN`]
@@ -401,149 +407,6 @@ fn state(git_dir: &Path) -> Option<&'static str> {
     }
 }
 
-/// Reads `git status --porcelain=v2 --branch -z`.
-fn parse_status(text: &str) -> GitStatus {
-    let mut status = GitStatus::default();
-    let mut items = text.split('\0');
-    let letter = |c: char| (c != '.').then(|| c.to_string());
-    while let Some(item) = items.next() {
-        if let Some(header) = item.strip_prefix("# ") {
-            let (key, value) = header.split_once(' ').unwrap_or((header, ""));
-            match key {
-                "branch.oid" if value != "(initial)" => status.head = Some(value.to_string()),
-                "branch.head" if value != "(detached)" => status.branch = Some(value.to_string()),
-                "branch.upstream" => status.upstream = Some(value.to_string()),
-                "branch.ab" => {
-                    for part in value.split(' ') {
-                        if let Some(n) = part.strip_prefix('+') {
-                            status.ahead = n.parse().unwrap_or(0);
-                        } else if let Some(n) = part.strip_prefix('-') {
-                            status.behind = n.parse().unwrap_or(0);
-                        }
-                    }
-                }
-                _ => {}
-            }
-            continue;
-        }
-        let mut file = match item.split_at_checked(2) {
-            Some(("1 ", rest)) => {
-                let fields: Vec<&str> = rest.splitn(8, ' ').collect();
-                let [xy, .., path] = fields.as_slice() else {
-                    continue;
-                };
-                changed(xy, path, &letter)
-            }
-            Some(("2 ", rest)) => {
-                let fields: Vec<&str> = rest.splitn(9, ' ').collect();
-                let [xy, .., path] = fields.as_slice() else {
-                    continue;
-                };
-                let mut file = changed(xy, path, &letter);
-                file.from = items.next().map(str::to_string);
-                file
-            }
-            Some(("u ", rest)) => {
-                let fields: Vec<&str> = rest.splitn(10, ' ').collect();
-                let Some(path) = fields.last() else {
-                    continue;
-                };
-                GitFile {
-                    path: path.to_string(),
-                    conflict: true,
-                    unstaged: Some("U".into()),
-                    ..GitFile::default()
-                }
-            }
-            Some(("? ", path)) => GitFile {
-                path: path.to_string(),
-                unstaged: Some("?".into()),
-                ..GitFile::default()
-            },
-            _ => continue,
-        };
-        if status.files.len() >= MAX_FILES {
-            status.more = true;
-            continue;
-        }
-        file.path.shrink_to_fit();
-        status.files.push(file);
-    }
-    status.files.sort_by(|a, b| a.path.cmp(&b.path));
-    status
-}
-
-fn changed(xy: &str, path: &str, letter: &impl Fn(char) -> Option<String>) -> GitFile {
-    let mut chars = xy.chars();
-    GitFile {
-        path: path.to_string(),
-        staged: chars.next().and_then(letter),
-        unstaged: chars.next().and_then(letter),
-        ..GitFile::default()
-    }
-}
-
-/// Reads `git diff --numstat -z`: lines added and removed by path (a renamed
-/// file's new path).
-fn parse_numstat(text: &str) -> HashMap<String, GitLines> {
-    let mut lines = HashMap::new();
-    let mut items = text.split('\0');
-    while let Some(item) = items.next() {
-        let mut fields = item.splitn(3, '\t');
-        let (Some(added), Some(removed), Some(path)) =
-            (fields.next(), fields.next(), fields.next())
-        else {
-            continue;
-        };
-        let path = if path.is_empty() {
-            // A rename: its old and new paths follow.
-            items.next();
-            match items.next() {
-                Some(path) => path,
-                None => break,
-            }
-        } else {
-            path
-        };
-        let binary = added == "-";
-        lines.insert(
-            path.to_string(),
-            GitLines {
-                added: added.parse().unwrap_or(0),
-                removed: removed.parse().unwrap_or(0),
-                binary,
-            },
-        );
-    }
-    lines
-}
-
-/// An untracked file's lines, when it is small enough to read; binary when
-/// it has a NUL byte.
-fn count_lines(path: &Path) -> Option<GitLines> {
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > COUNT_MAX {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if bytes[..bytes.len().min(8000)].contains(&0) {
-        return Some(GitLines {
-            binary: true,
-            ..GitLines::default()
-        });
-    }
-    let newlines = bytes.iter().filter(|&&b| b == b'\n').count();
-    let last = !bytes.is_empty() && !bytes.ends_with(b"\n");
-    Some(GitLines {
-        added: (newlines + usize::from(last)) as u32,
-        ..GitLines::default()
-    })
-}
-
 /// The field and record separators in the log's format.
 const FIELD: char = '\x1f';
 const TRAILER: char = '\x1d';
@@ -595,63 +458,6 @@ pub async fn log(path: &str, skip: u32, limit: Option<u32>) -> Result<GitLog> {
     Ok(GitLog { commits, more })
 }
 
-fn parse_log(text: &str) -> Vec<GitCommit> {
-    text.split('\0')
-        .filter_map(|record| {
-            let record = record.trim_start_matches('\n');
-            let fields: Vec<&str> = record.splitn(8, FIELD).collect();
-            let [sha, parents, author, email, time, refs, subject, trailers] = fields.as_slice()
-            else {
-                return None;
-            };
-            Some(GitCommit {
-                sha: sha.to_string(),
-                parents: parents.split_whitespace().map(str::to_string).collect(),
-                author: author.to_string(),
-                email: email.to_string(),
-                time_ms: time.parse::<i64>().unwrap_or(0) * 1000,
-                subject: subject.to_string(),
-                refs: parse_refs(refs),
-                coauthors: trailers
-                    .split(TRAILER)
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                    .map(str::to_string)
-                    .collect(),
-            })
-        })
-        .collect()
-}
-
-/// Reads `%D` with `--decorate=full`, like
-/// `HEAD -> refs/heads/main, refs/remotes/origin/main, tag: refs/tags/v1`.
-fn parse_refs(text: &str) -> Vec<GitRef> {
-    let mut refs = Vec::new();
-    for part in text.split(", ").map(str::trim).filter(|p| !p.is_empty()) {
-        let (kind, name) = if let Some(branch) = part.strip_prefix("HEAD -> ") {
-            ("head", branch.strip_prefix("refs/heads/").unwrap_or(branch))
-        } else if part == "HEAD" {
-            ("head", "HEAD")
-        } else if let Some(tag) = part.strip_prefix("tag: ") {
-            ("tag", tag.strip_prefix("refs/tags/").unwrap_or(tag))
-        } else if let Some(branch) = part.strip_prefix("refs/heads/") {
-            ("branch", branch)
-        } else if let Some(remote) = part.strip_prefix("refs/remotes/") {
-            if remote.ends_with("/HEAD") {
-                continue;
-            }
-            ("remote", remote)
-        } else {
-            continue;
-        };
-        refs.push(GitRef {
-            kind: kind.into(),
-            name: name.into(),
-        });
-    }
-    refs
-}
-
 /// A commit named by its hash, never an option or a range.
 fn check_sha(sha: &str) -> Result<()> {
     if (4..=64).contains(&sha.len()) && sha.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -663,80 +469,6 @@ fn check_sha(sha: &str) -> Result<()> {
 
 pub async fn own_commits(path: &str) -> Result<GitOwnCommits> {
     own(&need_repo(path).await?).await
-}
-
-/// The branch's own commits: on no remote branch, back to the last merge
-/// (a rebase would flatten it), at most [`MAX_OWN`].
-async fn own(repo: &Repo) -> Result<GitOwnCommits> {
-    let dir = &repo.root;
-    let born = run(
-        dir,
-        &["rev-parse", "-q", "--verify", "HEAD"],
-        None,
-        READ_TIMEOUT,
-    )
-    .await?
-    .ok();
-    if !born {
-        return Ok(GitOwnCommits {
-            note: Some("There are no commits yet.".into()),
-            ..GitOwnCommits::default()
-        });
-    }
-    let format = format!("--format=%H{FIELD}%P{FIELD}%at{FIELD}%B{RECORD}");
-    let count = format!("-n{}", MAX_OWN + 1);
-    let args = [
-        "log",
-        "--first-parent",
-        &format,
-        &count,
-        "HEAD",
-        "--not",
-        "--remotes",
-    ];
-    let text = git(dir, &args).await?;
-    let mut commits = Vec::new();
-    let mut base = None;
-    let mut note = None;
-    for record in text.split(RECORD) {
-        let fields: Vec<&str> = record.trim_start_matches('\n').splitn(4, FIELD).collect();
-        let [sha, parents, time, message] = fields.as_slice() else {
-            continue;
-        };
-        let parents: Vec<&str> = parents.split_whitespace().collect();
-        if parents.len() > 1 {
-            note = Some("Older commits come before a merge, which can't be squashed or moved.");
-            base = Some(sha.to_string());
-            break;
-        }
-        if commits.len() == MAX_OWN {
-            note = Some("Only the newest 50 commits can be changed here.");
-            base = Some(sha.to_string());
-            break;
-        }
-        commits.push(GitOwnCommit {
-            sha: sha.to_string(),
-            time_ms: time.parse::<i64>().unwrap_or(0) * 1000,
-            message: message.trim_end().to_string(),
-        });
-        base = parents.first().map(|p| p.to_string());
-    }
-    if commits.is_empty() && note.is_none() {
-        base = Some(git(dir, &["rev-parse", "HEAD"]).await?.trim().to_string());
-        note = Some(
-            "Every commit is on the remote already, so changing them would mean a forced push.",
-        );
-    } else if note.is_none() && base.is_some() {
-        note = Some(
-            "Older commits are on the remote already, so changing them would mean a forced push.",
-        );
-    }
-    commits.reverse();
-    Ok(GitOwnCommits {
-        commits,
-        base,
-        note: note.map(str::to_string),
-    })
 }
 
 pub async fn show(path: &str, sha: &str) -> Result<GitCommitInfo> {
@@ -775,31 +507,6 @@ pub async fn show(path: &str, sha: &str) -> Result<GitCommitInfo> {
         message: message.trim_end().to_string(),
         files,
     })
-}
-
-/// Reads `git diff-tree --name-status -z`.
-fn parse_name_status(text: &str) -> Vec<GitChange> {
-    let mut changes = Vec::new();
-    let mut items = text.split('\0').filter(|i| !i.is_empty());
-    while let Some(status) = items.next() {
-        let letter = status.chars().next().unwrap_or('M');
-        let Some(first) = items.next() else { break };
-        let (path, from) = if matches!(letter, 'R' | 'C') {
-            match items.next() {
-                Some(path) => (path, Some(first.to_string())),
-                None => break,
-            }
-        } else {
-            (first, None)
-        };
-        changes.push(GitChange {
-            path: path.to_string(),
-            from,
-            status: letter.to_string(),
-            lines: None,
-        });
-    }
-    changes
 }
 
 pub async fn diff(path: &str, file: &str, staged: bool, sha: Option<&str>) -> Result<GitDiff> {
@@ -897,73 +604,6 @@ fn diff_body(file: &str, text: &str) -> GitDiff {
         truncated,
         ..GitDiff::default()
     }
-}
-
-/// Applies the changes of `file` on the `lines` of `diff` (and no others),
-/// `how` saying where to, as `git add -p` would.
-async fn apply_lines(
-    dir: &Path,
-    file: &str,
-    diff: &str,
-    lines: &[usize],
-    way: Way,
-    how: &[&str],
-) -> Result<String> {
-    check_files(&[file.to_string()])?;
-    let patch = patch::partial(file, diff, &lines.iter().copied().collect(), way)?;
-    let mut args = vec!["apply", "--whitespace=nowarn"];
-    args.extend(how);
-    args.push("-");
-    change(dir, &args, Some(&patch)).await.map_err(|err| {
-        if err.to_string().contains("patch does not apply") {
-            anyhow!("{file} changed since its diff was read; look at the diff again")
-        } else {
-            err
-        }
-    })
-}
-
-/// A file name for git, never taken as an option.
-fn check_files(files: &[String]) -> Result<()> {
-    if files.iter().any(|f| f.is_empty() || f.starts_with('-')) {
-        bail!("not a file name: {files:?}");
-    }
-    Ok(())
-}
-
-/// Runs a merge, rebase or pull that may stop on conflicts: stopping leaves
-/// git merging or rebasing, which the pane shows, and isn't a failure.
-async fn stops(repo: &Repo, args: &[&str]) -> Result<String> {
-    let output = run(&repo.root, args, None, WRITE_TIMEOUT).await?;
-    if !output.ok() && state(&repo.git_dir).is_none() {
-        bail!("{}", output.error());
-    }
-    let mut said = output.stdout.trim().to_string();
-    let err = output.stderr.trim();
-    if !output.ok() && !err.is_empty() {
-        if !said.is_empty() {
-            said.push('\n');
-        }
-        said.push_str(err);
-    }
-    Ok(said)
-}
-
-async fn check_tag(dir: &Path, name: &str) -> Result<()> {
-    if name.is_empty() || name.starts_with('-') {
-        bail!("{name:?} can't be a tag name");
-    }
-    git(dir, &["check-ref-format", &format!("refs/tags/{name}")])
-        .await
-        .map(drop)
-        .map_err(|_| anyhow!("{name:?} can't be a tag name"))
-}
-
-fn check_branch(name: &str) -> Result<()> {
-    if name.is_empty() || name.starts_with('-') || name.chars().any(char::is_whitespace) {
-        bail!("{name:?} can't be a branch name");
-    }
-    Ok(())
 }
 
 pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
@@ -1272,117 +912,6 @@ pub async fn run_action(path: &str, action: GitAction) -> Result<GitDone> {
     Ok(GitDone { output })
 }
 
-/// Makes the branch's own commits again as `steps` says, with an interactive
-/// rebase whose list of commits is written for it: `pick`, `fixup` for one
-/// squashed into the one before, and after a commit given a new message, an
-/// `exec` that amends it with that message.
-async fn rewrite(repo: &Repo, base: Option<String>, steps: &[GitRewrite]) -> Result<String> {
-    let dir = &repo.root;
-    if state(&repo.git_dir).is_some() {
-        bail!("finish or stop the merge or rebase under way first");
-    }
-    if !run(dir, &["symbolic-ref", "-q", "HEAD"], None, READ_TIMEOUT)
-        .await?
-        .ok()
-    {
-        bail!("HEAD isn't on a branch; switch to one first");
-    }
-    let own = own(repo).await?;
-    let mut want: Vec<&str> = own.commits.iter().map(|c| c.sha.as_str()).collect();
-    let mut got: Vec<&str> = steps.iter().map(|s| s.sha.as_str()).collect();
-    want.sort_unstable();
-    got.sort_unstable();
-    if own.base != base || want != got {
-        bail!("the branch's commits changed since they were listed; look again");
-    }
-    if steps.first().is_some_and(|s| s.squash) {
-        bail!("the first commit has nothing before it to squash into");
-    }
-    let messages: HashMap<&str, &str> = own
-        .commits
-        .iter()
-        .map(|c| (c.sha.as_str(), c.message.as_str()))
-        .collect();
-    fn changed<'a>(step: &'a GitRewrite, messages: &HashMap<&str, &str>) -> Option<&'a str> {
-        step.message
-            .as_deref()
-            .map(str::trim_end)
-            .filter(|m| Some(m) != messages.get(step.sha.as_str()))
-    }
-    let new_message = |step| changed(step, &messages);
-    let same_order = got.len() == steps.len()
-        && steps
-            .iter()
-            .map(|s| s.sha.as_str())
-            .eq(own.commits.iter().map(|c| c.sha.as_str()));
-    if same_order && steps.iter().all(|s| !s.squash && new_message(s).is_none()) {
-        return Ok(String::new());
-    }
-
-    let work = repo.git_dir.join("sandhill-rewrite");
-    let _ = std::fs::remove_dir_all(&work);
-    std::fs::create_dir_all(&work)?;
-    let program = program()?;
-    let mut todo = String::new();
-    for (i, step) in steps.iter().enumerate() {
-        todo.push_str(&format!(
-            "{} {}\n",
-            if step.squash { "fixup" } else { "pick" },
-            step.sha
-        ));
-        // A message goes on once the commits squashed into it are in.
-        let start = steps[..=i].iter().rposition(|s| !s.squash).unwrap_or(0);
-        let ends = steps.get(i + 1).is_none_or(|next| !next.squash);
-        if let Some(message) = new_message(&steps[start]).filter(|_| ends) {
-            if message.trim().is_empty() {
-                bail!("a commit needs a message");
-            }
-            let file = work.join(format!("message-{i}.txt"));
-            std::fs::write(&file, format!("{message}\n"))?;
-            todo.push_str(&format!(
-                "exec {} commit --amend --no-verify --allow-empty -q -F {}\n",
-                shell_quote(&program.to_string_lossy()),
-                shell_quote(&file.to_string_lossy())
-            ));
-        }
-    }
-    let list = work.join("todo");
-    std::fs::write(&list, todo)?;
-    // Git runs the sequence editor with the list's file after it.
-    let editor = format!(
-        "sequence.editor=cp {}",
-        shell_quote(&list.to_string_lossy())
-    );
-    let onto = base.as_deref().unwrap_or("--root");
-    let args = [
-        "-c",
-        "core.editor=true",
-        "-c",
-        &editor,
-        "rebase",
-        "-i",
-        "--autostash",
-        onto,
-    ];
-    let said = stops(repo, &args).await?;
-    if state(&repo.git_dir).is_none() {
-        let _ = std::fs::remove_dir_all(&work);
-    }
-    Ok(said)
-}
-
-/// `text` as one word to a POSIX shell.
-fn shell_quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
-}
-
-/// What the agent is asked; the staged changes follow on its input.
-const MESSAGE_PROMPT: &str = "Write a git commit message for the staged changes given below. \
-Reply with the message only, no code fences or commentary: a summary line of at most 60 \
-characters in the imperative mood (\"Add QC plots\", not \"Added\"), then, if it helps, a blank \
-line and a few short lines on what changed and why. Match the style of the recent commit \
-subjects. Don't add co-author or attribution lines.";
-
 pub async fn write_message(path: &str, agent: Option<&str>) -> Result<GitMessage> {
     let repo = need_repo(path).await?;
     let dir = &repo.root;
@@ -1441,255 +970,9 @@ pub async fn write_message(path: &str, agent: Option<&str>) -> Result<GitMessage
     })
 }
 
-/// Each file's diff cut to [`PROMPT_FILE`] bytes, and all to
-/// [`PROMPT_TOTAL`]; whether any was cut.
-fn shorten_patch(patch: &str) -> (String, bool) {
-    let mut out = String::new();
-    let mut cut = false;
-    for (i, file) in patch.split("\ndiff --git ").enumerate() {
-        let file = if i == 0 {
-            file.to_string()
-        } else {
-            format!("\ndiff --git {file}")
-        };
-        let take = if file.len() > PROMPT_FILE {
-            cut = true;
-            let mut end = PROMPT_FILE;
-            while !file.is_char_boundary(end) {
-                end -= 1;
-            }
-            format!("{}\n[…]\n", &file[..end])
-        } else {
-            file
-        };
-        if out.len() + take.len() > PROMPT_TOTAL {
-            out.push_str("\n[…more files]\n");
-            return (out, true);
-        }
-        out.push_str(&take);
-    }
-    (out, cut)
-}
-
-/// Runs an agent CLI with `input` on its standard input.
-async fn ask(dir: &Path, program: &Path, args: &[String], input: &str) -> Result<String> {
-    let mut command = tokio::process::Command::new(program);
-    command
-        .args(args)
-        .current_dir(dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(path) = crate::agents::path_for(program)? {
-        command.env("PATH", path);
-    }
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("cannot run {}", program.display()))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.as_bytes()).await?;
-    }
-    let output = tokio::time::timeout(AGENT_TIMEOUT, child.wait_with_output())
-        .await
-        .map_err(|_| anyhow!("the agent took too long to write a message"))??;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        let said = if err.trim().is_empty() { out } else { err };
-        let said = said.trim();
-        let said = said.lines().rev().take(4).collect::<Vec<_>>();
-        bail!(
-            "the agent couldn't write a message: {}",
-            said.into_iter().rev().collect::<Vec<_>>().join("\n")
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-async fn ask_claude(dir: &Path, program: &Path, input: &str) -> Result<String> {
-    let help = crate::agents::help_text(program).await;
-    let mut args: Vec<String> = vec!["-p".into(), MESSAGE_PROMPT.into()];
-    // A small, quick model; no tools, MCP servers or saved session.
-    for (flag, value) in [
-        ("--model", Some("haiku")),
-        ("--tools", Some("")),
-        ("--strict-mcp-config", None),
-        ("--no-session-persistence", None),
-        ("--disable-slash-commands", None),
-    ] {
-        if help.contains(flag) {
-            args.push(flag.into());
-            args.extend(value.map(str::to_string));
-        }
-    }
-    ask(dir, program, &args, input).await
-}
-
-async fn ask_codex(dir: &Path, program: &Path, input: &str) -> Result<String> {
-    let help = crate::agents::help_text(program).await;
-    if !help.contains("exec") {
-        bail!("this Codex is too old to write a message");
-    }
-    let out = std::env::temp_dir().join(format!("sandhill-message-{}.txt", uuid::Uuid::new_v4()));
-    let out_arg = out.to_string_lossy().into_owned();
-    let args: Vec<String> = [
-        "exec",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "--output-last-message",
-        &out_arg,
-        "-",
-    ]
-    .map(str::to_string)
-    .to_vec();
-    let prompt = format!("{MESSAGE_PROMPT}\n\n{input}");
-    let result = ask(dir, program, &args, &prompt).await;
-    let text = std::fs::read_to_string(&out);
-    let _ = std::fs::remove_file(&out);
-    result?;
-    text.context("Codex didn't write a message")
-}
-
-/// The summary line and the body of an agent's message, without code fences
-/// or attribution lines.
-fn split_message(text: &str) -> (String, String) {
-    let lines: Vec<&str> = text
-        .trim()
-        .lines()
-        .map(str::trim_end)
-        .filter(|l| !l.trim_start().starts_with("```"))
-        .filter(|l| {
-            let lower = l.to_ascii_lowercase();
-            !lower.starts_with("co-authored-by:") && !lower.contains("generated with")
-        })
-        .collect();
-    let mut lines = lines.into_iter().skip_while(|l| l.trim().is_empty());
-    let summary = lines
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_matches('"')
-        .to_string();
-    let body: Vec<&str> = lines.collect();
-    let body = body.join("\n").trim().to_string();
-    (summary, body)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_the_status() {
-        let text = "# branch.oid 1234abcd\0# branch.head main\0# branch.upstream origin/main\0\
-# branch.ab +3 -1\0\
-1 M. N... 100644 100644 100644 aaa bbb analysis.qmd\0\
-1 .M N... 100644 100644 100644 aaa bbb R/01 qc.R\0\
-2 R. N... 100644 100644 100644 aaa bbb R100 new.R\0old.R\0\
-u UU N... 100644 100644 100644 100644 a b c conflict.R\0\
-? CLAUDE.md\0? data/\0";
-        let status = parse_status(text);
-        assert_eq!(status.head.as_deref(), Some("1234abcd"));
-        assert_eq!(status.branch.as_deref(), Some("main"));
-        assert_eq!(status.upstream.as_deref(), Some("origin/main"));
-        assert_eq!((status.ahead, status.behind), (3, 1));
-        let summary: Vec<_> = status
-            .files
-            .iter()
-            .map(|f| {
-                (
-                    f.path.as_str(),
-                    f.staged.as_deref(),
-                    f.unstaged.as_deref(),
-                    f.from.as_deref(),
-                    f.conflict,
-                )
-            })
-            .collect();
-        assert_eq!(
-            summary,
-            [
-                ("CLAUDE.md", None, Some("?"), None, false),
-                ("R/01 qc.R", None, Some("M"), None, false),
-                ("analysis.qmd", Some("M"), None, None, false),
-                ("conflict.R", None, Some("U"), None, true),
-                ("data/", None, Some("?"), None, false),
-                ("new.R", Some("R"), None, Some("old.R"), false),
-            ]
-        );
-    }
-
-    #[test]
-    fn reads_a_new_repository_and_a_detached_head() {
-        let status = parse_status("# branch.oid (initial)\0# branch.head main\0? a.R\0");
-        assert_eq!(status.head, None);
-        assert_eq!(status.branch.as_deref(), Some("main"));
-        let status = parse_status("# branch.oid abc\0# branch.head (detached)\0");
-        assert_eq!(status.branch, None);
-        assert_eq!(status.head.as_deref(), Some("abc"));
-    }
-
-    #[test]
-    fn reads_numstat_with_renames_and_binaries() {
-        let lines = parse_numstat("12\t0\tanalysis.qmd\0-\t-\tumap.png\x003\t1\t\0old.R\0new.R\0");
-        assert_eq!(lines["analysis.qmd"].added, 12);
-        assert!(lines["umap.png"].binary);
-        assert_eq!((lines["new.R"].added, lines["new.R"].removed), (3, 1));
-        assert!(!lines.contains_key("old.R"));
-    }
-
-    #[test]
-    fn reads_the_log_and_its_refs() {
-        let text = format!(
-            "aaa{FIELD}bbb ccc{FIELD}Huan Yang{FIELD}huan@example.org{FIELD}1760000000{FIELD}\
-HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD, tag: refs/tags/v0.1.0\
-{FIELD}Merge branch 'feature/deseq'{FIELD}Claude <noreply@anthropic.com>{TRAILER}Codex <codex@openai.com>\
-\0\nbbb{FIELD}{FIELD}Huan Yang{FIELD}huan@example.org{FIELD}1750000000{FIELD}{FIELD}First{FIELD}"
-        );
-        let commits = parse_log(&text);
-        assert_eq!(commits.len(), 2);
-        assert_eq!(commits[0].parents, ["bbb", "ccc"]);
-        assert_eq!(commits[0].time_ms, 1_760_000_000_000);
-        let refs: Vec<_> = commits[0]
-            .refs
-            .iter()
-            .map(|r| (r.kind.as_str(), r.name.as_str()))
-            .collect();
-        assert_eq!(
-            refs,
-            [
-                ("head", "main"),
-                ("remote", "origin/main"),
-                ("tag", "v0.1.0")
-            ]
-        );
-        assert_eq!(
-            commits[0].coauthors,
-            ["Claude <noreply@anthropic.com>", "Codex <codex@openai.com>"]
-        );
-        assert!(commits[1].parents.is_empty());
-        assert!(commits[1].coauthors.is_empty());
-        assert_eq!(parse_refs("HEAD, refs/heads/x")[0].name, "HEAD");
-    }
-
-    #[test]
-    fn reads_name_status() {
-        let changes = parse_name_status("M\0a.R\0R087\0old.R\0new.R\0A\0b.R\0");
-        let summary: Vec<_> = changes
-            .iter()
-            .map(|c| (c.status.as_str(), c.path.as_str(), c.from.as_deref()))
-            .collect();
-        assert_eq!(
-            summary,
-            [
-                ("M", "a.R", None),
-                ("R", "new.R", Some("old.R")),
-                ("A", "b.R", None)
-            ]
-        );
-    }
 
     #[test]
     fn keeps_the_diff_from_its_first_hunk() {
@@ -1701,26 +984,6 @@ HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD, tag
         let binary = diff_body("a.png", "diff --git a/a.png b/a.png\nBinary files differ\n");
         assert!(binary.binary);
         assert!(binary.text.is_empty());
-    }
-
-    #[test]
-    fn splits_an_agents_message() {
-        let (summary, body) = split_message(
-            "```\nAdd QC violin plots\n\nPlots nCount and percent.mt per sample.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n```\n",
-        );
-        assert_eq!(summary, "Add QC violin plots");
-        assert_eq!(body, "Plots nCount and percent.mt per sample.");
-        assert_eq!(split_message("\"Fix typo\"").0, "Fix typo");
-    }
-
-    #[test]
-    fn cuts_long_files_from_the_prompt() {
-        let long = format!("diff --git a/a b/a\n{}", "+x\n".repeat(5000));
-        let patch = format!("{long}\ndiff --git a/b b/b\n+y\n");
-        let (text, cut) = shorten_patch(&patch);
-        assert!(cut);
-        assert!(text.contains("[…]"));
-        assert!(text.contains("diff --git a/b b/b\n+y"));
     }
 
     #[test]

@@ -160,6 +160,18 @@ table (new file, what it holds, about how many lines) is added to this
 plan for Huan to see. A file that turns out to be one long thing that
 doesn't divide naturally is left whole and noted here.
 
+### Daemon `git.rs`
+
+Keeps the shared types, command runner and Git pane entry points.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `git/status_read.rs` | Status and numstat parsing, untracked line counts, and their tests | 220 |
+| `git/history_read.rs` | Log, refs and changed-file parsing, own-commit reading, and their tests | 250 |
+| `git/action_helpers.rs` | Applying selected lines, action validation, conflict stops and rewrite helpers | 180 |
+| `git/message_helpers.rs` | Agent prompts, invocation, message parsing, and their tests | 180 |
+
+
 ## Order
 
 1. Part 1 (plans), Part 2 (`CLAUDE.md`): documents only.
