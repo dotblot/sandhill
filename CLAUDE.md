@@ -177,11 +177,24 @@ These plans are history: where they differ from this file, this file wins.
   replaces click-to-sort; pinned columns stay left while scrolling sideways.
   The project keeps each table's pins and dragged widths with its sorting,
   filters and hidden columns, by column name; Reset View forgets them.
-  The toolbar has Copy as code (the whole view), Copy filters as code
-  (dimmed without filters), a magnifier in Search, Open in a new window and
-  an icon-only gear (summary panel by default, Reset View). The summary
-  panel shows each column's missing share (count on hover), folds its
-  statistics under it, and clicking a column scrolls the table to it.
+  The action row (Huan, 2026-11-14; `docs/design/data-explorer-redesign-plan.md`)
+  holds, left, the column panel toggle, the table's name (code on hover) and
+  a status dot (green live, amber running, red error); right, in a fixed
+  order, Search, Filter ("Filter · 2" with filters on), one Export menu
+  (Copy as Code, Copy Filters as Code dimmed without filters, Save as CSV…),
+  Read again, Open in a new window and an icon-only gear (column panel by
+  default, Reset View). Menus open under their buttons. While filters or
+  sorting are on, a row of wrapping chips sits over the table (filters
+  change, sort keys flip, × removes) with Clear all. The column panel has a
+  COLUMNS heading with "6 of 7" and a ⋯ menu (Show/Hide All Columns), a Find
+  column field, then one 32px line per column: fold arrow, type badge
+  (num, int, str, cat, bool, date, other), name, sparkline, missing share
+  (count on hover), and the shown checkbox last. Folded statistics: a wide
+  histogram between min and max with mean and median, or each common value
+  with a share bar (click filters to it), then "N distinct · N missing".
+  Clicking a column scrolls the table to it. Columns start as wide as their
+  first rows' measured values (at most 320px); a whole-column selection
+  uses the lighter tint.
   Full status/errors remain in tooltips. Ark is named "Ark R" however it was
   registered (Huan, 2026-11-14). List only runnable kernels, including
   conda/mamba kernels; do not add a separate environment inventory or disabled

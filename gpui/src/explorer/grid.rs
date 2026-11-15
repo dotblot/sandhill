@@ -164,7 +164,7 @@ impl Explorer {
         )
     }
 
-    /// The gear's menu: the summary panel's default, and resetting the view.
+    /// The gear's menu: the column panel's default, and resetting the view.
     pub(super) fn render_settings_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let at = self.settings_menu?;
         let p = *Palette::get(cx);
@@ -182,7 +182,7 @@ impl Explorer {
                     } else {
                         "sidebar.left"
                     },
-                    "Show Summary Panel by Default",
+                    "Show Column Panel by Default",
                     None,
                     true,
                     &p,
@@ -200,15 +200,187 @@ impl Explorer {
                     })
                     .on_click(cx.listener(|this, _, _, cx| this.reset_view(cx))),
             )
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.settings_menu = None;
-                cx.notify();
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if !this.popup_triggers.contains("settings", event.position) {
+                    this.settings_menu = None;
+                    cx.notify();
+                }
             }));
-        Some(
-            deferred(anchored().position(at).snap_to_window().child(body))
-                .with_priority(3)
-                .into_any_element(),
+        Some(self.menu_under("settings", at, body))
+    }
+
+    /// The Export menu: code for the whole view or just its filters, or the
+    /// view as a CSV file.
+    pub(super) fn render_export_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let at = self.export_menu?;
+        let p = *Palette::get(cx);
+        let filtered = !self.filters.is_empty();
+        let body = crate::composer_view::popup(&p)
+            .id("de-export-popup")
+            .occlude()
+            .min_w(px(240.))
+            .text_size(px(look::SMALL))
+            .child(
+                Self::menu_item("de-ex-code", "edit.copy", "Copy as Code", None, true, &p)
+                    .tooltip(tip(
+                        "Copy code for this view: filters, sorting and shown columns",
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.export_menu = None;
+                        this.copy_code(cx);
+                    })),
+            )
+            .child(
+                Self::menu_item(
+                    "de-ex-filters",
+                    "filter",
+                    "Copy Filters as Code",
+                    None,
+                    filtered,
+                    &p,
+                )
+                .when(filtered, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| {
+                        this.export_menu = None;
+                        this.copy_filter_code(cx);
+                    }))
+                }),
+            )
+            .child(div().h(px(1.)).my(px(4.)).mx(px(6.)).bg(p.line))
+            .child(
+                Self::menu_item("de-ex-csv", "doc.save", "Save as CSV…", None, true, &p).on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.export_menu = None;
+                        this.start_export(window, cx);
+                    }),
+                ),
+            )
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if !this.popup_triggers.contains("export", event.position) {
+                    this.export_menu = None;
+                    cx.notify();
+                }
+            }));
+        Some(self.menu_under("export", at, body))
+    }
+
+    /// The column panel's ⋯ menu.
+    pub(super) fn render_columns_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let at = self.columns_menu?;
+        let p = *Palette::get(cx);
+        let body = crate::composer_view::popup(&p)
+            .id("de-columns-popup")
+            .occlude()
+            .min_w(px(180.))
+            .text_size(px(look::SMALL))
+            .child(
+                Self::menu_item("de-show-all", "check", "Show All Columns", None, true, &p)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.columns_menu = None;
+                        this.show_all_columns(true, cx);
+                    })),
+            )
+            .child(
+                Self::menu_item("de-hide-all", "close", "Hide All Columns", None, true, &p)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.columns_menu = None;
+                        this.show_all_columns(false, cx);
+                    })),
+            )
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if !this.popup_triggers.contains("columns", event.position) {
+                    this.columns_menu = None;
+                    cx.notify();
+                }
+            }));
+        Some(self.menu_under("columns", at, body))
+    }
+
+    /// A menu just under its button's right end, as the button was last
+    /// drawn; at the click itself when it wasn't.
+    fn menu_under(
+        &self,
+        trigger: &'static str,
+        clicked: Point<Pixels>,
+        body: impl IntoElement,
+    ) -> AnyElement {
+        let (at, anchor) = match self.popup_triggers.bounds(trigger) {
+            Some(b) => (point(b.right(), b.bottom() + px(4.)), Anchor::TopRight),
+            None => (clicked, Anchor::TopLeft),
+        };
+        deferred(
+            anchored()
+                .anchor(anchor)
+                .position(at)
+                .snap_to_window()
+                .child(body),
         )
+        .with_priority(3)
+        .into_any_element()
+    }
+
+    /// A new table's columns and row labels as wide as the longest of their
+    /// first rows' values, as the window draws them (at most
+    /// [`FIT_WIDTH`]); widths the user dragged are kept.
+    pub(super) fn fit_column_widths(&mut self, window: &mut Window) {
+        let (Some(shape), Some(Block::Ready(rows))) = (&self.shape, self.blocks.get(&0)) else {
+            return;
+        };
+        let style = window.text_style();
+        let size = style.font_size.to_pixels(window.rem_size());
+        let mut bold = style.clone();
+        bold.font_weight = FontWeight::SEMIBOLD;
+        let measure = |text: &str, bold_text: bool| -> f32 {
+            let run = if bold_text { &bold } else { &style }.to_run(text.len());
+            f32::from(
+                window
+                    .text_system()
+                    .shape_line(text.to_string().into(), size, &[run], None)
+                    .width,
+            )
+        };
+        // The longest by characters are laid out: enough of them that
+        // narrow letters and digits ("1") don't hide wide ones.
+        let widest = |texts: Vec<String>, bold_text: bool| -> f32 {
+            let mut texts = texts;
+            texts.sort_by_key(|t| std::cmp::Reverse(t.chars().count()));
+            texts.dedup();
+            texts
+                .iter()
+                .take(24)
+                .map(|t| measure(t, bold_text))
+                .fold(0., f32::max)
+        };
+        let mut widths = self.widths.clone();
+        for (i, column) in shape.columns.iter().enumerate() {
+            if self.resized.contains(&(i as u32)) || i >= widths.len() {
+                continue;
+            }
+            let cells: Vec<String> = rows
+                .iter()
+                .filter_map(|row| row.cells.get(i))
+                .map(|v| format_cell(v, &self.language).0)
+                .collect();
+            // Category colours put a swatch before the value.
+            let swatch = if matches!(column.kind.as_str(), "category" | "logical") {
+                14.
+            } else {
+                0.
+            };
+            // The cell's padding and edge, and room for wider values below.
+            let cell = widest(cells, false) + 30. + swatch;
+            // Room for a sort arrow after the name.
+            let header = widest(vec![column.name.clone()], true) + 18. + 16.;
+            widths[i] = cell.max(header).clamp(MIN_COLUMN_WIDTH, FIT_WIDTH).ceil();
+        }
+        let labels: Vec<String> = rows
+            .iter()
+            .map(|r| r.label.clone())
+            .chain([shape.total.to_string()])
+            .collect();
+        self.label_width = (widest(labels, false) + 18.).clamp(44., 240.).ceil();
+        self.widths = widths;
+        self.fit_widths = false;
     }
 
     pub(super) fn render_grid(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -426,6 +598,7 @@ impl Explorer {
             );
         let numbers: Vec<bool> = shape.columns.iter().map(|c| c.kind == "number").collect();
         let language = self.language.clone();
+        let total_rows = shape.rows;
         let list = uniform_list(
             "table-rows",
             shape.rows as usize,
@@ -433,6 +606,14 @@ impl Explorer {
                 let p = *Palette::get(cx);
                 let cell_line = p.line.opacity(0.55);
                 let selected = this.selection.range();
+                // Whole columns take the lighter tint, so a picked column
+                // doesn't band the table heavily.
+                let selection =
+                    if selected.is_some_and(|r| total_rows > 1 && r.row_count() == total_rows) {
+                        p.accent_soft
+                    } else {
+                        p.sel
+                    };
                 range
                     .map(|ix| {
                         let row = this.row(ix, cx);
@@ -462,7 +643,7 @@ impl Explorer {
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .cursor_text()
-                            .when(selected_row, |d| d.bg(p.sel))
+                            .when(selected_row, |d| d.bg(selection))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -519,7 +700,7 @@ impl Explorer {
                                     .cursor_text()
                                     .when(
                                         selected.is_some_and(|r| r.contains(ix as u64, display)),
-                                        |d| d.bg(p.sel),
+                                        |d| d.bg(selection),
                                     )
                                     .on_mouse_down(
                                         MouseButton::Left,

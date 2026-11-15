@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::base::ElementExt as _;
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -44,12 +45,18 @@ const COLUMNS: u32 = 200;
 const ROW_HEIGHT: f32 = 26.;
 /// The header holds the column's name and its ⋮ menu.
 const HEADER_HEIGHT: f32 = 32.;
-const SIDE_WIDTH: f32 = 310.;
-const SIDE_ROW: f32 = 42.;
-const SPARK_WIDTH: f32 = 70.;
+const SIDE_WIDTH: f32 = 320.;
+const SIDE_ROW: f32 = 32.;
+const SPARK_WIDTH: f32 = 56.;
 const SPARK_HEIGHT: f32 = 22.;
 /// The missing share after each sparkline.
-const MISSING_WIDTH: f32 = 40.;
+const MISSING_WIDTH: f32 = 36.;
+/// A column's type badge in the column panel.
+const BADGE_WIDTH: f32 = 34.;
+/// A common value's name in folded statistics, before its bar.
+const VALUE_WIDTH: f32 = 96.;
+/// The widest a column starts, from its measured contents.
+const FIT_WIDTH: f32 = 320.;
 /// Kit base families, then their brighter variants for larger categories.
 const CATEGORY_ANSI: [usize; 10] = [4, 3, 1, 6, 2, 5, 12, 11, 9, 14];
 /// What the daemon says when the session runs other code.
@@ -318,6 +325,8 @@ pub struct Explorer {
     /// value a filter can pick from.
     summary: HashMap<u32, ColumnSummary>,
     overall: HashMap<u32, ColumnSummary>,
+    /// The read (`generation`) the summary belongs to.
+    summary_generation: u64,
     /// Each category value's theme colour index, kept as filters change.
     colors: HashMap<u32, Vec<(String, usize)>>,
     picked: usize,
@@ -352,6 +361,14 @@ pub struct Explorer {
     column_menu: Option<(u32, Point<Pixels>)>,
     /// The gear menu, where it opened.
     settings_menu: Option<Point<Pixels>>,
+    /// The Export menu, where it opened.
+    export_menu: Option<Point<Pixels>>,
+    /// The column panel's ⋯ menu, where it opened.
+    columns_menu: Option<Point<Pixels>>,
+    /// The column panel's Find column field.
+    column_find: Entity<InputState>,
+    /// A new table's widths, still to be measured from its first rows.
+    fit_widths: bool,
     /// Shown in a window of its own.
     popped: bool,
     _subscriptions: Vec<Subscription>,
@@ -444,6 +461,7 @@ impl Explorer {
         let typed = cx.new(|cx| InputState::new(window, cx).placeholder("a, b, c"));
         let export_input = cx.new(|cx| InputState::new(window, cx));
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let column_find = cx.new(|cx| InputState::new(window, cx).placeholder("Find column"));
         let explorer = cx.entity();
         let toolbar = cx.new(|cx| ExplorerToolbar {
             explorer: explorer.downgrade(),
@@ -465,6 +483,11 @@ impl Explorer {
             cx.subscribe_in(&search_input, window, |this, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.debounce_search(cx);
+                }
+            }),
+            cx.subscribe_in(&column_find, window, |_, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
                 }
             }),
             cx.subscribe_in(
@@ -510,6 +533,7 @@ impl Explorer {
             label_width: 60.,
             summary: HashMap::new(),
             overall: HashMap::new(),
+            summary_generation: 0,
             colors: HashMap::new(),
             picked: 0,
             selection: Selection::default(),
@@ -536,6 +560,10 @@ impl Explorer {
             expanded: std::collections::HashSet::new(),
             column_menu: None,
             settings_menu: None,
+            export_menu: None,
+            columns_menu: None,
+            column_find,
+            fit_widths: false,
             popped: false,
             _subscriptions: subscriptions,
         };
@@ -912,6 +940,9 @@ impl Explorer {
             .flatten();
         if !same {
             self.resized.clear();
+            // A first guess from character counts, measured properly once
+            // the window can lay the first rows out (`fit_column_widths`).
+            self.fit_widths = true;
             self.widths = rows
                 .columns
                 .iter()
@@ -949,6 +980,15 @@ impl Explorer {
             total: rows.total,
             rows: rows.rows,
         });
+        // The summary of this same read can arrive before its first rows:
+        // its category colours wait until the columns are known.
+        if !same && self.summary_generation == self.generation {
+            let summaries: Vec<ColumnSummary> = self.summary.values().cloned().collect();
+            self.color_values(&summaries);
+            if self.filters.is_empty() && self.search.is_empty() {
+                self.overall = self.summary.clone();
+            }
+        }
         let Some(saved) = self.saved.take().or(previous) else {
             return false;
         };
@@ -1057,7 +1097,10 @@ impl Explorer {
 }
 
 impl Render for Explorer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.fit_widths {
+            self.fit_column_widths(window);
+        }
         let p = *Palette::get(cx);
         let mut body = h_flex().flex_1().min_h_0().items_stretch();
         if self.side_shown && self.shape.is_some() {
@@ -1085,9 +1128,8 @@ impl Render for Explorer {
             )
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
-                    if this.column_menu.is_some() || this.settings_menu.is_some() {
-                        this.column_menu = None;
-                        this.settings_menu = None;
+                    if this.menu_open() {
+                        this.close_menus();
                     } else if let Some(edit) = &mut this.edit {
                         if edit.columns_open {
                             edit.columns_open = false;
@@ -1140,6 +1182,7 @@ impl Render for Explorer {
                 }),
             )
             .children(self.render_export(cx))
+            .children(self.render_filter_row(cx))
             .child(
                 body.child(
                     v_flex()
@@ -1155,7 +1198,14 @@ impl Render for Explorer {
                             }),
                         )
                         .children(self.render_note(&p))
-                        .child(self.render_grid(cx))
+                        .child(
+                            v_flex()
+                                .relative()
+                                .flex_1()
+                                .min_h_0()
+                                .child(self.render_grid(cx))
+                                .children(self.render_filter_popup(cx)),
+                        )
                         .child(
                             h_flex()
                                 .flex_none()
@@ -1169,47 +1219,66 @@ impl Render for Explorer {
                                 .overflow_hidden()
                                 .children(self.selection.range().map(|range| {
                                     div().flex_none().child(format!(
-                                        "{} rows × {} columns selected",
-                                        format_number(range.row_count() as f64),
-                                        format_number(range.column_count() as f64),
+                                        "{} × {} selected",
+                                        counted(range.row_count(), "row"),
+                                        counted(range.column_count() as u64, "column"),
                                     ))
                                 }))
                                 .child(div().flex_1())
                                 .children(self.shape.as_ref().map(|s| {
                                     let rows = if s.rows == s.total {
-                                        format!("{} rows", format_number(s.rows as f64))
+                                        counted(s.rows, "row")
                                     } else {
                                         format!(
-                                            "{} of {} rows",
+                                            "{} of {}",
                                             format_number(s.rows as f64),
-                                            format_number(s.total as f64)
+                                            counted(s.total, "row")
                                         )
                                     };
-                                    div().flex_none().child(format!(
-                                        "{rows} · {} columns",
-                                        format_number(s.width as f64)
-                                    ))
+                                    div()
+                                        .flex_none()
+                                        .child(format!("{rows} · {}", counted(s.width, "column")))
                                 })),
                         ),
                 ),
             )
-            .children(self.render_filter_popup(cx))
             .children(self.render_column_menu(cx))
             .children(self.render_settings_menu(cx))
+            .children(self.render_export_menu(cx))
+            .children(self.render_columns_menu(cx))
     }
 }
 
 impl Explorer {
-    /// The bar over the table: the column list's toggle, the table and its
-    /// session, read again, copy as code and export.
+    /// The action row: what the table is on the left (the column panel's
+    /// toggle, the table's name and a status dot), what to do with it on
+    /// the right (Search, Filter, Export, read again, a window of its own,
+    /// settings), in an order that never moves.
     fn render_top(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let state = if self.busy { "running code…" } else { "live" };
         let what = self
             .shape
             .as_ref()
             .map_or_else(|| self.name(), |s| s.code.clone());
+        let code = format!("{} · {what}", self.language_name());
         let side = self.side_shown;
+        let (dot, status) = if let Some(err) = &self.error {
+            (p.err, err.clone())
+        } else if self.busy {
+            (
+                p.warn,
+                format!(
+                    "{} is running code; the table updates when it finishes",
+                    self.language_name()
+                ),
+            )
+        } else {
+            (
+                p.ok,
+                "Live: read again after each run in its session".to_string(),
+            )
+        };
+        let filters = self.filters.len();
         h_flex()
             .flex_1()
             .w_full()
@@ -1226,19 +1295,17 @@ impl Explorer {
             }))
             .child(
                 look::icon_button("de-side", "sidebar.left", &p, side)
-                    .tooltip(move |w, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(if side {
-                            "Hide column stats"
-                        } else {
-                            "Show column stats"
-                        })
-                        .build(w, cx)
-                    })
+                    .tooltip(tip(if side {
+                        "Hide the column panel"
+                    } else {
+                        "Show the column panel"
+                    }))
                     .on_click(cx.listener(move |this, _, _, cx| this.show_side(!side, cx))),
             )
             .child(
                 h_flex()
-                    // The label gives way first, so Export stays in reach.
+                    .id("de-name")
+                    // The name gives way first, so the actions stay in reach.
                     .flex_shrink(1.)
                     .min_w(px(40.))
                     .gap(px(6.))
@@ -1253,74 +1320,100 @@ impl Explorer {
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .text_color(if self.busy { p.busy } else { p.muted })
-                            .child(format!("{} · {what}, {state}", self.language_name())),
-                    ),
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(self.name()),
+                    )
+                    .tooltip(move |w, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(code.clone()).build(w, cx)
+                    }),
             )
             .child(
-                look::icon_button("de-refresh", "refresh", &p, false)
-                    .tooltip(|w, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new("Read the table again")
-                            .build(w, cx)
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                div()
+                    .id("de-status")
+                    .flex_none()
+                    .p(px(3.))
+                    .child(look::dot(dot))
+                    .tooltip(move |w, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(status.clone()).build(w, cx)
+                    }),
+            )
+            .child(div().flex_1())
+            .child(
+                div().flex_none().w(px(150.)).child(
+                    Input::new(&self.search_input)
+                        .small()
+                        .prefix(icon("search").size(px(13.)).text_color(p.muted)),
+                ),
             )
             .child(
-                bar_button("de-copy", "Copy as code", Some("edit.copy"), &p)
-                    .tooltip(|w, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(
-                            "Copy code for this view: filters, sorting and shown columns",
-                        )
-                        .build(w, cx)
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| this.copy_code(cx))),
-            )
-            .child({
-                let filtered = !self.filters.is_empty();
                 bar_button(
-                    "de-copy-filters",
-                    "Copy filters as code",
+                    "de-add-filter",
+                    if filters == 0 {
+                        "Filter".to_string()
+                    } else {
+                        format!("Filter · {filters}")
+                    },
                     Some("filter"),
                     &p,
                 )
-                .when(!filtered, |d| d.opacity(0.4).cursor_default())
-                .when(filtered, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| this.copy_filter_code(cx)))
-                })
-            })
-            .child(div().flex_1())
-            .child(self.render_bar(cx))
+                .on_prepaint(self.popup_triggers.track("add-filter"))
+                .when(filters > 0, |d| d.text_color(p.accent))
+                .tooltip(tip("Add a filter"))
+                .on_click(cx.listener(|this, _, window, cx| this.open_filter(None, window, cx))),
+            )
             .child(
-                look::icon_button("de-export", "doc.save", &p, false)
-                    .tooltip(|w, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new("Export CSV").build(w, cx)
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| this.start_export(window, cx))),
+                bar_button("de-export", "Export", Some("doc.save"), &p)
+                    .on_prepaint(self.popup_triggers.track("export"))
+                    .when(self.export_menu.is_some(), |d| d.bg(p.ink(10.)))
+                    .child(icon("chevron.down").size(px(10.)))
+                    .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                        let open = this.export_menu.is_none();
+                        this.close_menus();
+                        if open {
+                            this.export_menu = Some(event.position());
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                look::icon_button("de-refresh", "refresh", &p, false)
+                    .tooltip(tip("Read the table again"))
+                    .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
             )
             .when(!self.popped, |d| {
                 d.child(
                     look::icon_button("de-pop-out", "window.pop-out", &p, false)
-                        .tooltip(|w, cx| {
-                            gpui_kit::component::tooltip::Tooltip::new("Open in a new window")
-                                .build(w, cx)
-                        })
+                        .tooltip(tip("Open in a new window"))
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(PopOut))),
                 )
             })
             .child(
                 look::icon_button("de-settings", "settings", &p, false)
-                    .tooltip(|w, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new("Settings").build(w, cx)
-                    })
+                    .on_prepaint(self.popup_triggers.track("settings"))
+                    .tooltip(tip("Settings"))
                     .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
-                        this.settings_menu = match this.settings_menu {
-                            Some(_) => None,
-                            None => Some(event.position()),
-                        };
-                        this.column_menu = None;
+                        let open = this.settings_menu.is_none();
+                        this.close_menus();
+                        if open {
+                            this.settings_menu = Some(event.position());
+                        }
                         cx.notify();
                     })),
             )
+    }
+
+    fn menu_open(&self) -> bool {
+        self.column_menu.is_some()
+            || self.settings_menu.is_some()
+            || self.export_menu.is_some()
+            || self.columns_menu.is_some()
+    }
+
+    fn close_menus(&mut self) {
+        self.column_menu = None;
+        self.settings_menu = None;
+        self.export_menu = None;
+        self.columns_menu = None;
     }
 
     fn render_note(&self, p: &Palette) -> Option<AnyElement> {
@@ -1359,6 +1452,20 @@ impl Explorer {
 /// A table's name among those a project keeps: its language and path.
 fn view_key(language: &str, path: &[String]) -> String {
     format!("{}:{}", language.to_lowercase(), path.join("\u{1f}"))
+}
+
+/// A plain tooltip.
+fn tip(text: &'static str) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    move |w, cx| gpui_kit::component::tooltip::Tooltip::new(text).build(w, cx)
+}
+
+/// "1 row", "2,000 rows".
+fn counted(n: u64, word: &str) -> String {
+    format!(
+        "{} {word}{}",
+        format_number(n as f64),
+        if n == 1 { "" } else { "s" }
+    )
 }
 
 #[cfg(test)]

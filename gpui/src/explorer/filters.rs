@@ -442,17 +442,24 @@ impl Explorer {
                     cx.notify();
                 }
             }));
-        let top = if self.export.is_some() { 40. } else { 0. };
-        let left = if self.side_shown { SIDE_WIDTH + 8. } else { 8. };
+        // Over the table's top: a chip's filter at the left, under its chip;
+        // a new one at the right, under the action row's Filter button.
+        let new = edit.index.is_none();
         Some(
             div()
                 .absolute()
-                .top(px(top))
-                .left(px(left))
+                .top(px(4.))
+                .when(new, |d| d.right(px(8.)))
+                .when(!new, |d| d.left(px(8.)))
                 // Anchored so a narrow pane neither squeezes nor clips it.
                 .child(
-                    deferred(anchored().snap_to_window_with_margin(px(8.)).child(popup))
-                        .with_priority(3),
+                    deferred(
+                        anchored()
+                            .when(new, |a| a.anchor(Anchor::TopRight))
+                            .snap_to_window_with_margin(px(8.))
+                            .child(popup),
+                    )
+                    .with_priority(3),
                 )
                 .into_any_element(),
         )

@@ -1,4 +1,4 @@
-//! The explorer's column summaries: the side panel, sparklines, stats, and the filter bar.
+//! The explorer's column summaries: the column panel, sparklines, folded statistics, and the filter row.
 
 use super::*;
 
@@ -24,6 +24,7 @@ impl Explorer {
                 match read {
                     Ok(read) => {
                         this.summary = read.columns.iter().map(|c| (c.column, c.clone())).collect();
+                        this.summary_generation = generation;
                         if !filtered {
                             this.overall = this.summary.clone();
                         }
@@ -73,29 +74,32 @@ impl Explorer {
             .map(|(_, c)| p.ansi[CATEGORY_ANSI[*c]])
     }
 
-    /// The column list: each column with its sparkline and missing share,
-    /// and its statistics folded under it like a folder's files. Clicking a
-    /// column scrolls the table to it.
+    /// The column panel: a heading with how many columns show and a ⋯ menu,
+    /// a Find column field, then one line per column (fold arrow, type
+    /// badge, name, sparkline, missing share, shown checkbox) with its
+    /// statistics folded under it. Clicking a column scrolls the table to it.
     pub(super) fn render_side(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let Some(shape) = &self.shape else {
             return div().into_any_element();
         };
         let shown_rows = shape.rows;
+        let find = self.column_find.read(cx).value().trim().to_lowercase();
+        let hover = p.hover;
         let rows: Vec<AnyElement> = shape
             .columns
             .iter()
             .enumerate()
+            .filter(|(_, c)| find.is_empty() || c.name.to_lowercase().contains(&find))
             .map(|(i, c)| {
                 let column = i as u32;
                 let summary = self.summary.get(&column);
                 let on = self.picked == i;
                 let shown = !self.hidden.contains(&column);
                 let open = self.expanded.contains(&column);
-                let hover = p.hover;
                 let missing = summary.map(|s| s.missing);
                 let share = missing.map(|m| missing_share(m, shown_rows));
-                let tip = missing.map(|m| {
+                let missing_tip = missing.map(|m| {
                     format!(
                         "{} of {} values missing ({})",
                         format_number(m as f64),
@@ -103,13 +107,16 @@ impl Explorer {
                         missing_text(&self.language)
                     )
                 });
+                let name_tip = format!("{} · {}", c.name, column_note(c, summary));
+                let kind_tip = c.kind_detail.clone();
+                let (badge, tint) = type_badge(c);
                 let row = h_flex()
                     .id(("de-col", i))
                     .flex_none()
                     .h(px(SIDE_ROW))
                     .pl(px(2.))
                     .pr(px(6.))
-                    .gap(px(4.))
+                    .gap(px(6.))
                     .rounded(px(6.))
                     .cursor_pointer()
                     .when(on, |d| d.bg(p.sel))
@@ -134,14 +141,11 @@ impl Explorer {
                                 })
                                 .size(px(12.)),
                             )
-                            .tooltip(move |w, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(if open {
-                                    "Hide statistics"
-                                } else {
-                                    "Show statistics"
-                                })
-                                .build(w, cx)
-                            })
+                            .tooltip(tip(if open {
+                                "Hide statistics"
+                            } else {
+                                "Show statistics"
+                            }))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 if !this.expanded.remove(&column) {
@@ -151,64 +155,74 @@ impl Explorer {
                             })),
                     )
                     .child(
-                        bar_button(SharedString::from(format!("de-visible-{i}")), "", None, &p)
-                            .px(px(4.))
-                            .child(if shown { "☑" } else { "☐" })
-                            .tooltip(move |w, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(if shown {
-                                    "Hide column"
-                                } else {
-                                    "Show column"
-                                })
-                                .build(w, cx)
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.show_column(column, !shown, cx);
-                            })),
-                    )
-                    .child(
-                        v_flex()
+                        h_flex()
                             .flex_1()
                             .min_w_0()
+                            .gap(px(6.))
+                            .when(!shown, |d| d.opacity(0.45))
                             .child(
                                 div()
+                                    .id(("de-kind", i))
+                                    .flex_none()
+                                    .w(px(BADGE_WIDTH))
+                                    .h(px(16.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(4.))
+                                    .bg(tint.map_or(p.ink(8.), |t| p.ansi[t].opacity(0.2)))
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(badge)
+                                    .tooltip(move |w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(kind_tip.clone())
+                                            .build(w, cx)
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id(("de-name", i))
+                                    .flex_1()
+                                    .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .child(c.name.clone()),
+                                    .child(c.name.clone())
+                                    .tooltip(move |w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(name_tip.clone())
+                                            .build(w, cx)
+                                    }),
                             )
+                            .child(self.spark(column, summary, &p))
                             .child(
                                 div()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
+                                    .id(("de-missing", i))
+                                    .w(px(MISSING_WIDTH))
+                                    .flex_none()
+                                    .text_right()
                                     .text_size(px(look::SMALL))
-                                    .text_color(p.faint)
-                                    .child(column_note(c, summary)),
+                                    .text_color(if missing.unwrap_or(0) > 0 {
+                                        p.muted
+                                    } else {
+                                        p.faint
+                                    })
+                                    .children(share)
+                                    .when_some(missing_tip, |d, tip| {
+                                        d.tooltip(move |w, cx| {
+                                            gpui_kit::component::tooltip::Tooltip::new(tip.clone())
+                                                .build(w, cx)
+                                        })
+                                    }),
                             ),
                     )
-                    .child(self.spark(column, summary, &p))
                     .child(
-                        div()
-                            .id(("de-missing", i))
-                            .w(px(MISSING_WIDTH))
-                            .flex_none()
-                            .text_right()
-                            .text_size(px(look::SMALL))
-                            .text_color(if missing.unwrap_or(0) > 0 {
-                                p.muted
-                            } else {
-                                p.faint
-                            })
-                            .children(share)
-                            .when_some(tip, |d, tip| {
-                                d.tooltip(move |w, cx| {
-                                    gpui_kit::component::tooltip::Tooltip::new(tip.clone())
-                                        .build(w, cx)
-                                })
-                            }),
+                        Checkbox::new(("de-visible", i))
+                            .checked(shown)
+                            .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                                cx.stop_propagation();
+                                this.show_column(column, *on, cx);
+                            })),
                     );
                 v_flex()
                     .flex_none()
@@ -217,28 +231,63 @@ impl Explorer {
                     .into_any_element()
             })
             .collect();
+        let total = shape.columns.len();
+        let shown = total
+            - self
+                .hidden
+                .iter()
+                .filter(|&&c| (c as usize) < total)
+                .count();
+        let none_found = rows.is_empty() && !find.is_empty();
         v_flex()
             .flex_none()
             .w(px(SIDE_WIDTH))
             .h_full()
             .p(px(6.))
+            .gap(px(4.))
             .border_r_1()
             .border_color(p.line)
             .child(
                 h_flex()
                     .flex_none()
-                    .gap(px(4.))
-                    .pb(px(4.))
+                    .h(px(24.))
+                    .pl(px(6.))
+                    .gap(px(6.))
                     .child(
-                        bar_button("de-show-all", "Show all", None, &p).on_click(
-                            cx.listener(|this, _, _, cx| this.show_all_columns(true, cx)),
-                        ),
+                        div()
+                            .text_size(px(look::SMALL - 1.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.faint)
+                            .child("COLUMNS"),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(px(look::SMALL))
+                            .text_color(p.muted)
+                            .child(format!("{shown} of {total}")),
                     )
                     .child(
-                        bar_button("de-hide-all", "Hide all", None, &p).on_click(
-                            cx.listener(|this, _, _, cx| this.show_all_columns(false, cx)),
-                        ),
+                        look::icon_button("de-columns-menu", "more", &p, false)
+                            .on_prepaint(self.popup_triggers.track("columns"))
+                            .when(self.columns_menu.is_some(), |d| d.bg(p.ink(10.)))
+                            .tooltip(tip("Show or hide all columns"))
+                            .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                                let open = this.columns_menu.is_none();
+                                this.close_menus();
+                                if open {
+                                    this.columns_menu = Some(event.position());
+                                }
+                                cx.notify();
+                            })),
                     ),
+            )
+            .child(
+                div().flex_none().child(
+                    Input::new(&self.column_find)
+                        .small()
+                        .prefix(icon("search").size(px(13.)).text_color(p.muted)),
+                ),
             )
             .child(
                 div()
@@ -247,7 +296,16 @@ impl Explorer {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.side_scroll)
-                    .child(v_flex().gap(px(1.)).children(rows)),
+                    .child(v_flex().gap(px(1.)).children(rows))
+                    .when(none_found, |d| {
+                        d.child(
+                            div()
+                                .px(px(6.))
+                                .py(px(4.))
+                                .text_color(p.muted)
+                                .child("No column matches."),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -293,8 +351,10 @@ impl Explorer {
             .into_any_element()
     }
 
-    /// A column's numbers, folded open under its row: its range and middle,
-    /// or its commonest values, each of which filters to it.
+    /// A column's statistics, folded open under its row and lined up with
+    /// its badge: numbers as a wide histogram between their min and max,
+    /// then mean and median; categories as each common value with a bar of
+    /// its share (clicking one filters to it); last, distinct and missing.
     pub(super) fn render_stats(
         &self,
         ix: u32,
@@ -302,23 +362,9 @@ impl Explorer {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
-        let line = |label: AnyElement, value: String| {
-            h_flex()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .text_color(p.muted)
-                        .child(label),
-                )
-                .child(div().flex_none().child(value))
-        };
-        let text = |s: &str| div().child(s.to_string()).into_any_element();
-        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut body: Vec<AnyElement> = Vec::new();
         match self.summary.get(&ix) {
-            None => rows.push(
+            None => body.push(
                 div()
                     .text_color(p.faint)
                     .child("Reading…")
@@ -328,51 +374,107 @@ impl Explorer {
                 if column.kind == "number"
                     && let (Some(min), Some(max)) = (s.min, s.max)
                 {
-                    let n = |v: Option<f64>| v.map(format_number).unwrap_or_default();
-                    rows.push(line(text("Min"), format_number(min)).into_any_element());
-                    rows.push(line(text("Median"), n(s.median)).into_any_element());
-                    rows.push(line(text("Mean"), n(s.mean)).into_any_element());
-                    rows.push(line(text("Max"), format_number(max)).into_any_element());
+                    let top = s.histogram.iter().copied().max().unwrap_or(1).max(1);
+                    let bar = p.accent.opacity(0.7);
+                    body.push(
+                        h_flex()
+                            .h(px(40.))
+                            .items_end()
+                            .children(s.histogram.iter().map(|&count| {
+                                div()
+                                    .flex_1()
+                                    .h(relative(count as f32 / top as f32))
+                                    .when(count > 0, |d| d.min_h(px(1.)))
+                                    .mr(px(1.))
+                                    .bg(bar)
+                            }))
+                            .into_any_element(),
+                    );
+                    body.push(
+                        h_flex()
+                            .justify_between()
+                            .text_color(p.muted)
+                            .child(format_number(min))
+                            .child(format_number(max))
+                            .into_any_element(),
+                    );
+                    let stat = |label: &'static str, value: Option<f64>| {
+                        h_flex()
+                            .flex_1()
+                            .gap(px(6.))
+                            .child(div().text_color(p.muted).child(label))
+                            .child(value.map(format_number).unwrap_or_default())
+                    };
+                    body.push(
+                        h_flex()
+                            .child(stat("Mean", s.mean))
+                            .child(stat("Median", s.median))
+                            .into_any_element(),
+                    );
                 }
+                let most = s.top.iter().map(|t| t.count).max().unwrap_or(1).max(1);
                 for (n, t) in s.top.iter().enumerate() {
                     let value = t.value.clone();
                     let color = self.color_of(ix, &t.value, &p);
                     let accent = p.accent;
-                    let label = h_flex()
-                        .id(("de-val", n))
-                        .gap(px(5.))
-                        .min_w_0()
-                        .cursor_pointer()
-                        .hover(move |d| d.text_color(accent))
-                        .when_some(color, |d, c| d.child(swatch(c)))
-                        .child(
-                            div()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .child(t.value.clone()),
-                        )
-                        .tooltip({
-                            let tip =
-                                format!("Show only rows where {} is {}", column.name, t.value);
-                            move |w, cx| {
+                    let tip = format!("Show only rows where {} is {}", column.name, t.value);
+                    body.push(
+                        h_flex()
+                            .id(("de-val", n))
+                            .gap(px(6.))
+                            .cursor_pointer()
+                            .hover(move |d| d.text_color(accent))
+                            .child(
+                                h_flex()
+                                    .w(px(VALUE_WIDTH))
+                                    .flex_none()
+                                    .gap(px(5.))
+                                    .when_some(color, |d, c| d.child(swatch(c)))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
+                                            .child(t.value.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .h(px(6.))
+                                    .rounded(px(3.))
+                                    .bg(p.ink(6.))
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .w(relative(t.count as f32 / most as f32))
+                                            .rounded(px(3.))
+                                            .bg(color.unwrap_or(p.accent).opacity(0.6)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w(px(MISSING_WIDTH + 4.))
+                                    .flex_none()
+                                    .text_right()
+                                    .text_color(p.muted)
+                                    .child(format_number(t.count as f64)),
+                            )
+                            .tooltip(move |w, cx| {
                                 gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
-                            }
-                        })
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| {
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
                                 this.filter_to(ix, value.clone(), cx)
-                            }),
-                        )
-                        .into_any_element();
-                    rows.push(line(label, format_number(t.count as f64)).into_any_element());
+                            }))
+                            .into_any_element(),
+                    );
                 }
                 if let Some(distinct) = s.distinct
                     && !s.top.is_empty()
                     && distinct > s.top.len() as u64
                 {
-                    rows.push(
+                    body.push(
                         div()
                             .text_color(p.faint)
                             .child(format!(
@@ -382,55 +484,80 @@ impl Explorer {
                             .into_any_element(),
                     );
                 }
+                let mut last = Vec::new();
                 if column.kind != "number"
                     && let Some(distinct) = s.distinct
                 {
-                    rows.push(
-                        line(text("Distinct"), format_number(distinct as f64)).into_any_element(),
-                    );
+                    last.push(format!("{} distinct", format_number(distinct as f64)));
                 }
-                rows.push(
-                    line(
-                        text(&format!("Missing ({})", missing_text(&self.language))),
-                        format_number(s.missing as f64),
-                    )
-                    .into_any_element(),
+                last.push(format!(
+                    "{} missing ({})",
+                    format_number(s.missing as f64),
+                    missing_text(&self.language)
+                ));
+                body.push(
+                    div()
+                        .text_color(p.muted)
+                        .child(last.join(" · "))
+                        .into_any_element(),
                 );
             }
         }
         div()
             .id(("de-stats", ix as usize))
             .flex_none()
-            .ml(px(22.))
-            .mr(px(6.))
-            .mb(px(6.))
-            .pl(px(8.))
-            .py(px(4.))
-            .border_l_1()
-            .border_color(p.line)
-            .child(v_flex().gap(px(3.)).children(rows))
+            .ml(px(26.))
+            .mr(px(8.))
+            .mt(px(2.))
+            .mb(px(8.))
+            .text_size(px(look::SMALL))
+            .child(v_flex().gap(px(4.)).children(body))
             .into_any_element()
     }
 
-    /// Filter chips and chip-less search, embedded in the single action row.
-    pub(super) fn render_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Filters and sort keys as chips over the table, only while there are
+    /// some: a filter's chip changes it, a sort key's flips its direction,
+    /// and × removes either. Chips wrap rather than being cut short.
+    pub(super) fn render_filter_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.filters.is_empty() && self.sort.is_empty() {
+            return None;
+        }
         let p = *Palette::get(cx);
         let columns = self.shape.as_ref().map_or(&[][..], |s| &s.columns);
-        let chips = self.filters.iter().enumerate().map(|(i, f)| {
-            let soft = p.ink(8.);
-            let text = p.text;
+        let soft = p.ink(8.);
+        let text = p.text;
+        let remove = move |id: ElementId| {
+            div()
+                .id(id)
+                .size(px(18.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .text_color(p.muted)
+                .cursor_pointer()
+                .hover(move |d| d.bg(soft).text_color(text))
+                .child(icon("close").size(px(11.)))
+        };
+        let chip = || {
             h_flex()
                 .flex_none()
+                .max_w(px(360.))
                 .h(px(24.))
                 .pl(px(10.))
                 .pr(px(3.))
-                .gap(px(2.))
+                .gap(px(4.))
                 .rounded(px(12.))
-                .bg(p.accent_soft)
                 .whitespace_nowrap()
+        };
+        let filters = self.filters.iter().enumerate().map(|(i, f)| {
+            chip()
+                .bg(p.accent_soft)
                 .child(
                     div()
                         .id(("de-chip", i))
+                        .min_w_0()
                         .cursor_pointer()
                         .overflow_hidden()
                         .text_ellipsis()
@@ -439,76 +566,110 @@ impl Explorer {
                             this.open_filter(Some(i), window, cx)
                         })),
                 )
+                .child(remove(("de-chip-x", i).into()).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        let mut filters = this.filters.clone();
+                        if i < filters.len() {
+                            filters.remove(i);
+                        }
+                        this.change_filters(filters, cx);
+                    },
+                )))
+                .into_any_element()
+        });
+        let sorts = self.sort.iter().enumerate().map(|(i, key)| {
+            let name = columns
+                .get(key.column as usize)
+                .map_or_else(|| format!("column {}", key.column + 1), |c| c.name.clone());
+            let descending = key.descending;
+            chip()
+                .bg(p.ink(6.))
                 .child(
-                    div()
-                        .id(("de-chip-x", i))
-                        .size(px(18.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
-                        .text_color(p.muted)
+                    h_flex()
+                        .id(("de-sort", i))
+                        .min_w_0()
+                        .gap(px(4.))
                         .cursor_pointer()
-                        .hover(move |d| d.bg(soft).text_color(text))
-                        .child(icon("close").size(px(11.)))
+                        .child(
+                            icon(if descending { "arrow.down" } else { "arrow.up" })
+                                .size(px(12.))
+                                .text_color(p.accent),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(name),
+                        )
+                        .tooltip(tip(if descending {
+                            "Sort ascending instead"
+                        } else {
+                            "Sort descending instead"
+                        }))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            let mut filters = this.filters.clone();
-                            if i < filters.len() {
-                                filters.remove(i);
+                            let mut sort = this.sort.clone();
+                            if let Some(key) = sort.get_mut(i) {
+                                key.descending = !key.descending;
                             }
-                            this.change_filters(filters, cx);
+                            this.change_sort(sort, cx);
                         })),
                 )
+                .child(remove(("de-sort-x", i).into()).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        let mut sort = this.sort.clone();
+                        if i < sort.len() {
+                            sort.remove(i);
+                        }
+                        this.change_sort(sort, cx);
+                    },
+                )))
+                .into_any_element()
         });
-        let text = p.text;
-        let faint = p.faint;
-        h_flex()
-            .flex_shrink(1.)
-            .min_w_0()
-            .gap(px(6.))
-            // Many chips are cut short before the buttons after them.
-            .child(
-                h_flex()
-                    .flex_shrink(1.)
-                    .min_w_0()
-                    .overflow_hidden()
-                    .gap(px(6.))
-                    .children(chips),
-            )
-            .child(
-                h_flex()
-                    .id("de-add-filter")
-                    .on_prepaint(self.popup_triggers.track("add-filter"))
-                    .flex_none()
-                    .h(px(24.))
-                    .px(px(10.))
-                    .gap(px(5.))
-                    .rounded(px(12.))
-                    .border_1()
-                    .border_dashed()
-                    .border_color(p.line)
-                    .text_color(p.muted)
-                    .cursor_pointer()
-                    .hover(move |d| d.text_color(text).border_color(faint))
-                    .child(icon("filter").size(px(13.)))
-                    .child("Add filter")
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.open_filter(None, window, cx)),
-                    ),
-            )
-            .child(
-                div().flex_none().w(px(140.)).child(
-                    Input::new(&self.search_input)
-                        .small()
-                        .prefix(icon("search").size(px(13.)).text_color(p.muted)),
-                ),
-            )
+        Some(
+            h_flex()
+                .flex_none()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.))
+                .px(px(8.))
+                .py(px(5.))
+                .border_b_1()
+                .border_color(p.line)
+                .children(filters)
+                .children(sorts)
+                .child(div().flex_1())
+                .child(
+                    bar_button("de-clear-all", "Clear all", None, &p).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.sort.clear();
+                            this.change_filters(Vec::new(), cx);
+                        },
+                    )),
+                )
+                .into_any_element(),
+        )
     }
 }
 
 /// A category value's colour, as a small square.
 pub(super) fn swatch(color: Hsla) -> Div {
     div().size(px(8.)).flex_none().rounded(px(2.)).bg(color)
+}
+
+/// A column's kind as a short badge, with its terminal colour (distinct
+/// hues, unlike the chart's shades): "num", "int", "str", "cat", "bool",
+/// "date", or "other" in grey.
+pub(super) fn type_badge(column: &TableColumn) -> (&'static str, Option<usize>) {
+    match column.kind.as_str() {
+        "number" if column.kind_detail.to_lowercase().contains("int") => ("int", Some(4)),
+        "number" => ("num", Some(4)),
+        "text" => ("str", Some(2)),
+        "category" => ("cat", Some(5)),
+        "logical" => ("bool", Some(3)),
+        "date" => ("date", Some(6)),
+        _ => ("other", None),
+    }
 }
 
 /// A column's missing share of `rows`, as the summary panel shows it:

@@ -1122,6 +1122,19 @@ preview and R's imports weren't seen.
   `RedrawPlot::rasterize`; the daemon (`redraw.rs`) rasterizes matplotlib's
   data artists, and R's whole plot through a base-R BMP read back into
   `grid.raster`. Checked in the app: a saved PDF holds an image and fonts.
+- **Data explorer redesign** (Huan, 2026-11-14;
+  `docs/design/data-explorer-redesign-plan.md`): `Explorer::render_top`
+  is the action row (name, status dot, Search, Filter, Export menu, icons);
+  `render_filter_row` puts filter and sort chips over the table only while
+  some are on; `render_side` is the column panel (heading, `column_find`,
+  one line per column with `type_badge` and the checkbox last) and
+  `render_stats` its folded statistics. Menus open under their buttons
+  (`menu_under`, through `popup_triggers`). `fit_column_widths` measures a
+  new table's first rows with the window's text system on the next render
+  (24 longest values per column, so narrow digits don't hide wide ones).
+  Category colours no longer go missing when the summary arrives before
+  the first rows (`summary_generation`). Checked in the app in light and
+  dark; typing into Find column could not be driven by the test tool.
 
 
 ## Running it
