@@ -192,6 +192,16 @@ The earlier `server/` call modules stay in place; no match arms are extracted.
 | `server/request_helpers.rs` | Account reports, Git credentials, language server startup and trust checks | 230 |
 | `server/session_helpers.rs` | Session lookup, quiet execution, redraw and job-awake helpers | 140 |
 
+### Daemon `terminal/codex/mod.rs`
+
+Keeps bridge state, process startup, account queries and the public entry points.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `terminal/codex/commands.rs` | Chat commands, turn submission, interrupts, login and plan decisions | 275 |
+| `terminal/codex/events.rs` | RPC reading, notifications, items/replies, approval requests and chat reports | 500 |
+
+
 
 ## Order
 
