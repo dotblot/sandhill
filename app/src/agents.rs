@@ -34,7 +34,7 @@ use sandhill_proto::{
 use serde_json::{Value, json};
 
 use crate::daemon::Daemon;
-use crate::terminal::TerminalView;
+use crate::panes::terminal::TerminalView;
 use crate::workbench::Workbench;
 use chat::{Chat, Entry};
 use composer::{Mention, ModelChoice};

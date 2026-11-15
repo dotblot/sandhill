@@ -18,8 +18,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, Package, PackageUpdate, PackageUpdates, Packages as Listed};
 
-use crate::help::HelpRequest;
 use crate::look::{self, Palette, RADIUS, icon, icon_button};
+use crate::panes::help::HelpRequest;
 use crate::workbench::{TopTab, Workbench};
 
 /// How long after a run finishes the list is read again.

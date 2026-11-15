@@ -289,7 +289,7 @@ impl Workbench {
         let generation = self.generation;
         let project = self.project.clone();
         cx.spawn(async move |this, cx| {
-            let title = format!("Open “{}” with its default app?", crate::files::base_name(&path));
+            let title = format!("Open “{}” with its default app?", crate::panes::files::base_name(&path));
             let detail = if remote {
                 "This file is on the server. Download a copy to this Mac and open that copy with its default app? No application will run on the server."
             } else {

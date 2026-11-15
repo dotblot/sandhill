@@ -388,7 +388,7 @@ pub(crate) fn with_welcome(
 /// Opens a Data Explorer in a window of its own, with its toolbar along the
 /// top beside the window buttons.
 pub(crate) fn open_explorer_window(
-    explorer: Entity<crate::explorer::Explorer>,
+    explorer: Entity<crate::panes::explorer::Explorer>,
     cx: &mut App,
 ) -> Option<AnyWindowHandle> {
     let title = format!("{} — Data Explorer", explorer.read(cx).name());
@@ -399,7 +399,7 @@ pub(crate) fn open_explorer_window(
     }
     match gpui_kit::open_window(options, cx, |window, cx| {
         look::set_appearance(window.appearance(), cx);
-        cx.new(|_| crate::explorer::ExplorerWindow::new(explorer))
+        cx.new(|_| crate::panes::explorer::ExplorerWindow::new(explorer))
     }) {
         Ok((window, _)) => Some(window),
         Err(err) => {
@@ -848,7 +848,7 @@ impl AppWindow {
             .info
             .project
             .as_deref()
-            .map(|p| crate::files::base_name(p).to_string())
+            .map(|p| crate::panes::files::base_name(p).to_string())
             .unwrap_or_else(|| "project".into());
         let unsaved = tab.workbench.read(cx).unsaved_count();
         let kernels = tab.workbench.read(cx).project_kernels();
@@ -1034,7 +1034,7 @@ impl AppWindow {
             let project = if path.is_empty() {
                 machine_name(&tab.host)
             } else {
-                crate::files::base_name(path).to_string()
+                crate::panes::files::base_name(path).to_string()
             };
             let tip = format!("{}: {path}", machine_name(&tab.host));
             let documents = tab
@@ -1204,7 +1204,7 @@ fn title(places: &Places) -> String {
     let Some(Place { host, path }) = shown else {
         return "Sandhill".to_string();
     };
-    let name = crate::files::base_name(path);
+    let name = crate::panes::files::base_name(path);
     if host == sandhill_link::LOCAL {
         name.to_string()
     } else {

@@ -61,7 +61,7 @@ impl Workbench {
         let p = *Palette::get(cx);
         let path = self.open.as_ref().map(|open| open.notebook.path.clone());
         let chosen = path.and_then(|path| crate::prefs::text_colouring(&self.host(), &path));
-        let mut rows = vec![crate::tree_actions::menu_item(
+        let mut rows = vec![crate::panes::tree_actions::menu_item(
             "colouring-auto",
             chosen.is_none().then_some("check"),
             "Automatic",
@@ -70,9 +70,9 @@ impl Workbench {
             cx,
             |this, window, cx| this.set_text_colouring(None, window, cx),
         )];
-        rows.push(crate::tree_actions::separator(&p));
+        rows.push(crate::panes::tree_actions::separator(&p));
         for (key, label) in COLOURINGS {
-            rows.push(crate::tree_actions::menu_item(
+            rows.push(crate::panes::tree_actions::menu_item(
                 SharedString::from(format!("colouring-{key}")),
                 (chosen.as_deref() == Some(key)).then_some("check"),
                 label,

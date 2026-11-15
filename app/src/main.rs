@@ -10,34 +10,21 @@ mod app_uninstall;
 mod connection;
 mod daemon;
 mod editor;
-mod explorer;
-mod files;
 mod folder_dialog;
 mod git;
 mod git_diff;
 mod git_log;
 mod git_pane;
 mod git_rewrite;
-mod help;
-mod irkernel;
-mod jobs;
-mod kernel_menu;
 mod look;
-mod machine;
-mod object_explorer;
-mod packages;
-mod plots;
+mod panes;
 mod prefs;
 mod project_settings;
 mod resource_manager;
 mod shell;
 mod start_screen;
-mod terminal;
-mod tree;
-mod tree_actions;
 mod trust;
 mod view;
-mod viewer;
 mod workbench;
 
 use std::sync::Arc;
@@ -198,7 +185,7 @@ fn main() -> anyhow::Result<()> {
         .with_assets(look::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            terminal::init(cx);
+            panes::terminal::init(cx);
             look::install(cx);
             cx.on_action(|_: &Quit, cx| app_window::quit(cx));
             // With no window open, a new one.

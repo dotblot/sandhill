@@ -10,7 +10,7 @@ use base64::Engine;
 use gpui_kit::*;
 use sandhill_proto::{Call, FileBytes, MAX_READ_BYTES};
 
-use crate::files::base_name;
+use crate::panes::files::base_name;
 use crate::workbench::Workbench;
 
 /// `name`, or "name 2.ext", "name 3.ext"… if the folder has one.

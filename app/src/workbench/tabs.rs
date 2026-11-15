@@ -144,7 +144,7 @@ impl Workbench {
             self.offer_delimited(rel, cx);
             return;
         }
-        if crate::viewer::is_html(&path) {
+        if crate::panes::viewer::is_html(&path) {
             self.open_html(path, rel, cx);
             return;
         }
@@ -1070,7 +1070,7 @@ impl Workbench {
             self.close_tab(&path, cx);
             return;
         }
-        let name = crate::files::base_name(&path).to_string();
+        let name = crate::panes::files::base_name(&path).to_string();
         let answer = window.prompt(
             PromptLevel::Warning,
             &format!("Save changes to {name}?"),

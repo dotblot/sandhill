@@ -259,7 +259,7 @@ impl Workbench {
                 let ix = files[0];
                 let path = &self.tabs[ix];
                 let name = if expanded {
-                    crate::files::base_name(path).to_string()
+                    crate::panes::files::base_name(path).to_string()
                 } else if files.len() > 1 {
                     files.len().to_string()
                 } else {

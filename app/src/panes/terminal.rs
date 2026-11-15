@@ -306,7 +306,7 @@ impl TerminalView {
             // StatFiles also includes directories. Confirm a regular file using
             // the daemon's directory metadata, never the Mac's filesystem.
             let exists = if exists {
-                let parent = crate::files::parent_of(&path);
+                let parent = crate::panes::files::parent_of(&path);
                 daemon
                     .call::<Vec<sandhill_proto::DirEntry>>(sandhill_proto::Call::ListDir {
                         path: parent,
@@ -317,7 +317,7 @@ impl TerminalView {
                     .ok()
                     .is_some_and(|entries| {
                         entries.iter().any(|entry| {
-                            entry.name == crate::files::base_name(&path)
+                            entry.name == crate::panes::files::base_name(&path)
                                 && entry.kind == sandhill_proto::EntryKind::File
                         })
                     })

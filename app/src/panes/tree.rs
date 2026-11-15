@@ -128,7 +128,7 @@ pub(crate) fn modified_ago(mtime_ms: i64, now_ms: i64) -> String {
 pub(crate) fn row_tip(row: &Row, sized: bool, now_ms: i64) -> String {
     let mut parts = vec![row.name.clone()];
     if sized {
-        parts.push(crate::machine::format_bytes(row.size));
+        parts.push(crate::panes::machine::format_bytes(row.size));
     }
     parts.push(format!("modified {}", modified_ago(row.mtime_ms, now_ms)));
     parts.join(" · ")

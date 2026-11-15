@@ -12,8 +12,8 @@ use gpui_kit::*;
 use sandhill_proto::{Call, DirEntry, EntryKind, FileWritten, PingReply};
 
 use crate::daemon::Daemon;
-use crate::files::{join_path, parent_of};
 use crate::look::{self, Palette, icon, icon_button, picture};
+use crate::panes::files::{join_path, parent_of};
 
 pub(crate) struct FolderDialogDone(pub Option<String>);
 

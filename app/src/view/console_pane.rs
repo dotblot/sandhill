@@ -146,7 +146,9 @@ impl Workbench {
             .console
             .iter()
             .filter_map(|id| self.runs.get(id).map(|run| (id, run)))
-            .filter(|(_, run)| self.notebook_console || !crate::plots::from_notebook(&run.cell))
+            .filter(|(_, run)| {
+                self.notebook_console || !crate::panes::plots::from_notebook(&run.cell)
+            })
             .map(|(run_id, run)| {
                 let source = match (&run.cell, &run.by) {
                     // A script's runs are labelled with the script alone.

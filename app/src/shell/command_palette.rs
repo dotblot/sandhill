@@ -8,8 +8,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, DirEntry, EntryKind};
 
-use crate::files::{MAX_DIRS, MAX_FILES, NewKind, SKIP, match_score};
 use crate::look::{self, Palette, icon, picture};
+use crate::panes::files::{MAX_DIRS, MAX_FILES, NewKind, SKIP, match_score};
 use crate::start_screen::StartMode;
 use crate::workbench::{ConsoleTab, Workbench};
 
@@ -124,11 +124,11 @@ impl Workbench {
                 "Run all"
             };
             list.push(c(run, "⌥⌘R", Cmd::RunAll));
-            if crate::viewer::is_previewable(&open.notebook.path) {
+            if crate::panes::viewer::is_previewable(&open.notebook.path) {
                 list.push(c("Quarto Preview", "⇧⌘K", Cmd::Preview));
                 list.push(c("Render Document", "", Cmd::RenderDocument));
             }
-            if crate::jobs::is_job_script(&open.notebook.path) {
+            if crate::panes::jobs::is_job_script(&open.notebook.path) {
                 list.push(c("Run as job", "", Cmd::RunAsJob));
             }
             if let Some(language) = self.active_language() {
@@ -225,7 +225,7 @@ impl Workbench {
                     .open
                     .as_ref()
                     .map(|o| o.notebook.path.clone())
-                    .filter(|p| crate::viewer::is_previewable(p))
+                    .filter(|p| crate::panes::viewer::is_previewable(p))
                 {
                     self.preview_document(path, cx);
                 }
@@ -338,7 +338,7 @@ impl Workbench {
                     .iter()
                     .map(|rel| {
                         daemon.call::<Vec<DirEntry>>(Call::ListDir {
-                            path: crate::tree::join(&project, rel),
+                            path: crate::panes::tree::join(&project, rel),
                             sizes: false,
                             marks: false,
                         })
@@ -350,7 +350,7 @@ impl Workbench {
                         if entry.name.starts_with('.') && entry.kind == EntryKind::Dir {
                             continue;
                         }
-                        let path = crate::tree::join(&rel, &entry.name);
+                        let path = crate::panes::tree::join(&rel, &entry.name);
                         match entry.kind {
                             EntryKind::Dir if !SKIP.contains(&entry.name.as_str()) => {
                                 next.push(path)

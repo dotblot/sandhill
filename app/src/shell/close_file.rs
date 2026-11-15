@@ -12,8 +12,8 @@ use gpui_kit::*;
 use sandhill_proto::{Call, SessionStatus, TerminalInfo};
 use serde_json::Value;
 
-use crate::files::base_name;
 use crate::look::{self, Palette};
+use crate::panes::files::base_name;
 use crate::workbench::Workbench;
 
 /// The question shown while a file closes.
@@ -96,7 +96,7 @@ impl Workbench {
                 }
                 KernelLink {
                     id: s.id.clone(),
-                    label: crate::machine::session_label(s, &self.kernels),
+                    label: crate::panes::machine::session_label(s, &self.kernels),
                     busy: s.pending_runs > 0,
                     others,
                     ticked: false,

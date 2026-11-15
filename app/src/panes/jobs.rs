@@ -18,7 +18,7 @@ use sandhill_proto::{
 };
 
 use crate::look::{self, Palette, RADIUS, icon, icon_button};
-use crate::terminal::TerminalView;
+use crate::panes::terminal::TerminalView;
 use crate::workbench::{ConsoleTab, Workbench};
 
 /// How often the list, and running jobs' CPU and memory, are read while the
@@ -561,7 +561,7 @@ impl Workbench {
     /// the right.
     pub(crate) fn render_jobs(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let now = crate::plots::now_ms();
+        let now = crate::panes::plots::now_ms();
         let shown = self.shown_job().map(|j| j.id.clone());
         let hover = p.ink(7.);
         let rows: Vec<AnyElement> = self

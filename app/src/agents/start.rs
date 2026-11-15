@@ -136,7 +136,7 @@ impl Agents {
             refs: Vec::new(),
         }];
         if let Some(file) = &self.start.file {
-            let name = crate::files::base_name(file).to_string();
+            let name = crate::panes::files::base_name(file).to_string();
             starters.push(Starter {
                 before: "Look over".into(),
                 after: "for problems".into(),
@@ -206,7 +206,7 @@ impl Agents {
     /// message box below it.
     pub(crate) fn render_new(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let project = crate::files::base_name(&self.project).to_string();
+        let project = crate::panes::files::base_name(&self.project).to_string();
         let chosen = kind_of(self.new_kind).unwrap_or(&KINDS[0]);
         let missing = self
             .installed

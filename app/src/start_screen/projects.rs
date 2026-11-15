@@ -133,7 +133,7 @@ impl AppWindow {
         let mut places: Vec<FolderPlace> = Vec::new();
         if let Some(Some(Ok(recent))) = machine.map(|machine| &machine.recent) {
             for project in recent {
-                let parent = crate::files::parent_of(&project.path);
+                let parent = crate::panes::files::parent_of(&project.path);
                 if parent != "/"
                     && Some(&parent) != home.as_ref()
                     && !places.iter().any(|place| place.path == parent)
@@ -309,7 +309,7 @@ impl AppWindow {
         if ids.is_empty() {
             return;
         }
-        let name = crate::files::base_name(&path).to_string();
+        let name = crate::panes::files::base_name(&path).to_string();
         let what = if ids.len() == 1 {
             "1 kernel".to_string()
         } else {
@@ -368,7 +368,7 @@ impl AppWindow {
             self.forget_project(host, path, cx);
             return;
         };
-        let name = crate::files::base_name(&path).to_string();
+        let name = crate::panes::files::base_name(&path).to_string();
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("Close {name} and remove it from the list?"),
@@ -492,7 +492,7 @@ impl AppWindow {
                     host: host.clone(),
                     path: path.to_string(),
                     name: info.map_or_else(
-                        || crate::files::base_name(path).to_string(),
+                        || crate::panes::files::base_name(path).to_string(),
                         |i| i.name.clone(),
                     ),
                     opened_ms: info.map_or(0, |i| i.opened_ms),
@@ -535,7 +535,7 @@ impl AppWindow {
                     host: h.clone(),
                     path: path.clone(),
                     name: info.map_or_else(
-                        || match crate::files::base_name(path) {
+                        || match crate::panes::files::base_name(path) {
                             "" => host_label(h),
                             name => name.to_string(),
                         },

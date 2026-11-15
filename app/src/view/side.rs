@@ -30,10 +30,10 @@ impl Workbench {
                     .filter_map(|ix| lines.get(ix).map(|line| (ix, line)))
                     .map(|(ix, line)| {
                         let row = match line {
-                            crate::tree_actions::Line::Field { depth } => {
+                            crate::panes::tree_actions::Line::Field { depth } => {
                                 return this.render_name_field(*depth, cx);
                             }
-                            crate::tree_actions::Line::Row(row) => row,
+                            crate::panes::tree_actions::Line::Row(row) => row,
                         };
                         let indent = 8. + 16. * row.depth as f32;
                         let hover = p.ink(7.);
@@ -81,8 +81,8 @@ impl Workbench {
                             .overflow_hidden()
                             .text_ellipsis()
                             .child(row.name.clone());
-                        let by_size = this.tree.sort == crate::tree::SortBy::Size;
-                        let tip = crate::tree::row_tip(
+                        let by_size = this.tree.sort == crate::panes::tree::SortBy::Size;
+                        let tip = crate::panes::tree::row_tip(
                             row,
                             !row.dir || by_size,
                             chrono::Utc::now().timestamp_millis(),
@@ -96,7 +96,7 @@ impl Workbench {
                                     .flex_none()
                                     .text_size(px(look::SMALL))
                                     .text_color(p.faint)
-                                    .child(crate::machine::format_bytes(row.size))
+                                    .child(crate::panes::machine::format_bytes(row.size))
                             })
                         };
                         if row.dir {
@@ -153,7 +153,7 @@ impl Workbench {
                             .cursor_pointer()
                             .child(picture(&look::file_icon_beside(&row.rel, |path| {
                                 lines.iter().any(|line| {
-                                    matches!(line, crate::tree_actions::Line::Row(r) if r.rel == path)
+                                    matches!(line, crate::panes::tree_actions::Line::Row(r) if r.rel == path)
                                 })
                             })))
                             .map(|d| {

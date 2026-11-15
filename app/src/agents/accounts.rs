@@ -12,7 +12,7 @@ use sandhill_proto::{AgentAccount, Call, TerminalEvent, TerminalInfo, TerminalSu
 
 use crate::daemon::Daemon;
 use crate::look::{self, Palette};
-use crate::terminal::TerminalView;
+use crate::panes::terminal::TerminalView;
 
 /// Which accounts a listing asks their agents about (sign-in state and
 /// usage). Nothing asks on its own: only a Refresh click or a finished

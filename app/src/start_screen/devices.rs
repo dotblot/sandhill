@@ -274,7 +274,7 @@ impl AppWindow {
                 ),
             )
             .when(!local, |menu| {
-                menu.child(crate::tree_actions::separator(&p))
+                menu.child(crate::panes::tree_actions::separator(&p))
                     .child(
                         sidebar_action(
                             "device-menu-connect",
@@ -307,7 +307,7 @@ impl AppWindow {
                             }
                         })),
                     )
-                    .child(crate::tree_actions::separator(&p))
+                    .child(crate::panes::tree_actions::separator(&p))
                     .child(
                         sidebar_action("device-menu-remove", "delete", "Remove from List", &p)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -435,7 +435,7 @@ impl AppWindow {
                     div()
                         .text_size(px(16.))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(format!("Icon for {}", crate::files::base_name(path))),
+                        .child(format!("Icon for {}", crate::panes::files::base_name(path))),
                 )
                 .child(div().text_color(p.muted).child(
                     "Shown for this project in Sandhill on this Mac. The project folder is not changed.",

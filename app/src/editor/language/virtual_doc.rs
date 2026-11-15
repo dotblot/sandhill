@@ -272,7 +272,7 @@ mod tests {
 
         let mut notebook = parse(
             "/p/report.qmd",
-            &crate::files::template("report.qmd", language),
+            &crate::panes::files::template("report.qmd", language),
         )
         .unwrap();
         let mut sources: Vec<_> = notebook

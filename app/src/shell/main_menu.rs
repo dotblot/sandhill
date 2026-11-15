@@ -8,8 +8,8 @@ use gpui_kit::*;
 use sandhill_link::Target;
 
 use crate::look::{self, Palette};
+use crate::panes::tree_actions::{menu_item, separator};
 use crate::shell::command_palette::Cmd;
-use crate::tree_actions::{menu_item, separator};
 use crate::workbench::Workbench;
 use crate::{
     About, CloseTab, CloseWindow, ConnectServer, HideOthers, HideSandhill, Minimize, NewFile,
@@ -89,10 +89,10 @@ impl Workbench {
                 cx.listener(|this, _: &CloseTab, w, cx| this.run_command(Cmd::CloseTab, w, cx)),
             )
             .on_action(cx.listener(|this, _: &NewFile, w, cx| {
-                this.run_command(Cmd::New(crate::files::NewKind::File), w, cx)
+                this.run_command(Cmd::New(crate::panes::files::NewKind::File), w, cx)
             }))
             .on_action(cx.listener(|this, _: &NewFolder, w, cx| {
-                this.run_command(Cmd::New(crate::files::NewKind::Folder), w, cx)
+                this.run_command(Cmd::New(crate::panes::files::NewKind::Folder), w, cx)
             }))
             .on_action(
                 cx.listener(|this, _: &OpenProject, w, cx| {

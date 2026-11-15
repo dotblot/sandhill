@@ -411,7 +411,7 @@ impl Workbench {
             .iter()
             .chain(&self.others)
             .filter(|o| o.session.id() == Some(session))
-            .map(|o| crate::files::base_name(&o.notebook.path).to_string())
+            .map(|o| crate::panes::files::base_name(&o.notebook.path).to_string())
             .collect();
         if self.loose.id() == Some(session) || self.console_sessions.retained.contains(session) {
             names.push("Console".into());

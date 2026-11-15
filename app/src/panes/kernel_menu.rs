@@ -108,7 +108,7 @@ impl Workbench {
                 .chain(&self.others)
                 .find(|open| open.notebook.path == file)
                 .map(|open| open.notebook.name())
-                .unwrap_or_else(|| crate::files::base_name(file));
+                .unwrap_or_else(|| crate::panes::files::base_name(file));
             label = format!("{name} · {label}");
         }
         let state = Self::session_text(if console {
@@ -284,8 +284,9 @@ impl Workbench {
                     .map(|open| open.notebook.path.as_str());
                 let title = format!(
                     "{} · {}",
-                    file.map(crate::files::base_name).unwrap_or("Console"),
-                    crate::machine::session_label(session, &self.kernels)
+                    file.map(crate::panes::files::base_name)
+                        .unwrap_or("Console"),
+                    crate::panes::machine::session_label(session, &self.kernels)
                 );
                 let created = chrono::DateTime::from_timestamp_millis(session.created_ms)
                     .map(|time| {

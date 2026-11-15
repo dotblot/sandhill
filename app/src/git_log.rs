@@ -196,7 +196,7 @@ impl Workbench {
         let (graph, lanes) = layout_graph(&shas);
         let graph_width = (6. + lanes.min(MAX_LANES) as f32 * LANE).max(52.);
         let x = |lane: usize| 12. + lane as f32 * LANE;
-        let now = crate::plots::now_ms();
+        let now = crate::panes::plots::now_ms();
         let staged = staged_files(status).len();
         let unstaged = unstaged_files(status).len();
         let head = status.head.clone();

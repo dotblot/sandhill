@@ -12,12 +12,12 @@ use gpui_kit::*;
 use sandhill_link::Target;
 use sandhill_proto::{ArchiveFormat, Call, Deleted, DirEntry, FileWritten};
 
-use crate::files::{
+use crate::look::{self, Palette, icon, picture};
+use crate::panes::files::{
     NewKind, base_name, copy_name, join_path, name_problem, new_notebook, parent_of, template,
     within,
 };
-use crate::look::{self, Palette, icon, picture};
-use crate::tree::join;
+use crate::panes::tree::join;
 use crate::workbench::Workbench;
 
 /// What the name field in the tree is for.
@@ -72,7 +72,7 @@ pub(crate) fn new_name_input(
 
 /// A line of the files pane's list: the tree's own, or the name field.
 pub(crate) enum Line {
-    Row(crate::tree::Row),
+    Row(crate::panes::tree::Row),
     Field { depth: usize },
 }
 
@@ -566,7 +566,7 @@ impl Workbench {
                 cx,
                 move |this, _, cx| this.open_external(external_path.clone(), cx),
             ));
-            if crate::jobs::is_job_script(&rel) {
+            if crate::panes::jobs::is_job_script(&rel) {
                 let path = path.clone();
                 rows.push(menu_item(
                     "tm-job",
@@ -815,7 +815,7 @@ impl Workbench {
         }
         let p = *Palette::get(cx);
         let mut rows = vec![heading("Sort files by".into(), &p)];
-        for by in crate::tree::SortBy::ALL {
+        for by in crate::panes::tree::SortBy::ALL {
             rows.push(menu_item(
                 SharedString::from(format!("sort-{}", by.key())),
                 (by == self.tree.sort).then_some("check"),

@@ -109,14 +109,14 @@ impl Workbench {
 
     /// The pages the Console's runs (and scripts') showed, oldest first,
     /// with their titles.
-    pub(crate) fn run_pages(&self) -> Vec<crate::viewer::ViewerItem> {
+    pub(crate) fn run_pages(&self) -> Vec<crate::panes::viewer::ViewerItem> {
         self.console
             .iter()
             .filter_map(|id| self.runs.get(id))
             .filter(|run| run.cell.as_ref().is_none_or(|(file, _)| is_script(file)))
             .flat_map(|run| run.outputs.iter())
             .filter_map(|output| match show(output) {
-                Shown::Page(page) => Some(crate::viewer::ViewerItem {
+                Shown::Page(page) => Some(crate::panes::viewer::ViewerItem {
                     page: Some(page),
                     title: page_title(output),
                     note: None,
@@ -245,14 +245,14 @@ impl Workbench {
             cx.subscribe_in(
                 explorer,
                 window,
-                |this, _, _: &crate::explorer::FocusChanged, window, cx| {
+                |this, _, _: &crate::panes::explorer::FocusChanged, window, cx| {
                     this.report_focus(window, cx);
                 },
             )
             .detach();
             cx.subscribe(
                 explorer,
-                |this, explorer, _: &crate::explorer::PopOut, cx| {
+                |this, explorer, _: &crate::panes::explorer::PopOut, cx| {
                     this.pop_out_explorer(explorer, cx);
                 },
             )

@@ -690,7 +690,7 @@ impl Workbench {
             return;
         }
         // `?topic` and `help(x)` open the Help pane, as in the Tauri app.
-        if let Some(asked) = crate::help::console_help(&code, self.console_language()) {
+        if let Some(asked) = crate::panes::help::console_help(&code, self.console_language()) {
             self.console_input
                 .update(cx, |input, cx| input.set_value("", window, cx));
             self.ask_help(asked, window, cx);

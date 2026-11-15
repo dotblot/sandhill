@@ -189,7 +189,7 @@ impl Workbench {
         }
         let project = self.project.clone()?;
         let p = *Palette::get(cx);
-        let name = crate::files::base_name(&project).to_string();
+        let name = crate::panes::files::base_name(&project).to_string();
         let host = self.host();
         let device = crate::shell::app_window::machine_name(&host);
         let saving = self.trust.saving;

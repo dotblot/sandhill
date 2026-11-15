@@ -65,7 +65,7 @@ impl Workbench {
                             div()
                                 .min_w_0()
                                 .truncate()
-                                .child(crate::files::base_name(path).to_string()),
+                                .child(crate::panes::files::base_name(path).to_string()),
                         )
                         .child(div().flex_none().child("Opening…")),
                 )
@@ -439,12 +439,15 @@ impl Workbench {
                         })),
                     )
                 })
-                .when(crate::jobs::is_job_script(&open.notebook.path), |bar| {
-                    bar.child(
-                        bar_button("run-job", "Run as job", Some("terminal"), &p)
-                            .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
-                    )
-                })
+                .when(
+                    crate::panes::jobs::is_job_script(&open.notebook.path),
+                    |bar| {
+                        bar.child(
+                            bar_button("run-job", "Run as job", Some("terminal"), &p)
+                                .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
+                        )
+                    },
+                )
                 .children(self.colouring_button(cx))
                 .children(wrap_button)
                 .child(
@@ -501,32 +504,38 @@ impl Workbench {
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
             )
-            .when(crate::viewer::is_previewable(&open.notebook.path), |bar| {
-                let path = open.notebook.path.clone();
-                bar.child(
-                    bar_button("preview", "Preview", Some("globe"), &p)
-                        .tooltip(|w, cx| {
-                            gpui_kit::component::tooltip::Tooltip::new(
-                                if cfg!(target_os = "macos") {
-                                    "Preview with Quarto in the Viewer (⇧⌘K)"
-                                } else {
-                                    "Preview with Quarto in the Viewer (Ctrl+Shift+K)"
-                                },
-                            )
-                            .build(w, cx)
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.preview_document(path.clone(), cx)
-                        })),
-                )
-                .child(self.render_document_button(cx))
-            })
-            .when(crate::jobs::is_job_script(&open.notebook.path), |bar| {
-                bar.child(
-                    bar_button("run-job", "Run as job", Some("terminal"), &p)
-                        .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
-                )
-            })
+            .when(
+                crate::panes::viewer::is_previewable(&open.notebook.path),
+                |bar| {
+                    let path = open.notebook.path.clone();
+                    bar.child(
+                        bar_button("preview", "Preview", Some("globe"), &p)
+                            .tooltip(|w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(
+                                    if cfg!(target_os = "macos") {
+                                        "Preview with Quarto in the Viewer (⇧⌘K)"
+                                    } else {
+                                        "Preview with Quarto in the Viewer (Ctrl+Shift+K)"
+                                    },
+                                )
+                                .build(w, cx)
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.preview_document(path.clone(), cx)
+                            })),
+                    )
+                    .child(self.render_document_button(cx))
+                },
+            )
+            .when(
+                crate::panes::jobs::is_job_script(&open.notebook.path),
+                |bar| {
+                    bar.child(
+                        bar_button("run-job", "Run as job", Some("terminal"), &p)
+                            .on_click(cx.listener(|this, _, _, cx| this.run_open_as_job(cx))),
+                    )
+                },
+            )
             .when(open.notebook.can_restructure(), |bar| {
                 let on = self.ghost_cells;
                 bar.child(

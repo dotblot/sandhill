@@ -9,8 +9,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, Variable, VariableMatch, VariableMatches, Variables};
 
-use crate::explorer::Explorer;
 use crate::look::{self, Palette, icon, icon_button, pane};
+use crate::panes::explorer::Explorer;
 use crate::workbench::Workbench;
 
 type Path = Vec<String>;
@@ -596,7 +596,7 @@ impl Workbench {
             cx.subscribe_in(
                 explorer,
                 window,
-                |this, _, _: &crate::explorer::FocusChanged, window, cx| {
+                |this, _, _: &crate::panes::explorer::FocusChanged, window, cx| {
                     this.report_focus(window, cx);
                 },
             )

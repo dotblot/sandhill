@@ -389,8 +389,8 @@ impl Workbench {
                             .child(div().flex_1().min_w_0().child(note(
                                 format!(
                                     "{} ({}) has no IRkernel.",
-                                    crate::irkernel::r_name(offer),
-                                    crate::irkernel::r_place(offer)
+                                    crate::panes::irkernel::r_name(offer),
+                                    crate::panes::irkernel::r_place(offer)
                                 ),
                                 false,
                             )))

@@ -236,7 +236,7 @@ fn import_session_label(
     sessions: &[SessionInfo],
     specs: &[sandhill_proto::KernelspecInfo],
 ) -> String {
-    let mut label = crate::machine::session_label(session, specs);
+    let mut label = crate::panes::machine::session_label(session, specs);
     let mut total = 0;
     let mut ordinal = 0;
     for candidate in sessions {
@@ -255,7 +255,7 @@ fn import_session_label(
         .as_deref()
         .filter(|project| !project.is_empty())
         .and_then(|project| {
-            let name = crate::files::base_name(project);
+            let name = crate::panes::files::base_name(project);
             if session.cwd == project {
                 Some(name.to_string())
             } else {
@@ -560,7 +560,7 @@ impl Workbench {
         let text_ok = !dialog.loading && dialog.size.is_some();
         let import_ok = !dialog.loading && dialog.selected.is_some();
         let hover = p.ink(8.);
-        let name = crate::files::base_name(&dialog.rel).to_string();
+        let name = crate::panes::files::base_name(&dialog.rel).to_string();
         let mut facts = Vec::new();
         if let Some((folder, _)) = dialog.rel.rsplit_once('/') {
             facts.push(folder.to_string());

@@ -19,7 +19,7 @@ pub(crate) enum OutputAction {
 }
 
 pub(crate) fn output_action(path: &str) -> OutputAction {
-    if crate::viewer::is_html(path) {
+    if crate::panes::viewer::is_html(path) {
         OutputAction::Viewer
     } else if path
         .rsplit_once('.')
@@ -81,7 +81,7 @@ impl RenderState {
     /// Both live finish events and restored job lists use the same deduplication.
     pub(crate) fn observe(&mut self, job: &TerminalInfo) -> Option<String> {
         let path = job.job.as_ref()?.path.as_deref()?;
-        if job.running || !crate::viewer::is_previewable(path) {
+        if job.running || !crate::panes::viewer::is_previewable(path) {
             return None;
         }
         let exit = job.exit.as_ref()?;
@@ -91,11 +91,11 @@ impl RenderState {
         self.notified.insert(job.id.clone(), exit.ended_ms);
         let success = exit.code == Some(0) && exit.signal.is_none();
         let title = if success {
-            format!("Rendered {}", crate::files::base_name(path))
+            format!("Rendered {}", crate::panes::files::base_name(path))
         } else {
             format!(
                 "Render failed: {}. See Jobs for details.",
-                crate::files::base_name(path)
+                crate::panes::files::base_name(path)
             )
         };
         let outputs = if success {
@@ -119,7 +119,7 @@ impl Workbench {
         let Some(open) = self.open.as_ref() else {
             return;
         };
-        if !crate::viewer::is_previewable(&open.notebook.path) {
+        if !crate::panes::viewer::is_previewable(&open.notebook.path) {
             return;
         }
         if self.daemon().is_none() {
@@ -203,7 +203,7 @@ impl Workbench {
     pub(crate) fn open_render_output(&mut self, path: String, cx: &mut Context<Self>) {
         match output_action(&path) {
             OutputAction::Viewer => {
-                let title = crate::files::base_name(&path).to_string();
+                let title = crate::panes::files::base_name(&path).to_string();
                 self.open_html(path, title, cx);
             }
             OutputAction::Pdf => self.open_media(path, cx),
@@ -238,7 +238,7 @@ impl Workbench {
         let pending = self.jobs.render.reveal.borrow();
         let index = pending.as_ref().and_then(|path| {
             self.file_lines().iter().position(
-                |line| matches!(line, crate::tree_actions::Line::Row(row) if &row.rel == path),
+                |line| matches!(line, crate::panes::tree_actions::Line::Row(row) if &row.rel == path),
             )
         });
         drop(pending);

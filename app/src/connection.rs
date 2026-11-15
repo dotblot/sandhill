@@ -423,7 +423,7 @@ impl Workbench {
                             .child(div().flex_1().min_w_0().child(value))
                     })),
             )
-            .child(crate::tree_actions::separator(&p))
+            .child(crate::panes::tree_actions::separator(&p))
             .children(actions)
             .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
                 if this.popup_triggers.contains("connection", event.position) {

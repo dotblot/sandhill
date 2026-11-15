@@ -25,11 +25,10 @@ use crate::editor::notebook::{self, CellKind, Format, Notebook};
 use crate::editor::pages::PageView;
 use crate::editor::shown::{Page, Shown, page_title, show};
 use crate::editor::statements;
-use crate::explorer::Explorer;
-use crate::terminal::TerminalView;
-use crate::tree::{self, Folder, Tree};
+use crate::panes::explorer::Explorer;
+use crate::panes::terminal::TerminalView;
+use crate::panes::tree::{self, Folder, Tree};
 
-#[path = "console.rs"]
 pub(crate) mod console;
 mod panels;
 mod runs;
@@ -338,11 +337,11 @@ pub struct Workbench {
     pub(crate) left_vertical: crate::shell::pane_sizes::Vertical,
     pub(crate) middle_vertical: crate::shell::pane_sizes::Vertical,
     /// The Plots pane's history.
-    pub(crate) plot_history: crate::plots::History,
-    pub(crate) help: crate::help::Help,
-    pub(crate) packages: crate::packages::Packages,
-    pub(crate) jobs: crate::jobs::Jobs,
-    pub(crate) irkernel: crate::irkernel::IrkernelOffers,
+    pub(crate) plot_history: crate::panes::plots::History,
+    pub(crate) help: crate::panes::help::Help,
+    pub(crate) packages: crate::panes::packages::Packages,
+    pub(crate) jobs: crate::panes::jobs::Jobs,
+    pub(crate) irkernel: crate::panes::irkernel::IrkernelOffers,
     pub(crate) git: crate::git_pane::Git,
     pub(crate) diff: Option<crate::git_diff::DiffTab>,
     pub(crate) diff_shown: bool,
@@ -360,7 +359,7 @@ pub struct Workbench {
     /// The Viewer's page, counting from the oldest; the latest when none.
     pub(crate) viewer_index: Option<usize>,
     /// The Viewer's own pages: previews and HTML files.
-    pub(crate) viewer_extra: Vec<crate::viewer::Extra>,
+    pub(crate) viewer_extra: Vec<crate::panes::viewer::Extra>,
     /// The notebook's scrolling, and where pages under its cells send the
     /// wheel's turns they don't use.
     pub(crate) notebook_scroll: ScrollHandle,
@@ -381,7 +380,7 @@ pub struct Workbench {
     pub(crate) popped_explorers: Vec<(AnyWindowHandle, WeakEntity<Explorer>)>,
     /// The Data Explorer's tab is the one shown.
     pub(crate) explorer_shown: bool,
-    pub(crate) objects: crate::object_explorer::ObjectExplorers,
+    pub(crate) objects: crate::panes::object_explorer::ObjectExplorers,
     pub(crate) focus_mode: crate::shell::focus_mode::FocusMode,
     pub(crate) notebook_ai_menu: bool,
     /// The open text file's colouring menu (`colouring.rs`).
@@ -440,7 +439,7 @@ pub struct Workbench {
     pub(crate) notebook_console: bool,
     pub(crate) notebook_plots: bool,
     /// The files pane's New, Rename and right-click menu.
-    pub(crate) files_ui: crate::tree_actions::FilesUi,
+    pub(crate) files_ui: crate::panes::tree_actions::FilesUi,
     pub(crate) name_input: Entity<InputState>,
     /// ⌘K.
     pub(crate) palette: crate::shell::command_palette::CommandPalette,
@@ -455,7 +454,7 @@ pub struct Workbench {
     /// The window, with its machine tabs and Start screen.
     pub(crate) shell: WeakEntity<crate::shell::app_window::AppWindow>,
     /// The machine's kernels and resources, and the left pane's menus.
-    pub(crate) machine: crate::machine::MachineUi,
+    pub(crate) machine: crate::panes::machine::MachineUi,
     /// The connection's pop-up is open, and the daemon's log dialog.
     pub(crate) connection_menu: bool,
     pub(crate) log: Option<crate::connection::LogView>,
@@ -489,15 +488,16 @@ impl Workbench {
         });
         // The language follows the Console's kernel; brackets follow it.
         crate::editor::rainbow::attach(&console_input, cx);
-        let (help, help_subscriptions) = crate::help::new_help(window, cx);
-        let (packages, package_subscriptions) = crate::packages::new_packages(window, cx);
-        let (jobs, job_subscriptions) = crate::jobs::new_jobs(window, cx);
+        let (help, help_subscriptions) = crate::panes::help::new_help(window, cx);
+        let (packages, package_subscriptions) = crate::panes::packages::new_packages(window, cx);
+        let (jobs, job_subscriptions) = crate::panes::jobs::new_jobs(window, cx);
         let (git, git_subscriptions) = crate::git_pane::new_git(window, cx);
         let (settings_env, settings_subscription) =
             crate::project_settings::new_env_input(window, cx);
         let (import_name, import_subscription) =
             crate::editor::import_dialog::new_import_input(window, cx);
-        let (name_input, name_subscription) = crate::tree_actions::new_name_input(window, cx);
+        let (name_input, name_subscription) =
+            crate::panes::tree_actions::new_name_input(window, cx);
         let (palette_input, palette_subscription) =
             crate::shell::command_palette::new_palette_input(window, cx);
         let (find, find_subscriptions) = crate::editor::find::new_find(window, cx);

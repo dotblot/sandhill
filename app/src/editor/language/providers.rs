@@ -909,7 +909,7 @@ fn help_markdown(page: &HelpPage) -> Option<String> {
     let mut parts = vec![];
     if let Some(signature) = page.signature.as_deref().filter(|sig| !sig.is_empty()) {
         parts.push(crate::editor::doc_text::python_code_markdown(
-            &crate::help::signature_lines(&page.topic, signature, 60),
+            &crate::panes::help::signature_lines(&page.topic, signature, 60),
         ));
     }
     if let Some(text) = page.text.as_deref().filter(|text| !text.trim().is_empty()) {

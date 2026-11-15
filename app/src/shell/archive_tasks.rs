@@ -11,8 +11,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{ArchiveFormat, ArchiveProgress, CANCELLED_ERROR, Call, FileWritten};
 
-use crate::files::{base_name, join_path};
 use crate::look::{self, Palette, bar_button};
+use crate::panes::files::{base_name, join_path};
 use crate::workbench::Workbench;
 
 /// How often a running task is asked how far it is.
