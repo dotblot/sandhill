@@ -250,6 +250,16 @@ Keeps chat types, conversation assembly, request views and account-limit handlin
 | `agents/chat/step_details.rs` | Tool-step descriptions, outputs, patches and tool-name helpers | 610 |
 | `agents/chat/tests.rs` | Conversation assembly, request and step-description tests | 350 |
 
+### App `agents/view.rs`
+
+Keeps the pane render entry point, header, history, terminal and shared artwork/cards.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `agents/view/chat_rows.rs` | Chat, trust, message and step rendering, step icons, code-copy and duration helpers | 490 |
+| `agents/view/requests.rs` | Permission, question and plan cards and their reply handlers | 390 |
+
+
 
 
 
