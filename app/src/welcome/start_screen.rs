@@ -18,9 +18,9 @@ use sandhill_proto::{
 
 use crate::agents::accounts::AccountManager;
 use crate::daemon::{Daemon, Streams};
-use crate::folder_dialog::{FolderDialog, FolderDialogDone, Place as FolderPlace};
 use crate::look::{self, Palette, icon, icon_button, side_pane, wall};
 use crate::shell::app_window::AppWindow;
+use crate::welcome::folder_dialog::{FolderDialog, FolderDialogDone, Place as FolderPlace};
 
 mod devices;
 mod projects;
@@ -862,7 +862,7 @@ pub(crate) fn brand_icon() -> Arc<Image> {
     ICON.get_or_init(|| {
         Arc::new(Image::from_bytes(
             ImageFormat::Png,
-            include_bytes!("../assets/brand/icon.png").to_vec(),
+            include_bytes!("../../assets/brand/icon.png").to_vec(),
         ))
     })
     .clone()

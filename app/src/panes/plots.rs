@@ -89,7 +89,7 @@ pub(crate) struct Zoom {
     settings: bool,
     physical: (f64, f64),
     folder: String,
-    folder_dialog: Option<Entity<crate::folder_dialog::FolderDialog>>,
+    folder_dialog: Option<Entity<crate::welcome::folder_dialog::FolderDialog>>,
     _subscriptions: Vec<Subscription>,
     pub format: &'static str,
     pub width: Entity<InputState>,

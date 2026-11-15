@@ -294,7 +294,7 @@ impl Workbench {
                 h_flex()
                     .gap(px(12.))
                     .child(
-                        img(crate::start_screen::brand_icon())
+                        img(crate::welcome::start_screen::brand_icon())
                             .size(px(40.))
                             .flex_none(),
                     )

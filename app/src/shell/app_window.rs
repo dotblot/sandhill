@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
 use crate::look::{self, Palette, capsule, capsule_divider, dot, icon_button};
-use crate::start_screen::{Start, StartMode};
+use crate::welcome::start_screen::{Start, StartMode};
 use crate::workbench::{Link, Workbench};
 use crate::{
     About, CloseWindow, ConnectServer, Minimize, NewProject, OpenProject, ToggleFullScreen, Zoom,
@@ -275,7 +275,7 @@ pub(crate) fn show_welcome(mode: Option<StartMode>, cx: &mut App) {
                 .or_else(|| cx.primary_display())
                 .map(|display| display.bounds().size)
                 .unwrap_or_default();
-            let width = px(crate::start_screen::WELCOME_WIDTH)
+            let width = px(crate::welcome::start_screen::WELCOME_WIDTH)
                 .max(px(800.))
                 .min(screen.width.max(px(800.)));
             let height = (screen.height / 2.).max(px(600.));
@@ -493,7 +493,7 @@ pub struct AppWindow {
     /// The project shown.
     pub(crate) current: Option<EntityId>,
     pub(crate) start: Start,
-    pub(crate) resource_manager: Option<crate::resource_manager::Manager>,
+    pub(crate) resource_manager: Option<crate::welcome::resource_manager::Manager>,
     focus: FocusHandle,
     project_scroll: ScrollHandle,
 }

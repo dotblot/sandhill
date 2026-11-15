@@ -395,7 +395,7 @@ pub struct Workbench {
     /// AI conversations.
     pub(crate) closing: Option<crate::shell::close_file::CloseAsk>,
     /// The project's settings (`.sandhill/project.toml`) and their dialog.
-    pub(crate) setup: crate::project_settings::Setup,
+    pub(crate) setup: crate::welcome::project_settings::Setup,
     pub(crate) settings_env: Entity<InputState>,
     /// The Variables tab's filter box.
     pub(crate) vars_filter: Entity<InputState>,
@@ -413,7 +413,7 @@ pub struct Workbench {
     pub(crate) show_agents: bool,
     pub(crate) agents: Option<Entity<Agents>>,
     /// Whether the open project's folder is trusted (see `trust.rs`).
-    pub(crate) trust: crate::trust::FolderTrust,
+    pub(crate) trust: crate::welcome::trust::FolderTrust,
     /// Account limits belong to the connected device, not an open project.
     pub(crate) quota: Option<Entity<crate::agents::quota::QuotaMonitor>>,
     quota_observation: Option<Subscription>,
@@ -493,7 +493,7 @@ impl Workbench {
         let (jobs, job_subscriptions) = crate::panes::jobs::new_jobs(window, cx);
         let (git, git_subscriptions) = crate::git::pane::new_git(window, cx);
         let (settings_env, settings_subscription) =
-            crate::project_settings::new_env_input(window, cx);
+            crate::welcome::project_settings::new_env_input(window, cx);
         let (import_name, import_subscription) =
             crate::editor::import_dialog::new_import_input(window, cx);
         let (name_input, name_subscription) =
@@ -734,7 +734,7 @@ impl Workbench {
     /// Leaves the daemon: what was edited is saved, and everything read
     /// from it is let go. Replies still on their way are dropped.
     pub(crate) fn forget_connection(&mut self, cx: &mut Context<Self>) {
-        if !crate::resource_manager::host_blocked(&self.host(), cx)
+        if !crate::welcome::resource_manager::host_blocked(&self.host(), cx)
             && let Some(daemon) = self.daemon()
         {
             crate::shell::app_window::quit::retain_daemon(self.host(), daemon, cx);
@@ -806,7 +806,7 @@ impl Workbench {
             Target::Local => sandhill_link::LOCAL,
             Target::Ssh(host) => host.as_str(),
         };
-        if crate::resource_manager::host_blocked(host, cx) {
+        if crate::welcome::resource_manager::host_blocked(host, cx) {
             if !matches!(self.link, Link::Ready(_)) {
                 self.link = Link::Failed(
                     "Stopped or uninstalled. Connect explicitly to start again.".into(),
@@ -1020,13 +1020,14 @@ impl Workbench {
                         this.problem = Some(format!("{} doesn't exist", project.path))
                     }
                     Ok(project) => {
-                        let answered = this.trust.state == crate::trust::Trust::Restricted
+                        let answered = this.trust.state == crate::welcome::trust::Trust::Restricted
                             && this.last_project.as_deref() == Some(&project.path);
                         this.close_project(cx);
                         this.last_project = Some(project.path.clone());
                         this.project = Some(project.path);
                         this.project_state = project.state;
-                        this.trust = crate::trust::FolderTrust::opened(project.trusted, answered);
+                        this.trust =
+                            crate::welcome::trust::FolderTrust::opened(project.trusted, answered);
                         this.setup.setup = setup;
                         if let Some(kernels) = kernels {
                             this.setup.kernels = kernels.clone();

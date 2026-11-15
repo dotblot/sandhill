@@ -951,62 +951,63 @@ impl Render for QuotaMonitor {
             if let Some(error) = manager_error {
                 section = section.child(div().text_color(p.err).child(error.clone()));
             }
-            section = section.child(
-                h_flex()
-                    .pt(px(8.))
-                    .border_t_1()
-                    .border_color(p.line)
-                    .justify_between()
-                    .gap(px(8.))
-                    .child(
-                        h_flex()
-                            .gap(px(10.))
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("quota-add-{kind}")))
-                                    .cursor_pointer()
-                                    .text_color(p.accent)
-                                    .child("Add Account…")
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.dismiss_popup(cx);
-                                        this.manager.update(cx, |manager, cx| {
-                                            manager.add(kind, window, cx)
-                                        });
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("quota-manage-{kind}")))
-                                    .cursor_pointer()
-                                    .text_color(p.accent)
-                                    .child("Manage…")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.dismiss_popup(cx);
-                                        crate::shell::app_window::show_welcome(
-                                            Some(crate::start_screen::StartMode::Accounts(
+            section =
+                section.child(
+                    h_flex()
+                        .pt(px(8.))
+                        .border_t_1()
+                        .border_color(p.line)
+                        .justify_between()
+                        .gap(px(8.))
+                        .child(
+                            h_flex()
+                                .gap(px(10.))
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("quota-add-{kind}")))
+                                        .cursor_pointer()
+                                        .text_color(p.accent)
+                                        .child("Add Account…")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.dismiss_popup(cx);
+                                            this.manager.update(cx, |manager, cx| {
+                                                manager.add(kind, window, cx)
+                                            });
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("quota-manage-{kind}")))
+                                        .cursor_pointer()
+                                        .text_color(p.accent)
+                                        .child("Manage…")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.dismiss_popup(cx);
+                                            crate::shell::app_window::show_welcome(
+                                            Some(crate::welcome::start_screen::StartMode::Accounts(
                                                 this.host.clone(),
                                             )),
                                             cx,
                                         );
+                                        })),
+                                ),
+                        )
+                        .child(
+                            h_flex().gap(px(6.)).child("Show in status bar").child(
+                                Switch::new(SharedString::from(format!("quota-show-{kind}")))
+                                    .small()
+                                    .color(p.accent)
+                                    .checked(enabled)
+                                    .accessibility_label(format!(
+                                        "Show {} in status bar",
+                                        provider.short
+                                    ))
+                                    .on_change(cx.listener(move |this, on: &bool, _, cx| {
+                                        this.set_provider(kind, *on, cx)
                                     })),
                             ),
-                    )
-                    .child(
-                        h_flex().gap(px(6.)).child("Show in status bar").child(
-                            Switch::new(SharedString::from(format!("quota-show-{kind}")))
-                                .small()
-                                .color(p.accent)
-                                .checked(enabled)
-                                .accessibility_label(format!(
-                                    "Show {} in status bar",
-                                    provider.short
-                                ))
-                                .on_change(cx.listener(move |this, on: &bool, _, cx| {
-                                    this.set_provider(kind, *on, cx)
-                                })),
                         ),
-                    ),
-            );
+                );
             details = details.child(section);
         }
         if !visible {

@@ -154,7 +154,7 @@ impl Render for Workbench {
                     && !this.palette.shown
                     && this.setup.dialog.is_none()
                     && this.import.dialog.is_none()
-                    && this.trust.state != crate::trust::Trust::Asking
+                    && this.trust.state != crate::welcome::trust::Trust::Asking
                 {
                     this.maximized_panel = None;
                     if let Some(agents) = this.agents.clone() {

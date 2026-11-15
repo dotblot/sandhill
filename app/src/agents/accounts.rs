@@ -601,7 +601,7 @@ impl AccountManager {
                 }
             }
             Dialog::Remove(account) => {
-                card = card.child(div().text_color(p.muted).child(format!("Remove {} and its saved sign-in from {}? Conversation history is kept. An account used by a running conversation cannot be removed.", account.name, crate::start_screen::host_label(&self.host))));
+                card = card.child(div().text_color(p.muted).child(format!("Remove {} and its saved sign-in from {}? Conversation history is kept. An account used by a running conversation cannot be removed.", account.name, crate::welcome::start_screen::host_label(&self.host))));
             }
             Dialog::GoogleLogin(_) => {
                 card = card.child(div().text_color(p.warn).child("Every Antigravity conversation on this device changes account."))
@@ -907,7 +907,7 @@ impl Render for AccountManager {
                     .gap(px(12.))
                     .child(div().text_color(p.muted).child(format!(
                         "Accounts on {}",
-                        crate::start_screen::host_label(&self.host)
+                        crate::welcome::start_screen::host_label(&self.host)
                     )))
                     .child(
                         Button::new("accounts-refresh")

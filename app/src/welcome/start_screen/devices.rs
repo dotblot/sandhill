@@ -12,7 +12,7 @@ impl AppWindow {
 
     pub(super) fn connect_machine(&mut self, host: &str, cx: &mut Context<Self>) {
         if crate::shell::app_window::quit::active(cx)
-            || crate::resource_manager::host_blocked(host, cx)
+            || crate::welcome::resource_manager::host_blocked(host, cx)
             || self.resource_manager.is_some()
             || self.start.machines.contains_key(host)
         {

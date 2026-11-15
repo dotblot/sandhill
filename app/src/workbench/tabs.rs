@@ -1217,7 +1217,7 @@ mod opening_tests {
             gpui_kit::init(cx);
             crate::look::install(cx);
             // Never connect to or change the user's daemon or project.
-            crate::resource_manager::block_host(sandhill_link::LOCAL, cx);
+            crate::welcome::resource_manager::block_host(sandhill_link::LOCAL, cx);
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     Workbench::new(

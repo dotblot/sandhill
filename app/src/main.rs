@@ -6,21 +6,16 @@
 //! `local` (the default) or an ssh destination such as `lab`.
 
 mod agents;
-mod app_uninstall;
 mod connection;
 mod daemon;
 mod editor;
-mod folder_dialog;
 mod git;
 mod look;
 mod panes;
 mod prefs;
-mod project_settings;
-mod resource_manager;
 mod shell;
-mod start_screen;
-mod trust;
 mod view;
+mod welcome;
 mod workbench;
 
 use std::sync::Arc;

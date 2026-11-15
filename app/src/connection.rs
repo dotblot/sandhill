@@ -107,7 +107,7 @@ impl Workbench {
     /// Connects again, reopening the project and the documents open now.
     pub(crate) fn reconnect(&mut self, cx: &mut Context<Self>) {
         if crate::shell::app_window::quit::active(cx)
-            || !crate::resource_manager::allow_host(&self.host(), cx)
+            || !crate::welcome::resource_manager::allow_host(&self.host(), cx)
         {
             return;
         }
@@ -144,7 +144,7 @@ impl Workbench {
     /// one; kernels and agents keep running.
     fn restart_daemon(&mut self, cx: &mut Context<Self>) {
         if crate::shell::app_window::quit::active(cx)
-            || crate::resource_manager::host_blocked(&self.host(), cx)
+            || crate::welcome::resource_manager::host_blocked(&self.host(), cx)
         {
             return;
         }
@@ -201,7 +201,7 @@ impl Workbench {
                 shell
                     .update(cx, |shell, cx| {
                         shell.show_start(
-                            crate::start_screen::StartMode::Resources(host),
+                            crate::welcome::start_screen::StartMode::Resources(host),
                             window,
                             cx,
                         )

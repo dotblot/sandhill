@@ -234,7 +234,7 @@ impl AppWindow {
                 )
             })
             .collect();
-        let (app_path, message) = match crate::app_uninstall::preview_path() {
+        let (app_path, message) = match crate::welcome::app_uninstall::preview_path() {
             Ok(Some(path)) => (Some(path.display().to_string()), None),
             Ok(None) => (
                 None,
@@ -529,7 +529,7 @@ impl AppWindow {
                     cx.notify();
                 }).ok();
             }
-            let trash_result = if trash_app && all_success { Some(crate::app_uninstall::move_to_trash().map_err(|error| format!("{error:#}"))) } else { None };
+            let trash_result = if trash_app && all_success { Some(crate::welcome::app_uninstall::move_to_trash().map_err(|error| format!("{error:#}"))) } else { None };
             if trash_result.as_ref().is_some_and(Result::is_err) { all_success = false; }
             this.update(cx, |this, cx| {
                 if let Some(manager) = &mut this.resource_manager {
@@ -571,7 +571,7 @@ impl AppWindow {
             let host = host.clone();
             ticks = ticks.child(
                 Checkbox::new(("manage-device", index))
-                    .label(crate::start_screen::host_label(&host))
+                    .label(crate::welcome::start_screen::host_label(&host))
                     .checked(device.selected)
                     .disabled(busy)
                     .on_click(cx.listener(move |this, on: &bool, _, cx| {
@@ -693,7 +693,7 @@ impl AppWindow {
                         div()
                             .text_size(px(15.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(crate::start_screen::host_label(host)),
+                            .child(crate::welcome::start_screen::host_label(host)),
                     )
                     .child(div().flex_1())
                     .child(
@@ -1265,7 +1265,7 @@ impl AppWindow {
             .filter(|(_, device)| {
                 device.selected && (action != Action::Force || device.force_available)
             })
-            .map(|(host, _)| crate::start_screen::host_label(host))
+            .map(|(host, _)| crate::welcome::start_screen::host_label(host))
             .collect::<Vec<_>>()
             .join(", ");
         let detail = match action {

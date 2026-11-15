@@ -86,12 +86,12 @@ pub(super) fn retain(shell: &AppWindow, cx: &mut App) {
             .daemon()
             .map(|daemon| (t.host.clone(), daemon))
     }));
-    targets.retain(|(host, _)| !crate::resource_manager::host_blocked(host, cx));
+    targets.retain(|(host, _)| !crate::welcome::resource_manager::host_blocked(host, cx));
     cx.global_mut::<QuitState>().retired.extend(targets);
 }
 
 pub(crate) fn retain_daemon(host: String, daemon: Rc<Daemon>, cx: &mut App) {
-    if !crate::resource_manager::host_blocked(&host, cx) {
+    if !crate::welcome::resource_manager::host_blocked(&host, cx) {
         cx.global_mut::<QuitState>().retired.insert(host, daemon);
     }
 }
@@ -125,7 +125,7 @@ pub(crate) fn connections(
 
 /// Detach every view and retained quit connection without reconnecting.
 pub(crate) fn forget_host(host: &str, cx: &mut App) {
-    crate::resource_manager::block_host(host, cx);
+    crate::welcome::resource_manager::block_host(host, cx);
     cx.global_mut::<QuitState>().retired.remove(host);
     cx.global_mut::<QuitState>().targets.remove(host);
     for shell in shells(cx) {
@@ -209,7 +209,7 @@ fn connecting_target(cx: &App) -> Option<String> {
         .targets
         .keys()
         .find(|host| Daemon::connecting(host))
-        .map(|host| crate::start_screen::host_label(host))
+        .map(|host| crate::welcome::start_screen::host_label(host))
 }
 
 fn notify(cx: &mut App) {
@@ -383,8 +383,8 @@ pub(crate) fn answer(answer: Answer, cx: &mut App) {
                 )
                 .await;
             match result {
-                Ok(value) if crate::resource_manager::resources_stopped(&value) => {
-                    cx.update(|cx| crate::resource_manager::block_host(&host, cx));
+                Ok(value) if crate::welcome::resource_manager::resources_stopped(&value) => {
+                    cx.update(|cx| crate::welcome::resource_manager::block_host(&host, cx));
                     match daemon.stop_confirmed().await {
                         Ok(_) => {
                             cx.update(|cx| forget_host(&host, cx));
@@ -398,7 +398,7 @@ pub(crate) fn answer(answer: Answer, cx: &mut App) {
                 Ok(value) => failures.push(format!(
                     "{}: {}",
                     target_label(&host),
-                    crate::resource_manager::stop_failure(&value)
+                    crate::welcome::resource_manager::stop_failure(&value)
                 )),
                 Err(error) => failures.push(format!(
                     "{}: resource stop was not confirmed: {error:#}",
@@ -432,7 +432,7 @@ fn finish(cx: &mut App) {
 }
 
 fn target_label(host: &str) -> String {
-    let name = crate::start_screen::host_label(host);
+    let name = crate::welcome::start_screen::host_label(host);
     if host == sandhill_link::LOCAL {
         format!("Local: {name}")
     } else if name == host {
@@ -456,7 +456,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
         state
             .targets
             .keys()
-            .map(|h| crate::start_screen::host_label(h))
+            .map(|h| crate::welcome::start_screen::host_label(h))
             .collect(),
     );
     let error = state.error.clone();
@@ -495,7 +495,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
             h_flex()
                 .gap(px(12.))
                 .child(
-                    img(crate::start_screen::brand_icon())
+                    img(crate::welcome::start_screen::brand_icon())
                         .size(px(40.))
                         .flex_none(),
                 )
@@ -723,7 +723,7 @@ mod tests {
                 quitting: true,
             });
             // Construction must not connect a daemon or open the requested project.
-            crate::resource_manager::block_host(&place.host, cx);
+            crate::welcome::resource_manager::block_host(&place.host, cx);
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
                     AppWindow::new(

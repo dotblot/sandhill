@@ -10,7 +10,7 @@ impl Workbench {
         };
         if self.host() == sandhill_link::LOCAL {
             // This Mac's folders: the system's own window.
-            let chosen = crate::folder_dialog::choose_local_folder("Choose", cx);
+            let chosen = crate::welcome::folder_dialog::choose_local_folder("Choose", cx);
             cx.spawn(async move |this, cx| {
                 if let Some(folder) = chosen.await {
                     this.update(cx, |this, cx| this.set_plot_folder(folder, cx))
@@ -24,7 +24,7 @@ impl Workbench {
         let places = self
             .project
             .iter()
-            .map(|project| crate::folder_dialog::Place {
+            .map(|project| crate::welcome::folder_dialog::Place {
                 label: project
                     .rsplit('/')
                     .next()
@@ -35,7 +35,7 @@ impl Workbench {
             })
             .collect();
         let dialog = cx.new(|cx| {
-            crate::folder_dialog::FolderDialog::new(
+            crate::welcome::folder_dialog::FolderDialog::new(
                 daemon,
                 "Choose a Folder for Plots".into(),
                 "Choose".into(),
@@ -48,7 +48,7 @@ impl Workbench {
         let subscription = cx.subscribe_in(
             &dialog,
             window,
-            |this, _, event: &crate::folder_dialog::FolderDialogDone, _, cx| {
+            |this, _, event: &crate::welcome::folder_dialog::FolderDialogDone, _, cx| {
                 if let Some(zoom) = &mut this.plot_history.zoom {
                     zoom.folder_dialog = None;
                 }

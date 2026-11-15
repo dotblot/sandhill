@@ -10,7 +10,7 @@ use sandhill_proto::{Call, DirEntry, EntryKind};
 
 use crate::look::{self, Palette, icon, picture};
 use crate::panes::files::{MAX_DIRS, MAX_FILES, NewKind, SKIP, match_score};
-use crate::start_screen::StartMode;
+use crate::welcome::start_screen::StartMode;
 use crate::workbench::{ConsoleTab, Workbench};
 
 /// How many matches show at most.
