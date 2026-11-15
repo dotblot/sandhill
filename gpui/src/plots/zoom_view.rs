@@ -4,7 +4,11 @@ use super::*;
 
 impl Workbench {
     /// The large view over the window, when open.
-    pub(crate) fn render_zoom(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_zoom(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let zoom = self.plot_history.zoom.as_ref()?;
         let p = *Palette::get(cx);
         let (list, at) = self.zoom_plots();
@@ -124,6 +128,212 @@ impl Workbench {
             });
         let back = at > 0;
         let on = at + 1 < list.len();
+        // Narrower than this, the settings go under the preview.
+        let viewport = window.viewport_size();
+        let card_width = zoom
+            .size
+            .map_or(viewport.width * 0.86, |size| size.width)
+            .min(viewport.width * 0.96);
+        let beside = card_width >= px(720.);
+        let heading = |text: &'static str| {
+            div()
+                .text_size(px(look::SMALL - 1.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.faint)
+                .child(text)
+        };
+        let switch_row = |switch: AnyElement, label: &'static str| {
+            h_flex()
+                .h(px(22.))
+                .flex_none()
+                .gap(px(8.))
+                .child(switch)
+                .child(label)
+        };
+        let pdf = zoom.format == "pdf" && redrawn;
+        let settings = v_flex()
+            .id("plot-zoom-settings")
+            .when(beside, |d| {
+                d.w(px(260.))
+                    .flex_none()
+                    .h_full()
+                    .border_l(px(0.5))
+            })
+            .when(!beside, |d| d.w_full().max_h(px(260.)).border_t(px(0.5)))
+            .border_color(p.glass_edge)
+            .overflow_y_scroll()
+            .px(px(14.))
+            .py(px(12.))
+            .gap(px(8.))
+            .text_size(px(look::SMALL))
+            .child(heading("FORMAT"))
+            .child(
+                h_flex()
+                    .gap(px(2.))
+                    .p(px(2.))
+                    .rounded(px(8.))
+                    .bg(p.ink(6.))
+                    .text_color(p.muted)
+                    .children(formats.iter().map(|f| segment(f, cx))),
+            )
+            .child(div().h(px(4.)))
+            .child(heading("SIZE"))
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .flex_none()
+                    .gap(px(6.))
+                    .child("W")
+                    .child(div().w(px(70.)).child(Input::new(&zoom.width).small()))
+                    .child("H")
+                    .child(div().w(px(70.)).child(Input::new(&zoom.height).small()))
+                    .child(unit_picker),
+            )
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .flex_none()
+                    .gap(px(6.))
+                    .child("Resolution")
+                    .child(div().w(px(70.)).child(Input::new(&zoom.dpi_input).small()))
+                    .child("dpi"),
+            )
+            .child(switch_row(
+                Switch::new("zoom-follow")
+                    .small()
+                    .color(p.accent)
+                    .checked(zoom.follow)
+                    .accessibility_label("Size follows window")
+                    .on_change(cx.listener(|this, on: &bool, window, cx| {
+                        if let Some(zoom) = &mut this.plot_history.zoom {
+                            zoom.follow = *on;
+                            if *on && let Some(room) = zoom.room.get() {
+                                zoom.physical = window_inches(room.width, room.height);
+                            }
+                        }
+                        this.sync_zoom_dimensions(window, cx);
+                        this.remember_zoom_sizing(cx);
+                    }))
+                    .into_any_element(),
+                "Size follows window",
+            ))
+            .when(pdf, |d| {
+                d.child(switch_row(
+                    Switch::new("zoom-rasterize")
+                        .small()
+                        .color(p.accent)
+                        .checked(zoom.rasterize)
+                        .accessibility_label("Rasterize")
+                        .on_change(cx.listener(|this, on: &bool, _, cx| {
+                            if let Some(zoom) = &mut this.plot_history.zoom {
+                                zoom.rasterize = *on;
+                            }
+                            if let Some(project) = &this.project {
+                                crate::prefs::save_plot_rasterize(&this.host(), project, *on);
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                    "Rasterize",
+                ))
+                .child(
+                    div()
+                        .pl(px(36.))
+                        .text_color(p.faint)
+                        .whitespace_normal()
+                        .child(
+                            "Draws the plot as pixels at the resolution above; smaller files for plots with many points.",
+                        ),
+                )
+            })
+            .child(div().h(px(4.)))
+            .child(heading("PREVIEW"))
+            .child(switch_row(
+                div()
+                    .id("zoom-redraw-tip")
+                    .child(
+                        Switch::new("zoom-redraw")
+                            .small()
+                            .color(p.accent)
+                            .checked(redrawn && zoom.redraw_preview)
+                            .disabled(!redrawn)
+                            .accessibility_label("Redraw preview")
+                            .on_change(cx.listener(|this, on: &bool, _, cx| {
+                                let Some(zoom) = &mut this.plot_history.zoom else {
+                                    return;
+                                };
+                                zoom.redraw_preview = *on;
+                                zoom.fitting = None;
+                                zoom.preview_note = None;
+                                let room = zoom.room.clone();
+                                if *on {
+                                    this.fit_zoom(room, cx);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(reason.clone()).build(window, cx)
+                    })
+                    .into_any_element(),
+                "Redraw preview",
+            ))
+            .child(div().h(px(4.)))
+            .child(heading("SAVE TO"))
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .flex_none()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(self.relative_path(&zoom.folder)),
+                    )
+                    .child(
+                        look::bar_button("zoom-folder", "Choose…", Some("folder"), &p).on_click(
+                            cx.listener(|this, _, window, cx| this.choose_plot_folder(window, cx)),
+                        ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .flex_none()
+                    .gap(px(6.))
+                    .child("Name")
+                    .child(div().flex_1().min_w_0().child(Input::new(&zoom.name).small())),
+            )
+            .child(div().flex_1().min_h(px(8.)))
+            .child(
+                div()
+                    .id("zoom-save")
+                    .flex_none()
+                    .w_full()
+                    .h(px(30.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(RADIUS))
+                    .bg(p.accent)
+                    .text_color(p.primary_text)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .cursor_pointer()
+                    .child(if zoom.replace.is_some() {
+                        "Replace"
+                    } else {
+                        "Save"
+                    })
+                    .when(zoom.working || zoom.redraw.is_none(), |d| d.opacity(0.5))
+                    .when(!zoom.working && zoom.redraw.is_some(), |d| {
+                        d.on_click(cx.listener(|this, _, window, cx| this.save_plot(window, cx)))
+                    }),
+            );
+        let shown = zoom.settings;
         let card = v_flex()
             .id("plot-zoom")
             .occlude()
@@ -185,6 +395,24 @@ impl Workbench {
                             )),
                     )
                     .child(
+                        icon_button("zoom-settings", "sidebar.right", &p, shown)
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(if shown {
+                                    "Hide the settings"
+                                } else {
+                                    "Show the settings"
+                                })
+                                .build(window, cx)
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(zoom) = &mut this.plot_history.zoom {
+                                    zoom.settings = !zoom.settings;
+                                    crate::prefs::save_plot_settings_shown(zoom.settings);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
                         icon_button("zoom-back", "previous", &p, false)
                             .when(!back, |d| d.opacity(0.35))
                             .on_click(
@@ -211,185 +439,63 @@ impl Workbench {
                 div()
                     .flex_1()
                     .min_h_0()
-                    .m(px(14.))
-                    .relative()
-                    .overflow_hidden()
                     .flex()
-                    .items_center()
-                    .justify_center()
+                    .when(beside, |d| d.flex_row())
+                    .when(!beside, |d| d.flex_col())
                     .child(
-                        div()
-                            .relative()
-                            .map(|d| match zoom.initial_picture {
-                                Some(picture) => d
-                                    .w(picture.width)
-                                    .h(picture.height)
-                                    .max_w(relative(1.))
-                                    .max_h(relative(1.)),
-                                None => d.size_full(),
-                            })
-                            .child(image)
-                            .child(self.zoom_room_watcher(cx)),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .flex_none()
-                    .min_w_0()
-                    .h(px(190.))
-                    .gap(px(8.))
-                    .px(px(14.))
-                    .py(px(10.))
-                    .border_t(px(0.5))
-                    .border_color(p.glass_edge)
-                    .text_size(px(look::SMALL))
-                    .child(
-                        h_flex().gap(px(10.)).h(px(26.)).flex_none().child(
-                            h_flex()
-                                .gap(px(2.))
-                                .p(px(2.))
-                                .rounded(px(8.))
-                                .bg(p.ink(6.))
-                                .text_color(p.muted)
-                                .children(formats.iter().map(|f| segment(f, cx))),
-                        ),
-                    )
-                    .child(
-                        h_flex()
-                            .h(px(28.))
-                            .flex_none()
-                            .gap(px(8.))
-                            .child("Width")
-                            .child(div().w(px(86.)).child(Input::new(&zoom.width).small()))
-                            .child("Height")
-                            .child(div().w(px(86.)).child(Input::new(&zoom.height).small()))
-                            .child(unit_picker)
-                            .child("at")
-                            .child(div().w(px(68.)).child(Input::new(&zoom.dpi_input).small()))
-                            .child("dpi"),
-                    )
-                    .child(
-                        h_flex()
-                            .h(px(22.))
-                            .flex_none()
-                            .gap(px(8.))
-                            .child(
-                                Switch::new("zoom-follow")
-                                    .small()
-                                    .color(p.accent)
-                                    .checked(zoom.follow)
-                                    .accessibility_label("Size follows window")
-                                    .on_change(cx.listener(|this, on: &bool, window, cx| {
-                                        if let Some(zoom) = &mut this.plot_history.zoom {
-                                            zoom.follow = *on;
-                                            if *on && let Some(room) = zoom.room.get() {
-                                                zoom.physical =
-                                                    window_inches(room.width, room.height);
-                                            }
-                                        }
-                                        this.sync_zoom_dimensions(window, cx);
-                                        this.remember_zoom_sizing(cx);
-                                    })),
-                            )
-                            .child("Size follows window")
-                            .child(div().w(px(12.)))
-                            .child(
-                                div()
-                                    .id("zoom-redraw-tip")
-                                    .child(
-                                        Switch::new("zoom-redraw")
-                                            .small()
-                                            .color(p.accent)
-                                            .checked(redrawn && zoom.redraw_preview)
-                                            .disabled(!redrawn)
-                                            .accessibility_label("Redraw")
-                                            .on_change(cx.listener(|this, on: &bool, _, cx| {
-                                                let Some(zoom) = &mut this.plot_history.zoom else {
-                                                    return;
-                                                };
-                                                zoom.redraw_preview = *on;
-                                                zoom.fitting = None;
-                                                zoom.preview_note = None;
-                                                let room = zoom.room.clone();
-                                                if *on {
-                                                    this.fit_zoom(room, cx);
-                                                }
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .tooltip(move |window, cx| {
-                                        gpui_kit::component::tooltip::Tooltip::new(reason.clone())
-                                            .build(window, cx)
-                                    }),
-                            )
-                            .child("Redraw"),
-                    )
-                    // Status changes must not change the footer's height:
-                    // that would resize the canvas and trigger another redraw.
-                    .child(
-                        div()
-                            .id("plot-zoom-status")
-                            .h(px(18.))
-                            .flex_none()
+                        v_flex()
+                            .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_color(p.faint)
-                            .child(zoom.note.clone().unwrap_or_else(|| explain.clone()))
-                            .tooltip(move |window, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(explain.clone())
-                                    .build(window, cx)
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .h(px(28.))
-                            .flex_none()
-                            .gap(px(8.))
-                            .child("Folder")
+                            .min_h_0()
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_h_0()
+                                    .m(px(14.))
+                                    .mb(px(6.))
+                                    .relative()
+                                    .overflow_hidden()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .map(|d| match zoom.initial_picture {
+                                                Some(picture) => d
+                                                    .w(picture.width)
+                                                    .h(picture.height)
+                                                    .max_w(relative(1.))
+                                                    .max_h(relative(1.)),
+                                                None => d.size_full(),
+                                            })
+                                            .child(image)
+                                            .child(self.zoom_room_watcher(cx)),
+                                    ),
+                            )
+                            // Status changes must not change the preview's
+                            // height: that would resize it and redraw again.
+                            .child(
+                                div()
+                                    .id("plot-zoom-status")
+                                    .h(px(18.))
+                                    .mb(px(8.))
+                                    .px(px(14.))
+                                    .flex_none()
                                     .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
-                                    .child(self.relative_path(&zoom.folder)),
-                            )
-                            .child(
-                                look::bar_button("zoom-folder", "Choose…", Some("folder"), &p)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.choose_plot_folder(window, cx)
-                                    })),
-                            )
-                            .child("Name")
-                            .child(div().w(px(150.)).child(Input::new(&zoom.name).small()))
-                            .child(
-                                div()
-                                    .id("zoom-save")
-                                    .h(px(28.))
-                                    .px(px(14.))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(RADIUS))
-                                    .bg(p.accent)
-                                    .text_color(p.primary_text)
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .cursor_pointer()
-                                    .child(if zoom.replace.is_some() {
-                                        "Replace"
-                                    } else {
-                                        "Save"
-                                    })
-                                    .when(zoom.working || zoom.redraw.is_none(), |d| d.opacity(0.5))
-                                    .when(!zoom.working && zoom.redraw.is_some(), |d| {
-                                        d.on_click(cx.listener(|this, _, window, cx| {
-                                            this.save_plot(window, cx)
-                                        }))
+                                    .text_size(px(look::SMALL))
+                                    .text_color(p.faint)
+                                    .child(zoom.note.clone().unwrap_or_else(|| explain.clone()))
+                                    .tooltip(move |window, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(explain.clone())
+                                            .build(window, cx)
                                     }),
                             ),
-                    ),
+                    )
+                    .when(shown, |d| d.child(settings)),
             )
             .child(
                 div()

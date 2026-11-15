@@ -213,6 +213,11 @@ impl Workbench {
             redraw_preview: true,
             unit,
             units_open: false,
+            rasterize: self
+                .project
+                .as_ref()
+                .is_some_and(|project| crate::prefs::plot_rasterize(&self.host(), project)),
+            settings: crate::prefs::plot_settings_shown(),
             physical,
             folder,
             folder_dialog: None,
@@ -251,6 +256,7 @@ impl Workbench {
             height: 0.,
             dpi: 0,
             show: false,
+            rasterize: false,
         });
         let room = self.plot_history.zoom.as_ref().unwrap().room.clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -444,6 +450,7 @@ impl Workbench {
                         height: size.height / f64::from(POINTS),
                         dpi: size.dpi,
                         show: true,
+                        rasterize: false,
                     })
                     .await;
                 let again = this

@@ -133,8 +133,9 @@ These plans are history: where they differ from this file, this file wins.
   (none outside the project), `https://` images, notebook attachments.
 - Editor actions and pane height controls share one 29px row, not a second
   toolbar beneath the pane title. It starts with the document's size for
-  single-editor documents ("1,204 lines", CSV/TSV "· 41 columns"; Huan,
-  2026-11-14). Kernel status is a dot inside the picker,
+  single-editor documents ("30,001 ln", CSV/TSV "· 41 col") and, while text
+  is selected, "· 12 ln selected" or on one line "· 3 col selected" (CSV/TSV
+  columns, else characters; Huan, 2026-11-14). Kernel status is a dot inside the picker,
   after the kernel name. The Console's picker shows its bound file and kernel
   together; it lists the bound file's kernel, the device's other sessions and
   new kernels. Activating or running a document, or clicking a Kernels row,
@@ -143,7 +144,12 @@ These plans are history: where they differ from this file, this file wins.
   2026-11-13). A Kernels row is one line: icon, name and version, then the
   open files using it. Above 80% of device memory used by
   kernels, warn once per crossing. Console plots stay inline unless sent to
-  Plots (per plot or all; auto-send is an opt-in switch). Opening documents
+  Plots (per plot or all; auto-send is an opt-in switch). The plot zoom and
+  save window (Huan, 2026-11-14; `docs/design/plot-save-window-plan.md`)
+  keeps the preview full height with a 260px settings column on the right
+  (under it when narrow), hidden or shown by a title-row button remembered
+  on this Mac; a PDF can be saved rasterized (matplotlib's data layers, R's
+  whole plot). Opening documents
   never changes the pointer; the editor shows a thin progress bar instead
   (Huan, 2026-11-11). A Wrap toggle in the editor's action row wraps long
   lines, remembered per file type on this Mac; Markdown and plain text wrap

@@ -225,7 +225,7 @@ impl Render for Workbench {
             .children(self.render_document_notice(cx))
             .child(self.render_status(cx))
             .children(self.render_resource_popup(cx))
-            .children(self.render_zoom(cx))
+            .children(self.render_zoom(window, cx))
             .children(self.render_settings_dialog(cx))
             .children(self.render_trust_dialog(cx))
             .children(self.render_irkernel_dialog(cx))

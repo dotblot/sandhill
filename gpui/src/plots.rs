@@ -83,6 +83,10 @@ pub(crate) struct Zoom {
     redraw_preview: bool,
     unit: PlotUnit,
     units_open: bool,
+    /// Save a PDF as pixels at `dpi` (Huan, 2026-11-14).
+    rasterize: bool,
+    /// The settings column beside the preview is shown.
+    settings: bool,
     physical: (f64, f64),
     folder: String,
     folder_dialog: Option<Entity<crate::folder_dialog::FolderDialog>>,
@@ -857,6 +861,7 @@ impl Workbench {
             height,
             dpi,
             show: true,
+            rasterize: false,
         };
         self.plot_history.fitting = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FIT_DELAY).await;

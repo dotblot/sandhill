@@ -1107,10 +1107,21 @@ preview and R's imports weren't seen.
     (`fileops.rs::mac_trash`): each disk's own Trash, so files on flash
     drives no longer fail as "on another disk", and Finder can Put Back.
     Checked with a temporary exFAT disk image.
-  - The action row starts with `document_size` (lines; CSV/TSV columns
-    from the pinned header, `delimited::column_count`).
+  - The action row starts with `document_size`: "ln", CSV/TSV "col" (from
+    the pinned header, `delimited::column_count`), and a selection's lines
+    or, on one line, its columns (`delimited::fields_spanned`) or
+    characters. `show_notebook` observes the editor and redraws only when
+    the selection or length changes.
   - The run line reads `#3`, without "Cell".
   - The daemon lists every Ark kernel as "Ark R" (`kernelspecs::shown_name`).
+- **Plot window** (Huan, 2026-11-14; `docs/design/plot-save-window-plan.md`):
+  `plots/zoom_view.rs` lays the preview out full height with a 260px
+  settings column (under the preview below 720px), toggled by a title-row
+  button (`Zoom::settings`, `prefs::plot_settings_shown`). PDF has a
+  Rasterize switch (`Zoom::rasterize`, `prefs::plot_rasterize`) sent as
+  `RedrawPlot::rasterize`; the daemon (`redraw.rs`) rasterizes matplotlib's
+  data artists, and R's whole plot through a base-R BMP read back into
+  `grid.raster`. Checked in the app: a saved PDF holds an image and fonts.
 
 
 ## Running it

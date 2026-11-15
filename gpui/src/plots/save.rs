@@ -102,6 +102,7 @@ impl Workbench {
         let redrawn = zoom.redraw.as_ref().is_some_and(|r| r.can);
         let original_format = plain_formats(&item.mime)[0];
         let format = zoom.format;
+        let rasterize = zoom.rasterize && format == "pdf";
         if !redrawn {
             path = std::path::Path::new(&path)
                 .with_extension(extension(original_format))
@@ -182,6 +183,7 @@ impl Workbench {
                             height: height / f64::from(dpi),
                             dpi,
                             show: false,
+                            rasterize,
                         })
                         .await?;
                     if reply.can {

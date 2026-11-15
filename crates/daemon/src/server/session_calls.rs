@@ -156,6 +156,7 @@ impl Daemon {
             width,
             height,
             dpi,
+            rasterize: false,
         };
         let drawn = self
             .redraw_plot(&session, &run, image.as_deref(), index, Some(save))
@@ -182,6 +183,7 @@ impl Daemon {
         width: f64,
         height: f64,
         dpi: u32,
+        rasterize: bool,
     ) -> Result<Value> {
         let save = file.as_deref().map(|file| redraw::Save {
             file,
@@ -189,6 +191,7 @@ impl Daemon {
             width,
             height,
             dpi,
+            rasterize,
         });
         Ok(serde_json::to_value(
             self.redraw_plot(&session, &run, image.as_deref(), index, save)

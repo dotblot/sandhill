@@ -735,6 +735,18 @@ impl Workbench {
                 cx,
             ));
         }
+        if nb.single_editor() {
+            // The action row's size and selection count follow the editor:
+            // redraw on a new selection or length, not on caret blinks.
+            let seen = std::cell::Cell::new((0..0, usize::MAX));
+            subscriptions.push(cx.observe(&editors[0], move |_, editor, cx| {
+                let editor = editor.read(cx);
+                let now = (editor.selected_range(), editor.text().len());
+                if seen.replace(now.clone()) != now {
+                    cx.notify();
+                }
+            }));
+        }
         let delimited_header = if nb.format == Format::Delimited {
             let (header, header_subscriptions) = crate::delimited::decorate_editor(
                 &editors[0],

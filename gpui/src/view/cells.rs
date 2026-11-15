@@ -312,34 +312,54 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// "1,204 lines", and for CSV/TSV "· 41 columns" (Huan, 2026-11-14), as
-    /// the text stands now: single-editor documents only, not notebooks.
+    /// "30,001 ln", for CSV/TSV "· 41 col", and while text is selected
+    /// "· 12 ln selected" or, on one line, "· 3 col selected" (CSV/TSV
+    /// columns, else characters; Huan, 2026-11-14). Single-editor documents
+    /// only, not notebooks.
     fn document_size(&self, open: &Open, p: &Palette, cx: &App) -> Option<AnyElement> {
         if !open.notebook.single_editor() {
             return None;
         }
-        let text = open.editors.first()?.read(cx).text();
+        let editor = open.editors.first()?.read(cx);
+        let text = editor.text();
         let mut lines = text.lines_len();
         // A final newline ends the last line rather than starting another.
         if lines > 1 && text.len() > 0 && text.char_at(text.len() - 1) == Some('\n') {
             lines -= 1;
         }
         let mut label = format!(
-            "{}{} {}",
+            "{}{} ln",
             Self::grouped(lines),
             if open.notebook.truncated { "+" } else { "" },
-            if lines == 1 { "line" } else { "lines" }
         );
-        if open.notebook.format == notebook::Format::Delimited
-            && let Some(header) = &open.delimited_header
-        {
-            let sep = crate::delimited::separator(open.notebook.language.as_deref());
+        let delimited = open.notebook.format == notebook::Format::Delimited;
+        let sep = crate::delimited::separator(open.notebook.language.as_deref());
+        if delimited && let Some(header) = &open.delimited_header {
             let columns = crate::delimited::column_count(&header.read(cx).value(), sep);
-            label.push_str(&format!(
-                " · {} {}",
-                Self::grouped(columns),
-                if columns == 1 { "column" } else { "columns" }
-            ));
+            label.push_str(&format!(" · {} col", Self::grouped(columns)));
+        }
+        let range = editor.selected_range();
+        if !range.is_empty() {
+            let start = text.offset_to_point(range.start);
+            let end = text.offset_to_point(range.end);
+            // A selection ending at a line's start doesn't take that line.
+            let last = if end.row > start.row && end.column == 0 {
+                end.row - 1
+            } else {
+                end.row
+            };
+            if last > start.row {
+                let rows = last - start.row + 1;
+                label.push_str(&format!(" · {} ln selected", Self::grouped(rows)));
+            } else {
+                let count = if delimited {
+                    let line = text.slice_line(start.row).to_string();
+                    crate::delimited::fields_spanned(&line, start.column, end.column, sep)
+                } else {
+                    editor.selected_value().chars().count()
+                };
+                label.push_str(&format!(" · {} col selected", Self::grouped(count)));
+            }
         }
         Some(
             div()

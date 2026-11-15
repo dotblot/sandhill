@@ -273,6 +273,10 @@ pub enum Call {
         /// [`PlotRedraw::png`] holds the image.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         show: bool,
+        /// A PDF drawn as pixels at `dpi` (Huan, 2026-11-14): matplotlib's
+        /// data layers only, R's whole plot. Ignored for other formats.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        rasterize: bool,
     },
     /// Lists a session's variables, or the parts of one: `path` is a
     /// variable's name, then the names of its parts as they were listed

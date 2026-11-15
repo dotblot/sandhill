@@ -153,6 +153,22 @@ pub(crate) fn column_count(header: &str, sep: u8) -> usize {
         .unwrap_or(0)
 }
 
+/// How many fields of `line` the bytes `start..end` touch: separators
+/// outside quotes inside the selection, plus one; a separator it ends on
+/// starts no new field. Quotes are followed from the line's start.
+pub(crate) fn fields_spanned(line: &str, start: usize, end: usize, sep: u8) -> usize {
+    let mut quoted = false;
+    let mut spanned = 1;
+    for (at, &byte) in line.as_bytes().iter().enumerate().take(end) {
+        if byte == b'"' {
+            quoted = !quoted;
+        } else if byte == sep && !quoted && at >= start && at + 1 < end {
+            spanned += 1;
+        }
+    }
+    spanned
+}
+
 pub(crate) fn decorate_editor(
     editor: &Entity<EditorState>,
     sep: u8,
@@ -796,7 +812,18 @@ impl Workbench {
 
 #[cfg(test)]
 mod tests {
-    use super::{Field, fields};
+    use super::{Field, fields, fields_spanned};
+
+    #[test]
+    fn selected_columns_follow_quotes_and_ignore_a_final_separator() {
+        let line = "gene,\"a,b\",count,x";
+        // "gene,\"a,b\",count" spans three fields; the comma inside quotes is data.
+        assert_eq!(fields_spanned(line, 0, 16, b','), 3);
+        // Ending on the comma after "gene" stays in one field.
+        assert_eq!(fields_spanned(line, 0, 5, b','), 1);
+        // A start inside a quoted field still knows it is quoted.
+        assert_eq!(fields_spanned(line, 7, 10, b','), 1);
+    }
 
     #[test]
     fn quote_aware_ranges_preserve_separators_and_logical_header() {

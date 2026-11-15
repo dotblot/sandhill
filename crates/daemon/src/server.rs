@@ -895,6 +895,7 @@ impl Daemon {
                 width,
                 height,
                 dpi,
+                rasterize: _,
                 show,
             } if show => {
                 self.redraw_plot_shown(session, run, image, index, width, height, dpi)
@@ -910,10 +911,13 @@ impl Daemon {
                 width,
                 height,
                 dpi,
+                rasterize,
                 show: _,
             } => {
-                self.redraw_plot_saved(session, run, image, index, file, format, width, height, dpi)
-                    .await?
+                self.redraw_plot_saved(
+                    session, run, image, index, file, format, width, height, dpi, rasterize,
+                )
+                .await?
             }
             Call::TableExport {
                 session,

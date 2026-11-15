@@ -62,7 +62,7 @@ async fn run(
     cell: Option<CellRef>,
     by: Option<&str>,
     quiet: bool,
-) {
+) -> String {
     client.subscribe(session, None).await.unwrap();
     let started: RunStarted = client
         .call(Call::Execute {
@@ -74,11 +74,15 @@ async fn run(
         })
         .await
         .unwrap();
+    let mut stdout = String::new();
     loop {
         let event = tokio::time::timeout(TIMEOUT, client.next_event())
             .await
             .expect("timed out waiting for the run")
             .expect("connection closed");
+        if event.run.as_deref() == Some(started.run.as_str()) && event.msg_type == "stream" {
+            stdout.push_str(event.content["text"].as_str().unwrap_or(""));
+        }
         if event.run.as_deref() == Some(started.run.as_str())
             && event.msg_type == EVENT_RUN_FINISHED
         {
@@ -86,6 +90,7 @@ async fn run(
         }
     }
     client.unsubscribe(session).await.unwrap();
+    stdout
 }
 
 /// A 1 × 1 PNG.
@@ -224,6 +229,7 @@ async fn redraw(
             width,
             height,
             dpi,
+            rasterize: false,
             show: false,
         })
         .await
@@ -344,6 +350,7 @@ async fn plots_are_drawn_again_at_a_new_size() {
                 width: 5.0,
                 height: 3.0,
                 dpi: 192,
+                rasterize: false,
                 show: true,
             })
             .await
@@ -386,6 +393,88 @@ async fn plots_are_drawn_again_at_a_new_size() {
             .await
             .unwrap_err();
             assert!(err.to_string().contains("at that size"), "{err}");
+        }
+        client.shutdown(&session).await.unwrap();
+    }
+}
+
+/// Dense data can be pixels in a PDF without changing its page size; Python
+/// leaves the axes and labels as vector text and restores the kept figure.
+#[tokio::test]
+async fn pdf_data_can_be_rasterized() {
+    let dir = common::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let mut client = daemon.client().await;
+    for kernel in ["python3", "ark", "ir"] {
+        if !have_kernel(kernel).await {
+            continue;
+        }
+        let session = client.start_session(kernel, None).await.unwrap().id;
+        if kernel == "python3" {
+            let available = run(
+                &mut client,
+                &session,
+                "import importlib.util\nprint('SANDHILL_MATPLOTLIB=' + str(importlib.util.find_spec('matplotlib') is not None))",
+                None,
+                None,
+                true,
+            )
+            .await;
+            if !available.contains("SANDHILL_MATPLOTLIB=True") {
+                eprintln!("skipping Python: matplotlib is not installed");
+                client.shutdown(&session).await.unwrap();
+                continue;
+            }
+            let plots_code = "import matplotlib.pyplot as plt\n\
+                fig, ax = plt.subplots()\n\
+                ax.scatter(range(10000), [(i * 37) % 101 for i in range(10000)], s=2)\n\
+                ax.set(xlabel='Observation', ylabel='Value', title='Dense scatter')\n\
+                plt.show()";
+            run(&mut client, &session, plots_code, None, None, false).await;
+        } else {
+            run(
+                &mut client,
+                &session,
+                "plot(seq_len(10000), (seq_len(10000) * 37) %% 101, pch = 16, cex = 0.3, xlab = 'Observation', ylab = 'Value', main = 'Dense scatter')",
+                None,
+                None,
+                false,
+            )
+            .await;
+        }
+        let plots = client.session_plots(&session, None).await.unwrap().plots;
+        assert_eq!(plots.len(), 1, "{kernel}: {plots:#?}");
+        // Save vector again after rasterization too, to catch leaked artist flags.
+        for (name, rasterize) in [("vector", false), ("raster", true), ("restored", false)] {
+            let file = dir.path().join(format!("{kernel}/{name}.pdf"));
+            let saved: PlotRedraw = client
+                .call(Call::RedrawPlot {
+                    session: session.clone(),
+                    run: plots[0].run.clone(),
+                    image: None,
+                    index: 0,
+                    file: Some(file.to_string_lossy().into_owned()),
+                    format: "pdf".into(),
+                    width: 6.02, // 903 pixels exercises BMP row padding too.
+                    height: 4.0,
+                    dpi: 150,
+                    rasterize,
+                    show: false,
+                })
+                .await
+                .unwrap();
+            assert!(saved.can, "{kernel}: {saved:?}");
+            let bytes = std::fs::read(&file).unwrap();
+            assert!(bytes.starts_with(b"%PDF"), "{kernel}: {name}");
+            let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|part| part == needle);
+            assert_eq!(
+                contains(b"/Subtype /Image"),
+                rasterize,
+                "{kernel}: {name} embedded image"
+            );
+            if kernel == "python3" && rasterize {
+                assert!(contains(b"/Font"), "Python labels must remain vector text");
+            }
         }
         client.shutdown(&session).await.unwrap();
     }
@@ -480,6 +569,7 @@ async fn r_plots_show_under_their_cell() {
                 width: 5.0,
                 height: 3.0,
                 dpi: 192,
+                rasterize: false,
                 show: true,
             })
             .await

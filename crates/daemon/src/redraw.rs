@@ -182,13 +182,14 @@ fn holds(content: &Value, hash: &str) -> bool {
         .is_some_and(|data| data.values().any(|v| v[sandhill_proto::BLOB_KEY] == hash))
 }
 
-/// Where and how to save it: the size in inches, and the resolution of a PNG.
+/// Where and how to save it: inches, raster resolution, and PDF rasterization.
 pub struct Save<'a> {
     pub file: &'a str,
     pub format: &'a str,
     pub width: f64,
     pub height: f64,
     pub dpi: u32,
+    pub rasterize: bool,
 }
 
 /// The code that draws the plot again into `save.file`.
@@ -205,6 +206,14 @@ pub fn code(plot: &Plot, save: &Save) -> String {
     .replace("__W__", &save.width.to_string())
     .replace("__H__", &save.height.to_string())
     .replace("__DPI__", &save.dpi.to_string())
+    .replace(
+        "__RASTERIZE__",
+        if save.format == "pdf" && save.rasterize {
+            "1"
+        } else {
+            "0"
+        },
+    )
 }
 
 /// Whether the code says it wrote the file.
@@ -229,15 +238,62 @@ __FIND__
   if (is.null(.plot)) stop("the session no longer has this plot")
   .file <- __FILE__
   .was <- grDevices::dev.cur()
-  switch(__FORMAT__,
-    png = grDevices::png(.file, width = round(__W__ * __DPI__), height = round(__H__ * __DPI__), res = __DPI__),
-    svg = grDevices::svg(.file, width = __W__, height = __H__),
-    pdf = grDevices::pdf(.file, width = __W__, height = __H__))
-  .dev <- grDevices::dev.cur()
-  tryCatch(suppressWarnings(grDevices::replayPlot(.plot)), finally = {
-    grDevices::dev.off(.dev)
-    if (.was > 1) grDevices::dev.set(.was)
-  })
+  if (__RASTERIZE__ != 0) {
+    .bitmap <- tempfile(fileext = ".bmp")
+    .dev <- NULL
+    tryCatch({
+      tryCatch(grDevices::bmp(.bitmap, width = round(__W__ * __DPI__), height = round(__H__ * __DPI__), res = __DPI__,
+        type = if (capabilities("cairo")) "cairo" else getOption("bitmapType")),
+        error = function(e) stop("could not open the R bitmap device for a rasterized PDF: ", conditionMessage(e)))
+      .dev <- grDevices::dev.cur()
+      suppressWarnings(grDevices::replayPlot(.plot))
+      grDevices::dev.off(.dev)
+      .dev <- NULL
+      # File bitmap devices cannot dev.capture(); BMP needs no extra package.
+      .bytes <- readBin(.bitmap, what = "raw", n = file.info(.bitmap)$size)
+      .int <- function(at, size = 4, signed = FALSE) {
+        value <- sum(as.integer(.bytes[seq.int(at, length.out = size)]) * 256^(seq_len(size) - 1))
+        if (signed && value >= 2^(size * 8 - 1)) value - 2^(size * 8) else value
+      }
+      if (length(.bytes) < 54 || !identical(.bytes[1:2], charToRaw("BM")) ||
+          .int(15) < 40 || !.int(29, 2) %in% c(8, 24, 32) || .int(31) != 0)
+        stop("the R bitmap device produced an unsupported BMP for a rasterized PDF")
+      .offset <- .int(11)
+      .width <- .int(19, signed = TRUE)
+      .height <- .int(23, signed = TRUE)
+      .channels <- .int(29, 2) / 8
+      .stride <- ceiling(.width * .channels / 4) * 4
+      if (.width <= 0 || .height == 0 || .offset + .stride * abs(.height) > length(.bytes))
+        stop("the R bitmap device produced an incomplete BMP for a rasterized PDF")
+      # BMP stores BGR(A) pixels, four-byte row padding, usually bottom-up.
+      .rows <- if (.height > 0) rev(seq_len(.height)) else seq_len(-.height)
+      .at <- rep((.rows - 1) * .stride + .offset, each = .width) +
+        rep((seq_len(.width) - 1) * .channels, times = abs(.height))
+      # Cairo uses an indexed palette when the plot needs at most 256 colours.
+      if (.channels == 1)
+        .at <- 14 + .int(15) + as.integer(.bytes[.at + 1]) * 4
+      .img <- matrix(grDevices::rgb(as.integer(.bytes[.at + 3]), as.integer(.bytes[.at + 2]),
+        as.integer(.bytes[.at + 1]), maxColorValue = 255), nrow = abs(.height), byrow = TRUE)
+      grDevices::pdf(.file, width = __W__, height = __H__)
+      .dev <- grDevices::dev.cur()
+      grid::grid.newpage()
+      grid::grid.raster(.img, width = grid::unit(1, "npc"), height = grid::unit(1, "npc"), interpolate = FALSE)
+    }, finally = {
+      if (!is.null(.dev)) grDevices::dev.off(.dev)
+      unlink(.bitmap)
+      if (.was > 1) grDevices::dev.set(.was)
+    })
+  } else {
+    switch(__FORMAT__,
+      png = grDevices::png(.file, width = round(__W__ * __DPI__), height = round(__H__ * __DPI__), res = __DPI__),
+      svg = grDevices::svg(.file, width = __W__, height = __H__),
+      pdf = grDevices::pdf(.file, width = __W__, height = __H__))
+    .dev <- grDevices::dev.cur()
+    tryCatch(suppressWarnings(grDevices::replayPlot(.plot)), finally = {
+      grDevices::dev.off(.dev)
+      if (.was > 1) grDevices::dev.set(.was)
+    })
+  }
   cat("SANDHILL_SAVED\n")
 })
 "#;
@@ -252,11 +308,27 @@ const PYTHON: &str = r#"def _sandhill_redraw():
     if fig is None:
         raise RuntimeError("the session no longer has this figure")
     size = fig.get_size_inches()
+    rasterized = []
     try:
         fig.set_size_inches(__W__, __H__)
+        if __RASTERIZE__:
+            from matplotlib.collections import Collection
+            from matplotlib.image import AxesImage
+            from matplotlib.lines import Line2D
+            from matplotlib.patches import Patch
+            from matplotlib.spines import Spine
+
+            for ax in fig.axes:
+                for artist in ax.get_children():
+                    if (isinstance(artist, (Collection, Line2D, AxesImage, Patch))
+                            and artist is not ax.patch and not isinstance(artist, Spine)):
+                        rasterized.append((artist, artist.get_rasterized()))
+                        artist.set_rasterized(True)
         with matplotlib.rc_context({"savefig.bbox": "standard"}):
             fig.savefig(__FILE__, dpi=__DPI__, format=__FORMAT__)
     finally:
+        for artist, was in rasterized:
+            artist.set_rasterized(was)
         fig.set_size_inches(size)
     print("SANDHILL_SAVED")
 
@@ -321,6 +393,7 @@ mod tests {
             width: 6.0,
             height: 4.5,
             dpi: 300,
+            rasterize: false,
         };
         let r = code(&Plot::Ark("p\"1".into()), &save);
         assert!(r.contains(r#".plot <- .recording("p\"1")"#), "{r}");
@@ -334,5 +407,29 @@ mod tests {
             "{python}"
         );
         assert!(saved("noise\nSANDHILL_SAVED\n") && !saved("nothing"));
+    }
+
+    #[test]
+    fn rasterization_only_applies_to_pdf() {
+        let mut save = Save {
+            file: "/p/plot.pdf",
+            format: "pdf",
+            width: 6.0,
+            height: 4.0,
+            dpi: 300,
+            rasterize: true,
+        };
+        for enabled in [true, false] {
+            save.rasterize = enabled;
+            let flag = u8::from(enabled);
+            assert!(code(&Plot::Kept("p1".into()), &save).contains(&format!("if ({flag} != 0)")));
+            assert!(code(&Plot::Figure("f1".into()), &save).contains(&format!("if {flag}:")));
+        }
+        save.rasterize = true;
+        for format in ["png", "svg"] {
+            save.format = format;
+            assert!(code(&Plot::Kept("p1".into()), &save).contains("if (0 != 0)"));
+            assert!(code(&Plot::Figure("f1".into()), &save).contains("if 0:"));
+        }
     }
 }

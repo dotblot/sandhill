@@ -668,6 +668,27 @@ pub(crate) fn save_plot_export(host: &str, project: &str, unit: PlotUnit, dpi: u
     save_plot_sizing_fields(host, project, json!({"unit": unit, "exportDpi": dpi}));
 }
 
+/// Whether a PDF is saved rasterized (Huan, 2026-11-14), per project.
+pub(crate) fn plot_rasterize(host: &str, project: &str) -> bool {
+    read()["plotSizing"][host][project]["rasterize"]
+        .as_bool()
+        .unwrap_or(false)
+}
+
+pub(crate) fn save_plot_rasterize(host: &str, project: &str, on: bool) {
+    save_plot_sizing_fields(host, project, json!({"rasterize": on}));
+}
+
+/// Whether the plot window shows its settings column (Huan, 2026-11-14);
+/// one choice on this Mac, shown at first.
+pub(crate) fn plot_settings_shown() -> bool {
+    read()["plotSettingsShown"].as_bool().unwrap_or(true)
+}
+
+pub(crate) fn save_plot_settings_shown(on: bool) {
+    write("plotSettingsShown", json!(on));
+}
+
 pub(crate) fn plot_folder(host: &str, project: &str) -> Option<String> {
     read()["plotFolder"][host][project]
         .as_str()
