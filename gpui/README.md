@@ -1178,6 +1178,12 @@ preview and R's imports weren't seen.
   F1 (`help_at_cursor`) now also works in the Console, takes the language
   from the focused editor, moves the Console to the file's live session
   first, and says so in Help when no session of that language runs.
+- **Red button labels in dark mode** (Huan, 2026-11-15): Kit's dark theme
+  labels its red (red-400) buttons with red-600, which can't be read.
+  `look::brand_colors` sets `danger_foreground` and
+  `button_danger_foreground` to `#450a0a` in dark mode (about 6:1), as
+  navy labels the light blue. Kernels' Shut down, Stop All and Quit, and
+  Kit's red tags use it.
 
 
 ## Running it

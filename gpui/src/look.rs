@@ -115,6 +115,13 @@ fn brand_colors(dark: bool) -> ThemeColor {
         .background
         .blend(c.primary.opacity(if dark { 0.16 } else { 0.08 }));
     c.accent_foreground = c.foreground;
+    // Kit's dark theme labels its light red (red-400) with red-600, which
+    // can't be read (Huan, 2026-11-15); a near-black red reads as the navy
+    // label does on the light blue.
+    if dark {
+        c.danger_foreground = color(0x450a0a);
+        c.button_danger_foreground = c.danger_foreground;
+    }
     c.ring = c.primary;
     c.link = c.primary;
     c.link_hover = c.primary_hover;
