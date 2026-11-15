@@ -836,7 +836,10 @@ impl Agents {
     pub(crate) fn refresh_accounts(&mut self, cx: &mut Context<Self>) {
         let request = self
             .daemon
-            .call::<Vec<AgentAccount>>(Call::ListAgentAccounts { refresh: false });
+            .call::<Vec<AgentAccount>>(Call::ListAgentAccounts {
+                refresh: false,
+                ids: None,
+            });
         cx.spawn(async move |this, cx| {
             if let Ok(accounts) = request.await {
                 let _ = this.update(cx, |this, cx| {

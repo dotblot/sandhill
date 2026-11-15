@@ -167,7 +167,10 @@ async fn account_rpcs_preserve_shared_targets_and_default_logins() {
     let machine = Machine::start(false).await;
     let defaults: Vec<AgentAccount> = machine
         .client
-        .call(Call::ListAgentAccounts { refresh: false })
+        .call(Call::ListAgentAccounts {
+            refresh: false,
+            ids: None,
+        })
         .await
         .unwrap();
     assert_eq!(defaults.len(), 3);
@@ -265,7 +268,10 @@ async fn account_rpcs_preserve_shared_targets_and_default_logins() {
         assert_eq!(machine.folder(&renamed), folder);
         let listed: Vec<AgentAccount> = machine
             .client
-            .call(Call::ListAgentAccounts { refresh: false })
+            .call(Call::ListAgentAccounts {
+                refresh: false,
+                ids: None,
+            })
             .await
             .unwrap();
         assert_eq!(
@@ -289,7 +295,10 @@ async fn account_rpcs_preserve_shared_targets_and_default_logins() {
         }
         let listed: Vec<AgentAccount> = machine
             .client
-            .call(Call::ListAgentAccounts { refresh: false })
+            .call(Call::ListAgentAccounts {
+                refresh: false,
+                ids: None,
+            })
             .await
             .unwrap();
         assert!(!listed.iter().any(|a| a.id == account.id));

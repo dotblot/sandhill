@@ -1063,6 +1063,14 @@ preview and R's imports weren't seen.
   `refresh_provider`), which only Posit still used; every remaining
   provider is read through `AccountManager`. The Welcome sidebar shows the
   first seven characters of `SANDHILL_COMMIT`.
+- **No automatic quota checks** (Huan, 2026-11-14, after Google suspended
+  an Antigravity account): `QuotaMonitor` lost its 60-second poll, and
+  opening the panel no longer asks the agents. `agent_accounts::Ask` says
+  whom a listing asks: `Nobody` (the saved answers), `Accounts(ids)` (a
+  provider's Refresh button, or the account a sign-in was for) or
+  `Everyone` (Welcome's Refresh); `ListAgentAccounts` gained `ids`. Saved
+  measurements no longer expire after five minutes, only when their
+  window resets; cards say when they were checked.
 
 
 ## Running it

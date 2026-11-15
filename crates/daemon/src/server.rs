@@ -1058,9 +1058,11 @@ impl Daemon {
             Call::AgentAccountsQuery { kinds, force } => {
                 self.agent_accounts(Some(&kinds), force).await?
             }
-            Call::ListAgentAccounts { refresh } => {
-                serde_json::to_value(crate::accounts::Registry::from_env().list(refresh).await?)?
-            }
+            Call::ListAgentAccounts { refresh, ids } => serde_json::to_value(
+                crate::accounts::Registry::from_env()
+                    .list(refresh, ids.as_deref())
+                    .await?,
+            )?,
             Call::AddAgentAccount {
                 kind,
                 name,

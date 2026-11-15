@@ -344,13 +344,18 @@ impl Registry {
         })
     }
 
-    pub async fn list(&self, refresh: bool) -> Result<Vec<AgentAccount>> {
+    /// With `refresh`, asks the agents about each account, or only about
+    /// `ids`; the others keep what was last known.
+    pub async fn list(&self, refresh: bool, ids: Option<&[String]>) -> Result<Vec<AgentAccount>> {
         let mut accounts = {
             let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
             self.metadata()?
         };
         if refresh {
             for account in &mut accounts {
+                if ids.is_some_and(|ids| !ids.contains(&account.id)) {
+                    continue;
+                }
                 if account.method == "api_key" {
                     if let Ok(key) = self.key(&account.id) {
                         account.signed_in = Some(key.is_some());
@@ -620,7 +625,7 @@ mod tests {
         registry
             .remember(&second.id, &json!({"account": null}))
             .unwrap();
-        let accounts = registry.list(false).await.unwrap();
+        let accounts = registry.list(false, None).await.unwrap();
         let personal = accounts.iter().find(|a| a.id == first.id).unwrap();
         assert_eq!(personal.identity.as_deref(), Some("personal@example.test"));
         assert_eq!(personal.signed_in, Some(true));

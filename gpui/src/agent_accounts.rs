@@ -14,6 +14,34 @@ use crate::daemon::Daemon;
 use crate::look::{self, Palette};
 use crate::terminal::TerminalView;
 
+/// Which accounts a listing asks their agents about (sign-in state and
+/// usage). Nothing asks on its own: only a Refresh click or a finished
+/// sign-in does (Huan, 2026-11-14); otherwise the last answers are shown.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Ask {
+    Nobody,
+    Accounts(Vec<String>),
+    Everyone,
+}
+
+impl Ask {
+    /// Two waiting listings as one that asks everything either would.
+    fn with(self, other: Ask) -> Ask {
+        match (self, other) {
+            (Ask::Everyone, _) | (_, Ask::Everyone) => Ask::Everyone,
+            (Ask::Nobody, ask) | (ask, Ask::Nobody) => ask,
+            (Ask::Accounts(mut ids), Ask::Accounts(more)) => {
+                for id in more {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+                Ask::Accounts(ids)
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Dialog {
     Add(String),
@@ -30,7 +58,7 @@ pub(crate) struct AccountManager {
     pub(crate) error: Option<String>,
     sign_in_error: Option<String>,
     pub(crate) refreshing: bool,
-    refresh_queued: Option<bool>,
+    refresh_queued: Option<Ask>,
     accounts_revision: u64,
     dialog: Option<Dialog>,
     dialog_error: Option<String>,
@@ -66,21 +94,29 @@ impl AccountManager {
             login: None,
             login_id: None,
         };
-        this.refresh(false, cx);
+        this.refresh(Ask::Nobody, cx);
         this
     }
 
-    pub(crate) fn refresh(&mut self, refresh: bool, cx: &mut Context<Self>) {
+    pub(crate) fn refresh(&mut self, ask: Ask, cx: &mut Context<Self>) {
         if self.refreshing {
-            self.refresh_queued = Some(self.refresh_queued.unwrap_or(false) || refresh);
+            self.refresh_queued = Some(match self.refresh_queued.take() {
+                Some(queued) => queued.with(ask),
+                None => ask,
+            });
             return;
         }
         self.refreshing = true;
         self.error = self.sign_in_error.clone();
         let revision = self.accounts_revision;
+        let (refresh, ids) = match ask {
+            Ask::Nobody => (false, None),
+            Ask::Accounts(ids) => (true, Some(ids)),
+            Ask::Everyone => (true, None),
+        };
         let listed = self
             .daemon
-            .call::<Vec<AgentAccount>>(Call::ListAgentAccounts { refresh });
+            .call::<Vec<AgentAccount>>(Call::ListAgentAccounts { refresh, ids });
         cx.spawn(async move |this, cx| {
             let result = listed.await;
             this.update(cx, |this, cx| {
@@ -90,12 +126,12 @@ impl AccountManager {
                     Ok(_) => {
                         // A reset returned a newer account while this list was
                         // pending. Keep it visible and read the list again.
-                        this.refresh_queued.get_or_insert(false);
+                        this.refresh_queued.get_or_insert(Ask::Nobody);
                     }
                     Err(err) => this.error = Some(format!("Could not read accounts: {err:#}")),
                 }
-                if let Some(refresh) = this.refresh_queued.take() {
-                    this.refresh(refresh, cx);
+                if let Some(ask) = this.refresh_queued.take() {
+                    this.refresh(ask, cx);
                 }
                 cx.notify();
             })
@@ -103,6 +139,16 @@ impl AccountManager {
         })
         .detach();
         cx.notify();
+    }
+
+    /// After a sign-in ends, ask about the account it was for.
+    fn signed_in_ask(&self) -> Ask {
+        match &self.dialog {
+            Some(Dialog::Login(account) | Dialog::GoogleLogin(account)) => {
+                Ask::Accounts(vec![account.id.clone()])
+            }
+            _ => Ask::Nobody,
+        }
     }
 
     pub(crate) fn apply_account(&mut self, account: AgentAccount, cx: &mut Context<Self>) {
@@ -232,8 +278,9 @@ impl AccountManager {
                 match result {
                     Ok(_) => {
                         this.daemon.fire(Call::UnsubscribeTerminal { terminal: id });
+                        let ask = this.signed_in_ask();
                         this.clear_dialog(window, cx);
-                        this.refresh(true, cx);
+                        this.refresh(ask, cx);
                     }
                     Err(err) => {
                         this.dialog_error = Some(format!("Could not stop sign-in: {err:#}"))
@@ -317,7 +364,7 @@ impl AccountManager {
                                 Err(err) => {
                                     this.dialog_error =
                                         Some(format!("Could not read the added account: {err}"));
-                                    this.refresh(false, cx);
+                                    this.refresh(Ask::Nobody, cx);
                                     cx.notify();
                                     return;
                                 }
@@ -334,7 +381,7 @@ impl AccountManager {
                             this.accounts.retain(|old| old.id != account.id);
                         }
                         this.clear_dialog(window, cx);
-                        this.refresh(false, cx);
+                        this.refresh(Ask::Nobody, cx);
                         if let Some(account) = added {
                             this.accounts.retain(|old| old.id != account.id);
                             this.accounts.push(account.clone());
@@ -401,8 +448,9 @@ impl AccountManager {
             return;
         }
         if !terminal.running {
+            let ask = self.signed_in_ask();
             self.clear_dialog(window, cx);
-            self.refresh(true, cx);
+            self.refresh(ask, cx);
             self.sign_in_error = terminal.exit.as_ref().and_then(sign_in_failure);
             self.error = self.sign_in_error.clone();
             return;
@@ -470,13 +518,14 @@ impl AccountManager {
             self.daemon.fire(Call::UnsubscribeTerminal {
                 terminal: event.terminal.clone(),
             });
+            let ask = self.signed_in_ask();
             self.generation += 1;
             self.dialog = None;
             self.dialog_error = None;
             self.pending = false;
             self.login = None;
             self.login_id = None;
-            self.refresh(true, cx);
+            self.refresh(ask, cx);
             self.sign_in_error = event.exit.as_ref().and_then(sign_in_failure);
             self.error = self.sign_in_error.clone();
             cx.notify();
@@ -869,7 +918,9 @@ impl Render for AccountManager {
                                 "Refresh"
                             })
                             .disabled(self.refreshing)
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh(true, cx))),
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.refresh(Ask::Everyone, cx)),
+                            ),
                     ),
             )
             .when_some(self.error.clone(), |d, error| {
@@ -877,5 +928,20 @@ impl Render for AccountManager {
             })
             .child(groups)
             .child(self.render_dialogs(cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Ask;
+
+    #[test]
+    fn queued_refreshes_keep_every_account_asked_for() {
+        let ids = |ids: &[&str]| Ask::Accounts(ids.iter().map(|id| id.to_string()).collect());
+        assert_eq!(ids(&["a"]).with(ids(&["b", "a"])), ids(&["a", "b"]));
+        assert_eq!(Ask::Nobody.with(ids(&["a"])), ids(&["a"]));
+        assert_eq!(ids(&["a"]).with(Ask::Nobody), ids(&["a"]));
+        assert_eq!(ids(&["a"]).with(Ask::Everyone), Ask::Everyone);
+        assert_eq!(Ask::Nobody.with(Ask::Nobody), Ask::Nobody);
     }
 }

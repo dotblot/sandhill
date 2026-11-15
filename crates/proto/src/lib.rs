@@ -761,11 +761,13 @@ pub enum Call {
     /// The accounts each agent can run on, on this device: the agent's own
     /// login first, then the ones added with `add_agent_account`. With
     /// `refresh`, asks each agent whether it is signed in and how much it
-    /// has used (official CLI queries only); otherwise returns what was
-    /// last known. Returns `Vec<AgentAccount>`.
+    /// has used (official CLI queries only), or only the accounts in `ids`;
+    /// otherwise returns what was last known. Returns `Vec<AgentAccount>`.
     ListAgentAccounts {
         #[serde(default)]
         refresh: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ids: Option<Vec<String>>,
     },
     /// Adds an account for `kind`: for Claude Code and Codex a folder of
     /// Sandhill's own that the agent keeps that login in (sign in with

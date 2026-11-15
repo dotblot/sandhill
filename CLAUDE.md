@@ -298,6 +298,12 @@ These plans are history: where they differ from this file, this file wins.
   limit resets, so its cards link to claude.ai Settings → Usage.
   Only Claude Code, Codex and Antigravity show quota in the status bar;
   Posit Assistant, OpenScience, Oh My Pi and pi have none (Huan, 2026-11-14).
+  Sandhill never asks an agent for its quota or sign-in on its own (Huan,
+  2026-11-14, after Google suspended an Antigravity account that Sandhill
+  had been checking every minute): only a Refresh click (that provider's
+  accounts, or every account on Welcome) or a finished sign-in (that
+  account) asks. Otherwise the status bar shows what the last check saved
+  on the device, until its window resets, with "Checked … ago" in the panel.
 - Positron and Kallichore are Elastic License 2.0: do not copy their code.
   Ark and Air are MIT and may be used.
 - Open source and non-commercial (Huan, 2026-11-06): Sandhill is under

@@ -1,10 +1,12 @@
 //! Host-local agent accounts and quotas. Sign-ins stay in the agent's own CLI.
 //! Each provider has its own status chip and account popup; hidden providers
 //! remain reachable through the full account list in the same popup frame.
+//! Nothing asks an agent for its quota on its own: the chips show what the
+//! last Refresh click saved on the device, until its window resets
+//! (Huan, 2026-11-14).
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
-use std::time::Duration;
 
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -16,12 +18,10 @@ use sandhill_proto::{AgentAccount, Call, TerminalEvent};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::agent_accounts::AccountManager;
+use crate::agent_accounts::{AccountManager, Ask};
 use crate::agents::{Agents, Show};
 use crate::daemon::Daemon;
 use crate::look::{self, Palette};
-
-const FRESH_MS: i64 = 5 * 60 * 1000;
 
 /// OpenScience, Oh My Pi and pi use the user's own model accounts and keys,
 /// and Posit Assistant manages its own models: none has a quota to show.
@@ -196,7 +196,6 @@ impl QuotaWindow {
     fn value(&self, now: i64) -> Option<f32> {
         (self.observed_ms > 0
             && now >= self.observed_ms
-            && now - self.observed_ms <= FRESH_MS
             && self
                 .reset_ms
                 .map_or(!self.requires_reset, |reset| reset > now))
@@ -321,7 +320,6 @@ impl Account {
 
 impl QuotaMonitor {
     pub(crate) fn new(daemon: Rc<Daemon>, host: String, cx: &mut Context<Self>) -> Self {
-        Self::start_quota_poll(cx);
         let enabled = crate::prefs::quota_providers(&host);
         let manager = cx.new(|cx| AccountManager::new(daemon.clone(), host.clone(), cx));
         cx.observe(&manager, |this, manager, cx| {
@@ -370,9 +368,25 @@ impl QuotaMonitor {
             .update(cx, |manager, cx| manager.terminal_event(event, cx));
     }
 
-    fn refresh_accounts(&self, refresh: bool, cx: &mut Context<Self>) {
-        self.manager
-            .update(cx, |manager, cx| manager.refresh(refresh, cx));
+    /// Shows what the device last saved; with `kind`, first asks that agent
+    /// about each of its accounts.
+    fn refresh_accounts(&mut self, kind: Option<&str>, cx: &mut Context<Self>) {
+        // Another window may have changed which chips show.
+        self.enabled = crate::prefs::quota_providers(&self.host);
+        self.manager.update(cx, |manager, cx| {
+            let ask = match kind {
+                Some(kind) => Ask::Accounts(
+                    manager
+                        .accounts
+                        .iter()
+                        .filter(|account| account.kind == kind)
+                        .map(|account| account.id.clone())
+                        .collect(),
+                ),
+                None => Ask::Nobody,
+            };
+            manager.refresh(ask, cx)
+        });
     }
 
     fn shown_account(&self, kind: &str, cx: &App) -> Option<(String, bool)> {
@@ -567,6 +581,12 @@ impl QuotaMonitor {
             for window in snapshot.windows.values() {
                 card = card.child(window.row(now, p));
             }
+            if snapshot.observed_at > 0 && now >= snapshot.observed_at {
+                card = card.child(div().text_color(p.muted).child(format!(
+                    "Checked {} ago",
+                    countdown((now - snapshot.observed_at) / 1000)
+                )));
+            }
         }
         if kind == "codex" && entry.method == "login" {
             let credits = entry
@@ -701,32 +721,9 @@ impl QuotaMonitor {
         crate::prefs::save_quota_provider(&self.host, kind, on);
         self.enabled.insert(kind.into(), on);
         if on {
-            self.refresh_accounts(false, cx);
+            self.refresh_accounts(None, cx);
         }
         cx.notify();
-    }
-
-    fn start_quota_poll(cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            loop {
-                if this
-                    .update(cx, |this, cx| {
-                        // Reload device settings before every scheduled refresh:
-                        // another workspace may have disabled a provider.
-                        this.enabled = crate::prefs::quota_providers(&this.host);
-                        this.refresh_accounts(true, cx);
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-                cx.background_executor()
-                    .timer(Duration::from_secs(60))
-                    .await;
-            }
-        })
-        .detach();
     }
 }
 
@@ -840,7 +837,7 @@ impl Render for QuotaMonitor {
                         this.reset_confirm = None;
                         this.reset_notices.clear();
                         if this.quota_open.is_some() {
-                            this.refresh_accounts(true, cx);
+                            this.refresh_accounts(None, cx);
                         }
                         cx.notify();
                     }))
@@ -852,8 +849,7 @@ impl Render for QuotaMonitor {
                 }) {
                     let value = (selected.is_none_or(|account| {
                         account.method != "api_key" && account.signed_in == Some(true)
-                    }) && now >= account.observed_at
-                        && now - account.observed_at <= FRESH_MS)
+                    }) && now >= account.observed_at)
                         .then(|| window.remaining(now))
                         .flatten();
                     item = item.child(crate::meter::labelled_ring(
@@ -901,7 +897,7 @@ impl Render for QuotaMonitor {
                                     "Refresh quota"
                                 })
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.refresh_accounts(true, cx)
+                                    this.refresh_accounts(Some(kind), cx)
                                 })),
                         ),
                 );
@@ -1007,7 +1003,7 @@ impl Render for QuotaMonitor {
                         this.reset_confirm = None;
                         this.reset_notices.clear();
                         if this.quota_open.is_some() {
-                            this.refresh_accounts(true, cx);
+                            this.refresh_accounts(None, cx);
                         }
                         cx.notify();
                     }))
@@ -1029,7 +1025,7 @@ impl Render for QuotaMonitor {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.quota_open = Some(QuotaPopup::All);
                         this.reset_confirm = None;
-                        this.refresh_accounts(true, cx);
+                        this.refresh_accounts(None, cx);
                         cx.notify();
                     }))
                     .child("All AI accounts…"),
@@ -1071,8 +1067,7 @@ impl Render for QuotaMonitor {
 #[cfg(test)]
 mod tests {
     use super::{
-        FRESH_MS, QuotaWindow, RemainingLevel, banked_resets, quota_providers, remaining_level,
-        window_label,
+        QuotaWindow, RemainingLevel, banked_resets, quota_providers, remaining_level, window_label,
     };
     use serde_json::{Value, json};
 
@@ -1094,8 +1089,8 @@ mod tests {
             let actual = window.remaining(1500).unwrap();
             assert!((actual - remaining).abs() < 0.0001);
             assert_eq!(remaining_level(actual), level);
-            assert_eq!(window.remaining(1000 + FRESH_MS), Some(actual));
-            assert_eq!(window.remaining(1000 + FRESH_MS + 1), None);
+            // The last measurement stays until its window resets.
+            assert_eq!(window.remaining(1000 + 30 * 86_400_000), Some(actual));
             assert_eq!(window.remaining(999), None);
         }
     }
@@ -1151,7 +1146,6 @@ mod tests {
         );
         assert_eq!(window.label, "1h");
         assert_eq!(window.value(2000), Some(42.5));
-        assert_eq!(window.value(1000 + FRESH_MS + 1), None);
         assert_eq!(
             QuotaWindow::parse("secondary", &json!({"used_percentage": -1}), 1000).used,
             None
