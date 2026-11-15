@@ -1135,13 +1135,16 @@ preview and R's imports weren't seen.
   Category colours no longer go missing when the summary arrives before
   the first rows (`summary_generation`). Checked in the app in light and
   dark; typing into Find column could not be driven by the test tool.
-- **Compress** (Huan, 2026-11-14): the Files menu's Compress to .zip and
-  .gz/.tar.gz (`tree_actions.rs::compress`) send `Call::CompressPath`; the
-  daemon's `compress.rs` writes the archive beside the original under a
-  free name (claimed with `create_new`), with zip, flate2 and tar in pure
-  Rust (zlib-rs) so server builds need no C libraries, and removes a
-  half-written archive on failure. Links inside folders stay links; zip64
-  is used for files from 4 GiB. A notice shows "Compressing …" meanwhile.
+- **Compress and extract** (Huan, 2026-11-14): the Files menu's Compress to
+  .zip, .gz/.tar.gz and .gz (bgzip), Extract Here and Decompress Here
+  (`tree_actions.rs::archive`) send `Call::CompressPath`/`ExtractPath`; the
+  daemon's `archives.rs` works beside the original under free names
+  (claimed with `create_new`), with zip, flate2, tar and noodles-bgzf in
+  pure Rust (zlib-rs) so server builds need no C libraries. bgzip runs on
+  up to 8 threads. Zips and tarballs unpack into a hidden staging folder,
+  then their one item or the folder moves out; a failure removes what was
+  half made. Links stay links; zip64 is used for files from 4 GiB. A
+  notice shows the work meanwhile.
 
 
 ## Running it

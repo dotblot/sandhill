@@ -711,7 +711,7 @@ async fn the_file_tree_makes_renames_copies_and_deletes() {
 }
 
 #[tokio::test]
-async fn the_file_tree_compresses_beside_the_original() {
+async fn the_file_tree_compresses_and_extracts_beside_the_original() {
     use std::io::Read;
     let dir = common::tempdir().unwrap();
     let work = dir.path().join("work");
@@ -816,6 +816,96 @@ async fn the_file_tree_compresses_beside_the_original() {
         .unwrap();
     assert_eq!(unpacked, reads);
     assert!(work.join("reads.fastq").exists() && work.join("results/counts.csv").exists());
+
+    // bgzip writes BGZF: gzip members carrying the "BC" block size, and
+    // the empty end-of-file block that tabix and samtools look for.
+    assert_eq!(
+        compress(at("reads.fastq"), ArchiveFormat::Bgzip).await,
+        "reads.fastq 2.gz"
+    );
+    let blocked = std::fs::read(work.join("reads.fastq 2.gz")).unwrap();
+    assert_eq!((blocked[3] & 4, &blocked[12..14]), (4, &b"BC"[..]));
+    const BGZF_EOF: [u8; 28] = [
+        0x1f, 0x8b, 8, 4, 0, 0, 0, 0, 0, 0xff, 6, 0, b'B', b'C', 2, 0, 0x1b, 0, 3, 0, 0, 0, 0, 0,
+        0, 0, 0, 0,
+    ];
+    assert!(blocked.ends_with(&BGZF_EOF));
+    let err = client
+        .call::<FileWritten>(Call::CompressPath {
+            path: at("results"),
+            format: ArchiveFormat::Bgzip,
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains(".tar.gz"), "{err}");
+
+    let extract = |path: String| {
+        let client = &client;
+        async move {
+            let written: FileWritten = client.call(Call::ExtractPath { path }).await.unwrap();
+            let path = PathBuf::from(written.path);
+            path.file_name().unwrap().to_string_lossy().into_owned()
+        }
+    };
+    // One folder inside comes out as itself, numbered beside the original,
+    // links kept; a bgzip file decompresses like any gzip.
+    assert_eq!(extract(at("results.zip")).await, "results 2");
+    assert_eq!(
+        std::fs::read_to_string(work.join("results 2/counts.csv")).unwrap(),
+        "gene,n\nA,3\n"
+    );
+    assert!(
+        std::fs::symlink_metadata(work.join("results 2/latest.csv"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(extract(at("results.tar.gz")).await, "results 3");
+    assert_eq!(
+        std::fs::read_to_string(work.join("results 3/sub/notes.txt")).unwrap(),
+        "deep\n"
+    );
+    assert_eq!(extract(at("reads.fastq 2.gz")).await, "reads.fastq 2");
+    assert_eq!(
+        std::fs::read_to_string(work.join("reads.fastq 2")).unwrap(),
+        reads
+    );
+    // A taken name is numbered before the file's extension.
+    assert_eq!(extract(at("reads.fastq.gz")).await, "reads 2.fastq");
+
+    // Several items go into a folder named after the archive, without the
+    // Mac's __MACOSX extras.
+    let mut pair = zip::ZipWriter::new(std::fs::File::create(work.join("pair.zip")).unwrap());
+    for (name, text) in [("a.txt", "a"), ("b.txt", "b"), ("__MACOSX/._a.txt", "x")] {
+        pair.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut pair, text.as_bytes()).unwrap();
+    }
+    pair.finish().unwrap();
+    assert_eq!(extract(at("pair.zip")).await, "pair");
+    let mut inside: Vec<String> = std::fs::read_dir(work.join("pair"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    inside.sort();
+    assert_eq!(inside, ["a.txt", "b.txt"]);
+
+    // An entry reaching outside the folder fails the whole extraction and
+    // leaves nothing behind.
+    let mut evil = zip::ZipWriter::new(std::fs::File::create(work.join("evil.zip")).unwrap());
+    evil.start_file("../evil.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    std::io::Write::write_all(&mut evil, b"x").unwrap();
+    evil.finish().unwrap();
+    let before: Vec<_> = std::fs::read_dir(&work).unwrap().collect();
+    client
+        .call::<FileWritten>(Call::ExtractPath {
+            path: at("evil.zip"),
+        })
+        .await
+        .unwrap_err();
+    assert!(!dir.path().join("evil.txt").exists());
+    assert_eq!(std::fs::read_dir(&work).unwrap().count(), before.len());
 }
 
 #[tokio::test]

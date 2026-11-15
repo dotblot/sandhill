@@ -423,32 +423,50 @@ impl Workbench {
         .detach();
     }
 
-    /// Packs it into an archive beside it in the daemon, keeping it; large
-    /// data takes a while, so a notice says so meanwhile.
-    fn compress(&mut self, rel: String, format: ArchiveFormat, cx: &mut Context<Self>) {
+    /// Packs it into an archive beside it (`format`), or unpacks the
+    /// archive it is (none), in the daemon, keeping the original; large data
+    /// takes a while, so a notice says so meanwhile.
+    fn archive(&mut self, rel: String, format: Option<ArchiveFormat>, cx: &mut Context<Self>) {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
         let path = join_path(&project, &rel);
         let name = base_name(&path).to_string();
-        self.notice = Some(format!("Compressing {name}…"));
+        // Only what a compression or a gzip file's decompression makes is
+        // surely a file; a zip's contents may be a folder.
+        let lower = name.to_ascii_lowercase();
+        let single_gzip = [".gz", ".bgz"].iter().any(|e| lower.ends_with(e))
+            && ![".tar.gz", ".tgz"].iter().any(|e| lower.ends_with(e));
+        let file_out = format.is_some() || single_gzip;
+        let (doing, done, verb) = match format {
+            Some(_) => ("Compressing", "Compressed", "compress"),
+            None if single_gzip => ("Decompressing", "Decompressed", "decompress"),
+            None => ("Extracting", "Extracted", "extract"),
+        };
+        self.notice = Some(format!("{doing} {name}…"));
         cx.notify();
-        let packed = daemon.call::<FileWritten>(Call::CompressPath { path, format });
+        let call = match format {
+            Some(format) => Call::CompressPath { path, format },
+            None => Call::ExtractPath { path },
+        };
+        let answer = daemon.call::<FileWritten>(call);
         cx.spawn(async move |this, cx| {
-            let packed = packed.await;
+            let answer = answer.await;
             this.update(cx, |this, cx| {
-                match packed {
+                match answer {
                     Ok(written) => {
-                        let archive = base_name(&written.path).to_string();
-                        this.notice = Some(format!("Compressed {name} to {archive}"));
-                        if let Some(rel) = written.path.strip_prefix(&format!("{project}/")) {
+                        let made = base_name(&written.path).to_string();
+                        this.notice = Some(format!("{done} {name} to {made}"));
+                        if file_out
+                            && let Some(rel) = written.path.strip_prefix(&format!("{project}/"))
+                        {
                             this.files_ui.selected = Some((rel.to_string(), false));
                         }
                         this.refresh_files(cx);
                     }
                     Err(err) => {
                         this.notice = None;
-                        this.problem = Some(format!("Could not compress {name}: {err:#}"));
+                        this.problem = Some(format!("Could not {verb} {name}: {err:#}"));
                     }
                 }
                 cx.notify();
@@ -673,35 +691,54 @@ impl Workbench {
                 move |this, _, cx| this.duplicate(r.clone(), dir, cx),
             ));
             let lower = rel.to_ascii_lowercase();
-            // Packing an archive again gains nothing.
+            let tarball = [".tar.gz", ".tgz"].iter().any(|e| lower.ends_with(e));
             let zipped = lower.ends_with(".zip");
             let gzipped = [".gz", ".tgz", ".bgz"].iter().any(|e| lower.ends_with(e));
-            if !zipped {
+            if !dir && (zipped || gzipped) {
                 let r = rel.clone();
                 rows.push(menu_item(
-                    "tm-zip",
+                    "tm-extract",
                     None,
-                    "Compress to .zip",
+                    if zipped || tarball {
+                        "Extract Here"
+                    } else {
+                        "Decompress Here"
+                    },
                     "",
                     &p,
                     cx,
-                    move |this, _, cx| this.compress(r.clone(), ArchiveFormat::Zip, cx),
+                    move |this, _, cx| this.archive(r.clone(), None, cx),
                 ));
             }
-            if !gzipped {
-                let r = rel.clone();
-                rows.push(menu_item(
+            // An archive is offered extraction only: packing it again gains
+            // nothing.
+            let mut formats = Vec::new();
+            if dir || !(zipped || gzipped) {
+                formats.push(("tm-zip", "Compress to .zip", ArchiveFormat::Zip));
+                formats.push((
                     "tm-gzip",
-                    None,
                     if dir {
                         "Compress to .tar.gz"
                     } else {
                         "Compress to .gz"
                     },
+                    ArchiveFormat::Gzip,
+                ));
+                // bgzip packs one file.
+                if !dir {
+                    formats.push(("tm-bgzip", "Compress to .gz (bgzip)", ArchiveFormat::Bgzip));
+                }
+            }
+            for (id, label, format) in formats {
+                let r = rel.clone();
+                rows.push(menu_item(
+                    id,
+                    None,
+                    label,
                     "",
                     &p,
                     cx,
-                    move |this, _, cx| this.compress(r.clone(), ArchiveFormat::Gzip, cx),
+                    move |this, _, cx| this.archive(r.clone(), Some(format), cx),
                 ));
             }
         }

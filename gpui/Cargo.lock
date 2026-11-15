@@ -5389,6 +5389,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "noodles-bgzf"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "950a8570bb43a68697bb34ba39a44f1171faacceb852104d4a35701b86d7ef29"
+dependencies = [
+ "bytes",
+ "crossbeam-channel",
+ "rayon",
+ "zlib-rs",
+]
+
+[[package]]
 name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7715,6 +7727,7 @@ dependencies = [
  "jupyter-protocol",
  "jupyter-zmq-client",
  "libc",
+ "noodles-bgzf",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
  "rusqlite",

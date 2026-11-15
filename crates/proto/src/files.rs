@@ -40,6 +40,9 @@ pub enum ArchiveFormat {
     Zip,
     /// `name.gz` for a file, `name.tar.gz` for a folder.
     Gzip,
+    /// `name.gz` in bgzip's blocks, which tabix and samtools index; files
+    /// only.
+    Bgzip,
 }
 
 /// The most [`Call::ReadBytes`] returns at once.

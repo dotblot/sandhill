@@ -609,6 +609,13 @@ pub enum Call {
         path: String,
         format: ArchiveFormat,
     },
+    /// Unpacks a `.zip`, `.tar.gz`/`.tgz` or `.gz`/`.bgz` (plain or bgzip)
+    /// beside it, keeping it: one item inside comes out as itself, several
+    /// in a folder named after the archive; taken names are numbered.
+    /// Returns [`FileWritten`] for what came out.
+    ExtractPath {
+        path: String,
+    },
     /// Up to `limit` bytes of a file from `offset` (at most
     /// [`MAX_READ_BYTES`]), for downloading it. Returns [`FileBytes`].
     /// With `limit: 0`, returns full-file size and mtime without file contents.
