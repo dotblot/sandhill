@@ -1,6 +1,8 @@
 //! The tools Sandhill gives coding agents (`sandhilld mcp`), against real
 //! kernels. Each test skips (and says so) when its kernel isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -80,7 +82,7 @@ async fn agents_run_python_in_the_users_session() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -150,7 +152,7 @@ async fn agents_see_r_data_frames() {
     } else {
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let client = daemon.client().await;
     let session = client.start_session(kernel, None).await.unwrap().id;
@@ -184,7 +186,7 @@ async fn agents_read_the_outputs_of_a_document() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -250,7 +252,7 @@ async fn agents_read_the_outputs_of_a_document() {
 /// Agents start `sandhilld mcp` themselves and talk JSON-RPC over stdio.
 #[tokio::test]
 async fn the_mcp_server_speaks_json_rpc_on_stdio() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_sandhilld"))
         .arg("--socket")
@@ -323,7 +325,7 @@ async fn agents_write_cells_into_documents_on_disk() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(project.join("notes")).unwrap();
@@ -451,7 +453,7 @@ async fn agents_write_into_the_document_their_conversation_is_about() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -570,7 +572,7 @@ async fn agents_write_into_the_document_their_conversation_is_about() {
 /// the last one: with no `after`, rather than a null one.
 #[tokio::test]
 async fn a_window_adds_after_the_last_cell_when_the_user_is_in_none() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -621,7 +623,7 @@ async fn an_open_window_makes_the_edit_and_runs_the_cell() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -692,7 +694,7 @@ async fn an_open_window_makes_the_edit_and_runs_the_cell() {
 /// tools that change something refuse, and those that look still work.
 #[tokio::test]
 async fn in_ask_mode_sandhills_tools_only_look() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let terminal = dir.path().join("terminal");
     std::fs::create_dir_all(&terminal).unwrap();
@@ -805,7 +807,7 @@ async fn agent_code_goes_to_the_console_when_the_user_says_so() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -883,7 +885,7 @@ async fn agent_code_goes_to_the_console_when_the_user_says_so() {
 
 #[tokio::test]
 async fn agents_read_the_projects_jobs_and_their_logs() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let project = root.join("rnaseq");
     std::fs::create_dir(&project).unwrap();
@@ -941,7 +943,7 @@ async fn agents_read_the_console_plots_tables_help_and_packages() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();

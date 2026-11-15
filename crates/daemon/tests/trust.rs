@@ -2,6 +2,8 @@
 //! the user trusts it. Uses a real kernel, shell, Git and pi; each part
 //! skips (and says so) when its program isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -78,7 +80,7 @@ fn session(kernel: &str, cwd: &str, project: &str) -> Call {
 
 #[tokio::test]
 async fn an_untrusted_project_starts_nothing_until_it_is_trusted() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (_daemon, socket) = start_daemon(&dir.path().join("state")).await;
     let client = Client::connect_unix(&socket).await.unwrap();
     let project = dir.path().join("atlas");
@@ -176,7 +178,7 @@ async fn pi_loads_a_trusted_folders_own_files_without_asking() {
         eprintln!("skipping: pi is not installed");
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let home = dir.path().join("home");
     let project = dir.path().join("proj");
     let other = dir.path().join("other");
@@ -245,7 +247,7 @@ async fn codex_takes_a_trusted_folder_for_one_run() {
         eprintln!("skipping: Codex is not installed");
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let home = dir.path().join("codex-home");
     let project = dir.path().join("my.proj v2");
     let inner = project.join("analysis");

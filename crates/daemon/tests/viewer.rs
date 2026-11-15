@@ -3,6 +3,8 @@
 //! carry its pages (and apps) to another machine. Each test skips (and
 //! says so) when its kernel isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -142,7 +144,7 @@ async fn r_pages_and_widgets_reach_the_viewer_in_every_r_kernel() {
         .with_test_writer()
         .with_max_level(tracing::Level::WARN)
         .try_init();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&tmp.path().join("state")).await;
     let mut client = daemon.client().await;
     let names = kernels(&client).await;
@@ -209,7 +211,7 @@ async fn r_pages_and_widgets_reach_the_viewer_in_every_r_kernel() {
 
 #[tokio::test]
 async fn the_viewer_takes_pages_but_leaves_tables_to_the_console() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&tmp.path().join("state")).await;
     let mut client = daemon.client().await;
     if !kernels(&client).await.iter().any(|k| k == "python3") {
@@ -249,7 +251,7 @@ async fn get(port: u16, path: &str) -> String {
 
 #[tokio::test]
 async fn pages_reach_another_machine_through_a_tunnel() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let report = root.join("reports");
     std::fs::create_dir_all(report.join("multiqc_data")).unwrap();
@@ -304,7 +306,7 @@ async fn pages_reach_another_machine_through_a_tunnel() {
 
 #[tokio::test]
 async fn r_apps_open_in_the_viewer_and_stop_when_interrupted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&tmp.path().join("state")).await;
     let names = kernels(&daemon.client().await).await;
     let r: Vec<&str> = ["ir", "ark"]

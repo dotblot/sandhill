@@ -3,6 +3,8 @@
 //! project's folder. Each test skips (and says so) when its kernel isn't
 //! installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +50,7 @@ impl TestDaemon {
 
 #[tokio::test]
 async fn document_kernel_history_does_not_launch_sessions() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let project = tmp.path().join("atlas");
     let env = project.join(".conda");
     std::fs::create_dir_all(env.join("conda-meta")).unwrap();
@@ -178,7 +180,7 @@ async fn a_project_runs_python_in_its_own_venv_with_its_env_file() {
     if !have_kernel("python3").await {
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // Python reports paths with symlinks resolved (/var is /private/var on
     // macOS), so start resolved.
     let base = tmp.path().canonicalize().unwrap();
@@ -313,7 +315,7 @@ async fn r_starts_in_the_project_folder_then_moves_to_the_documents() {
         eprintln!("skipping: no R kernel (IRkernel or Ark) is installed");
         return;
     };
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let base = tmp.path().canonicalize().unwrap();
     let project = base.join("pbmc");
     let docs = project.join("reports");

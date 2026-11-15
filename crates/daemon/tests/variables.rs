@@ -3,6 +3,8 @@
 //! for its Console. Each test skips (and says so) when its kernel isn't
 //! installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -109,7 +111,7 @@ async fn python_variables_are_listed_opened_and_deleted() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -272,7 +274,7 @@ async fn r_variables_are_listed_opened_and_deleted() {
     } else {
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session(kernel, None).await.unwrap().id;
@@ -337,7 +339,7 @@ async fn the_console_lists_a_sessions_runs() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -402,7 +404,7 @@ async fn ark_seurat_accessors_equal_walked_nodes_and_search_is_quiet() {
     if !have_kernel("ark").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("ark", None).await.unwrap().id;
@@ -539,7 +541,7 @@ async fn anndata_accessors_equal_walked_nodes_and_search_is_bounded() {
     } else {
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session(kernel, None).await.unwrap().id;

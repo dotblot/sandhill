@@ -3,6 +3,8 @@
 //! Each test skips (and says so) when its kernel, or pandas, isn't
 //! installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -236,7 +238,7 @@ async fn check_meta(client: &Client, session: &str, code: &str, text: &[&str], t
     assert_eq!(kept.rows, 3);
     assert_eq!(kept.columns[3].max, Some(4.25));
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let file = dir.path().join("out/meta.csv");
     let written = tokio::time::timeout(
         TIMEOUT,
@@ -442,7 +444,7 @@ async fn check_search(client: &mut Client, session: &str, language: &str) {
     assert_eq!(literal_summary.rows, 1);
     assert_eq!(literal_summary.columns[2].min, Some(942.0));
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let file = dir.path().join("search.csv");
     client
         .table_export(
@@ -535,7 +537,7 @@ async fn r_tables_are_read_filtered_sorted_and_exported() {
     } else {
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session(kernel, None).await.unwrap().id;
@@ -585,7 +587,7 @@ async fn python_tables_are_read_filtered_sorted_and_exported() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -700,7 +702,7 @@ async fn view_asks_the_app_to_open_the_data_explorer() {
             kernels.push((kernel, code));
         }
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     for (kernel, code) in kernels {

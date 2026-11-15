@@ -1,4 +1,6 @@
 //! End-to-end language features with real Python kernels and Astral servers.
+mod common;
+
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{Call, LspMessage, SessionInfo};
@@ -42,7 +44,7 @@ fn labels(message: &Value) -> Vec<&str> {
 
 #[tokio::test]
 async fn python_language_relay_shares_servers_and_routes_replies_and_diagnostics() {
-    let project = tempfile::tempdir().unwrap();
+    let project = common::tempdir().unwrap();
     for name in ["ty", "ruff"] {
         if sandhill_daemon::lsp::find_binary(project.path(), None, name).is_none() {
             eprintln!("skipping Python LSP relay: {name} is not installed");
@@ -56,7 +58,7 @@ async fn python_language_relay_shares_servers_and_routes_replies_and_diagnostics
         eprintln!("skipping Python LSP relay: python3 ipykernel is not installed");
         return;
     }
-    let state = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let daemon = Daemon::open(StateDir::new(state.path())).await.unwrap();
     let (socket, peer) = tokio::io::duplex(1024 * 1024);
     let (reader, writer) = tokio::io::split(peer);
@@ -149,8 +151,8 @@ async fn python_language_relay_shares_servers_and_routes_replies_and_diagnostics
 
 #[tokio::test]
 async fn r_language_features_require_an_existing_project_session() {
-    let project = tempfile::tempdir().unwrap();
-    let state = tempfile::tempdir().unwrap();
+    let project = common::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let daemon = Daemon::open(StateDir::new(state.path())).await.unwrap();
     let (socket, peer) = tokio::io::duplex(4096);
     let (reader, writer) = tokio::io::split(peer);

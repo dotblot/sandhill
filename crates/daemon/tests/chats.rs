@@ -3,6 +3,8 @@
 //! on with it, or starts afresh with the chat to read. The machines are two
 //! state folders and two homes; no agent runs.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -111,7 +113,7 @@ fn conversation_on(a: &Machine, project: &Path, dir: &Path) {
 
 #[test]
 fn a_conversation_goes_on_on_another_machine() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let a = Machine::new(dir.path(), "mac-a");
     let b = Machine::new(dir.path(), "mac-b");
     let on_a = dir.path().join("Users/huan/rnaseq");
@@ -173,7 +175,7 @@ fn a_conversation_goes_on_on_another_machine() {
 
 #[test]
 fn an_agent_without_its_copy_starts_afresh_with_the_chat() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let a = Machine::new(dir.path(), "mac-a");
     let c = Machine::new(dir.path(), "mac-c");
     let project = dir.path().join("rnaseq");
@@ -212,7 +214,7 @@ fn an_agent_without_its_copy_starts_afresh_with_the_chat() {
 
 #[test]
 fn a_conversation_removed_on_one_machine_goes_from_the_others() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let a = Machine::new(dir.path(), "mac-a");
     let b = Machine::new(dir.path(), "mac-b");
     let project = dir.path().join("Dropbox/rnaseq");
@@ -252,7 +254,7 @@ fn a_conversation_removed_on_one_machine_goes_from_the_others() {
 /// folder.
 #[tokio::test]
 async fn opening_a_project_shows_its_conversations() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let a = Machine::new(dir.path(), "mac-a");
     let on_a = dir.path().join("a/rnaseq");
     let project = dir.path().join("b/rnaseq");

@@ -4,6 +4,8 @@
 //! the window for through `sandhilld` as its askpass program. Skips (and
 //! says so) when git isn't installed.
 
+mod common;
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -83,7 +85,7 @@ async fn branches_are_rebased_tags_pushed_and_passwords_asked_for() {
         eprintln!("skipping: git is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let global = dir.path().join(".gitconfig");
     std::fs::write(
         &global,

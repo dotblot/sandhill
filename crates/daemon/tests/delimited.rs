@@ -1,5 +1,7 @@
 //! Exact bounded reads over the real daemon protocol and the GPUI import code
 //! against real R/Python kernels. No source-string/echo substitutes for imports.
+mod common;
+
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{Call, EVENT_RUN_FINISHED, FileBytes, RunStarted, SessionInfo};
@@ -67,7 +69,7 @@ async fn run(client: &mut Client, session: &str, code: String) -> String {
 
 #[tokio::test]
 async fn bounded_file_protocol_checks_actual_size_without_starting_a_kernel() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let client = daemon.client().await;
     let file = dir.path().join("boundary.csv");
@@ -105,7 +107,7 @@ async fn import_with_kernel(kernel: &str, language: &str) {
         eprintln!("skipping: {kernel} is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session(kernel, None).await.unwrap().id;

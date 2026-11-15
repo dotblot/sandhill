@@ -375,6 +375,10 @@ These plans are history: where they differ from this file, this file wins.
 - Errors: `anyhow` in binaries, `thiserror` in libraries.
 - Every daemon feature gets an integration test that uses a real kernel.
   Tests skip (with a message) when a kernel isn't installed.
+  Their temporary folders come from `tests/common` (`common::tempdir()`),
+  which kills the kernels and test daemons started from a folder before
+  deleting it: kernels outlive their daemon by design, and plain
+  `tempfile` folders left 183 of them running (Huan, 2026-11-14).
 - Output building (`crates/daemon/src/outputs.rs`) and finding Quarto chunks
   and their ids (`crates/daemon/src/qmd.rs`) live in the daemon crate, and
   the app uses them from there. A change gets a case in

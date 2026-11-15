@@ -1,4 +1,6 @@
 //! Real selected-kernel checks; missing kernels/packages are explicitly skipped.
+mod common;
+
 use sandhill_daemon::{
     Daemon, StateDir,
     bio::{checks, guides},
@@ -132,9 +134,9 @@ async fn session(harness: &Harness, root: &Path, language: &str) -> Option<(Clie
 
 #[tokio::test]
 async fn design_is_kernel_free_owned_historical_and_journal_authoritative() {
-    let state = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    let other = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
+    let project = common::tempdir().unwrap();
+    let other = common::tempdir().unwrap();
     let harness = Harness::open(state.path()).await;
     let record = harness
         .daemon
@@ -247,9 +249,9 @@ async fn design_is_kernel_free_owned_historical_and_journal_authoritative() {
 
 #[tokio::test]
 async fn exports_reject_symlink_and_hardlink_targets() {
-    let state = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
+    let outside = common::tempdir().unwrap();
     let harness = Harness::open(state.path()).await;
     std::fs::create_dir(root.path().join(".sandhill")).unwrap();
     std::os::unix::fs::symlink(outside.path(), root.path().join(".sandhill/analysis")).unwrap();
@@ -333,8 +335,8 @@ fn qc_details(root: &Path, language: &str) -> Value {
 
 #[tokio::test]
 async fn real_seurat_all_stages_same_path_damage_busy_and_freshness() {
-    let state = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let harness = Harness::open(state.path()).await;
     let Some((mut client, session)) = session(&harness, root.path(), "r").await else {
         return;
@@ -540,7 +542,7 @@ saveRDS(fixture,'result.rds')
             .contains("busy")
     );
     tokio::time::sleep(Duration::from_secs(3)).await;
-    let other = tempfile::tempdir().unwrap();
+    let other = common::tempdir().unwrap();
     assert!(
         harness
             .daemon
@@ -649,8 +651,8 @@ saveRDS(fixture,'ensembl-raw.rds')
 
 #[tokio::test]
 async fn design_record_survives_daemon_reopen_without_importing_exports() {
-    let state = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let daemon = Daemon::open(StateDir::new(state.path())).await.unwrap();
     let record = daemon
         .begin_analysis(root.path().to_str().unwrap(), design_spec())
@@ -673,8 +675,8 @@ async fn design_record_survives_daemon_reopen_without_importing_exports() {
 
 #[tokio::test]
 async fn real_omicverse_all_stages_sparse_subset_same_path_damage_and_read_only_checks() {
-    let state = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let harness = Harness::open(state.path()).await;
     let Some((mut client, session)) = session(&harness, root.path(), "python").await else {
         return;
@@ -934,8 +936,8 @@ fixture.write_h5ad('result.h5ad')
 
 #[tokio::test]
 async fn fifo_source_is_rejected_without_holding_analysis_requests_indefinitely() {
-    let state = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
     let harness = Harness::open(state.path()).await;
     let fifo = root.path().join("unwritten.fifo");
     let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
@@ -960,9 +962,9 @@ async fn fifo_source_is_rejected_without_holding_analysis_requests_indefinitely(
 
 #[tokio::test]
 async fn documents_are_reowned_each_check_and_cannot_alias_managed_exports() {
-    let state = tempfile::tempdir().unwrap();
-    let root = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
+    let root = common::tempdir().unwrap();
+    let outside = common::tempdir().unwrap();
     let harness = Harness::open(state.path()).await;
     let document = root.path().join("analysis.py");
     std::fs::write(&document, b"original").unwrap();

@@ -1,6 +1,8 @@
 //! Real terminal-host/bridge processes and an official-protocol agy stand-in.
 //! No Google login, model request, or installed kernel is needed.
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -238,7 +240,7 @@ async fn native_owns_the_same_conversation_and_imports_only_new_records() {
         eprintln!("skipping: python3 is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let root = dir.path();
     let bin = root.join("bin");
     let home = root.join("home");

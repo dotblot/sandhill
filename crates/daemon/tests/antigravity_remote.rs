@@ -7,6 +7,8 @@
 //! sign-in fails within a bound, and the command line opens before any
 //! message. No Google login, model request or kernel is needed.
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -201,7 +203,7 @@ async fn agy_over_ssh_answers_fails_in_bounded_time_and_opens_its_command_line()
         eprintln!("skipping: python3 is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let root = dir.path();
     let bin = root.join("bin");
     let home = root.join("home");

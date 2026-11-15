@@ -3,6 +3,8 @@
 //! a real Python kernel for Sandhill's tools. Skips (and says so) when
 //! Codex or the kernel isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -252,7 +254,7 @@ async fn codex_works_through_the_chat() {
         eprintln!("skipping: Jupyter kernel \"python3\" is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (_daemon, socket) = start_daemon(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -597,7 +599,7 @@ async fn codex_lists_its_models_before_a_conversation() {
         eprintln!("skipping: codex is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (port, requests) = model(Vec::new()).await;
     let home = dir.path().join("codex-home");
     std::fs::create_dir_all(&home).unwrap();

@@ -2,6 +2,8 @@
 //! disconnects. No substitute renderer: missing Quarto/R dependencies are skipped
 //! explicitly, while an installed renderer's failures fail the test.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -167,7 +169,7 @@ async fn markdown_render_survives_disconnect_and_discovers_project_output_direct
     if !quarto_available() {
         return;
     }
-    let temp = tempfile::tempdir().unwrap();
+    let temp = common::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let project = root.join("project");
     let documents = project.join("documents");
@@ -241,7 +243,7 @@ async fn rmarkdown_render_executes_a_fresh_knitr_process() {
     if !quarto_available() || !rmarkdown_available() {
         return;
     }
-    let temp = tempfile::tempdir().unwrap();
+    let temp = common::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let project = root.join("project");
     let documents = project.join("analysis");

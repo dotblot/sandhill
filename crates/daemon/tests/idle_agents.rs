@@ -1,5 +1,7 @@
 //! Idle retirement uses real terminal hosts and a separately running daemon.
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Stdio;
@@ -78,7 +80,7 @@ async fn idle_resumable_agents_stop_and_the_next_message_restarts_them() {
         eprintln!("skipping idle agents: /bin/sh, stty and sleep are required");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let state = dir.path().join("state");
     let terminals = Terminals::new(state.join("terminals"), DAEMON.into());
     let wait = "while read -r line; do :; done";

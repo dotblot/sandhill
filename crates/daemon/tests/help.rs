@@ -3,6 +3,8 @@
 //! packages. Each test skips (and says so) when its kernel, or pandas,
 //! isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -113,7 +115,7 @@ async fn r_help_is_searched_read_and_packages_listed() {
     } else {
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session(kernel, None).await.unwrap().id;
@@ -263,7 +265,7 @@ async fn python_updates_are_asked_of_the_index() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -342,7 +344,7 @@ async fn python_help_is_searched_read_and_packages_listed() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -457,7 +459,7 @@ async fn r_updates_come_from_the_repositories() {
         return;
     };
     // A repository of its own, with a jsonlite (which IRkernel needs) newer than any.
-    let repo = tempfile::tempdir().unwrap();
+    let repo = common::tempdir().unwrap();
     let contrib = repo.path().join("src/contrib");
     std::fs::create_dir_all(&contrib).unwrap();
     std::fs::write(
@@ -465,7 +467,7 @@ async fn r_updates_come_from_the_repositories() {
         "Package: jsonlite\nVersion: 999.0.0\n\n",
     )
     .unwrap();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session(kernel, None).await.unwrap().id;

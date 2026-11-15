@@ -1,5 +1,7 @@
 //! `sandhilld attach`, the stdio bridge the app and ssh use.
 
+mod common;
+
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -29,7 +31,7 @@ async fn daemon_pid(socket: &Path) -> i32 {
 
 #[tokio::test]
 async fn attach_ends_when_the_daemon_stops() {
-    let state = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let mut serve = Command::new(DAEMON)
         .arg("--state-dir")
         .arg(state.path())
@@ -62,7 +64,7 @@ async fn attach_ends_when_the_daemon_stops() {
 
 #[tokio::test]
 async fn attach_start_replaces_a_daemon_of_another_build() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     // Another build: the same program with a byte appended hashes differently.
     let other = dir.path().join("sandhilld-other");
     let mut program = std::fs::read(DAEMON).unwrap();
@@ -130,7 +132,7 @@ async fn attach_start_replaces_a_daemon_of_another_build() {
 
 #[tokio::test]
 async fn a_daemon_says_how_it_runs_shows_its_log_and_stops_when_asked() {
-    let state = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let socket = state.path().join("sandhilld.sock");
     let attach = || {
         let mut attach = Command::new(DAEMON);
@@ -199,7 +201,7 @@ async fn a_daemon_says_how_it_runs_shows_its_log_and_stops_when_asked() {
 /// its maintenance rejection to Welcome, even with two simultaneous attaches.
 #[tokio::test]
 async fn stop_resources_then_concurrent_attach_recovers_same_build() {
-    let state = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let socket = state.path().join("sandhilld.sock");
     let mut old = Command::new(DAEMON)
         .arg("--state-dir")
@@ -441,7 +443,7 @@ fn wire_fixture(root: &Path, mode: &str) -> tokio::process::Child {
 
 #[tokio::test]
 async fn explicit_reopen_recovers_a_legacy_maintenance_daemon_cooperatively() {
-    let state = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let socket = state.path().join("sandhilld.sock");
     // This is a real independent process, not a fixture-reported fake PID.
     // It belongs to the test, not the legacy daemon, and must survive restart.
@@ -549,7 +551,7 @@ async fn explicit_reopen_recovers_a_legacy_maintenance_daemon_cooperatively() {
 
 #[tokio::test]
 async fn explicit_reopen_replaces_a_daemon_that_refused_after_incomplete_stop() {
-    let state = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let socket = state.path().join("sandhilld.sock");
     // Independent work left behind by the incomplete stop; owned by the test.
     let mut retained = Command::new("sleep")
@@ -596,7 +598,7 @@ async fn explicit_reopen_replaces_a_daemon_that_refused_after_incomplete_stop() 
 
 #[tokio::test]
 async fn stop_reply_and_socket_eof_are_not_proof_of_daemon_exit() {
-    let state = tempfile::tempdir().unwrap();
+    let state = common::tempdir().unwrap();
     let socket = state.path().join("sandhilld.sock");
     let mut fake = wire_fixture(state.path(), "unconfirmed");
     wait_for_socket(&socket).await;

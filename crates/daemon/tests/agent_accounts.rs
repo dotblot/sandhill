@@ -1,6 +1,8 @@
 //! Account RPCs use a real daemon in a disposable home. CLI smoke tests run
 //! installed, unmodified executables without signing in or making model calls.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
@@ -38,7 +40,7 @@ const CODEX_LINKS: &[&str] = &[
 ];
 
 struct Machine {
-    dir: tempfile::TempDir,
+    dir: common::TempDir,
     home: PathBuf,
     state: PathBuf,
     daemon: tokio::process::Child,
@@ -47,7 +49,7 @@ struct Machine {
 
 impl Machine {
     async fn start(stand_in: bool) -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = common::tempdir().unwrap();
         let home = dir.path().join("home");
         let state = dir.path().join("state");
         let bin = dir.path().join("bin");
@@ -361,7 +363,7 @@ async fn version_with_env(program: &Path, home: &Path, env: &[(String, String)],
 
 #[tokio::test]
 async fn installed_clis_start_with_isolated_account_environments_without_authentication() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir(&home).unwrap();
     let registry = registry(&home);

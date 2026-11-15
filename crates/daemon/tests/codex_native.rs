@@ -1,6 +1,8 @@
 //! The real bridge and terminal host, with a fake Codex speaking the documented
 //! app-server protocol and a raw interactive CLI on the same controlling PTY.
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
@@ -72,7 +74,7 @@ async fn native_codex_exclusively_resumes_the_chat_thread_and_imports_new_turns(
         eprintln!("skipping: python3 is needed for the fake Codex process");
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let fake = dir.path().join("codex");
     let script = r#"
 import json, os, pathlib, sys, termios, tty

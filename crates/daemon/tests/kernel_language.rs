@@ -1,6 +1,8 @@
 //! Live-kernel completion and Ark's TCP LSP handshake. Missing kernels skip
 //! explicitly; no language service or completion response is mocked.
 
+mod common;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +22,7 @@ const TIMEOUT: Duration = Duration::from_secs(90);
 struct TestSession {
     session: SessionHandle,
     journal: Arc<Journal>,
-    _dir: tempfile::TempDir,
+    _dir: common::TempDir,
 }
 
 impl TestSession {
@@ -29,7 +31,7 @@ impl TestSession {
             eprintln!("skipping: Jupyter kernel {name:?} is not installed");
             return None;
         }
-        let dir = tempfile::tempdir().unwrap();
+        let dir = common::tempdir().unwrap();
         let kernels = dir.path().join("kernels");
         std::fs::create_dir_all(&kernels).unwrap();
         let journal = Arc::new(
@@ -350,7 +352,7 @@ async fn ark_lsp_initializes_and_completes_through_the_daemon_wire() {
     let Some(name) = ark_kernel().await else {
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
     let project = project

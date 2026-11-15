@@ -1,6 +1,8 @@
 //! Terminals: programs in a terminal that keep running without the daemon,
 //! with their output kept for clients that come later.
 
+mod common;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,7 +72,7 @@ async fn read_until(
 
 #[tokio::test]
 async fn a_terminal_followed_while_it_starts_is_followed_live() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Arc::new(Terminals::new(
         dir.path().join("terminals"),
         sandhilld().into(),
@@ -119,7 +121,7 @@ async fn a_terminal_followed_while_it_starts_is_followed_live() {
 async fn a_program_that_ends_at_once_has_started() {
     // Its terminal may be gone before the daemon looks for it, as on a
     // busy Mac: here the daemon is kept from looking while it ends.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     for _ in 0..3 {
         let (info, ()) = tokio::join!(
@@ -142,7 +144,7 @@ async fn a_program_that_ends_at_once_has_started() {
 
 #[tokio::test]
 async fn a_program_gets_input_and_its_output_is_kept_after_it_ends() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     let info = terminals
         .start(sh(
@@ -200,7 +202,7 @@ async fn a_program_gets_input_and_its_output_is_kept_after_it_ends() {
 
 #[tokio::test]
 async fn a_terminal_outlives_the_daemon_that_started_it() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let root = dir.path().join("terminals");
     let id = {
         let terminals = Terminals::new(root.clone(), sandhilld().into());
@@ -256,7 +258,7 @@ async fn a_terminal_outlives_the_daemon_that_started_it() {
 
 #[tokio::test]
 async fn terminals_work_in_a_deep_state_folder() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     // Too deep for a socket path: the socket goes under /tmp instead.
     let root = dir.path().join("a".repeat(60)).join("terminals");
     let terminals = Terminals::new(root, sandhilld().into());
@@ -315,7 +317,7 @@ impl TestDaemon {
 
 #[tokio::test]
 async fn clients_run_a_shell_through_the_daemon() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let state = dir.path().join("state");
     std::fs::create_dir_all(&state).unwrap();
     let daemon = TestDaemon::start(&state).await;
@@ -422,7 +424,7 @@ async fn clients_run_a_shell_through_the_daemon() {
 
 #[tokio::test]
 async fn an_agent_reports_to_its_terminal() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     // Stands in for an agent whose hooks run `sandhilld terminal-event`.
     let script = format!(
@@ -463,7 +465,7 @@ async fn an_agent_reports_to_its_terminal() {
 
 #[tokio::test]
 async fn a_terminal_starts_again_where_it_left_off() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     // Stands in for Claude Code: its Stop hook ends a turn of the
     // conversation and says which session it is.
@@ -561,7 +563,7 @@ async fn a_terminal_starts_again_where_it_left_off() {
 
 #[tokio::test]
 async fn agents_started_by_an_older_build_are_marked() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let root = dir.path().join("terminals");
     let terminals = Terminals::new(root.clone(), sandhilld().into());
     let agent = Launch {
@@ -619,7 +621,7 @@ async fn chat_until(
 
 #[tokio::test]
 async fn an_agents_conversation_is_kept_and_its_questions_answered() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     // Stands in for Claude Code: runs its hooks with what Claude Code gave
     // them in a recorded turn. The permission request waits for an answer.
@@ -760,7 +762,7 @@ async fn collect(
 
 #[tokio::test]
 async fn restricted_and_ask_modes_guard_claudes_steps() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     // Stands in for Claude Code: runs its hooks with what it would give
     // them, in Ask mode, then (once the user switches) in Restricted mode.
@@ -950,7 +952,7 @@ async fn restricted_and_ask_modes_guard_claudes_steps() {
 
 #[tokio::test]
 async fn the_message_boxs_choices_go_with_each_message() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let terminals = Terminals::new(dir.path().join("terminals"), sandhilld().into());
     // Stands in for Claude Code: a message, then a web search and a read.
     let hook = |event: &str, id: &str, tool: &str| {

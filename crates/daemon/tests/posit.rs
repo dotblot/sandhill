@@ -4,6 +4,8 @@
 //! provider's sign-in, so it isn't run here. Skips (and says so) when Python
 //! or the kernel isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -117,7 +119,7 @@ async fn posit_assistant_reaches_the_live_session() {
         eprintln!("skipping: Jupyter kernel \"python3\" is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (_daemon, socket) = start_daemon(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();

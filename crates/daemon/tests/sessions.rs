@@ -1,6 +1,8 @@
 //! End-to-end tests against real Jupyter kernels. Each test skips (and says
 //! so) when the kernel it needs isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -116,7 +118,7 @@ async fn python_outputs_stream_back_in_order() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -141,7 +143,7 @@ async fn outputs_are_kept_while_no_client_is_connected() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let session = {
         let client = daemon.client().await;
@@ -187,7 +189,7 @@ async fn kernel_and_running_cell_survive_a_daemon_restart() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let first = TestDaemon::start(dir.path()).await;
     let session = {
         let mut client = first.client().await;
@@ -237,7 +239,7 @@ async fn kernel_and_running_cell_survive_a_daemon_restart() {
 
 #[tokio::test]
 async fn interrupt_stops_a_long_running_cell() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     for (kernel, code) in [
@@ -288,7 +290,7 @@ async fn r_sessions_give_their_version_as_a_number() {
             eprintln!("skipping {kernel}: not installed");
             continue;
         }
-        let dir = tempfile::tempdir().unwrap();
+        let dir = common::tempdir().unwrap();
         let daemon = TestDaemon::start(dir.path()).await;
         let client = daemon.client().await;
         let info = client.start_session(kernel, None).await.unwrap();
@@ -306,7 +308,7 @@ async fn sessions_report_their_language_version_and_memory() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let info = client.start_session("python3", None).await.unwrap();
@@ -343,7 +345,7 @@ async fn hardware_snapshot_reports_available_or_unknown_without_fake_zero() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap();
@@ -407,7 +409,7 @@ async fn sessions_count_their_unfinished_runs() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -455,7 +457,7 @@ async fn images_are_stored_as_blobs() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -482,7 +484,7 @@ async fn shutdown_ends_the_session() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let info = client.start_session("python3", None).await.unwrap();
@@ -512,7 +514,7 @@ async fn r_kernel_runs_code() {
     } else {
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let info = client.start_session(kernel, None).await.unwrap();
@@ -560,7 +562,7 @@ async fn read_sidecar(doc: &Path) -> serde_json::Value {
 
 #[tokio::test]
 async fn files_can_be_listed_read_and_saved() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let work = dir.path().join("work");
     std::fs::create_dir_all(work.join("data")).unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
@@ -594,7 +596,7 @@ async fn files_can_be_listed_read_and_saved() {
 
 #[tokio::test]
 async fn the_file_tree_makes_renames_copies_and_deletes() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let work = dir.path().join("work");
     std::fs::create_dir_all(&work).unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
@@ -713,7 +715,7 @@ async fn notebook_plots_stay_in_the_daemon_between_open_and_save() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let doc = dir.path().join("analysis.ipynb");
     let notebook = serde_json::json!({
         "cells": [{"cell_type": "code", "execution_count": null, "id": "c1",
@@ -781,7 +783,7 @@ async fn qmd_outputs_are_saved_next_to_the_file() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let doc = dir.path().join("analysis.qmd");
     std::fs::write(&doc, "```{python}\nprint('hi')\n```\n").unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
@@ -835,7 +837,7 @@ async fn reopening_mid_run_shows_output_so_far_then_the_rest() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let doc = dir.path().join("long.ipynb");
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let session = {
@@ -886,7 +888,7 @@ async fn projects_keep_their_state_and_their_sessions() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let project = dir.path().join("my-analysis");
     std::fs::create_dir_all(&project).unwrap();
     let project_path = project.to_string_lossy().into_owned();
@@ -955,7 +957,7 @@ async fn runs_queued_behind_an_error_finish() {
         if !have_kernel(kernel).await {
             continue;
         }
-        let dir = tempfile::tempdir().unwrap();
+        let dir = common::tempdir().unwrap();
         let daemon = TestDaemon::start(dir.path()).await;
         let mut client = daemon.client().await;
         let session = client.start_session(kernel, None).await.unwrap().id;
@@ -993,7 +995,7 @@ async fn cleared_cells_have_no_outputs_until_run_again() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let doc = dir.path().join("cleared.ipynb");
     std::fs::write(&doc, "{}").unwrap();
     let path = doc.to_string_lossy().into_owned();

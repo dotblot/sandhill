@@ -3,6 +3,8 @@
 //! them again in the order asked, keeping changes not committed. Skips (and
 //! says so) when git isn't installed.
 
+mod common;
+
 use std::path::Path;
 
 use sandhill_daemon::{Daemon, StateDir};
@@ -41,7 +43,7 @@ async fn own_commits_are_squashed_reordered_and_reworded() {
         eprintln!("skipping: git is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let global = dir.path().join(".gitconfig");
     std::fs::write(
         &global,

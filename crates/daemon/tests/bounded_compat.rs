@@ -1,5 +1,7 @@
 //! Old-wire endpoint backed by real daemon file operations and real files.
 //! Its closed request enum deliberately cannot deserialize newer RPCs.
+mod common;
+
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -144,7 +146,7 @@ async fn read_file(
 
 #[tokio::test]
 async fn legacy_wire_opens_small_and_empty_csv_tsv_losslessly() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     for (name, raw) in [
         ("quoted.csv", "\u{feff}a,b\r\n\"雪,ice\",2\r\n"),
         ("quoted.tsv", "a\tb\r\n\"two\nlines\"\t三\r\n"),
@@ -183,7 +185,7 @@ async fn legacy_wire_opens_small_and_empty_csv_tsv_losslessly() {
 
 #[tokio::test]
 async fn legacy_wire_exact_limit_and_split_utf8_are_lossless_but_plus_one_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let path = dir.path().join("boundary.csv");
     let mut raw = "x".repeat(MAX_READ_BYTES as usize - 1);
     raw.push('雪'); // First byte in one response, remaining bytes in the next.
@@ -211,7 +213,7 @@ async fn legacy_wire_exact_limit_and_split_utf8_are_lossless_but_plus_one_is_ref
 
 #[tokio::test]
 async fn legacy_wire_rejects_changes_and_malformed_chunks() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     for (i, fault) in [
         Fault::Grow,
         Fault::Shrink,

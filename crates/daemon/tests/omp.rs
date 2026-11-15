@@ -5,6 +5,8 @@
 //! Anthropic key (for a model list), never the user's own `~/.omp`. Skips
 //! when `omp` is not installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -129,7 +131,7 @@ async fn omp_lists_models_and_starts_switches_and_loads_a_session_without_a_turn
         eprintln!("skipping: Oh My Pi (`omp`) is not installed");
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     // SAFETY: this file's only test sets these before starting any process

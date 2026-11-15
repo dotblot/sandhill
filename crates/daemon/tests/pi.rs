@@ -5,6 +5,8 @@
 //! the user's own pi settings are never read or written. Skips (and says so)
 //! when pi isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -297,7 +299,7 @@ async fn pi_works_through_the_chat() {
         eprintln!("skipping: pi is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (_daemon, socket) = start_daemon(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -593,7 +595,7 @@ async fn pi_hands_its_session_to_its_command_line_and_back() {
         eprintln!("skipping: pi is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (_daemon, socket) = start_daemon(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -752,7 +754,7 @@ async fn pi_lists_its_models_before_a_conversation() {
         eprintln!("skipping: pi is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (port, requests) = model(Vec::new()).await;
     let home = pi_home(dir.path(), port);
     // Its own daemon, so pi finds this home.

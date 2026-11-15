@@ -5,6 +5,8 @@
 //! script with Rscript, when they are installed, and the test says when
 //! they aren't.
 
+mod common;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,7 +88,7 @@ async fn info(client: &Client, terminal: &str) -> TerminalInfo {
 
 #[tokio::test]
 async fn jobs_run_in_the_background() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let project = root.join("project");
     std::fs::create_dir(&project).unwrap();

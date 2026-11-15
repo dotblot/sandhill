@@ -5,6 +5,8 @@
 //!
 //! Needs a real Ark: `SANDHILL_TEST_ARK=/path/to/ark`, and R on `PATH`.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -30,7 +32,7 @@ async fn the_installed_ark_runs_r() {
         eprintln!("skipping: R is not on PATH");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let installed = home.join(sandhill_proto::ARK_PATH);
     std::fs::create_dir_all(installed.parent().unwrap()).unwrap();

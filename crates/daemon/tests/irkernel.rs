@@ -2,6 +2,8 @@
 //! as a separate process so it has its own home and Jupyter folders. The
 //! install itself downloads from CRAN, so it isn't run here.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -61,7 +63,7 @@ async fn r_without_irkernel_is_offered_until_one_runs_it() {
         eprintln!("skipping: an IRkernel is installed system-wide");
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let home = tmp.path().join("home");
     let jupyter = tmp.path().join("jupyter");
     std::fs::create_dir_all(&home).unwrap();

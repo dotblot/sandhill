@@ -1,6 +1,8 @@
 //! Viewer context uses journaled pages, not kernel evaluation or browser code.
 //! Real htmlwidget cases skip with a message when R or its packages are absent.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -108,7 +110,7 @@ async fn viewer(tools: &Tools, args: Value) -> Value {
 #[tokio::test]
 async fn plain_html_returns_text_tables_and_declarative_plots_but_never_scripts() {
     assert!(read_only_tools().iter().any(|name| name == "get_viewer"));
-    let temp = tempfile::tempdir().unwrap();
+    let temp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(temp.path()).await;
     daemon.saved_session("saved-r", "/project");
     daemon.page("saved-r", "page-1", HTML);
@@ -156,7 +158,7 @@ async fn plain_html_returns_text_tables_and_declarative_plots_but_never_scripts(
 
 #[tokio::test]
 async fn default_selects_latest_page_in_project_not_the_latest_session_activity() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(temp.path()).await;
     for (id, project) in [
         ("first", "/project"),
@@ -198,7 +200,7 @@ async fn default_selects_latest_page_in_project_not_the_latest_session_activity(
 
 #[tokio::test]
 async fn large_blob_pages_remain_valid_json_under_the_total_cap() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(temp.path()).await;
     daemon.saved_session("large", "/project");
     let cell = "\"\\细胞".repeat(150);
@@ -228,7 +230,7 @@ async fn large_blob_pages_remain_valid_json_under_the_total_cap() {
 
 #[tokio::test]
 async fn python_plotly_html_and_mime_figures_have_series_summaries() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(temp.path()).await;
     daemon.saved_session("python", "/project");
     daemon.page("python", "python-page", r#"<div class="plotly-graph-div" id="p"></div><script>Plotly.newPlot("p", [{"type":"bar","name":"genes","x":["A","B"],"y":[4,8]}], {"xaxis":{"title":{"text":"Gene"}}}, {}); const NEVER_SEND = true;</script>"#);
@@ -270,7 +272,7 @@ async fn execute(client: &mut Client, session: &str, code: &str) -> String {
 }
 
 async fn real_widget(package: &str) {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = common::tempdir().unwrap();
     let daemon = TestDaemon::start(temp.path()).await;
     let mut client = Client::connect_unix(&daemon.socket).await.unwrap();
     let kernels: Vec<_> = client

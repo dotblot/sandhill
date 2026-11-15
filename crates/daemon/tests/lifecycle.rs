@@ -1,5 +1,7 @@
 //! Resource management uses real task-owned terminals/kernels and isolated
 //! state. No uninstall call targets the real HOME or service manager.
+mod common;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +14,7 @@ use serde_json::{Value, json};
 use tokio::net::UnixListener;
 
 struct Fixture {
-    _temp: tempfile::TempDir,
+    _temp: common::TempDir,
     root: PathBuf,
     daemon: Arc<Daemon>,
     client: Client,
@@ -20,7 +22,7 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = common::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let state = StateDir::new(root.join("state"));
         let daemon = Daemon::open_with(

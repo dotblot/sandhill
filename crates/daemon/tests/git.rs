@@ -3,6 +3,8 @@
 //! Write it with a stand-in agent. Skips (and says so) when git isn't
 //! installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -72,7 +74,7 @@ async fn a_repository_is_made_changed_committed_and_pushed() {
         eprintln!("skipping: git is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir(&home).unwrap();
     let global = home.join(".gitconfig");

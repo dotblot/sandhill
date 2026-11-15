@@ -2,6 +2,8 @@
 //! `claude` on PATH here, suggests the next one from its code and what it
 //! showed. Skips (and says so) when the python3 kernel isn't installed.
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +24,7 @@ async fn an_agent_suggests_the_cell_after_a_run() {
         eprintln!("skipping: Jupyter kernel \"python3\" is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let bin = dir.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let fake = bin.join("claude");

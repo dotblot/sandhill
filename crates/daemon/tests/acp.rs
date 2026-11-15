@@ -2,6 +2,8 @@
 //! No model service, OpenScience installation, or Jupyter kernel is needed.
 //! The fake also starts the supplied real MCP server to check Ask's guard.
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -370,7 +372,7 @@ async fn openscience_acp_chat_round_trip_and_resume() {
         eprintln!("skipping: python3 is needed for the fake ACP executable");
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let fake = dir.path().join("openscience");
     std::fs::write(&fake, format!("#!{}\n{FAKE}", python.display())).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();

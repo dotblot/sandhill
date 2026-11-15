@@ -5,6 +5,8 @@
 //! needs a Google sign-in, so it isn't run here. Skips (and says so) when
 //! Python or the kernel isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -307,7 +309,7 @@ async fn antigravity_works_through_the_chat() {
         eprintln!("skipping: Jupyter kernel \"python3\" is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let (_daemon, socket) = start_daemon(&dir.path().join("state")).await;
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -689,7 +691,7 @@ async fn agy_lists_its_models_before_a_conversation() {
         eprintln!("skipping: python3 is not installed");
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let agy = dir.path().join("agy");
     std::fs::write(&agy, STANDIN).unwrap();
     std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o755)).unwrap();

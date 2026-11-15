@@ -2,6 +2,8 @@
 //! showed, and saving one as a file. Each test skips (and says so) when its
 //! kernel isn't installed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -94,7 +96,7 @@ async fn a_sessions_plots_come_from_every_kind_of_run() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -181,7 +183,7 @@ async fn r_plots_show_up() {
     if !have_kernel("ir").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let session = client.start_session("ir", None).await.unwrap().id;
@@ -247,7 +249,7 @@ async fn plots_are_drawn_again_at_a_new_size() {
             kernels.push(kernel);
         }
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     for kernel in kernels {
@@ -409,7 +411,7 @@ const SHOWN_ORDER: &[&str] = &[
 /// and after the Plots pane draws it again at its own size.
 #[tokio::test]
 async fn r_plots_show_under_their_cell() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     for kernel in ["ark", "ir"] {
@@ -495,7 +497,7 @@ async fn retina_figures_show_and_can_be_drawn_again() {
     if !have_kernel("python3").await {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(dir.path()).await;
     let mut client = daemon.client().await;
     let matplotlib = std::process::Command::new("python3")

@@ -1,9 +1,11 @@
 //! A removed installation must not be resurrected by a stale client/service.
+mod common;
+
 use std::process::Command;
 
 #[test]
 fn tombstone_blocks_both_service_and_autostart_without_recreating_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let state = tmp.path().join("state");
     std::fs::create_dir(&state).unwrap();
     let marker = state.join("uninstalled");

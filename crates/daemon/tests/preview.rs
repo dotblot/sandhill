@@ -4,6 +4,8 @@
 //! serves a page) runs everywhere; the real Quarto runs too when it is
 //! installed, and the test says when it isn't.
 
+mod common;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +77,7 @@ async fn get(url: &str) -> Option<String> {
 
 #[tokio::test]
 async fn documents_are_previewed_with_quarto() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     // Looked for before QUARTO_PATH points to the stand-in.
     let real =

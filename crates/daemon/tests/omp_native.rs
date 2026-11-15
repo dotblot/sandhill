@@ -4,6 +4,8 @@
 //! to omp's own screen and back (the ACP server ends first, the session is
 //! loaded again with the command line's turns).
 
+mod common;
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Duration;
@@ -211,7 +213,7 @@ async fn omp_chat_hands_its_session_to_the_command_line_and_back() {
         eprintln!("skipping: python3 is needed for the stand-in omp");
         return;
     };
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let fake = dir.path().join("omp");
     std::fs::write(&fake, format!("#!{}\n{FAKE}", python.display())).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();

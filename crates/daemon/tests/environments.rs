@@ -2,6 +2,8 @@
 //! Jupyter. The daemon runs as a separate process here so it can be given
 //! its own home folder.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -50,7 +52,7 @@ async fn a_conda_environment_runs_its_own_python() {
         eprintln!("skipping: no python3 with ipykernel installed");
         return;
     };
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // Python reports its path with symlinks resolved (on macOS the temp
     // folder is under /var, a link to /private/var), so start resolved.
     let home = tmp.path().canonicalize().unwrap();
@@ -158,7 +160,7 @@ async fn run(client: &mut Client, kernel: &str) -> String {
 /// printed before it stopped (Ark that can't find R, say).
 #[tokio::test]
 async fn a_kernel_that_cannot_start_says_why() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let jupyter = home.join("jupyter");
     let kernel = |name: &str, argv: serde_json::Value| {
