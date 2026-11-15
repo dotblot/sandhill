@@ -11,7 +11,7 @@ pub(crate) fn insertion(text: &str, cursor: usize, assignment: bool) -> String {
             .is_none_or(char::is_whitespace);
     let operator = if assignment {
         "<-"
-    } else if crate::statements::ggplot_chain(text, cursor) {
+    } else if crate::editor::statements::ggplot_chain(text, cursor) {
         "+"
     } else {
         "|>"

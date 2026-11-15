@@ -7,7 +7,7 @@ use sandhill_daemon::outputs::{PLOTLY_MIME, is_page};
 use sandhill_daemon::viewer::MIME as VIEWER_MIME;
 use sandhill_proto::BLOB_KEY;
 
-use crate::notebook::multiline;
+use crate::editor::notebook::multiline;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shown {
@@ -28,7 +28,7 @@ pub enum Shown {
     /// Something the trial can't draw.
     Note(String),
     /// A data frame, drawn as a grid.
-    Table(crate::html_table::Table),
+    Table(crate::editor::html_table::Table),
 }
 
 /// A web page an output holds, as `is_page` in the daemon's output rules
@@ -205,7 +205,7 @@ pub fn show(output: &Value) -> Shown {
             } else if let Some(table) = data
                 .get("text/html")
                 .filter(|h| !h.is_null())
-                .and_then(|h| crate::html_table::parse(&multiline(h)))
+                .and_then(|h| crate::editor::html_table::parse(&multiline(h)))
             {
                 Shown::Table(table)
             } else if mimes.contains_key("text/plain") {

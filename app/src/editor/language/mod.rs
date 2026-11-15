@@ -474,7 +474,7 @@ mod tests {
         });
         cx.update_window(handle, |_, window, cx| {
             workbench.update(cx, |this, cx| {
-                let notebook = crate::notebook::parse("/p/mixed.qmd",
+                let notebook = crate::editor::notebook::parse("/p/mixed.qmd",
                     "---\r\ntitle: Test\r\n---\r\n\r\n```{r}\r\nx <- 1\r\n```\r\n\r\n```{python}\r\nimport pandas as pd\r\ndf = pd.DataFrame({'x': [1]})\r\n```\r\n\r\n```{python}\r\nprint(df.shape)\r\n```\r\n").unwrap();
                 this.show_notebook(notebook, 0, window, cx);
                 let editors = this.open.as_ref().unwrap().editors.clone();

@@ -127,7 +127,7 @@ fn bytes(bytes: u64) -> String {
 
 fn local_inventory() -> Value {
     let mut inventory = crate::prefs::storage_inventory();
-    match crate::media::cache::inventory() {
+    match crate::editor::media::cache::inventory() {
         Ok(media) => {
             if let Some(entries) = inventory["entries"].as_array_mut() {
                 entries.extend(media["entries"].as_array().into_iter().flatten().cloned());
@@ -473,7 +473,7 @@ impl AppWindow {
                 });
                 if host == sandhill_link::LOCAL && action == Action::Clean {
                     if categories.contains("media_previews") {
-                        match crate::media::cache::clean() {
+                        match crate::editor::media::cache::clean() {
                             Ok(value) => { success &= operation_succeeded(&value); if let Ok(result) = &mut result { result["local_media"] = value; } }
                             Err(error) => { success = false; result = Err(format!("Media preview cleanup: {error:#}")); }
                         }

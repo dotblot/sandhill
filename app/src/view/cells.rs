@@ -200,7 +200,7 @@ impl Workbench {
             .pr(px(24.))
             // Between cells that can be added to, the rows that add them.
             .when(!open.notebook.can_add_cells(), |d| {
-                d.gap(px(crate::cell_view::TOOLS_HEIGHT + 4.))
+                d.gap(px(crate::editor::cell_view::TOOLS_HEIGHT + 4.))
             })
             .children(cells);
         pane(&p)
@@ -241,7 +241,7 @@ impl Workbench {
                 .px(px(18.))
                 .py(px(12.))
                 .child(
-                    crate::md_images::markdown(open, 0, "markdown-document", cx)
+                    crate::editor::md_images::markdown(open, 0, "markdown-document", cx)
                         .style(TextViewStyle::default().paragraph_gap(rems(0.5))),
                 )
                 .into_any_element();
@@ -295,7 +295,7 @@ impl Workbench {
                 }
             }))
             .child(
-                crate::md_images::markdown(open, ix, ("md", ix), cx).style(
+                crate::editor::md_images::markdown(open, ix, ("md", ix), cx).style(
                     TextViewStyle::default()
                         .paragraph_gap(rems(0.5))
                         .heading_font_size(|level, _| {
@@ -333,9 +333,9 @@ impl Workbench {
             if open.notebook.truncated { "+" } else { "" },
         );
         let delimited = open.notebook.format == notebook::Format::Delimited;
-        let sep = crate::delimited::separator(open.notebook.language.as_deref());
+        let sep = crate::editor::delimited::separator(open.notebook.language.as_deref());
         if delimited && let Some(header) = &open.delimited_header {
-            let columns = crate::delimited::column_count(&header.read(cx).value(), sep);
+            let columns = crate::editor::delimited::column_count(&header.read(cx).value(), sep);
             label.push_str(&format!(" · {} col", Self::grouped(columns)));
         }
         let range = editor.selected_range();
@@ -354,7 +354,7 @@ impl Workbench {
             } else {
                 let count = if delimited {
                     let line = text.slice_line(start.row).to_string();
-                    crate::delimited::fields_spanned(&line, start.column, end.column, sep)
+                    crate::editor::delimited::fields_spanned(&line, start.column, end.column, sep)
                 } else {
                     editor.selected_value().chars().count()
                 };

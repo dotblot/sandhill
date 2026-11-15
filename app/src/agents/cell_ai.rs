@@ -10,8 +10,8 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use serde_json::json;
 
+use crate::editor::notebook;
 use crate::look::{self, Palette, icon};
-use crate::notebook;
 use crate::workbench::{Open, Workbench};
 
 /// How long a cell the agent added or changed stays lit.
@@ -327,7 +327,7 @@ impl Workbench {
                     .id(("agent-deleted", n))
                     .flex_none()
                     .w_full()
-                    .pl(px(crate::cell_view::GUTTER))
+                    .pl(px(crate::editor::cell_view::GUTTER))
                     .my(px(2.))
                     .gap(px(8.))
                     .child(

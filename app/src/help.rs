@@ -1137,9 +1137,9 @@ impl Workbench {
                 Some(Ok(source)) => code_view(
                     format!("help-source-{}-{}", page.package, page.topic),
                     if page.html.is_some() {
-                        crate::doc_text::r_code_markdown(&source.text)
+                        crate::editor::doc_text::r_code_markdown(&source.text)
                     } else {
-                        crate::doc_text::python_code_markdown(&source.text)
+                        crate::editor::doc_text::python_code_markdown(&source.text)
                     },
                 ),
             }
@@ -1150,11 +1150,11 @@ impl Workbench {
             v_flex()
                 .gap(px(6.))
                 .children(
-                    crate::doc_text::split_pre(html)
+                    crate::editor::doc_text::split_pre(html)
                         .into_iter()
                         .enumerate()
                         .map(|(ix, part)| match part {
-                            crate::doc_text::HelpPart::Html(html) => {
+                            crate::editor::doc_text::HelpPart::Html(html) => {
                                 let weak = cx.entity().downgrade();
                                 TextView::html(SharedString::from(format!("{key}-{ix}")), html)
                                     .style(help_style())
@@ -1166,9 +1166,9 @@ impl Workbench {
                                     })
                                     .into_any_element()
                             }
-                            crate::doc_text::HelpPart::Code(code) => code_view(
+                            crate::editor::doc_text::HelpPart::Code(code) => code_view(
                                 format!("{key}-{ix}"),
-                                crate::doc_text::r_code_markdown(&code),
+                                crate::editor::doc_text::r_code_markdown(&code),
                             ),
                         }),
                 )
@@ -1196,7 +1196,11 @@ impl Workbench {
             .when_some(page.signature.clone(), |d, sig| {
                 d.child(code_view(
                     format!("help-sig-{}", page.topic),
-                    crate::doc_text::python_code_markdown(&signature_lines(&page.topic, &sig, 60)),
+                    crate::editor::doc_text::python_code_markdown(&signature_lines(
+                        &page.topic,
+                        &sig,
+                        60,
+                    )),
                 ))
             })
             .when_some(
@@ -1205,7 +1209,7 @@ impl Workbench {
                     d.child(
                         TextView::markdown(
                             SharedString::from(format!("help-doc-{}", page.topic)),
-                            crate::doc_text::docstring_markdown(&text),
+                            crate::editor::doc_text::docstring_markdown(&text),
                         )
                         .style(help_style())
                         .selectable(true),

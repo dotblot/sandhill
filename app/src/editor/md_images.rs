@@ -16,8 +16,8 @@ use markdown::mdast::Node;
 use sandhill_proto::{Call, FileBytes, MAX_READ_BYTES};
 
 use crate::daemon::Daemon;
+use crate::editor::notebook::{CellKind, Format};
 use crate::look::Palette;
-use crate::notebook::{CellKind, Format};
 use crate::workbench::{Open, Workbench};
 
 const MAX_BYTES: u64 = 20 * 1024 * 1024;
@@ -423,7 +423,7 @@ fn attachment(attachments: &serde_json::Value, name: &str) -> Load {
         "image/vnd.microsoft.icon",
     ] {
         if let Some(value) = bundle.get(mime) {
-            let data = crate::notebook::multiline(value);
+            let data = crate::editor::notebook::multiline(value);
             if data.len() as u64 > MAX_BYTES.div_ceil(3) * 4 + 1024 {
                 return Load::Failed("Too large");
             }
@@ -558,7 +558,7 @@ fn decode(bytes: Vec<u8>) -> Loaded {
             .map_err(|_| "Not an image")?;
         return Ok(Arc::new(Image::from_bytes(gpui_format, bytes)));
     }
-    crate::media::rasterize_svg_bytes(&bytes)
+    crate::editor::media::rasterize_svg_bytes(&bytes)
         .map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png)))
         .map_err(|_| "Not an image")
 }

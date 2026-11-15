@@ -22,12 +22,12 @@ use sandhill_proto::{
 use serde_json::Value;
 
 use crate::daemon::Daemon;
-use crate::look::{self, Palette, bar_button, icon};
-use crate::table::{
+use crate::editor::table::{
     TableCodeView, Takes, column_note, column_width, export_name, filter_error, filter_text,
     format_cell, format_number, missing_text, new_filter, ops_for, sorted_by, table_code,
 };
-use crate::table_selection::{Selection, Target, encode_tsv};
+use crate::editor::table_selection::{Selection, Target, encode_tsv};
+use crate::look::{self, Palette, bar_button, icon};
 
 mod export;
 mod filters;

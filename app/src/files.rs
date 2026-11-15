@@ -236,7 +236,7 @@ mod tests {
         NewKind, base_name, copy_name, free_name, match_score, name_problem, new_notebook,
         parent_of, template, within,
     };
-    use crate::notebook::{CellKind, parse, recover_kernel};
+    use crate::editor::notebook::{CellKind, parse, recover_kernel};
     use sandhill_proto::KernelspecInfo;
     use std::collections::HashSet;
 
@@ -250,7 +250,7 @@ mod tests {
         assert_eq!(name, "untitled 2.py");
         assert_eq!(name_problem(&name, true), None);
         assert_eq!(
-            crate::notebook::parse(&name, "")
+            crate::editor::notebook::parse(&name, "")
                 .unwrap()
                 .language
                 .as_deref(),

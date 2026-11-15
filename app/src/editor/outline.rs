@@ -38,7 +38,7 @@ pub(crate) fn entries(text: &str, language: &str) -> Vec<Entry> {
     let comments = if markdown {
         Vec::new()
     } else {
-        crate::statements::comment_lines(text, language == "python")
+        crate::editor::statements::comment_lines(text, language == "python")
     };
     let mut fence: Option<(char, usize)> = None;
     for (line, source) in text.lines().enumerate() {
@@ -106,7 +106,7 @@ pub(crate) fn entries(text: &str, language: &str) -> Vec<Entry> {
     }
     if language == "python" {
         result.extend(
-            crate::statements::python_declarations(text)
+            crate::editor::statements::python_declarations(text)
                 .into_iter()
                 .map(|(line, title)| Entry {
                     line,
@@ -200,7 +200,7 @@ pub(crate) fn fold_ranges(
         // Reuse the statement scanner, which excludes comments and tracks
         // multiline strings, so example code in docstrings cannot create folds.
         ranges.extend(
-            crate::statements::python_folds(text)
+            crate::editor::statements::python_folds(text)
                 .into_iter()
                 .map(|(start, end)| FoldRange::new(start, end)),
         );

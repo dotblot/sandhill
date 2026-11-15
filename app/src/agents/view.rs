@@ -361,7 +361,7 @@ impl Agents {
             )
             .when(!self.entries(&t.id).is_empty(), |d| {
                 d.child(div().h(px(1.)).mx(px(4.)).my(px(3.)).bg(p.line))
-                    .children(crate::export::Format::ALL.map(|format| {
+                    .children(crate::editor::export::Format::ALL.map(|format| {
                         row(
                             format.ext(),
                             "share",
@@ -1070,7 +1070,7 @@ impl Agents {
                 let file = view
                     .file
                     .clone()
-                    .filter(|f| crate::notebook::format_of(f).is_some());
+                    .filter(|f| crate::editor::notebook::format_of(f).is_some());
                 d.child(
                     v_flex()
                         .gap(px(4.))

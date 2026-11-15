@@ -7,7 +7,7 @@
 use gpui_kit::*;
 use sandhill_proto::{Call, PreviewInfo};
 
-use crate::shown::Page;
+use crate::editor::shown::Page;
 use crate::workbench::{BottomTab, Workbench};
 
 /// A page the Viewer was asked to show.
@@ -227,7 +227,7 @@ impl Workbench {
         let Some(page) = item.page else { return };
         let remote = self.target != sandhill_link::Target::Local;
         let near = self.open.as_ref().map(|o| o.notebook.path.clone());
-        let address = crate::pages::address(page, daemon, remote, near);
+        let address = crate::editor::pages::address(page, daemon, remote, near);
         cx.spawn(async move |this, cx| {
             let address = address.await;
             this.update(cx, |this, cx| match address {

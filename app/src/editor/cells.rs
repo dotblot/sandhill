@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::*;
 use sandhill_proto::Call;
 
-use crate::notebook::{self, CellKind};
+use crate::editor::notebook::{self, CellKind};
 use crate::workbench::{DocKind, Run, Workbench};
 
 /// How a cell's latest run is going.

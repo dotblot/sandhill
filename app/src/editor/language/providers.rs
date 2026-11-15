@@ -847,7 +847,7 @@ fn plain_docs_as_markdown(item: &mut CompletionItem) {
     };
     item.documentation = Some(Documentation::MarkupContent(MarkupContent {
         kind: MarkupKind::Markdown,
-        value: crate::doc_text::docstring_markdown(&plain),
+        value: crate::editor::doc_text::docstring_markdown(&plain),
     }));
 }
 
@@ -908,12 +908,12 @@ fn docs_markdown(item: &CompletionItem) -> Option<String> {
 fn help_markdown(page: &HelpPage) -> Option<String> {
     let mut parts = vec![];
     if let Some(signature) = page.signature.as_deref().filter(|sig| !sig.is_empty()) {
-        parts.push(crate::doc_text::python_code_markdown(
+        parts.push(crate::editor::doc_text::python_code_markdown(
             &crate::help::signature_lines(&page.topic, signature, 60),
         ));
     }
     if let Some(text) = page.text.as_deref().filter(|text| !text.trim().is_empty()) {
-        parts.push(crate::doc_text::docstring_markdown(text));
+        parts.push(crate::editor::doc_text::docstring_markdown(text));
     }
     (!parts.is_empty()).then(|| parts.join("\n\n"))
 }

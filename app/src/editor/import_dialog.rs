@@ -11,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, DirEntry, EntryKind, RunStarted, SessionInfo, SessionStatus};
 
-use crate::imports::{
+use crate::editor::imports::{
     generated_import_code, importable, imports_for, valid_variable, variable_name,
 };
 use crate::look::{self, Palette, bar_button, icon, picture};

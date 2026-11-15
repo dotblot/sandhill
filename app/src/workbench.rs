@@ -21,11 +21,11 @@ use tokio::runtime::Runtime;
 
 use crate::agents::Agents;
 use crate::daemon::{Daemon, Streams};
+use crate::editor::notebook::{self, CellKind, Format, Notebook};
+use crate::editor::pages::PageView;
+use crate::editor::shown::{Page, Shown, page_title, show};
+use crate::editor::statements;
 use crate::explorer::Explorer;
-use crate::notebook::{self, CellKind, Format, Notebook};
-use crate::pages::PageView;
-use crate::shown::{Page, Shown, page_title, show};
-use crate::statements;
 use crate::terminal::TerminalView;
 use crate::tree::{self, Folder, Tree};
 
@@ -113,7 +113,7 @@ pub(crate) struct Open {
     pub dirty: bool,
     /// Standalone Markdown stays source-first; preview reads the editor value.
     pub(crate) markdown_preview: bool,
-    pub(crate) md_images: crate::md_images::Cache,
+    pub(crate) md_images: crate::editor::md_images::Cache,
     /// Notebook editors stay alive while the whole Quarto source is shown.
     pub(crate) quarto_view: Option<QuartoView>,
     pub(crate) delimited_header: Option<Entity<EditorState>>,
@@ -310,7 +310,7 @@ pub struct Workbench {
     pub(crate) tabs: Vec<String>,
     /// Quarto presentation preference, including documents closed this session.
     quarto_sources: HashSet<String>,
-    pub(crate) media: HashMap<String, Entity<crate::media::MediaView>>,
+    pub(crate) media: HashMap<String, Entity<crate::editor::media::MediaView>>,
     pub(crate) media_shown: Option<String>,
     /// The Console's kernel when no notebook is open.
     pub(crate) loose: Session,
@@ -324,7 +324,7 @@ pub struct Workbench {
     pub(crate) console: Vec<String>,
     console_session: Option<String>,
     pub(crate) console_input: Entity<EditorState>,
-    pub(crate) language: crate::language::Language,
+    pub(crate) language: crate::editor::language::Language,
     pub(crate) console_scroll: ScrollHandle,
     pub(crate) vars: Vars,
     pub(crate) console_tab: ConsoleTab,
@@ -372,7 +372,7 @@ pub struct Workbench {
     pub(crate) cells_focus: FocusHandle,
     /// Where the open notebook's cells were at the last layout, and which
     /// are drawn now: only those near the view (see `place_cells`).
-    pub(crate) placed: crate::cell_view::Placed,
+    pub(crate) placed: crate::editor::cell_view::Placed,
     page_wheel: tokio::sync::mpsc::UnboundedSender<f32>,
     /// The Data Explorer, a tab of its own in the middle.
     pub(crate) explorer: Option<Entity<Explorer>>,
@@ -401,8 +401,8 @@ pub struct Workbench {
     /// The Variables tab's filter box.
     pub(crate) vars_filter: Entity<InputState>,
     /// Variables' Import menu and dialog.
-    pub(crate) import: crate::import_dialog::Import,
-    pub(crate) delimited: Option<crate::delimited::DelimitedDialog>,
+    pub(crate) import: crate::editor::import_dialog::Import,
+    pub(crate) delimited: Option<crate::editor::delimited::DelimitedDialog>,
     pub(crate) popup_triggers: crate::popup::PopupTriggers,
     pub(crate) import_name: Entity<InputState>,
     /// The left panel is shown (the title bar's first button).
@@ -445,8 +445,8 @@ pub struct Workbench {
     /// ⌘K.
     pub(crate) palette: crate::command_palette::CommandPalette,
     pub(crate) palette_input: Entity<InputState>,
-    pub(crate) find: crate::find::Find,
-    pub(crate) outline: crate::outline::Outline,
+    pub(crate) find: crate::editor::find::Find,
+    pub(crate) outline: crate::editor::outline::Outline,
     /// The ☰ menu is open.
     pub(crate) main_menu: bool,
     /// The window's own focus, so its shortcuts work before anything
@@ -488,19 +488,20 @@ impl Workbench {
                 .placeholder("Type code; Enter runs it")
         });
         // The language follows the Console's kernel; brackets follow it.
-        crate::rainbow::attach(&console_input, cx);
+        crate::editor::rainbow::attach(&console_input, cx);
         let (help, help_subscriptions) = crate::help::new_help(window, cx);
         let (packages, package_subscriptions) = crate::packages::new_packages(window, cx);
         let (jobs, job_subscriptions) = crate::jobs::new_jobs(window, cx);
         let (git, git_subscriptions) = crate::git_pane::new_git(window, cx);
         let (settings_env, settings_subscription) =
             crate::project_settings::new_env_input(window, cx);
-        let (import_name, import_subscription) = crate::import_dialog::new_import_input(window, cx);
+        let (import_name, import_subscription) =
+            crate::editor::import_dialog::new_import_input(window, cx);
         let (name_input, name_subscription) = crate::tree_actions::new_name_input(window, cx);
         let (palette_input, palette_subscription) =
             crate::command_palette::new_palette_input(window, cx);
-        let (find, find_subscriptions) = crate::find::new_find(window, cx);
-        let (outline, outline_subscription) = crate::outline::new_outline(window, cx);
+        let (find, find_subscriptions) = crate::editor::find::new_find(window, cx);
+        let (outline, outline_subscription) = crate::editor::outline::new_outline(window, cx);
         let vars_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
         let vars_filter_subscription =
             cx.subscribe(&vars_filter, |_, _, event: &InputEvent, cx| {

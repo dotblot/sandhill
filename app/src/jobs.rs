@@ -41,7 +41,7 @@ pub(crate) struct Jobs {
     /// A job whose Stop was pressed once: pressing it again stops it.
     confirm_stop: Option<String>,
     error: Option<String>,
-    pub(crate) render: crate::render_document::RenderState,
+    pub(crate) render: crate::editor::render_document::RenderState,
 }
 
 pub(crate) fn new_jobs(

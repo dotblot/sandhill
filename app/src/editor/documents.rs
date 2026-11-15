@@ -11,9 +11,9 @@ use sandhill_link::Target;
 use sandhill_proto::{Call, FileBytes, FileText, MAX_READ_BYTES};
 
 use crate::daemon::Daemon;
-use crate::delimited::TEXT_LIMIT;
+use crate::editor::delimited::TEXT_LIMIT;
+use crate::editor::notebook;
 use crate::look::Palette;
-use crate::notebook;
 use crate::workbench::{Open, Workbench};
 
 /// The last codepoint may be cut by the prefix request, but invalid UTF-8

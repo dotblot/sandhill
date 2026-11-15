@@ -224,7 +224,7 @@ mod tests {
     }
     #[test]
     fn parsed_mixed_quarto_excludes_other_languages_and_prose() {
-        let notebook = crate::notebook::parse("/p/mixed.qmd", "# Report\n\n```{r}\nx <- 1\n```\n\n```{python}\nx = '名😀'\n```\n\n```{r}\ny <- x\n```\n").unwrap();
+        let notebook = crate::editor::notebook::parse("/p/mixed.qmd", "# Report\n\n```{r}\nx <- 1\n```\n\n```{python}\nx = '名😀'\n```\n\n```{r}\ny <- x\n```\n").unwrap();
         let build = |language: &str| {
             Document::new(
                 &notebook.path,
@@ -253,7 +253,7 @@ mod tests {
         );
     }
     fn quarto_document(text: &str, language: &str) -> Document {
-        let notebook = crate::notebook::parse("/p/report.qmd", text).unwrap();
+        let notebook = crate::editor::notebook::parse("/p/report.qmd", text).unwrap();
         Document::new(
             &notebook.path,
             language,
@@ -268,7 +268,7 @@ mod tests {
         )
     }
     fn new_quarto_python_document(language: Option<&str>) -> Document {
-        use crate::notebook::{CellKind, parse};
+        use crate::editor::notebook::{CellKind, parse};
 
         let mut notebook = parse(
             "/p/report.qmd",

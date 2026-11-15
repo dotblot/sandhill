@@ -13,12 +13,12 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::cells::CellStatus;
-use crate::html_table::{Table, shown_name};
+use crate::editor::cells::CellStatus;
+use crate::editor::html_table::{Table, shown_name};
+use crate::editor::notebook::{CellKind, Format};
+use crate::editor::output_table::OutputTable;
+use crate::editor::output_text::OutputText;
 use crate::look::{self, Palette, icon, icon_button};
-use crate::notebook::{CellKind, Format};
-use crate::output_table::OutputTable;
-use crate::output_text::OutputText;
 use crate::workbench::{Open, Workbench};
 use crate::{
     AddCellAbove, AddCellBelow, CellToCode, CellToMarkdown, DeleteCell, EditCell, RunCell, RunLine,
@@ -78,7 +78,7 @@ impl Placed {
 
 /// A reservation, not a rendered cell. Keep the full document's scroll extent
 /// from the first frame without decoding offscreen outputs or formatting prose.
-fn estimated_cell_height(cell: &crate::notebook::Cell) -> Pixels {
+fn estimated_cell_height(cell: &crate::editor::notebook::Cell) -> Pixels {
     let source = cell.source.split('\n').count().max(1) as f32 * 20. + 22.;
     let mut outputs = 0.;
     for output in &cell.outputs {

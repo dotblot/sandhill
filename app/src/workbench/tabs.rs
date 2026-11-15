@@ -132,7 +132,7 @@ impl Workbench {
         };
         self.reveal_middle();
         let path = format!("{project}/{rel}");
-        if crate::media::is_media(&path) {
+        if crate::editor::media::is_media(&path) {
             self.open_media(path, cx);
             return;
         }
@@ -432,7 +432,8 @@ impl Workbench {
             cx.spawn(async move |_, cx| {
                 let (text, folds) = cx
                     .background_spawn(async move {
-                        let folds = crate::outline::fold_ranges(&text.to_string(), language);
+                        let folds =
+                            crate::editor::outline::fold_ranges(&text.to_string(), language);
                         (text, folds)
                     })
                     .await;
@@ -449,14 +450,14 @@ impl Workbench {
             editor.update(cx, |editor, cx| {
                 let text = editor.value();
                 editor.apply_highlighter_fold_candidates(
-                    crate::outline::fold_ranges(&text, language),
+                    crate::editor::outline::fold_ranges(&text, language),
                     cx,
                 );
             });
         }
         if kind == CellKind::Code && matches!(language, "r" | "python") {
             self.install_language(&editor, Some(&nb.path), cx);
-            crate::rainbow::attach(&editor, cx);
+            crate::editor::rainbow::attach(&editor, cx);
         }
         let path = nb.path.clone();
         let subscription = cx.subscribe(&editor, move |this, editor, event: &InputEvent, cx| {
@@ -481,7 +482,7 @@ impl Workbench {
                     editor.update(cx, |editor, cx| {
                         let text = editor.value();
                         editor.apply_highlighter_fold_candidates(
-                            crate::outline::fold_ranges(&text, &language),
+                            crate::editor::outline::fold_ranges(&text, &language),
                             cx,
                         );
                     });
@@ -729,7 +730,7 @@ impl Workbench {
         );
         let (editors, mut subscriptions) = self.cell_editors(&nb, window, cx);
         if nb.format == Format::Text {
-            subscriptions.extend(crate::bio_text::decorate_editor(
+            subscriptions.extend(crate::editor::bio_text::decorate_editor(
                 &editors[0],
                 nb.language.as_deref(),
                 cx,
@@ -748,9 +749,9 @@ impl Workbench {
             }));
         }
         let delimited_header = if nb.format == Format::Delimited {
-            let (header, header_subscriptions) = crate::delimited::decorate_editor(
+            let (header, header_subscriptions) = crate::editor::delimited::decorate_editor(
                 &editors[0],
-                crate::delimited::separator(nb.language.as_deref()),
+                crate::editor::delimited::separator(nb.language.as_deref()),
                 window,
                 cx,
             );
@@ -1136,7 +1137,7 @@ mod opening_tests {
     use std::sync::Arc;
 
     use super::{Workbench, editor_wrap_type};
-    use crate::notebook::{CellKind, Format};
+    use crate::editor::notebook::{CellKind, Format};
 
     #[test]
     fn wrapping_types_follow_cells_and_exclude_delimited_data() {
@@ -1182,7 +1183,7 @@ mod opening_tests {
             "metadata": {"language_info": {"name": "python"}}, "cells": cells
         })
         .to_string();
-        let nb = crate::notebook::parse("/large.ipynb", &text).unwrap();
+        let nb = crate::editor::notebook::parse("/large.ipynb", &text).unwrap();
         let saved = FileOutputs {
             file: nb.path.clone(),
             seq: 1,
@@ -1249,7 +1250,7 @@ mod opening_tests {
                 assert_eq!(sources.len(), 1500);
                 assert_eq!(sources[1499], "value = 1499\nprint(value)\n");
                 let written = open.notebook.render(&sources).unwrap();
-                let reopened = crate::notebook::parse("/large.ipynb", &written).unwrap();
+                let reopened = crate::editor::notebook::parse("/large.ipynb", &written).unwrap();
                 assert_eq!(reopened.cells.len(), 1500);
                 assert_eq!(reopened.cells[1499].source, sources[1499]);
                 cx.notify();

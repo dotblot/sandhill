@@ -37,7 +37,7 @@ type Queued = (
 pub struct Daemon {
     rt: Arc<Runtime>,
     client: Arc<Client>,
-    pub(crate) language: Arc<crate::language::transport::Transport>,
+    pub(crate) language: Arc<crate::editor::language::transport::Transport>,
     /// Calls that must reach the daemon in the order they were made.
     queue: UnboundedSender<Queued>,
     /// Ports on the daemon's machine reached from here (see
@@ -161,8 +161,11 @@ impl Daemon {
         async move {
             let (conn, streams) = task.await??;
             let client = Arc::new(conn.client);
-            let (language, lsp) =
-                crate::language::transport::Transport::new(client.clone(), streams.lsp, &rt);
+            let (language, lsp) = crate::editor::language::transport::Transport::new(
+                client.clone(),
+                streams.lsp,
+                &rt,
+            );
             let streams = Streams { lsp, ..streams };
             let (queue, mut queued) = tokio::sync::mpsc::unbounded_channel::<Queued>();
             let sender = client.clone();
@@ -410,8 +413,8 @@ mod tests {
     };
 
     use super::*;
-    use crate::notebook;
-    use crate::shown::{Shown, show};
+    use crate::editor::notebook;
+    use crate::editor::shown::{Shown, show};
 
     /// The workspace's own build of sandhilld (`cargo build -p sandhill-daemon`).
     fn sandhilld() -> Option<PathBuf> {

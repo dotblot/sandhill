@@ -258,7 +258,7 @@ impl Workbench {
                                 this.open_to(if folder { &rel } else { &parent }, cx);
                                 this.files_ui.selected = Some((rel.clone(), folder));
                                 this.refresh_files(cx);
-                                if !folder && crate::notebook::format_of(&rel).is_some() {
+                                if !folder && crate::editor::notebook::format_of(&rel).is_some() {
                                     this.open_file(rel, cx);
                                 }
                             }
@@ -539,7 +539,7 @@ impl Workbench {
         let local = self.target == Target::Local;
         let mut rows: Vec<AnyElement> = Vec::new();
         if !dir {
-            let openable = crate::notebook::can_open(&rel);
+            let openable = crate::editor::notebook::can_open(&rel);
             if openable {
                 let r = rel.clone();
                 rows.push(menu_item(

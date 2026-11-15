@@ -15,7 +15,7 @@ use sandhill_proto::{AppRequest, Call, Focus};
 use serde_json::json;
 
 use crate::agents::cell_ai::{AgentChange, AgentDeleted};
-use crate::notebook::{self, CellKind, Format};
+use crate::editor::notebook::{self, CellKind, Format};
 use crate::workbench::Workbench;
 
 /// Cursor moves are told the daemon once they settle.

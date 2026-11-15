@@ -11,9 +11,9 @@ use sandhill_proto::{Call, CellSuggestion};
 use serde_json::Value;
 
 use crate::agents::cell_ai::pill;
+use crate::editor::notebook::CellKind;
+use crate::editor::shown::{Shown, show};
 use crate::look::{self, Palette, icon};
-use crate::notebook::CellKind;
-use crate::shown::{Shown, show};
 use crate::workbench::{Open, Workbench};
 
 /// The suggestion for the cell after `after` (a cell id).
@@ -287,7 +287,7 @@ impl Workbench {
         Some(
             div()
                 .w_full()
-                .pl(px(crate::cell_view::GUTTER + 8.))
+                .pl(px(crate::editor::cell_view::GUTTER + 8.))
                 .pr(px(6.))
                 .pt(px(4.))
                 .child(body)

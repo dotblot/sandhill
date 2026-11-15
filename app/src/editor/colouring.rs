@@ -6,8 +6,8 @@ use gpui_kit::base::ElementExt as _;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
+use crate::editor::notebook::COLOURINGS;
 use crate::look::{Palette, bar_button, icon};
-use crate::notebook::COLOURINGS;
 use crate::workbench::Workbench;
 
 impl Workbench {
@@ -120,7 +120,7 @@ impl Workbench {
         let text = open.editors[0].read(cx).value().to_string();
         let (dirty, mtime_ms, truncated) = (open.dirty, open.mtime_ms, open.notebook.truncated);
         crate::prefs::save_text_colouring(&self.host(), &path, choice);
-        let Ok(mut nb) = crate::notebook::parse(&path, &text) else {
+        let Ok(mut nb) = crate::editor::notebook::parse(&path, &text) else {
             return;
         };
         nb.truncated = truncated;

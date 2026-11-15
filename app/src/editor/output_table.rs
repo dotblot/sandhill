@@ -5,9 +5,9 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::html_table::Table;
+use crate::editor::html_table::Table;
+use crate::editor::table_selection::{Selection, Target, encode_tsv};
 use crate::look::{self, Palette};
-use crate::table_selection::{Selection, Target, encode_tsv};
 
 const ROW_HEIGHT: f32 = 24.;
 const COLUMN_CHARS: (usize, usize) = (3, 28);

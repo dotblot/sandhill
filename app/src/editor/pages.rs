@@ -15,7 +15,7 @@ use sandhill_proto::{Blob, Call, PageUrl};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::daemon::Daemon;
-use crate::shown::{Page, plotly_page};
+use crate::editor::shown::{Page, plotly_page};
 
 /// What a web view is given: a page's HTML, or an address to load.
 enum Content {

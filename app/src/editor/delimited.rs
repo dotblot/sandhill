@@ -368,10 +368,10 @@ impl Workbench {
         let project = self.project.clone();
         let generation = self.generation;
         self.delimited.as_mut().unwrap().loading = true;
-        let read = crate::documents::read_text_preview(daemon, path.clone());
+        let read = crate::editor::documents::read_text_preview(daemon, path.clone());
         cx.spawn(async move |this, cx| {
             let read = read.await.and_then(|(file, truncated)| {
-                let mut nb = crate::notebook::parse(&file.path, &file.text)?;
+                let mut nb = crate::editor::notebook::parse(&file.path, &file.text)?;
                 nb.truncated = truncated;
                 Ok((nb, file.mtime_ms))
             });
@@ -516,13 +516,13 @@ impl Workbench {
             .iter()
             .find(|s| Some(s.id.as_str()) == dialog.selected.as_deref())?;
         let language = session.language.to_ascii_lowercase();
-        let kind = crate::imports::imports_for(&language).first()?;
-        Some(crate::imports::generated_import_code(
+        let kind = crate::editor::imports::imports_for(&language).first()?;
+        Some(crate::editor::imports::generated_import_code(
             &language,
             kind,
             &dialog.path,
             Some(&session.cwd),
-            &crate::imports::variable_name(&dialog.path),
+            &crate::editor::imports::variable_name(&dialog.path),
         ))
     }
 
