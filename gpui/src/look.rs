@@ -30,6 +30,8 @@ pub const CODE: f32 = 15.;
 pub const SMALL: f32 = 13.;
 /// Pane tab titles and toolbar buttons: 1pt below the chrome's text.
 pub const TAB_TEXT: f32 = 14.;
+/// The room either side of a tab's label, the same in every pane.
+pub const TAB_PAD: f32 = 8.;
 /// A tab: a pill in a 24px track, both fully round (Huan, 2026-11-14).
 pub const TAB_H: f32 = 20.;
 /// The track pane tabs sit in: the tab's height and 2px around it.
@@ -865,6 +867,13 @@ pub(crate) fn floating_header(
         .occlude()
         .child(header)
         .into_any_element()
+}
+
+/// A header that sits above its content (terminals, Plots, the Viewer, a
+/// collapsed pane, the AI pane) wears the floating headers' backdrop, so a
+/// pane's bar doesn't change shade with its tab (Huan, 2026-11-15).
+pub(crate) fn stacked_header(p: &Palette, header: Div) -> AnyElement {
+    header.bg(Hsla { a: 0.82, ..p.glass }).into_any_element()
 }
 
 /// A scroll viewport fills the pane, including the area beneath its header.

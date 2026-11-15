@@ -266,7 +266,7 @@ impl Workbench {
                         {
                             crate::look::floating_header(&p, 0., false, strip)
                         } else {
-                            strip.into_any_element()
+                            crate::look::stacked_header(&p, strip)
                         }
                     }),
             )
@@ -279,30 +279,27 @@ impl Workbench {
         let p = *Palette::get(cx);
         let top_tab =
             |id: &'static str, label: &'static str, which: TopTab, cx: &mut Context<Self>| {
-                // Four tabs share a narrow panel: a little tighter.
-                Self::tab(id, None, label, self.top_tab == which, &p)
-                    .px(px(7.))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                Self::tab(id, None, label, self.top_tab == which, &p).on_click(cx.listener(
+                    move |this, _, _, cx| {
                         this.top_tab = which;
                         if this.panel_collapsed(Panel::LeftTop) {
                             this.left_vertical = Vertical::Split;
                         }
                         cx.notify();
-                    }))
+                    },
+                ))
             };
         let bottom_tab =
             |id: &'static str, label: &'static str, which: BottomTab, cx: &mut Context<Self>| {
-                // As above: with the Plots tools beside them, wider tabs cut
-                // "Viewer" short.
-                Self::tab(id, None, label, self.bottom_tab == which, &p)
-                    .px(px(7.))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                Self::tab(id, None, label, self.bottom_tab == which, &p).on_click(cx.listener(
+                    move |this, _, _, cx| {
                         this.bottom_tab = which;
                         if this.panel_collapsed(Panel::LeftBottom) {
                             this.left_vertical = Vertical::Split;
                         }
                         cx.notify();
-                    }))
+                    },
+                ))
             };
         let restricted = self.restricted();
         let (top, refresh): (AnyElement, Vec<AnyElement>) = match self.top_tab {
@@ -408,7 +405,7 @@ impl Workbench {
                                 .child(self.panel_buttons(Panel::LeftTop, cx))
                                 .map(|strip| {
                                     if self.panel_collapsed(Panel::LeftTop) {
-                                        strip.into_any_element()
+                                        crate::look::stacked_header(&p, strip)
                                     } else {
                                         crate::look::floating_header(&p, 0., false, strip)
                                     }
@@ -469,7 +466,7 @@ impl Workbench {
                                     {
                                         crate::look::floating_header(&p, 0., false, strip)
                                     } else {
-                                        strip.into_any_element()
+                                        crate::look::stacked_header(&p, strip)
                                     }
                                 }),
                         )

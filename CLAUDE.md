@@ -61,6 +61,12 @@ These plans are history: where they differ from this file, this file wins.
   tab after its label, on others in the icon's place under the pointer
   (hover cannot change GPUI layout, so hidden buttons reserve no room);
   unsaved tabs keep their dot after the label.
+  Consistency (Huan, 2026-11-15; `docs/design/ui-consistency-plan.md`,
+  approved, done pane by pane): every pane's bar has the same backdrop
+  whether it floats or is stacked, tabs share one padding
+  (`look::TAB_PAD`), bar icons sit edge to edge, and kernel pickers are
+  round capsules with the neutral wash, no edge. Labels of 12 or 12.5px
+  become 13px; questions about one row are asked in that row.
 - The app reaches the daemon only through the wire protocol, by running
   `sandhilld attach --start` (later through ssh). It never opens notebooks
   or kernels itself, so local and remote work the same way.

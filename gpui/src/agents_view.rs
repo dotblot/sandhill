@@ -146,8 +146,10 @@ impl Agents {
                 icon("history").size(px(14.)).into_any_element(),
                 "History".into(),
             ),
+            // The + button beside it starts one; a second + would read as
+            // another button.
             (Show::New, _) => (
-                icon("add").size(px(14.)).into_any_element(),
+                icon("chat").size(px(14.)).into_any_element(),
                 "New conversation".into(),
             ),
             (_, Some(t)) => (provider(&t.kind).into_any_element(), self.title(t)),
@@ -186,6 +188,7 @@ impl Agents {
                 .px(px(6.))
                 .flex_shrink(1.)
                 .min_w(px(0.))
+                .text_size(px(look::TAB_TEXT))
                 .text_color(p.text)
                 .child(div().flex_none().child(leading))
                 .child(div().min_w_0().truncate().child(label))
@@ -203,7 +206,9 @@ impl Agents {
                 .into_any_element(),
         };
         let gear_on = current.is_some() && matches!(self.show, Show::Chat | Show::Terminal);
-        Workbench::strip(&p)
+        // The same backdrop and icon spacing as the other panes' bars.
+        let strip = Workbench::strip(&p)
+            .gap(px(0.))
             .child(title)
             .child(div().flex_1())
             .child(
@@ -309,7 +314,8 @@ impl Agents {
                         .update(cx, |w, cx| w.maximize_panel(panel, cx));
                     cx.notify();
                 }))
-            })
+            });
+        look::stacked_header(&p, strip)
     }
 
     /// The conversation's menu: compact, rename, end.

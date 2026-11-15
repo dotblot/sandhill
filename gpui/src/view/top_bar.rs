@@ -214,7 +214,7 @@ impl Workbench {
             .flex_none()
             .h(px(look::TAB_H))
             .gap(px(5.))
-            .px(px(10.))
+            .px(px(look::TAB_PAD))
             .rounded_full()
             .text_size(px(look::TAB_TEXT))
             .whitespace_nowrap()
