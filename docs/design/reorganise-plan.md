@@ -171,6 +171,16 @@ Keeps the shared types, command runner and Git pane entry points.
 | `git/action_helpers.rs` | Applying selected lines, action validation, conflict stops and rewrite helpers | 180 |
 | `git/message_helpers.rs` | Agent prompts, invocation, message parsing, and their tests | 180 |
 
+### Daemon `lifecycle.rs`
+
+Keeps ownership/resource types and the daemon's lifecycle entry points.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `lifecycle/ownership.rs` | Process inspection, ownership refresh and their tests | 330 |
+| `lifecycle/components.rs` | Component manifests, MCP registration helpers, uninstall and their tests | 300 |
+| `lifecycle/storage.rs` | Descriptor-relative storage access, accounting, removal and their tests | 340 |
+
 
 ## Order
 
