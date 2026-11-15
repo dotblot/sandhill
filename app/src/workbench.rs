@@ -279,7 +279,7 @@ pub struct Workbench {
     pub(crate) generation: u64,
     /// This window, for agents' edits that arrive from the daemon.
     pub(crate) window_handle: AnyWindowHandle,
-    /// Where the user is, as last told the daemon (see `agent_edits`).
+    /// Where the user is, as last told the daemon (see `agents::edits`).
     pub(crate) focus_sent: Option<sandhill_proto::Focus>,
     pub(crate) focus_generation: u64,
     /// A timer redraws running cells' times.

@@ -131,6 +131,18 @@ are updated by the same commit and the compiler proves none was missed.
 No forwarding names are left behind. `gpui/README.md`'s file names are
 updated to match.
 
+Built 2026-11-15, one commit per folder, each checked with the app's
+format, lint and 291 tests. Two changes from the table: `console.rs`,
+the workbench's own child (it reads the workbench's private fields),
+went to `workbench/console.rs` instead of `panes/`, and `quit.rs` to
+`shell/app_window/quit.rs`; both had been children kept elsewhere by a
+`#[path]`, which is gone. `editor/`, `panes/`, `shell/` and `welcome/`
+each have a short head file declaring the folder. `main.rs` reaches
+`app_window` and `main_menu` through `use shell::{…}`. The app's README
+gained a "Where the code is" table with the old names for its older
+notes, rather than rewriting dated history; current docs and comments
+were updated.
+
 ## Part 5: the few oversized files are split
 
 Only files over 1,500 lines, split the way `file-split-plan.md` did it

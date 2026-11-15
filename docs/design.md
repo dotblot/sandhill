@@ -571,7 +571,7 @@ an icon column, 16px per level and plain guide lines. New files and folders
 are named in a field in the tree, from the + menu (in the selected folder),
 a folder's hover buttons, the right-click menu, ⌘N and ⌥⌘N; a name such as
 `raw/samples.csv` makes the folder too, and new Quarto documents, R scripts
-and notebooks start from a template (`app/src/files.rs`). The right-click
+and notebooks start from a template (`app/src/panes/files.rs`). The right-click
 menu renames, duplicates, copies the path and moves to the Trash, plus
 Reveal in Finder on this Mac, and Download to this Mac and Delete… on a
 server. These go through the daemon (`make_dir`, `move_path`, `copy_path`,
@@ -590,7 +590,7 @@ as in RStudio: for R, text (base and readr), Excel, SPSS, SAS, Stata, R data
 and 10x Genomics; for Python, pandas, Parquet, AnnData and 10x. Each opens a
 dialog that browses the daemon's machine for files it reads, names the
 variable after the file and shows the code before running it in the session,
-so the run shows in the Console (`app/src/imports.rs`). The Data
+so the run shows in the Console (`app/src/editor/imports.rs`). The Data
 Explorer's column list and stats hide with **Hide column stats**, remembered
 on the Mac.
 
@@ -603,7 +603,7 @@ second local-only file reader.
   marks for the current model/provider's available levels. No explanatory
   paragraph. Dense labels must not overlap or widen the fixed model menu.
   *Superseded 2026-11-12 (Huan):* one segmented bar after a Dribbble
-  reference, the chosen level's name in its fill (`app/src/effort_bar.rs`).
+  reference, the chosen level's name in its fill (`app/src/agents/effort_bar.rs`).
 - Hide the title-bar project `+` on the welcome screen only; existing project
   windows retain it. Prefix each expanded/collapsed project capsule's name
   with the existing local-device or remote-server icon. *2026-11-12:* Welcome

@@ -1,7 +1,7 @@
 //! What the message box offers, from the Tauri app's `model/agents.ts` and
 //! `model/mentions.ts`: each agent's models and thinking effort, the modes
 //! (Posit Assistant's names), and the @ menu (files, variables) and # menu
-//! (cells of the notebooks named with @). Drawing is in `agents_view`.
+//! (cells of the notebooks named with @). Drawing is in `agents::view`.
 
 use sandhill_daemon::qmd;
 use sandhill_proto::{AgentOptions, TerminalInfo};

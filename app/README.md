@@ -29,6 +29,29 @@ through their defaults. `Cargo.toml.orig` preserves the upstream manifest.
 Do not patch the machine's Cargo cache.
 When upstream supports the current Kit, compare and replace this local copy.
 
+## Where the code is
+
+Since 2026-11-15 (`docs/design/reorganise-plan.md`) `src/` holds the
+core at the top and six folders named after the part of the window they
+draw; each folder's head file (`agents.rs`, `editor.rs`…) declares it.
+
+| Place | What |
+|---|---|
+| `main.rs`, `workbench.rs` (+ `workbench/`, with `console.rs`), `view.rs` (+ `view/`), `look.rs`, `prefs.rs`, `daemon.rs`, `connection.rs` | Starting up, a project window's state and drawing, styles, this Mac's settings, reaching sandhilld |
+| `agents/` | The AI pane: conversations (`agents.rs`), `view`, `input_box`, `start`, `accounts`, `edits`, `chat`, `composer`, `composer_view` (also every popup's frame), `effort_bar`, `quota`, `cell_ai`, `notebook_ai`, `ghost` |
+| `editor/` | Documents: `notebook`, `cells`, `cell_view`, outputs and tables, `language/` (completion), `media/` (previews), find, outline, imports |
+| `panes/` | Kernels and resources (`machine`, `kernel_menu`, `irkernel`), Help, Packages, Files (`files`, `tree`, `tree_actions`), Plots, the Viewer, the data explorer, the Terminal, Jobs |
+| `git/` | Git: `git.rs`, `pane` (+ `pane/`), `diff`, `log`, `rewrite` |
+| `welcome/` | Welcome (`start_screen` + folder), `folder_dialog`, `trust`, `resource_manager`, `app_uninstall`, `project_settings` |
+| `shell/` | The window's frame: `app_window` (+ `quit`), `main_menu`, `command_palette`, `pane_sizes`, `focus_mode`, `popup`, `meter`, `archive_tasks`, `close_file`, `download` |
+
+Notes below from before that date name files by their old places:
+`agents_box`, `agents_start`, `agents_view`, `agent_accounts` and
+`agent_edits` are now `agents/input_box`, `start`, `view`, `accounts` and
+`edits`; `git_diff`, `git_log`, `git_pane` and `git_rewrite` are
+`git/diff`, `log`, `pane` and `rewrite`; `panes.rs` is
+`shell/pane_sizes.rs`; other files kept their names in their folder.
+
 ## Milestone 1: run one cell
 
 - Starts (or finds) sandhilld on this machine.

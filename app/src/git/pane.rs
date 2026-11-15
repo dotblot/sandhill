@@ -98,7 +98,7 @@ pub(crate) struct Git {
     merge_filled: Option<String>,
     /// The Squash and reorder dialog, when open.
     pub(crate) rewrite: Option<crate::git::rewrite::Rewrite>,
-    // History, read in `git_log.rs`.
+    // History, read in `git/log.rs`.
     pub(crate) log: crate::git::log::Log,
 }
 
