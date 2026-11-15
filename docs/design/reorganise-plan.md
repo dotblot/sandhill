@@ -259,6 +259,17 @@ Keeps the pane render entry point, header, history, terminal and shared artwork/
 | `agents/view/chat_rows.rs` | Chat, trust, message and step rendering, step icons, code-copy and duration helpers | 490 |
 | `agents/view/requests.rs` | Permission, question and plan cards and their reply handlers | 390 |
 
+### App `panes/explorer.rs`
+
+Keeps explorer types, state, construction, selection, layout and render entry points.
+
+| New file | What it holds | About how many lines |
+|---|---|---|
+| `panes/explorer/saved_views.rs` | Saved-view column remapping and its tests | 230 |
+| `panes/explorer/row_loading.rs` | Block requests, row caching, invalidation and shape updates | 210 |
+| `panes/explorer/toolbar.rs` | Action row, menu state and status-note rendering | 200 |
+
+
 
 
 
