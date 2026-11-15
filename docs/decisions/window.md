@@ -1,0 +1,66 @@
+# Window
+
+Settled decisions about the window, its panes, the title bar and Welcome.
+Moved here unchanged from `CLAUDE.md` on 2026-11-15; where an older plan
+differs, this wins.
+
+## Layout and pane sizes
+- Window layout (Huan, 2026-11-02): three columns, 1:2:1. Left: Variables,
+  Help, Packages, Kernels in one group; Files, Git, Plots, Viewer in the
+  other (the two groups split 1:1). Middle: the editor, with Console,
+  Terminal and Jobs under it. Right: the AI pane. Resource indicators follow
+  the device connection at the left of the status bar (Huan, 2026-11-08).
+  The AI pane and the right side pane are shown by default. Each pane's tab
+  bar ends with a maximize button: the pane fills the space between the title
+  and status bars until clicked again or Escape. A title-bar toggle between
+  the left and AI toggles hides the middle column (editor with Console,
+  Terminal and Jobs); the AI pane takes its width, or the left column when the
+  AI pane is hidden; one column always stays, and opening or running a
+  document shows the middle again (Huan, 2026-11-13). Pane height and size
+  icons (Huan, 2026-11-13, redrawn 2026-11-14 after his RStudio-like
+  references): a short window (title row only) collapses a pane to its
+  title row, a tall window with a title bar fills its column, and two
+  overlapping windows restore the split, so the two buttons never match;
+  corners out/in
+  maximize to and restore from the window. The left and middle toggles keep
+  plain outline icons. The AI pane's header shows the conversation's name as
+  plain text, not a tab; AI replies colour code blocks in Python, R, shell,
+  JSON, YAML, TOML, Markdown, SQL, diff, HTML, CSS and JavaScript.
+
+## Title bar, windows and Welcome
+- Title bar (Huan, 2026-11-06): one capsule per project, including multiple
+  projects on the same device. The active capsule shows the project name,
+  a divider and open file tabs; inactive ones show the name and file icons.
+  Each project name has a local-device or remote-server icon. File labels
+  are not repeated in the editor pane. Left panel controls and the right
+  theme switch have no enclosing capsule. The left status bar shows the
+  active project's device and connection state. Windows (Huan, 2026-11-12):
+  exactly one maximized main window holds the projects as capsules; Welcome
+  is its own window, as wide as its sidebar and widest page (1036px; Huan,
+  2026-11-13, after half the display left empty space beside the lists) and
+  half the display's height, at least 800×600 and never resized smaller,
+  never drawn inside the main window. Sandhill
+  starts with the projects open at the last quit, else with Welcome alone;
+  `+` brings Welcome up beside the main window, as does the house button
+  beside the theme switch (Huan, 2026-11-13), and the project chosen opens
+  there, closing Welcome; closing the main window (or its last project)
+  brings Welcome back; closing Welcome alone quits (with the background-work
+  question). Welcome's sidebar and content reach the window top; the sidebar
+  is Devices, Projects, then Manage (Resources and Storage, Trusted
+  Folders), one row selected with its page on the right; it opens on This
+  Mac's page. Projects lists Pinned (the star on any device's projects),
+  Open, then Running (live kernels or agents, not open), each project once.
+  Rows show live kernels and agent conversations. Devices can be renamed and
+  projects given a built-in folder/file icon; both are this Mac's app
+  settings, never written to the device or folder. Resources and Storage is
+  a Welcome page, also from a project window's device menu, never a dialog.
+  Project rows (Huan, 2026-11-14) have a ⋯ menu (also on right-click): Save
+  All Files, Stop All Kernels (confirmed), Close Project, Change Icon.
+  Closing a project with unsaved files or running kernels asks once: Save
+  and Close (default, kernels keep running), Save, Stop Kernels and Close,
+  or Cancel. Removing an open project from the list asks to close it first.
+  Choosing folders (Huan, 2026-11-14): on this Mac, the system's folder
+  window; folders dragged from Finder onto Welcome open as projects here.
+  Servers keep Sandhill's own chooser, read through the daemon, with
+  places, a clickable path, filter/typed paths, keyboard, New Folder,
+  hidden-name toggle, faded files and Git/Sandhill marks.

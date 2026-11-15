@@ -72,6 +72,14 @@ topic files only when they open them. The list in `CLAUDE.md` tells them
 which to read first; a helper that skips it could miss a rule. The gain is
 that Huan can read and correct one topic at a time.
 
+Built 2026-11-15. `CLAUDE.md` is 100 lines. The check found all 204
+sentences of the old section in exactly one new file, with no word lost
+or added; the only change is six new bullet dashes where one 80-line
+bullet (editor, kernels, Plots, completion, explorer) was divided by
+subject. Brand marks and fonts stayed with the icons in `look.md`, as
+they were one bullet. The design-docs list now says `docs/decisions/`
+wins over older plans, and lists `done/`.
+
 ## Part 3: the Mac app's folder is named `app/`
 
 `gpui/` is named after the toolkit. It becomes `app/` (free since the
