@@ -47,6 +47,9 @@ impl Workbench {
             let on = zoom.format == f;
             div()
                 .id(SharedString::from(format!("fmt-{f}")))
+                .flex_1()
+                .flex()
+                .justify_center()
                 .px(px(10.))
                 .py(px(3.))
                 .rounded(px(6.))

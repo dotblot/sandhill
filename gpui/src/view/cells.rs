@@ -315,8 +315,8 @@ impl Workbench {
     /// "30,001 ln", for CSV/TSV "· 41 col", and while text is selected
     /// "· 12 ln selected" or, on one line, "· 3 col selected" (CSV/TSV
     /// columns, else characters; Huan, 2026-11-14). Single-editor documents
-    /// only, not notebooks.
-    fn document_size(&self, open: &Open, p: &Palette, cx: &App) -> Option<AnyElement> {
+    /// only, not notebooks. Sits at the row's right, before the outline.
+    pub(super) fn document_size(&self, open: &Open, p: &Palette, cx: &App) -> Option<AnyElement> {
         if !open.notebook.single_editor() {
             return None;
         }
@@ -389,7 +389,6 @@ impl Workbench {
     /// Document actions inside the editor's single header row.
     pub(super) fn render_notebook_bar(&self, open: &Open, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let size = self.document_size(open, &p, cx);
         let wrap_button = Self::editor_wrap_type(open).map(|kind| {
             icon_button("editor-wrap", "editor.wrap", &p, false)
                 .when(crate::prefs::editor_soft_wrap(kind), |button| {
@@ -406,7 +405,6 @@ impl Workbench {
             return h_flex()
                 .flex_none()
                 .gap(px(4.))
-                .children(size)
                 .when(open.notebook.quarto_source(), |bar| {
                     bar.child(
                         bar_button("quarto-view", "Notebook", Some("doc"), &p)
@@ -460,7 +458,6 @@ impl Workbench {
             .flex_none()
             .gap(px(4.))
             .whitespace_nowrap()
-            .children(size)
             .when(open.notebook.format == notebook::Format::Quarto, |bar| {
                 bar.child(
                     bar_button("quarto-view", "Source", Some("doc"), &p)

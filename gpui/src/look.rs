@@ -1065,8 +1065,10 @@ pub fn tab_close(id: impl Into<ElementId>, shown: bool, p: &Palette) -> Stateful
 }
 
 /// The empty 16px circle of a tab's close button, lit under the pointer.
+/// The cross is muted, not faint, so it reads on hovered tabs in both
+/// themes (Huan, 2026-11-14).
 pub fn close_circle(id: impl Into<ElementId>, p: &Palette) -> Stateful<Div> {
-    let hover = p.ink(8.);
+    let hover = p.ink(10.);
     let text = p.text;
     div()
         .id(id)
@@ -1076,7 +1078,7 @@ pub fn close_circle(id: impl Into<ElementId>, p: &Palette) -> Stateful<Div> {
         .items_center()
         .justify_center()
         .rounded_full()
-        .text_color(p.faint)
+        .text_color(p.muted)
         .cursor_pointer()
         .hover(move |d| d.bg(hover).text_color(text))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

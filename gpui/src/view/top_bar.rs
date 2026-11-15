@@ -393,6 +393,10 @@ impl Workbench {
                     })
                     .when_some(explorer, |d, explorer| d.child(explorer.read(cx).toolbar())),
             )
+            .when_some(
+                document.and_then(|open| self.document_size(open, &p, cx)),
+                |d, size| d.child(size),
+            )
             .when(document.is_some(), |d| d.child(self.outline_button(cx)))
             .child(self.panel_buttons(crate::panes::Panel::Editor, cx))
     }

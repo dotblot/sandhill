@@ -56,7 +56,8 @@ These plans are history: where they differ from this file, this file wins.
   are a faint neutral wash with no edge, and only the picked tab is raised
   (white in light mode, text colour at 20% in dark, soft shadow, no edge).
   The active project's capsule is not raised; its name is in the text colour,
-  others' muted, semibold. Close buttons are one 16px circle: on the picked
+  others' muted, semibold. Close buttons are one 16px circle with a muted
+  (not faint) cross, readable in both themes: on the picked
   tab after its label, on others in the icon's place under the pointer
   (hover cannot change GPUI layout, so hidden buttons reserve no room);
   unsaved tabs keep their dot after the label.
@@ -132,10 +133,10 @@ These plans are history: where they differ from this file, this file wins.
   text cells) shows tables and images: project images through the daemon
   (none outside the project), `https://` images, notebook attachments.
 - Editor actions and pane height controls share one 29px row, not a second
-  toolbar beneath the pane title. It starts with the document's size for
-  single-editor documents ("30,001 ln", CSV/TSV "· 41 col") and, while text
-  is selected, "· 12 ln selected" or on one line "· 3 col selected" (CSV/TSV
-  columns, else characters; Huan, 2026-11-14). Kernel status is a dot inside the picker,
+  toolbar beneath the pane title. Single-editor documents show their size
+  at its right, before the outline button ("30,001 ln", CSV/TSV "· 41 col")
+  and, while text is selected, "· 12 ln selected" or on one line "· 3 col
+  selected" (CSV/TSV columns, else characters; Huan, 2026-11-14). Kernel status is a dot inside the picker,
   after the kernel name. The Console's picker shows its bound file and kernel
   together; it lists the bound file's kernel, the device's other sessions and
   new kernels. Activating or running a document, or clicking a Kernels row,
