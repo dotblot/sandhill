@@ -1050,7 +1050,9 @@ impl Workbench {
         Some(task)
     }
 
-    /// Closes a document's tab, asking first when it has unsaved changes.
+    /// Closes a document's tab. A live kernel or AI conversations about it
+    /// bring up the close card (with the save question in it); otherwise
+    /// only unsaved changes ask.
     pub(crate) fn ask_close(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.close_media(&path, cx) {
             return;
@@ -1058,7 +1060,12 @@ impl Workbench {
         let Some(open) = self.open_at(&path) else {
             return;
         };
-        if !open.dirty {
+        let dirty = open.dirty;
+        if let Some(ask) = self.close_ask(&path, dirty, cx) {
+            self.ask_close_with(ask, window, cx);
+            return;
+        }
+        if !dirty {
             self.close_tab(&path, cx);
             return;
         }

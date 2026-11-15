@@ -423,59 +423,6 @@ impl Workbench {
         .detach();
     }
 
-    /// Packs it into an archive beside it (`format`), or unpacks the
-    /// archive it is (none), in the daemon, keeping the original; large data
-    /// takes a while, so a notice says so meanwhile.
-    fn archive(&mut self, rel: String, format: Option<ArchiveFormat>, cx: &mut Context<Self>) {
-        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
-            return;
-        };
-        let path = join_path(&project, &rel);
-        let name = base_name(&path).to_string();
-        // Only what a compression or a gzip file's decompression makes is
-        // surely a file; a zip's contents may be a folder.
-        let lower = name.to_ascii_lowercase();
-        let single_gzip = [".gz", ".bgz"].iter().any(|e| lower.ends_with(e))
-            && ![".tar.gz", ".tgz"].iter().any(|e| lower.ends_with(e));
-        let file_out = format.is_some() || single_gzip;
-        let (doing, done, verb) = match format {
-            Some(_) => ("Compressing", "Compressed", "compress"),
-            None if single_gzip => ("Decompressing", "Decompressed", "decompress"),
-            None => ("Extracting", "Extracted", "extract"),
-        };
-        self.notice = Some(format!("{doing} {name}…"));
-        cx.notify();
-        let call = match format {
-            Some(format) => Call::CompressPath { path, format },
-            None => Call::ExtractPath { path },
-        };
-        let answer = daemon.call::<FileWritten>(call);
-        cx.spawn(async move |this, cx| {
-            let answer = answer.await;
-            this.update(cx, |this, cx| {
-                match answer {
-                    Ok(written) => {
-                        let made = base_name(&written.path).to_string();
-                        this.notice = Some(format!("{done} {name} to {made}"));
-                        if file_out
-                            && let Some(rel) = written.path.strip_prefix(&format!("{project}/"))
-                        {
-                            this.files_ui.selected = Some((rel.to_string(), false));
-                        }
-                        this.refresh_files(cx);
-                    }
-                    Err(err) => {
-                        this.notice = None;
-                        this.problem = Some(format!("Could not {verb} {name}: {err:#}"));
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// Moves it to the Trash on this machine; on a server, deletes it once
     /// you say so.
     fn remove(&mut self, rel: String, dir: bool, window: &mut Window, cx: &mut Context<Self>) {

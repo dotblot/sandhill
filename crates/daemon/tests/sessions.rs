@@ -10,9 +10,9 @@ use std::time::Duration;
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    ArchiveFormat, BLOB_KEY, CONFLICT_ERROR, Call, CellRef, Deleted, DirEntry, EVENT_RUN_FINISHED,
-    EVENT_RUN_STARTED, EVENT_SESSION_ENDED, EXISTS_ERROR, EntryKind, Event, FileBytes, FileWritten,
-    RunFinished, SessionStatus,
+    ArchiveFormat, ArchiveProgress, BLOB_KEY, CANCELLED_ERROR, CONFLICT_ERROR, Call, CellRef,
+    Deleted, DirEntry, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED, EXISTS_ERROR,
+    EntryKind, Event, FileBytes, FileWritten, RunFinished, SessionStatus,
 };
 use tokio::net::UnixListener;
 use tokio::task::JoinHandle;
@@ -728,7 +728,11 @@ async fn the_file_tree_compresses_and_extracts_beside_the_original() {
         let client = &client;
         async move {
             let written: FileWritten = client
-                .call(Call::CompressPath { path, format })
+                .call(Call::CompressPath {
+                    path,
+                    format,
+                    task: None,
+                })
                 .await
                 .unwrap();
             let path = PathBuf::from(written.path);
@@ -834,6 +838,7 @@ async fn the_file_tree_compresses_and_extracts_beside_the_original() {
         .call::<FileWritten>(Call::CompressPath {
             path: at("results"),
             format: ArchiveFormat::Bgzip,
+            task: None,
         })
         .await
         .unwrap_err();
@@ -842,7 +847,10 @@ async fn the_file_tree_compresses_and_extracts_beside_the_original() {
     let extract = |path: String| {
         let client = &client;
         async move {
-            let written: FileWritten = client.call(Call::ExtractPath { path }).await.unwrap();
+            let written: FileWritten = client
+                .call(Call::ExtractPath { path, task: None })
+                .await
+                .unwrap();
             let path = PathBuf::from(written.path);
             path.file_name().unwrap().to_string_lossy().into_owned()
         }
@@ -901,11 +909,84 @@ async fn the_file_tree_compresses_and_extracts_beside_the_original() {
     client
         .call::<FileWritten>(Call::ExtractPath {
             path: at("evil.zip"),
+            task: None,
         })
         .await
         .unwrap_err();
     assert!(!dir.path().join("evil.txt").exists());
     assert_eq!(std::fs::read_dir(&work).unwrap().count(), before.len());
+}
+
+#[tokio::test]
+async fn compressing_reports_progress_and_stops_when_cancelled() {
+    let dir = common::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    // Bytes that don't compress, so the work takes long enough to watch.
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let noise: Vec<u8> = (0..64 << 20)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as u8
+        })
+        .collect();
+    std::fs::write(work.join("noise.bin"), &noise).unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let client = Arc::new(daemon.client().await);
+    let path = work.join("noise.bin").to_string_lossy().into_owned();
+
+    let packing = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .call::<FileWritten>(Call::CompressPath {
+                    path,
+                    format: ArchiveFormat::Gzip,
+                    task: Some("t1".into()),
+                })
+                .await
+        })
+    };
+    // Progress counts the input read, out of its whole size.
+    let seen = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let progress: Option<ArchiveProgress> = client
+                .call(Call::ArchiveProgress { task: "t1".into() })
+                .await
+                .unwrap();
+            if let Some(p) = progress
+                && p.done > 0
+            {
+                return p;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(seen.total, noise.len() as u64);
+    assert!(seen.done <= seen.total);
+
+    let stopped: bool = client
+        .call(Call::CancelArchive { task: "t1".into() })
+        .await
+        .unwrap();
+    assert!(stopped);
+    let err = packing.await.unwrap().unwrap_err();
+    assert!(err.to_string().contains(CANCELLED_ERROR), "{err}");
+    // Nothing half made is left, and the finished task is forgotten.
+    let left: Vec<_> = std::fs::read_dir(&work)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["noise.bin"]);
+    let progress: Option<ArchiveProgress> = client
+        .call(Call::ArchiveProgress { task: "t1".into() })
+        .await
+        .unwrap();
+    assert_eq!(progress, None);
 }
 
 #[tokio::test]

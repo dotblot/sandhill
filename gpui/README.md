@@ -1137,14 +1137,28 @@ preview and R's imports weren't seen.
   dark; typing into Find column could not be driven by the test tool.
 - **Compress and extract** (Huan, 2026-11-14): the Files menu's Compress to
   .zip, .gz/.tar.gz and .gz (bgzip), Extract Here and Decompress Here
-  (`tree_actions.rs::archive`) send `Call::CompressPath`/`ExtractPath`; the
+  (`archive_tasks.rs::archive`) send `Call::CompressPath`/`ExtractPath`; the
   daemon's `archives.rs` works beside the original under free names
   (claimed with `create_new`), with zip, flate2, tar and noodles-bgzf in
   pure Rust (zlib-rs) so server builds need no C libraries. bgzip runs on
   up to 8 threads. Zips and tarballs unpack into a hidden staging folder,
   then their one item or the folder moves out; a failure removes what was
-  half made. Links stay links; zip64 is used for files from 4 GiB. A
-  notice shows the work meanwhile.
+  half made. Links stay links; zip64 is used for files from 4 GiB.
+- **Archive progress** (Huan, 2026-11-15): calls given a `task` id count
+  the input bytes read (`archives::Counted`) against the input's size;
+  `Call::ArchiveProgress` reads it, `Call::CancelArchive` makes the next
+  read fail with `CANCELLED_ERROR` and the half-made archive is removed.
+  The app asks four times a second (`archive_tasks.rs`) and draws the bar,
+  percentage and Cancel in the status bar; a cancelled task reads
+  "Stopped …", not an error. Checked on a 600 MB file.
+- **Closing a file** (Huan, 2026-11-15; `docs/design/close-file-plan.md`):
+  `ask_close` asks `close_ask` for the file's live kernel (with its other
+  users from `used_by`) and the running conversations `close_file::mentions`
+  ties to it (pin, starting refs, the report's `document`, or a prompt's
+  `place.refs`). Any found bring up `render_close_card`; ticked items are
+  shut down (`shut_down`) or stopped (`StopTerminal`, which keeps them
+  resumable) as the tab closes. Checked with a live kernel and a Codex
+  conversation @-mentioning the file.
 
 
 ## Running it

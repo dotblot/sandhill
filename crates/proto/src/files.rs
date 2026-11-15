@@ -45,6 +45,17 @@ pub enum ArchiveFormat {
     Bgzip,
 }
 
+/// How far a compression or extraction is: bytes read of the input, of
+/// `total` (the files packed, or the archive unpacked).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArchiveProgress {
+    pub done: u64,
+    pub total: u64,
+}
+
+/// Prefix of the error a cancelled compression or extraction returns.
+pub const CANCELLED_ERROR: &str = "cancelled:";
+
 /// The most [`Call::ReadBytes`] returns at once.
 pub const MAX_READ_BYTES: u64 = 4 * 1024 * 1024;
 

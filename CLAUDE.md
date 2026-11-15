@@ -75,6 +75,14 @@ These plans are history: where they differ from this file, this file wins.
   Keep Running and Quit (default), Stop All and Quit, Cancel. A stop failure
   shows one red line, per-device reasons behind "Show details", and Force
   Stop and Quit in place of Stop All. No paragraph or keyboard hint.
+  Closing a file (Huan, 2026-11-15; `docs/design/close-file-plan.md`)
+  whose kernel or AI conversations still run shows a card in the same
+  style: "Close x?", one sentence, a box to shut the kernel down (naming a
+  busy kernel and its other files/Console) and one box per running
+  conversation pinned to, given, working in or @-mentioning the file. All
+  start unticked; stopped conversations stay resumable in history. Unsaved
+  edits fold in (Save and Close, Don't Save, Cancel; else Close, Cancel).
+  Files with nothing running ask only about unsaved edits, as before.
 - Device management lists resources, affected projects, storage paths/sizes and
   per-device results. Default to the current device only. Offline is not success.
   Cleanup/uninstall preserves history by default and project `.sandhill` data.
@@ -137,7 +145,9 @@ These plans are history: where they differ from this file, this file wins.
   "reads 2.fastq"); one item inside an archive comes out as itself,
   several in a folder named after it, without __MACOSX; entries reaching
   outside fail the whole extraction; links stay links; archives are
-  offered extraction only. Rendered Markdown (files, notebook and Quarto
+  offered extraction only. While one runs, the status bar shows its name, a
+  progress bar of the input read, the percentage and Cancel, which stops it
+  and leaves nothing half made (Huan, 2026-11-15). Rendered Markdown (files, notebook and Quarto
   text cells) shows tables and images: project images through the daemon
   (none outside the project), `https://` images, notebook attachments.
 - Editor actions and pane height controls share one 29px row, not a second

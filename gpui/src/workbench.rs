@@ -390,6 +390,11 @@ pub struct Workbench {
     pub(crate) problem: Option<String>,
     /// A short note in the status bar, such as "Saved in …".
     pub(crate) notice: Option<String>,
+    /// Compressions and extractions under way, shown in the status bar.
+    pub(crate) archive_tasks: Vec<crate::archive_tasks::ArchiveTask>,
+    /// The question shown while closing a file with a live kernel or
+    /// AI conversations.
+    pub(crate) closing: Option<crate::close_file::CloseAsk>,
     /// The project's settings (`.sandhill/project.toml`) and their dialog.
     pub(crate) setup: crate::project_settings::Setup,
     pub(crate) settings_env: Entity<InputState>,
@@ -631,6 +636,8 @@ impl Workbench {
             colouring_menu: false,
             problem: None,
             notice: None,
+            archive_tasks: Vec::new(),
+            closing: None,
             setup: Default::default(),
             settings_env,
             vars_filter,

@@ -6,18 +6,25 @@
 //! a single item comes out as itself, several go into a folder named after
 //! the archive. The original always stays and nothing is replaced: a taken
 //! name is numbered ("results 2"). Links inside folders stay links.
+//!
+//! Work started with a task id reports how many input bytes it has read
+//! ([`progress`]) and stops when asked ([`cancel`]), leaving nothing half
+//! made.
 
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufReader, BufWriter, ErrorKind, Write};
+use std::io::{self, BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::num::NonZero;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result, bail};
 use flate2::read::MultiGzDecoder;
 use flate2::{Compression, GzBuilder};
 use noodles_bgzf as bgzf;
-use sandhill_proto::{ArchiveFormat, FileWritten};
+use sandhill_proto::{ArchiveFormat, ArchiveProgress, CANCELLED_ERROR, FileWritten};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
@@ -35,7 +42,115 @@ const MAC_EXTRAS: &str = "__MACOSX";
 /// How many numbered names are tried before giving up.
 const NAMES: u32 = 10_000;
 
-pub fn compress(path: &str, format: ArchiveFormat) -> Result<FileWritten> {
+/// How far one compression or extraction is, and whether to stop it.
+#[derive(Default)]
+struct Progress {
+    done: AtomicU64,
+    total: AtomicU64,
+    cancelled: AtomicBool,
+}
+
+impl Progress {
+    fn check(&self) -> io::Result<()> {
+        if self.cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::other(format!("{CANCELLED_ERROR} stopped")));
+        }
+        Ok(())
+    }
+}
+
+/// The work under way that the app named, by its task id.
+static TASKS: LazyLock<Mutex<HashMap<String, Arc<Progress>>>> = LazyLock::new(Default::default);
+
+/// A task's progress, listed under its id until dropped.
+struct Task {
+    id: Option<String>,
+    progress: Arc<Progress>,
+}
+
+impl Task {
+    fn start(id: Option<String>) -> Self {
+        let progress = Arc::new(Progress::default());
+        if let Some(id) = &id {
+            TASKS.lock().unwrap().insert(id.clone(), progress.clone());
+        }
+        Task { id, progress }
+    }
+
+    /// The error as the caller sees it: plain "cancelled" when it was
+    /// stopped, so the app needn't show it as a failure.
+    fn outcome<T>(&self, result: Result<T>, what: &str) -> Result<T> {
+        if self.progress.cancelled.load(Ordering::Relaxed) {
+            bail!("{CANCELLED_ERROR} {what} stopped");
+        }
+        result.with_context(|| what.to_string())
+    }
+}
+
+impl Drop for Task {
+    fn drop(&mut self) {
+        if let Some(id) = &self.id {
+            TASKS.lock().unwrap().remove(id);
+        }
+    }
+}
+
+/// How far the task `id` is; none once it has finished.
+pub fn progress(id: &str) -> Option<ArchiveProgress> {
+    let tasks = TASKS.lock().unwrap();
+    let p = tasks.get(id)?;
+    let total = p.total.load(Ordering::Relaxed);
+    Some(ArchiveProgress {
+        done: p.done.load(Ordering::Relaxed).min(total),
+        total,
+    })
+}
+
+/// Asks the task `id` to stop. Says whether it was still running.
+pub fn cancel(id: &str) -> bool {
+    match TASKS.lock().unwrap().get(id) {
+        Some(p) => {
+            p.cancelled.store(true, Ordering::Relaxed);
+            true
+        }
+        None => false,
+    }
+}
+
+/// A reader that counts what it reads into the task's progress and fails
+/// once the task is cancelled.
+struct Counted<R> {
+    inner: R,
+    progress: Arc<Progress>,
+}
+
+impl<R: Read> Read for Counted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.progress.check()?;
+        let n = self.inner.read(buf)?;
+        self.progress.done.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
+impl<R: Seek> Seek for Counted<R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+fn counted(path: &Path, progress: &Arc<Progress>) -> io::Result<BufReader<Counted<File>>> {
+    Ok(BufReader::with_capacity(
+        BUFFER,
+        Counted {
+            inner: File::open(path)?,
+            progress: progress.clone(),
+        },
+    ))
+}
+
+pub fn compress(path: &str, format: ArchiveFormat, task: Option<String>) -> Result<FileWritten> {
+    let task = Task::start(task);
     let path = resolve(path)?;
     // The item itself is followed if it's a link; links inside a folder aren't.
     let meta = fs::metadata(&path).with_context(|| format!("cannot find {}", path.display()))?;
@@ -51,24 +166,32 @@ pub fn compress(path: &str, format: ArchiveFormat) -> Result<FileWritten> {
             bail!("bgzip packs one file; compress the folder to .tar.gz instead")
         }
     };
+    let total = if meta.is_dir() {
+        files_size(&path)
+    } else {
+        meta.len()
+    };
+    task.progress.total.store(total, Ordering::Relaxed);
     let (target, file) = create_free(dir, |n| format!("{}{ext}", numbered(&name, n, true)))?;
     let out = BufWriter::with_capacity(BUFFER, file);
+    let progress = &task.progress;
     let packed = match (format, meta.is_dir()) {
-        (ArchiveFormat::Zip, _) => write_zip(&path, &name, &meta, out),
-        (ArchiveFormat::Gzip, false) => write_gzip(&path, &name, &meta, out),
-        (ArchiveFormat::Gzip, true) => write_tar_gz(&path, &name, out),
-        (ArchiveFormat::Bgzip, _) => write_bgzip(&path, out),
+        (ArchiveFormat::Zip, _) => write_zip(&path, &name, &meta, out, progress),
+        (ArchiveFormat::Gzip, false) => write_gzip(&path, &name, &meta, out, progress),
+        (ArchiveFormat::Gzip, true) => write_tar_gz(&path, &name, out, progress),
+        (ArchiveFormat::Bgzip, _) => write_bgzip(&path, out, progress),
     };
-    if let Err(err) = packed {
+    if packed.is_err() {
         let _ = fs::remove_file(&target);
-        return Err(err.context(format!("cannot compress {}", path.display())));
     }
+    task.outcome(packed, &format!("cannot compress {}", path.display()))?;
     written(&target)
 }
 
 /// Unpacks an archive beside itself. Returns what came out: the one file
 /// or folder inside, or the folder holding several.
-pub fn extract(path: &str) -> Result<FileWritten> {
+pub fn extract(path: &str, task: Option<String>) -> Result<FileWritten> {
+    let task = Task::start(task);
     let path = resolve(path)?;
     let (Some(name), Some(dir)) = (path.file_name(), path.parent()) else {
         bail!("cannot extract {}", path.display());
@@ -77,12 +200,31 @@ pub fn extract(path: &str) -> Result<FileWritten> {
     let Some((kind, stem)) = archive_kind(&name) else {
         bail!("{name} is not a .zip, .tar.gz, .tgz, .gz or .bgz file");
     };
+    let size = fs::metadata(&path)
+        .with_context(|| format!("cannot find {}", path.display()))?
+        .len();
+    task.progress.total.store(size, Ordering::Relaxed);
     let out = match kind {
-        Kind::Gzip => decompress(&path, dir, stem),
-        Kind::Zip | Kind::TarGz => unpack(&path, dir, &name, stem, kind),
-    }
-    .with_context(|| format!("cannot extract {}", path.display()))?;
+        Kind::Gzip => decompress(&path, dir, stem, &task.progress),
+        Kind::Zip | Kind::TarGz => unpack(&path, dir, &name, stem, kind, &task.progress),
+    };
+    let out = task.outcome(out, &format!("cannot extract {}", path.display()))?;
     written(&out)
+}
+
+/// The bytes of the files under `dir`, not following links.
+fn files_size(dir: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.metadata() {
+            Ok(meta) if meta.is_dir() => files_size(&entry.path()),
+            Ok(meta) if meta.is_file() => meta.len(),
+            _ => 0,
+        })
+        .sum()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -110,10 +252,10 @@ fn archive_kind(name: &str) -> Option<(Kind, &str)> {
 }
 
 /// A gzip or bgzip file's one file, written beside it.
-fn decompress(path: &Path, dir: &Path, stem: &str) -> Result<PathBuf> {
+fn decompress(path: &Path, dir: &Path, stem: &str, progress: &Arc<Progress>) -> Result<PathBuf> {
     let (target, file) = create_free(dir, |n| numbered(stem, n, false))?;
     let copied = (|| {
-        let mut input = MultiGzDecoder::new(BufReader::with_capacity(BUFFER, File::open(path)?));
+        let mut input = MultiGzDecoder::new(counted(path, progress)?);
         let mut out = BufWriter::with_capacity(BUFFER, file);
         io::copy(&mut input, &mut out)?;
         finish(out)
@@ -127,16 +269,24 @@ fn decompress(path: &Path, dir: &Path, stem: &str) -> Result<PathBuf> {
 
 /// A zip's or tarball's contents, unpacked into a hidden folder first so
 /// nothing half-done shows, then moved beside the archive.
-fn unpack(path: &Path, dir: &Path, name: &str, stem: &str, kind: Kind) -> Result<PathBuf> {
+fn unpack(
+    path: &Path,
+    dir: &Path,
+    name: &str,
+    stem: &str,
+    kind: Kind,
+    progress: &Arc<Progress>,
+) -> Result<PathBuf> {
     let staging = make_staging(dir, name)?;
     let unpacked = (|| {
-        let input = BufReader::with_capacity(BUFFER, File::open(path)?);
+        let input = counted(path, progress)?;
         // Both refuse entries that would land outside the folder.
         if kind == Kind::Zip {
             ZipArchive::new(input)?.extract(&staging)?;
         } else {
             tar::Archive::new(MultiGzDecoder::new(input)).unpack(&staging)?;
         }
+        progress.check()?;
         if fs::symlink_metadata(staging.join(MAC_EXTRAS)).is_ok() {
             fs::remove_dir_all(staging.join(MAC_EXTRAS))?;
         }
@@ -214,19 +364,24 @@ fn numbered(name: &str, n: u32, whole: bool) -> String {
     }
 }
 
-fn write_gzip(path: &Path, name: &str, meta: &fs::Metadata, out: BufWriter<File>) -> Result<()> {
+fn write_gzip(
+    path: &Path,
+    name: &str,
+    meta: &fs::Metadata,
+    out: BufWriter<File>,
+    progress: &Arc<Progress>,
+) -> Result<()> {
     let mut gz = GzBuilder::new()
         .filename(name.as_bytes())
         .mtime(u32::try_from(meta.mtime()).unwrap_or(0))
         .write(out, Compression::default());
-    let mut input = BufReader::with_capacity(BUFFER, File::open(path)?);
-    io::copy(&mut input, &mut gz)?;
+    io::copy(&mut counted(path, progress)?, &mut gz)?;
     finish(gz.finish()?)
 }
 
 /// BGZF blocks, compressed on several threads, ending with bgzip's empty
 /// end-of-file block.
-fn write_bgzip(path: &Path, out: BufWriter<File>) -> Result<()> {
+fn write_bgzip(path: &Path, out: BufWriter<File>, progress: &Arc<Progress>) -> Result<()> {
     let threads = std::thread::available_parallelism()
         .map_or(1, NonZero::get)
         .min(BGZIP_THREADS);
@@ -234,22 +389,64 @@ fn write_bgzip(path: &Path, out: BufWriter<File>) -> Result<()> {
         NonZero::new(threads).unwrap_or(NonZero::<usize>::MIN),
         out,
     );
-    let mut input = BufReader::with_capacity(BUFFER, File::open(path)?);
-    io::copy(&mut input, &mut writer)?;
-    finish(writer.finish()?)
+    let copied = io::copy(&mut counted(path, progress)?, &mut writer);
+    // Finished either way, so its threads end.
+    let out = writer.finish()?;
+    copied?;
+    finish(out)
 }
 
-fn write_tar_gz(path: &Path, name: &str, out: BufWriter<File>) -> Result<()> {
+fn write_tar_gz(
+    path: &Path,
+    name: &str,
+    out: BufWriter<File>,
+    progress: &Arc<Progress>,
+) -> Result<()> {
     let gz = GzBuilder::new().write(out, Compression::default());
     let mut tar = tar::Builder::new(gz);
     tar.follow_symlinks(false);
-    tar.append_dir_all(name, path)?;
+    add_to_tar(&mut tar, path, name, progress)?;
     finish(tar.into_inner()?.finish()?)
 }
 
-fn write_zip(path: &Path, name: &str, meta: &fs::Metadata, out: BufWriter<File>) -> Result<()> {
+/// Adds a file, link or folder (and everything in it) under `entry`,
+/// reading files through the task's count.
+fn add_to_tar<W: Write>(
+    tar: &mut tar::Builder<W>,
+    path: &Path,
+    entry: &str,
+    progress: &Arc<Progress>,
+) -> Result<()> {
+    progress.check()?;
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_file() {
+        let mut header = tar::Header::new_gnu();
+        header.set_metadata(&meta);
+        tar.append_data(&mut header, entry, counted(path, progress)?)?;
+    } else if meta.is_dir() {
+        tar.append_dir(entry, path)?;
+        let mut children: Vec<_> = fs::read_dir(path)?.collect::<io::Result<_>>()?;
+        children.sort_by_key(|c| c.file_name());
+        for child in children {
+            let child_entry = format!("{entry}/{}", child.file_name().to_string_lossy());
+            add_to_tar(tar, &child.path(), &child_entry, progress)?;
+        }
+    } else {
+        // Links and the like, as they are.
+        tar.append_path_with_name(path, entry)?;
+    }
+    Ok(())
+}
+
+fn write_zip(
+    path: &Path,
+    name: &str,
+    meta: &fs::Metadata,
+    out: BufWriter<File>,
+    progress: &Arc<Progress>,
+) -> Result<()> {
     let mut zip = ZipWriter::new(out);
-    add_to_zip(&mut zip, path, name, meta)?;
+    add_to_zip(&mut zip, path, name, meta, progress)?;
     finish(zip.finish()?)
 }
 
@@ -259,7 +456,9 @@ fn add_to_zip(
     path: &Path,
     entry: &str,
     meta: &fs::Metadata,
+    progress: &Arc<Progress>,
 ) -> Result<()> {
+    progress.check()?;
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .unix_permissions(meta.mode() & 0o7777)
@@ -274,12 +473,11 @@ fn add_to_zip(
         for child in children {
             let child_meta = fs::symlink_metadata(child.path())?;
             let child_entry = format!("{entry}/{}", child.file_name().to_string_lossy());
-            add_to_zip(zip, &child.path(), &child_entry, &child_meta)?;
+            add_to_zip(zip, &child.path(), &child_entry, &child_meta, progress)?;
         }
     } else {
         zip.start_file(entry, options.large_file(meta.len() >= ZIP64_AT))?;
-        let mut input = BufReader::with_capacity(BUFFER, File::open(path)?);
-        io::copy(&mut input, zip)?;
+        io::copy(&mut counted(path, progress)?, zip)?;
     }
     Ok(())
 }

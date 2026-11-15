@@ -238,6 +238,7 @@ impl Render for Workbench {
             .children(self.render_tree_menu(cx))
             .children(self.render_palette(cx))
             .children(self.render_signature(cx))
+            .children(self.render_close_card(cx))
     }
 }
 
@@ -341,6 +342,7 @@ impl Workbench {
             .child(self.render_connection_status(cx))
             .children(self.render_restricted_chip(cx))
             .children(self.render_resources(cx))
+            .children(self.render_archive_progress(cx))
             .children(
                 self.problem
                     .clone()

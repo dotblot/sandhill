@@ -604,17 +604,34 @@ pub enum Call {
     /// Packs a file or folder into an archive beside it, keeping the
     /// original: `name.zip`, `name.gz` or (a folder) `name.tar.gz`, or
     /// "name 2.zip" and so on when that's taken. Links inside folders stay
-    /// links. Returns [`FileWritten`] for the archive.
+    /// links. With `task`, [`Call::ArchiveProgress`] reports how far it is
+    /// and [`Call::CancelArchive`] stops it. Returns [`FileWritten`] for
+    /// the archive.
     CompressPath {
         path: String,
         format: ArchiveFormat,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
     },
     /// Unpacks a `.zip`, `.tar.gz`/`.tgz` or `.gz`/`.bgz` (plain or bgzip)
     /// beside it, keeping it: one item inside comes out as itself, several
     /// in a folder named after the archive; taken names are numbered.
-    /// Returns [`FileWritten`] for what came out.
+    /// `task` as for [`Call::CompressPath`]. Returns [`FileWritten`] for
+    /// what came out.
     ExtractPath {
         path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task: Option<String>,
+    },
+    /// How far a compression or extraction started with this `task` is.
+    /// Returns [`ArchiveProgress`], or null once it has finished.
+    ArchiveProgress {
+        task: String,
+    },
+    /// Stops a compression or extraction started with this `task`; it
+    /// fails with [`CANCELLED_ERROR`] and leaves nothing half made.
+    CancelArchive {
+        task: String,
     },
     /// Up to `limit` bytes of a file from `offset` (at most
     /// [`MAX_READ_BYTES`]), for downloading it. Returns [`FileBytes`].
