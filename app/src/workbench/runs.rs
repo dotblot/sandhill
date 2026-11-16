@@ -888,6 +888,7 @@ impl Workbench {
                     self.packages_run_finished(cx);
                 }
                 self.suggest_after_run(&run_id, cx);
+                self.explore_when_made(&run_id, cx);
             }
             _ if run.quiet => {}
             msg_type => {

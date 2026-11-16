@@ -159,6 +159,8 @@ pub struct Input {
     ///
     /// If set, this overrides the built-in context menu.
     context_menu_builder: Option<Rc<dyn Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu>>,
+    /// Sandhill: items added after the menu's own (or the custom one's).
+    context_menu_extra: Option<Rc<dyn Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu>>,
 
     /// An optional paste handler. If set, it is invoked with the clipboard item
     /// before the default text insertion. Return `true` if handled.
@@ -267,6 +269,7 @@ impl Input {
             accessibility_id: None,
             aria_label: None,
             context_menu_builder: None,
+            context_menu_extra: None,
             paste_handler: None,
             token_renderer: None,
             token_click_listener: None,
@@ -395,6 +398,15 @@ impl Input {
         f: impl Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu + 'static,
     ) -> Self {
         self.context_menu_builder = Some(Rc::new(f));
+        self
+    }
+
+    /// Sandhill: adds items after the right-click menu's own.
+    pub fn extend_context_menu(
+        mut self,
+        f: impl Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu + 'static,
+    ) -> Self {
+        self.context_menu_extra = Some(Rc::new(f));
         self
     }
 
@@ -629,6 +641,7 @@ impl RenderOnce for Input {
         state.set_readonly(self.readonly, cx);
         state.set_text_align(text_align, cx);
         let custom = self.context_menu_builder.clone();
+        let extra = self.context_menu_extra.clone();
         state.on_context_menu(
             Rc::new(move |_, capabilities, position, window, cx| {
                 let menu = if let Some(custom) = custom.as_ref() {
@@ -676,6 +689,10 @@ impl RenderOnce for Input {
                         t!("Input.Select All"),
                         Box::new(gpui_base::input::SelectAll),
                     )
+                };
+                let menu = match extra.as_ref() {
+                    Some(extra) => extra(menu, window, cx),
+                    None => menu,
                 };
                 menu.show(position, window, cx);
             }),

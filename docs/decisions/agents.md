@@ -10,6 +10,11 @@ differs, this wins.
   (and brings its output). No @ symbol is shown in the composer box.
   Messages carry no implicit document context (open file, cell or
   selection); only what the user adds with @ and # (Huan, 2026-11-12).
+  With "Code File" and no @ file, the agent's code goes into the document
+  in front (a new cell below the current one, or the end of a script),
+  and only with no document open into the Console (Huan, 2026-11-16;
+  `docs/design/done/chat-editor-batch-plan.md`). Before, it ran in the
+  Console whenever no file was named.
   A new conversation (Huan, 2026-11-14; `docs/design/done/new-conversation-plan.md`)
   shows the agent centred (mark, name, model and account, the project's live
   sessions as chips), then over the message box "Start with" rows that only
@@ -31,7 +36,9 @@ differs, this wins.
   choice of this Mac for every device: off, an agent is not offered, never
   asked for models, accounts or quota, and its old chats take no messages.
   Antigravity starts off, with an amber line saying Google suspended an
-  account used with Sandhill; the user may turn it on. The page has one box
+  account used with Sandhill; the user may turn it on. The page lists the
+  turned-on agents first, then the others, each by name; the order is set
+  when the page opens (Huan, 2026-11-16). The page has one box
   per agent (mark, name, version and plan or "Not installed on …", switch)
   and, for Claude Code, Codex and Antigravity, their accounts: "Default for
   new chats" tag, Sign In when needed, a ⋯ menu (Use for New Chats,
@@ -63,6 +70,23 @@ differs, this wins.
   descriptions only), Codex's and pi's from asking them, OpenScience's and
   Oh My Pi's from their running conversation; Posit Assistant keeps its
   own screen's "/".
+- Conversation tools (Huan, 2026-11-16; `docs/design/done/chat-editor-batch-plan.md`):
+  Up in the message box (caret on its first line) brings back this
+  conversation's earlier messages, Down comes forward and past the newest
+  returns the unsent text. The user's messages can be selected like
+  replies; right-clicking either offers Copy (the selection, else the whole
+  message) and Send to Message Box. Every code block in a reply, and the
+  code of an agent's steps (coloured like the editor, selectable), has Copy
+  and ⋯: Insert at Cursor, Add Cell Below (in the code's language),
+  Run in Console, New File (`untitled.py`…). Under each table in a reply:
+  Copy (tab-separated), Save as CSV… (on this Mac) and Open in Data
+  Explorer, which makes `ai_table_N` in the Console's session with a run
+  shown as "run by Sandhill". Agents end a finished reply with one or two
+  suggestions in a hidden line (`<!-- next: … | … -->`); the latest
+  reply's show as chips, and a click only fills the box. The cell toolbar's
+  Ask AI and the editor's right-click "Ask AI About Selection" put the cell
+  (a # chip) or the selected code (a chip named "file:12–18") in the box
+  and send nothing.
 - Context panel (Huan, 2026-11-16; `docs/design/done/context-plan.md`):
   for Claude Code and Codex, the ring in the box opens a panel with how
   full the conversation is (number, %, a bar of the last request's parts,

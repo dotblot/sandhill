@@ -88,6 +88,7 @@ pub(crate) fn ref_icon(item: &Value) -> AnyElement {
                 .into_any_element()
         }
         "chunk" => icon("outline").size(px(13.)).into_any_element(),
+        "selection" => icon("edit.copy").size(px(13.)).into_any_element(),
         "plot" => icon("zoom").size(px(13.)).into_any_element(),
         "command" => icon("terminal").size(px(13.)).into_any_element(),
         "skill" | "guide" => icon("skill").size(px(13.)).into_any_element(),
@@ -225,15 +226,19 @@ impl Agents {
             }))
             // Up, Down, Tab and Enter are bound to the input's own actions,
             // so the mention list takes those actions rather than key events.
-            .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
+            .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 if matches!(this.menu, Some(Menu::Mention { .. })) {
                     this.move_mention(false, cx);
                     cx.stop_propagation();
+                } else if this.recall(true, window, cx) {
+                    cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|this, _: &MoveDown, _, cx| {
+            .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
                 if matches!(this.menu, Some(Menu::Mention { .. })) {
                     this.move_mention(true, cx);
+                    cx.stop_propagation();
+                } else if this.recall(false, window, cx) {
                     cx.stop_propagation();
                 }
             }))

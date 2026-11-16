@@ -13,3 +13,4 @@ pub(crate) mod main_menu;
 pub(crate) mod meter;
 pub(crate) mod pane_sizes;
 pub(crate) mod popup;
+pub(crate) mod text_menu;

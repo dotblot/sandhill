@@ -327,6 +327,11 @@ pub struct Workbench {
     pub(crate) console_input_height: Option<f32>,
     pub(crate) language: crate::editor::language::Language,
     pub(crate) console_scroll: ScrollHandle,
+    /// The right-click menu over the Console's runs.
+    pub(crate) console_menu: Option<crate::shell::text_menu::TextMenu>,
+    /// A reply's table being made for the Data Explorer: the run making it
+    /// and its name.
+    pub(crate) explore_after: Option<(String, String)>,
     pub(crate) vars: Vars,
     pub(crate) console_tab: ConsoleTab,
     pub(crate) top_tab: TopTab,
@@ -600,6 +605,8 @@ impl Workbench {
             console_input_height: crate::prefs::input_height("console"),
             language: Default::default(),
             console_scroll: ScrollHandle::new(),
+            console_menu: None,
+            explore_after: None,
             vars: Vars::default(),
             console_tab: ConsoleTab::Console,
             top_tab: TopTab::Variables,

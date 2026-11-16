@@ -1313,6 +1313,22 @@ preview and R's imports weren't seen.
   `fastq`, `bam`, `tenx`) and their names in `resolve.folders`; R, R
   Markdown, Quarto and Jupyter are Sandhill drawings in two colours
   (Quarto's light variant keeps its two shades, `"shades": true`).
+- **AI pane, editor and status bar batch** (Huan, 2026-11-16;
+  `docs/design/done/chat-editor-batch-plan.md`): Up/Down recall
+  (`messages.rs` `recall`); `shell/text_menu.rs` is the right-click Copy /
+  Send to Message Box over the conversation and the Console;
+  `agents/code_actions.rs` (Copy and ⋯ on code, step code through
+  `OutputText` with `cached_code_highlights`); `agents/table_actions.rs`
+  (`explore_table` runs visibly and opens the explorer when
+  `explore_when_made` sees the run end); `chat::split_next` takes the
+  agent's `<!-- next: … -->` line onto the turn's footer; `cell_ai.rs`
+  `ask_ai_about_cell`/`ask_ai_about_selection` with a `selection` chip
+  the daemon describes (`choices::Ref.text`); the daemon's `target` falls
+  back to the document in front. The hover provider waits `HOVER_PAUSE`
+  and checks the pointer is over the name; `view/cells.rs` `hover_leaves`
+  closes the box when it leaves. `completion_items::variables_first` and
+  `assigned_names`. The device popup (`connection.rs`) with
+  `prefs::usage_in_status_bar` and `Workbench::measuring`.
 
 
 ## Running it

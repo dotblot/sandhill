@@ -132,6 +132,8 @@ impl Render for Agents {
                 .child(self.render_composer(current.as_ref(), window, cx))
             })
             .children(head)
+            .children(self.render_text_menu(cx))
+            .children(self.render_code_menu(cx))
     }
 }
 
@@ -726,10 +728,21 @@ impl RenderOnce for Provider {
     }
 }
 
-/// A step's card: its code, its diff, its output.
-fn step_card(view: &chat::StepView, p: &Palette) -> AnyElement {
-    let block = |text: String, bg: Hsla, color: Hsla| {
+/// A step's card: its code (in the editor's colours, selectable, with Copy
+/// and ⋯), its diff, its output (selectable).
+pub(super) fn step_card(
+    view: &chat::StepView,
+    key: &str,
+    agents: WeakEntity<Agents>,
+    p: &Palette,
+    cx: &App,
+) -> AnyElement {
+    use crate::editor::output_text::{OutputText, cached_code_highlights};
+    use gpui_kit::component::ActiveTheme as _;
+    let block = |id: String, text: OutputText, bg: Hsla, color: Hsla| {
         div()
+            .id(SharedString::from(id))
+            .relative()
             .max_h(px(360.))
             .overflow_hidden()
             .px(px(10.))
@@ -781,11 +794,36 @@ fn step_card(view: &chat::StepView, p: &Palette) -> AnyElement {
                 .children(lines),
         );
     } else if let Some(code) = view.code.as_ref().filter(|c| !c.is_empty()) {
-        card = card.child(block(code.clone(), p.chunk, p.text));
+        let language = view.language.as_deref().map(str::to_lowercase);
+        let highlights = cached_code_highlights(
+            code,
+            language.as_deref().unwrap_or_default(),
+            &cx.theme().highlight_theme,
+        );
+        let text = OutputText::new(SharedString::from(format!("step-code-{key}")), code.clone())
+            .highlights(highlights);
+        card = card.child(
+            block(format!("step-code-box-{key}"), text, p.chunk, p.text).child(
+                div()
+                    .absolute()
+                    .top(px(4.))
+                    .right(px(4.))
+                    .rounded(px(RADIUS - 4.))
+                    .bg(p.chunk)
+                    .child(crate::agents::code_actions::code_buttons(
+                        SharedString::from(format!("step-{key}")),
+                        code.clone().into(),
+                        language.map(Into::into),
+                        agents,
+                        p,
+                    )),
+            ),
+        );
     }
     if let Some(output) = view.output.as_ref().filter(|o| !o.trim().is_empty()) {
         let text: String = output.lines().take(200).collect::<Vec<_>>().join("\n");
-        card = card.child(block(text, p.bg, p.text));
+        let text = OutputText::new(SharedString::from(format!("step-out-{key}")), text);
+        card = card.child(block(format!("step-out-box-{key}"), text, p.bg, p.text));
     }
     card.into_any_element()
 }

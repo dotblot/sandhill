@@ -443,6 +443,9 @@ impl Workbench {
                     tool("run-below", "run.below", "Run this cell and those below")
                         .on_click(cx.listener(move |this, _, _, cx| this.run_below(ix, cx))),
                 )
+                .child(tool("ask-ai", "agent", "Ask AI about this cell").on_click(
+                    cx.listener(move |this, _, window, cx| this.ask_ai_about_cell(ix, window, cx)),
+                ))
             })
             .when(has_outputs, |d| {
                 d.child(

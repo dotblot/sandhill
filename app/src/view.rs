@@ -236,6 +236,7 @@ impl Render for Workbench {
             .children(self.render_log_dialog(cx))
             .children(self.render_rewrite(cx))
             .children(self.render_tree_menu(cx))
+            .children(self.render_console_menu(cx))
             .children(self.render_palette(cx))
             .children(self.render_signature(cx))
             .children(self.render_close_card(cx))

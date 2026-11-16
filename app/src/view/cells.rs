@@ -17,6 +17,53 @@ fn cell_text(open: &Open, ix: usize, cx: &App) -> String {
     open.editors[ix].read(cx).value().to_string()
 }
 
+/// The editor's right-click item that puts the selection in the AI pane's
+/// message box; dimmed without a selection (Huan, 2026-11-16).
+fn ask_ai_item(
+    editor: &Entity<gpui_kit::component::input::EditorState>,
+) -> impl Fn(
+    gpui_kit::component::native_menu::NativeMenu,
+    &mut Window,
+    &mut App,
+) -> gpui_kit::component::native_menu::NativeMenu
++ 'static {
+    let editor = editor.downgrade();
+    move |menu, _, cx| {
+        let selected = editor
+            .upgrade()
+            .is_some_and(|e| !e.read(cx).selected_range().is_empty());
+        menu.separator().menu_with_disabled(
+            "Ask AI About Selection",
+            !selected,
+            Box::new(crate::AskAiAboutSelection),
+        )
+    }
+}
+
+/// Closes the explanation box as soon as the pointer leaves the name it
+/// explains (Huan, 2026-11-16); the editor itself keeps it until its next
+/// answer, 3 seconds later. Runs after the editor's own mouse move.
+fn hover_leaves(
+    editor: &Entity<gpui_kit::component::input::EditorState>,
+) -> impl Fn(&MouseMoveEvent, &mut Window, &mut App) + 'static {
+    let editor = editor.downgrade();
+    move |event, _, cx| {
+        let Some(editor) = editor.upgrade() else {
+            return;
+        };
+        let left = {
+            let e = editor.read(cx);
+            e.hover_popover().is_some_and(|shown| {
+                !e.range_to_bounds(&shown.symbol_range)
+                    .is_some_and(|bounds| bounds.contains(&event.position))
+            })
+        };
+        if left {
+            editor.update(cx, |e, cx| e.clear_hover_state(cx));
+        }
+    }
+}
+
 impl Workbench {
     /// The notebook and source jumps share the same unobscured viewport edge.
     /// Find has a 24px input, 12px padding and 1px edge; Replace adds 28px.
@@ -259,8 +306,15 @@ impl Workbench {
             .on_action(cx.listener(|this, _: &RunLine, window, cx| this.run_statement(window, cx)))
             // Shift+Enter does the same, as in the Tauri app's scripts.
             .on_action(cx.listener(|this, _: &RunCell, window, cx| this.run_statement(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::AskAiAboutSelection, window, cx| {
+                    this.ask_ai_about_selection(0, window, cx)
+                }),
+            )
+            .on_mouse_move(hover_leaves(&open.editors[0]))
             .child(
                 Editor::new(&open.editors[0])
+                    .extend_context_menu(ask_ai_item(&open.editors[0]))
                     .readonly(open.notebook.truncated)
                     .bordered(false)
                     .appearance(false)
@@ -626,8 +680,15 @@ impl Workbench {
                 this.run_and_advance(ix, window, cx)
             }))
             .on_action(cx.listener(move |this, _: &RunLine, _, cx| this.run_cell(ix, cx)))
+            .on_action(
+                cx.listener(move |this, _: &crate::AskAiAboutSelection, window, cx| {
+                    this.ask_ai_about_selection(ix, window, cx)
+                }),
+            )
+            .on_mouse_move(hover_leaves(editor))
             .child(
                 Editor::new(editor)
+                    .extend_context_menu(ask_ai_item(editor))
                     .bordered(false)
                     .appearance(false)
                     .line_height(px(LINE_HEIGHT))

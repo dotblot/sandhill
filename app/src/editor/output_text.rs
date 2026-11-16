@@ -25,6 +25,41 @@ pub(crate) fn code_highlights(
     highlighter.styles(&(0..code.len()), theme).into()
 }
 
+/// [`code_highlights`] kept for code drawn every frame (the AI pane's step
+/// cards): one parse per code, language and theme.
+pub(crate) fn cached_code_highlights(
+    code: &str,
+    language: &str,
+    theme: &std::sync::Arc<gpui_kit::component::highlighter::HighlightTheme>,
+) -> Highlights {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+    type Key = (u64, String, usize);
+    thread_local! {
+        static CACHE: RefCell<HashMap<Key, Highlights>> = RefCell::new(HashMap::new());
+    }
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hash);
+    let key = (
+        hash.finish(),
+        language.to_string(),
+        std::sync::Arc::as_ptr(theme) as usize,
+    );
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(found) = cache.get(&key) {
+            return found.clone();
+        }
+        if cache.len() >= 256 {
+            cache.clear();
+        }
+        let made = code_highlights(code, language, theme);
+        cache.insert(key, made.clone());
+        made
+    })
+}
+
 /// Keeps selection changes local to the output, rather than rebuilding its
 /// notebook or Console. The standard selectable text still owns hit testing,
 /// Unicode projection, selection painting and copy behavior.

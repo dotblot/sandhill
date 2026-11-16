@@ -298,9 +298,16 @@ fn resource_label(key: &str) -> &'static str {
 }
 
 impl Workbench {
+    /// Whether the device's usage is measured now: shown in the status bar
+    /// (its switch on and the chevron open), or the device popup is open.
+    pub(crate) fn measuring(&self) -> bool {
+        (crate::prefs::usage_in_status_bar() && crate::prefs::resources_shown())
+            || self.connection_menu
+    }
+
     /// Asks the daemon how its machine is doing, now and every few seconds
     /// for as long as this connection lasts. The resources are measured
-    /// only while the status bar shows them; the sessions always.
+    /// only while [`Self::measuring`]; the sessions always.
     pub(crate) fn watch_machine(&mut self, generation: u64, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
@@ -309,15 +316,15 @@ impl Workbench {
                         if this.generation != generation {
                             return None;
                         }
-                        Some((this.daemon()?, this.project.clone()))
+                        Some((this.daemon()?, this.project.clone(), this.measuring()))
                     })
                     .ok()
                     .flatten();
-                let Some((daemon, path)) = link else {
+                let Some((daemon, path, measuring)) = link else {
                     break;
                 };
-                let stats = crate::prefs::resources_shown()
-                    .then(|| daemon.call::<SystemStats>(Call::SystemStats { path }));
+                let stats =
+                    measuring.then(|| daemon.call::<SystemStats>(Call::SystemStats { path }));
                 let sessions = daemon.call::<Vec<SessionInfo>>(Call::ListSessions);
                 drop(daemon);
                 let stats = match stats {
@@ -332,7 +339,7 @@ impl Workbench {
                     // An older daemon can't say; the section stays hidden.
                     // Hidden since asked, the answer is dropped.
                     if let Some(Ok(stats)) = stats
-                        && crate::prefs::resources_shown()
+                        && this.measuring()
                     {
                         this.machine.stats = Some(stats);
                     }
@@ -375,7 +382,7 @@ impl Workbench {
         cx.spawn(async move |this, cx| {
             if let Ok(stats) = stats.await {
                 this.update(cx, |this, cx| {
-                    if this.generation == generation && crate::prefs::resources_shown() {
+                    if this.generation == generation && this.measuring() {
                         this.machine.stats = Some(stats);
                         cx.notify();
                     }
@@ -627,10 +634,12 @@ impl Workbench {
     /// The status bar's left capsule: the device, then (while shown and
     /// `wide`) its CPU, memory, GPUs and disk as numbers, each opening its
     /// details above it, and a chevron that hides or shows them. Hidden,
-    /// they aren't measured at all (Huan, 2026-11-15).
+    /// they aren't measured at all (Huan, 2026-11-15). The device popup's
+    /// switch takes numbers and chevron away (Huan, 2026-11-16).
     pub(crate) fn render_device_capsule(&self, wide: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let shown = crate::prefs::resources_shown();
+        let usage = crate::prefs::usage_in_status_bar();
+        let shown = usage && crate::prefs::resources_shown();
         let ready = matches!(self.link, Link::Ready(_));
         let hover = p.ink(8.);
         let mut items: Vec<AnyElement> = Vec::new();
@@ -675,7 +684,7 @@ impl Workbench {
                 );
             }
         }
-        let toggle = (ready && wide).then(|| {
+        let toggle = (ready && wide && usage).then(|| {
             look::close_circle("status-resources", &p)
                 .child(
                     icon(if shown {

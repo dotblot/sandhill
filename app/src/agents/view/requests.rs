@@ -71,7 +71,13 @@ impl Agents {
                     )),
             );
         } else if view.questions.is_empty() {
-            card = card.child(step_card(&view.view, &p));
+            card = card.child(step_card(
+                &view.view,
+                &format!("ask-{}", ask.id),
+                cx.entity().downgrade(),
+                &p,
+                cx,
+            ));
         }
         if !pending {
             let answer = ask.answer.as_ref().and_then(|a| a["behavior"].as_str());

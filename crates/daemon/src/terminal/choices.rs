@@ -42,6 +42,9 @@ pub struct Ref {
     pub session: Option<String>,
     #[serde(default)]
     pub language: Option<String>,
+    /// The code a `selection` chip carries, as the user selected it.
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 /// The choices in the terminal in `dir` now.
@@ -80,6 +83,11 @@ pub fn refs_text(refs: &[Ref]) -> Option<String> {
                 }
                 None => r.name.clone(),
             },
+            "selection" => format!(
+                "this code they selected, {}:\n```\n{}\n```",
+                r.name,
+                r.text.as_deref().unwrap_or_default().trim_end()
+            ),
             "variable" => {
                 let language = r.language.as_deref().map(language_name).unwrap_or("");
                 let session = r

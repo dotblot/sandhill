@@ -19,6 +19,13 @@ differs, this wins.
   chevron hides the resources, and hidden they are not measured at all
   (this Mac's choice, for every device). Narrow windows drop the resource
   numbers, then the agents' numbers.
+  The device popup (Huan, 2026-11-16): the device, its state and one grey
+  line (sandhilld's version, how long it has run, for another computer its
+  address), its usage as rings (a click opens that resource's details),
+  its running kernels with the files using them, a "Show usage in status
+  bar" switch, then the connection's actions and Sandhill's version. The
+  switch is on by default; off, the status bar has neither the numbers nor
+  the chevron, and usage is measured only while the popup is open.
   The AI pane and the right side pane are shown by default. Each pane's tab
   bar ends with a maximize button: the pane fills the space between the title
   and status bars until clicked again or Escape. A title-bar toggle between

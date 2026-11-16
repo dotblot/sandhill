@@ -37,6 +37,9 @@ kept as Sandhill had them plus 0.10's own small changes to them, the
   sets the interface font (it inherited the editor's code font) and the
   popups' 13px, and its corner away from the text drags to resize it for
   the session.
+- `src/input/input.rs` and `src/input/editor.rs` (2026-11-16):
+  `extend_context_menu` adds items after the right-click menu's own (or a
+  custom one's), for the editor's "Ask AI About Selection".
 
 Everything else is unchanged. Return to the crates.io release once upstream
 offers the same, and remove the patch.

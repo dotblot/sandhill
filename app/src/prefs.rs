@@ -160,6 +160,25 @@ pub(crate) fn save_resources_shown(shown: bool) {
     write("resourcesShown", json!(shown));
 }
 
+/// Whether the status bar has the device's usage at all, numbers and
+/// chevron (Huan, 2026-11-16: the device popup's switch). Off, nothing is
+/// measured while the popup is closed. On this Mac for every device.
+static USAGE_IN_STATUS_BAR: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(None);
+
+pub(crate) fn usage_in_status_bar() -> bool {
+    if let Some(on) = *USAGE_IN_STATUS_BAR.read().unwrap() {
+        return on;
+    }
+    let on = read()["usageInStatusBar"].as_bool().unwrap_or(true);
+    *USAGE_IN_STATUS_BAR.write().unwrap() = Some(on);
+    on
+}
+
+pub(crate) fn save_usage_in_status_bar(on: bool) {
+    *USAGE_IN_STATUS_BAR.write().unwrap() = Some(on);
+    write("usageInStatusBar", json!(on));
+}
+
 /// Whether the window is frosted glass (the default) or solid (Huan,
 /// 2026-11-16: a choice on Welcome's General page). Read on every palette
 /// change, so cached.

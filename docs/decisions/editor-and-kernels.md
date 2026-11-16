@@ -33,6 +33,9 @@ by sentence); where an older plan differs, this wins.
 - Plain output/table text owns a local selection invalidation boundary
   (`output_text.rs`); keep drag highlight updates local rather than polling or
   refreshing the whole notebook. Verify while the mouse is still held down.
+- The Console's code for each run can be selected and copied, keeping its
+  colours; right-click copies the selection, else the run's code (Huan,
+  2026-11-16).
 
 ## Kernels and the Console
 - Kernel status is a dot inside the picker,
@@ -107,6 +110,11 @@ by sentence); where an older plan differs, this wins.
   Tab shows it at once (Huan, 2026-11-15). F1 (fn+F1) on a name in a
   script, cell or the Console opens its page in Help, from the file's own
   kernel (the Console moves to it), else the Console's.
+- The explanation box (hover) shows only while the pointer rests 3 seconds
+  on a name's own letters, never for the blank space past a line's end,
+  and covers that name only, not the list or call around it; leaving the
+  name closes it (Huan, 2026-11-16). In completion lists, names in the
+  Variables pane or assigned in the document come first (Huan, 2026-11-16).
 
 ## Data explorer
 - The data explorer's column edges drag to resize (Huan, 2026-11-14): no

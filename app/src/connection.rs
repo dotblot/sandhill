@@ -100,6 +100,10 @@ impl Workbench {
             .on_click(cx.listener(|this, _, _, cx| {
                 this.connection_menu = !this.connection_menu;
                 this.main_menu = false;
+                // The popup shows the usage, measured or not in the bar.
+                if this.connection_menu && matches!(this.link, Link::Ready(_)) {
+                    this.read_stats(cx);
+                }
                 cx.notify();
             }))
     }
@@ -212,8 +216,9 @@ impl Workbench {
         });
     }
 
-    /// Above the status bar's device item: what the connection is, and what
-    /// can be done to it.
+    /// Above the status bar's device item (Huan, 2026-11-16): the device and
+    /// its state, its usage as rings, its running kernels, the switch for
+    /// usage in the status bar, and what can be done to the connection.
     pub(crate) fn render_connection_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.connection_menu {
             return None;
@@ -221,80 +226,241 @@ impl Workbench {
         let p = *Palette::get(cx);
         let local = self.local();
         let host = self.host();
-        let mut rows: Vec<(&str, String)> = Vec::new();
         let info = self.about.as_ref();
+        let ready = matches!(self.link, Link::Ready(_));
+        let failed = matches!(self.link, Link::Failed(_));
+        let heading = |text: &'static str| {
+            div()
+                .px(px(8.))
+                .pt(px(6.))
+                .pb(px(2.))
+                .text_size(px(look::SMALL - 1.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.faint)
+                .child(text)
+        };
+
+        // The device, its state, and one grey line of what it runs.
+        let mut about: Vec<String> = Vec::new();
         if !local {
             let (user, address) = match host.split_once('@') {
                 Some((user, address)) => (Some(user.to_string()), address.to_string()),
                 None => (None, host.clone()),
             };
-            let named = info
-                .map(|i| i.hostname.clone())
-                .filter(|h| !h.is_empty() && h.split('.').next() != address.split('.').next())
-                .map(|h| format!(" ({h})"))
-                .unwrap_or_default();
-            rows.push(("Address", format!("{address}{named}")));
             let as_user = info
                 .map(|i| i.user.clone())
                 .filter(|u| !u.is_empty())
                 .or(user)
-                .unwrap_or_else(|| "you".into());
-            rows.push(("Via", format!("ssh, as {as_user}")));
+                .map_or_else(String::new, |u| format!("{u}@"));
+            about.push(format!("{as_user}{address} over ssh"));
         }
         if let Some(info) = info {
-            let by = match info.started_by.as_str() {
-                "app" => " · started by Sandhill",
-                "launchd" => " · started by launchd",
-                "systemd" => " · started by systemd",
-                _ => "",
+            about.push(format!("sandhilld {}", info.daemon_version));
+        }
+        if ready {
+            let since = if local {
+                info.map(|i| i.started_ms).filter(|ms| *ms > 0)
+            } else {
+                self.connected_ms
             };
-            rows.push(("sandhilld", format!("{}{by}", info.daemon_version)));
-        }
-        match &self.link {
-            Link::Failed(err) => rows.push(("Error", err.clone())),
-            Link::Ready(_) => {
-                let since = if local {
-                    info.map(|i| i.started_ms).filter(|ms| *ms > 0)
-                } else {
-                    self.connected_ms
-                };
-                if let Some(since) = since {
-                    rows.push((
-                        if local {
-                            "Running for"
-                        } else {
-                            "Connected for"
-                        },
-                        duration(now_ms() - since),
-                    ));
-                }
-                let kernels = self
-                    .machine
-                    .sessions
-                    .iter()
-                    .filter(|s| s.status != sandhill_proto::SessionStatus::Ended)
-                    .count();
-                rows.push((
-                    "Kernels",
-                    if kernels > 0 {
-                        format!("{kernels} running")
-                    } else {
-                        "none running".into()
-                    },
-                ));
+            if let Some(since) = since {
+                about.push(format!("up {}", duration(now_ms() - since)));
             }
-            Link::Connecting => {}
         }
-        rows.push((
-            "Sandhill",
-            format!(
-                "{}{}",
-                env!("CARGO_PKG_VERSION"),
-                option_env!("SANDHILL_COMMIT")
-                    .map(|c| format!(" · {c}"))
-                    .unwrap_or_default()
-            ),
-        ));
+        let (dot, state) = match &self.link {
+            Link::Ready(_) => (p.ok, if local { "Running" } else { "Connected" }),
+            Link::Connecting => (p.busy, "Connecting"),
+            Link::Failed(_) => (p.err, "Disconnected"),
+        };
+        let header = v_flex()
+            .px(px(8.))
+            .pt(px(4.))
+            .pb(px(6.))
+            .gap(px(2.))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        icon(if local {
+                            "device.laptop"
+                        } else {
+                            "device.cloud"
+                        })
+                        .size(px(15.)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(look::SMALL + 1.))
+                            .child(crate::welcome::start_screen::host_label(&host)),
+                    )
+                    .child(
+                        h_flex()
+                            .ml_auto()
+                            .flex_none()
+                            .gap(px(5.))
+                            .text_color(p.muted)
+                            .child(crate::look::dot(dot).size(px(6.)))
+                            .child(state),
+                    ),
+            )
+            .when(!about.is_empty(), |d| {
+                d.child(
+                    div()
+                        .pl(px(23.))
+                        .text_color(p.faint)
+                        .child(about.join(" · ")),
+                )
+            })
+            .when_some(
+                match &self.link {
+                    Link::Failed(err) => Some(err.clone()),
+                    _ => None,
+                },
+                |d, err| d.child(div().pl(px(23.)).text_color(p.err).child(err)),
+            );
+
+        // Usage: a ring each, with the memory and the kernels under them.
+        let usage = ready.then(|| {
+            let body = match &self.machine.stats {
+                None => div()
+                    .px(px(8.))
+                    .text_color(p.faint)
+                    .child("Measuring…")
+                    .into_any_element(),
+                Some(stats) => {
+                    let rows = crate::panes::machine::resource_rows(
+                        stats,
+                        &self.machine.sessions,
+                        &self.kernels,
+                    );
+                    let memory = rows
+                        .iter()
+                        .find(|r| r.key == "mem")
+                        .map(|r| format!("Memory: {}", r.main));
+                    let tiles = rows.into_iter().map(|r| {
+                        let key = r.key;
+                        let high = r.percent.is_some_and(|v| v >= 80);
+                        let hover = p.ink(7.);
+                        let main = r.main.clone();
+                        h_flex()
+                            .id(SharedString::from(format!("usage-{key}")))
+                            .w(relative(0.5))
+                            .gap(px(8.))
+                            .px(px(8.))
+                            .py(px(5.))
+                            .rounded(px(look::RADIUS - 4.))
+                            .hover(move |d| d.bg(hover))
+                            .child(crate::shell::meter::ring_of(
+                                r.percent.map(|v| v as f32 / 100.),
+                                if high { p.err } else { p.accent },
+                                p.ink(18.),
+                                26.,
+                            ))
+                            .child(
+                                v_flex()
+                                    .min_w_0()
+                                    .child(div().text_color(p.muted).child(r.name.clone()))
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(if high { p.err } else { p.text })
+                                            .child(
+                                                r.percent
+                                                    .map_or("–".to_string(), |v| format!("{v}%")),
+                                            ),
+                                    ),
+                            )
+                            .tooltip(move |w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(main.clone())
+                                    .build(w, cx)
+                            })
+                            .cursor_pointer()
+                            // Its details, as the status bar's number opens them.
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.connection_menu = false;
+                                this.machine.resource = Some(key);
+                                cx.notify();
+                            }))
+                    });
+                    v_flex()
+                        .child(h_flex().flex_wrap().children(tiles))
+                        .when_some(memory, |d, memory| {
+                            d.child(
+                                div()
+                                    .px(px(8.))
+                                    .pt(px(2.))
+                                    .text_color(p.faint)
+                                    .child(memory),
+                            )
+                        })
+                        .into_any_element()
+                }
+            };
+            v_flex().child(heading("USAGE")).child(body)
+        });
+
+        // The device's running kernels, and this window's files using them.
+        let sessions: Vec<_> = self
+            .machine
+            .sessions
+            .iter()
+            .filter(|s| s.status != sandhill_proto::SessionStatus::Ended)
+            .collect();
+        let kernels = (ready && !sessions.is_empty()).then(|| {
+            let shown = 5;
+            let lines = sessions.iter().take(shown).map(|s| {
+                let files = self.used_by(&s.id).join(", ");
+                h_flex()
+                    .px(px(8.))
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(crate::panes::machine::session_label(s, &self.kernels)),
+                    )
+                    .child(
+                        div()
+                            .ml_auto()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(p.faint)
+                            .child(files),
+                    )
+            });
+            v_flex()
+                .gap(px(2.))
+                .child(heading("KERNELS"))
+                .children(lines)
+                .when(sessions.len() > shown, |d| {
+                    d.child(
+                        div()
+                            .px(px(8.))
+                            .text_color(p.faint)
+                            .child(format!("and {} more", sessions.len() - shown)),
+                    )
+                })
+        });
+
+        // The status bar's usage, on or off.
+        let usage_switch = h_flex()
+            .px(px(8.))
+            .py(px(4.))
+            .gap(px(8.))
+            .child(div().flex_1().child("Show usage in status bar"))
+            .child(
+                gpui_kit::component::switch::Switch::new("usage-in-status-bar")
+                    .small()
+                    .color(p.accent)
+                    .checked(crate::prefs::usage_in_status_bar())
+                    .accessibility_label("Show usage in status bar")
+                    .on_change(|on: &bool, _, cx| {
+                        crate::shell::choices::choose(crate::shell::choices::Choice::Usage(*on), cx)
+                    }),
+            );
+
         let hover = p.ink(8.);
         let item = |id: &'static str,
                     name: &'static str,
@@ -321,8 +487,6 @@ impl Workbench {
                 }))
                 .into_any_element()
         };
-        let ready = matches!(self.link, Link::Ready(_));
-        let failed = matches!(self.link, Link::Failed(_));
         let mut actions = Vec::new();
         if local && ready {
             actions.push(item(
@@ -376,51 +540,33 @@ impl Workbench {
             cx,
             |this, cx| this.read_log(cx),
         ));
+        let version = format!(
+            "Sandhill {}{}",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("SANDHILL_COMMIT")
+                .map(|c| format!(" · {}", &c[..c.len().min(7)]))
+                .unwrap_or_default()
+        );
+        let separator = || crate::panes::tree_actions::separator(&p);
         let body = crate::agents::composer_view::popup(&p)
             .id("connection-menu")
             .occlude()
-            .w(px(320.))
-            .child(
-                h_flex()
-                    .px(px(8.))
-                    .py(px(4.))
-                    .gap(px(8.))
-                    .child(
-                        icon(if local {
-                            "device.laptop"
-                        } else {
-                            "device.cloud"
-                        })
-                        .size(px(14.)),
-                    )
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(crate::welcome::start_screen::host_label(&host)),
-                    )
-                    .child(div().ml_auto().text_color(p.faint).child(self.state_word())),
-            )
-            .child(
-                v_flex()
-                    .px(px(8.))
-                    .pb(px(4.))
-                    .gap(px(2.))
-                    .children(rows.into_iter().map(|(name, value)| {
-                        h_flex()
-                            .gap(px(10.))
-                            .items_start()
-                            .child(
-                                div()
-                                    .w(px(96.))
-                                    .flex_none()
-                                    .text_color(p.faint)
-                                    .child(name.to_string()),
-                            )
-                            .child(div().flex_1().min_w_0().child(value))
-                    })),
-            )
-            .child(crate::panes::tree_actions::separator(&p))
+            .w(px(340.))
+            .child(header)
+            .when_some(usage, |d, usage| d.child(separator()).child(usage))
+            .when_some(kernels, |d, kernels| d.child(kernels))
+            .child(separator())
+            .child(usage_switch)
+            .child(separator())
             .children(actions)
+            .child(
+                div()
+                    .px(px(8.))
+                    .pt(px(4.))
+                    .text_size(px(look::SMALL - 1.))
+                    .text_color(p.faint)
+                    .child(version),
+            )
             .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
                 if this.popup_triggers.contains("connection", event.position) {
                     return;

@@ -7,9 +7,15 @@ pub(crate) fn ring(value: Option<f32>, color: Hsla, track: Hsla) -> AnyElement {
     ring_track(value, color, track, 14., true)
 }
 
+/// [`ring`] at `size` pixels, its line thicker to match.
+pub(crate) fn ring_of(value: Option<f32>, color: Hsla, track: Hsla, size: f32) -> AnyElement {
+    ring_track(value, color, track, size, true)
+}
+
 fn ring_track(value: Option<f32>, color: Hsla, track: Hsla, size: f32, slash: bool) -> AnyElement {
     let value = value.filter(|v| v.is_finite()).map(|v| v.clamp(0., 1.));
-    let radius = size / 2. - 1.5;
+    let stroke = (size / 9.).max(1.5);
+    let radius = size / 2. - stroke;
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| {
@@ -21,7 +27,7 @@ fn ring_track(value: Option<f32>, color: Hsla, track: Hsla, size: f32, slash: bo
                 )
             };
             let start = -std::f32::consts::FRAC_PI_2;
-            let mut background = PathBuilder::stroke(px(1.5));
+            let mut background = PathBuilder::stroke(px(stroke));
             if value.is_none() {
                 background = background.dash_array(&[px(1.5), px(1.5)]);
             }
@@ -34,7 +40,7 @@ fn ring_track(value: Option<f32>, color: Hsla, track: Hsla, size: f32, slash: bo
             }
             if let Some(value) = value {
                 if value > 0. {
-                    let mut arc = PathBuilder::stroke(px(1.5));
+                    let mut arc = PathBuilder::stroke(px(stroke));
                     arc.move_to(at(start));
                     let steps = (40. * value).ceil() as usize;
                     for step in 1..=steps {

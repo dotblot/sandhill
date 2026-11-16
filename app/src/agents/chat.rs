@@ -109,6 +109,8 @@ pub enum Item {
         at_ms: Option<i64>,
         ms: Option<i64>,
         text: String,
+        /// What the agent suggests asking next; only on the latest turn.
+        next: Vec<String>,
     },
     Note {
         key: String,
@@ -395,6 +397,21 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
                 _ => {}
             }
         }
+        // The agent's suggestions for what to ask next, hidden at the end of
+        // its reply (Huan, 2026-11-16): taken out of the text, kept for the
+        // footer.
+        let mut next = Vec::new();
+        for (_, at, _) in &replies {
+            if let Item::Reply { text, .. } = &mut chat.items[*at] {
+                let (kept, found) = split_next(text);
+                if !found.is_empty() {
+                    next = found;
+                }
+                if kept.len() != text.len() {
+                    *text = kept.to_string();
+                }
+            }
+        }
         for (_, at) in &steps {
             if let Item::Step { step, .. } = &mut chat.items[*at] {
                 step.status = step_status(step, ended);
@@ -418,6 +435,7 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
                 at_ms: end,
                 ms: start.zip(end).map(|(s, e)| e - s),
                 text,
+                next,
             });
         } else if !waiting_here && chat.waiting.is_empty() {
             chat.items.push(Item::Thinking {
@@ -425,7 +443,47 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
             });
         }
     }
+    // Suggestions only while their turn is the last thing in the chat.
+    let last = chat.items.len().saturating_sub(1);
+    for (at, item) in chat.items.iter_mut().enumerate() {
+        if let Item::Footer { next, .. } = item
+            && at != last
+        {
+            next.clear();
+        }
+    }
     chat
+}
+
+/// The reply without the suggestions line the agent ends it with,
+/// `<!-- next: first | second -->`, and those suggestions (two at most).
+/// While the line is still coming in, it is hidden already.
+pub fn split_next(text: &str) -> (&str, Vec<String>) {
+    const MARK: &str = "next:";
+    let Some(at) = text.rfind("<!--") else {
+        return (text, Vec::new());
+    };
+    let inner = text[at + 4..].trim_start();
+    let before = text[..at].trim_end();
+    match inner.find("-->") {
+        // Complete, and the last thing in the reply.
+        Some(end) if inner[end + 3..].trim().is_empty() => match inner[..end].strip_prefix(MARK) {
+            Some(list) => (
+                before,
+                list.split('|')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .take(2)
+                    .map(str::to_string)
+                    .collect(),
+            ),
+            None => (text, Vec::new()),
+        },
+        Some(_) => (text, Vec::new()),
+        // Still streaming: "<!-- ne", "<!-- next: Plot th".
+        None if inner.starts_with(MARK) || MARK.starts_with(inner) => (before, Vec::new()),
+        None => (text, Vec::new()),
+    }
 }
 
 /// Only the latest reply/error turn can offer continuation after a usage limit.

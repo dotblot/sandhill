@@ -195,7 +195,7 @@ impl Agents {
             // Only what the user added with @ and #: messages carry no
             // document of their own, and older ones' recorded `place.file`
             // isn't shown either.
-            Item::User { text, place, .. } => {
+            Item::User { key, text, place } => {
                 let refs: Vec<String> = place["refs"]
                     .as_array()
                     .into_iter()
@@ -214,7 +214,11 @@ impl Agents {
                             .rounded(px(RADIUS))
                             .bg(p.ink(8.))
                             .line_height(rems(1.45))
-                            .child(text.clone()),
+                            .child(crate::editor::output_text::OutputText::new(
+                                SharedString::from(format!("user-{key}")),
+                                text.clone(),
+                            ))
+                            .on_mouse_down(MouseButton::Right, self.text_menu_opener(text, cx)),
                     )
                     .when(!refs.is_empty(), |d| {
                         d.child(
@@ -226,24 +230,44 @@ impl Agents {
                     })
                     .into_any_element()
             }
-            Item::Reply { key, text } => div()
-                .line_height(rems(1.5))
-                .child(
-                    TextView::markdown(SharedString::from(format!("md-{key}")), text.clone())
-                        .selectable(true)
-                        // New words fade in one after another as the reply streams.
-                        .stream_fade(true)
-                        .code_block_actions(code_copy_button)
-                        .style(
-                            TextViewStyle::default()
-                                .paragraph_gap(rems(0.4))
-                                .heading_font_size(|_, _| px(look::CHROME)),
-                        ),
-                )
-                .into_any_element(),
+            Item::Reply { key, text } => {
+                let agents = cx.entity().downgrade();
+                let workbench = self.workbench.clone();
+                div()
+                    .line_height(rems(1.5))
+                    .on_mouse_down(MouseButton::Right, self.text_menu_opener(text, cx))
+                    .child(
+                        TextView::markdown(SharedString::from(format!("md-{key}")), text.clone())
+                            .selectable(true)
+                            // New words fade in one after another as the reply streams.
+                            .stream_fade(true)
+                            .code_block_actions(move |block, _, cx| {
+                                code_block_buttons(block, agents.clone(), cx)
+                            })
+                            .table_actions(move |table, _, cx| {
+                                crate::agents::table_actions::table_buttons(
+                                    table,
+                                    workbench.clone(),
+                                    Palette::get(cx),
+                                )
+                            })
+                            .style(
+                                TextViewStyle::default()
+                                    .paragraph_gap(rems(0.4))
+                                    .heading_font_size(|_, _| px(look::CHROME)),
+                            ),
+                    )
+                    .into_any_element()
+            }
             Item::Step { key, step } => self.render_step(key, step, agent, cx),
             Item::Ask { ask, .. } => self.render_ask(ask, agent, cx),
-            Item::Footer { at_ms, ms, .. } => {
+            Item::Footer {
+                key,
+                at_ms,
+                ms,
+                next,
+                ..
+            } => {
                 let mut parts = Vec::new();
                 if let Some(ms) = ms {
                     parts.push(duration_label(*ms));
@@ -251,13 +275,44 @@ impl Agents {
                 if let Some(at) = at_ms {
                     parts.push(time_label(*at));
                 }
-                h_flex()
+                let line = h_flex()
                     .gap(px(6.))
-                    .mb(px(4.))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(icon("check").size(px(12.)))
-                    .child(parts.join(" · "))
+                    .child(parts.join(" · "));
+                // What the agent suggests next: a click puts it in the box,
+                // to send or change (Huan, 2026-11-16).
+                let chips = next.iter().enumerate().map(|(n, text)| {
+                    let fill = text.clone();
+                    h_flex()
+                        .id(SharedString::from(format!("next-{key}-{n}")))
+                        .flex_none()
+                        .max_w_full()
+                        .gap(px(5.))
+                        .h(px(26.))
+                        .px(px(10.))
+                        .rounded_full()
+                        .border(px(0.5))
+                        .border_color(p.accent.opacity(0.4))
+                        .bg(p.accent_soft)
+                        .text_size(px(look::SMALL + 1.))
+                        .text_color(p.accent)
+                        .cursor_pointer()
+                        .hover(move |d| d.border_color(p.accent))
+                        .child(icon("sparkle").size(px(12.)))
+                        .child(div().min_w_0().truncate().child(text.clone()))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.fill_box(fill.clone(), window, cx)
+                        }))
+                });
+                v_flex()
+                    .gap(px(6.))
+                    .mb(px(4.))
+                    .child(line)
+                    .when(!next.is_empty(), |d| {
+                        d.child(h_flex().flex_wrap().gap(px(6.)).children(chips))
+                    })
                     .into_any_element()
             }
             Item::Note { text, .. } => div()
@@ -293,6 +348,84 @@ impl Agents {
                 .child(format!("{agent} is working…"))
                 .into_any_element(),
         }
+    }
+
+    /// Opens the right-click menu over a message whose text is `whole`.
+    fn text_menu_opener(
+        &self,
+        whole: &str,
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+        let whole = whole.to_string();
+        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+            this.text_menu = Some(crate::shell::text_menu::TextMenu::open(
+                event.position,
+                whole.clone(),
+                window,
+                cx,
+            ));
+            cx.stop_propagation();
+            cx.notify();
+        })
+    }
+
+    /// The conversation's right-click menu: Copy, and Send to Message Box,
+    /// which puts the text in the box at the caret (Huan, 2026-11-16).
+    pub(crate) fn render_text_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::shell::text_menu::{copy, render, row};
+        let menu = self.text_menu.as_ref()?;
+        let p = *Palette::get(cx);
+        let selected = menu.has_selection();
+        let rows = vec![
+            row(
+                "chat-copy",
+                if selected { "Copy" } else { "Copy Message" },
+                if selected { "⌘C" } else { "" },
+                &p,
+                cx,
+                |this, _, cx| {
+                    if let Some(menu) = this.text_menu.take() {
+                        copy(menu.text(), cx);
+                    }
+                },
+            ),
+            row(
+                "chat-to-box",
+                "Send to Message Box",
+                "",
+                &p,
+                cx,
+                |this, window, cx| {
+                    if let Some(menu) = this.text_menu.take() {
+                        let text = menu.text();
+                        this.composer.update(cx, |c, cx| {
+                            // After other text, on a line of its own.
+                            let value = c.value();
+                            let before = &value[..c.cursor().min(value.len())];
+                            let text = if before.trim_end_matches(' ').is_empty()
+                                || before.ends_with('\n')
+                            {
+                                text
+                            } else {
+                                format!("\n{text}")
+                            };
+                            c.insert(text, window, cx);
+                            c.focus(window, cx);
+                        });
+                    }
+                },
+            ),
+        ];
+        Some(render(
+            "chat-text-menu",
+            menu.at,
+            rows,
+            &p,
+            cx,
+            |this: &mut Self| {
+                this.text_menu = None;
+            },
+        ))
     }
 
     /// A step's row, which opens to its card; a request waiting on it shows
@@ -402,7 +535,7 @@ impl Agents {
                         .pl(px(29.))
                         .pr(px(6.))
                         .pb(px(8.))
-                        .child(step_card(&view, &p))
+                        .child(step_card(&view, key, cx.entity().downgrade(), &p, cx))
                         .when_some(file, |d, file| {
                             let name = file.rsplit('/').next().unwrap_or(&file).to_string();
                             d.child(
@@ -460,24 +593,23 @@ fn tool_icon(name: &str) -> &'static str {
     }
 }
 
-/// The copy button in the corner of a reply's code block.
-fn code_copy_button(
+/// Copy and ⋯ in the corner of a reply's code block.
+fn code_block_buttons(
     block: &gpui_kit::base::text::CodeBlock,
-    _: &mut Window,
+    agents: WeakEntity<Agents>,
     cx: &mut App,
-) -> Stateful<Div> {
+) -> Div {
     use std::hash::{Hash as _, Hasher as _};
     let code = block.code();
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     code.hash(&mut hash);
-    icon_button(
-        ("chat-code-copy", hash.finish()),
-        "edit.copy",
+    crate::agents::code_actions::code_buttons(
+        ("chat-code", hash.finish()),
+        code,
+        block.lang(),
+        agents,
         Palette::get(cx),
-        false,
     )
-    .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new("Copy").build(w, cx))
-    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(code.to_string())))
 }
 
 /// "3.1 s", "2 min 5 s".

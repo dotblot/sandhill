@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::input::RopeExt as _;
 
 impl Agents {
     pub(crate) fn choose_new_kind(&mut self, kind: &'static str, cx: &mut Context<Self>) {
@@ -17,6 +18,84 @@ impl Agents {
         };
         kind.and_then(kind_of)
             .map_or("Ask the agent…", |k| k.placeholder)
+    }
+
+    /// This conversation's sent messages, newest first, without repeats
+    /// next to each other.
+    fn sent_prompts(&self) -> Vec<String> {
+        let mut prompts: Vec<String> = Vec::new();
+        for entry in self.entries(&self.draft_key).iter().rev() {
+            if entry.event["kind"] != "prompt" {
+                continue;
+            }
+            let Some(text) = entry.event["text"].as_str().map(str::trim) else {
+                continue;
+            };
+            if !text.is_empty() && prompts.last().is_none_or(|last| last != text) {
+                prompts.push(text.to_string());
+            }
+        }
+        prompts
+    }
+
+    /// Up (`back`) with the caret on the box's first line puts the
+    /// conversation's previous message in the box; Down with it on the last
+    /// line comes forward, and past the newest brings back what was being
+    /// written (Huan, 2026-11-16). Whether it did.
+    pub(crate) fn recall(
+        &mut self,
+        back: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (text, caret, focused) = {
+            let c = self.composer.read(cx);
+            (
+                c.value().to_string(),
+                c.cursor(),
+                c.focus_handle(cx).is_focused(window) && c.selected_range().is_empty(),
+            )
+        };
+        let edge = if back {
+            !text[..caret.min(text.len())].contains('\n')
+        } else {
+            !text[caret.min(text.len())..].contains('\n')
+        };
+        if !focused || !edge {
+            return false;
+        }
+        let recall = self
+            .recall
+            .take()
+            .filter(|(key, _, _)| *key == self.draft_key);
+        let prompts = self.sent_prompts();
+        let (shown, next) = match (recall, back) {
+            (None, false) => return false,
+            (None, true) => match prompts.first() {
+                Some(first) => (first.clone(), Some((0, text))),
+                None => return false,
+            },
+            (Some((_, at, draft)), true) => match prompts.get(at + 1) {
+                Some(older) => (older.clone(), Some((at + 1, draft))),
+                None => {
+                    self.recall = Some((self.draft_key.clone(), at, draft));
+                    return false;
+                }
+            },
+            (Some((_, 0, draft)), false) => (draft, None),
+            (Some((_, at, draft)), false) => match prompts.get(at - 1) {
+                Some(newer) => (newer.clone(), Some((at - 1, draft))),
+                None => (draft, None),
+            },
+        };
+        self.recall = next.map(|(at, draft)| (self.draft_key.clone(), at, draft));
+        self.composer.update(cx, |c, cx| {
+            c.set_value(shown, window, cx);
+            let end = c.text().offset_to_position(c.text().len());
+            c.set_cursor_position(end, window, cx);
+        });
+        cx.notify();
+        true
     }
 
     /// Enter in the message box: starts a conversation with the message,
@@ -39,6 +118,7 @@ impl Agents {
         if sent {
             self.menu = None;
             self.drafts.remove(&self.draft_key);
+            self.recall = None;
             self.composer
                 .update(cx, |c, cx| c.set_value("", window, cx));
         } else {
@@ -116,6 +196,36 @@ impl Agents {
             self.show = Show::New;
         }
         self.say(text, vec![cell], window, cx);
+        cx.notify();
+    }
+
+    /// Puts `refs` in the message box as chips and the caret in it, for the
+    /// user to ask about them; nothing is sent (Huan, 2026-11-16).
+    pub(crate) fn offer_refs(
+        &mut self,
+        refs: Vec<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show != Show::New && self.current().is_none() {
+            self.show = Show::New;
+        }
+        for item in refs {
+            self.add_ref(item);
+        }
+        self.composer.update(cx, |c, cx| c.focus(window, cx));
+        cx.notify();
+    }
+
+    /// Puts `text` in the message box, the caret at its end, for the user
+    /// to send or change.
+    pub(crate) fn fill_box(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.composer.update(cx, |c, cx| {
+            c.set_value(text, window, cx);
+            let end = c.text().offset_to_position(c.text().len());
+            c.set_cursor_position(end, window, cx);
+            c.focus(window, cx);
+        });
         cx.notify();
     }
 

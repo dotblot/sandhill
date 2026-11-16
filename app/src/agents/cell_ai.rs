@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::editor::notebook;
 use crate::look::{self, Palette, icon};
@@ -147,6 +147,36 @@ pub(crate) fn pill(
 }
 
 impl Workbench {
+    /// Cell `ix` as a # chip (which brings its latest output to the agent),
+    /// with the cell's and the file's names.
+    fn cell_mention(&self, ix: usize, cx: &App) -> Option<(Value, String, String)> {
+        let open = self.open.as_ref()?;
+        let cell = open.notebook.cells.get(ix)?;
+        let name = open
+            .code_cells(cx)
+            .into_iter()
+            .find(|c| c.id == cell.id)
+            .map(|c| c.name)?;
+        let rel = self.project_relative(&open.notebook.path);
+        let file = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+        let mention = json!({
+            "kind": "chunk",
+            "name": format!("{file} › {name}"),
+            "path": rel,
+            "cell": cell.id,
+        });
+        Some((mention, name, file))
+    }
+
+    /// `path` relative to the project, when it is inside it.
+    fn project_relative(&self, path: &str) -> String {
+        self.project
+            .as_deref()
+            .and_then(|p| path.strip_prefix(&format!("{}/", p.trim_end_matches('/'))))
+            .unwrap_or(path)
+            .to_string()
+    }
+
     /// Asks the agent in the AI pane to fix cell `ix`'s error, or to
     /// explain it. The message names the cell with #, which brings its
     /// latest output (the error) to the agent.
@@ -157,34 +187,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(open) = &self.open else {
+        let Some((mention, name, file)) = self.cell_mention(ix, cx) else {
             return;
         };
-        let Some(cell) = open.notebook.cells.get(ix) else {
-            return;
-        };
-        let Some(name) = open
-            .code_cells(cx)
-            .into_iter()
-            .find(|c| c.id == cell.id)
-            .map(|c| c.name)
-        else {
-            return;
-        };
-        let path = open.notebook.path.clone();
-        let rel = self
-            .project
-            .as_deref()
-            .and_then(|p| path.strip_prefix(&format!("{}/", p.trim_end_matches('/'))))
-            .unwrap_or(&path)
-            .to_string();
-        let file = rel.rsplit('/').next().unwrap_or(&rel).to_string();
-        let mention = json!({
-            "kind": "chunk",
-            "name": format!("{file} › {name}"),
-            "path": rel,
-            "cell": cell.id,
-        });
         let text = if fix {
             format!(
                 "Fix the error in {name} of {file}. Change that cell (edit_cell) rather than adding a new one, and run it."
@@ -197,6 +202,84 @@ impl Workbench {
             // After this update, as the AI pane reads this window.
             window.defer(cx, move |window, cx| {
                 agents.update(cx, |a, cx| a.ask_about_cell(text, mention, window, cx));
+            });
+        }
+        cx.notify();
+    }
+
+    /// The cell toolbar's Ask AI: cell `ix` goes in the message box as a #
+    /// chip, with the caret there for the question (Huan, 2026-11-16).
+    pub(crate) fn ask_ai_about_cell(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((mention, _, _)) = self.cell_mention(ix, cx) {
+            self.offer_to_agent(vec![mention], window, cx);
+        }
+    }
+
+    /// The editor's "Ask AI About Selection": the code selected in the
+    /// editor of cell `ix` (0 for a script) goes in the message box as a
+    /// chip named by its file and lines (Huan, 2026-11-16).
+    pub(crate) fn ask_ai_about_selection(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.open.as_ref() else {
+            return;
+        };
+        let Some(editor) = open.editors.get(ix) else {
+            return;
+        };
+        let (text, first, last) = {
+            let e = editor.read(cx);
+            let range = e.selected_range();
+            let text = e.value();
+            let text = text.get(range.clone()).unwrap_or_default().to_string();
+            let line_of =
+                |at: usize| e.value()[..at.min(e.value().len())].matches('\n').count() + 1;
+            // A selection ending at a line's start doesn't take that line.
+            let end = if text.ends_with('\n') {
+                range.end - 1
+            } else {
+                range.end
+            };
+            (text, line_of(range.start), line_of(end.max(range.start)))
+        };
+        if text.trim().is_empty() {
+            return;
+        }
+        let rel = self.project_relative(&open.notebook.path);
+        let file = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+        let lines = if first == last {
+            format!("{first}")
+        } else {
+            format!("{first}–{last}")
+        };
+        let mut chip = json!({"kind": "selection", "path": rel, "text": text});
+        if open.single_editor() {
+            chip["name"] = json!(format!("{file}:{lines}"));
+        } else {
+            let Some((_, name, _)) = self.cell_mention(ix, cx) else {
+                return;
+            };
+            chip["name"] = json!(format!("{file} › {name}:{lines}"));
+            chip["cell"] = json!(open.notebook.cells[ix].id);
+        }
+        self.offer_to_agent(vec![chip], window, cx);
+    }
+
+    /// Shows the AI pane and puts `refs` in its message box.
+    fn offer_to_agent(&mut self, refs: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_agents = true;
+        if let Some(agents) = self.agents.clone() {
+            // After this update, as the AI pane reads this window.
+            window.defer(cx, move |window, cx| {
+                agents.update(cx, |a, cx| a.offer_refs(refs, window, cx));
             });
         }
         cx.notify();

@@ -9,6 +9,7 @@
 pub(crate) mod accounts;
 pub(crate) mod cell_ai;
 pub(crate) mod chat;
+pub(crate) mod code_actions;
 pub(crate) mod composer;
 pub(crate) mod composer_view;
 pub(crate) mod context_panel;
@@ -19,6 +20,7 @@ pub(crate) mod input_box;
 pub(crate) mod notebook_ai;
 pub(crate) mod quota;
 pub(crate) mod start;
+pub(crate) mod table_actions;
 pub(crate) mod view;
 
 mod messages;
@@ -363,6 +365,13 @@ pub struct Agents {
     /// Unsent text and chips, by conversation ("new" for a new one).
     pub(crate) drafts: HashMap<String, (String, Vec<Value>)>,
     pub(crate) draft_key: String,
+    /// Up/Down in the message box: the conversation, how far back
+    /// (0 = its newest message) and the unsent text to come back to.
+    pub(crate) recall: Option<(String, usize, String)>,
+    /// The right-click menu over the conversation's text.
+    pub(crate) text_menu: Option<crate::shell::text_menu::TextMenu>,
+    /// The ⋯ menu of a piece of code in the conversation.
+    pub(crate) code_menu: Option<crate::agents::code_actions::CodeMenu>,
     /// A command typed while the agent waits for an answer, which it would
     /// answer: it goes once the agent stops waiting.
     pub(crate) held: Option<(String, String)>,
@@ -456,6 +465,9 @@ impl Agents {
             favourites: crate::prefs::favourites(),
             new_choice: Choice::default(),
             browsed_effort: None,
+            recall: None,
+            text_menu: None,
+            code_menu: None,
             picked: HashMap::new(),
             listed: HashMap::new(),
             drafts: HashMap::new(),

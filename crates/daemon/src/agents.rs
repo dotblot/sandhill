@@ -639,6 +639,12 @@ pub fn instructions(options: &AgentOptions) -> String {
          and what they printed. Files you edit show up in the user's open editor.",
     );
     text.push(' ');
+    text.push_str(
+        "When a reply finishes what the user asked, end it with one more line, which \
+         Sandhill hides and shows as buttons: one or two short next steps they might ask \
+         for, in their words, as `<!-- next: Plot the top 20 genes | Save the table as CSV -->`.",
+    );
+    text.push(' ');
     text.push_str(crate::mcp::bio::GUIDANCE);
     if let Some(pin) = &options.pin {
         text.push_str(&format!(
@@ -655,7 +661,10 @@ pub fn instructions(options: &AgentOptions) -> String {
             " This conversation is about the whole project, not one file. Files the user \
              names with @ (and notebook cells, with #) come with their message: work on a \
              file only when the user names it. add_cell writes into the document the \
-             message names; when it names none, add_cell runs the code in the Console.",
+             message names; when it names none, into the document in front of them, and \
+             with no document open it runs the code in the Console. Unless the user has \
+             chosen to have your code go to the Console, everything they ask you to compute, \
+             load or plot goes in with add_cell; run_code is only for quick checks.",
         );
     }
     text

@@ -25,6 +25,8 @@ pub(crate) enum Choice {
     Agent(&'static str, bool),
     /// Whether the status bar shows, and the daemon measures, resources.
     Resources(bool),
+    /// Whether the status bar has the device's usage at all.
+    Usage(bool),
     /// Whether the window is frosted glass (`prefs::glass`).
     Glass(bool),
 }
@@ -41,6 +43,7 @@ pub(crate) fn choose(choice: Choice, cx: &mut App) {
         Choice::Wrap(kind, on) => crate::prefs::save_editor_soft_wrap(kind, on),
         Choice::Agent(kind, on) => crate::prefs::save_agent_off(kind, !on),
         Choice::Resources(shown) => crate::prefs::save_resources_shown(shown),
+        Choice::Usage(on) => crate::prefs::save_usage_in_status_bar(on),
         Choice::Glass(on) => crate::prefs::save_glass(on),
     }
     if matches!(choice, Choice::Glass(_)) {
@@ -104,8 +107,8 @@ impl Workbench {
                     });
                 }
             }
-            Choice::Resources(shown) => {
-                if shown {
+            Choice::Resources(_) | Choice::Usage(_) => {
+                if self.measuring() {
                     self.read_stats(cx);
                 } else {
                     self.machine.stats = None;

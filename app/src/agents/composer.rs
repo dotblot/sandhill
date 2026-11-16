@@ -962,6 +962,10 @@ pub fn filter_cells<'a>(all: &'a [Mention], query: &str) -> Vec<(String, Vec<&'a
 
 /// Whether a ref is already a chip: the same kind and name.
 pub fn same_ref(a: &Value, b: &Value) -> bool {
+    // Selections: the same code from the same place, whatever the name.
+    if ref_kind(a) == "selection" && ref_kind(b) == "selection" {
+        return a["path"] == b["path"] && a["cell"] == b["cell"] && a["text"] == b["text"];
+    }
     ref_kind(a) == ref_kind(b) && ref_name(a) == ref_name(b)
 }
 

@@ -150,8 +150,8 @@ impl Tools {
             return self.add_to_console(edit).await;
         }
         let mut client = self.client().await?;
-        // With no document named, the code runs in the Console: a file is
-        // written to only when the user names it.
+        // With no document named and none in front, the code runs in the
+        // Console.
         let Ok(file) = self.target(&client, edit.file).await else {
             drop(client);
             return self.add_to_console(edit).await;
@@ -203,7 +203,7 @@ impl Tools {
     async fn add_to_console(&self, edit: Edit<'_>) -> Result<Vec<Value>> {
         let mut client = self.client().await?;
         let focus = self.focus(&client).await;
-        let file = self.target(&client, edit.file).await.ok();
+        let file = self.named_target(&client, edit.file).await;
         let language = match edit.language {
             Some(language) => normalize_language(language),
             None => match self
@@ -435,18 +435,30 @@ impl Tools {
     }
 
     /// The document to edit: the one named, else the one the user's message
-    /// named with @. Not the one in front: a file is worked on only when
-    /// the user names it.
+    /// named with @ (or pinned), else, as the user has the agent's code go
+    /// to the file, the document in front of them (Huan, 2026-11-16; before,
+    /// the code then ran in the Console).
     async fn target(&self, client: &Client, file: Option<&str>) -> Result<String> {
-        if let Some(file) = file {
-            return Ok(self.path(file));
+        if let Some(named) = self.named_target(client, file).await {
+            return Ok(named);
         }
-        if let Some(linked) = self.linked_document(client).await {
-            return Ok(linked);
-        }
-        bail!(
-            "say which document with `file`: the user's message names none (they name a file with @ when they want it worked on)"
+        let front = self
+            .focus(client)
+            .await
+            .and_then(|f| f.file)
+            .filter(|f| cells::kind(Path::new(f)).is_some());
+        front.context(
+            "say which document with `file`: the user's message names none and no document is open in front of them",
         )
+    }
+
+    /// The document named, else the one the user's message named with @
+    /// (or pinned).
+    async fn named_target(&self, client: &Client, file: Option<&str>) -> Option<String> {
+        if let Some(file) = file {
+            return Some(self.path(file));
+        }
+        self.linked_document(client).await
     }
 
     async fn describe_focus(&self, focus: &Focus) -> String {

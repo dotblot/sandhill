@@ -781,15 +781,6 @@ impl HoverProvider for Provider {
         let provider = self.clone();
         let window = window.window_handle();
         cx.spawn(async move |cx| {
-            // Called again only once the pointer has left the box's name:
-            // the box it shows closes now, not when the next one is ready.
-            cx.update(|cx| {
-                if let Some(editor) = provider.editor.upgrade()
-                    && editor.read(cx).hover_popover().is_some()
-                {
-                    editor.update(cx, |editor, cx| editor.clear_hover_state(cx));
-                }
-            });
             let Some(name) = name else {
                 return Ok(None);
             };

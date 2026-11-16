@@ -178,17 +178,32 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let language = self
-            .open
-            .as_ref()
-            .and_then(|open| open.session.id())
-            .and_then(|session| self.session_language(session))
-            .or_else(|| {
-                self.active_kernel()
-                    .and_then(|kernel| self.kernels.iter().find(|spec| spec.name == kernel))
-                    .map(|spec| spec.language.as_str())
-            })
-            .map(str::to_string);
+        self.add_cell_in(at, kind, source, None, window, cx);
+    }
+
+    /// [`Self::add_cell_with`], a Quarto chunk in `language` when given
+    /// (else the document's session's).
+    pub(crate) fn add_cell_in(
+        &mut self,
+        at: usize,
+        kind: CellKind,
+        source: String,
+        language: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let language = language.map(str::to_string).or_else(|| {
+            self.open
+                .as_ref()
+                .and_then(|open| open.session.id())
+                .and_then(|session| self.session_language(session))
+                .or_else(|| {
+                    self.active_kernel()
+                        .and_then(|kernel| self.kernels.iter().find(|spec| spec.name == kernel))
+                        .map(|spec| spec.language.as_str())
+                })
+                .map(str::to_string)
+        });
         let Some(open) = self.open.as_mut().filter(|o| o.notebook.can_add_cells()) else {
             return;
         };

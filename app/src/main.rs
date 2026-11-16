@@ -32,6 +32,7 @@ actions!(
         Save,
         RunCell,
         RunLine,
+        AskAiAboutSelection,
         RunAll,
         Interrupt,
         ToggleConsole,

@@ -219,6 +219,51 @@ fn waits_for_an_answer_while_the_turn_goes_on() {
 }
 
 #[test]
+fn suggestions_leave_the_reply_for_the_latest_footer() {
+    let turn = |t: &str, at: i64, reply: &str| {
+        vec![
+            json!({"turn": t, "kind": "prompt", "text": "go", "at_ms": at}),
+            json!({"turn": t, "kind": "text", "message": t, "text": reply, "at_ms": at + 1}),
+            json!({"turn": t, "kind": "stop", "at_ms": at + 2}),
+        ]
+    };
+    let mut events = turn("t1", 1, "Done.\n<!-- next: Plot it | Save it -->");
+    events.extend(turn(
+        "t2",
+        10,
+        "Plotted.\n\n<!-- next: Save the plot as PDF |  | Colour by sample | A third -->\n",
+    ));
+    let chat = build(&entries(events), false);
+    let replies: Vec<&str> = chat
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Reply { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(replies, vec!["Done.", "Plotted."]);
+    let nexts: Vec<&Vec<String>> = chat
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Footer { next, .. } => Some(next),
+            _ => None,
+        })
+        .collect();
+    assert!(nexts[0].is_empty(), "an older turn keeps none");
+    assert_eq!(*nexts[1], vec!["Save the plot as PDF", "Colour by sample"]);
+    // While it streams in, the line never shows.
+    assert_eq!(split_next("Done.\n<!-- ne").0, "Done.");
+    assert_eq!(split_next("Done.\n<!-- next: Plot th").0, "Done.");
+    // Other comments, and a line that isn't last, stay.
+    let html = "Use <!-- this --> carefully";
+    assert_eq!(split_next(html), (html, vec![]));
+    let middle = "<!-- next: a -->\nmore text";
+    assert_eq!(split_next(middle), (middle, vec![]));
+}
+
+#[test]
 fn puts_parts_together_and_marks_stopped_and_denied_steps() {
     let chat = build(
         &entries(vec![
@@ -235,7 +280,8 @@ fn puts_parts_together_and_marks_stopped_and_denied_steps() {
             key: "ft1".into(),
             at_ms: Some(4),
             ms: Some(3),
-            text: "Hello world".into()
+            text: "Hello world".into(),
+            next: vec![],
         }
     );
     let chat = build(

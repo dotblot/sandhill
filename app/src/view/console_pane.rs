@@ -163,9 +163,22 @@ impl Workbench {
                     _ => None,
                 };
                 let failed = failed_status(run);
+                let code = run.code.trim_end().to_string();
                 v_flex()
                     .gap_1()
                     .pb_2()
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.console_menu = Some(crate::shell::text_menu::TextMenu::open(
+                                event.position,
+                                code.clone(),
+                                window,
+                                cx,
+                            ));
+                            cx.notify();
+                        }),
+                    )
                     .when_some(source, |d, s| {
                         d.child(
                             div()
@@ -332,6 +345,37 @@ impl Workbench {
         if crate::prefs::input_height("console") != self.console_input_height {
             crate::prefs::save_input_height("console", self.console_input_height);
         }
+    }
+
+    /// The Console's right-click menu: Copy the selection, else the run's
+    /// code (Huan, 2026-11-16).
+    pub(crate) fn render_console_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::shell::text_menu::{copy, render, row};
+        let menu = self.console_menu.as_ref()?;
+        let p = *Palette::get(cx);
+        let selected = menu.has_selection();
+        let rows = vec![row(
+            "console-copy",
+            if selected { "Copy" } else { "Copy Code" },
+            if selected { "⌘C" } else { "" },
+            &p,
+            cx,
+            |this: &mut Self, _, cx| {
+                if let Some(menu) = this.console_menu.take() {
+                    copy(menu.text(), cx);
+                }
+            },
+        )];
+        Some(render(
+            "console-text-menu",
+            menu.at,
+            rows,
+            &p,
+            cx,
+            |this: &mut Self| {
+                this.console_menu = None;
+            },
+        ))
     }
 
     pub(crate) fn render_terminal(&self, cx: &mut Context<Self>) -> AnyElement {
