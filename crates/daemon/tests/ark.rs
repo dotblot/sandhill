@@ -68,7 +68,12 @@ async fn the_installed_ark_runs_r() {
         .iter()
         .find(|k| k.name == "ark")
         .unwrap_or_else(|| panic!("the installed Ark is not listed: {specs:?}"));
-    assert_eq!(spec.display_name, "Ark R");
+    // Named as everywhere else (`sandhill_proto::kernel_label`): "R 4.3.3 · Ark".
+    assert!(
+        spec.display_name.starts_with("R ") && spec.display_name.ends_with(" · Ark"),
+        "{}",
+        spec.display_name
+    );
 
     let session = client.start_session("ark", None).await.unwrap().id;
     client.subscribe(&session, None).await.unwrap();
