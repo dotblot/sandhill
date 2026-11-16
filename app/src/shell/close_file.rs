@@ -203,14 +203,18 @@ impl Workbench {
             h_flex()
                 .items_start()
                 .gap(px(8.))
-                .child(Checkbox::new(id).checked(ticked).on_click(cx.listener(
-                    move |this, _: &bool, _, cx| {
-                        if let Some(ask) = this.closing.as_mut() {
-                            toggle(ask);
-                        }
-                        cx.notify();
-                    },
-                )))
+                // Centred on the label's line (the card's 1.25rem), not on
+                // the label and its note together (Huan, 2026-11-16).
+                .child(h_flex().h(rems(1.25)).flex_none().items_center().child(
+                    Checkbox::new(id).checked(ticked).on_click(cx.listener(
+                        move |this, _: &bool, _, cx| {
+                            if let Some(ask) = this.closing.as_mut() {
+                                toggle(ask);
+                            }
+                            cx.notify();
+                        },
+                    )),
+                ))
                 .child(v_flex().min_w_0().child(label).children(note.map(|note| {
                     div()
                         .text_size(px(look::SMALL))
