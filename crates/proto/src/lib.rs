@@ -782,6 +782,12 @@ pub enum Call {
     AgentModels {
         kind: String,
     },
+    /// Commands, skills and Sandhill guides available before a conversation.
+    /// Returns `[{kind, name, description, path?, prompt?}]`; names omit `/`.
+    AgentCommands {
+        kind: String,
+        cwd: String,
+    },
     /// Read-only official CLI account snapshots, without starting conversations.
     /// Returns `[{kind, account, observed_at_ms, status: {rate_limits?}}]`.
     /// A null account explicitly means signed out, not merely unavailable.

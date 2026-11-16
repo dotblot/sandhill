@@ -51,6 +51,17 @@ differs, this wins.
   everything; Sandhill's own Restricted and Ask modes are gone. There is
   no web-search switch: each agent keeps its own default. Following the
   agent's edits is only in Welcome → General.
+- "/" in the message box (Huan, 2026-11-16; `docs/design/done/slash-plan.md`):
+  typed at the start of a message (or from the @ list's "Commands and
+  skills…"), it lists Sandhill's own (Compact while a conversation runs,
+  its bioinformatics guides), then the agent's commands and skills. A pick
+  is a chip, one per message, first; Compact runs at once. Codex's skills go
+  as Codex's skill input; every other pick goes as "/name text"; a guide
+  puts its instruction first. Claude Code's and Antigravity's lists come
+  from their command and skill folders on the device (names and
+  descriptions only), Codex's and pi's from asking them, OpenScience's and
+  Oh My Pi's from their running conversation; Posit Assistant keeps its
+  own screen's "/".
 
 ## The agents
 - Agents: Claude Code and Codex run as unmodified CLIs. Do not read or reuse

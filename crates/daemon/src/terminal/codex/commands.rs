@@ -100,7 +100,7 @@ impl Bridge {
                 return;
             }
         }
-        let mut input = vec![json!({"type": "text", "text": text, "text_elements": []})];
+        let mut input = turn_input(&text, &prompt.refs);
         if let Some(context) = &prompt.context {
             input.push(json!({"type": "text", "text": context, "text_elements": []}));
         }
@@ -264,5 +264,40 @@ impl Bridge {
         } else {
             self.next();
         }
+    }
+}
+
+/// Codex's native skill input accompanies, rather than replaces, the text.
+fn turn_input(text: &str, refs: &[super::super::choices::Ref]) -> Vec<Value> {
+    let mut input = vec![json!({"type": "text", "text": text, "text_elements": []})];
+    input.extend(
+        refs.iter()
+            .filter(|r| r.kind == "skill")
+            .filter_map(|skill| {
+                Some(json!({"type": "skill", "name": skill.name, "path": skill.path.as_deref()?}))
+            }),
+    );
+    input
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_refs_are_native_codex_user_input() {
+        let refs: Vec<super::super::super::choices::Ref> = serde_json::from_value(json!([
+            {"kind": "file", "name": "data.csv", "path": "data.csv"},
+            {"kind": "skill", "name": "scan", "path": "/skills/scan/SKILL.md"},
+            {"kind": "skill", "name": "missing-path"}
+        ]))
+        .unwrap();
+        assert_eq!(
+            turn_input("Inspect data", &refs),
+            vec![
+                json!({"type": "text", "text": "Inspect data", "text_elements": []}),
+                json!({"type": "skill", "name": "scan", "path": "/skills/scan/SKILL.md"})
+            ]
+        );
     }
 }

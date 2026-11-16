@@ -24,8 +24,8 @@ pub struct Choices {
 }
 
 /// Something added to a message: `kind` is `file`, `chunk`, `variable`,
-/// `plot` or `attach` (a file from the user's Mac), `name` how the app
-/// showed it.
+/// `plot`, `attach` (a file from the user's Mac), or `skill` (native Codex
+/// input); `name` is how the app showed it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Ref {
     pub kind: String,
@@ -66,11 +66,11 @@ pub fn of(report: &Value) -> Choices {
 
 /// What the agent is told of the things added to a message.
 pub fn refs_text(refs: &[Ref]) -> Option<String> {
-    if refs.is_empty() {
+    if !refs.iter().any(|r| r.kind != "skill") {
         return None;
     }
     let mut text = String::from("Sandhill: the user added these to this message:");
-    for r in refs {
+    for r in refs.iter().filter(|r| r.kind != "skill") {
         let path = r.path.as_deref().unwrap_or(&r.name);
         let line = match r.kind.as_str() {
             "file" => format!("the file {path}"),
@@ -152,5 +152,13 @@ mod tests {
              - gel.png, a file from their Mac, saved as .sandhill/attachments/gel.png"
         );
         assert_eq!(refs_text(&[]), None);
+        let skills = serde_json::from_value::<Vec<Ref>>(json!([
+            {"kind": "skill", "name": "scan", "path": "/skills/scan/SKILL.md"}
+        ]))
+        .unwrap();
+        assert_eq!(refs_text(&skills), None);
+        let mut mixed = refs.clone();
+        mixed.extend(skills);
+        assert_eq!(refs_text(&mixed), Some(text));
     }
 }

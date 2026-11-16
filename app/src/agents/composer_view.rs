@@ -77,7 +77,8 @@ fn heading(text: impl Into<SharedString>, p: &Palette) -> Div {
         .child(text.into())
 }
 
-/// A ref's icon: a file's, else a cell's, a plot's or a table.
+/// A ref's icon: a file's, else a cell's, a plot's, a command's, a skill's
+/// or a table.
 pub(crate) fn ref_icon(item: &Value) -> AnyElement {
     match ref_kind(item) {
         "file" | "attach" => {
@@ -88,6 +89,9 @@ pub(crate) fn ref_icon(item: &Value) -> AnyElement {
         }
         "chunk" => icon("outline").size(px(13.)).into_any_element(),
         "plot" => icon("zoom").size(px(13.)).into_any_element(),
+        "command" => icon("terminal").size(px(13.)).into_any_element(),
+        "skill" | "guide" => icon("skill").size(px(13.)).into_any_element(),
+        "compact" => icon("compact").size(px(13.)).into_any_element(),
         _ => icon("table").size(px(13.)).into_any_element(),
     }
 }
@@ -109,7 +113,8 @@ impl Agents {
             .clamp(2, LINES);
         let t = current.filter(|_| self.show != Show::New);
         let working = t.is_some_and(|t| self.working(t));
-        let typed = !self.composer.read(cx).value().trim().is_empty();
+        let typed = !self.composer.read(cx).value().trim().is_empty()
+            || self.refs.iter().any(composer::is_slash);
         let stopping = working && !typed;
         let kind = self.box_kind().to_string();
         let focused = self
@@ -156,13 +161,13 @@ impl Agents {
                     .bg(p.ink(6.))
                     .text_size(px(look::SMALL))
                     .child(ref_icon(item))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(ref_name(item).to_string()),
-                    )
+                    .child(div().min_w_0().overflow_hidden().whitespace_nowrap().child(
+                        if composer::is_slash(item) {
+                            format!("/{}", ref_name(item))
+                        } else {
+                            ref_name(item).to_string()
+                        },
+                    ))
                     .child(
                         div()
                             .id(("ref-x", i))
@@ -246,7 +251,10 @@ impl Agents {
                 }
             }))
             .capture_action(cx.listener(|this, action: &Enter, window, cx| {
-                if matches!(this.menu, Some(Menu::Mention { .. })) && !action.shift {
+                if matches!(this.menu, Some(Menu::Mention { .. }))
+                    && !action.shift
+                    && !this.slash_unmatched()
+                {
                     this.pick_mention(None, window, cx);
                     cx.stop_propagation();
                 }
@@ -319,7 +327,7 @@ impl Agents {
                                         d.bg(pill_hover)
                                     })
                                     .child(icon("add").size(px(13.)).text_color(p.muted))
-                                    .tooltip(tip("Add files, cells, variables or plots (@ or #)"))
+                                    .tooltip(tip("Add files, cells, variables, plots, commands or skills (@ # /)"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.toggle_add(window, cx)
                                     })),
@@ -525,7 +533,7 @@ impl Agents {
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_color(p.faint)
-                                .font_family(look::MONO)
+                                .when(sign != '/', |d| d.font_family(look::MONO))
                                 .text_size(px(look::SMALL - 1.))
                                 .child(m.detail.clone().unwrap_or_default()),
                         )
@@ -543,11 +551,29 @@ impl Agents {
                 Some(_) if sign == '#' && composer::cell_documents(&self.refs).is_empty() => {
                     "Add a notebook with @ first; then # picks one of its cells".into()
                 }
+                Some(_) if sign == '/' && !query.is_empty() => {
+                    format!("Nothing matches “{query}”: Enter sends it as typed")
+                }
                 Some(_) if !query.is_empty() => format!("Nothing matches “{query}”"),
                 Some(_) if sign == '#' => "No code cells in it yet".into(),
+                Some(_) if sign == '/' => "No commands or skills".into(),
                 Some(_) => "Nothing to add yet".into(),
             };
             rows.push(heading(text, p).into_any_element());
+        }
+        let kind = self.box_kind();
+        if sign == '/'
+            && matches!(kind, "openscience" | "omp")
+            && self.box_terminal().is_none_or(|t| !t.running)
+        {
+            let name = kind_of(kind).map_or("The agent", |k| k.name);
+            rows.push(
+                heading(
+                    format!("{name}'s own commands come once the conversation starts"),
+                    p,
+                )
+                .into_any_element(),
+            );
         }
         if sign == '@' {
             rows.push(div().h(px(1.)).my(px(4.)).bg(p.line).into_any_element());
@@ -571,10 +597,34 @@ impl Agents {
                     }))
                     .into_any_element(),
             );
+            if !terminal_only(kind) {
+                rows.push(
+                    h_flex()
+                        .id("mention-slash")
+                        .flex_none()
+                        .gap(px(7.))
+                        .h(px(26.))
+                        .px(px(8.))
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .hover(|d| d.bg(p.accent).text_color(p.primary_text))
+                        .child(icon("skill").size(px(13.)))
+                        .child("Commands and skills…")
+                        .child(div().flex_1())
+                        .child(div().text_color(p.faint).child("/"))
+                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                        .on_click(cx.listener(|this, _, window, cx| this.open_slash(window, cx)))
+                        .into_any_element(),
+                );
+            }
         }
         popup(p)
             .id("mention-menu")
-            .w(px(MENU_WIDTH))
+            .w(px(if sign == '/' {
+                MENU_WIDTH + 80.
+            } else {
+                MENU_WIDTH
+            }))
             .max_h(px(320.))
             .overflow_y_scroll()
             .track_scroll(&self.mention_scroll)

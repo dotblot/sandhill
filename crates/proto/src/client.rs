@@ -739,6 +739,14 @@ impl Client {
         self.call(Call::AgentModels { kind: kind.into() }).await
     }
 
+    pub async fn agent_commands(&self, kind: &str, cwd: &str) -> Result<Vec<serde_json::Value>> {
+        self.call(Call::AgentCommands {
+            kind: kind.into(),
+            cwd: cwd.into(),
+        })
+        .await
+    }
+
     pub async fn agent_accounts(&self) -> Result<Vec<serde_json::Value>> {
         self.call(Call::AgentAccounts).await
     }

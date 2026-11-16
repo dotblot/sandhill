@@ -40,6 +40,9 @@ pub(super) struct Edit<'a> {
 pub struct Prompt {
     /// What the agent is told with it.
     pub context: Option<String>,
+    /// Exact reference snapshot used to build this turn's context. Codex sends
+    /// skill references as native input items, not as file descriptions.
+    pub refs: Vec<crate::terminal::choices::Ref>,
     /// What the chat shows went with it: `{refs}`, the names of what the
     /// user added with @ and #.
     pub place: Option<Value>,
@@ -112,6 +115,8 @@ impl Tools {
                     lines.push(text);
                 }
             }
+        }
+        if !choices.refs.is_empty() {
             place["refs"] = json!(choices.refs.iter().map(|r| &r.name).collect::<Vec<_>>());
         }
         // Null when the message names none, so the last one doesn't stay.
@@ -121,6 +126,7 @@ impl Tools {
         }
         Prompt {
             context: (!lines.is_empty()).then(|| lines.join("\n")),
+            refs: choices.refs,
             place: (place.as_object().is_some_and(|p| !p.is_empty())).then_some(place),
             report,
         }

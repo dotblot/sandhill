@@ -24,10 +24,14 @@ impl Agents {
     /// one, as its own screen takes messages.
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).value().trim().to_string();
-        if text.is_empty() && !(self.show == Show::New && terminal_only(self.new_kind)) {
+        let picked = self.refs.iter().any(composer::is_slash);
+        if text.is_empty() && !picked && !(self.show == Show::New && terminal_only(self.new_kind)) {
             return;
         }
-        if matches!(self.menu, Some(Menu::Mention { .. })) {
+        if self.slash_unmatched() {
+            // "/…" that is none of the list's goes as typed.
+            self.menu = None;
+        } else if matches!(self.menu, Some(Menu::Mention { .. })) {
             return self.pick_mention(None, window, cx);
         }
         let refs = std::mem::take(&mut self.refs);
@@ -54,6 +58,17 @@ impl Agents {
         let kind = match self.show {
             Show::New => Some(self.new_kind),
             _ => self.current().map(|t| t.kind.as_str()),
+        };
+        // A "/" pick goes as the agent takes it.
+        let (text, refs) = match refs.iter().position(composer::is_slash) {
+            Some(at) => {
+                let mut refs = refs;
+                let pick = refs.remove(at);
+                let (text, skill) = composer::slash_message(kind.unwrap_or_default(), &pick, &text);
+                refs.extend(skill);
+                (text, refs)
+            }
+            None => (text, refs),
         };
         if let Some(off) = kind.filter(|kind| turned_off(kind)).and_then(kind_of) {
             self.problem = Some(format!(

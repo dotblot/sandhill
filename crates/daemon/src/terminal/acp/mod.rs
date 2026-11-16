@@ -560,8 +560,17 @@ impl Bridge {
     async fn message(&mut self, message: Value) -> Result<()> {
         match message["method"].as_str() {
             Some("session/update") => {
-                if message["params"]["sessionId"] == self.session {
-                    self.update(&message["params"]["update"]).await?;
+                let params = &message["params"];
+                // Some agents publish commands while session/new is still
+                // pending, before its response gives us the session ID.
+                let starting_commands = self.session.is_empty()
+                    && params["update"]["sessionUpdate"] == "available_commands_update"
+                    && self
+                        .pending
+                        .values()
+                        .any(|request| matches!(request, Request::Session));
+                if params["sessionId"] == self.session || starting_commands {
+                    self.update(&params["update"]).await?;
                 }
             }
             Some("session/request_permission") => self.permission(&message).await?,
@@ -864,6 +873,21 @@ impl Bridge {
                 .await?;
         }
         match kind {
+            "available_commands_update" => {
+                let commands: Vec<Value> = update["availableCommands"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|command| {
+                        Some(crate::agent_commands::item(
+                            "command",
+                            command["name"].as_str()?,
+                            command["description"].as_str().unwrap_or(""),
+                        ))
+                    })
+                    .collect();
+                self.report(json!({"commands": commands})).await?;
+            }
             "agent_message_chunk" | "agent_thought_chunk" => {
                 let text = content_text(&update["content"]);
                 if self.stream.kind != kind {

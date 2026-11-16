@@ -548,3 +548,153 @@ else:
     );
     terminals.close(&info.id).await.unwrap();
 }
+
+#[tokio::test]
+async fn codex_sends_initial_say_and_set_skills_as_native_turn_input() {
+    let Some(python) = sandhill_daemon::agents::find("python3") else {
+        eprintln!("skipping: python3 is needed for the fake Codex process");
+        return;
+    };
+    let dir = common::tempdir().unwrap();
+    let fake = dir.path().join("codex-skills");
+    let script = r#"
+import json, pathlib, sys, time
+root = pathlib.Path(__file__).parent
+number = 0
+def send(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get('method')
+    params = request.get('params', {})
+    result = {}
+    if method == 'initialized':
+        continue
+    if method == 'thread/start':
+        result = dict(thread=dict(id='skill-thread', turns=[]), model='test-model')
+    elif method == 'model/list':
+        result = dict(data=[])
+    elif method == 'account/read':
+        result = dict(account=None)
+    elif method == 'turn/start':
+        with (root / 'calls.jsonl').open('a') as out:
+            out.write(json.dumps(dict(kind='turn', input=params['input'])) + '\n')
+        number += 1
+        turn = dict(id='turn-' + str(number), status='completed', items=[])
+        result = dict(turn=turn)
+    send(dict(id=request['id'], result=result))
+    if method == 'turn/start':
+        time.sleep(0.05)
+        send(dict(method='turn/completed', params=dict(turn=turn)))
+"#;
+    std::fs::write(&fake, format!("#!{}\n{script}", python.display())).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let skill = |name: &str| json!({"kind": "skill", "name": name, "path": format!("/skills/{name}/SKILL.md")});
+    let options = AgentOptions {
+        refs: vec![skill("initial")],
+        ..AgentOptions::default()
+    };
+    let terminals = Terminals::new(
+        dir.path().join("terminals"),
+        env!("CARGO_BIN_EXE_sandhilld").into(),
+    );
+    let info = terminals
+        .start(Launch {
+            kind: "codex".into(),
+            title: "Codex skills".into(),
+            program: env!("CARGO_BIN_EXE_sandhilld").into(),
+            args: vec![
+                "--socket".into(),
+                dir.path()
+                    .join("unused.sock")
+                    .to_string_lossy()
+                    .into_owned(),
+                "codex-chat".into(),
+                "--codex".into(),
+                fake.to_string_lossy().into_owned(),
+                "--prompt".into(),
+                "First message".into(),
+                "--options".into(),
+                serde_json::to_string(&options).unwrap(),
+            ],
+            env: vec![],
+            cwd: dir.path().to_path_buf(),
+            project: None,
+            options,
+            size: None,
+            job: None,
+        })
+        .await
+        .unwrap();
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut entries = Vec::new();
+    let mut output = String::new();
+    for (index, text) in [
+        "First message",
+        "Second message",
+        "Third message",
+        "No skill",
+    ]
+    .iter()
+    .enumerate()
+    {
+        if index == 1 {
+            command(
+                &terminals,
+                &info.id,
+                json!({"kind": "say", "text": text, "refs": [skill("say")]}),
+            )
+            .await;
+        } else if index == 2 {
+            command(
+                &terminals,
+                &info.id,
+                json!({"kind": "set", "refs": [skill("set")]}),
+            )
+            .await;
+            command(&terminals, &info.id, json!({"kind": "say", "text": text})).await;
+        } else if index == 3 {
+            command(&terminals, &info.id, json!({"kind": "say", "text": text})).await;
+        }
+        until(
+            &terminals,
+            &info.id,
+            &mut events,
+            &mut entries,
+            &mut output,
+            |entries, _, agent| {
+                entries.iter().filter(|e| e["kind"] == "stop").count() > index
+                    && agent["state"] == "idle"
+            },
+        )
+        .await;
+    }
+    let turns = records(dir.path());
+    assert_eq!(turns.len(), 4);
+    for (turn, name) in turns[..3].iter().zip(["initial", "say", "set"]) {
+        let input = turn["input"].as_array().unwrap();
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0]["type"], "text");
+        assert_eq!(
+            input[1],
+            json!({"type": "skill", "name": name, "path": format!("/skills/{name}/SKILL.md")})
+        );
+        assert!(!input[0]["text"].as_str().unwrap().contains("saved as"));
+    }
+    assert_eq!(turns[3]["input"].as_array().unwrap().len(), 1);
+    for name in ["initial", "say", "set"] {
+        assert!(
+            entries
+                .iter()
+                .any(|e| e["kind"] == "prompt" && e["place"]["refs"] == json!([name]))
+        );
+    }
+    terminals.close(&info.id).await.unwrap();
+}

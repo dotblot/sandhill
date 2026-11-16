@@ -726,10 +726,90 @@ pub fn filter_mentions<'a>(all: &'a [Mention], query: &str) -> Vec<(String, Vec<
         .collect()
 }
 
+/// The "/" list's groups, in order: Sandhill's own (Compact, its guides),
+/// then the agent's commands and skills.
+pub const SLASH_GROUPS: [(&str, &str); 3] = [
+    ("sandhill", "Sandhill"),
+    ("command", "Commands"),
+    ("skill", "Skills"),
+];
+
+fn slash_group(kind: &str) -> &str {
+    match kind {
+        "compact" | "guide" => "sandhill",
+        kind => kind,
+    }
+}
+
+/// The "/" list's items matching `query` (any part of the name or
+/// description, any case), grouped in list order.
+pub fn filter_commands<'a>(all: &'a [Mention], query: &str) -> Vec<(String, Vec<&'a Mention>)> {
+    let q = query.to_lowercase();
+    SLASH_GROUPS
+        .iter()
+        .filter_map(|(group, label)| {
+            let hits: Vec<&Mention> = all
+                .iter()
+                .filter(|m| {
+                    slash_group(ref_kind(&m.item)) == *group
+                        && (q.is_empty()
+                            || ref_name(&m.item).to_lowercase().contains(&q)
+                            || m.detail
+                                .as_deref()
+                                .is_some_and(|d| d.to_lowercase().contains(&q)))
+                })
+                .take(SHOWN)
+                .collect();
+            (!hits.is_empty()).then(|| (label.to_string(), hits))
+        })
+        .collect()
+}
+
+/// What a message with a "/" pick sends: its text, and for Codex's skills
+/// the skill as a ref (Codex takes it as part of the message). Commands
+/// and other agents' skills go as "/name text", as typed in the agent's
+/// own screen; a Sandhill guide puts its instruction first.
+pub fn slash_message(kind: &str, pick: &Value, text: &str) -> (String, Option<Value>) {
+    let name = ref_name(pick);
+    match ref_kind(pick) {
+        "guide" => {
+            let prompt = pick["prompt"].as_str().unwrap_or_default();
+            let joined = if text.is_empty() {
+                prompt.to_string()
+            } else {
+                format!("{prompt}\n\n{text}")
+            };
+            (joined, None)
+        }
+        "skill" if kind == "codex" => (
+            text.to_string(),
+            Some(json!({"kind": "skill", "name": name, "path": pick["path"]})),
+        ),
+        _ => (format!("/{name} {text}").trim_end().to_string(), None),
+    }
+}
+
+/// Whether a chip is a "/" pick: one per message, first.
+pub fn is_slash(item: &Value) -> bool {
+    matches!(ref_kind(item), "command" | "skill" | "guide")
+}
+
+/// The commands a running OpenScience or Oh My Pi conversation reported.
+pub fn reported_commands(t: &TerminalInfo) -> Vec<Value> {
+    report(t, "commands")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// The "@" (or "#", for cells) being typed before the caret (a byte
-/// offset), and what follows it: `(where the sign is, query, sign)`.
+/// offset), and what follows it: `(where the sign is, query, sign)`. "/"
+/// counts only at the start of the message, as agents read it there.
 pub fn typed_mention(text: &str, caret: usize) -> Option<(usize, String, char)> {
     let before = text.get(..caret)?;
+    if let Some(query) = before.strip_prefix('/') {
+        return (!query.contains(char::is_whitespace)).then(|| (0, query.to_string(), '/'));
+    }
     let start = before
         .char_indices()
         .rev()
@@ -1115,6 +1195,33 @@ mod tests {
         assert_eq!(typed_mention("issue#3", 7), None);
         assert_eq!(typed_mention("mail me@x", 9), None);
         assert_eq!(typed_mention("@seu and more", 13), None);
+    }
+
+    #[test]
+    fn slash_counts_only_at_the_start() {
+        assert_eq!(typed_mention("/rev", 4), Some((0, "rev".into(), '/')));
+        assert_eq!(typed_mention("/review now", 11), None);
+        assert_eq!(typed_mention("see /tmp", 8), None);
+        assert_eq!(typed_mention("@data/x", 7), Some((0, "data/x".into(), '@')));
+    }
+
+    #[test]
+    fn slash_picks_go_as_each_agent_takes_them() {
+        let skill = json!({"kind": "skill", "name": "scanpy", "path": "/s/SKILL.md"});
+        assert_eq!(
+            slash_message("claude", &skill, "on adata"),
+            ("/scanpy on adata".into(), None)
+        );
+        let (text, sent) = slash_message("codex", &skill, "on adata");
+        assert_eq!(text, "on adata");
+        assert_eq!(sent.unwrap()["path"], "/s/SKILL.md");
+        let command = json!({"kind": "command", "name": "review"});
+        assert_eq!(slash_message("omp", &command, "").0, "/review");
+        let guide = json!({"kind": "guide", "name": "g", "prompt": "Follow g."});
+        assert_eq!(
+            slash_message("pi", &guide, "Plan it").0,
+            "Follow g.\n\nPlan it"
+        );
     }
 
     #[test]

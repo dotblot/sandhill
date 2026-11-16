@@ -126,6 +126,10 @@ for line in sys.stdin:
     elif method in ('session/new', 'session/load'):
         assert active is None
         assert params['mcpServers'] == [], 'Sandhill passes its MCP server through the config'
+        update('available_commands_update', availableCommands=[
+            dict(name='review', description='Review the changes'),
+            dict(name='inspect', description=' Inspect\n evidence '),
+            dict(name='no-description')])
         if method == 'session/new':
             reply(request, dict(sessionId=session, **session_info()))
         else:
@@ -530,6 +534,14 @@ async fn openscience_acp_chat_round_trip_and_resume() {
     assert_eq!(agent["status"]["model"], "Fake model B");
     assert_eq!(agent["models"][1]["id"], "fake-model-b");
     assert_eq!(agent["models"][1]["label"], "Fake model B");
+    assert_eq!(
+        agent["commands"],
+        json!([
+            {"kind":"command", "name":"review", "description":"Review the changes"},
+            {"kind":"command", "name":"inspect", "description":"Inspect evidence"},
+            {"kind":"command", "name":"no-description", "description":""}
+        ])
+    );
 
     let calls = records(dir.path());
     let methods: Vec<_> = calls

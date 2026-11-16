@@ -626,6 +626,9 @@ impl Daemon {
             }
             Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
             Call::AgentModels { kind } => crate::agents::models(&kind).await?,
+            Call::AgentCommands { kind, cwd } => {
+                serde_json::to_value(crate::agent_commands::list(&kind, &cwd).await)?
+            }
             Call::AgentAccounts => self.agent_accounts(None, false).await?,
             Call::AgentAccountsQuery { kinds, force } => {
                 self.agent_accounts(Some(&kinds), force).await?

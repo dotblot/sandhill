@@ -364,6 +364,7 @@ impl Agents {
                             .text_color(p.muted)
                             .child(hint("@", "attach a file"))
                             .child(hint("#", "attach a cell"))
+                            .child(hint("/", "commands and skills"))
                             .child(hint("↩", "send")),
                     ),
             )

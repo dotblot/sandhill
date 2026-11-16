@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 
 use crate::agents::composer::{
     self, ATTACHMENTS, Mention, Mode, ModelChoice, Models, cell_documents, cell_mentions,
-    document_cells, filter_cells, filter_mentions, same_ref, typed_mention,
+    document_cells, filter_cells, filter_commands, filter_mentions, ref_name, same_ref,
+    typed_mention,
 };
 use crate::agents::{
     Agents, Choice, Menu, START_COLUMNS, START_ROWS, SUBMIT_DELAY, Show, drives_chat, terminal_only,
@@ -98,13 +99,16 @@ impl Agents {
             .update(cx, |c, cx| c.set_value(text, window, cx));
     }
 
-    /// The text changed: opens, narrows or closes the @ and # menus.
+    /// The text changed: opens, narrows or closes the @, # and / menus.
     pub(crate) fn composer_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let (text, caret) = {
             let c = self.composer.read(cx);
             (c.value().to_string(), c.cursor())
         };
-        match typed_mention(&text, caret) {
+        // Posit Assistant's own screen has its "/" list.
+        let typed = typed_mention(&text, caret)
+            .filter(|(_, _, sign)| *sign != '/' || !terminal_only(self.box_kind()));
+        match typed {
             Some((_, query, sign)) => self.open_mention(sign, query, cx),
             None => {
                 if matches!(self.menu, Some(Menu::Mention { .. })) {
@@ -115,7 +119,7 @@ impl Agents {
         }
     }
 
-    /// Opens the @ menu (or #), reading what it offers the first time.
+    /// Opens the @ menu (or # or /), reading what it offers the first time.
     fn open_mention(&mut self, sign: char, query: String, cx: &mut Context<Self>) {
         if let Some(Menu::Mention {
             sign: open,
@@ -141,10 +145,10 @@ impl Agents {
         });
         self.mention_scroll.scroll_to_item(0);
         cx.notify();
-        if sign == '#' {
-            self.load_cells(cx);
-        } else {
-            self.load_mentions(cx);
+        match sign {
+            '#' => self.load_cells(cx),
+            '/' => self.load_commands(cx),
+            _ => self.load_mentions(cx),
         }
     }
 
@@ -157,6 +161,44 @@ impl Agents {
             *items = Some(list);
             cx.notify();
         }
+    }
+
+    /// The "/" list: Compact while a conversation runs, the commands a
+    /// running OpenScience or Oh My Pi conversation reported, then what the
+    /// daemon finds for the agent (its commands and skills, and Sandhill's
+    /// guides).
+    fn load_commands(&mut self, cx: &mut Context<Self>) {
+        let running = self.box_terminal().filter(|t| t.running);
+        let mut list: Vec<Value> = Vec::new();
+        if let Some(t) = running {
+            list.push(json!({
+                "kind": "compact",
+                "name": "compact",
+                "description": "Replace the conversation with a summary, to make room",
+            }));
+            list.extend(composer::reported_commands(t));
+        }
+        let listed = self.daemon.call::<Vec<Value>>(Call::AgentCommands {
+            kind: self.box_kind().to_string(),
+            cwd: self.project.clone(),
+        });
+        cx.spawn(async move |this, cx| {
+            list.extend(listed.await.unwrap_or_default());
+            let list = list
+                .into_iter()
+                .map(|item| Mention {
+                    label: Some(format!("/{}", ref_name(&item))),
+                    detail: item["description"]
+                        .as_str()
+                        .filter(|d| !d.is_empty())
+                        .map(str::to_string),
+                    item,
+                    source: None,
+                })
+                .collect();
+            this.update(cx, |this, cx| this.loaded('/', list, cx)).ok();
+        })
+        .detach();
     }
 
     /// The project's files and the variables of its running kernels.
@@ -452,7 +494,7 @@ impl Agents {
         }
     }
 
-    /// The open @ or # menu's groups, as shown.
+    /// The open @, # or / menu's groups, as shown.
     pub(crate) fn mention_groups(&self) -> Vec<(String, Vec<Mention>)> {
         let Some(Menu::Mention {
             sign,
@@ -463,10 +505,10 @@ impl Agents {
         else {
             return Vec::new();
         };
-        let groups = if *sign == '#' {
-            filter_cells(items, query)
-        } else {
-            filter_mentions(items, query)
+        let groups = match sign {
+            '#' => filter_cells(items, query),
+            '/' => filter_commands(items, query),
+            _ => filter_mentions(items, query),
         };
         groups
             .into_iter()
@@ -508,16 +550,29 @@ impl Agents {
         }
     }
 
-    /// Adds the picked item (or the highlighted one) as a chip; the "@"
-    /// and what was typed after it go.
+    /// Whether the "/" list is open with nothing matching what was typed:
+    /// Enter then sends the text as it is.
+    pub(crate) fn slash_unmatched(&self) -> bool {
+        matches!(
+            self.menu,
+            Some(Menu::Mention {
+                sign: '/',
+                items: Some(_),
+                ..
+            })
+        ) && self.mention_groups().is_empty()
+    }
+
+    /// Adds the picked item (or the highlighted one) as a chip; the sign
+    /// and what was typed after it go. Compact runs at once.
     pub(crate) fn pick_mention(
         &mut self,
         index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let active = match &self.menu {
-            Some(Menu::Mention { active, .. }) => *active,
+        let (active, sign) = match &self.menu {
+            Some(Menu::Mention { active, sign, .. }) => (*active, *sign),
             _ => return,
         };
         let picked = self
@@ -531,10 +586,33 @@ impl Agents {
                     let name = composer::ref_name(&m.item).to_string();
                     self.attach_plot(name, source, cx);
                 }
+                None if composer::ref_kind(&m.item) == "compact" => self.compact(cx),
+                None if sign == '/' => {
+                    // One per message, first.
+                    self.problem = None;
+                    self.refs.retain(|r| !composer::is_slash(r));
+                    self.refs.insert(0, m.item);
+                }
                 None => self.add_ref(m.item),
             }
         }
         cx.notify();
+    }
+
+    /// The @ list's "Commands and skills…": the "/" list, typed when the
+    /// box is empty (so typing narrows it), else opened beside the text.
+    pub(crate) fn open_slash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        let empty = self.composer.read(cx).value().is_empty();
+        if empty {
+            self.composer.update(cx, |c, cx| {
+                c.insert("/", window, cx);
+                c.focus(window, cx);
+            });
+            self.composer_changed(window, cx);
+        } else {
+            self.open_mention('/', String::new(), cx);
+        }
     }
 
     pub(crate) fn add_ref(&mut self, item: Value) {
@@ -544,12 +622,15 @@ impl Agents {
         }
     }
 
-    /// Closes the open menu; the @ menu takes what was typed for it along.
+    /// Closes the open menu; the @, # or / menu takes what was typed for it
+    /// along (nothing when it was opened without typing).
     pub(crate) fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.menu.take(), Some(Menu::Mention { .. })) {
+        if let Some(Menu::Mention { sign, .. }) = self.menu.take() {
             self.composer.update(cx, |c, cx| {
                 let caret = c.cursor();
-                if let Some((at, _, _)) = typed_mention(&c.value(), caret) {
+                if let Some((at, _, typed)) = typed_mention(&c.value(), caret)
+                    && typed == sign
+                {
                     c.set_selected_range(at..caret, cx);
                     c.replace("", window, cx);
                 }

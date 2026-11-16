@@ -1274,6 +1274,14 @@ preview and R's imports weren't seen.
   agent's own default; pi and Posit Assistant have none); the notebook's
   Explain starts in `composer::read_only_mode`. The web switch, Sandhill's
   Restricted/Ask guard and the box's follow-edits button are gone.
+- **"/" commands and skills** (Huan, 2026-11-16; `docs/design/done/slash-plan.md`):
+  `composer::typed_mention` takes "/" only at the start of the text; the
+  list is `Menu::Mention` with sign '/', filled by `load_commands`
+  (`Call::AgentCommands`, plus `composer::reported_commands` from a running
+  ACP conversation) and grouped by `filter_commands`. A pick is the first
+  ref (`composer::is_slash`); `say` turns it into what the agent takes with
+  `composer::slash_message`. Enter with nothing matching sends the text as
+  typed (`slash_unmatched`).
 
 
 ## Running it

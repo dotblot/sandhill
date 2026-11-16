@@ -196,6 +196,11 @@ fn metadata(guide: &Guide) -> Value {
     })
 }
 
+/// Guide IDs and titles without loading or hashing their resources.
+pub fn titles() -> impl Iterator<Item = (&'static str, &'static str)> {
+    GUIDES.iter().map(|guide| (guide.id, guide.name))
+}
+
 /// Catalog, main skill, or one exactly allowlisted relative resource.
 /// No filesystem access, kernel execution, data download or user configuration.
 pub fn get(id: Option<&str>, resource: Option<&str>) -> Result<Value> {

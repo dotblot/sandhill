@@ -5,6 +5,7 @@
 //! the agents' tools (`mcp`).
 
 pub mod accounts;
+pub mod agent_commands;
 pub mod agents;
 pub mod archives;
 pub mod bio;
