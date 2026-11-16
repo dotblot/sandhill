@@ -1364,8 +1364,9 @@
    "family": "code",
    "label": "R script",
    "source": {
-    "library": "gruvbox",
-    "path": "icons/r.svg"
+    "library": "sandhill",
+    "path": "icons/r.svg",
+    "note": "The R logo's ring and R in two colours (Huan, 2026-11-16), geometry from Developer Icons' r.svg."
    },
    "light": "bio/r.light.svg"
   },
@@ -1398,8 +1399,10 @@
    "family": "docs",
    "label": "Quarto document",
    "source": {
-    "library": "gruvbox",
-    "path": "icons/quarto.svg"
+    "library": "sandhill",
+    "path": "icons/quarto.svg",
+    "note": "Gruvbox Material's Quarto quarters in two blues (Huan, 2026-11-16).",
+    "shades": true
    },
    "light": "bio/quarto.light.svg"
   },
@@ -1409,9 +1412,9 @@
    "family": "docs",
    "label": "R Markdown",
    "source": {
-    "library": "gruvbox",
-    "path": "icons/r.svg",
-    "note": "Upstream associates R Markdown with its R artwork; no separate R Markdown SVG is present."
+    "library": "sandhill",
+    "path": "icons/rmarkdown.svg",
+    "note": "Drawn for Sandhill: a page with Markdown's down arrow and a small R logo (Huan, 2026-11-16)."
    },
    "light": "bio/rmarkdown.light.svg"
   },
@@ -1455,8 +1458,9 @@
    "family": "notebook",
    "label": "Jupyter notebook",
    "source": {
-    "library": "gruvbox",
-    "path": "icons/jupyter.svg"
+    "library": "sandhill",
+    "path": "icons/jupyter.svg",
+    "note": "Gruvbox Material's Jupyter mark with the logo's two colours, orange arcs and grey moons (Huan, 2026-11-16)."
    },
    "light": "bio/notebook.light.svg"
   },
@@ -1856,6 +1860,7 @@
    "file": "folders/project.svg",
    "kind": "folder",
    "label": "Project root",
+   "hue": 255,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-project.svg"
@@ -1866,6 +1871,7 @@
    "file": "folders/data.svg",
    "kind": "folder",
    "label": "data",
+   "hue": 85,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-database.svg",
@@ -1877,6 +1883,7 @@
    "file": "folders/results.svg",
    "kind": "folder",
    "label": "results",
+   "hue": 25,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-dist.svg",
@@ -1888,6 +1895,7 @@
    "file": "folders/figures.svg",
    "kind": "folder",
    "label": "figures, plots",
+   "hue": 145,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-images.svg",
@@ -1899,6 +1907,7 @@
    "file": "folders/tests.svg",
    "kind": "folder",
    "label": "tests",
+   "hue": 300,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-test.svg"
@@ -1909,6 +1918,8 @@
    "file": "folders/sandhill.svg",
    "kind": "folder",
    "label": ".sandhill (Sandhill settings)",
+   "hue": 240,
+   "quiet": true,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-config.svg",
@@ -1920,6 +1931,7 @@
    "file": "folders/notebooks.svg",
    "kind": "folder",
    "label": "notebooks",
+   "hue": 50,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-jupyter.svg",
@@ -1931,6 +1943,7 @@
    "file": "folders/scripts.svg",
    "kind": "folder",
    "label": "scripts, R, src",
+   "hue": 195,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-scripts.svg"
@@ -1941,6 +1954,8 @@
    "file": "folders/cache.svg",
    "kind": "folder",
    "label": "cache, tmp, work",
+   "hue": 230,
+   "quiet": true,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-temp.svg",
@@ -1952,11 +1967,61 @@
    "file": "folders/other.svg",
    "kind": "folder",
    "label": "Any other folder",
+   "hue": 255,
+   "quiet": true,
    "source": {
     "library": "gruvbox",
     "path": "icons/folder-other.svg"
    },
    "light": "folders/other.light.svg"
+  },
+  "folder.qc": {
+   "file": "folders/qc.svg",
+   "kind": "folder",
+   "label": "qc, fastqc, multiqc",
+   "hue": 130,
+   "source": {
+    "library": "sandhill",
+    "path": "icons/folder-qc.svg",
+    "note": "Drawn for Sandhill: a badge with a tick, for quality-control reports."
+   },
+   "light": "folders/qc.light.svg"
+  },
+  "folder.fastq": {
+   "file": "folders/fastq.svg",
+   "kind": "folder",
+   "label": "fastq, reads",
+   "hue": 65,
+   "source": {
+    "library": "sandhill",
+    "path": "icons/folder-fastq.svg",
+    "note": "Drawn for Sandhill: the FASTQ file's wave and quality bars."
+   },
+   "light": "folders/fastq.light.svg"
+  },
+  "folder.bam": {
+   "file": "folders/bam.svg",
+   "kind": "folder",
+   "label": "bam, alignments",
+   "hue": 220,
+   "source": {
+    "library": "sandhill",
+    "path": "icons/folder-bam.svg",
+    "note": "Drawn for Sandhill: the BAM file's pileup."
+   },
+   "light": "folders/bam.light.svg"
+  },
+  "folder.tenx": {
+   "file": "folders/tenx.svg",
+   "kind": "folder",
+   "label": "10x Genomics output (outs, cellranger)",
+   "hue": 350,
+   "source": {
+    "library": "sandhill",
+    "path": "icons/folder-tenx.svg",
+    "note": "Drawn for Sandhill: barcoded droplets, for Cell Ranger and Space Ranger output; not 10x Genomics' mark."
+   },
+   "light": "folders/tenx.light.svg"
   },
   "agent.claude": {
    "file": "agents/claude.svg",
@@ -2285,7 +2350,24 @@
    ".cache": "cache",
    "tmp": "cache",
    "work": "cache",
-   ".github": "other"
+   ".github": "other",
+   "qc": "qc",
+   "quality_control": "qc",
+   "fastqc": "qc",
+   "multiqc": "qc",
+   "fastq": "fastq",
+   "fastqs": "fastq",
+   "reads": "fastq",
+   "raw_reads": "fastq",
+   "bam": "bam",
+   "bams": "bam",
+   "alignments": "bam",
+   "aligned": "bam",
+   "outs": "tenx",
+   "filtered_feature_bc_matrix": "tenx",
+   "raw_feature_bc_matrix": "tenx",
+   "cellranger": "tenx",
+   "spaceranger": "tenx"
   },
   "folderExtensions": {
    "zarr": "hdf5"

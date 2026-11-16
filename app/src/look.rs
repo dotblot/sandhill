@@ -1377,6 +1377,12 @@ mod tests {
         assert_eq!(file_icon("figures/umap.svg"), "bio/svg");
         assert_eq!(folder_icon("Data"), "folders/data");
         assert_eq!(folder_icon("misc"), "folders/other");
+        // Bioinformatics folders have their own (Huan, 2026-11-16).
+        assert_eq!(folder_icon("MultiQC"), "folders/qc");
+        assert_eq!(folder_icon("raw_reads"), "folders/fastq");
+        assert_eq!(folder_icon("alignments"), "folders/bam");
+        assert_eq!(folder_icon("outs"), "folders/tenx");
+        assert_eq!(file_icon("report.Rmd"), "bio/rmarkdown");
         // A Zarr store is a folder that is one data set.
         assert_eq!(folder_icon("atlas.zarr"), "bio/hdf5");
         // PLINK genotypes are told from BED intervals by their companions.

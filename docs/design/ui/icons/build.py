@@ -54,10 +54,16 @@ REPAINTED = ("gruvbox", "sandhill")
 # enough, and the dark theme's icons, are unchanged.
 LIGHT_SURFACE = "#efefef"
 LIGHT_CONTRAST = 4.5
-# A folder's emblem sits partly on its dark body (#3b4558): darkened to 4.5
+# A folder's emblem sits partly on its dark body: darkened to 4.5
 # it would sink into the body, so emblems stop at 3:1, which still leaves
 # about 3:1 against the body.
 FOLDER_CONTRAST = 3.0
+# Folder colours (Huan, 2026-11-16): OKLCH lightness and chroma of a
+# folder's body, in each theme, from its catalog `hue`; `quiet` folders
+# (cache, other, .sandhill) stay nearly grey. The dark theme's emblems are
+# white on the coloured folder.
+FOLDER_BODY = {True: (0.6, 0.12, 0.03), False: (0.43, 0.075, 0.025)}
+FOLDER_EMBLEM = "#f4f6f9"
 
 
 def _linear(c):
@@ -144,11 +150,66 @@ def repaint(svg, convert):
     return changed
 
 
-def light_variant(svg, target=LIGHT_CONTRAST):
+def darken(hex_color, by):
+    """`hex_color` with its OKLCH lightness lowered `by`, chroma trimmed to fit."""
+    L, C, H = _to_oklch(hex_color)
+    chroma = C
+    while chroma >= 0:
+        found = _from_oklch(max(L - by, 0.0), chroma, H)
+        if found:
+            return found
+        chroma -= 0.005
+    return "#000000"
+
+
+def light_variant(svg, target=LIGHT_CONTRAST, shades=False):
     """A copy of a coloured icon for the light theme, or None if every
-    colour already reads there."""
+    colour already reads there. With `shades` (two tones of one colour, as
+    Quarto's quarters) every colour drops by the same lightness, the most
+    any of them needs, so the tones stay apart."""
     light = copy.deepcopy(svg)
-    return light if repaint(light, lambda c: for_light(c, target)) else None
+    if not shades:
+        return light if repaint(light, lambda c: for_light(c, target)) else None
+    paint = re.compile(r"#[0-9a-fA-F]{6}\b")
+    found = {c.lower() for node in svg.iter() for attr in ("fill", "stroke")
+             for c in paint.findall(node.get(attr) or "")}
+    drop = max((_to_oklch(c)[0] - _to_oklch(for_light(c, target))[0] for c in found), default=0)
+    return light if drop > 0 and repaint(light, lambda c: darken(c, drop)) else None
+
+
+def folder_body(hue, quiet, dark):
+    """A folder's body colour: its hue at the theme's lightness, with as much
+    of the chroma as fits in sRGB."""
+    import math
+    lightness, chroma, quiet_chroma = FOLDER_BODY[dark]
+    chroma = quiet_chroma if quiet else chroma
+    while chroma > 0:
+        found = _from_oklch(lightness, chroma, math.radians(hue))
+        if found:
+            return found
+        chroma -= 0.005
+    return _from_oklch(lightness, 0, 0)
+
+
+def theme_folder(svg, hue, quiet, dark):
+    """Paints a folder's body (`…-folder`) for the theme; in the dark theme
+    its emblem (`…-motive`) turns white, masks inside it untouched."""
+    def whiten(node):
+        if node.tag == f"{{{NS}}}mask":
+            return
+        for attr in ("fill", "stroke"):
+            value = node.get(attr)
+            if value and value.startswith("#"):
+                node.set(attr, FOLDER_EMBLEM)
+        for child in node:
+            whiten(child)
+
+    for node in svg.iter():
+        ident = node.get("id") or ""
+        if ident.endswith("-folder"):
+            node.set("fill", folder_body(hue, quiet, dark))
+        elif ident.endswith("-motive") and dark:
+            whiten(node)
 
 
 def in_palette(hex_color):
@@ -391,13 +452,23 @@ def main():
             svg.set("aria-label", item["label"])
             ET.SubElement(svg, f"{{{NS}}}title").text = item["label"]
         item["source"] = source
+        # Folders (Huan, 2026-11-16): each kind its own colour, `hue` in the
+        # catalog. Dark theme: the folder in that colour, its emblem white.
+        # Light theme: a dark tint of it, the emblem in its own colour.
+        unthemed = None
+        if item["kind"] == "folder":
+            unthemed = copy.deepcopy(svg)
+            theme_folder(svg, item["hue"], item.get("quiet", False), dark=True)
         write(HERE / item["file"], ET.tostring(svg, encoding="unicode") + "\n")
         artwork[ident] = body(svg)
         light_path = HERE / item["file"].replace(".svg", ".light.svg")
         light = None
-        if item["kind"] in ("file", "folder"):
-            target = FOLDER_CONTRAST if item["kind"] == "folder" else LIGHT_CONTRAST
-            light = light_variant(svg, target)
+        if unthemed is not None:
+            theme_folder(unthemed, item["hue"], item.get("quiet", False), dark=False)
+            darkened = light_variant(unthemed, FOLDER_CONTRAST)
+            light = unthemed if darkened is None else darkened
+        elif item["kind"] == "file":
+            light = light_variant(svg, LIGHT_CONTRAST, source.get("shades", False))
         if light is not None:
             item["light"] = item["file"].replace(".svg", ".light.svg")
             write(light_path, ET.tostring(light, encoding="unicode") + "\n")

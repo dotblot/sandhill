@@ -1175,52 +1175,89 @@
     "folder.project": {
       "file": "folders/project.svg",
       "kind": "folder",
-      "label": "Project root"
+      "label": "Project root",
+      "hue": 255
     },
     "folder.data": {
       "file": "folders/data.svg",
       "kind": "folder",
-      "label": "data"
+      "label": "data",
+      "hue": 85
     },
     "folder.results": {
       "file": "folders/results.svg",
       "kind": "folder",
-      "label": "results"
+      "label": "results",
+      "hue": 25
     },
     "folder.figures": {
       "file": "folders/figures.svg",
       "kind": "folder",
-      "label": "figures, plots"
+      "label": "figures, plots",
+      "hue": 145
     },
     "folder.tests": {
       "file": "folders/tests.svg",
       "kind": "folder",
-      "label": "tests"
+      "label": "tests",
+      "hue": 300
     },
     "folder.sandhill": {
       "file": "folders/sandhill.svg",
       "kind": "folder",
-      "label": ".sandhill (Sandhill settings)"
+      "label": ".sandhill (Sandhill settings)",
+      "hue": 240,
+      "quiet": true
     },
     "folder.notebooks": {
       "file": "folders/notebooks.svg",
       "kind": "folder",
-      "label": "notebooks"
+      "label": "notebooks",
+      "hue": 50
     },
     "folder.scripts": {
       "file": "folders/scripts.svg",
       "kind": "folder",
-      "label": "scripts, R, src"
+      "label": "scripts, R, src",
+      "hue": 195
     },
     "folder.cache": {
       "file": "folders/cache.svg",
       "kind": "folder",
-      "label": "cache, tmp, work"
+      "label": "cache, tmp, work",
+      "hue": 230,
+      "quiet": true
     },
     "folder.other": {
       "file": "folders/other.svg",
       "kind": "folder",
-      "label": "Any other folder"
+      "label": "Any other folder",
+      "hue": 255,
+      "quiet": true
+    },
+    "folder.qc": {
+      "file": "folders/qc.svg",
+      "kind": "folder",
+      "label": "qc, fastqc, multiqc",
+      "hue": 130
+    },
+    "folder.fastq": {
+      "file": "folders/fastq.svg",
+      "kind": "folder",
+      "label": "fastq, reads",
+      "hue": 65
+    },
+    "folder.bam": {
+      "file": "folders/bam.svg",
+      "kind": "folder",
+      "label": "bam, alignments",
+      "hue": 220
+    },
+    "folder.tenx": {
+      "file": "folders/tenx.svg",
+      "kind": "folder",
+      "label": "10x Genomics output (outs, cellranger)",
+      "hue": 350
     },
     "agent.claude": {
       "file": "agents/claude.svg",
@@ -1477,7 +1514,24 @@
       ".cache": "cache",
       "tmp": "cache",
       "work": "cache",
-      ".github": "other"
+      ".github": "other",
+      "qc": "qc",
+      "quality_control": "qc",
+      "fastqc": "qc",
+      "multiqc": "qc",
+      "fastq": "fastq",
+      "fastqs": "fastq",
+      "reads": "fastq",
+      "raw_reads": "fastq",
+      "bam": "bam",
+      "bams": "bam",
+      "alignments": "bam",
+      "aligned": "bam",
+      "outs": "tenx",
+      "filtered_feature_bc_matrix": "tenx",
+      "raw_feature_bc_matrix": "tenx",
+      "cellranger": "tenx",
+      "spaceranger": "tenx"
     },
     "folderExtensions": {
       "zarr": "hdf5"

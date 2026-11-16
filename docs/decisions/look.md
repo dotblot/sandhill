@@ -63,7 +63,17 @@ Settled decisions about how Sandhill looks. Moved here unchanged from
   `#fd8f3f`, pink `#fc5fa3`; folder body slate `#3b4558`), so icons and code
   share one palette. The light theme uses generated `*.light.svg` versions
   darkened in OKLCH, hue kept, to 4.5:1 on `#efefef` (folder emblems 3:1, as
-  they sit on the dark folder body). Other vendors' logos keep their own
+  they sit on the dark folder body). Folders (Huan, 2026-11-16) each have
+  their own colour (`hue` in `catalog.json`; cache, other and .sandhill
+  nearly grey): in the dark theme the folder is that colour with a white
+  emblem, in the light theme a dark tint of it with the emblem in its own
+  colour. QC (qc, quality_control, fastqc, multiqc), FASTQ (fastq, fastqs,
+  reads, raw_reads), BAM (bam, bams, alignments, aligned) and 10x Genomics
+  output (outs, filtered/raw_feature_bc_matrix, cellranger, spaceranger)
+  folders have their own icons. Jupyter, Quarto and R icons have two
+  colours (Jupyter's orange and grey, Quarto's two blues, R's grey ring and
+  blue R); R Markdown has its own (a page with Markdown's arrow and a small
+  R). Other vendors' logos keep their own
   colours. Formats Gruvbox
   has no artwork for are drawn for Sandhill in its document style
   (`vendor/sandhill`, GPL like Sandhill: FASTA, FASTQ, BAM, VCF, GFF, BED,

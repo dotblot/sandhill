@@ -1,7 +1,8 @@
 {
   "file.r": {
-    "library": "gruvbox",
-    "path": "icons/r.svg"
+    "library": "sandhill",
+    "path": "icons/r.svg",
+    "note": "The R logo's ring and R in two colours (Huan, 2026-11-16), geometry from Developer Icons' r.svg."
   },
   "file.python": {
     "library": "gruvbox",
@@ -13,13 +14,15 @@
     "note": "Generic shell-script artwork represents sh, Bash and zsh."
   },
   "file.quarto": {
-    "library": "gruvbox",
-    "path": "icons/quarto.svg"
+    "library": "sandhill",
+    "path": "icons/quarto.svg",
+    "note": "Gruvbox Material's Quarto quarters in two blues (Huan, 2026-11-16).",
+    "shades": true
   },
   "file.rmarkdown": {
-    "library": "gruvbox",
-    "path": "icons/r.svg",
-    "note": "Upstream associates R Markdown with its R artwork; no separate R Markdown SVG is present."
+    "library": "sandhill",
+    "path": "icons/rmarkdown.svg",
+    "note": "Drawn for Sandhill: a page with Markdown's down arrow and a small R logo (Huan, 2026-11-16)."
   },
   "file.markdown": {
     "library": "gruvbox",
@@ -35,8 +38,9 @@
     "note": "Gruvbox's agent artwork for agent instruction files (CLAUDE.md, AGENTS.md)."
   },
   "file.notebook": {
-    "library": "gruvbox",
-    "path": "icons/jupyter.svg"
+    "library": "sandhill",
+    "path": "icons/jupyter.svg",
+    "note": "Gruvbox Material's Jupyter mark with the logo's two colours, orange arcs and grey moons (Huan, 2026-11-16)."
   },
   "file.fasta": {
     "library": "sandhill",
@@ -237,6 +241,26 @@
   "folder.other": {
     "library": "gruvbox",
     "path": "icons/folder-other.svg"
+  },
+  "folder.qc": {
+    "library": "sandhill",
+    "path": "icons/folder-qc.svg",
+    "note": "Drawn for Sandhill: a badge with a tick, for quality-control reports."
+  },
+  "folder.fastq": {
+    "library": "sandhill",
+    "path": "icons/folder-fastq.svg",
+    "note": "Drawn for Sandhill: the FASTQ file's wave and quality bars."
+  },
+  "folder.bam": {
+    "library": "sandhill",
+    "path": "icons/folder-bam.svg",
+    "note": "Drawn for Sandhill: the BAM file's pileup."
+  },
+  "folder.tenx": {
+    "library": "sandhill",
+    "path": "icons/folder-tenx.svg",
+    "note": "Drawn for Sandhill: barcoded droplets, for Cell Ranger and Space Ranger output; not 10x Genomics' mark."
   },
   "agent.claude": {
     "library": "developer",

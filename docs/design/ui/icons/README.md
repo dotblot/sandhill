@@ -1,11 +1,12 @@
 # Sandhill icons
 
-Sandhill's 171 shared interface, file, folder, language and integration icons
+Sandhill's 175 shared interface, file, folder, language and integration icons
 use [Gruvbox Material Icons](https://github.com/navernoedenis/gruvbox-material-icons),
 [Lucide](https://github.com/lucide-icons/lucide) and
 [Developer Icons](https://github.com/xandemon/developer-icons), selected by
 Huan on 2026-11-06, 18 file icons drawn for Sandhill in Gruvbox's
-document style (Huan, 2026-11-14), and three pane-height controls drawn in
+document style (Huan, 2026-11-14; R, R Markdown, Quarto and Jupyter redrawn
+in two colours and four bioinformatics folders added on 2026-11-16), and three pane-height controls drawn in
 Lucide's stroke style (Huan, 2026-11-14). Posit Assistant and Antigravity use Huan's supplied brand
 references, and Oh My Pi and pi their official MIT-licensed marks, instead of
 generic symbols. This replaces Atom Material completely.
@@ -19,7 +20,7 @@ Open [`preview.html`](preview.html) for every icon in light and dark themes;
 |---|---|---|
 | `system/` | Window, toolbar, editor, run, resources, Git and agent controls | 106 |
 | `bio/` | File types, including bioinformatics formats | 43 |
-| `folders/` | Project, data, results, figures, notebooks and other folders | 10 |
+| `folders/` | Project, data, results, figures, notebooks, QC, FASTQ, BAM, 10x output and other folders, each in its own colour | 14 |
 | `agents/` | Agent integrations | 8 |
 | `lang/` | R, Python, Nextflow and shell runtimes | 4 |
 
@@ -39,7 +40,7 @@ package, icon font or network connection is needed to rebuild the assets.
   the light logo backing; `recolor` maps source paint colours to replacements
   in fill/stroke attributes and inline styles without changing vendor originals;
   `viewBox` crops an original with empty margins to its mark.
-- `vendor/`: 170 selected SVGs: pinned library originals, Sandhill's own
+- `vendor/`: 178 selected SVGs: pinned library originals, Sandhill's own
   drawings (`vendor/sandhill/`), the supplied Antigravity and Synthetic
   Sciences SVGs, a trace of the supplied Posit Assistant mark, and the
   official Oh My Pi and pi marks.

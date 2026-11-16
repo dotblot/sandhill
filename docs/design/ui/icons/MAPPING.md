@@ -111,15 +111,15 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `chevron.down` | i-chev | `lucide/icons/chevron-down.svg` |  |
 | `chevron.right` | i-chevr | `lucide/icons/chevron-right.svg` |  |
 | `arrow.up` | i-up | `lucide/icons/arrow-up.svg` |  |
-| `file.r` |  | `gruvbox/icons/r.svg` |  |
+| `file.r` |  | `sandhill/icons/r.svg` | The R logo's ring and R in two colours (Huan, 2026-11-16), geometry from Developer Icons' r.svg. |
 | `file.python` |  | `gruvbox/icons/python.svg` |  |
 | `file.shell` |  | `gruvbox/icons/console.svg` | Generic shell-script artwork represents sh, Bash and zsh. |
-| `file.quarto` |  | `gruvbox/icons/quarto.svg` |  |
-| `file.rmarkdown` |  | `gruvbox/icons/r.svg` | Upstream associates R Markdown with its R artwork; no separate R Markdown SVG is present. |
+| `file.quarto` |  | `sandhill/icons/quarto.svg` | Gruvbox Material's Quarto quarters in two blues (Huan, 2026-11-16). |
+| `file.rmarkdown` |  | `sandhill/icons/rmarkdown.svg` | Drawn for Sandhill: a page with Markdown's down arrow and a small R logo (Huan, 2026-11-16). |
 | `file.markdown` |  | `gruvbox/icons/markdown.svg` |  |
 | `file.readme` |  | `gruvbox/icons/readme.svg` |  |
 | `file.agent-notes` |  | `gruvbox/icons/agent.svg` | Gruvbox's agent artwork for agent instruction files (CLAUDE.md, AGENTS.md). |
-| `file.notebook` |  | `gruvbox/icons/jupyter.svg` |  |
+| `file.notebook` |  | `sandhill/icons/jupyter.svg` | Gruvbox Material's Jupyter mark with the logo's two colours, orange arcs and grey moons (Huan, 2026-11-16). |
 | `file.fasta` |  | `sandhill/icons/fasta.svg` | Drawn for Sandhill in Gruvbox Material's document style: FASTA sequences: a DNA helix. |
 | `file.fastq` |  | `sandhill/icons/fastq.svg` | Drawn for Sandhill in Gruvbox Material's document style: FASTQ reads: a helix over per-base quality bars. |
 | `file.alignment` |  | `sandhill/icons/alignment.svg` | Drawn for Sandhill in Gruvbox Material's document style: Aligned reads (BAM, SAM, CRAM) stacked in a pileup. |
@@ -164,6 +164,10 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `folder.scripts` |  | `gruvbox/icons/folder-scripts.svg` |  |
 | `folder.cache` |  | `gruvbox/icons/folder-temp.svg` | Temporary-folder artwork represents cache, temporary and work directories. |
 | `folder.other` |  | `gruvbox/icons/folder-other.svg` |  |
+| `folder.qc` |  | `sandhill/icons/folder-qc.svg` | Drawn for Sandhill: a badge with a tick, for quality-control reports. |
+| `folder.fastq` |  | `sandhill/icons/folder-fastq.svg` | Drawn for Sandhill: the FASTQ file's wave and quality bars. |
+| `folder.bam` |  | `sandhill/icons/folder-bam.svg` | Drawn for Sandhill: the BAM file's pileup. |
+| `folder.tenx` |  | `sandhill/icons/folder-tenx.svg` | Drawn for Sandhill: barcoded droplets, for Cell Ranger and Space Ranger output; not 10x Genomics' mark. |
 | `agent.claude` | i-claude | `developer/icons/claude-ai.svg` |  |
 | `agent.codex` | i-openai | `developer/icons/openai.svg` | OpenAI's logo identifies the Codex integration (Huan), without a background; the app draws the one-colour mark in the surrounding text colour so it reads on light and dark. |
 | `agent.antigravity` | i-agy | `brands/antigravity.svg` | Original full-colour SVG supplied by Huan; redistribution license not supplied. |

@@ -1307,6 +1307,12 @@ preview and R's imports weren't seen.
   ring is `shell::meter::ring` with "42%". Previews in hand mode set GPUI's
   cursor over their hitbox (`media/native.rs`): GPUI's cursor rects
   otherwise showed the arrow over the native view's hand.
+- **Folder colours and new icons** (Huan, 2026-11-16): `build.py` paints
+  each folder by its catalog `hue` (`theme_folder`: coloured with a white
+  emblem for dark, a dark tint for light); four new folders (`folders/qc`,
+  `fastq`, `bam`, `tenx`) and their names in `resolve.folders`; R, R
+  Markdown, Quarto and Jupyter are Sandhill drawings in two colours
+  (Quarto's light variant keeps its two shades, `"shades": true`).
 
 
 ## Running it
