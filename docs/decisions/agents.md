@@ -111,6 +111,18 @@ differs, this wins.
   (ACP session request, per-run extensions/overlays); never edit `~/.omp`,
   and touch `~/.pi` only to add a `sandhill` entry to `agent/mcp.json` if pi
   cannot take MCP per run.
+- Skills (Huan, 2026-11-16; `docs/design/done/skills-plan.md`): Welcome → Skills
+  installs skills (folders with a `SKILL.md`) per device, from Sandhill's
+  Suggested list, GitHub, or a folder or zip on the Mac, after a card shows
+  the source, licence, files and any scripts; Copy to… sends one to another
+  device. Sandhill keeps them in its own state folder and gives them to
+  every agent through its `get_skill` tool and "/", never through the
+  agents' own folders. Suggested is only skills published under a
+  GPL-compatible licence, fetched at a pinned commit on Add: Anthropic's
+  eight Apache-2.0 science skills. Claude Science's own skills and
+  connectors are inside its app and are not copied. No Sandhill-written
+  skills for other tools until Huan asks. No automatic updates. Connectors
+  come after skills, in their own plan.
 
 ## Accounts and quota
 - Agent accounts (Huan, 2026-11-13; `docs/design/done/agent-accounts-plan.md`):

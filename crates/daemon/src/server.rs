@@ -87,6 +87,7 @@ pub struct Daemon {
     pub(crate) maintenance: AtomicBool,
     pub(crate) stopping: AtomicBool,
     pub(crate) analysis_gate: tokio::sync::Mutex<()>,
+    skills_gate: tokio::sync::Mutex<()>,
 }
 
 /// The window a git action came from, on its connection.
@@ -162,6 +163,7 @@ impl Daemon {
             maintenance: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             analysis_gate: tokio::sync::Mutex::new(()),
+            skills_gate: tokio::sync::Mutex::new(()),
         });
         for record in journal.sessions()? {
             if record.status == SessionStatus::Ended {
@@ -623,6 +625,20 @@ impl Daemon {
                         .await?,
                 )?
             }
+            // A preview only reads the index and writes its own incoming
+            // folder, so a slow download doesn't hold up agents' get_skill.
+            call @ Call::PreviewSkills { .. } => {
+                crate::skills::call(self.state.root(), call).await?
+            }
+            call @ (Call::ListSkills
+            | Call::InstallSkills { .. }
+            | Call::SetSkillEnabled { .. }
+            | Call::RemoveSkill { .. }
+            | Call::ExportSkill { .. }
+            | Call::GetSkill { .. }) => {
+                let _gate = self.skills_gate.lock().await;
+                crate::skills::call(self.state.root(), call).await?
+            }
             Call::SystemStats { path } => self.system_stats(path).await?,
             Call::ReadLog { bytes } => self.read_log(bytes).await?,
             Call::PrepareAttach { build } => self.prepare_attach(&build)?,
@@ -636,9 +652,9 @@ impl Daemon {
             }
             Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
             Call::AgentModels { kind } => crate::agents::models(&kind).await?,
-            Call::AgentCommands { kind, cwd } => {
-                serde_json::to_value(crate::agent_commands::list(&kind, &cwd).await)?
-            }
+            Call::AgentCommands { kind, cwd } => serde_json::to_value(
+                crate::agent_commands::list(&kind, &cwd, self.state.root()).await,
+            )?,
             Call::AgentAccounts => self.agent_accounts(None, false).await?,
             Call::AgentAccountsQuery { kinds, force } => {
                 self.agent_accounts(Some(&kinds), force).await?

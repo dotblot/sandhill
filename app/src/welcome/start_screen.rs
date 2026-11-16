@@ -25,6 +25,7 @@ use crate::welcome::folder_dialog::{FolderDialog, FolderDialogDone, Place as Fol
 mod devices;
 mod general;
 mod projects;
+mod skills;
 mod trusted;
 mod usage;
 
@@ -71,6 +72,7 @@ pub(crate) enum Page {
     Device,
     Resources,
     Trusted,
+    Skills,
     Accounts,
     /// What the agents in Sandhill's conversations used (Huan, 2026-11-16).
     Usage,
@@ -138,6 +140,8 @@ pub(crate) struct Start {
     /// The Usage page's figures, bound to a device and its attach
     /// generation as `accounts` is.
     usage: Option<(String, u64, Entity<usage::UsageView>)>,
+    /// Skills belong to the selected device and its attach generation.
+    skills: Option<(String, u64, Entity<skills::SkillsView>)>,
     /// The page on the right (Huan, 2026-11-12: Projects first).
     pub(crate) page: Page,
     _subscriptions: Vec<Subscription>,
@@ -197,6 +201,7 @@ impl Start {
             trusted: HashMap::new(),
             accounts: None,
             usage: None,
+            skills: None,
             page: Page::Device,
             _subscriptions: subscriptions,
         }
@@ -260,6 +265,7 @@ impl Start {
 
     pub(crate) fn set_mode(&mut self, mode: StartMode, window: &mut Window, cx: &mut App) {
         self.problem = None;
+        self.skills = None;
         self.close_dialogs(window, cx);
         if !matches!(&mode, StartMode::Accounts(host) if host == &self.selected_host && self.page == Page::Accounts)
         {
@@ -551,6 +557,10 @@ impl AppWindow {
                 })),
             )
             .child(
+                sidebar_row("start-skills", "skill", "Skills", page == Page::Skills, &p)
+                    .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Skills, cx))),
+            )
+            .child(
                 sidebar_row("start-usage", "history", "Usage", page == Page::Usage, &p)
                     .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Usage, cx))),
             );
@@ -608,6 +618,7 @@ impl AppWindow {
             Page::Trusted => self.trusted_folders(list_height, cx),
             Page::Accounts => self.agent_accounts_page(cx),
             Page::Usage => self.usage_page(cx),
+            Page::Skills => self.skills_page(window, cx),
             Page::General => self.general_page(cx),
         };
         let footnote = matches!(page, Page::Projects | Page::Device);
@@ -645,6 +656,7 @@ impl AppWindow {
             .child(self.start_title_bar(cx))
             .children(self.render_device_menu(cx))
             .children(self.render_project_menu(cx))
+            .children(self.skills_overlay(cx))
             .children(self.render_start_dialog(cx))
             .children(self.start.folder_dialog.clone())
             .into_any_element()
@@ -719,6 +731,9 @@ impl AppWindow {
         }
         if page != Page::Usage {
             self.start.usage = None;
+        }
+        if page != Page::Skills {
+            self.start.skills = None;
         }
         if matches!(page, Page::Projects | Page::Device) {
             self.start.refresh(cx);

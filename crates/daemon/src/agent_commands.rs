@@ -1,6 +1,6 @@
 //! Read-only command metadata for the message box, without starting a turn.
 
-mod folders;
+pub(crate) mod folders;
 mod probes;
 
 use std::path::Path;
@@ -8,7 +8,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 /// Discovery failures leave Sandhill's guides available for every agent.
-pub async fn list(kind: &str, cwd: &str) -> Vec<Value> {
+pub async fn list(kind: &str, cwd: &str, root: &Path) -> Vec<Value> {
     let mut commands = match kind {
         "claude" | "antigravity" => {
             let kind = kind.to_string();
@@ -27,6 +27,12 @@ pub async fn list(kind: &str, cwd: &str) -> Vec<Value> {
         json!({"kind": "guide", "name": id, "description": title,
             "prompt": format!("For this message, follow Sandhill's bioinformatics guide “{title}” (`{id}`): read it first with the get_bio_guide tool.")})
     }));
+    if let Ok(skills) = crate::skills::enabled(root) {
+        commands.extend(skills.into_iter().map(|skill| {
+            json!({"kind": "guide", "name": skill.name, "description": skill.description,
+                "prompt": format!("For this message, follow the skill “{}”: read it first with the get_skill tool.", skill.name)})
+        }));
+    }
     commands
 }
 

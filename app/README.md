@@ -1341,6 +1341,14 @@ preview and R's imports weren't seen.
   chat events from the pi and ACP bridges) into `crate::usage`'s monthly
   files; `Call::UsageStats { days, tz_offset_minutes }` adds them up.
   Welcome's `start_screen/usage.rs` draws the page.
+- **Skills** (Huan, 2026-11-16; `docs/design/done/skills-plan.md`):
+  Welcome's `start_screen/skills.rs` binds its list to the selected device
+  and attach generation. Suggested, GitHub and local folder/zip imports
+  preview source, licence, files and scripts before installation; the
+  existing glass switch and row menus handle on/off, files, manual updates,
+  removal and copies to other connected devices. Confirmation cards keep
+  keyboard focus, and local folder reads skip links and metadata and enforce
+  the 2,048-file / 20 MB limits before sending files.
 
 
 ## Running it

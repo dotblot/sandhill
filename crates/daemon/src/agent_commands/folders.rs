@@ -11,9 +11,9 @@ const MAX_ENTRIES: usize = 2048;
 const MAX_BYTES: u64 = 64 * 1024;
 
 #[derive(Default, Deserialize)]
-struct Metadata {
-    name: Option<String>,
-    description: Option<String>,
+pub(crate) struct Metadata {
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
 }
 
 pub(super) fn list(kind: &str, cwd: &Path, home: Option<&Path>) -> Vec<Value> {
@@ -137,7 +137,7 @@ fn read(path: &Path) -> Option<String> {
     (text.len() as u64 <= MAX_BYTES).then_some(text)
 }
 
-fn metadata(text: &str) -> (Metadata, &str) {
+pub(crate) fn metadata(text: &str) -> (Metadata, &str) {
     let text = text.trim_start_matches('\u{feff}');
     let mut lines = text.split_inclusive('\n');
     if lines.next().map(str::trim) != Some("---") {

@@ -1,7 +1,7 @@
 # Skills: install, manage and hand to every agent
 
-Status: **waiting for Huan's approval** (written 2026-11-16). Nothing is
-built yet. Connectors are a later plan; Huan chose skills first.
+Status: **approved by Huan and built, 2026-11-16**. Connectors are a
+later plan; Huan chose skills first.
 
 ## What Huan asked for
 - Installing skills and connectors, similar to Claude Science
@@ -74,12 +74,14 @@ install works for all seven agents:
   lists the skills that are on (name and description). With a name it
   returns the `SKILL.md` text, the folder's path on the device and its
   file list, so the agent can read the reference files and run the scripts
-  from that folder.
+  from that folder. With a name and `file`, it returns that text file of
+  the skill, for agents whose own sandbox can't read the folder.
 - The instructions Sandhill already gives each agent gain one sentence:
   "Installed skills are listed by `get_skill`; read a skill before work
   that matches its description."
 - "/" in the message box lists installed skills that are on, under
-  Sandhill's own section next to the guides. Picking one makes a chip and
+  Sandhill's own section next to the guides (sent by the daemon as guide
+  items, so the message box needs no change). Picking one makes a chip and
   sends "For this message, follow the skill X: read it first with the
   `get_skill` tool."
 
@@ -126,19 +128,25 @@ picker the Usage page uses.
 - **Add Skill** button, top right, a menu: From GitHub…, From a Folder or
   Zip….
 
-Check for Updates is manual, as in Claude Science: it compares the
-installed commit with the repository's newest one and offers Update for
-the skills whose files changed.
+Check for Updates is manual, as in Claude Science: it fetches the skill's
+repository at its newest commit and shows the confirm card with Update
+when the skill's files changed, or "Up to date" when they did not.
+
+Copy to… sends the skill's files and its source (so updates still work
+there) and installs without a card, unless a skill of that name is already
+on the other device, which asks to replace it.
 
 The page follows `docs/decisions/look.md`: the switch, capsules, menus and
 cards already in use; no new styles.
 
 ### 5. Daemon calls
-`ListSkills`, `PreviewSkill {source}` (fetches into a temporary folder and
-returns what the card shows), `InstallSkill {preview}`, `SetSkillEnabled
-{name, on}`, `RemoveSkill {name}`, `CheckSkillUpdates {name}`,
-`ExportSkill {name}` (the folder as one archive) and `InstallSkill
-{archive}` for Copy to… and uploads. Added to `docs/protocol.md`.
+`ListSkills`, `PreviewSkills {fetch}` (fetches into `skills/.incoming/`
+and returns what the card shows, under a token), `InstallSkills {token,
+names}`, `SetSkillEnabled {name, enabled}`, `RemoveSkill {name}`,
+`ExportSkill {name}` (files and source, for Copy to…) and `GetSkill {name?,
+file?}` (for `get_skill`). A fetch is a git address, a Suggested id, an
+installed skill's update, a zip file or a folder's files. Types in
+`crates/proto/src/skills.rs`; added to `docs/protocol.md`.
 
 ## Not building (in this plan)
 - Connectors (next plan).
@@ -195,8 +203,7 @@ card, the menus, a skill picked from "/".
 - **Rollback:** removing the `skills/` folder on a device returns it to
   today's behaviour; nothing else on the device is touched.
 
-## For Huan to decide
-1. Is the eight-skill starting list right, given that the rest of Claude
-   Science's list is not available to copy?
-2. Should a later plan have Sandhill write its own skills for the tools in
-   the screenshot (AlphaFold2, Boltz, scGPT and the others)?
+## Huan's decisions (2026-11-16)
+1. The eight-skill starting list is fine.
+2. No Sandhill-written skills for the other tools for now; Huan will ask
+   when they are needed.

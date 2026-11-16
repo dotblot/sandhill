@@ -106,7 +106,7 @@ impl Output {
 }
 
 /// The `git` to run.
-fn program() -> Result<PathBuf> {
+pub(crate) fn program() -> Result<PathBuf> {
     let git = crate::agents::find("git")
         .context("git is not installed on this machine; install it to use the Git pane")?;
     // macOS's /usr/bin/git only offers to install Apple's command line tools

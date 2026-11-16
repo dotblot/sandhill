@@ -15,6 +15,7 @@ mod git;
 mod packages;
 mod projects;
 mod sessions;
+mod skills;
 mod system;
 mod tables;
 mod terminals;
@@ -25,6 +26,7 @@ pub use git::*;
 pub use packages::*;
 pub use projects::*;
 pub use sessions::*;
+pub use skills::*;
 pub use system::*;
 pub use tables::*;
 pub use terminals::*;
@@ -704,6 +706,44 @@ pub enum Call {
     UsageStats {
         days: u32,
         tz_offset_minutes: i32,
+    },
+    /// The skills on this device: installed, Sandhill's list and the
+    /// built-in guides. Returns [`SkillList`].
+    ListSkills,
+    /// Fetches skills to show before installing: nothing is installed yet.
+    /// Returns [`SkillPreview`]; its `token` names what was fetched.
+    PreviewSkills {
+        fetch: SkillFetch,
+    },
+    /// Installs the previewed skills named, replacing installed ones of the
+    /// same name, and drops the rest of the preview. Returns
+    /// `Vec<SkillInfo>`.
+    InstallSkills {
+        token: String,
+        names: Vec<String>,
+    },
+    /// Turns an installed skill on or off for agents. Returns `null`.
+    SetSkillEnabled {
+        name: String,
+        enabled: bool,
+    },
+    /// Deletes an installed skill. Returns `null`.
+    RemoveSkill {
+        name: String,
+    },
+    /// An installed skill's files, for Copy to…. Returns [`SkillExport`].
+    ExportSkill {
+        name: String,
+    },
+    /// For agents (`get_skill`): with no `name`, the skills that are on, as
+    /// `{skills: [{name, description}]}`; with a name, `{name, description,
+    /// path, files, text}` (`text` is `SKILL.md`, or `file` when given, a
+    /// text file of that skill). Turned-off skills are not found.
+    GetSkill {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<String>,
     },
     /// A project's shared settings, from `.sandhill/project.toml`, and the
     /// environments its files point to. Returns [`ProjectSetup`].

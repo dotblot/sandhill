@@ -16,6 +16,7 @@ mod documents;
 pub mod http;
 mod jobs;
 mod session;
+pub(crate) mod skills;
 mod viewer;
 pub use documents::Prompt;
 pub mod text;
@@ -156,7 +157,7 @@ impl Tools {
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "sandhill", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{INSTRUCTIONS} {}", bio::GUIDANCE),
+                    "instructions": format!("{INSTRUCTIONS} {} {}", bio::GUIDANCE, skills::GUIDANCE),
                 })
             }
             "ping" => json!({}),
@@ -183,6 +184,7 @@ impl Tools {
             "get_bio_guide" | "begin_analysis" | "check_analysis" | "get_analysis" => {
                 self.bio_tool(name, args).await
             }
+            "get_skill" => self.get_skill(args).await,
             "list_sessions" => self.list_sessions().await,
             "list_variables" => self.list_variables(text("session"), text("language")).await,
             "run_code" => {
@@ -895,6 +897,7 @@ fn tool_list() -> Value {
         },
     ]);
     tools.as_array_mut().unwrap().extend(bio::tool_list());
+    tools.as_array_mut().unwrap().push(skills::tool());
     tools
 }
 

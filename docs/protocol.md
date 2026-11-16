@@ -128,6 +128,13 @@ Responses can arrive out of order; match them by `id`.
 | `begin_analysis` | `project`, `spec` | `{analysis, latest_check?, history, validity, export}`; new journal-backed record at `analysis.id` |
 | `check_analysis` | `project`, `analysis`, `checkpoint`, `details?` | Same envelope with a new program-generated checkpoint and actual run evidence |
 | `get_analysis` | `project`, `analysis` | Authoritative historical evidence; no kernel run and no assertion of current revalidation |
+| `list_skills` | | `SkillList`: installed, suggested and built-in skills |
+| `preview_skills` | `fetch` | `SkillPreview`: token, source, candidates and refusals; no install |
+| `install_skills` | `token`, `names` | `[SkillInfo]`: installs or replaces the selected candidates |
+| `set_skill_enabled` | `name`, `enabled` | `null`; off hides the skill from agents |
+| `remove_skill` | `name` | `null`; deletes its files and index record |
+| `export_skill` | `name` | `SkillExport`: files as base64, executable bits and original source |
+| `get_skill` | `name?`, `file?` | Enabled skill summaries, or text, path and file list |
 
 Management calls are device-wide, not project-wide. Clients must show affected
 resources/projects and obtain confirmation before destructive operations.
@@ -1140,6 +1147,57 @@ older servers report the feature unavailable. Ask and Plan permit only
 reading guides/history among these four tools. Existing unrelated Plan tools
 are unchanged; the CLI's independent shell/file tools are not sandboxed.
 
+
+### Skills
+
+Skills are device-wide folders with a `SKILL.md`, installed only after the
+user confirms the preview. `list_skills` returns installed skills by name,
+the pinned Suggested catalog (with installation status), and the four
+built-in bioinformatics guides.
+
+`preview_skills` accepts a tagged `fetch`: `git {url, commit?}`,
+`suggested {id}`, `update {name}`, `zip {label, base64}`, or
+`files {label, files, source?}`. Each file is `{path, base64, executable}`.
+Git accepts `owner/repo`, GitHub repository and `/tree/<ref>/<folder>`
+addresses, or another git URL. A shallow fetch records the exact commit;
+Suggested uses its catalog pin, while Update fetches the repository's
+current HEAD and restricts discovery to the installed skill's folder.
+Uploads cannot be checked for updates. Export followed by Files with
+`source` keeps the original Git source when copying between devices.
+
+Previews live in `skills/.incoming/<token>/` under the daemon's state
+folder. Tokens expire after one hour; each preview removes old incoming
+folders. Install consumes its token, including on failure. It installs
+only the selected names, replacing an existing folder when requested.
+`skills/<name>/` keeps the files and executable bits; `skills/index.json`
+records description, source, enabled state, install time, counts, scripts,
+licence and a SHA-256 digest. Index writes use a temporary file and rename;
+the daemon serializes skill operations. Replacement preserves the on/off
+state.
+
+Discovery looks for `SKILL.md` up to six folders deep, skipping `.git`.
+Each candidate includes its whole folder tree and needs frontmatter
+`name` and `description`. Names are lowercased, unsafe characters become
+hyphens, outer dots and hyphens are trimmed, and the result is at most
+64 characters. Empty names are refused. Candidates with symlinks, escaping
+paths, more than 20 MiB or 2,048 files are refused. Duplicate names in a
+preview are refused after the first. Git trees and uploads are limited to
+100 MiB; zip archives and folder uploads to 10,000 entries. Zip paths and
+symlinks are checked before extraction. Mac metadata files are ignored.
+Script paths are shown in the preview. A nearest ancestor licence inside
+the fetched tree is copied as `LICENSE` when the skill has none.
+`replaces` signals a name already installed; `changed` compares file bytes,
+relative paths and executable bits to the installed digest.
+
+Every agent gets the read-only MCP tool `get_skill`. With no name it lists
+enabled skills as `{skills: [{name, description}]}`. A name returns
+`{name, description, path, files, text}`, with `SKILL.md` as the text.
+`file` reads another relative UTF-8 text file inside the skill, at most
+256 KiB, with no `..` components or symlinks. Disabled or missing skills
+are not readable through this tool. Enabled skills also appear after the
+four guides in `agent_commands`, as `kind: "guide"` picks that instruct
+the agent to read the skill first. Sandhill does not write to agents'
+own skill folders or run installed scripts on their behalf.
 
 ### Agent accounts
 

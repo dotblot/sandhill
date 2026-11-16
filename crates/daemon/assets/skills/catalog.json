@@ -1,0 +1,77 @@
+{
+  "_comment": "Sandhill's Suggested skills (Huan, 2026-11-16; docs/design/done/skills-plan.md). Each is fetched from its repository at the pinned commit when the user presses Add; nothing here is shipped with Sandhill. All are Apache-2.0 (checked 2026-11-16).",
+  "skills": [
+    {
+      "id": "scvi-tools",
+      "name": "scvi-tools",
+      "description": "Deep-learning single-cell methods: integration and batch correction (scVI, scANVI), CITE-seq, multiome, ATAC, spatial deconvolution, label transfer.",
+      "url": "https://github.com/anthropics/knowledge-work-plugins",
+      "path": "bio-research/skills/scvi-tools",
+      "commit": "e91a134584eb798bac7fb0379358006a2b63b965",
+      "licence": "Apache-2.0"
+    },
+    {
+      "id": "single-cell-rna-qc",
+      "name": "Single-cell RNA QC",
+      "description": "Quality control of scRNA-seq data (.h5ad, .h5) with scverse best practices: MAD-based filtering and QC plots.",
+      "url": "https://github.com/anthropics/knowledge-work-plugins",
+      "path": "bio-research/skills/single-cell-rna-qc",
+      "commit": "e91a134584eb798bac7fb0379358006a2b63b965",
+      "licence": "Apache-2.0"
+    },
+    {
+      "id": "nextflow-development",
+      "name": "Nextflow and nf-core",
+      "description": "Run nf-core pipelines (rnaseq, sarek, atacseq) on local FASTQs or public GEO/SRA data, including samplesheets.",
+      "url": "https://github.com/anthropics/knowledge-work-plugins",
+      "path": "bio-research/skills/nextflow-development",
+      "commit": "e91a134584eb798bac7fb0379358006a2b63b965",
+      "licence": "Apache-2.0"
+    },
+    {
+      "id": "instrument-data-to-allotrope",
+      "name": "Instrument data to Allotrope",
+      "description": "Convert lab instrument files (PDF, CSV, Excel, TXT) to Allotrope Simple Model JSON or flat CSV for LIMS and data lakes.",
+      "url": "https://github.com/anthropics/knowledge-work-plugins",
+      "path": "bio-research/skills/instrument-data-to-allotrope",
+      "commit": "e91a134584eb798bac7fb0379358006a2b63b965",
+      "licence": "Apache-2.0"
+    },
+    {
+      "id": "scientific-problem-selection",
+      "name": "Scientific problem selection",
+      "description": "Choosing and pitching research problems, evaluating project risk and getting unstuck, after Fischbach and Walsh.",
+      "url": "https://github.com/anthropics/life-sciences",
+      "path": "scientific-problem-selection",
+      "commit": "0d38fe5c0a50d711ebe6ecd85dc84b98660579d0",
+      "licence": "Apache-2.0"
+    },
+    {
+      "id": "clinical-trial-protocol-skill",
+      "name": "Clinical trial protocol",
+      "description": "Draft clinical trial protocols for medical devices or drugs, with research into similar trials.",
+      "url": "https://github.com/anthropics/life-sciences",
+      "path": "clinical-trial-protocol-skill",
+      "commit": "0d38fe5c0a50d711ebe6ecd85dc84b98660579d0",
+      "licence": "Apache-2.0"
+    },
+    {
+      "id": "clinical-trial-forecast",
+      "name": "Clinical trial forecast",
+      "description": "A registered trial's probability of success: checked research, a Monte Carlo model and a cited report. Written for Claude Science.",
+      "url": "https://github.com/anthropics/life-sciences",
+      "path": "clinical-trial-forecast",
+      "commit": "0d38fe5c0a50d711ebe6ecd85dc84b98660579d0",
+      "licence": "Apache-2.0"
+    },
+    {
+      "id": "binder-gauntlet",
+      "name": "Binder gauntlet",
+      "description": "Validate de novo protein binders: independent re-prediction, controls, developability and sequence liabilities, and a dossier.",
+      "url": "https://github.com/anthropics/life-sciences",
+      "path": "binder-gauntlet",
+      "commit": "0d38fe5c0a50d711ebe6ecd85dc84b98660579d0",
+      "licence": "Apache-2.0"
+    }
+  ]
+}

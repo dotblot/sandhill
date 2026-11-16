@@ -201,6 +201,14 @@ pub fn titles() -> impl Iterator<Item = (&'static str, &'static str)> {
     GUIDES.iter().map(|guide| (guide.id, guide.name))
 }
 
+pub(crate) fn skills() -> impl Iterator<Item = sandhill_proto::BuiltInSkill> {
+    GUIDES.iter().map(|guide| sandhill_proto::BuiltInSkill {
+        id: guide.id.into(),
+        name: guide.name.into(),
+        description: guide.description.into(),
+    })
+}
+
 /// Catalog, main skill, or one exactly allowlisted relative resource.
 /// No filesystem access, kernel execution, data download or user configuration.
 pub fn get(id: Option<&str>, resource: Option<&str>) -> Result<Value> {

@@ -43,6 +43,7 @@ pub mod redraw;
 pub mod server;
 pub mod session;
 pub mod sidecar;
+pub mod skills;
 pub mod startup;
 pub mod system;
 pub mod tables;

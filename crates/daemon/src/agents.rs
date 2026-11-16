@@ -646,6 +646,8 @@ pub fn instructions(options: &AgentOptions) -> String {
     );
     text.push(' ');
     text.push_str(crate::mcp::bio::GUIDANCE);
+    text.push(' ');
+    text.push_str(crate::mcp::skills::GUIDANCE);
     if let Some(pin) = &options.pin {
         text.push_str(&format!(
             " The user pinned this session to {pin}; add_cell writes there."
