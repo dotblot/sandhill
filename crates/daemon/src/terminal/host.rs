@@ -610,25 +610,17 @@ impl Shared {
         listeners.push(out);
     }
 
-    /// Passes a command from the user to the listening program. A mode
-    /// switch also sets Sandhill's own guard, which Claude Code's hooks
-    /// read, and where the agent's code goes, which the MCP server reads
-    /// (Claude Code doesn't listen; its commands just wait here).
+    /// Passes a command from the user to the listening program and records
+    /// where the agent's code goes for the MCP server (Claude Code doesn't
+    /// listen; its commands just wait here).
     fn command(&self, command: Value) {
-        if command["kind"] == "set"
-            && let Some(permission) = command.get("permission")
-        {
-            let guard = super::guard::of(permission.as_str());
-            self.report(json!({ "guard": guard }));
-        }
         if command["kind"] == "set"
             && let Some(code) = command.get("code")
         {
             self.report(json!({ "code": super::code_to(code.as_str()) }));
         }
-        // The message box's choices, which the next message reads: the
-        // pinned file, web search and session context, and (with a set or
-        // with the message itself) what was added to the message.
+        // The pinned file and what was added to the next message, with a
+        // set command or with the message itself.
         let choices: serde_json::Map<String, Value> = super::choices::KEYS
             .iter()
             .filter(|key| command["kind"] == "set" || **key == "refs")

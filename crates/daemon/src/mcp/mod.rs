@@ -164,13 +164,7 @@ impl Tools {
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                let result = if self.read_only_now() && !read_only_tools().iter().any(|t| t == name)
-                {
-                    Err(anyhow::anyhow!(crate::terminal::guard::BLOCKED))
-                } else {
-                    self.call(name, &args).await
-                };
-                match result {
+                match self.call(name, &args).await {
                     Ok(content) => json!({"content": content, "isError": false}),
                     Err(err) => json!({
                         "content": [{"type": "text", "text": format!("{err:#}")}],
@@ -180,15 +174,6 @@ impl Tools {
             }
             _ => bail!("method not found: {method}"),
         })
-    }
-
-    /// Whether the user has the agent in Sandhill's read-only Ask mode.
-    fn read_only_now(&self) -> bool {
-        self.terminal_dir
-            .as_deref()
-            .and_then(crate::terminal::guard::current)
-            .as_deref()
-            == Some(crate::terminal::guard::ASK)
     }
 
     /// Runs one tool. Returns MCP content items.

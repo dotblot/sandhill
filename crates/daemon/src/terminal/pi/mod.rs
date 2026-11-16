@@ -9,13 +9,10 @@
 //!   and #;
 //! - pi's events come back as the chat entries Claude Code's hooks make,
 //!   translated in [`events`];
-//! - Sandhill's MCP server and the approval check before each tool call come
-//!   from a small extension loaded for the run (`-e`, see `extension.js`):
-//!   pi reads MCP servers only from its config files, but an extension can
-//!   register one for its session, so no pi file is edited. The check asks
-//!   the bridge through RPC mode's extension dialogs, and the bridge asks the
-//!   user in the chat when the conversation's mode says so; pi itself never
-//!   asks before a tool runs;
+//! - Sandhill's MCP server comes from a small extension loaded for the run
+//!   (`-e`, see `extension.js`): pi reads MCP servers only from its config
+//!   files, but an extension can register one for its session, so no pi file
+//!   is edited. Tools run as they do in pi itself, without Sandhill approval;
 //! - the session is resumed with `--session-id`, and its id is the
 //!   conversation's resume key (`thread`), so Sandhill's command-line mode
 //!   runs pi's own interface on the same session and back.
@@ -39,7 +36,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc;
 
 pub use super::acp::Options;
-use super::{FromHost, Paths, ToHost, guard};
+use super::{FromHost, Paths, ToHost};
 use crate::journal::now_ms;
 use events::Translator;
 
@@ -54,14 +51,11 @@ const REFS_TIMEOUT: Duration = Duration::from_millis(1500);
 /// pi's own interface: Escape stops a turn, Ctrl+C clears the editor and
 /// Ctrl+D quits. (pi has no `/exit`; typed, it would be a message.)
 const QUIT: [&str; 3] = ["\x1b", "\x03", "\x04"];
-/// The title of the extension's dialog that asks before a tool call.
-const GATE: &str = "sandhill:tool_call";
 const EXTENSION: &str = include_str!("extension.js");
 
 /// Writes Sandhill's pi extension (see `extension.js`) into `dir`, the
 /// conversation's terminal folder. It reads its settings from the
-/// environment: `SANDHILL_MCP_URL`, `SANDHILL_MCP_TOKEN` and, for chat
-/// mode's approvals, `SANDHILL_PI_GATE=1`.
+/// environment: `SANDHILL_MCP_URL` and `SANDHILL_MCP_TOKEN`.
 pub fn write_extension(dir: &Path) -> std::io::Result<PathBuf> {
     let path = dir.join("pi-sandhill.js");
     std::fs::write(&path, EXTENSION)?;
@@ -173,15 +167,11 @@ struct Startup {
 
 /// A dialog of pi's waiting for the user.
 enum Dialog {
-    /// The extension's check before a tool call; `tool` is pi's name for it.
-    Gate {
-        tool: String,
-    },
     Select(Vec<String>),
     Confirm,
 }
 
-struct Approval {
+struct PendingDialog {
     /// pi's id for the dialog.
     ui: Value,
     dialog: Dialog,
@@ -198,69 +188,6 @@ struct Sent {
 struct Pi {
     child: Child,
     lines: Lines<BufReader<ChildStdout>>,
-}
-
-/// What Sandhill does with a tool call, by the conversation's mode.
-#[derive(Debug, PartialEq, Eq)]
-enum Gate {
-    Allow,
-    Ask,
-    /// Ask mode (and planning) is read-only.
-    Block,
-}
-
-/// pi's tools that only look: its own, its MCP resource and tool loading
-/// tools, Sandhill's read-only ones, and `codemode`, whose scripts' calls
-/// are each checked themselves.
-fn looks_only(tool: &str) -> bool {
-    if let Some(name) = tool.strip_prefix("mcp__sandhill__") {
-        return crate::mcp::read_only_tools().iter().any(|t| t == name);
-    }
-    matches!(
-        tool,
-        "read"
-            | "grep"
-            | "find"
-            | "ls"
-            | "list_mcp_resources"
-            | "list_mcp_resource_templates"
-            | "read_mcp_resource"
-            | "tool_search"
-            | "codemode"
-    )
-}
-
-/// What allowing a tool "for this chat" allows: file edits together, else
-/// the tool.
-fn kind_of(tool: &str) -> &str {
-    match tool {
-        "edit" | "write" => "files",
-        _ => tool,
-    }
-}
-
-fn gate(permission: Option<&str>, tool: &str, allowed: &HashSet<String>) -> Gate {
-    let looks = looks_only(tool);
-    let kept = allowed.contains(kind_of(tool));
-    match permission {
-        Some(guard::ASK | "plan") if looks => Gate::Allow,
-        Some(guard::ASK | "plan") => Gate::Block,
-        Some(guard::RESTRICTED) if kept => Gate::Allow,
-        Some(guard::RESTRICTED) => Gate::Ask,
-        Some("auto" | "full") => Gate::Allow,
-        Some("edits") if kind_of(tool) == "files" => Gate::Allow,
-        _ if looks || kept => Gate::Allow,
-        _ => Gate::Ask,
-    }
-}
-
-/// What the ask card says allowing for the chat allows.
-fn remember(tool: &str) -> String {
-    match kind_of(tool) {
-        "bash" => "commands".into(),
-        "files" => "file edits".into(),
-        other => other.rsplit("__").next().unwrap_or(other).to_string(),
-    }
 }
 
 struct Bridge {
@@ -289,10 +216,8 @@ struct Bridge {
     queued: VecDeque<String>,
     sent: Option<Sent>,
     events: Translator,
-    approvals: HashMap<String, Approval>,
+    dialogs: HashMap<String, PendingDialog>,
     answers: mpsc::UnboundedSender<(String, Option<Value>)>,
-    /// Kinds of tools the user allowed for this chat (see [`kind_of`]).
-    allowed: HashSet<String>,
     models: Value,
     /// What the bridge last set (or pi started with), and the user's choice.
     model: Option<String>,
@@ -359,9 +284,8 @@ pub async fn run(options: Options) -> Result<i32> {
         queued,
         sent: None,
         events: Translator::default(),
-        approvals: HashMap::new(),
+        dialogs: HashMap::new(),
         answers,
-        allowed: HashSet::new(),
         models: Value::Null,
         model: None,
         effort: None,
@@ -417,8 +341,8 @@ pub async fn run(options: Options) -> Result<i32> {
             .await;
         let _ = bridge.finish(true).await;
     }
-    for (_, approval) in bridge.approvals.drain() {
-        approval.task.abort();
+    for (_, dialog) in bridge.dialogs.drain() {
+        dialog.task.abort();
     }
     let _ = pi.child.kill().await;
     result
@@ -473,7 +397,7 @@ impl Bridge {
         status.insert("model".into(), label);
         status.insert("model_id".into(), json!(self.model));
         status.insert("effort".into(), json!(self.level));
-        let state = if !self.approvals.is_empty() {
+        let state = if !self.dialogs.is_empty() {
             "waiting"
         } else if self.busy || self.startup.is_some() {
             "busy"
@@ -483,7 +407,6 @@ impl Bridge {
         let mut report = json!({
             "state": state,
             "thread": self.session,
-            "permission": self.options.options.permission.as_deref().unwrap_or("supervised"),
             "view_mode": self.view_mode,
             "status": status,
         });
@@ -516,9 +439,7 @@ impl Bridge {
     fn pi_command(&self, rpc: bool) -> Command {
         let mut command = Command::new(&self.options.program);
         if rpc {
-            command.args(["--mode", "rpc"]).env("SANDHILL_PI_GATE", "1");
-        } else {
-            command.env_remove("SANDHILL_PI_GATE");
+            command.args(["--mode", "rpc"]);
         }
         if !self.session.is_empty() {
             // Opens the session, or starts it with this id if pi has not
@@ -789,7 +710,7 @@ impl Bridge {
         }
         let out = self.events.finish(interrupted);
         self.send_all(out).await?;
-        self.cancel_approvals().await?;
+        self.cancel_dialogs().await?;
         let was_busy = std::mem::take(&mut self.busy);
         self.stopping = false;
         self.report(json!({})).await?;
@@ -816,9 +737,6 @@ impl Bridge {
                 if command.get("effort").is_some() {
                     self.selected_effort = text("effort");
                 }
-                if command.get("permission").is_some() {
-                    self.options.options.permission = text("permission");
-                }
                 self.report(json!({})).await?;
             }
             Some("compact") => {
@@ -839,7 +757,7 @@ impl Bridge {
 
     async fn interrupt(&mut self) -> Result<()> {
         self.queued.clear();
-        self.cancel_approvals().await?;
+        self.cancel_dialogs().await?;
         if self.busy && !self.stopping && self.stdin.is_some() {
             self.stopping = true;
             self.call(Request::Abort, json!({"type": "abort"})).await?;
@@ -900,13 +818,6 @@ impl Bridge {
             message.push_str("\n\n");
             message.push_str(context);
         }
-        if matches!(
-            self.options.options.permission.as_deref(),
-            Some(guard::ASK | "plan")
-        ) {
-            message.push_str("\n\n");
-            message.push_str(guard::ASK_NOTE);
-        }
         self.sent = Some(Sent {
             text,
             place: prompt.place,
@@ -924,27 +835,11 @@ impl Bridge {
         self.write(fields).await
     }
 
-    async fn verdict(&mut self, id: &Value, allow: bool, reason: Option<&str>) -> Result<()> {
-        let mut decision = json!({"allow": allow});
-        if let Some(reason) = reason {
-            decision["reason"] = json!(reason);
-        }
-        self.respond(id, json!({"value": decision.to_string()}))
-            .await
-    }
-
-    /// A dialog from pi: the extension's check before a tool call, or
-    /// another extension's question.
+    /// A native extension's dialog from pi.
     async fn dialog(&mut self, request: Value) -> Result<()> {
         let id = request["id"].clone();
         let title = request["title"].as_str().unwrap_or("pi").to_string();
         match request["method"].as_str().unwrap_or_default() {
-            "input" if title == GATE => {
-                let call: Value =
-                    serde_json::from_str(request["placeholder"].as_str().unwrap_or("null"))
-                        .unwrap_or_default();
-                self.gate(id, &call).await
-            }
             "select" => {
                 let options: Vec<String> = request["options"]
                     .as_array()
@@ -986,36 +881,6 @@ impl Bridge {
         }
     }
 
-    async fn gate(&mut self, id: Value, call: &Value) -> Result<()> {
-        let tool = call["toolName"].as_str().unwrap_or_default().to_string();
-        let step = call["toolCallId"].as_str().unwrap_or_default().to_string();
-        if self.stopping {
-            return self
-                .verdict(&id, false, Some("The user stopped the turn."))
-                .await;
-        }
-        match gate(
-            self.options.options.permission.as_deref(),
-            &tool,
-            &self.allowed,
-        ) {
-            Gate::Allow => self.verdict(&id, true, None).await,
-            Gate::Block => {
-                self.events.block(&step, guard::BLOCKED_STEP);
-                self.verdict(&id, false, Some(guard::BLOCKED)).await
-            }
-            Gate::Ask => {
-                let (name, input) = match self.events.step(&step) {
-                    Some((name, input)) => (name.to_string(), input.clone()),
-                    None => events::tool_step(&tool, &call["input"]),
-                };
-                let event = json!({"kind": "ask", "turn": self.events.turn, "tool": name,
-                    "input": input, "step": step, "scopes": ["chat"], "remember": [remember(&tool)]});
-                self.ask(id, Dialog::Gate { tool }, event).await
-            }
-        }
-    }
-
     /// Shows the ask card `event` and waits (in a task) for the user's
     /// answer to pi's dialog `ui`.
     async fn ask(&mut self, ui: Value, dialog: Dialog, mut event: Value) -> Result<()> {
@@ -1035,32 +900,18 @@ impl Bridge {
             let answer = super::ask(&dir, &ask_id, event).await.ok().flatten();
             let _ = answers.send((ask_id, answer));
         });
-        self.approvals.insert(key, Approval { ui, dialog, task });
+        self.dialogs.insert(key, PendingDialog { ui, dialog, task });
         self.report(json!({})).await?;
         let _ = go.send(());
         Ok(())
     }
 
     async fn answer(&mut self, key: &str, answer: Option<Value>) -> Result<()> {
-        let Some(approval) = self.approvals.remove(key) else {
+        let Some(dialog) = self.dialogs.remove(key) else {
             return Ok(());
         };
         let answer = answer.unwrap_or_default();
-        match approval.dialog {
-            Dialog::Gate { tool } => {
-                if answer["behavior"] == "allow" {
-                    if matches!(answer["scope"].as_str(), Some("chat" | "project")) {
-                        self.allowed.insert(kind_of(&tool).to_string());
-                    }
-                    self.verdict(&approval.ui, true, None).await?;
-                } else {
-                    let reason = answer["message"]
-                        .as_str()
-                        .unwrap_or("The user did not allow this step in Sandhill.")
-                        .to_string();
-                    self.verdict(&approval.ui, false, Some(&reason)).await?;
-                }
-            }
+        match dialog.dialog {
             Dialog::Select(options) => {
                 let chosen = answer["option_id"]
                     .as_str()
@@ -1070,23 +921,22 @@ impl Bridge {
                     Some(value) => json!({"value": value}),
                     None => json!({"cancelled": true}),
                 };
-                self.respond(&approval.ui, fields).await?;
+                self.respond(&dialog.ui, fields).await?;
             }
             Dialog::Confirm => {
                 let confirmed = answer["option_id"] == "yes";
-                self.respond(&approval.ui, json!({"confirmed": confirmed}))
+                self.respond(&dialog.ui, json!({"confirmed": confirmed}))
                     .await?;
             }
         }
         self.report(json!({})).await
     }
 
-    async fn cancel_approvals(&mut self) -> Result<()> {
-        for (_, approval) in std::mem::take(&mut self.approvals) {
-            approval.task.abort();
+    async fn cancel_dialogs(&mut self) -> Result<()> {
+        for (_, dialog) in std::mem::take(&mut self.dialogs) {
+            dialog.task.abort();
             if self.stdin.is_some() {
-                self.respond(&approval.ui, json!({"cancelled": true}))
-                    .await?;
+                self.respond(&dialog.ui, json!({"cancelled": true})).await?;
             }
         }
         Ok(())
@@ -1124,7 +974,7 @@ impl Bridge {
         if !matches!(settled, Ok(Ok(()))) || self.busy {
             self.finish(true).await?;
         }
-        self.cancel_approvals().await?;
+        self.cancel_dialogs().await?;
         self.stdin = None;
         self.pending.clear();
         if !matches!(
@@ -1151,49 +1001,5 @@ impl Bridge {
             self.command(command).await?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Gate, gate, remember};
-    use std::collections::HashSet;
-
-    #[test]
-    fn modes_decide_which_tool_calls_ask_first() {
-        let none = HashSet::new();
-        // Supervised (the default) asks before commands and edits.
-        assert_eq!(gate(None, "read", &none), Gate::Allow);
-        assert_eq!(
-            gate(None, "mcp__sandhill__list_variables", &none),
-            Gate::Allow
-        );
-        assert_eq!(gate(None, "bash", &none), Gate::Ask);
-        assert_eq!(gate(Some("supervised"), "edit", &none), Gate::Ask);
-        assert_eq!(gate(None, "mcp__sandhill__run_code", &none), Gate::Ask);
-        assert_eq!(gate(None, "mcp__github__create_issue", &none), Gate::Ask);
-        // Allowed for the chat: edits go together.
-        let files = HashSet::from(["files".to_string()]);
-        assert_eq!(gate(None, "write", &files), Gate::Allow);
-        assert_eq!(gate(None, "bash", &files), Gate::Ask);
-        assert_eq!(gate(Some("edits"), "edit", &none), Gate::Allow);
-        assert_eq!(gate(Some("edits"), "bash", &none), Gate::Ask);
-        assert_eq!(gate(Some("full"), "bash", &none), Gate::Allow);
-        assert_eq!(
-            gate(Some("auto"), "mcp__sandhill__run_code", &none),
-            Gate::Allow
-        );
-        // Restricted asks before every step; Ask mode only looks.
-        assert_eq!(gate(Some("restricted"), "read", &none), Gate::Ask);
-        assert_eq!(gate(Some("restricted"), "write", &files), Gate::Allow);
-        assert_eq!(gate(Some("ask"), "read", &none), Gate::Allow);
-        assert_eq!(gate(Some("ask"), "bash", &files), Gate::Block);
-        assert_eq!(
-            gate(Some("plan"), "mcp__sandhill__add_cell", &none),
-            Gate::Block
-        );
-        assert_eq!(remember("bash"), "commands");
-        assert_eq!(remember("write"), "file edits");
-        assert_eq!(remember("mcp__sandhill__run_code"), "run_code");
     }
 }

@@ -39,6 +39,18 @@ differs, this wins.
   agent's own login is never renamed or removed. Returned effort-variant siblings
   share one row and slider levels map to real IDs, without a second `--effort`.
   Preserve explicit provider/model selections and existing chats on refresh.
+- Message box (Huan, 2026-11-16; `docs/design/done/composer-plan.md`):
+  chips, then the text across the full width, then one row of pills:
+  + (opens the @ list), the mode, "Code File/Console", the context ring,
+  the model and the send/stop button. Modes are each agent's own, in its
+  own words, starting in its own default (Claude Code: Manual, Accept
+  edits, Plan mode, Auto mode, Bypass permissions; Codex: Read Only,
+  Default, Approve for me, Full Access, Plan mode; Antigravity: Default,
+  Accept edits, Auto, Plan, Skip permissions; OpenScience: Build, Plan;
+  Oh My Pi: Always ask, Write, YOLO, Plan). pi has no modes and runs
+  everything; Sandhill's own Restricted and Ask modes are gone. There is
+  no web-search switch: each agent keeps its own default. Following the
+  agent's edits is only in Welcome → General.
 
 ## The agents
 - Agents: Claude Code and Codex run as unmodified CLIs. Do not read or reuse

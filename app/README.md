@@ -1265,6 +1265,15 @@ preview and R's imports weren't seen.
   `Call::SystemStats` (`read_stats` asks once on showing). The quota strip
   shows what is left as numbers and only marks below 820px; resource
   numbers go below 1000px. Problems get a × that clears `problem`.
+- **Message box** (Huan, 2026-11-16; `docs/design/done/composer-plan.md`):
+  `composer_view.rs::render_composer` puts the text across the box and one
+  row of capsule pills under it: + (`Agents::toggle_add` types @ so the @
+  list opens as typing does), mode, "Code File/Console" (`set_console`),
+  context, model, send. Modes are per agent (`composer::modes(kind)`, each a
+  `Mode` with the daemon's `permission`; `DEFAULT` = "supervised" is the
+  agent's own default; pi and Posit Assistant have none); the notebook's
+  Explain starts in `composer::read_only_mode`. The web switch, Sandhill's
+  Restricted/Ask guard and the box's follow-edits button are gone.
 
 
 ## Running it

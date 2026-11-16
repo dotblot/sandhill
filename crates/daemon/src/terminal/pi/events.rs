@@ -35,8 +35,6 @@ pub struct Translator {
     serial: u64,
     stream: Option<Stream>,
     steps: HashMap<String, Step>,
-    /// Steps Sandhill refused (Ask mode), shown as such in the chat.
-    blocked: HashMap<String, String>,
     /// The last reply's error, said when the turn ends unless pi retried.
     error: Option<String>,
 }
@@ -52,18 +50,6 @@ impl Translator {
         out.extend(self.flush(true));
         self.turn = Some(id);
         out
-    }
-
-    /// The chat says `reason` for a step Sandhill would not run.
-    pub fn block(&mut self, step: &str, reason: &str) {
-        self.blocked.insert(step.to_string(), reason.to_string());
-    }
-
-    /// Whether a step is open, by pi's id.
-    pub fn step(&self, id: &str) -> Option<(&str, &Value)> {
-        self.steps
-            .get(id)
-            .map(|step| (step.tool.as_str(), &step.input))
     }
 
     /// One event from pi's output.
@@ -120,9 +106,6 @@ impl Translator {
                     &event["result"],
                     event["isError"] == true,
                 );
-                if let Some(reason) = self.blocked.remove(id) {
-                    end = json!({"kind": "step_failed", "tool": step.tool, "error": reason});
-                }
                 end["turn"] = json!(self.turn);
                 end["id"] = json!(id);
                 if let Some(ms) = event["durationMs"].as_f64() {
@@ -211,7 +194,6 @@ impl Translator {
                 "error": "The turn ended before the step completed.", "interrupted": interrupted}),
             );
         }
-        self.blocked.clear();
         if let Some(error) = self.error.take().filter(|_| !interrupted) {
             out.push(json!({"kind": "error", "turn": self.turn, "text": error}));
         }
@@ -544,7 +526,7 @@ mod tests {
 {"type":"tool_execution_start","toolCallId":"call_2","toolName":"mcp__sandhill__list_variables","args":{"session":"py"}}
 {"type":"tool_execution_end","toolCallId":"call_2","toolName":"mcp__sandhill__list_variables","result":{"content":[{"type":"text","text":"df: DataFrame"}]},"isError":false}
 {"type":"tool_execution_start","toolCallId":"call_3","toolName":"edit","args":{"path":"a.py","edits":[{"oldText":"x = 1","newText":"x = 2"}]}}
-{"type":"tool_execution_end","toolCallId":"call_3","toolName":"edit","result":{"content":[{"type":"text","text":"Blocked: Ask mode"}]},"isError":true}
+{"type":"tool_execution_end","toolCallId":"call_3","toolName":"edit","result":{"content":[{"type":"text","text":"No matching text found"}]},"isError":true}
 {"type":"turn_end","message":{"role":"assistant"},"toolResults":[]}
 {"type":"message_start","message":{"role":"assistant","content":[],"stopReason":"pending"}}
 {"type":"message_update","usage":{},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
@@ -579,7 +561,6 @@ mod tests {
     fn a_turn_becomes_reasoning_steps_and_a_reply() {
         let mut translator = Translator::default();
         assert!(translator.begin("s:turn:1".into()).is_empty());
-        translator.block("call_3", super::super::super::guard::BLOCKED_STEP);
         let out = run(&lines(TURN), &mut translator);
         let kinds: Vec<&str> = out.iter().map(|e| e["kind"].as_str().unwrap()).collect();
         assert_eq!(
@@ -611,7 +592,7 @@ mod tests {
             out[6]["input"],
             json!({"file_path": "a.py", "old_string": "x = 1", "new_string": "x = 2"})
         );
-        assert_eq!(out[7]["error"], "Not run: Ask mode is read-only.");
+        assert_eq!(out[7]["error"], "No matching text found");
         assert_eq!(out[8]["text"], "There are 3 rows.");
         assert_eq!(out[8]["final"], true);
         assert_eq!(out[9]["turn"], "s:turn:1");

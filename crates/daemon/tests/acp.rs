@@ -1,6 +1,6 @@
 //! The real ACP bridge and terminal host, with a local scripted OpenScience.
 //! No model service, OpenScience installation, or Jupyter kernel is needed.
-//! The fake also starts the supplied real MCP server to check Ask's guard.
+//! The fake also uses the supplied real MCP server to inspect and edit files.
 
 mod common;
 
@@ -75,8 +75,8 @@ def session_info():
         models=dict(currentModelId='fake-model-a', availableModels=[
             dict(modelId='fake-model-a', name='Fake model A'),
             dict(modelId='fake-model-b', name='Fake model B')]),
-        modes=dict(currentModeId='ask', availableModes=[
-            dict(id='ask', name='Ask'), dict(id='default', name='Normal')]))
+        modes=dict(currentModeId='plan', availableModes=[
+            dict(id='plan', name='Plan'), dict(id='build', name='Build')]))
 
 
 def mcp_call(server, name, arguments):
@@ -143,7 +143,7 @@ for line in sys.stdin:
         reply(request, {})
     elif method == 'session/set_mode':
         assert params['sessionId'] == session
-        assert params['modeId'] in ('ask', 'default')
+        assert params['modeId'] in ('plan', 'build')
         reply(request, {})
         update('current_mode_update', currentModeId=params['modeId'])
     elif method == 'session/prompt':
@@ -160,12 +160,9 @@ for line in sys.stdin:
                                     dict(content='Report', priority='medium', status='in_progress')])
             server = config['mcp']['sandhill']
             listed = mcp_call(server, 'list_sessions', {})
-            refused = mcp_call(server, 'run_code', dict(code="print('must not execute')"))
-            added = mcp_call(server, 'add_cell', dict(code="print('must not be added')"))
+            added = mcp_call(server, 'add_cell', dict(file='evidence.py', code="print('added')", run=False))
             assert listed['result']['isError'] is False, listed
-            for result in (refused, added):
-                assert result['result']['isError'] is True, result
-                assert 'Ask mode' in json.dumps(result), result
+            assert added['result']['isError'] is False, added
             tool = dict(toolCallId='read-1', title='Inspect evidence', kind='read', status='pending',
                 locations=[dict(path=str(root / 'evidence.txt'), line=2)],
                 rawInput=dict(path='evidence.txt'),
@@ -276,7 +273,7 @@ fn reply(entries: &[Value]) -> String {
 
 fn launch(fake: &Path, socket: &Path, project: &Path, session: Option<&str>) -> Launch {
     let options = AgentOptions {
-        permission: Some("ask".into()),
+        permission: Some("supervised".into()),
         model: Some("fake-model-b".into()),
         refs: vec![
             json!({"kind":"file","name":"evidence.txt","path":project.join("evidence.txt")}),
@@ -378,6 +375,7 @@ async fn openscience_acp_chat_round_trip_and_resume() {
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
     let project = dir.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("evidence.py"), "print('existing')\n").unwrap();
     let state = dir.path().join("state");
     let (_daemon, socket) = start_daemon(&state).await;
     let terminals = Terminals::new(
@@ -407,6 +405,10 @@ async fn openscience_acp_chat_round_trip_and_resume() {
         serde_json::from_str::<Value>(OPTIONS).unwrap()
     );
     assert_eq!(ask["input"]["rawInput"]["path"], "evidence.txt");
+    assert_eq!(
+        terminals.info(&info.id).unwrap().agent.unwrap()["permission"],
+        "supervised"
+    );
     let read = transcript
         .entries
         .iter()
@@ -454,6 +456,12 @@ async fn openscience_acp_chat_round_trip_and_resume() {
     );
 
     // The bridge must hold this message until the permission-gated turn ends.
+    command(
+        &terminals,
+        &info.id,
+        json!({"kind":"set","permission":"plan"}),
+    )
+    .await;
     command(
         &terminals,
         &info.id,
@@ -517,7 +525,7 @@ async fn openscience_acp_chat_round_trip_and_resume() {
     let agent = terminals.info(&info.id).unwrap().agent.unwrap();
     assert_eq!(agent["thread"], SESSION);
     assert_eq!(agent["view_mode"], "chat");
-    assert_eq!(agent["permission"], "ask");
+    assert_eq!(agent["permission"], "plan");
     assert_eq!(agent["status"]["model_id"], "fake-model-b");
     assert_eq!(agent["status"]["model"], "Fake model B");
     assert_eq!(agent["models"][1]["id"], "fake-model-b");
@@ -548,6 +556,18 @@ async fn openscience_acp_chat_round_trip_and_resume() {
     assert_eq!(boot["config"]["permission"]["python"], "deny");
     assert_eq!(boot["config"]["permission"]["r"], "deny");
     assert_eq!(boot["config"]["model"], "fake-model-b");
+    assert!(
+        calls
+            .iter()
+            .any(|call| call["message"]["method"] == "session/set_mode"
+                && call["message"]["params"]["modeId"] == "build")
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|call| call["message"]["method"] == "session/set_mode"
+                && call["message"]["params"]["modeId"] == "plan")
+    );
     assert!(
         calls
             .iter()
@@ -613,36 +633,30 @@ async fn openscience_acp_chat_round_trip_and_resume() {
         .filter(|call| call["kind"] == "mcp_unauthorized")
         .map(|call| call["status"].clone())
         .collect();
-    assert_eq!(unauthorized, vec![json!(401); 3]);
-    // Looking tools always run freely. Outside a supervised conversation the
-    // rest do too; in this Ask-mode one Sandhill's guard refuses them itself.
-    let rules = &boot["config"]["permission"]["mcp"];
-    assert_eq!(rules["sandhill_list_sessions"], "allow");
-    assert_eq!(rules["sandhill_run_code"], "allow");
-    let guarded: Vec<_> = calls.iter().filter(|call| call["kind"] == "mcp").collect();
-    assert_eq!(guarded.len(), 3);
-    for call in guarded {
-        assert_eq!(
-            call["response"]["result"]["isError"],
-            call["name"] != "list_sessions",
-            "{call}"
-        );
-        if call["name"] != "list_sessions" {
-            assert!(call["response"].to_string().contains("Ask mode"), "{call}");
-        }
+    assert_eq!(unauthorized, vec![json!(401); 2]);
+    let rules = boot["config"]["permission"]["mcp"].as_object().unwrap();
+    for tool in sandhill_daemon::mcp::tool_names() {
+        assert_eq!(rules[&format!("sandhill_{tool}")], "allow");
     }
-    assert!(!std::fs::read_dir(&project).unwrap().any(|entry| {
-        entry
-            .unwrap()
-            .path()
-            .extension()
-            .is_some_and(|ext| ext == "ipynb")
-    }));
+    let mcp_calls: Vec<_> = calls.iter().filter(|call| call["kind"] == "mcp").collect();
+    assert_eq!(mcp_calls.len(), 2);
+    for call in mcp_calls {
+        assert_eq!(call["response"]["result"]["isError"], false, "{call}");
+    }
+    let written = std::fs::read_to_string(project.join("evidence.py")).unwrap();
+    assert!(written.contains("print('existing')"), "{written}");
+    assert!(written.contains("print('added')"), "{written}");
     assert!(
         calls.iter().any(|call| call["kind"] == "permission"
             && call["result"]["outcome"]["optionId"] == "project")
     );
 
+    command(
+        &terminals,
+        &info.id,
+        json!({"kind":"set","permission":"ask"}),
+    )
+    .await;
     let after = transcript.entries.len();
     command(
         &terminals,
@@ -672,6 +686,12 @@ async fn openscience_acp_chat_round_trip_and_resume() {
             .iter()
             .any(|call| call["message"]["method"] == "session/cancel")
     );
+    let modes: Vec<_> = calls
+        .iter()
+        .filter(|call| call["message"]["method"] == "session/set_mode")
+        .map(|call| call["message"]["params"]["modeId"].clone())
+        .collect();
+    assert_eq!(modes, vec![json!("build"), json!("plan"), json!("build")]);
     assert_eq!(
         calls
             .iter()

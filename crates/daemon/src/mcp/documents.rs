@@ -114,9 +114,6 @@ impl Tools {
             }
             place["refs"] = json!(choices.refs.iter().map(|r| &r.name).collect::<Vec<_>>());
         }
-        if !choices.web {
-            lines.push(crate::terminal::choices::WEB_OFF_NOTE.to_string());
-        }
         // Null when the message names none, so the last one doesn't stay.
         let mut report = json!({"document": document});
         if !choices.refs.is_empty() {

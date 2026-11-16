@@ -478,8 +478,7 @@ async fn antigravity_works_through_the_chat() {
         1
     );
 
-    // Normal: headless agy can't ask, so the command is turned down, and
-    // the chat says how to let it.
+    // Default: headless agy can't ask, so the command is turned down.
     say(
         &terminals,
         &info.id,
@@ -512,7 +511,7 @@ async fn antigravity_works_through_the_chat() {
         error.event["text"]
             .as_str()
             .unwrap()
-            .contains("Switch to YOLO"),
+            .contains("needs approval"),
         "{error:?}"
     );
     assert!(!project.join("made.txt").exists());
@@ -524,7 +523,7 @@ async fn antigravity_works_through_the_chat() {
         Some("Make a file")
     );
 
-    // YOLO, with another model and effort: the command runs.
+    // Skip permissions, with another model and effort: the command runs.
     say(
         &terminals,
         &info.id,

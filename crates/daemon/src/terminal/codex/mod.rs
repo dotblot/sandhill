@@ -38,7 +38,7 @@ use tokio::net::unix::OwnedWriteHalf;
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::oneshot;
 
-use super::{FromHost, Paths, ToHost, ask, guard};
+use super::{FromHost, Paths, ToHost, ask};
 use crate::journal::now_ms;
 
 /// Replies are sent to the chat in pieces at most this far apart.

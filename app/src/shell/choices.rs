@@ -67,14 +67,8 @@ impl Workbench {
                     open.ghost = None;
                 }
             }
-            Choice::FollowAgent(on) => {
-                if let Some(agents) = &self.agents {
-                    agents.update(cx, |agents, cx| {
-                        agents.follow_edits = on;
-                        cx.notify();
-                    });
-                }
-            }
+            // Notebooks read it from prefs as the agent edits them.
+            Choice::FollowAgent(_) => {}
             Choice::Sort(by) => self.apply_sort(by, cx),
             Choice::Wrap(kind, on) => self.apply_editor_wrap(kind, on, window, cx),
             Choice::Agent(_, on) => {

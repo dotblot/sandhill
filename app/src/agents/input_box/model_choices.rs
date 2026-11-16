@@ -148,32 +148,14 @@ impl Agents {
         }
     }
 
-    pub(crate) fn box_mode(&self) -> &'static Mode {
+    /// The mode the box shows; `None` when the agent has no modes.
+    pub(crate) fn box_mode(&self) -> Option<&'static Mode> {
         match self.box_terminal() {
-            Some(t) => self
-                .picked_for(t)
-                .mode
-                .map(composer::mode)
-                .unwrap_or_else(|| composer::current_mode(t)),
-            None => {
-                let mode = composer::mode(self.new_choice.mode.unwrap_or("normal"));
-                if composer::has_mode(self.new_kind, mode) {
-                    mode
-                } else {
-                    &composer::MODES[0]
-                }
-            }
-        }
-    }
-
-    /// Web search on or off.
-    pub(crate) fn box_web(&self) -> bool {
-        match self.box_terminal() {
-            Some(t) => self
-                .picked_for(t)
-                .web
-                .unwrap_or_else(|| composer::web_on(t)),
-            None => self.new_choice.web.unwrap_or(true),
+            Some(t) => match self.picked_for(t).mode {
+                Some(picked) => composer::mode(&t.kind, Some(picked)),
+                None => composer::current_mode(t),
+            },
+            None => composer::mode(self.new_kind, self.new_choice.mode),
         }
     }
 
@@ -389,16 +371,15 @@ impl Agents {
         if !t.running || drives_chat(&t.kind) {
             return None;
         }
-        let current = self.box_mode();
+        let other = self.box_mode().map(|m| m.permission) != Some(mode.permission);
         if t.kind != "claude" {
-            return (mode.id != current.id)
-                .then(|| "Change this in the agent's terminal".to_string());
+            return other.then(|| "Change this in the agent's terminal".to_string());
         }
-        if self.waiting(t) && mode.id != current.id {
+        if self.waiting(t) && other {
             return Some("Answer Claude first".into());
         }
-        if mode.id == "yolo" && current.id != "yolo" && !composer::can_resume(t) {
-            return Some("Start a new conversation in YOLO mode".into());
+        if mode.permission == "full" && other && !composer::can_resume(t) {
+            return Some(format!("Start a new conversation in {}", mode.label));
         }
         None
     }
@@ -408,39 +389,43 @@ impl Agents {
         if let Some(note) = self.mode_note(mode) {
             return note;
         }
-        let kind = self.box_kind();
         if let Some(t) = self.box_terminal()
             && t.running
             && t.kind == "claude"
-            && mode.id == "yolo"
-            && self.box_mode().id != "yolo"
+            && mode.permission == "full"
+            && self.box_mode().map(|m| m.permission) != Some("full")
         {
-            return "Claude Code turns YOLO on only as it starts: it starts again and goes on with this conversation.".into();
+            return format!(
+                "Claude Code turns {} on only as it starts: it starts again and goes on with this conversation.",
+                mode.label
+            );
         }
-        composer::mode_detail(kind, mode).to_string()
+        mode.detail.to_string()
     }
 
     pub(crate) fn choose_mode(&mut self, mode: &'static Mode, cx: &mut Context<Self>) {
         self.menu = None;
         let Some(t) = self.box_terminal().cloned() else {
-            self.new_choice.mode = Some(mode.id);
+            self.new_choice.mode = Some(mode.permission);
             self.problem = None;
             cx.notify();
             return;
         };
-        if self.mode_note(mode).is_some() || self.box_mode().id == mode.id {
+        if self.mode_note(mode).is_some()
+            || self.box_mode().map(|m| m.permission) == Some(mode.permission)
+        {
             cx.notify();
             return;
         }
         self.problem = None;
         if !t.running {
-            self.picked.entry(t.id.clone()).or_default().mode = Some(mode.id);
-        } else if t.kind == "claude" && mode.id == "yolo" {
+            self.picked.entry(t.id.clone()).or_default().mode = Some(mode.permission);
+        } else if t.kind == "claude" && mode.permission == "full" {
             let mut options = composer::live_options(&t);
             options.permission = Some(mode.permission.into());
             self.restart(&t, options, None, cx);
         } else if drives_chat(&t.kind) {
-            self.picked.entry(t.id.clone()).or_default().mode = Some(mode.id);
+            self.picked.entry(t.id.clone()).or_default().mode = Some(mode.permission);
             self.tell(&t, json!({"kind": "set", "permission": mode.permission}));
         } else {
             self.switch_mode(&t, mode, cx);
@@ -449,8 +434,7 @@ impl Agents {
     }
 
     /// Switches Claude Code's mode as ⇧Tab does, until its terminal shows
-    /// it. Restricted and Ask are Sandhill's, on top of Claude Code's
-    /// default mode: the daemon is told which is on.
+    /// it; then the daemon is told which is on.
     fn switch_mode(&mut self, t: &TerminalInfo, mode: &'static Mode, cx: &mut Context<Self>) {
         let Some(view) = self.view(&t.id) else {
             return;
@@ -461,9 +445,9 @@ impl Agents {
             for i in 0..=MODE_TRIES {
                 let shown = view.read_with(cx, |v, cx| composer::screen_mode(&v.screen_text(cx)));
                 let Some(shown) = shown else { break };
-                if shown.claude == mode.claude {
+                if shown == mode.permission {
                     this.update(cx, |this, cx| {
-                        this.picked.entry(t.id.clone()).or_default().mode = Some(mode.id);
+                        this.picked.entry(t.id.clone()).or_default().mode = Some(mode.permission);
                         this.tell(&t, json!({"kind": "set", "permission": mode.permission}));
                         this.problem = None;
                         cx.notify();
@@ -482,7 +466,7 @@ impl Agents {
             }
             this.update(cx, |this, cx| {
                 this.problem = Some(format!(
-                    "Claude Code didn't switch to {} mode here. Its terminal shows the modes it offers: ⇧Tab switches.",
+                    "Claude Code didn't switch to {} here. Its terminal shows the modes it offers: ⇧Tab switches.",
                     mode.label
                 ));
                 cx.notify();
@@ -490,21 +474,6 @@ impl Agents {
             .ok();
         })
         .detach();
-    }
-
-    /// Web search switched in the box.
-    pub(crate) fn set_web(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.problem = None;
-        match self.box_terminal().cloned() {
-            None => self.new_choice.web = Some(on),
-            Some(t) => {
-                self.picked.entry(t.id.clone()).or_default().web = Some(on);
-                if t.running {
-                    self.tell(&t, json!({"kind": "set", "web": on}));
-                }
-            }
-        }
-        cx.notify();
     }
 
     /// Where the agent's code goes: the focus file, or the Console.

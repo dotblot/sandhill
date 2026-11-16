@@ -133,16 +133,8 @@ impl Agents {
             (self.new_kind, self.new_options(Vec::new()))
         };
         let prompt = action.prompt(&path);
-        let options = action.options(options, &path);
+        let options = action.options(kind, options, &path);
         self.start(kind, Some(prompt), options, window, cx);
-    }
-
-    /// The switch for notebooks following the agent's edits, in every project.
-    pub(crate) fn toggle_follow_edits(&mut self, cx: &mut Context<Self>) {
-        crate::shell::choices::choose(
-            crate::shell::choices::Choice::FollowAgent(!self.follow_edits),
-            cx,
-        );
     }
 
     /// Starts a conversation in the project's folder, with its first

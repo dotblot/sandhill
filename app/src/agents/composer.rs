@@ -366,144 +366,225 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
-/// A mode: what the agent may do without asking. `permission` is what the
-/// daemon starts the agent with, `claude` Claude Code's own mode.
+/// A mode: what the agent may do without asking, in the agent's own words
+/// (Huan, 2026-11-16). `permission` is what the daemon starts the agent
+/// with; [`DEFAULT`] is always the agent's own default.
 #[derive(Debug, PartialEq)]
 pub struct Mode {
-    pub id: &'static str,
+    pub permission: &'static str,
     pub label: &'static str,
     pub detail: &'static str,
-    pub permission: &'static str,
-    pub claude: &'static str,
     /// Its icon in `docs/design/ui/icons/system`.
     pub icon: &'static str,
-    /// Offered in the mode menu.
-    pub offered: bool,
 }
 
-pub const MODES: [Mode; 7] = [
+/// The permission every agent's own default mode has.
+pub const DEFAULT: &str = "supervised";
+
+const fn m(
+    permission: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    detail: &'static str,
+) -> Mode {
     Mode {
-        id: "normal",
-        label: "Normal",
-        detail: "Safe steps run. Risky ones ask first.",
-        permission: "supervised",
-        claude: "default",
-        icon: "ask",
-        offered: true,
-    },
-    Mode {
-        id: "auto",
-        label: "Auto",
-        detail: "A second model reviews risky steps.",
-        permission: "auto",
-        claude: "auto",
-        icon: "sparkle.ai",
-        offered: true,
-    },
-    Mode {
-        id: "yolo",
-        label: "YOLO",
-        detail: "Everything runs without asking. Only for folders you can afford to lose.",
-        permission: "full",
-        claude: "bypassPermissions",
-        icon: "auto",
-        offered: true,
-    },
-    // Sandhill's own: Claude Code runs in its default mode, and Sandhill's
-    // hooks ask about or block each step.
-    Mode {
-        id: "restricted",
-        label: "Restricted",
-        detail: "Asks before every step.",
-        permission: "restricted",
-        claude: "default",
-        icon: "lock",
-        offered: true,
-    },
-    Mode {
-        id: "ask",
-        label: "Ask",
-        detail: "Read-only. No edits and no code runs; suggestions stay in the chat.",
-        permission: "ask",
-        claude: "default",
-        icon: "context.show",
-        offered: true,
-    },
-    Mode {
-        id: "plan",
-        label: "Plan",
-        detail: "Writes a plan first, then asks before carrying it out.",
-        permission: "plan",
-        claude: "plan",
-        icon: "plan",
-        offered: true,
-    },
-    // Claude Code's own, between Normal and Plan (⇧Tab in its terminal).
-    Mode {
-        id: "edits",
-        label: "Edits",
-        detail: "Edits files without asking. Other steps ask first.",
-        permission: "edits",
-        claude: "acceptEdits",
-        icon: "edit.rename",
-        offered: false,
-    },
+        permission,
+        label,
+        detail,
+        icon,
+    }
+}
+
+const CLAUDE_MODES: [Mode; 5] = [
+    m(DEFAULT, "Manual", "ask", "Asks before edits and commands."),
+    m(
+        "edits",
+        "Accept edits",
+        "edit.rename",
+        "Edits files without asking. Commands still ask.",
+    ),
+    m(
+        "plan",
+        "Plan mode",
+        "plan",
+        "Looks and plans, changing nothing, then asks before carrying the plan out.",
+    ),
+    m(
+        "auto",
+        "Auto mode",
+        "sparkle.ai",
+        "A second model approves safe steps. Risky ones still ask.",
+    ),
+    m(
+        "full",
+        "Bypass permissions",
+        "auto",
+        "Runs everything without asking. Only for folders you can afford to lose.",
+    ),
 ];
 
-pub fn mode(id: &str) -> &'static Mode {
-    MODES.iter().find(|m| m.id == id).unwrap_or(&MODES[0])
-}
+const CODEX_MODES: [Mode; 5] = [
+    m(
+        "readonly",
+        "Read Only",
+        "context.show",
+        "Reads the project. Asks before editing files or using the internet.",
+    ),
+    m(
+        DEFAULT,
+        "Default",
+        "ask",
+        "Reads and edits the project and runs commands. Asks before using the internet or editing other files.",
+    ),
+    m(
+        "auto",
+        "Approve for me",
+        "sparkle.ai",
+        "As Default, but a reviewer model answers its requests instead of you.",
+    ),
+    m(
+        "full",
+        "Full Access",
+        "auto",
+        "Edits anything and uses the internet without asking. Only for folders you can afford to lose.",
+    ),
+    m(
+        "plan",
+        "Plan mode",
+        "plan",
+        "Reads and plans, then asks before carrying the plan out.",
+    ),
+];
 
-/// Whether the agent has the mode: headless Antigravity can't stop to ask.
-pub fn has_mode(kind: &str, mode: &Mode) -> bool {
-    kind != "antigravity" || matches!(mode.id, "normal" | "yolo" | "plan")
-}
+/// Headless Antigravity can't stop to ask: what it would ask about is
+/// turned down.
+const ANTIGRAVITY_MODES: [Mode; 5] = [
+    m(
+        DEFAULT,
+        "Default",
+        "ask",
+        "Edits files in the project. Commands it would ask about are turned down.",
+    ),
+    m(
+        "edits",
+        "Accept edits",
+        "edit.rename",
+        "Accepts file edits. Other steps it would ask about are turned down.",
+    ),
+    m(
+        "auto",
+        "Auto",
+        "sparkle.ai",
+        "Antigravity's own reviewer decides which steps run.",
+    ),
+    m(
+        "plan",
+        "Plan",
+        "plan",
+        "Writes a plan first, then asks before carrying it out.",
+    ),
+    m(
+        "full",
+        "Skip permissions",
+        "auto",
+        "Runs everything without asking. Only for folders you can afford to lose.",
+    ),
+];
 
-/// What a mode does with this agent.
-pub fn mode_detail(kind: &str, mode: &Mode) -> &'static str {
-    if kind == "antigravity" && mode.id == "normal" {
-        return "Edits files in the project. Commands it would ask about are turned down.";
+const OPENSCIENCE_MODES: [Mode; 2] = [
+    m(
+        DEFAULT,
+        "Build",
+        "ask",
+        "Works on the project, with OpenScience's own permission settings.",
+    ),
+    m("plan", "Plan", "plan", "Looks and plans, changing nothing."),
+];
+
+const OMP_MODES: [Mode; 4] = [
+    m(
+        DEFAULT,
+        "Always ask",
+        "ask",
+        "Asks before every edit and command.",
+    ),
+    m(
+        "edits",
+        "Write",
+        "edit.rename",
+        "Edits files without asking. Commands still ask.",
+    ),
+    m(
+        "full",
+        "YOLO",
+        "auto",
+        "Runs everything without asking. Only for folders you can afford to lose.",
+    ),
+    m(
+        "plan",
+        "Plan",
+        "plan",
+        "Looks and plans, then asks before carrying the plan out.",
+    ),
+];
+
+/// The agent's own modes, in its order. pi has none (it runs everything),
+/// and Posit Assistant keeps its own menu on its screen.
+pub fn modes(kind: &str) -> &'static [Mode] {
+    match kind {
+        "claude" => &CLAUDE_MODES,
+        "codex" => &CODEX_MODES,
+        "antigravity" => &ANTIGRAVITY_MODES,
+        "openscience" => &OPENSCIENCE_MODES,
+        "omp" => &OMP_MODES,
+        _ => &[],
     }
-    mode.detail
 }
 
-/// The mode a session started in, by its `permission`.
-pub fn mode_by_permission(permission: Option<&str>) -> &'static Mode {
-    MODES
+/// The agent's mode with `permission`, else its default; `None` when the
+/// agent has no modes.
+pub fn mode(kind: &str, permission: Option<&str>) -> Option<&'static Mode> {
+    let modes = modes(kind);
+    modes
         .iter()
         .find(|m| Some(m.permission) == permission)
-        .unwrap_or(&MODES[0])
+        .or_else(|| modes.iter().find(|m| m.permission == DEFAULT))
 }
 
-/// The mode for a Claude Code permission mode.
-pub fn claude_mode(claude: Option<&str>) -> Option<&'static Mode> {
-    // `manual` is what newer versions call `default`.
-    let claude = if claude == Some("manual") {
-        Some("default")
-    } else {
-        claude
-    };
-    MODES.iter().find(|m| Some(m.claude) == claude)
+/// The mode closest to read-only the agent has, for asking it only to
+/// look (a notebook's Explain): Read Only, else Plan.
+pub fn read_only_mode(kind: &str) -> Option<&'static str> {
+    let modes = modes(kind);
+    ["readonly", "plan"]
+        .into_iter()
+        .find(|p| modes.iter().any(|m| m.permission == *p))
 }
 
-/// Sandhill's own mode when one is on (Restricted, Ask), else the mode the
-/// agent last reported, else the one it started in.
-pub fn current_mode(t: &TerminalInfo) -> &'static Mode {
-    if let Some(guard) = report(t, "guard").and_then(Value::as_str) {
-        return mode_by_permission(Some(guard));
+/// The permission for a Claude Code permission mode.
+pub fn claude_permission(claude: Option<&str>) -> Option<&'static str> {
+    match claude? {
+        // `manual` is what newer versions call `default`.
+        "default" | "manual" => Some(DEFAULT),
+        "acceptEdits" => Some("edits"),
+        "plan" => Some("plan"),
+        "auto" => Some("auto"),
+        "bypassPermissions" => Some("full"),
+        _ => None,
     }
-    claude_mode(report(t, "mode").and_then(Value::as_str)).unwrap_or_else(|| {
-        mode_by_permission(
-            report(t, "permission")
-                .and_then(Value::as_str)
-                .or(t.options.permission.as_deref()),
-        )
-    })
 }
 
-/// The mode Claude Code's terminal shows under its prompt ("⏸ plan mode
-/// on"), from its last lines.
-pub fn screen_mode(screen: &str) -> Option<&'static Mode> {
+/// The agent's mode now: as it last reported (Claude Code its own), else
+/// the one it started in.
+pub fn current_mode(t: &TerminalInfo) -> Option<&'static Mode> {
+    let permission = claude_permission(report(t, "mode").and_then(Value::as_str))
+        .or_else(|| report(t, "permission").and_then(Value::as_str))
+        .or(t.options.permission.as_deref());
+    mode(&t.kind, permission)
+}
+
+/// The permission of the mode Claude Code's terminal shows under its
+/// prompt ("⏸ plan mode on"), from its last lines.
+pub fn screen_mode(screen: &str) -> Option<&'static str> {
     const SHOWN: [(&str, &str); 5] = [
         ("manual mode on", "default"),
         ("accept edits on", "acceptEdits"),
@@ -516,10 +597,10 @@ pub fn screen_mode(screen: &str) -> Option<&'static Mode> {
         .filter_map(|(text, claude)| screen.rfind(text).map(|at| (at, *claude)))
         .max_by_key(|(at, _)| *at);
     if let Some((_, claude)) = last {
-        return claude_mode(Some(claude));
+        return claude_permission(Some(claude));
     }
     // Older versions show nothing in the default mode.
-    screen.contains("? for shortcuts").then_some(&MODES[0])
+    screen.contains("? for shortcuts").then_some(DEFAULT)
 }
 
 /// Whether Claude Code's screen asks if the user trusts the folder (it
@@ -556,11 +637,6 @@ pub fn code_to_console(t: &TerminalInfo) -> bool {
     }
 }
 
-/// Web search on: unless the agent or its start said off.
-pub fn web_on(t: &TerminalInfo) -> bool {
-    report(t, "web").and_then(Value::as_bool).or(t.options.web) != Some(false)
-}
-
 /// What the agent runs with now, as it last reported: what it starts again
 /// with. Conversations are about the whole project, so no documents or pin.
 pub fn live_options(t: &TerminalInfo) -> AgentOptions {
@@ -571,11 +647,10 @@ pub fn live_options(t: &TerminalInfo) -> AgentOptions {
     AgentOptions {
         model,
         effort: effort_of(t).filter(|_| !encoded),
-        permission: Some(current_mode(t).permission.to_string()),
+        permission: current_mode(t).map(|m| m.permission.to_string()),
         code: code_to_console(t).then(|| "console".to_string()),
         documents: Vec::new(),
         pin: None,
-        web: (!web_on(t)).then_some(false),
         refs: Vec::new(),
         account: t.options.account.clone(),
     }
@@ -835,7 +910,7 @@ mod tests {
             "agent": {
                 "thread": "acp-session",
                 "models": listing,
-                "permission": "ask",
+                "permission": "plan",
                 "status": {"model_id": "cloud/model", "model": "My configured model"}
             }
         }))
@@ -843,10 +918,10 @@ mod tests {
         assert!(can_resume(&terminal));
         assert_eq!(model_id(&terminal).as_deref(), Some("cloud/model"));
         assert_eq!(model_label(&terminal), "My configured model");
-        assert_eq!(current_mode(&terminal).id, "ask");
+        assert_eq!(current_mode(&terminal).map(|m| m.label), Some("Plan"));
         let options = live_options(&terminal);
         assert_eq!(options.model.as_deref(), Some("cloud/model"));
-        assert_eq!(options.permission.as_deref(), Some("ask"));
+        assert_eq!(options.permission.as_deref(), Some("plan"));
         assert_eq!(options.effort, None);
         assert_eq!(
             running_models(&terminal, None).choice("cloud/model").label,
@@ -1107,15 +1182,18 @@ mod tests {
 
     #[test]
     fn reads_the_mode_from_claude_codes_screen() {
-        let id = |s: &str| screen_mode(s).map(|m| m.id);
-        assert_eq!(id("❯ \n⏸ manual mode on · ? for shortcuts"), Some("normal"));
+        let id = screen_mode;
+        assert_eq!(
+            id("❯ \n⏸ manual mode on · ? for shortcuts"),
+            Some("supervised")
+        );
         assert_eq!(
             id("⏸ manual mode on · ? for shortcuts\n⏵⏵ accept edits on (shift+tab to cycle)"),
             Some("edits")
         );
         assert_eq!(id("⏸ plan mode on (shift+tab to cycle)"), Some("plan"));
-        assert_eq!(id("⏵⏵ bypass permissions on"), Some("yolo"));
-        assert_eq!(id("  ? for shortcuts"), Some("normal"));
+        assert_eq!(id("⏵⏵ bypass permissions on"), Some("full"));
+        assert_eq!(id("  ? for shortcuts"), Some("supervised"));
         assert_eq!(id("Do you trust the files in this folder?"), None);
     }
 

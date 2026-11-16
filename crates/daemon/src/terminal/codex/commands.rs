@@ -58,7 +58,7 @@ impl Bridge {
     /// while one runs. `shown`: the message shows in the chat.
     pub(super) async fn say(self: Arc<Self>, text: String, shown: bool) {
         let at_ms = now_ms();
-        let (params, asking) = {
+        let params = {
             let mut state = self.state.lock().unwrap();
             if state.paused || state.turn.is_some() || state.waiting > 0 {
                 state.queued.push(text);
@@ -85,8 +85,7 @@ impl Bridge {
                     "settings": {"model": model, "reasoning_effort": state.effort, "developer_instructions": null},
                 });
             }
-            let asking = state.permission.as_deref() == Some(guard::ASK);
-            (params, asking)
+            params
         };
         let prompt = if shown {
             self.prompt().await
@@ -109,9 +108,6 @@ impl Bridge {
             self.report(prompt.report.clone()).await;
         }
         let place = prompt.place;
-        if asking {
-            input.push(json!({"type": "text", "text": guard::ASK_NOTE, "text_elements": []}));
-        }
         let mut params = params;
         params["input"] = json!(input);
         if shown {

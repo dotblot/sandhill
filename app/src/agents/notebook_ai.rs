@@ -26,20 +26,19 @@ impl NotebookAction {
         }
     }
 
-    pub(crate) fn options(self, mut options: AgentOptions, path: &str) -> AgentOptions {
+    pub(crate) fn options(self, kind: &str, mut options: AgentOptions, path: &str) -> AgentOptions {
         options.documents = vec![path.to_string()];
         options.refs = vec![json!({"kind": "file", "name": path, "path": path})];
         options.pin = Some(path.to_string());
         options.code = None;
-        // Improve must be able to submit reviewable edit_cell changes even
-        // when the previously selected conversation was read-only.
-        options.permission = Some(
-            match self {
-                Self::Explain => "ask",
-                Self::Improve => "supervised",
-            }
-            .into(),
-        );
+        // Explain only looks, in the agent's mode closest to read-only;
+        // Improve must be able to submit reviewable edit_cell changes, so
+        // it starts in the agent's own default.
+        options.permission = match self {
+            Self::Explain => crate::agents::composer::read_only_mode(kind),
+            Self::Improve => crate::agents::composer::mode(kind, None).map(|m| m.permission),
+        }
+        .map(str::to_string);
         options
     }
 }
@@ -163,6 +162,7 @@ mod tests {
     #[test]
     fn explain_is_read_only_and_attaches_only_this_notebook() {
         let options = NotebookAction::Explain.options(
+            "codex",
             AgentOptions {
                 model: Some("selected-model".into()),
                 code: Some("console".into()),
@@ -170,7 +170,9 @@ mod tests {
             },
             "analysis.qmd",
         );
-        assert_eq!(options.permission.as_deref(), Some("ask"));
+        assert_eq!(options.permission.as_deref(), Some("readonly"));
+        let claude = NotebookAction::Explain.options("claude", Default::default(), "a.qmd");
+        assert_eq!(claude.permission.as_deref(), Some("plan"));
         assert_eq!(options.model.as_deref(), Some("selected-model"));
         assert_eq!(options.documents, vec!["analysis.qmd"]);
         assert_eq!(options.refs[0]["path"], "analysis.qmd");
@@ -197,7 +199,7 @@ mod tests {
         }
         assert_eq!(
             NotebookAction::Improve
-                .options(Default::default(), "cells.ipynb")
+                .options("codex", Default::default(), "cells.ipynb")
                 .permission
                 .as_deref(),
             Some("supervised")

@@ -1,6 +1,6 @@
 //! Generic stdio ACP chat transport, for OpenScience (`openscience acp`) and
 //! Oh My Pi (`omp acp`). Provider configuration is confined to process
-//! startup; updates use the same durable chat and guard as other agents.
+//! startup; updates use the same durable chat as other agents.
 //!
 //! Sandhill's MCP tools are served over loopback HTTP with a per-conversation
 //! bearer token (`crate::mcp::http`): OpenScience reads the server from its
@@ -23,7 +23,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::mpsc;
 
-use super::{FromHost, Paths, ToHost, chat::shorten, guard};
+use super::{FromHost, Paths, ToHost, chat::shorten};
 use crate::agents::{OMP, OPENSCIENCE};
 use crate::journal::now_ms;
 
@@ -337,7 +337,7 @@ pub async fn run(options: Options) -> Result<i32> {
         let instructions = dir.join("openscience-instructions.txt");
         std::fs::write(&instructions, format!("{INSTRUCTIONS}\n"))?;
         let mut permission = json!({"python": "deny", "r": "deny"});
-        permission["mcp"] = sandhill_tool_rules(options.options.permission.as_deref());
+        permission["mcp"] = sandhill_tool_rules();
         // OpenScience offers MCP tools only from servers in its configuration
         // (`MCP.clients` filters out servers added through ACP session/new).
         let mut config = json!({
@@ -477,23 +477,11 @@ fn spawn(program: &Path, cwd: &Path, env: &[(String, String)]) -> Result<Child> 
         .with_context(|| format!("cannot start {}", program.display()))
 }
 
-/// OpenScience asks before every MCP call (`permission.mcp` patterns are the
-/// `<server>_<tool>` names). Looking tools run freely; tools that run code or
-/// change documents ask first when the conversation is supervised. Sandhill's
-/// own guard still blocks changes in Ask mode.
-fn sandhill_tool_rules(permission: Option<&str>) -> Value {
-    let read_only = crate::mcp::read_only_tools();
-    let supervised = matches!(permission, None | Some("supervised"));
+/// OpenScience allows every Sandhill MCP tool, independently of its mode.
+fn sandhill_tool_rules() -> Value {
     crate::mcp::tool_names()
         .into_iter()
-        .map(|tool| {
-            let action = if !supervised || read_only.contains(&tool) {
-                "allow"
-            } else {
-                "ask"
-            };
-            (format!("sandhill_{tool}"), json!(action))
-        })
+        .map(|tool| (format!("sandhill_{tool}"), json!("allow")))
         .collect::<serde_json::Map<_, _>>()
         .into()
 }
@@ -787,10 +775,7 @@ impl Bridge {
                 _ => self.selected_effort = self.effort.clone(),
             }
         }
-        let planning = matches!(
-            self.options.options.permission.as_deref(),
-            Some("ask" | "plan")
-        );
+        let planning = self.options.options.permission.as_deref() == Some("plan");
         let target = self
             .modes
             .as_array()
@@ -845,9 +830,6 @@ impl Bridge {
             self.instructed = true;
             if let Some(context) = prompt.context {
                 parts.push(json!({"type": "text", "text": context}));
-            }
-            if planning {
-                parts.push(json!({"type": "text", "text": guard::ASK_NOTE}));
             }
             self.call(
                 Request::Prompt,
@@ -1274,6 +1256,16 @@ mod tests {
     }
 
     #[test]
+    fn openscience_allows_every_sandhill_tool() {
+        let rules = sandhill_tool_rules();
+        let tools = crate::mcp::tool_names();
+        assert_eq!(rules.as_object().unwrap().len(), tools.len());
+        for tool in tools {
+            assert_eq!(rules[format!("sandhill_{tool}")], "allow");
+        }
+    }
+
+    #[test]
     fn omp_approves_by_sandhills_mode() {
         assert_eq!(omp_approval(Some("full")), "yolo");
         assert_eq!(omp_approval(Some("edits")), "write");
@@ -1284,6 +1276,8 @@ mod tests {
             Some("ask"),
             Some("plan"),
             Some("auto"),
+            Some("readonly"),
+            Some("unknown"),
         ] {
             assert_eq!(omp_approval(mode), "always-ask");
         }

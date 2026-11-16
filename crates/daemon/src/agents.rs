@@ -471,8 +471,7 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
             "SessionStart": hook,
             "UserPromptSubmit": hook,
             "MessageDisplay": hook,
-            // In Restricted mode, it waits for the user too.
-            "PreToolUse": ask_hook,
+            "PreToolUse": tool_hook,
             "PostToolUse": tool_hook,
             "PostToolUseFailure": tool_hook,
             "PermissionRequest": ask_hook,
@@ -499,20 +498,15 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
     {
         args.extend(["--effort".into(), effort.clone()]);
     }
-    // Supervised is named too: without a mode, Claude Code takes the
-    // user's own default, which may be one that asks less. Restricted and
-    // Ask are Sandhill's own, on top of the default (see `guard`).
+    // Unknown values from older sessions use the agent's default too.
     let mode = match options.permission.as_deref() {
-        Some("supervised" | "restricted" | "ask") => Some("default"),
-        Some("edits") => Some("acceptEdits"),
-        Some("auto") if help.contains("\"auto\"") => Some("auto"),
-        Some("full") => Some("bypassPermissions"),
-        Some("plan") => Some("plan"),
-        _ => None,
+        Some("edits") => "acceptEdits",
+        Some("auto") if help.contains("\"auto\"") => "auto",
+        Some("full") => "bypassPermissions",
+        Some("plan") => "plan",
+        _ => "default",
     };
-    if let Some(mode) = mode
-        && help.contains("--permission-mode")
-    {
+    if help.contains("--permission-mode") {
         args.extend(["--permission-mode".into(), mode.into()]);
     }
     if let Some(session) = context.resume
@@ -973,13 +967,10 @@ mod tests {
             settings["permissions"]["allow"][2],
             "mcp__sandhill__get_focus"
         );
-        // Both wait for the user.
-        for event in ["PermissionRequest", "PreToolUse"] {
-            assert_eq!(
-                settings["hooks"][event][0]["hooks"][0]["timeout"],
-                ASK_TIMEOUT_S
-            );
-        }
+        assert_eq!(
+            settings["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+            ASK_TIMEOUT_S
+        );
         assert!(args[5].contains("analysis.qmd"));
         assert!(args[5].contains("add_cell"));
         assert!(args.windows(2).any(|w| w == ["--model", "opus"]));
@@ -1026,20 +1017,55 @@ mod tests {
     }
 
     #[test]
-    fn supervised_claude_asks_whatever_the_users_default() {
-        // Restricted and Ask are Sandhill's hooks on top of the default.
-        for permission in ["supervised", "restricted", "ask"] {
+    fn claude_defaults_and_unknown_modes_use_manual() {
+        for permission in [
+            None,
+            Some("supervised"),
+            Some("restricted"),
+            Some("ask"),
+            Some("unknown"),
+            Some("readonly"),
+        ] {
             let options = AgentOptions {
-                permission: Some(permission.into()),
+                permission: permission.map(str::to_string),
                 ..Default::default()
             };
             let args = claude_args(&options, &context(), "--permission-mode");
             assert!(
                 args.windows(2)
                     .any(|w| w == ["--permission-mode", "default"]),
+                "{permission:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_uses_native_modes_and_checks_auto_support() {
+        for (permission, mode) in [
+            ("edits", "acceptEdits"),
+            ("auto", "auto"),
+            ("full", "bypassPermissions"),
+            ("plan", "plan"),
+        ] {
+            let options = AgentOptions {
+                permission: Some(permission.into()),
+                ..Default::default()
+            };
+            let args = claude_args(&options, &context(), "--permission-mode \"auto\"");
+            assert!(
+                args.windows(2).any(|w| w == ["--permission-mode", mode]),
                 "{permission}"
             );
         }
+        let options = AgentOptions {
+            permission: Some("auto".into()),
+            ..Default::default()
+        };
+        let args = claude_args(&options, &context(), "--permission-mode");
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--permission-mode", "default"])
+        );
     }
 
     #[test]

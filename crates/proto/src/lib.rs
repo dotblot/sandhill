@@ -941,13 +941,12 @@ pub enum Call {
         id: String,
         answer: Value,
     },
-    /// Tells an agent whose chat Sandhill drives (Codex) what the user did
-    /// in the chat: `{kind: "say", text}`, `{kind: "interrupt"}`, `{kind:
+    /// Tells an agent whose chat Sandhill drives what the user did in the
+    /// chat: `{kind: "say", text}`, `{kind: "interrupt"}`, `{kind:
     /// "set", model?, effort?, permission?}`, `{kind: "compact"}` or
-    /// `{kind: "login", method: "browser" | "code"}`. A `set` with
-    /// `permission` also sets Sandhill's own guard for the Restricted and
-    /// Ask modes, for any agent: Claude Code's hooks enforce it. Returns
-    /// null.
+    /// `{kind: "login", method: "browser" | "code"}`. Permission names
+    /// select the agent's own modes (see [`AgentOptions::permission`]).
+    /// Returns null.
     TellTerminal {
         terminal: String,
         command: Value,

@@ -459,29 +459,31 @@ pub fn response(method: &str, params: &Value, answer: &Value) -> Value {
     }
 }
 
-/// What a mode lets Codex do without asking, as a turn's settings. The
-/// modes are Sandhill's (`AgentOptions::permission`): Normal
-/// (`supervised`) runs only what reads, Auto has Codex's reviewer decide
-/// risky steps, YOLO (`full`) runs everything, and Plan only reads.
-/// Restricted asks before anything Codex doesn't know to be harmless, and
-/// Ask only reads and never asks (Sandhill's tools refuse to change
-/// anything, see `guard`).
+/// Codex's native approval, sandbox and reviewer settings for a turn.
+/// Unknown or older modes use Codex's default workspace access.
 pub fn mode_settings(permission: Option<&str>) -> Value {
-    let read_only = json!({"type": "readOnly", "networkAccess": false});
-    let workspace = json!({
-        "type": "workspaceWrite",
-        "writableRoots": [],
-        "networkAccess": false,
-        "excludeTmpdirEnvVar": false,
-        "excludeSlashTmp": false,
-    });
     let (approval, sandbox, reviewer) = match permission {
-        Some("edits") => ("on-request", workspace, "user"),
-        Some("auto") => ("on-request", workspace, "auto_review"),
+        Some("readonly" | "plan") => (
+            "on-request",
+            json!({"type": "readOnly", "networkAccess": false}),
+            "user",
+        ),
         Some("full") => ("never", json!({"type": "dangerFullAccess"}), "user"),
-        Some("restricted") => ("untrusted", read_only, "user"),
-        Some("ask") => ("never", read_only, "user"),
-        _ => ("on-request", read_only, "user"),
+        _ => (
+            "on-request",
+            json!({
+                "type": "workspaceWrite",
+                "writableRoots": [],
+                "networkAccess": false,
+                "excludeTmpdirEnvVar": false,
+                "excludeSlashTmp": false,
+            }),
+            if permission == Some("auto") {
+                "auto_review"
+            } else {
+                "user"
+            },
+        ),
     };
     json!({"approvalPolicy": approval, "sandboxPolicy": sandbox, "approvalsReviewer": reviewer})
 }
@@ -729,28 +731,23 @@ mod tests {
 
     #[test]
     fn modes_set_the_sandbox_and_who_approves() {
-        assert_eq!(
-            mode_settings(Some("supervised"))["sandboxPolicy"]["type"],
-            "readOnly"
-        );
-        assert_eq!(
-            mode_settings(Some("auto"))["approvalsReviewer"],
-            "auto_review"
-        );
-        let yolo = mode_settings(Some("full"));
-        assert_eq!(yolo["approvalPolicy"], "never");
-        assert_eq!(yolo["sandboxPolicy"]["type"], "dangerFullAccess");
-        assert_eq!(
-            mode_settings(Some("plan"))["sandboxPolicy"]["type"],
-            "readOnly"
-        );
-        assert_eq!(
-            mode_settings(Some("restricted"))["approvalPolicy"],
-            "untrusted"
-        );
-        let ask = mode_settings(Some("ask"));
-        assert_eq!(ask["approvalPolicy"], "never");
-        assert_eq!(ask["sandboxPolicy"]["type"], "readOnly");
+        for (permission, approval, sandbox, reviewer) in [
+            (Some("readonly"), "on-request", "readOnly", "user"),
+            (Some("plan"), "on-request", "readOnly", "user"),
+            (Some("auto"), "on-request", "workspaceWrite", "auto_review"),
+            (Some("full"), "never", "dangerFullAccess", "user"),
+            (Some("supervised"), "on-request", "workspaceWrite", "user"),
+            (Some("edits"), "on-request", "workspaceWrite", "user"),
+            (None, "on-request", "workspaceWrite", "user"),
+            (Some("restricted"), "on-request", "workspaceWrite", "user"),
+            (Some("ask"), "on-request", "workspaceWrite", "user"),
+            (Some("unknown"), "on-request", "workspaceWrite", "user"),
+        ] {
+            let settings = mode_settings(permission);
+            assert_eq!(settings["approvalPolicy"], approval, "{permission:?}");
+            assert_eq!(settings["sandboxPolicy"]["type"], sandbox, "{permission:?}");
+            assert_eq!(settings["approvalsReviewer"], reviewer, "{permission:?}");
+        }
     }
 
     #[test]

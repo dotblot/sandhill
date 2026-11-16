@@ -559,6 +559,26 @@ impl Agents {
         cx.notify();
     }
 
+    /// The + button: types @ at the caret, which opens the @ list as typing
+    /// it does; clicked again, it closes the list and takes the @ away.
+    pub(crate) fn toggle_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.menu, Some(Menu::Mention { .. })) {
+            return self.close_menu(window, cx);
+        }
+        self.composer.update(cx, |c, cx| {
+            let caret = c.cursor();
+            // The sign must start the text or follow a space.
+            let after_word = c
+                .value()
+                .get(..caret)
+                .and_then(|before| before.chars().next_back())
+                .is_some_and(|ch| !ch.is_whitespace());
+            c.insert(if after_word { " @" } else { "@" }, window, cx);
+            c.focus(window, cx);
+        });
+        self.composer_changed(window, cx);
+    }
+
     pub(crate) fn toggle_menu(&mut self, menu: Menu, window: &mut Window, cx: &mut Context<Self>) {
         self.gear = false;
         self.confirm_end = false;
@@ -659,21 +679,11 @@ impl Agents {
         AgentOptions {
             model,
             effort,
-            permission: Some(self.box_mode_for_new().permission.into()),
+            permission: composer::mode(self.new_kind, c.mode).map(|m| m.permission.into()),
             code: c.console.unwrap_or(false).then(|| "console".into()),
-            web: (c.web == Some(false)).then_some(false),
             account: crate::prefs::agent_account(&self.host, self.new_kind),
             refs,
             ..AgentOptions::default()
-        }
-    }
-
-    fn box_mode_for_new(&self) -> &'static Mode {
-        let mode = composer::mode(self.new_choice.mode.unwrap_or("normal"));
-        if composer::has_mode(self.new_kind, mode) {
-            mode
-        } else {
-            &composer::MODES[0]
         }
     }
 
@@ -688,14 +698,11 @@ impl Agents {
         if let Some(effort) = c.effort {
             options.effort = Some(effort);
         }
-        if let Some(mode) = c.mode {
-            options.permission = Some(composer::mode(mode).permission.into());
+        if let Some(mode) = c.mode.and_then(|p| composer::mode(&t.kind, Some(p))) {
+            options.permission = Some(mode.permission.into());
         }
         if let Some(console) = c.console {
             options.code = console.then(|| "console".into());
-        }
-        if let Some(web) = c.web {
-            options.web = (!web).then_some(false);
         }
         if composer::running_models(t, options.model.as_deref())
             .variant_effort(options.model.as_deref())

@@ -8,7 +8,7 @@
 //! - What agy does becomes the conversation entries Claude Code's hooks
 //!   make ([`super::chat`]), so the chat shows every agent the same way.
 //! - Headless agy can't ask for permission: what it would have asked about
-//!   is turned down, and the chat says so. YOLO lets everything through.
+//!   is turned down, and the chat says so. Skip permissions runs everything.
 //! - Sandhill's tools reach it as an MCP server in agy's own settings,
 //!   added once with `agy mcp add sandhill`, as a user would add one.
 //! - Headless agy runs without the conversation's terminal ([`headless`]),
@@ -500,7 +500,7 @@ impl Bridge {
     }
 
     /// Asks the user whether to carry out the plan agy made in plan mode,
-    /// as Claude Code's plan card does; yes switches to Normal and carries
+    /// as Claude Code's plan card does; yes switches to Default and carries
     /// it out.
     async fn decide_plan(self: Arc<Self>, turn: String, plan: String, generation: u64) {
         let cancelled = self.plan_cancel.notified();
@@ -658,6 +658,7 @@ fn conversation_args(help: &str, state: &State) -> Vec<String> {
         Some("full") => args.push("--dangerously-skip-permissions".into()),
         Some("plan") if has("--mode") => args.extend(["--mode".into(), "plan".into()]),
         Some("edits") if has("--mode") => args.extend(["--mode".into(), "accept-edits".into()]),
+        Some("auto") if has("--mode") => args.extend(["--mode".into(), "auto".into()]),
         _ => {}
     }
     args
@@ -871,7 +872,7 @@ mod tests {
                 "plan"
             ]
         );
-        // YOLO lets everything through; Normal leaves agy's own rules.
+        // Full access skips permissions; the default leaves agy's own rules.
         let full = State {
             permission: Some("full".into()),
             ..State::default()
@@ -885,6 +886,44 @@ mod tests {
                 "--output-format",
                 "stream-json"
             ]
+        );
+    }
+
+    #[test]
+    fn modes_use_native_flags_when_supported() {
+        for (permission, mode) in [
+            ("edits", "accept-edits"),
+            ("auto", "auto"),
+            ("plan", "plan"),
+        ] {
+            let state = State {
+                permission: Some(permission.into()),
+                ..State::default()
+            };
+            assert_eq!(conversation_args("--mode", &state), ["--mode", mode]);
+            assert!(conversation_args("", &state).is_empty());
+        }
+        for permission in [
+            None,
+            Some("supervised"),
+            Some("readonly"),
+            Some("restricted"),
+            Some("ask"),
+            Some("unknown"),
+        ] {
+            let state = State {
+                permission: permission.map(str::to_string),
+                ..State::default()
+            };
+            assert!(conversation_args("--mode", &state).is_empty());
+        }
+        let state = State {
+            permission: Some("full".into()),
+            ..State::default()
+        };
+        assert_eq!(
+            conversation_args("--mode", &state),
+            ["--dangerously-skip-permissions"]
         );
     }
 

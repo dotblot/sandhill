@@ -690,15 +690,13 @@ async fn an_open_window_makes_the_edit_and_runs_the_cell() {
     window.shutdown(&session).await.unwrap();
 }
 
-/// In Sandhill's Ask mode, the agent's terminal is read-only: Sandhill's
-/// tools that change something refuse, and those that look still work.
+/// Plan mode keeps analysis-changing tools unavailable without blocking guides.
 #[tokio::test]
-async fn in_ask_mode_sandhills_tools_only_look() {
+async fn plan_mode_keeps_analysis_tools_read_only() {
     let dir = common::tempdir().unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let terminal = dir.path().join("terminal");
     std::fs::create_dir_all(&terminal).unwrap();
-    std::fs::write(terminal.join("agent.json"), r#"{"guard": "ask"}"#).unwrap();
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_sandhilld"))
         .arg("--socket")
         .arg(&daemon.socket)
@@ -727,41 +725,6 @@ async fn in_ask_mode_sandhills_tools_only_look() {
             .unwrap();
         serde_json::from_str::<Value>(&line).unwrap()["result"].clone()
     };
-    let refused = call(1, "run_code", json!({"code": "1 + 1"})).await;
-    assert_eq!(refused["isError"], true);
-    assert!(
-        refused["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Ask mode"),
-        "{refused}"
-    );
-    let added = call(2, "add_cell", json!({"code": "x <- 1"})).await;
-    assert_eq!(added["isError"], true);
-    let listed = call(3, "list_sessions", json!({})).await;
-    assert_eq!(listed["isError"], false);
-    for (id, name) in [(10, "begin_analysis"), (11, "check_analysis")] {
-        let refused = call(id, name, json!({})).await;
-        assert_eq!(refused["isError"], true, "{refused}");
-        assert!(
-            refused["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("Ask mode"),
-            "{refused}"
-        );
-    }
-    let catalog = call(12, "get_bio_guide", json!({})).await;
-    assert_eq!(catalog["isError"], false, "{catalog}");
-    let history = call(13, "get_analysis", json!({"analysis": "missing"})).await;
-    assert_eq!(history["isError"], true, "{history}");
-    assert!(
-        !history["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Ask mode"),
-        "{history}"
-    );
     for report in [json!({"mode": "plan"}), json!({"permission": "plan"})] {
         std::fs::write(terminal.join("agent.json"), report.to_string()).unwrap();
         for (id, name) in [(20, "begin_analysis"), (21, "check_analysis")] {
@@ -786,17 +749,6 @@ async fn in_ask_mode_sandhills_tools_only_look() {
             "{history}"
         );
     }
-
-    // Switched out of Ask mode, the tool runs (and finds no session).
-    std::fs::write(terminal.join("agent.json"), r#"{"guard": null}"#).unwrap();
-    let ran = call(4, "run_code", json!({"code": "1 + 1"})).await;
-    assert!(
-        !ran["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Ask mode"),
-        "{ran}"
-    );
 }
 
 /// With the user's choice of "Agent code goes: In the Console", add_cell

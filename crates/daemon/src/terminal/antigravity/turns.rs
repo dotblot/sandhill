@@ -553,7 +553,7 @@ fn denials(result: &Value, errors: &[String]) -> Option<String> {
         return None;
     }
     Some(format!(
-        "Antigravity can't ask for permission here, so it was turned down: {}. Switch to YOLO to let it, or allow it in Antigravity's own settings.",
+        "Antigravity can't ask for permission here, so it was turned down: {}. Switch to Skip permissions to let it, or allow it in Antigravity's own settings.",
         denied.join("; ")
     ))
 }

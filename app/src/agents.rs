@@ -231,7 +231,6 @@ pub(crate) struct Choice {
     pub effort: Option<String>,
     pub mode: Option<&'static str>,
     pub console: Option<bool>,
-    pub web: Option<bool>,
 }
 
 /// What the pane shows.
@@ -335,8 +334,6 @@ pub struct Agents {
     /// A conversation starting: its agent's name.
     pub(crate) starting: Option<&'static str>,
     pub(crate) problem: Option<String>,
-    /// Whether notebooks scroll to the cells agents add or change.
-    pub(crate) follow_edits: bool,
     /// What was added to the message with @ and #, shown as chips.
     pub(crate) refs: Vec<Value>,
     /// What a new conversation's screen knows of the project.
@@ -440,7 +437,6 @@ impl Agents {
             typing: HashMap::new(),
             starting: None,
             problem: None,
-            follow_edits: crate::prefs::follow_agent(),
             refs: Vec::new(),
             start: Default::default(),
             menu: None,

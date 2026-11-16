@@ -123,9 +123,9 @@ pub struct AgentOptions {
     /// Thinking effort: `low`, `medium`, `high`...
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
-    /// `supervised` (ask before commands and edits), `edits` (accept edits),
-    /// `auto`, `full`, `plan` (plans first and asks before carrying the plan
-    /// out), `restricted` (asks before every step) or `ask` (read-only).
+    /// The agent's native mode: `supervised` (its default), `readonly`,
+    /// `edits`, `auto`, `full` or `plan`. Unsupported or unknown values
+    /// use its default; pi ignores this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission: Option<String>,
     /// Documents the session is about, named to the agent at start.
@@ -141,9 +141,6 @@ pub struct AgentOptions {
     /// document. A `set` command (`{kind: "set", pin}`) changes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin: Option<String>,
-    /// `false` turns web search off; unset is on. `set` changes it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web: Option<bool>,
     /// What the user added to the first message with the @ menu (files,
     /// chunks, variables, plots), which that message takes. A message
     /// later takes them from a `set` or `say` command's `refs`.
@@ -273,4 +270,23 @@ pub struct CellSuggestion {
     /// The agent that answered (its kind).
     pub agent: String,
     pub code: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentOptions;
+    use serde_json::json;
+
+    #[test]
+    fn saved_options_ignore_the_removed_web_choice() {
+        let options: AgentOptions = serde_json::from_value(json!({
+            "web": false,
+            "permission": "ask",
+            "model": "opus"
+        }))
+        .unwrap();
+        assert_eq!(options.permission.as_deref(), Some("ask"));
+        assert_eq!(options.model.as_deref(), Some("opus"));
+        assert!(serde_json::to_value(options).unwrap().get("web").is_none());
+    }
 }

@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::RunCell;
 use crate::agents::composer::{
-    self, MODES, ModelChoice, effort_name, ref_kind, ref_name, short_model, tokens,
+    self, ModelChoice, effort_name, ref_kind, ref_name, short_model, tokens,
 };
 use crate::agents::view::provider;
 use crate::agents::{Agents, KINDS, Menu, Show, kind_of, terminal_only};
@@ -123,7 +123,6 @@ impl Agents {
             p.ink(if p.dark { 26. } else { 22. })
         };
         let mode = self.box_mode();
-        let web = self.box_web();
         let effort = self
             .box_effort()
             .unwrap_or_else(|| self.models_of(&kind).recommended);
@@ -180,21 +179,42 @@ impl Agents {
                     )
             })
             .collect();
-        let following = self.follow_edits;
-        let toggle = |id: &'static str, name: &'static str, on: bool| {
-            let hover = p.ink(7.);
-            div()
+        let chat_agent = !terminal_only(&kind);
+        let console = self.box_console();
+        let model_label = if !chat_agent {
+            kind_of(&kind).map_or("Agent", |kind| kind.name).to_string()
+        } else if kind == "antigravity"
+            && !self.models_of(&kind).models.iter().any(|m| m.id.is_some())
+        {
+            "Antigravity models not loaded".to_string()
+        } else if composer::configured_models(&kind) && effort.is_empty() {
+            short_model(&self.box_model())
+        } else {
+            format!(
+                "{} ({})",
+                short_model(&self.box_model()),
+                effort_name(&effort)
+            )
+        };
+        let pill_hover = p.ink(11.);
+        // The bottom row's pills, in the status bar's capsule look.
+        let pill = move |id: &'static str| {
+            h_flex()
                 .id(id)
                 .flex_none()
-                .size(px(24.))
-                .rounded(px(6.))
-                .flex()
-                .items_center()
-                .justify_center()
+                .gap(px(5.))
+                .h(px(24.))
+                .px(px(9.))
+                .rounded_full()
+                .bg(p.cap_bg)
                 .cursor_pointer()
-                .text_color(if on { p.text } else { p.faint })
-                .hover(move |d| d.bg(hover))
-                .child(icon(name).size(px(15.)))
+                .whitespace_nowrap()
+                .hover(move |d| d.bg(pill_hover))
+        };
+        let tip = |text: &'static str| {
+            move |w: &mut Window, cx: &mut App| {
+                gpui_kit::component::tooltip::Tooltip::new(text).build(w, cx)
+            }
         };
         div()
             .flex_none()
@@ -259,10 +279,10 @@ impl Agents {
             .when_some(menu, |d, menu| d.child(menu))
             .child(
                 v_flex()
-                    .gap(px(4.))
-                    .px(px(6.))
-                    .pt(px(6.))
-                    .pb(px(4.))
+                    .gap(px(6.))
+                    .px(px(8.))
+                    .pt(px(8.))
+                    .pb(px(6.))
                     .rounded(px(RADIUS))
                     .border_1()
                     .border_color(edge)
@@ -272,23 +292,110 @@ impl Agents {
                         this.attach_paths(paths.paths().to_vec(), cx)
                     }))
                     .when(!self.refs.is_empty(), |d| {
-                        d.child(h_flex().flex_wrap().gap(px(4.)).px(px(2.)).children(chips))
+                        d.child(h_flex().flex_wrap().gap(px(4.)).children(chips))
                     })
                     .child(
+                        Editor::new(&self.composer)
+                            .bordered(false)
+                            .appearance(false)
+                            .font_family(".SystemUIFont")
+                            .text_size(px(look::CHROME))
+                            .line_height(px(LINE))
+                            .h(px(lines as f32 * LINE + 8.)),
+                    )
+                    .child(
                         h_flex()
-                            .items_start()
-                            .gap(px(4.))
+                            .gap(px(6.))
+                            .h(px(26.))
+                            .text_size(px(look::SMALL))
+                            .text_color(p.text)
                             .child(
-                                div().flex_1().min_w_0().child(
-                                    Editor::new(&self.composer)
-                                        .bordered(false)
-                                        .appearance(false)
-                                        .font_family(".SystemUIFont")
-                                        .text_size(px(look::CHROME))
-                                        .line_height(px(LINE))
-                                        .h(px(lines as f32 * LINE + 8.)),
-                                ),
+                                pill("agent-add")
+                                    .on_prepaint(self.popup_triggers.track("agent-mention"))
+                                    .w(px(24.))
+                                    .px(px(0.))
+                                    .justify_center()
+                                    .when(matches!(self.menu, Some(Menu::Mention { .. })), |d| {
+                                        d.bg(pill_hover)
+                                    })
+                                    .child(icon("add").size(px(13.)).text_color(p.muted))
+                                    .tooltip(tip("Add files, cells, variables or plots (@ or #)"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_add(window, cx)
+                                    })),
                             )
+                            .when_some(mode.filter(|_| chat_agent), |d, mode| {
+                                d.child(
+                                    pill("agent-mode")
+                                        .on_prepaint(self.popup_triggers.track("agent-mode"))
+                                        .when(self.menu == Some(Menu::Mode), |d| d.bg(pill_hover))
+                                        .child(icon(mode.icon).size(px(13.)).text_color(p.muted))
+                                        .child(mode.label)
+                                        .child(
+                                            icon("chevron.down").size(px(10.)).text_color(p.muted),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.toggle_menu(Menu::Mode, window, cx)
+                                        })),
+                                )
+                            })
+                            .when(chat_agent, |d| {
+                                d.child(
+                                    pill("agent-code")
+                                        .child(div().text_color(p.muted).child("Code"))
+                                        .child(if console { "Console" } else { "File" })
+                                        .tooltip(tip(if console {
+                                            "The agent's code goes into the Console: click to put it in the file"
+                                        } else {
+                                            "The agent's code goes into the file: click to run it in the Console"
+                                        }))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_console(!console, cx)
+                                        })),
+                                )
+                            })
+                            .child(div().flex_1())
+                            .when_some(used, |d, used| {
+                                d.child(
+                                    h_flex()
+                                        .id("agent-tokens")
+                                        .on_prepaint(self.popup_triggers.track("agent-context"))
+                                        .flex_none()
+                                        .gap(px(4.))
+                                        .h(px(24.))
+                                        .px(px(6.))
+                                        .rounded_full()
+                                        .cursor_pointer()
+                                        .text_color(p.muted)
+                                        .hover(move |d| d.bg(pill_hover))
+                                        .child(ring(percent, &p))
+                                        .child(used)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.toggle_menu(Menu::Context, window, cx)
+                                        })),
+                                )
+                            })
+                            // New conversations always keep a provider
+                            // picker, including Posit Assistant.
+                            .when(chat_agent || self.show == Show::New, |d| {
+                                d.child(
+                                    pill("agent-model")
+                                        .on_prepaint(self.popup_triggers.track("agent-model"))
+                                        .flex_shrink(1.)
+                                        .min_w(px(0.))
+                                        .overflow_hidden()
+                                        .pl(px(6.))
+                                        .when(self.menu == Some(Menu::Model), |d| d.bg(pill_hover))
+                                        .child(provider(&kind))
+                                        .child(shrinking(model_label))
+                                        .child(
+                                            icon("chevron.down").size(px(10.)).text_color(p.muted),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.toggle_menu(Menu::Model, window, cx)
+                                        })),
+                                )
+                            })
                             .child(
                                 div()
                                     .id("agent-send")
@@ -319,113 +426,7 @@ impl Agents {
                                         }
                                     })),
                             ),
-                    )
-                    // New conversations always keep a provider picker, including PA.
-                    .when(!terminal_only(&kind) || self.show == Show::New, |d| {
-                        d.child(
-                        h_flex()
-                            .gap(px(2.))
-                            .h(px(26.))
-                            .text_size(px(look::SMALL))
-                            .text_color(p.muted)
-                            .when(!terminal_only(&kind), |d| {
-                                d
-                            .child(toggle("agent-web", "globe", web).on_click(
-                                cx.listener(move |this, _, _, cx| this.set_web(!web, cx)),
-                            ))
-                            .child(
-                                toggle("agent-follow", "zoom", self.follow_edits)
-                                    .tooltip(move |w, cx| {
-                                        gpui_kit::component::tooltip::Tooltip::new(if following {
-                                            "Notebooks follow the agent's edits: click to stop"
-                                        } else {
-                                            "Notebooks don't follow the agent's edits: click to follow"
-                                        })
-                                        .build(w, cx)
-                                    })
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.toggle_follow_edits(cx)),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .id("agent-mode")
-                                    .on_prepaint(self.popup_triggers.track("agent-mode"))
-                                    .flex_none()
-                                    .gap(px(4.))
-                                    .h(px(24.))
-                                    .px(px(5.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .hover(|d| d.bg(p.ink(7.)))
-                                    .when(self.menu == Some(Menu::Mode), |d| d.bg(p.ink(9.)))
-                                    .text_color(if mode.id == "normal" { p.faint } else { p.text })
-                                    .child(icon(mode.icon).size(px(15.)))
-                                    .when(mode.id != "normal", |d| d.child(mode.label))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.toggle_menu(Menu::Mode, window, cx)
-                                    })),
-                            )
-                            })
-                            .child(div().flex_1())
-                            .when_some(used, |d, used| {
-                                d.child(
-                                    h_flex()
-                                        .id("agent-tokens")
-                                        .on_prepaint(self.popup_triggers.track("agent-context"))
-                                        .flex_none()
-                                        .gap(px(4.))
-                                        .h(px(24.))
-                                        .px(px(6.))
-                                        .rounded(px(6.))
-                                        .cursor_pointer()
-                                        .hover(|d| d.bg(p.ink(7.)))
-                                        .child(ring(percent, &p))
-                                        .child(used)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.toggle_menu(Menu::Context, window, cx)
-                                        })),
-                                )
-                            })
-                            .child(
-                                h_flex()
-                                    .id("agent-model")
-                                    .on_prepaint(self.popup_triggers.track("agent-model"))
-                                    .flex_shrink(1.)
-                                    .min_w(px(0.))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .gap(px(5.))
-                                    .h(px(24.))
-                                    .px(px(6.))
-                                    .rounded(px(6.))
-                                    .cursor_pointer()
-                                    .text_color(p.text)
-                                    .hover(|d| d.bg(p.ink(7.)))
-                                    .when(self.menu == Some(Menu::Model), |d| d.bg(p.ink(9.)))
-                                    .child(provider(&kind))
-                                    .child(if terminal_only(&kind) {
-                                        kind_of(&kind).map_or("Agent", |kind| kind.name).to_string()
-                                    } else if kind == "antigravity"
-                                        && !self.models_of(&kind).models.iter().any(|m| m.id.is_some())
-                                    {
-                                        "Antigravity models not loaded".to_string()
-                                    } else if composer::configured_models(&kind) && effort.is_empty() {
-                                        short_model(&self.box_model())
-                                    } else {
-                                        format!(
-                                            "{} ({})",
-                                            short_model(&self.box_model()),
-                                            effort_name(&effort)
-                                        )
-                                    })
-                                    .child(icon("chevron.down").size(px(11.)).text_color(p.muted))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.toggle_menu(Menu::Model, window, cx)
-                                    })),
-                            ),
-                        )
-                    }),
+                    ),
             )
     }
 
@@ -582,85 +583,56 @@ impl Agents {
             .children(rows)
     }
 
-    /// The modes, and where the agent's code goes.
+    /// The agent's own modes, in its own words.
     fn render_modes(&self, p: &Palette, cx: &mut Context<Self>) -> Stateful<Div> {
         let kind = self.box_kind().to_string();
-        let current = self.box_mode();
-        let console = self.box_console();
-        let rows = MODES
-            .iter()
-            .filter(|m| (m.offered && composer::has_mode(&kind, m)) || m.id == current.id)
-            .map(|mode| {
-                let on = mode.id == current.id;
-                let blocked = self.mode_note(mode).is_some();
-                h_flex()
-                    .id(SharedString::from(format!("mode-{}", mode.id)))
-                    .items_start()
-                    .gap(px(8.))
-                    .px(px(8.))
-                    .py(px(5.))
-                    .rounded(px(6.))
-                    .when(on, |d| d.bg(p.hover))
-                    .map(|d| {
-                        if blocked {
-                            d.opacity(0.5)
-                        } else {
-                            d.cursor_pointer().hover(|d| d.bg(p.ink(7.)))
-                        }
-                    })
-                    .child(div().pt(px(2.)).child(icon(mode.icon).size(px(14.))))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(mode.label))
-                            .child(
-                                div()
-                                    .text_color(p.muted)
-                                    .line_height(rems(1.35))
-                                    .child(self.mode_text(mode)),
-                            ),
-                    )
-                    .when(on, |d| {
-                        d.child(
-                            div()
-                                .pt(px(2.))
-                                .child(icon("check").size(px(13.)).text_color(p.accent)),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| this.choose_mode(mode, cx)))
-            });
-        let segment = |id: &'static str, label: &'static str, on: bool, to_console: bool| {
-            div()
-                .id(id)
-                .flex_1()
-                .h(px(24.))
+        let current = self.box_mode().map(|m| m.permission);
+        let rows = composer::modes(&kind).iter().map(|mode| {
+            let on = Some(mode.permission) == current;
+            let blocked = self.mode_note(mode).is_some();
+            h_flex()
+                .id(SharedString::from(format!("mode-{}", mode.permission)))
+                .items_start()
+                .gap(px(8.))
+                .px(px(8.))
+                .py(px(5.))
                 .rounded(px(6.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .when(on, |d| d.bg(p.bg).shadow_sm())
-                .when(!on, |d| d.text_color(p.muted))
-                .child(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.set_console(to_console, cx)))
-        };
+                .when(on, |d| d.bg(p.hover))
+                .map(|d| {
+                    if blocked {
+                        d.opacity(0.5)
+                    } else {
+                        d.cursor_pointer().hover(|d| d.bg(p.ink(7.)))
+                    }
+                })
+                .child(div().pt(px(2.)).child(icon(mode.icon).size(px(14.))))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(mode.label))
+                        .child(
+                            div()
+                                .text_color(p.muted)
+                                .line_height(rems(1.35))
+                                .child(self.mode_text(mode)),
+                        ),
+                )
+                .when(on, |d| {
+                    d.child(
+                        div()
+                            .pt(px(2.))
+                            .child(icon("check").size(px(13.)).text_color(p.accent)),
+                    )
+                })
+                .on_click(cx.listener(move |this, _, _, cx| this.choose_mode(mode, cx)))
+        });
+        let name = kind_of(&kind).map_or("Agent", |k| k.name);
         popup(p)
             .id("mode-menu")
             .w(px(MENU_WIDTH))
-            .child(heading("Mode", p))
+            .child(heading(format!("{name} modes"), p))
             .children(rows)
-            .child(heading("Agent code goes", p).pt(px(8.)))
-            .child(
-                h_flex()
-                    .gap(px(2.))
-                    .p(px(2.))
-                    .mx(px(4.))
-                    .rounded(px(8.))
-                    .bg(p.ink(6.))
-                    .child(segment("code-file", "In the file", !console, false))
-                    .child(segment("code-console", "In the Console", console, true)),
-            )
     }
 
     /// The model menu's open tab: favourites, or an agent's.
@@ -1078,4 +1050,13 @@ fn render_context(t: &TerminalInfo, p: &Palette, cx: &mut Context<Agents>) -> St
                     .on_click(cx.listener(|this, _, _, cx| this.compact(cx))),
             ),
         )
+}
+
+/// A pill's text that gives way first, ending in "…", so its icons stay.
+fn shrinking(text: impl Into<SharedString>) -> Div {
+    div()
+        .min_w_0()
+        .overflow_hidden()
+        .text_ellipsis()
+        .child(text.into())
 }

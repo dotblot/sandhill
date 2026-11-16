@@ -28,20 +28,38 @@ static OUTPUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 /// The message the conversation goes on with once pi is started again.
 const RESUMED: &str = "Go on";
 
+/// pi has no permission modes, including old and unrecognized values.
+const PERMISSIONS: &[Option<&str>] = &[
+    None,
+    Some("supervised"),
+    Some("readonly"),
+    Some("edits"),
+    Some("auto"),
+    Some("full"),
+    Some("plan"),
+    Some("restricted"),
+    Some("ask"),
+    Some("unknown"),
+];
+
 /// What the stand-in model does, one request after another.
 fn script() -> Vec<Value> {
-    vec![
-        // The first message: a command, which the user is asked about...
+    let mut steps = vec![
+        // Commands and Sandhill's MCP tools run without Sandhill approval.
         json!({"tool": "bash", "arguments": {"command": "echo made > made.txt"}}),
-        // ...then Sandhill's own tool, which only looks, so it just runs...
         json!({"tool": "mcp__sandhill__list_sessions", "arguments": {}}),
         json!({"text": "Done."}),
-        // The second, in Ask mode: a command Sandhill refuses.
-        json!({"tool": "bash", "arguments": {"command": "echo no > no.txt"}}),
-        json!({"text": "I would run echo."}),
-        // The third takes until it is stopped.
-        json!("hang"),
-    ]
+    ];
+    for permission in PERMISSIONS {
+        let name = permission.unwrap_or("default");
+        steps.push(json!({"tool": "bash", "arguments": {
+            "command": format!("echo {name} > {name}.txt")
+        }}));
+        steps.push(json!({"text": "Written."}));
+    }
+    // The last message takes until it is stopped.
+    steps.push(json!("hang"));
+    steps
 }
 
 /// Server-sent events of an OpenAI chat completion stream.
@@ -335,33 +353,16 @@ async fn pi_works_through_the_chat() {
             .forward(out),
     );
 
-    // pi asks to run the command, on the step that shows it.
+    // A command runs immediately, with no Sandhill approval card.
     let mut entries = Vec::new();
-    let ask = chat_until(&mut events, &mut entries, 0, "ask").await;
-    assert_eq!(ask["tool"], "Bash");
-    assert_eq!(ask["input"]["command"], "echo made > made.txt");
-    assert_eq!(ask["scopes"], json!(["chat"]));
+    chat_until(&mut events, &mut entries, 0, "stop").await;
     let step = entries
         .iter()
         .find(|e| e.event["kind"] == "step" && e.event["tool"] == "Bash")
         .unwrap()
         .event
         .clone();
-    assert_eq!(ask["step"], step["id"]);
-    assert_eq!(ask["turn"], step["turn"]);
-    let agent = terminals.info(&info.id).unwrap().agent.unwrap();
-    assert_eq!(agent["state"], "waiting");
-    assert_eq!(agent["permission"], "supervised");
-    assert!(!project.join("made.txt").exists());
-    terminals
-        .answer(
-            &info.id,
-            ask["id"].as_str().unwrap(),
-            json!({"behavior": "allow", "scope": "once"}),
-        )
-        .await
-        .unwrap();
-    chat_until(&mut events, &mut entries, 0, "stop").await;
+    assert_eq!(step["input"]["command"], "echo made > made.txt");
     let ran = entries
         .iter()
         .find(|e| e.event["kind"] == "step_done" && e.event["id"] == step["id"])
@@ -371,8 +372,7 @@ async fn pi_works_through_the_chat() {
         std::fs::read_to_string(project.join("made.txt")).unwrap(),
         "made\n"
     );
-    // Sandhill's tool reached pi through the extension's server, and only
-    // looks, so it ran without asking.
+    // Sandhill's MCP server is still available through pi's extension.
     let listed = entries
         .iter()
         .find(|e| e.event["kind"] == "step" && e.event["tool"] == "mcp__sandhill__list_sessions")
@@ -384,10 +384,7 @@ async fn pi_works_through_the_chat() {
         "{:#?}",
         entries.iter().map(|e| &e.event).collect::<Vec<_>>()
     );
-    assert_eq!(
-        entries.iter().filter(|e| e.event["kind"] == "ask").count(),
-        1
-    );
+    assert!(!entries.iter().any(|e| e.event["kind"] == "ask"));
     let reply: String = entries
         .iter()
         .filter(|e| e.event["kind"] == "text")
@@ -439,39 +436,49 @@ async fn pi_works_through_the_chat() {
     let terminal_dir = terminals.dir(&info.id).unwrap();
     assert!(terminal_dir.join("pi-sandhill.js").exists());
 
-    // In Ask mode, Sandhill refuses the command; pi is told so.
-    say(
-        &terminals,
-        &info.id,
-        json!({"kind": "set", "permission": "ask"}),
-    )
-    .await;
-    let after = entries.len();
-    say(
-        &terminals,
-        &info.id,
-        json!({"kind": "say", "text": "Write another"}),
-    )
-    .await;
-    chat_until(&mut events, &mut entries, after, "stop").await;
-    let refused = entries[after..]
-        .iter()
-        .find(|e| e.event["kind"] == "step_failed")
-        .unwrap();
-    assert_eq!(refused.event["tool"], "Bash");
-    assert_eq!(refused.event["error"], "Not run: Ask mode is read-only.");
-    assert!(!project.join("no.txt").exists());
-    assert!(!entries[after..].iter().any(|e| e.event["kind"] == "ask"));
-    {
-        let requests = requests.lock().unwrap();
-        let asked = requests[3].to_string();
-        assert!(asked.contains("Sandhill is in Ask mode"), "{asked}");
+    // Every permission value is ignored: commands still execute, no Ask
+    // instruction is appended, and no active plan permission is reported
+    // to Sandhill's MCP tools.
+    for permission in PERMISSIONS {
+        say(
+            &terminals,
+            &info.id,
+            json!({"kind": "set", "permission": permission}),
+        )
+        .await;
+        let after = entries.len();
+        say(
+            &terminals,
+            &info.id,
+            json!({"kind": "say", "text": "Write another"}),
+        )
+        .await;
+        chat_until(&mut events, &mut entries, after, "stop").await;
+        let turn = &entries[after..];
         assert!(
-            requests[4]
-                .to_string()
-                .contains("Ask mode, which is read-only")
+            turn.iter()
+                .any(|e| e.event["kind"] == "step_done" && e.event["tool"] == "Bash"),
+            "permission {permission:?}: {turn:?}"
         );
+        assert!(!turn.iter().any(|e| matches!(
+            e.event["kind"].as_str(),
+            Some("ask" | "step_failed" | "error")
+        )));
+        let name = permission.unwrap_or("default");
+        assert_eq!(
+            std::fs::read_to_string(project.join(format!("{name}.txt"))).unwrap(),
+            format!("{name}\n")
+        );
+        let agent = agent_until(&terminals, &info.id, |a| a["state"] == "idle").await;
+        assert!(agent["permission"].is_null());
     }
+    assert!(
+        !requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.to_string().contains("Sandhill is in Ask mode"))
+    );
 
     // Stopped while it waits on the model.
     let after = entries.len();
@@ -483,7 +490,7 @@ async fn pi_works_through_the_chat() {
     .await;
     chat_until(&mut events, &mut entries, after, "prompt").await;
     agent_until(&terminals, &info.id, |a| a["state"] == "busy").await;
-    while requests.lock().unwrap().len() < 6 {
+    while requests.lock().unwrap().len() < 4 + PERMISSIONS.len() * 2 {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     say(&terminals, &info.id, json!({"kind": "interrupt"})).await;
@@ -815,4 +822,102 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
             }
         })
         .collect()
+}
+
+/// User extensions still ask their own questions; only Sandhill's tool
+/// approval hook is gone.
+#[tokio::test]
+async fn pi_keeps_native_extension_questions() {
+    if agents::find("pi").is_none() {
+        eprintln!("skipping: pi is not installed");
+        return;
+    }
+    let dir = common::tempdir().unwrap();
+    let (_daemon, socket) = start_daemon(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let (port, _) = model(vec![
+        json!({"tool": "bash", "arguments": {"command": "echo native > native.txt"}}),
+        json!({"text": "Done."}),
+    ])
+    .await;
+    let home = pi_home(dir.path(), port);
+    let extensions = home.join(".pi/agent/extensions");
+    std::fs::create_dir_all(&extensions).unwrap();
+    std::fs::write(
+        extensions.join("questions.js"),
+        r#"
+export default function (pi) {
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "bash") return;
+    const selected = await ctx.ui.select("Native selection", ["First", "Second"]);
+    const confirmed = await ctx.ui.confirm("Native confirmation", selected ?? "No selection");
+    if (selected !== "Second" || !confirmed) {
+      return { block: true, reason: "The native extension did not get its answers." };
+    }
+  });
+}
+"#,
+    )
+    .unwrap();
+    let options = AgentOptions {
+        model: Some("standin/plain".into()),
+        permission: Some("plan".into()),
+        ..AgentOptions::default()
+    };
+    let exe = PathBuf::from(env!("CARGO_BIN_EXE_sandhilld"));
+    let project_name = project.to_string_lossy().into_owned();
+    let context = Context {
+        executable: &exe,
+        socket: &socket,
+        project: Some(&project_name),
+        cwd: &project,
+        prompt: Some("Run the command"),
+        resume: None,
+    };
+    let mut launch = agents::launch("pi", &options, &context).await.unwrap();
+    launch.env.extend(pi_env(&home));
+    let terminals = Terminals::new(dir.path().join("state/terminals"), exe);
+    let info = terminals.start(launch).await.unwrap();
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&info.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut entries = Vec::new();
+    for (title, option_id) in [("Native selection", "1"), ("Native confirmation", "yes")] {
+        let after = entries.len();
+        let question = chat_until(&mut events, &mut entries, after, "ask").await;
+        assert_eq!(question["tool"], title);
+        assert!(!project.join("native.txt").exists());
+        let agent = terminals.info(&info.id).unwrap().agent.unwrap();
+        assert_eq!(agent["state"], "waiting");
+        assert!(agent["permission"].is_null());
+        terminals
+            .answer(
+                &info.id,
+                question["id"].as_str().unwrap(),
+                json!({"option_id": option_id}),
+            )
+            .await
+            .unwrap();
+    }
+    chat_until(&mut events, &mut entries, 0, "stop").await;
+    assert_eq!(
+        std::fs::read_to_string(project.join("native.txt")).unwrap(),
+        "native\n"
+    );
+    assert_eq!(
+        entries.iter().filter(|e| e.event["kind"] == "ask").count(),
+        2
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|e| matches!(e.event["kind"].as_str(), Some("error" | "step_failed")))
+    );
+    terminals.close(&info.id).await.unwrap();
 }

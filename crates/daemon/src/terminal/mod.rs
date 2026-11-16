@@ -8,8 +8,7 @@
 //! host.json    the terminal host's pid and the program's pid
 //! sock         the host's socket, while the program runs
 //! out.<n>      the output, in 1 MiB segments (see `log`)
-//! agent.json   what the agent last reported through its hooks, and
-//!              Sandhill's own mode for it (see `guard`)
+//! agent.json   what the agent last reported, and the conversation's choices
 //! exit.json    how the program ended
 //! render.json  successful Quarto output paths (written by the host)
 //! host.log     the host's own errors
@@ -25,7 +24,6 @@ pub mod chat;
 pub mod choices;
 pub mod codex;
 pub mod events;
-pub mod guard;
 pub mod host;
 pub(crate) mod idle;
 pub mod log;
@@ -981,24 +979,18 @@ async fn tell(dir: &Path, message: &ToHost) -> Result<()> {
     Ok(())
 }
 
-/// The report a program starts with: `kept` from the last one, and the
-/// guard of the mode it starts in. None at all when that is empty.
+/// The report a program starts with: `kept` from the last one and the
+/// conversation's choices. None at all when that is empty.
 fn write_report(
     paths: &Paths,
     mut kept: serde_json::Map<String, Value>,
     options: &AgentOptions,
 ) -> Result<()> {
-    if let Some(guard) = guard::of(options.permission.as_deref()) {
-        kept.insert("guard".into(), guard.into());
-    }
     if let Some(code) = code_to(options.code.as_deref()) {
         kept.insert("code".into(), code.into());
     }
     if let Some(pin) = &options.pin {
         kept.insert("pin".into(), pin.clone().into());
-    }
-    if let Some(web) = options.web {
-        kept.insert("web".into(), web.into());
     }
     if !options.refs.is_empty() {
         kept.insert("refs".into(), options.refs.clone().into());

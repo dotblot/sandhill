@@ -21,10 +21,7 @@
 //!   `notification` do, and adds the event to the conversation
 //!   ([`super::chat`]). A permission request waits for the user's answer
 //!   from the app; when the terminal goes away first, Claude Code asks in
-//!   its own terminal instead. In Sandhill's Restricted and Ask modes
-//!   ([`super::guard`]), the hook before each step asks the user, or
-//!   blocks the step; with web search off ([`super::choices`]), it blocks
-//!   Claude's web tools.
+//!   its own terminal instead.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -32,8 +29,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
-use super::guard::{self, Verdict};
-use super::{chat, choices};
+use super::chat;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -137,9 +133,6 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
             if let Some(context) = &prompt.context {
                 println!("{context}");
             }
-            if guard::current(terminal).as_deref() == Some(guard::ASK) {
-                println!("{}", guard::ASK_NOTE);
-            }
             if prompt.report.as_object().is_some_and(|r| !r.is_empty()) {
                 let _ = send(Some(terminal), prompt.report).await;
             }
@@ -176,27 +169,7 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
             );
             reported
         }
-        "PreToolUse" => {
-            let (reported, ()) = tokio::join!(
-                state("busy"),
-                add_chat(terminal, chat::from_claude(&input, at_ms, None))
-            );
-            let tool = input["tool_name"].as_str().unwrap_or("");
-            if choices::blocks(&choices::read(terminal), tool) {
-                block_step(
-                    terminal,
-                    &input,
-                    choices::WEB_BLOCKED,
-                    choices::WEB_BLOCKED,
-                    at_ms,
-                )
-                .await;
-            } else if let Some(guard) = guard::current(terminal) {
-                guard_step(terminal, &input, &guard, at_ms).await;
-            }
-            reported
-        }
-        "PostToolUse" | "PostToolUseFailure" => {
+        "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => {
             let (reported, ()) = tokio::join!(
                 state("busy"),
                 add_chat(terminal, chat::from_claude(&input, at_ms, None))
@@ -215,54 +188,6 @@ async fn hook(terminal: &Path, project: Option<String>, socket: &Path) -> Result
         _ => {
             add_chat(terminal, chat::from_claude(&input, at_ms, None)).await;
             Ok(())
-        }
-    }
-}
-
-/// Stops a step of Claude Code's: the chat crosses it out with `shown`,
-/// and Claude is told `why`.
-async fn block_step(terminal: &Path, input: &Value, shown: &str, why: &str, at_ms: i64) {
-    let failed = json!({
-        "kind": "step_failed",
-        "turn": input["prompt_id"],
-        "id": input["tool_use_id"],
-        "tool": input["tool_name"],
-        "error": shown,
-        "at_ms": at_ms,
-    });
-    add_chat(terminal, Some(failed)).await;
-    println!("{}", chat::claude_step_decision("deny", Some(why)));
-}
-
-/// Sandhill's Restricted or Ask mode for a step Claude Code is about to
-/// take: asks the user first, or blocks it, or leaves it to Claude Code.
-async fn guard_step(terminal: &Path, input: &Value, guard: &str, at_ms: i64) {
-    let tool = input["tool_name"].as_str().unwrap_or("");
-    match guard::claude(guard, tool) {
-        Verdict::Pass => {}
-        Verdict::Block => {
-            block_step(terminal, input, guard::BLOCKED_STEP, guard::BLOCKED, at_ms).await;
-        }
-        Verdict::Ask => {
-            let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-            let waiting =
-                json!({"state": "waiting", "message": format!("Claude asks to use {tool}")});
-            let _ = send(Some(terminal), with_mode(waiting, input)).await;
-            // On the step it is about, allowed once at a time: Restricted
-            // asks every time.
-            let mut ask = chat::claude_ask(input, &id, at_ms);
-            ask["step"] = input["tool_use_id"].clone();
-            ask["scopes"] = json!([]);
-            let decision = match super::ask(terminal, &id, ask).await {
-                Ok(Some(answer)) if answer["behavior"] == "allow" => {
-                    chat::claude_step_decision("allow", None)
-                }
-                Ok(Some(answer)) => chat::claude_step_decision("deny", Some(chat::denied(&answer))),
-                // The terminal went away: Claude Code asks in its own.
-                _ => chat::claude_step_decision("ask", None),
-            };
-            println!("{decision}");
-            let _ = send(Some(terminal), with_mode(json!({"state": "busy"}), input)).await;
         }
     }
 }
