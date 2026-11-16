@@ -404,6 +404,129 @@ pub(super) fn rank(
     ranked.into_iter().map(|(_, item)| item).collect()
 }
 
+/// Moves the names the user has, in the Variables pane or assigned in the
+/// file, ahead of everything else, keeping [`rank`]'s order within each
+/// group (Huan, 2026-11-16).
+pub(super) fn variables_first(items: &mut [CompletionItem], names: &HashSet<String>) {
+    items.sort_by_key(|item| !names.contains(item.label.as_str()));
+}
+
+/// The names `code` assigns: `x <- …`, `x = …`, `… -> x`, `a, b = …`,
+/// `def x`, `class x`, `import … as x`, `from m import x`, loop and `with`
+/// variables. Line by line, as written; good enough to order a menu.
+pub(super) fn assigned_names(code: &str, r: bool) -> HashSet<String> {
+    let name_end = |s: &str| {
+        s.find(|c: char| !(c.is_alphanumeric() || c == '_' || (r && c == '.')))
+            .unwrap_or(s.len())
+    };
+    let whole = |s: &str| {
+        let s = s
+            .trim()
+            .trim_start_matches('*')
+            .trim_matches(['(', ')', '[', ']', ' ']);
+        let s = if r { s.trim_matches('`') } else { s };
+        // An annotated Python name, `x: int`.
+        let s = s.split(':').next().unwrap_or(s).trim();
+        (!s.is_empty() && name_end(s) == s.len() && !s.starts_with(|c: char| c.is_ascii_digit()))
+            .then(|| s.to_string())
+    };
+    let mut names = HashSet::new();
+    let add_all = |list: &str, names: &mut HashSet<String>| {
+        names.extend(list.split(',').filter_map(whole));
+    };
+    for line in code.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let word = |prefix: &str| {
+            line.strip_prefix(prefix)
+                .map(|rest| &rest[..name_end(rest)])
+        };
+        if !r {
+            for prefix in ["def ", "async def ", "class "] {
+                if let Some(name) = word(prefix).filter(|n| !n.is_empty()) {
+                    names.insert(name.to_string());
+                }
+            }
+            if let Some(rest) = line.strip_prefix("import ") {
+                for part in rest.split(',') {
+                    let part = part.trim();
+                    let name = match part.split_once(" as ") {
+                        Some((_, alias)) => alias,
+                        None => part.split('.').next().unwrap_or(part),
+                    };
+                    names.extend(whole(name));
+                }
+            }
+            if let Some((_, rest)) = line
+                .strip_prefix("from ")
+                .and_then(|l| l.split_once(" import "))
+            {
+                for part in rest.trim_matches(['(', ')']).split(',') {
+                    let part = part.trim();
+                    names.extend(whole(part.split_once(" as ").map_or(part, |(_, a)| a)));
+                }
+            }
+            if (line.starts_with("with ") || line.starts_with("except "))
+                && let Some((_, alias)) = line.rsplit_once(" as ")
+            {
+                names.extend(whole(alias.trim_end_matches(':')));
+            }
+        }
+        if let Some(rest) = line.strip_prefix(if r { "for (" } else { "for " })
+            && let Some((targets, _)) = rest.split_once(" in ")
+        {
+            add_all(targets, &mut names);
+        }
+        if r {
+            if let Some((left, _)) = line.split_once("<-") {
+                names.extend(whole(left.trim_end_matches('<')));
+            }
+            if let Some((_, right)) = line.rsplit_once("->") {
+                names.extend(whole(right.trim_start_matches('>')));
+            }
+        }
+        // `x = …` at the line's top level, not `==`, `<=`, `!=` or `f(a = 1)`.
+        let bytes = line.as_bytes();
+        let mut depth = 0i32;
+        for (at, &b) in bytes.iter().enumerate() {
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b'"' | b'\'' => break,
+                b'=' if depth == 0 => {
+                    let before = at.checked_sub(1).map(|i| bytes[i]);
+                    let after = bytes.get(at + 1).copied();
+                    if after != Some(b'=')
+                        && !matches!(
+                            before,
+                            Some(
+                                b'=' | b'<'
+                                    | b'>'
+                                    | b'!'
+                                    | b'+'
+                                    | b'-'
+                                    | b'*'
+                                    | b'/'
+                                    | b'%'
+                                    | b'|'
+                                    | b'&'
+                                    | b':'
+                            )
+                        )
+                    {
+                        add_all(&line[..at], &mut names);
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    names
+}
+
 /// Whether typing `inserted` after `line` (the current line up to it)
 /// should ask for completions: `$ @ . [ :: ( ,` and every letter of a name,
 /// from the first (`pauses` may hold the first two back); not in numbers

@@ -5,7 +5,7 @@ use crate::workbench::Workbench;
 use anyhow::Result;
 use gpui_kit::component::input::{
     CompletionProvider, DefinitionProvider, EditorState, HoverProvider, InputEvent, Rope,
-    highlight_characters, set_completion_docs,
+    RopeExt as _, highlight_characters, set_completion_docs,
 };
 use gpui_kit::*;
 use lsp_types::{
@@ -29,6 +29,9 @@ const KERNEL_GRACE: Duration = Duration::from_millis(300);
 const LIBRARY: &[&str] = &["library", "require", "requireNamespace"];
 /// How long the first two letters of a plain word wait before the menu.
 const TYPING_PAUSE: Duration = Duration::from_secs(3);
+/// How long the pointer rests on a name before its explanation shows
+/// (Huan, 2026-11-16).
+const HOVER_PAUSE: Duration = Duration::from_secs(3);
 /// Accepts kept across answers (the menu may show an earlier one).
 const MAX_ACCEPTS: usize = 512;
 /// Documentation kept per editor before the store starts over.
@@ -640,6 +643,18 @@ impl CompletionProvider for Provider {
                 }));
             }
             let mut items = rank(items, &text, offset, start, call.is_some(), library);
+            if !library {
+                // The whole document's names, not only this cell's.
+                let code = context.document.as_ref().map_or(text.as_str(), |d| &d.text);
+                let mut names = assigned_names(code, r);
+                if code != text {
+                    names.extend(assigned_names(&text, r));
+                }
+                let _ = provider.workbench.read_with(cx, |this, _| {
+                    names.extend(this.vars.list.iter().map(|v| v.name.clone()));
+                });
+                variables_first(&mut items, &names);
+            }
             let python = context.language == "python";
             let found: Vec<Accept> = items
                 .iter_mut()
@@ -748,21 +763,57 @@ fn show_completions(
 }
 
 impl HoverProvider for Provider {
+    /// The explanation of the name under the pointer, once the pointer has
+    /// rested on that name's letters for [`HOVER_PAUSE`]. Past the end of a
+    /// line the editor counts the pointer as at the line's end, and the
+    /// language server answers there with the whole list or call around it,
+    /// so the pointer itself is checked against the name, and the box's area
+    /// is the name, never the expression around it (Huan, 2026-11-16).
     fn hover(
         &self,
         text: &Rope,
         offset: usize,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Option<Hover>>> {
-        let work = self.request(text, offset, "textDocument/hover", cx);
-        cx.spawn(async move |_| {
-            let (value, document, cell) = work.await?;
+        let name = text.word_range(offset);
+        let text = text.clone();
+        let provider = self.clone();
+        let window = window.window_handle();
+        cx.spawn(async move |cx| {
+            // Called again only once the pointer has left the box's name:
+            // the box it shows closes now, not when the next one is ready.
+            cx.update(|cx| {
+                if let Some(editor) = provider.editor.upgrade()
+                    && editor.read(cx).hover_popover().is_some()
+                {
+                    editor.update(cx, |editor, cx| editor.clear_hover_state(cx));
+                }
+            });
+            let Some(name) = name else {
+                return Ok(None);
+            };
+            cx.background_executor().timer(HOVER_PAUSE).await;
+            let on_name = window
+                .update(cx, |_, window, cx| {
+                    let pointer = window.mouse_position();
+                    provider.editor.upgrade().is_some_and(|editor| {
+                        editor
+                            .read(cx)
+                            .range_to_bounds(&name)
+                            .is_some_and(|bounds| bounds.contains(&pointer))
+                    })
+                })
+                .unwrap_or(false);
+            if !on_name {
+                return Ok(None);
+            }
+            let work = cx.update(|cx| provider.request(&text, offset, "textDocument/hover", cx));
+            let (value, _, _) = work.await?;
             let mut hover = serde_json::from_value::<Option<Hover>>(value).unwrap_or(None);
-            if let (Some(hover), Some(document)) = (&mut hover, document) {
-                hover.range = hover
-                    .range
-                    .and_then(|range| document.component_range(cell, range));
+            if let Some(hover) = &mut hover {
+                // The editor then takes the name under the pointer.
+                hover.range = None;
             }
             Ok(hover)
         })

@@ -182,13 +182,13 @@ impl Workbench {
                             .text_size(px(look::CODE))
                             .line_height(px(LINE_HEIGHT))
                             .child(div().text_color(p.accent).child("›"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_color(p.muted)
-                                    .child(run.highlighted_code(self.run_language(run), cx)),
-                            ),
+                            .child(div().flex_1().min_w_0().text_color(p.muted).child(
+                                run.highlighted_code(
+                                    SharedString::from(format!("ccode-{run_id}")),
+                                    self.run_language(run),
+                                    cx,
+                                ),
+                            )),
                     )
                     .children(run.outputs.iter().enumerate().map(|(n, o)| {
                         let id = SharedString::from(format!("cout-{run_id}-{n}"));

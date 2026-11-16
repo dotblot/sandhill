@@ -87,6 +87,10 @@ pub(crate) struct AccountManager {
     removing: Option<String>,
     remove_error: Option<String>,
     remove_busy: bool,
+    /// The agents in the page's order: turned on first, then by name. Set
+    /// when the page opens, so a box doesn't move under the pointer when its
+    /// switch is clicked (Huan, 2026-11-16).
+    order: Vec<&'static crate::agents::Kind>,
     triggers: crate::shell::popup::PopupTriggers,
 }
 
@@ -115,6 +119,7 @@ impl AccountManager {
             menu: None,
             removing: None,
             remove_error: None,
+            order: agent_order(),
             remove_busy: false,
             triggers: Default::default(),
         };
@@ -1205,8 +1210,7 @@ impl AccountManager {
 impl Render for AccountManager {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let mut kinds: Vec<&'static crate::agents::Kind> = crate::agents::KINDS.iter().collect();
-        kinds.sort_by_key(|kind| kind.name.to_lowercase());
+        let kinds = self.order.clone();
         v_flex()
             .relative()
             .w_full()
@@ -1217,6 +1221,18 @@ impl Render for AccountManager {
             .children(kinds.into_iter().map(|kind| self.agent_group(kind, &p, cx)))
             .child(self.render_dialogs(cx))
     }
+}
+
+/// Turned-on agents first, each group by name.
+fn agent_order() -> Vec<&'static crate::agents::Kind> {
+    let mut kinds: Vec<&'static crate::agents::Kind> = crate::agents::KINDS.iter().collect();
+    kinds.sort_by_key(|kind| {
+        (
+            crate::agents::turned_off(kind.kind),
+            kind.name.to_lowercase(),
+        )
+    });
+    kinds
 }
 
 #[cfg(test)]

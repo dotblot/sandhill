@@ -2,6 +2,28 @@
 
 use gpui_kit::base::{SelectableText, TextSelectionEvent, TextSelectionHandle};
 use gpui_kit::*;
+use std::ops::Range;
+use std::rc::Rc;
+
+/// Colours over ranges of the text, such as code's syntax colours.
+pub(crate) type Highlights = Rc<[(Range<usize>, HighlightStyle)]>;
+
+/// R and Python code's syntax colours in `theme`, the editor's; none for
+/// other languages.
+pub(crate) fn code_highlights(
+    code: &str,
+    language: &str,
+    theme: &gpui_kit::component::highlighter::HighlightTheme,
+) -> Highlights {
+    use gpui_kit::component::highlighter::SyntaxHighlighter;
+    use gpui_kit::component::input::Rope;
+    if !matches!(language, "python" | "r") {
+        return Rc::from([]);
+    }
+    let mut highlighter = SyntaxHighlighter::new(language);
+    highlighter.update(None, &Rope::from_str(code), None);
+    highlighter.styles(&(0..code.len()), theme).into()
+}
 
 /// Keeps selection changes local to the output, rather than rebuilding its
 /// notebook or Console. The standard selectable text still owns hit testing,
@@ -9,6 +31,7 @@ use gpui_kit::*;
 pub(crate) struct OutputText {
     id: ElementId,
     text: SharedString,
+    highlights: Option<Highlights>,
 }
 
 impl OutputText {
@@ -16,12 +39,20 @@ impl OutputText {
         Self {
             id: id.into(),
             text: text.into(),
+            highlights: None,
         }
+    }
+
+    /// Colours ranges of the text (UTF-8 offsets, in order, not overlapping).
+    pub(crate) fn highlights(mut self, highlights: Highlights) -> Self {
+        self.highlights = Some(highlights);
+        self
     }
 }
 
 struct SelectionOwner {
     text: SharedString,
+    highlights: Option<Highlights>,
     selection: TextSelectionHandle,
     _subscription: Subscription,
 }
@@ -42,6 +73,7 @@ impl SelectionOwner {
         );
         Self {
             text,
+            highlights: None,
             selection,
             _subscription: subscription,
         }
@@ -50,7 +82,11 @@ impl SelectionOwner {
 
 impl Render for SelectionOwner {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        SelectableText::with_handle("text", self.selection.clone(), self.text.clone())
+        let text = SelectableText::with_handle("text", self.selection.clone(), self.text.clone());
+        match &self.highlights {
+            Some(highlights) => text.highlights(highlights.iter().cloned()),
+            None => text,
+        }
     }
 }
 
@@ -90,6 +126,15 @@ impl Element for OutputText {
                 owner
                     .selection
                     .set_fallback_copy_text(self.text.to_string(), cx);
+                cx.notify();
+            }
+            let same = match (&owner.highlights, &self.highlights) {
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                owner.highlights = self.highlights.clone();
                 cx.notify();
             }
         });

@@ -1,7 +1,7 @@
 use super::{
     CompletionItem, CompletionItemKind, CompletionReply, CompletionTextEdit, Document, HELP_TOPIC,
-    InsertTextFormat, Position, Range, TextEdit, Value, coalesce_edits, finish, kernel_items,
-    map_completion, match_tier, pauses, rank, snippet_text, trigger,
+    InsertTextFormat, Position, Range, TextEdit, Value, assigned_names, coalesce_edits, finish,
+    kernel_items, map_completion, match_tier, pauses, rank, snippet_text, trigger, variables_first,
 };
 fn labels(items: &[CompletionItem]) -> Vec<&str> {
     items.iter().map(|item| item.label.as_str()).collect()
@@ -108,6 +108,53 @@ fn arguments_and_packages_come_first() {
             true
         )),
         vec!["ggplot2", "gg", "ggg"]
+    );
+}
+#[test]
+fn the_users_names_come_first() {
+    let python = assigned_names(
+        "import numpy as np\nimport os.path, sys\nfrom scanpy import pp as preprocess, tl\n\
+         adata, raw = load()\ncount: int = 3\ndef plot_umap(x=1):\n    total += 1\n\
+         for gene, score in pairs:\n    pass\nwith open(f) as fh:\n    x[0] = 1\nif a == b: pass\n\
+         self.y = 2\nf(key=1)\n# commented = 1\nclass Model:\n    pass\n",
+        false,
+    );
+    let mut want = [
+        "np",
+        "os",
+        "sys",
+        "preprocess",
+        "tl",
+        "adata",
+        "raw",
+        "count",
+        "plot_umap",
+        "gene",
+        "score",
+        "fh",
+        "Model",
+    ]
+    .map(String::from)
+    .to_vec();
+    let mut got: Vec<String> = python.into_iter().collect();
+    want.sort();
+    got.sort();
+    assert_eq!(got, want);
+    let r = assigned_names(
+        "counts.raw <- read.csv(f)\nx<<-1\nn = 3\nsummary(x) -> s\nfor (i in 1:3) {}\n\
+         names(x) <- y\ndf$col <- 1\nf <- function(a = 1) a\n",
+        true,
+    );
+    let mut got: Vec<String> = r.into_iter().collect();
+    got.sort();
+    assert_eq!(got, vec!["counts.raw", "f", "i", "n", "s", "x"]);
+    // Within each group, the order rank gave stays.
+    let mut items = ["data.frame", "data", "dat_raw", "date"].map(item).to_vec();
+    let names = ["dat_raw", "data"].map(String::from).into_iter().collect();
+    variables_first(&mut items, &names);
+    assert_eq!(
+        labels(&items),
+        vec!["data", "dat_raw", "data.frame", "date"]
     );
 }
 #[test]

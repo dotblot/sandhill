@@ -1,13 +1,12 @@
 //! Unbound Console sessions and a bounded, non-destructive command index.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ops::Range;
 use std::sync::Arc;
 
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::ActiveTheme;
-use gpui_kit::component::highlighter::{HighlightTheme, SyntaxHighlighter};
-use gpui_kit::component::input::{Rope, RopeExt as _};
+use gpui_kit::component::highlighter::HighlightTheme;
+use gpui_kit::component::input::RopeExt as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -202,30 +201,29 @@ pub(super) struct HighlightedCode {
     text: SharedString,
     language: &'static str,
     theme: Arc<HighlightTheme>,
-    styles: Vec<(Range<usize>, HighlightStyle)>,
+    styles: crate::editor::output_text::Highlights,
 }
 
 impl HighlightedCode {
     fn new(code: &str, language: &'static str, theme: Arc<HighlightTheme>) -> Self {
-        let text = SharedString::from(code);
-        let styles = if matches!(language, "python" | "r") {
-            let mut highlighter = SyntaxHighlighter::new(language);
-            highlighter.update(None, &Rope::from_str(code), None);
-            highlighter.styles(&(0..code.len()), theme.as_ref())
-        } else {
-            Vec::new()
-        };
         Self {
-            text,
+            text: SharedString::from(code),
             language,
+            styles: crate::editor::output_text::code_highlights(code, language, &theme),
             theme,
-            styles,
         }
     }
 }
 
 impl Run {
-    pub(crate) fn highlighted_code(&self, language: &'static str, cx: &App) -> StyledText {
+    /// The run's code in the editor's colours, selectable and copyable like
+    /// its output (Huan, 2026-11-16).
+    pub(crate) fn highlighted_code(
+        &self,
+        id: impl Into<ElementId>,
+        language: &'static str,
+        cx: &App,
+    ) -> crate::editor::output_text::OutputText {
         let code = self.code.trim_end();
         let theme = &cx.theme().highlight_theme;
         let mut cached = self.code_highlights.borrow_mut();
@@ -237,7 +235,8 @@ impl Run {
         {
             *cached = HighlightedCode::new(code, language, theme.clone());
         }
-        StyledText::new(cached.text.clone()).with_highlights(cached.styles.iter().cloned())
+        crate::editor::output_text::OutputText::new(id, cached.text.clone())
+            .highlights(cached.styles.clone())
     }
 
     pub(super) fn append_output(&mut self, seq: i64, msg_type: String, content: Value) {
