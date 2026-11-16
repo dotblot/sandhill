@@ -1227,6 +1227,15 @@ preview and R's imports weren't seen.
   menu use it too, so they now change all open projects, not only the shown
   one. The theme gained System (`look::choose_appearance(None)`), which the
   title bar's button alone could not return to.
+- **Project settings redrawn** (Huan, 2026-11-15;
+  `docs/design/done/project-settings-plan.md`): the card uses General's
+  groups and rows, now shared in `look.rs` (`settings_group`,
+  `settings_row`, `settings_label`, `settings_detail`). R and Python use
+  the Console's round picker with its list floating in
+  `composer_view::popup` (it used to open inside the card and push rows
+  down); where documents run and where chats are kept are capsule tabs;
+  the R and Python notes are one grey line each; IRkernel offers sit under
+  the R row. What is saved is unchanged.
 
 
 ## Running it

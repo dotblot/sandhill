@@ -1028,6 +1028,75 @@ fn card(p: &Palette, bg: Hsla) -> Div {
         .rounded(px(RADIUS))
 }
 
+/// A settings group, as on Welcome's General page and in Project settings:
+/// a small heading over a box of rows with lines between them, as in the
+/// Mac's own settings.
+pub fn settings_group(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -> Div {
+    let mut body = div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .rounded(px(RADIUS))
+        .border_1()
+        .border_color(p.line);
+    for (ix, row) in rows.into_iter().enumerate() {
+        body = body.child(
+            div()
+                .w_full()
+                .when(ix > 0, |d| d.border_t_1().border_color(p.line))
+                .child(row),
+        );
+    }
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .gap(px(6.))
+        .child(
+            div()
+                .px(px(14.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.muted)
+                .child(title),
+        )
+        .child(body)
+}
+
+/// The grey line under a settings row's name.
+pub fn settings_detail(text: impl Into<SharedString>, p: &Palette) -> Div {
+    div()
+        .text_size(px(12.5))
+        .text_color(p.muted)
+        .whitespace_normal()
+        .child(text.into())
+}
+
+/// A settings row's name, with its grey line under it.
+pub fn settings_label(label: impl Into<SharedString>, detail: Option<Div>) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_w_0()
+        .gap(px(2.))
+        .child(label.into())
+        .children(detail)
+}
+
+/// A settings row with its name on the left; the caller adds the control.
+pub fn settings_row(label: impl Into<SharedString>, detail: Option<Div>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .w_full()
+        .min_h(px(44.))
+        .gap(px(16.))
+        .px(px(14.))
+        .py(px(10.))
+        .child(settings_label(label, detail))
+}
+
 /// A capsule, as in the title bar and around a pane's tabs: a pill with a
 /// light wash and no edge, so only the picked tab stands out.
 pub fn capsule(p: &Palette, height: f32) -> Div {

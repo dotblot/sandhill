@@ -89,14 +89,14 @@ impl AppWindow {
                         "Choices for every project on this Mac. The buttons beside the editor, notebooks and panes change the same choices.",
                     )),
             )
-            .child(group(
+            .child(look::settings_group(
                 "Appearance",
                 vec![row("Theme", Some("System follows the Mac's light or dark appearance."), &p)
                     .child(themes)
                     .into_any_element()],
                 &p,
             ))
-            .child(group(
+            .child(look::settings_group(
                 "Notebooks and Quarto",
                 vec![
                     switch_row(
@@ -134,31 +134,30 @@ impl AppWindow {
                 ],
                 &p,
             ))
-            .child(group(
+            .child(look::settings_group(
                 "Editor",
                 vec![
                     v_flex()
                         .w_full()
                         .px(px(14.))
                         .py(px(10.))
-                        .child(label_column(
+                        .child(look::settings_label(
                             "Wrap long lines",
-                            Some("For each kind of file. The Wrap button in the editor changes the same choice."),
-                            &p,
+                            Some(look::settings_detail("For each kind of file. The Wrap button in the editor changes the same choice.", &p)),
                         ))
                         .child(kinds)
                         .into_any_element(),
                 ],
                 &p,
             ))
-            .child(group(
+            .child(look::settings_group(
                 "Files",
                 vec![row("Sort files by", Some("Folders always come first."), &p)
                     .child(sorts)
                     .into_any_element()],
                 &p,
             ))
-            .child(group(
+            .child(look::settings_group(
                 "Plots and tables",
                 vec![
                     switch_row(
@@ -190,47 +189,10 @@ impl AppWindow {
     }
 }
 
-/// A titled box of rows with lines between them, as in the Mac's settings.
-fn group(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -> Div {
-    let mut body = v_flex()
-        .w_full()
-        .rounded(px(look::RADIUS))
-        .border_1()
-        .border_color(p.line);
-    for (ix, row) in rows.into_iter().enumerate() {
-        body = body.child(
-            div()
-                .w_full()
-                .when(ix > 0, |d| d.border_t_1().border_color(p.line))
-                .child(row),
-        );
-    }
-    v_flex()
-        .w_full()
-        .gap(px(6.))
-        .child(sidebar_heading(title, p).px(px(14.)).py(px(0.)))
-        .child(body)
-}
-
-/// A row's name, with a muted line under it.
-fn label_column(label: &'static str, detail: Option<&'static str>, p: &Palette) -> Div {
-    v_flex()
-        .flex_1()
-        .min_w_0()
-        .gap(px(2.))
-        .child(label)
-        .children(detail.map(|detail| div().text_size(px(12.5)).text_color(p.muted).child(detail)))
-}
-
-/// A row with its name on the left; the caller adds the control.
+/// A row with its name and grey line on the left; the caller adds the
+/// control.
 fn row(label: &'static str, detail: Option<&'static str>, p: &Palette) -> Div {
-    h_flex()
-        .w_full()
-        .min_h(px(44.))
-        .gap(px(16.))
-        .px(px(14.))
-        .py(px(10.))
-        .child(label_column(label, detail, p))
+    look::settings_row(label, detail.map(|detail| look::settings_detail(detail, p)))
 }
 
 fn switch_row(

@@ -72,4 +72,8 @@ differs, this wins.
   the Data Explorer's column panel show at first. ⌘, and Sandhill →
   Settings… open it; there is no separate settings window. Each choice
   also stays beside what it changes, and changing it anywhere applies to
-  every open project at once. Project settings stay per project.
+  every open project at once. Project settings stay per project, in a
+  card drawn the same way (Huan, 2026-11-15): Kernels, Running and AI
+  groups, the round kernel picker with a floating list, capsule tabs for
+  two-way choices, and a Save button, as it writes a file collaborators
+  may share.

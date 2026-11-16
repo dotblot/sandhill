@@ -53,13 +53,11 @@ fn language_of(spec: &KernelspecInfo) -> String {
     spec.language.to_ascii_lowercase()
 }
 
-/// The dialog's lists that drop down.
+/// The dialog's kernel lists that drop down.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Menu {
     R,
     Python,
-    Documents,
-    History,
 }
 
 pub(crate) struct SettingsDialog {
@@ -292,35 +290,15 @@ impl Workbench {
     pub(crate) fn render_settings_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dialog = self.setup.dialog.as_ref()?;
         let p = *Palette::get(cx);
-        let name = self
-            .project
-            .as_deref()
-            .and_then(|path| path.rsplit('/').next())
+        let path = self.project.clone().unwrap_or_default();
+        let name = path
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty())
             .unwrap_or("the project")
             .to_string();
-        let note = |text: String, warn: bool| {
-            div()
-                .text_size(px(look::SMALL))
-                .text_color(if warn { p.warn } else { p.faint })
-                .whitespace_normal()
-                .child(text)
-        };
-        let label = |text: &'static str| {
-            div()
-                .w(px(110.))
-                .flex_none()
-                .pt(px(4.))
-                .text_color(p.muted)
-                .child(text)
-        };
-        let row = |label_el: Div, field: Div| {
-            h_flex()
-                .items_start()
-                .gap(px(12.))
-                .child(label_el)
-                .child(field)
-        };
-        let mut rows: Vec<AnyElement> = Vec::new();
+        let host = self.host();
+        let mut kernels: Vec<AnyElement> = Vec::new();
         for (menu, id, title) in [(Menu::R, "r", "R"), (Menu::Python, "python", "Python")] {
             let specs: Vec<&KernelspecInfo> = dialog
                 .kernels
@@ -363,41 +341,57 @@ impl Workbench {
             if !chosen.is_empty() && !specs.iter().any(|k| &k.name == chosen) {
                 options.push((chosen.clone(), format!("{chosen} (not installed here)")));
             }
-            let mut field = v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap(px(4.))
-                .child(self.select(menu, dialog, options, chosen, cx));
-            for f in &found {
-                field = field.child(note(found_note(f), f.hint.is_some()));
-            }
-            if specs.len() < 2 {
-                field = field.child(note(only_kernel(id).into(), false));
-            }
+            // One grey line: what Automatic found, else why there's no
+            // other kernel to pick.
+            let mut said: Vec<String> = found.iter().map(|f| found_note(f)).collect();
             if id == "r" && found.iter().any(|f| f.file == "renv.lock") {
-                field = field.child(note(
+                said.push(
                     "R starts in the project's folder, so renv loads the project's library.".into(),
-                    false,
-                ));
+                );
             }
+            if said.is_empty() && specs.len() < 2 {
+                said.push(only_kernel(id).into());
+            }
+            let warn = found.iter().any(|f| f.hint.is_some());
+            let detail = (!said.is_empty()).then(|| {
+                look::settings_detail(said.join(" "), &p).when(warn, |d| d.text_color(p.warn))
+            });
+            let mut cell =
+                v_flex()
+                    .w_full()
+                    .child(look::settings_row(title, detail).child(self.select(
+                        menu,
+                        dialog,
+                        options,
+                        chosen,
+                        look::language_icon(id),
+                        cx,
+                    )));
             if id == "r" {
                 for (ix, offer) in self.irkernel.list.iter().enumerate() {
                     let picked = offer.clone();
-                    field = field.child(
+                    cell = cell.child(
                         h_flex()
-                            .gap(px(8.))
-                            .child(div().flex_1().min_w_0().child(note(
-                                format!(
-                                    "{} ({}) has no IRkernel.",
-                                    crate::panes::irkernel::r_name(offer),
-                                    crate::panes::irkernel::r_place(offer)
-                                ),
-                                false,
-                            )))
+                            .w_full()
+                            .gap(px(16.))
+                            .px(px(14.))
+                            .pb(px(10.))
+                            .child(
+                                look::settings_detail(
+                                    format!(
+                                        "{} ({}) has no IRkernel.",
+                                        crate::panes::irkernel::r_name(offer),
+                                        crate::panes::irkernel::r_place(offer)
+                                    ),
+                                    &p,
+                                )
+                                .flex_1()
+                                .min_w_0(),
+                            )
                             .child(
                                 Button::new(("settings-install-irkernel", ix))
-                                    .xsmall()
-                                    .label("Install IRkernel")
+                                    .small()
+                                    .label("Install IRkernel…")
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.ask_install_irkernel(picked.clone(), cx)
                                     })),
@@ -405,90 +399,97 @@ impl Workbench {
                     );
                 }
             }
-            rows.push(row(label(title), field).into_any_element());
+            kernels.push(cell.into_any_element());
         }
-        let documents = match dialog.documents {
-            DocumentsRunIn::Document => "document",
-            DocumentsRunIn::Project => "project",
+        // Two-way choices are capsule tabs, as on Welcome's General page.
+        let tab = |id: &'static str,
+                   label: &'static str,
+                   on: bool,
+                   set: fn(&mut SettingsDialog),
+                   cx: &mut Context<Self>| {
+            Self::tab(id, None, label, on, &p).on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(dialog) = &mut this.setup.dialog {
+                    set(dialog);
+                    dialog.menu = None;
+                }
+                cx.notify();
+            }))
         };
-        rows.push(
-            row(
-                label("Notebooks"),
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(px(4.))
-                    .child(self.select(
-                        Menu::Documents,
-                        dialog,
-                        vec![
-                            ("document".into(), "Run in their own folder, as quarto render does".into()),
-                            ("project".into(), "Run in the project's folder".into()),
-                        ],
-                        documents,
-                        cx,
-                    ))
-                    .child(note(
-                        "For .ipynb, .qmd and .Rmd. The Console and scripts run in the project's folder.".into(),
-                        false,
-                    )),
+        let documents = look::tab_capsule(&p)
+            .gap(px(1.))
+            .child(tab(
+                "settings-run-document",
+                "Their folder",
+                dialog.documents == DocumentsRunIn::Document,
+                |d| d.documents = DocumentsRunIn::Document,
+                cx,
+            ))
+            .child(tab(
+                "settings-run-project",
+                "Project folder",
+                dialog.documents == DocumentsRunIn::Project,
+                |d| d.documents = DocumentsRunIn::Project,
+                cx,
+            ));
+        let history = look::tab_capsule(&p)
+            .gap(px(1.))
+            .child(tab(
+                "settings-history-project",
+                "With the project",
+                dialog.history == ChatHistory::Project,
+                |d| d.history = ChatHistory::Project,
+                cx,
+            ))
+            .child(tab(
+                "settings-history-machine",
+                "On this device",
+                dialog.history == ChatHistory::Machine,
+                |d| d.history = ChatHistory::Machine,
+                cx,
+            ));
+        let running = vec![
+            look::settings_row(
+                "Notebooks and Quarto run in",
+                Some(look::settings_detail(
+                    "Their own folder is what quarto render does. The Console and scripts run in the project's folder.",
+                    &p,
+                )),
             )
+            .child(documents)
             .into_any_element(),
-        );
-        rows.push(
-            row(
-                label("Env files"),
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(px(4.))
-                    .child(Input::new(&self.settings_env).small())
-                    .child(note(
-                        "NAME=value lines new R and Python sessions start with, comma-separated. Missing files are skipped.".into(),
-                        false,
-                    )),
+            look::settings_row(
+                "Env files",
+                Some(look::settings_detail(
+                    "NAME=value lines new R and Python sessions start with, comma-separated. Missing files are skipped.",
+                    &p,
+                )),
             )
+            .child(div().w(px(200.)).flex_none().child(Input::new(&self.settings_env).small()))
             .into_any_element(),
-        );
-        let history = match dialog.history {
-            ChatHistory::Project => "project",
-            ChatHistory::Machine => "machine",
-        };
-        rows.push(
-            row(
-                label("Chat history"),
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(px(4.))
-                    .child(self.select(
-                        Menu::History,
-                        dialog,
-                        vec![
-                            ("project".into(), "Kept with the project".into()),
-                            ("machine".into(), "Kept on this machine only".into()),
-                        ],
-                        history,
-                        cx,
-                    ))
-                    .child(note(
-                        if dialog.history == ChatHistory::Project {
-                            "Agent conversations are saved in .sandhill/agents/, so they go with the folder to another computer and go on there. Git ignores them.".into()
-                        } else {
-                            "Agent conversations stay on the computer the project is on.".into()
-                        },
-                        false,
-                    )),
+        ];
+        let ai = vec![
+            look::settings_row(
+                "Conversations are kept",
+                Some(look::settings_detail(
+                    if dialog.history == ChatHistory::Project {
+                        "In .sandhill/agents/, so they go with the folder to another computer and go on there. Git ignores them."
+                    } else {
+                        "They stay on the device the project is on."
+                    },
+                    &p,
+                )),
             )
+            .child(history)
             .into_any_element(),
-        );
+        ];
         let card = v_flex()
             .id("settings-card")
             .occlude()
-            .w(px(620.))
+            .w(px(560.))
+            .max_w(relative(0.95))
             .max_h(relative(0.9))
             .overflow_y_scroll()
-            .gap(px(14.))
+            .gap(px(16.))
             .p(px(20.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
@@ -496,29 +497,61 @@ impl Workbench {
             .border_color(p.glass_edge)
             .shadow_lg()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            // The project's icon beside its title, as the quit card has the crane.
             .child(
-                div()
-                    .text_size(px(16.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(if dialog.first {
-                        format!("Which R and Python should {name} use?")
-                    } else {
-                        format!("Project settings · {name}")
-                    }),
+                h_flex()
+                    .gap(px(12.))
+                    .child(
+                        look::picture(&look::project_icon(&host, &path, &name))
+                            .size(px(32.))
+                            .flex_none(),
+                    )
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_size(px(16.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(if dialog.first {
+                                        format!("Which R and Python should {name} use?")
+                                    } else {
+                                        "Project Settings".to_string()
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(look::SMALL))
+                                    .text_color(p.muted)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .child(format!(
+                                        "{name} · {}",
+                                        crate::welcome::start_screen::host_label(&host)
+                                    )),
+                            ),
+                    ),
             )
-            .child(note(
-                "Saved in .sandhill/project.toml in the project's folder. Commit it to share these with collaborators.".into(),
-                false,
-            ))
             .when_some(dialog.setup.problem.clone(), |d, problem| {
                 d.child(div().text_color(p.err).child(format!("Couldn't read the file: {problem}")))
             })
-            .children(rows)
+            .child(look::settings_group("Kernels", kernels, &p))
+            .child(look::settings_group("Running", running, &p))
+            .child(look::settings_group("AI", ai, &p))
             .when_some(dialog.error.clone(), |d, err| d.child(div().text_color(p.err).child(err)))
             .child(
                 h_flex()
-                    .justify_end()
                     .gap(px(8.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(look::SMALL))
+                            .text_color(p.muted)
+                            .child("Saved in .sandhill/project.toml. Commit it to share these with collaborators."),
+                    )
                     .child(
                         Button::new("settings-cancel")
                             .small()
@@ -555,13 +588,15 @@ impl Workbench {
         )
     }
 
-    /// A list that drops down under its button, as a `<select>`.
+    /// A kernel choice: the round picker the Console uses, its list floating
+    /// in the shared menu frame.
     fn select(
         &self,
         menu: Menu,
         dialog: &SettingsDialog,
         options: Vec<(String, String)>,
         chosen: &str,
+        lead: Option<&'static str>,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = *Palette::get(cx);
@@ -574,31 +609,35 @@ impl Workbench {
         let trigger = match menu {
             Menu::R => "settings-r",
             Menu::Python => "settings-python",
-            Menu::Documents => "settings-documents",
-            Menu::History => "settings-history",
         };
         let hover = p.ink(8.);
         let button = h_flex()
-            .id(SharedString::from(format!("select-{}", menu as u8)))
+            .id(SharedString::from(format!("select-{trigger}")))
             .on_prepaint(self.popup_triggers.track(trigger))
-            .h(px(28.))
-            .px(px(10.))
-            .gap(px(6.))
-            .rounded(px(6.))
-            .border_1()
-            .border_color(if open { p.accent } else { p.line })
-            .bg(p.bg)
+            .min_w_0()
+            .max_w(px(240.))
+            .h(px(22.))
+            .gap(px(5.))
+            .pl(px(6.))
+            .pr(px(8.))
+            .rounded_full()
+            .bg(p.cap_bg)
+            .text_size(px(look::TAB_TEXT))
+            .whitespace_nowrap()
             .cursor_pointer()
+            .hover(move |d| d.bg(hover))
+            .map(|d| match lead {
+                Some(lead) => d.child(look::picture(lead).size(px(14.))),
+                None => d.pl(px(8.)),
+            })
             .child(
                 div()
-                    .flex_1()
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()
-                    .whitespace_nowrap()
                     .child(shown),
             )
-            .child(icon("chevron.down").size(px(12.)).text_color(p.muted))
+            .child(icon("chevron.down").size(px(12.)).text_color(p.faint))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(dialog) = &mut this.setup.dialog {
                     dialog.menu = if dialog.menu == Some(menu) {
@@ -610,13 +649,10 @@ impl Workbench {
                 cx.notify();
             }));
         let list = open.then(|| {
-            v_flex()
+            crate::agents::composer_view::popup(&p)
                 .id(trigger)
-                .rounded(px(6.))
-                .border_1()
-                .border_color(p.line)
-                .bg(p.bg)
-                .py(px(3.))
+                .min_w(px(220.))
+                .max_w(px(420.))
                 .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                     if !this.popup_triggers.contains(trigger, event.position) {
                         this.dismiss_settings_menu(cx);
@@ -625,14 +661,15 @@ impl Workbench {
                 .children(options.into_iter().enumerate().map(|(i, (value, label))| {
                     let on = value == chosen;
                     h_flex()
-                        .id(SharedString::from(format!("select-{}-{i}", menu as u8)))
+                        .id(SharedString::from(format!("{trigger}-{i}")))
                         .h(px(26.))
-                        .px(px(10.))
-                        .gap(px(6.))
+                        .px(px(8.))
+                        .gap(px(8.))
+                        .rounded(px(look::RADIUS - 4.))
                         .cursor_pointer()
                         .hover(move |d| d.bg(hover))
                         .child(div().w(px(14.)).flex_none().when(on, |d| {
-                            d.child(icon("check").size(px(12.)).text_color(p.accent))
+                            d.child(icon("check").size(px(13.)).text_color(p.muted))
                         }))
                         .child(
                             div()
@@ -647,20 +684,6 @@ impl Workbench {
                                 match menu {
                                     Menu::R => dialog.r = value.clone(),
                                     Menu::Python => dialog.python = value.clone(),
-                                    Menu::Documents => {
-                                        dialog.documents = if value == "project" {
-                                            DocumentsRunIn::Project
-                                        } else {
-                                            DocumentsRunIn::Document
-                                        }
-                                    }
-                                    Menu::History => {
-                                        dialog.history = if value == "machine" {
-                                            ChatHistory::Machine
-                                        } else {
-                                            ChatHistory::Project
-                                        }
-                                    }
                                 }
                                 dialog.menu = None;
                             }
@@ -668,7 +691,24 @@ impl Workbench {
                         }))
                 }))
         });
-        v_flex().gap(px(2.)).child(button).children(list)
+        div()
+            .relative()
+            .flex_none()
+            .min_w_0()
+            .child(button)
+            .when_some(list, |d, list| {
+                d.child(
+                    div().absolute().right_0().top(px(24.)).child(
+                        deferred(
+                            anchored()
+                                .anchor(Anchor::TopRight)
+                                .snap_to_window_with_margin(px(8.))
+                                .child(list),
+                        )
+                        .with_priority(3),
+                    ),
+                )
+            })
     }
 }
 
