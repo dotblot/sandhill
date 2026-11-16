@@ -287,19 +287,6 @@ pub(crate) fn resource_rows(
     rows
 }
 
-/// "this Mac", or the server's name.
-fn host_name(host: &str) -> String {
-    if host == sandhill_link::LOCAL {
-        if cfg!(target_os = "macos") {
-            "this Mac".into()
-        } else {
-            "this computer".into()
-        }
-    } else {
-        host.into()
-    }
-}
-
 impl Workbench {
     /// Asks the daemon how its machine is doing, now and every few seconds
     /// for as long as this connection lasts.
@@ -681,7 +668,11 @@ impl Workbench {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(r.name.clone()),
                     )
-                    .child(div().text_color(p.faint).child(host_name(&self.host()))),
+                    .child(
+                        div()
+                            .text_color(p.faint)
+                            .child(crate::welcome::start_screen::host_label(&self.host())),
+                    ),
             )
             .child(
                 h_flex()

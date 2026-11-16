@@ -55,7 +55,7 @@ pub(crate) enum StartMode {
     Picking(String),
     /// Resources and Storage, for this device first.
     Resources(String),
-    /// Agent accounts on this device.
+    /// The Agents page, on this device.
     Accounts(String),
     /// This Mac's choices for every project (⌘,).
     General,
@@ -534,7 +534,7 @@ impl AppWindow {
                 sidebar_row(
                     "start-accounts",
                     "agent",
-                    "Agent Accounts",
+                    "Agents",
                     page == Page::Accounts,
                     &p,
                 )

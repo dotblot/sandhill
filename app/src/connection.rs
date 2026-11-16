@@ -57,7 +57,7 @@ impl Workbench {
     pub(crate) fn render_connection_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         let host = self.host();
-        let name = crate::shell::app_window::machine_name(&host);
+        let name = crate::welcome::start_screen::host_label(&host);
         let state = self.state_word();
         let link = match &self.link {
             Link::Ready(_) => p.ok,
@@ -393,15 +393,11 @@ impl Workbench {
                         })
                         .size(px(14.)),
                     )
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(if local {
-                        if cfg!(target_os = "macos") {
-                            "This Mac".to_string()
-                        } else {
-                            "This computer".to_string()
-                        }
-                    } else {
-                        host.clone()
-                    }))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(crate::welcome::start_screen::host_label(&host)),
+                    )
                     .child(div().ml_auto().text_color(p.faint).child(self.state_word())),
             )
             .child(
@@ -446,15 +442,7 @@ impl Workbench {
     pub(crate) fn render_log_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let log = self.log.as_ref()?;
         let p = *Palette::get(cx);
-        let host = if self.local() {
-            if cfg!(target_os = "macos") {
-                "this Mac".to_string()
-            } else {
-                "this computer".to_string()
-            }
-        } else {
-            self.host()
-        };
+        let host = crate::welcome::start_screen::host_label(&self.host());
         let (detail, text) = match &log.tail {
             None => ("Loading…".to_string(), String::new()),
             Some(Err(err)) => (err.clone(), String::new()),

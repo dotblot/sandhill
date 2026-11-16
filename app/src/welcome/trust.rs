@@ -191,7 +191,7 @@ impl Workbench {
         let p = *Palette::get(cx);
         let name = crate::panes::files::base_name(&project).to_string();
         let host = self.host();
-        let device = crate::shell::app_window::machine_name(&host);
+        let device = crate::welcome::start_screen::host_label(&host);
         let saving = self.trust.saving;
         let card = v_flex()
             .id("trust-card")

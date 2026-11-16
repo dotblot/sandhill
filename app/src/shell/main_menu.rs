@@ -5,7 +5,6 @@
 
 use gpui_kit::component::input;
 use gpui_kit::*;
-use sandhill_link::Target;
 
 use crate::look::{self, Palette};
 use crate::panes::tree_actions::{menu_item, separator};
@@ -169,10 +168,7 @@ impl Workbench {
             .cloned()
             .collect();
         if !recent.is_empty() {
-            let host = match &self.target {
-                Target::Local => "this computer".to_string(),
-                Target::Ssh(h) => h.to_string(),
-            };
+            let host = crate::welcome::start_screen::host_label(&self.host());
             rows.push(separator(&p));
             rows.push(
                 div()

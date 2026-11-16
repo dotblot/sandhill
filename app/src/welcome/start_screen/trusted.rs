@@ -1,4 +1,4 @@
-//! The Agent accounts page and trusted folders list.
+//! The Agents page and trusted folders list.
 
 use super::*;
 
@@ -30,30 +30,58 @@ impl AppWindow {
         } else {
             self.start.accounts = None;
         }
-        let mut devices = h_flex().gap(px(6.)).flex_wrap();
+        // Accounts belong to a device: one capsule tab each.
+        let mut devices = look::tab_capsule(&p).gap(px(1.));
         for (ix, device) in self.start.hosts().into_iter().enumerate() {
             let selected = device == host;
             devices = devices.child(
-                Button::new(("accounts-device", ix))
-                    .small()
-                    .label(host_label(&device))
-                    .when(selected, |button| button.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if selected {
-                            return;
-                        }
-                        this.start.selected_host = device.clone();
-                        this.start.accounts = None;
-                        this.ensure_machine(&device, cx);
-                        cx.notify();
-                    })),
+                crate::workbench::Workbench::tab(
+                    ("agents-device", ix),
+                    None,
+                    host_label(&device),
+                    selected,
+                    &p,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if selected {
+                        return;
+                    }
+                    this.start.selected_host = device.clone();
+                    this.start.accounts = None;
+                    this.ensure_machine(&device, cx);
+                    cx.notify();
+                })),
             );
         }
-        let mut page = v_flex().w_full().gap(px(16.))
-            .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Agent Accounts"))
-            .child(div().text_size(px(14.)).text_color(p.muted)
-                .child("Keep your own accounts on each device. Switching accounts in a conversation is always your choice."))
-            .child(devices);
+        let refresh = self.start.accounts.as_ref().map(|(_, _, accounts)| {
+            let accounts = accounts.clone();
+            let refreshing = accounts.read(cx).refreshing;
+            Button::new("agents-refresh")
+                .small()
+                .label(if refreshing {
+                    "Refreshing…"
+                } else {
+                    "Refresh"
+                })
+                .disabled(refreshing)
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    accounts.update(cx, |accounts, cx| accounts.refresh_all(cx))
+                }))
+        });
+        let mut page = v_flex()
+            .w_full()
+            .gap(px(16.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap(px(12.))
+                    .child(div().flex_1().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Agents"))
+                    .children(refresh),
+            )
+            .child(div().text_size(px(14.)).text_color(p.muted).child(
+                "Choose which agents Sandhill offers, and the accounts they run on. Switching accounts in a conversation is always your choice.",
+            ))
+            .child(h_flex().child(devices));
         if let Some((_, _, accounts)) = &self.start.accounts {
             page = page.child(accounts.clone());
         } else {

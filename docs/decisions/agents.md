@@ -27,9 +27,16 @@ differs, this wins.
   Model popup: fixed 380×360px, icon-only provider tabs on a 32px left rail in
   alphabetical order with Favorites first, names in hover tooltips; the right
   model list scrolls. New conversation starts with Codex (Huan, 2026-11-14).
-  Antigravity is turned off for now (`agents::TURNED_OFF`): not offered, never
-  asked for models, accounts or quota, its old chats take no messages; remove
-  it from that list to turn it back on. Returned effort-variant siblings
+  Agents are turned on or off on Welcome → Agents (Huan, 2026-11-15), a
+  choice of this Mac for every device: off, an agent is not offered, never
+  asked for models, accounts or quota, and its old chats take no messages.
+  Antigravity starts off, with an amber line saying Google suspended an
+  account used with Sandhill; the user may turn it on. The page has one box
+  per agent (mark, name, version and plan or "Not installed on …", switch)
+  and, for Claude Code, Codex and Antigravity, their accounts: "Default for
+  new chats" tag, Sign In when needed, a ⋯ menu (Use for New Chats,
+  Rename…, Remove…) and "+ Add Account…". Removing asks in the row; the
+  agent's own login is never renamed or removed. Returned effort-variant siblings
   share one row and slider levels map to real IDs, without a second `--effort`.
   Preserve explicit provider/model selections and existing chats on refresh.
 

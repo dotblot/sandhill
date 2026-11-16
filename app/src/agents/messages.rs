@@ -56,7 +56,10 @@ impl Agents {
             _ => self.current().map(|t| t.kind.as_str()),
         };
         if let Some(off) = kind.filter(|kind| turned_off(kind)).and_then(kind_of) {
-            self.problem = Some(format!("{} is turned off for now.", off.name));
+            self.problem = Some(format!(
+                "{} is turned off. Turn it on in Welcome → Agents.",
+                off.name
+            ));
             cx.notify();
             return false;
         }

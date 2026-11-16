@@ -118,7 +118,7 @@ impl Agents {
                 let wb = wb.read(cx);
                 (
                     wb.about.as_ref().map(|about| about.build.clone()),
-                    crate::shell::app_window::machine_name(&wb.host()),
+                    crate::welcome::start_screen::host_label(&wb.host()),
                 )
             });
         let checked = self.daemon.matches_bundled_build(build);

@@ -220,7 +220,7 @@ impl Workbench {
         let offer = self.irkernel.confirming.as_ref()?;
         let p = *Palette::get(cx);
         let starting = self.irkernel.starting;
-        let device = crate::shell::app_window::machine_name(&self.host());
+        let device = crate::welcome::start_screen::host_label(&self.host());
         let card = v_flex()
             .id("irkernel-card")
             .occlude()

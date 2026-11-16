@@ -34,15 +34,15 @@ const MODEL_COLUMN_GAP: f32 = 6.;
 // Popup border + inset, left provider rail + gap, effort section inset.
 const EFFORT_WIDTH: f32 =
     MODEL_MENU_WIDTH - 2. * (1. + 6. + 8.) - MODEL_PROVIDER_WIDTH - MODEL_COLUMN_GAP;
-static MODEL_PROVIDERS: std::sync::LazyLock<Vec<&crate::agents::Kind>> =
-    std::sync::LazyLock::new(|| {
-        let mut providers: Vec<_> = KINDS
-            .iter()
-            .filter(|kind| !crate::agents::turned_off(kind.kind))
-            .collect();
-        providers.sort_by_key(|kind| kind.name.to_lowercase());
-        providers
-    });
+/// The model menu's agents, turned on, alphabetical.
+fn model_providers() -> Vec<&'static crate::agents::Kind> {
+    let mut providers: Vec<_> = KINDS
+        .iter()
+        .filter(|kind| !crate::agents::turned_off(kind.kind))
+        .collect();
+    providers.sort_by_key(|kind| kind.name.to_lowercase());
+    providers
+}
 
 /// A menu's frame: the Tauri app's `.apop`.
 pub(crate) fn popup(p: &Palette) -> Div {
@@ -792,7 +792,7 @@ impl Agents {
                 cx.notify();
             })),
         ];
-        for &k in MODEL_PROVIDERS.iter() {
+        for k in model_providers() {
             let usable = self.usable(k.kind);
             let name = k.kind;
             tabs.push(

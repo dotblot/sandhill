@@ -46,9 +46,12 @@ differs, this wins.
   there, closing Welcome; closing the main window (or its last project)
   brings Welcome back; closing Welcome alone quits (with the background-work
   question). Welcome's sidebar and content reach the window top; the sidebar
-  is Devices, Projects, then Manage (Resources and Storage, Trusted
-  Folders), one row selected with its page on the right; it opens on This
-  Mac's page. Projects lists Pinned (the star on any device's projects),
+  is Devices, Projects, then Manage (General, Resources and Storage,
+  Trusted Folders, Agents), one row selected with its page on the right;
+  it opens on This Mac's page. A device has one name everywhere (Huan,
+  2026-11-15): the one given it, else "This Mac" ("This computer" off a
+  Mac) or the server's ssh name, in Welcome, the status bar, title-bar
+  capsules, cards and menus. Projects lists Pinned (the star on any device's projects),
   Open, then Running (live kernels or agents, not open), each project once.
   Rows show live kernels and agent conversations. Devices can be renamed and
   projects given a built-in folder/file icon; both are this Mac's app

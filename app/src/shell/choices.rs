@@ -21,6 +21,8 @@ pub(crate) enum Choice {
     Sort(SortBy),
     /// Whether long lines wrap in a file type (`prefs::editor_soft_wrap`).
     Wrap(&'static str, bool),
+    /// Whether an agent is offered (Welcome's Agents page).
+    Agent(&'static str, bool),
 }
 
 /// Saves a choice, then applies it to every open project once the current
@@ -33,6 +35,7 @@ pub(crate) fn choose(choice: Choice, cx: &mut App) {
         Choice::FollowAgent(on) => crate::prefs::save_follow_agent(on),
         Choice::Sort(by) => crate::prefs::save_tree_sort(by.key()),
         Choice::Wrap(kind, on) => crate::prefs::save_editor_soft_wrap(kind, on),
+        Choice::Agent(kind, on) => crate::prefs::save_agent_off(kind, !on),
     }
     cx.defer(move |cx| {
         crate::shell::app_window::update_projects(cx, move |workbench, window, cx| {
@@ -71,6 +74,22 @@ impl Workbench {
             }
             Choice::Sort(by) => self.apply_sort(by, cx),
             Choice::Wrap(kind, on) => self.apply_editor_wrap(kind, on, window, cx),
+            Choice::Agent(_, on) => {
+                if let Some(agents) = &self.agents {
+                    agents.update(cx, |agents, cx| {
+                        // A new conversation set to an agent turned off
+                        // starts with another.
+                        if crate::agents::turned_off(agents.new_kind) {
+                            agents.new_kind = crate::agents::default_kind().kind;
+                        }
+                        // Turned on, its models are read.
+                        if on {
+                            agents.refresh(cx);
+                        }
+                        cx.notify();
+                    });
+                }
+            }
         }
         cx.notify();
     }

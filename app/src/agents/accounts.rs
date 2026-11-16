@@ -1,5 +1,8 @@
-//! Device-local agent accounts. The daemon owns account storage and the
-//! agents' own sign-in programs; this view only presents their wire API.
+//! Device-local agent accounts and Welcome's Agents page (Huan,
+//! 2026-11-15; `docs/design/done/agents-page-plan.md`). The daemon owns
+//! account storage and the agents' own sign-in programs; this view only
+//! presents their wire API. Turning agents on or off is this Mac's choice
+//! (`prefs::agent_off`), for every device.
 
 use std::rc::Rc;
 
@@ -8,11 +11,14 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::{AgentAccount, Call, TerminalEvent, TerminalInfo, TerminalSubscribed};
+use sandhill_proto::{
+    AgentAccount, AgentInfo, Call, TerminalEvent, TerminalInfo, TerminalSubscribed,
+};
 
 use crate::daemon::Daemon;
-use crate::look::{self, Palette};
+use crate::look::{self, Palette, icon};
 use crate::panes::terminal::TerminalView;
+use gpui_kit::base::ElementExt as _;
 
 /// Which accounts a listing asks their agents about (sign-in state and
 /// usage). Nothing asks on its own: only a Refresh click or a finished
@@ -44,10 +50,15 @@ impl Ask {
 enum Dialog {
     Add(String),
     Rename(AgentAccount),
-    Remove(AgentAccount),
     GoogleLogin(AgentAccount),
     Login(AgentAccount),
 }
+
+/// Agents whose accounts Sandhill keeps; the others use their own model
+/// accounts.
+const WITH_ACCOUNTS: [&str; 3] = ["claude", "codex", "antigravity"];
+/// Account rows start under the agent's name, past its mark.
+const INDENT: f32 = 44.;
 
 pub(crate) struct AccountManager {
     daemon: Rc<Daemon>,
@@ -68,6 +79,15 @@ pub(crate) struct AccountManager {
     input_subscription: Option<Subscription>,
     login: Option<Entity<TerminalView>>,
     login_id: Option<String>,
+    /// The device's agents: installed or not, and their versions.
+    agents: Vec<AgentInfo>,
+    /// The account whose ⋯ menu is open.
+    menu: Option<String>,
+    /// The account whose row asks "Remove …?", and why removing failed.
+    removing: Option<String>,
+    remove_error: Option<String>,
+    remove_busy: bool,
+    triggers: crate::shell::popup::PopupTriggers,
 }
 
 impl AccountManager {
@@ -91,9 +111,77 @@ impl AccountManager {
             input_subscription: None,
             login: None,
             login_id: None,
+            agents: Vec::new(),
+            menu: None,
+            removing: None,
+            remove_error: None,
+            remove_busy: false,
+            triggers: Default::default(),
         };
         this.refresh(Ask::Nobody, cx);
+        this.load_agents(cx);
         this
+    }
+
+    /// Reads which agents the device has, and their versions.
+    fn load_agents(&mut self, cx: &mut Context<Self>) {
+        let listed = self.daemon.call::<Vec<AgentInfo>>(Call::ListAgents);
+        cx.spawn(async move |this, cx| {
+            if let Ok(agents) = listed.await {
+                this.update(cx, |this, cx| {
+                    this.agents = agents;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// The page's Refresh: the agents, and every account of an agent
+    /// turned on asked about again.
+    pub(crate) fn refresh_all(&mut self, cx: &mut Context<Self>) {
+        let ids = self
+            .accounts
+            .iter()
+            .filter(|account| !crate::agents::turned_off(&account.kind))
+            .map(|account| account.id.clone())
+            .collect();
+        self.refresh(Ask::Accounts(ids), cx);
+        self.load_agents(cx);
+    }
+
+    /// Removes an account Sandhill added, after its row asked.
+    fn confirm_remove(&mut self, account: AgentAccount, cx: &mut Context<Self>) {
+        if account.default || self.remove_busy {
+            return;
+        }
+        self.remove_busy = true;
+        self.remove_error = None;
+        let requested = self
+            .daemon
+            .call::<serde_json::Value>(Call::RemoveAgentAccount {
+                id: account.id.clone(),
+            });
+        cx.spawn(async move |this, cx| {
+            let result = requested.await;
+            this.update(cx, |this, cx| {
+                this.remove_busy = false;
+                match result {
+                    Ok(_) => {
+                        crate::prefs::forget_agent_account(&this.host, &account.kind, &account.id);
+                        this.accounts.retain(|old| old.id != account.id);
+                        this.removing = None;
+                        this.refresh(Ask::Nobody, cx);
+                    }
+                    Err(err) => this.remove_error = Some(format!("{err:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     pub(crate) fn refresh(&mut self, ask: Ask, cx: &mut Context<Self>) {
@@ -230,9 +318,14 @@ impl AccountManager {
         self.prepare_name(&name, window, cx);
     }
 
-    fn remove(&mut self, account: AgentAccount, window: &mut Window, cx: &mut Context<Self>) {
-        if !account.default && self.dialog.is_none() {
-            self.begin(Dialog::Remove(account), window, cx);
+    /// The row asks before removing (the interface rules: per-row questions
+    /// stay in the row).
+    fn ask_remove(&mut self, account: &AgentAccount, cx: &mut Context<Self>) {
+        if !account.default {
+            self.menu = None;
+            self.removing = Some(account.id.clone());
+            self.remove_error = None;
+            cx.notify();
         }
     }
 
@@ -337,9 +430,6 @@ impl AccountManager {
                 id: account.id.clone(),
                 name,
             },
-            Dialog::Remove(account) => Call::RemoveAgentAccount {
-                id: account.id.clone(),
-            },
             _ => return,
         };
         let requested = self.daemon.call::<serde_json::Value>(call);
@@ -369,14 +459,6 @@ impl AccountManager {
                         } else {
                             None
                         };
-                        if let Dialog::Remove(account) = &dialog {
-                            crate::prefs::forget_agent_account(
-                                &this.host,
-                                &account.kind,
-                                &account.id,
-                            );
-                            this.accounts.retain(|old| old.id != account.id);
-                        }
                         this.clear_dialog(window, cx);
                         this.refresh(Ask::Nobody, cx);
                         if let Some(account) = added {
@@ -540,7 +622,6 @@ impl AccountManager {
                 Some("Add Account"),
             ),
             Dialog::Rename(account) => (format!("Rename {}", account.name), Some("Rename")),
-            Dialog::Remove(account) => (format!("Remove {}?", account.name), Some("Remove")),
             Dialog::GoogleLogin(_) => ("Change Google Login".into(), Some("Continue")),
             Dialog::Login(account) => (format!("Sign In to {}", account.name), None),
         };
@@ -599,9 +680,6 @@ impl AccountManager {
                 if let Some(name) = &self.name {
                     card = card.child(Input::new(name).small().disabled(self.pending));
                 }
-            }
-            Dialog::Remove(account) => {
-                card = card.child(div().text_color(p.muted).child(format!("Remove {} and its saved sign-in from {}? Conversation history is kept. An account used by a running conversation cannot be removed.", account.name, crate::welcome::start_screen::host_label(&self.host))));
             }
             Dialog::GoogleLogin(_) => {
                 card = card.child(div().text_color(p.warn).child("Every Antigravity conversation on this device changes account."))
@@ -772,168 +850,371 @@ fn account_detail(account: &AgentAccount) -> String {
     parts.join(" · ")
 }
 
-impl Render for AccountManager {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *Palette::get(cx);
-        let mut groups = v_flex().w_full().gap(px(20.));
-        for kind in ["claude", "codex", "antigravity"]
-            .into_iter()
-            .filter(|kind| !crate::agents::turned_off(kind))
-        {
-            let mut rows = v_flex().w_full().gap(px(4.));
-            let mut count = 0;
-            for account in self.accounts.iter().filter(|account| account.kind == kind) {
-                count += 1;
-                let rename = account.clone();
-                let remove = account.clone();
-                let login = account.clone();
-                let mut actions = h_flex().gap(px(6.)).flex_wrap();
-                // Antigravity's own login can always be changed (whole device);
-                // Claude Code and Codex logins only when missing or expired.
-                if account.method != "api_key"
-                    && (kind == "antigravity" || account.signed_in != Some(true))
-                {
-                    actions = actions.child(
-                        Button::new(SharedString::from(format!(
-                            "account-sign-in-{}",
-                            account.id
-                        )))
-                        .small()
-                        .label(if kind == "antigravity" {
-                            "Change Google Login…"
-                        } else {
-                            "Sign In"
-                        })
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| this.sign_in(login.clone(), window, cx),
-                        )),
+/// What an agent runs, its version and plan ("Codex 0.62.0 · your ChatGPT
+/// plan"), or that the device lacks it.
+fn agent_detail(kind: &crate::agents::Kind, info: Option<&AgentInfo>, host: &str) -> String {
+    if info.is_some_and(|info| info.path.is_none()) {
+        return format!(
+            "Not installed on {}",
+            crate::welcome::start_screen::host_label(host)
+        );
+    }
+    let plan = kind.plan.rsplit(" · ").next().unwrap_or(kind.plan);
+    match info
+        .and_then(|info| info.version.as_deref())
+        .and_then(sandhill_proto::version_in)
+    {
+        Some(version) => format!("{} {version} · {plan}", kind.name),
+        None => format!("{} · {plan}", kind.name),
+    }
+}
+
+impl AccountManager {
+    /// An agent's group: its name, version and switch, then its accounts.
+    fn agent_group(
+        &self,
+        kind: &'static crate::agents::Kind,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let on = !crate::agents::turned_off(kind.kind);
+        let info = self.agents.iter().find(|agent| agent.kind == kind.kind);
+        let missing = info.is_some_and(|info| info.path.is_none());
+        let mut detail = look::settings_detail(agent_detail(kind, info, &self.host), p);
+        if kind.kind == "antigravity" {
+            detail = detail.child(div().text_color(p.warn).child(
+                "Google suspended an account used with Sandhill; turning it on is your choice.",
+            ));
+        }
+        let install = info
+            .filter(|_| missing && on)
+            .map(|info| info.install.clone());
+        let id = kind.kind;
+        let head = h_flex()
+            .w_full()
+            .min_h(px(44.))
+            .gap(px(12.))
+            .px(px(14.))
+            .py(px(10.))
+            .child(
+                div()
+                    .w(px(18.))
+                    .flex_none()
+                    .flex()
+                    .justify_center()
+                    .when(!on, |d| d.opacity(0.5))
+                    .child(crate::agents::view::provider(id).size(px(18.))),
+            )
+            .child(
+                look::settings_label(kind.name, Some(detail)).when(!on, |d| d.text_color(p.muted)),
+            )
+            .children(install.map(|command| {
+                Button::new(SharedString::from(format!("agent-install-{id}")))
+                    .small()
+                    .label("Copy Install Command")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(command.clone()))
+                    })
+            }))
+            .child(
+                gpui_kit::component::switch::Switch::new(SharedString::from(format!(
+                    "agent-on-{id}"
+                )))
+                .small()
+                .color(p.accent)
+                .checked(on)
+                .accessibility_label(kind.name)
+                .on_change(cx.listener(move |_, on: &bool, _, cx| {
+                    crate::shell::choices::choose(
+                        crate::shell::choices::Choice::Agent(id, *on),
+                        cx,
                     );
-                }
-                if !account.default {
-                    actions = actions
-                        .child(
-                            Button::new(SharedString::from(format!(
-                                "account-rename-{}",
-                                account.id
-                            )))
-                            .small()
-                            .label("Rename")
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| this.rename(rename.clone(), window, cx),
-                            )),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!(
-                                "account-remove-{}",
-                                account.id
-                            )))
-                            .small()
-                            .label("Remove…")
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| this.remove(remove.clone(), window, cx),
-                            )),
-                        );
-                }
-                rows = rows.child(
-                    v_flex()
-                        .w_full()
-                        .gap(px(7.))
-                        .py(px(12.))
-                        .border_b_1()
-                        .border_color(p.line)
-                        .child(
-                            div()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(account.name.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_color(if account.signed_in == Some(false) {
-                                    p.warn
-                                } else {
-                                    p.muted
-                                })
-                                .child(account_detail(account)),
-                        )
-                        .child(actions),
-                );
-            }
-            if count == 0 {
-                rows = rows.child(
+                    cx.notify();
+                })),
+            )
+            .into_any_element();
+        let mut rows = vec![head];
+        if on && WITH_ACCOUNTS.contains(&id) {
+            let accounts: Vec<&AgentAccount> = self
+                .accounts
+                .iter()
+                .filter(|account| account.kind == id)
+                .collect();
+            if accounts.is_empty() {
+                rows.push(
                     div()
-                        .py(px(8.))
+                        .pl(px(INDENT))
+                        .pr(px(14.))
+                        .py(px(10.))
                         .text_color(p.muted)
                         .child(if self.refreshing {
                             "Loading accounts…"
                         } else {
                             "No accounts reported by this device."
-                        }),
+                        })
+                        .into_any_element(),
                 );
             }
-            groups = groups.child(
-                v_flex()
-                    .w_full()
+            // The account new chats start with: the one picked, else the
+            // agent's own login.
+            let picked = crate::prefs::agent_account(&self.host, id)
+                .filter(|picked| accounts.iter().any(|account| &account.id == picked));
+            for account in accounts {
+                let for_new = picked
+                    .as_deref()
+                    .map_or(account.default, |picked| picked == account.id);
+                rows.push(self.account_row(account, for_new, p, cx));
+            }
+            rows.push(
+                h_flex()
+                    .id(SharedString::from(format!("account-add-{id}")))
+                    .pl(px(INDENT))
+                    .pr(px(14.))
+                    .py(px(10.))
                     .gap(px(6.))
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(provider_name(kind)),
-                            )
-                            .child(
-                                Button::new(SharedString::from(format!("account-add-{kind}")))
-                                    .small()
-                                    .label("Add Account…")
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.add(kind, window, cx)
-                                    })),
-                            ),
-                    )
-                    .child(rows),
+                    .text_color(p.accent)
+                    .cursor_pointer()
+                    .hover(|d| d.opacity(0.8))
+                    .child(icon("add").size(px(14.)))
+                    .child("Add Account…")
+                    .on_click(cx.listener(move |this, _, window, cx| this.add(id, window, cx)))
+                    .into_any_element(),
             );
         }
+        // The first row names the agent, so the box has no heading.
+        look::settings_box(rows, p).into_any_element()
+    }
+
+    /// One account: its name (tagged when new chats start with it), its
+    /// sign-in and use, Sign In when needed and a ⋯ menu. Asked to remove,
+    /// the row becomes the question.
+    fn account_row(
+        &self,
+        account: &AgentAccount,
+        for_new: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if self.removing.as_deref() == Some(account.id.as_str()) {
+            let remove = account.clone();
+            return h_flex()
+                .w_full()
+                .min_h(px(44.))
+                .gap(px(8.))
+                .pl(px(INDENT))
+                .pr(px(14.))
+                .py(px(10.))
+                .child(look::settings_label(
+                    format!("Remove {}?", account.name),
+                    Some(match &self.remove_error {
+                        Some(error) => look::settings_detail(error.clone(), p).text_color(p.err),
+                        None => look::settings_detail(
+                            "Its saved sign-in goes; conversation history is kept.",
+                            p,
+                        ),
+                    }),
+                ))
+                .child(
+                    Button::new("account-remove-cancel")
+                        .small()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.removing = None;
+                            this.remove_error = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("account-remove-confirm")
+                        .small()
+                        .danger()
+                        .label("Remove")
+                        .disabled(self.remove_busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.confirm_remove(remove.clone(), cx)
+                        })),
+                )
+                .into_any_element();
+        }
+        let kind = account.kind.clone();
+        // Antigravity's own login can always be changed (whole device);
+        // Claude Code and Codex logins only when missing or expired.
+        let sign_in = account.method != "api_key"
+            && (kind == "antigravity" || account.signed_in != Some(true));
+        let login = account.clone();
+        let open = self.menu.as_deref() == Some(account.id.as_str());
+        let menu_id = account.id.clone();
+        h_flex()
+            .w_full()
+            .min_h(px(44.))
+            .gap(px(8.))
+            .pl(px(INDENT))
+            .pr(px(14.))
+            .py(px(10.))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(account.name.clone())
+                            .when(for_new, |d| {
+                                d.child(
+                                    div()
+                                        .px(px(6.))
+                                        .rounded_full()
+                                        .bg(p.accent_soft)
+                                        .text_color(p.accent)
+                                        .text_size(px(look::SMALL - 1.))
+                                        .child("Default for new chats"),
+                                )
+                            }),
+                    )
+                    .child(
+                        look::settings_detail(account_detail(account), p)
+                            .when(account.signed_in == Some(false), |d| d.text_color(p.warn)),
+                    ),
+            )
+            .when(sign_in, |d| {
+                d.child(
+                    Button::new(SharedString::from(format!(
+                        "account-sign-in-{}",
+                        account.id
+                    )))
+                    .small()
+                    .label(if kind == "antigravity" {
+                        "Change Google Login…"
+                    } else {
+                        "Sign In"
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.sign_in(login.clone(), window, cx)
+                    })),
+                )
+            })
+            // The agent's own login, already the one new chats use, has
+            // nothing in the menu.
+            .when(!for_new || !account.default, |d| {
+                d.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .child(
+                            look::icon_button(
+                                SharedString::from(format!("account-menu-{}", account.id)),
+                                "more",
+                                p,
+                                false,
+                            )
+                            .when(open, |d| d.on_prepaint(self.triggers.track("account-menu")))
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.menu = if this.menu.as_deref() == Some(menu_id.as_str()) {
+                                        None
+                                    } else {
+                                        Some(menu_id.clone())
+                                    };
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .when(open, |d| {
+                            d.child(self.account_menu(account, for_new, p, cx))
+                        }),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// The ⋯ menu: Use for New Chats, Rename…, Remove….
+    fn account_menu(
+        &self,
+        account: &AgentAccount,
+        for_new: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let hover = p.ink(8.);
+        let item = |id: &'static str, label: &'static str| {
+            h_flex()
+                .id(id)
+                .h(px(26.))
+                .px(px(8.))
+                .rounded(px(look::RADIUS - 4.))
+                .cursor_pointer()
+                .hover(move |d| d.bg(hover))
+                .whitespace_nowrap()
+                .child(label)
+        };
+        let mut menu = crate::agents::composer_view::popup(p)
+            .min_w(px(180.))
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if !this.triggers.contains("account-menu", event.position) {
+                    this.menu = None;
+                    cx.notify();
+                }
+            }));
+        if !for_new {
+            let (host, kind, id) = (self.host.clone(), account.kind.clone(), account.id.clone());
+            menu = menu.child(
+                item("account-use-new", "Use for New Chats").on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        crate::prefs::save_agent_account(&host, &kind, &id);
+                        this.menu = None;
+                        // The status bar's quota panel shows it too.
+                        cx.refresh_windows();
+                    },
+                )),
+            );
+        }
+        if !account.default {
+            let rename = account.clone();
+            let remove = account.clone();
+            menu = menu
+                .child(item("account-rename", "Rename…").on_click(cx.listener(
+                    move |this, _, window, cx| {
+                        this.menu = None;
+                        this.rename(rename.clone(), window, cx)
+                    },
+                )))
+                .child(
+                    item("account-remove", "Remove…")
+                        .text_color(p.err)
+                        .on_click(cx.listener(move |this, _, _, cx| this.ask_remove(&remove, cx))),
+                );
+        }
+        div()
+            .absolute()
+            .right_0()
+            .top(px(24.))
+            .child(
+                deferred(
+                    anchored()
+                        .anchor(Anchor::TopRight)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(menu),
+                )
+                .with_priority(3),
+            )
+            .into_any_element()
+    }
+}
+
+impl Render for AccountManager {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = *Palette::get(cx);
+        let mut kinds: Vec<&'static crate::agents::Kind> = crate::agents::KINDS.iter().collect();
+        kinds.sort_by_key(|kind| kind.name.to_lowercase());
         v_flex()
             .relative()
             .w_full()
-            .gap(px(16.))
-            .text_size(px(13.))
-            .text_color(p.text)
-            .child(
-                h_flex()
-                    .justify_between()
-                    .gap(px(12.))
-                    .child(div().text_color(p.muted).child(format!(
-                        "Accounts on {}",
-                        crate::welcome::start_screen::host_label(&self.host)
-                    )))
-                    .child(
-                        Button::new("accounts-refresh")
-                            .small()
-                            .label(if self.refreshing {
-                                "Refreshing…"
-                            } else {
-                                "Refresh"
-                            })
-                            .disabled(self.refreshing)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                // Every account shown: none of an agent turned off.
-                                let ids = this
-                                    .accounts
-                                    .iter()
-                                    .filter(|account| !crate::agents::turned_off(&account.kind))
-                                    .map(|account| account.id.clone())
-                                    .collect();
-                                this.refresh(Ask::Accounts(ids), cx)
-                            })),
-                    ),
-            )
+            .gap(px(22.))
             .when_some(self.error.clone(), |d, error| {
                 d.child(div().text_color(p.err).child(error))
             })
-            .child(groups)
+            .children(kinds.into_iter().map(|kind| self.agent_group(kind, &p, cx)))
             .child(self.render_dialogs(cx))
     }
 }

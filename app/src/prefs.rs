@@ -106,6 +106,41 @@ pub(crate) fn save_device_name(host: &str, name: &str) {
     write("deviceNames", json!(names));
 }
 
+/// Agents turned off on Welcome's Agents page, on every device (Huan,
+/// 2026-11-15). Read on every draw, so kept in memory. Antigravity starts
+/// off: Google suspended an account used with it (2026-11-14).
+static AGENTS_OFF: std::sync::RwLock<Option<std::collections::BTreeSet<String>>> =
+    std::sync::RwLock::new(None);
+
+fn agents_off_in(all: &Value) -> std::collections::BTreeSet<String> {
+    match all.get("agentsOff") {
+        Some(off) => serde_json::from_value(off.clone()).unwrap_or_default(),
+        None => std::collections::BTreeSet::from(["antigravity".to_string()]),
+    }
+}
+
+pub(crate) fn agent_off(kind: &str) -> bool {
+    if let Some(off) = AGENTS_OFF.read().unwrap().as_ref() {
+        return off.contains(kind);
+    }
+    let off = agents_off_in(&read());
+    let is_off = off.contains(kind);
+    *AGENTS_OFF.write().unwrap() = Some(off);
+    is_off
+}
+
+pub(crate) fn save_agent_off(kind: &str, off: bool) {
+    agent_off(kind);
+    let mut cached = AGENTS_OFF.write().unwrap();
+    let all = cached.get_or_insert_default();
+    if off {
+        all.insert(kind.to_string());
+    } else {
+        all.remove(kind);
+    }
+    write("agentsOff", json!(all));
+}
+
 /// Icons chosen for projects: host → folder → icon path such as
 /// `folders/folder-src` (Huan, 2026-11-12). Kept in memory like names.
 pub(crate) type ProjectIcons =

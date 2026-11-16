@@ -1029,9 +1029,27 @@ fn card(p: &Palette, bg: Hsla) -> Div {
 }
 
 /// A settings group, as on Welcome's General page and in Project settings:
-/// a small heading over a box of rows with lines between them, as in the
-/// Mac's own settings.
+/// a small heading over a [`settings_box`].
 pub fn settings_group(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .gap(px(6.))
+        .child(
+            div()
+                .px(px(14.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.muted)
+                .child(title),
+        )
+        .child(settings_box(rows, p))
+}
+
+/// A box of settings rows with lines between them, as in the Mac's own
+/// settings; on its own when its first row names it (Welcome's Agents).
+pub fn settings_box(rows: Vec<AnyElement>, p: &Palette) -> Div {
     let mut body = div()
         .flex()
         .flex_col()
@@ -1047,20 +1065,7 @@ pub fn settings_group(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -
                 .child(row),
         );
     }
-    div()
-        .flex()
-        .flex_col()
-        .w_full()
-        .gap(px(6.))
-        .child(
-            div()
-                .px(px(14.))
-                .text_size(px(12.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(p.muted)
-                .child(title),
-        )
-        .child(body)
+    body
 }
 
 /// The grey line under a settings row's name.

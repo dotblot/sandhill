@@ -126,19 +126,20 @@ pub(crate) fn kind_of(kind: &str) -> Option<&'static Kind> {
     KINDS.iter().find(|k| k.kind == kind)
 }
 
-/// Agents turned off for now (Huan, 2026-11-14, after Google suspended the
-/// Antigravity account): not offered for new conversations, never asked for
-/// models, accounts or quota, and their conversations take no messages.
-/// Remove an entry to turn the agent back on.
-const TURNED_OFF: [&str; 1] = ["antigravity"];
-
+/// Agents turned off on Welcome's Agents page (Huan, 2026-11-15): not
+/// offered for new conversations, never asked for models, accounts or
+/// quota, and their conversations take no messages.
 pub(crate) fn turned_off(kind: &str) -> bool {
-    TURNED_OFF.contains(&kind)
+    crate::prefs::agent_off(kind)
 }
 
-/// The agent a new conversation starts with (Huan, 2026-11-14).
+/// The agent a new conversation starts with (Huan, 2026-11-14): Codex, else
+/// the first agent turned on.
 pub(crate) fn default_kind() -> &'static Kind {
-    kind_of("codex").unwrap_or(&KINDS[0])
+    kind_of("codex")
+        .filter(|kind| !turned_off(kind.kind))
+        .or_else(|| KINDS.iter().find(|kind| !turned_off(kind.kind)))
+        .unwrap_or(&KINDS[0])
 }
 
 /// Agents whose chat Sandhill drives through a bridge: messages go with

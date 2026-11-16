@@ -1048,11 +1048,14 @@ impl AppWindow {
             let picked = self.current == Some(id);
             let path = tab.info.project.as_deref().unwrap_or(&tab.wanted);
             let project = if path.is_empty() {
-                machine_name(&tab.host)
+                crate::welcome::start_screen::host_label(&tab.host)
             } else {
                 crate::panes::files::base_name(path).to_string()
             };
-            let tip = format!("{}: {path}", machine_name(&tab.host));
+            let tip = format!(
+                "{}: {path}",
+                crate::welcome::start_screen::host_label(&tab.host)
+            );
             let documents = tab
                 .workbench
                 .update(cx, |wb, cx| wb.render_document_tabs(picked, cx));
@@ -1225,17 +1228,6 @@ fn title(places: &Places) -> String {
         name.to_string()
     } else {
         format!("{name} — {host}")
-    }
-}
-
-/// "Local", or the server's name, unless the user renamed the device.
-pub(crate) fn machine_name(host: &str) -> String {
-    if let Some(name) = crate::prefs::device_name(host) {
-        name
-    } else if host == sandhill_link::LOCAL {
-        "Local".into()
-    } else {
-        host.into()
     }
 }
 

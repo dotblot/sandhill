@@ -1245,6 +1245,17 @@ preview and R's imports weren't seen.
   modification time is unchanged). `machine::session_label` uses the same
   function with the running kernel's version, and the AI pane's new
   conversation screen now uses `session_label` instead of its own.
+- **Agents page and one device name** (Huan, 2026-11-15;
+  `docs/design/done/agents-page-plan.md`): Manage → Agents
+  (`agents/accounts.rs`, drawn with `look::settings_box`) lists every agent
+  with a switch (`prefs::agent_off`, replacing the fixed `TURNED_OFF`;
+  `shell::choices::Choice::Agent` moves new conversations off an agent
+  turned off and reads models for one turned on), its version from
+  `Call::ListAgents`, and Claude Code, Codex and Antigravity accounts with a
+  ⋯ menu; removal asks in the row (`confirm_remove`), not in a card. The
+  model menu's providers are read each time (`model_providers`). Devices
+  are named by `start_screen::host_label` everywhere; `machine_name`
+  ("Local") and `machine::host_name` are gone.
 
 
 ## Running it
