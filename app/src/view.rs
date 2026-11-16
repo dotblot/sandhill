@@ -56,6 +56,13 @@ impl Render for Workbench {
         if window.focused(cx).is_none() {
             window.focus(&self.focus, cx);
         }
+        // The trust question takes Escape and Enter (`trust_keys`), so the
+        // keys must come here while it shows.
+        if self.trust.state == crate::welcome::trust::Trust::Asking
+            && !self.focus.contains_focused(window, cx)
+        {
+            window.focus(&self.focus, cx);
+        }
         self.place_cells(window);
         self.fetch_notebook_plots(cx);
         self.sync_markdown_images(cx);
@@ -79,6 +86,10 @@ impl Render for Workbench {
             // Esc closes the large plot and the log, before a field in
             // them takes it.
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.trust_keys(event, window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 // ⌥1–9 pick a model while the agents' model menu is open,
                 // wherever the focus is.
                 if let Some(agents) = this.agents.clone()

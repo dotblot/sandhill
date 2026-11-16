@@ -82,6 +82,26 @@ impl Workbench {
         cx.notify();
     }
 
+    /// While the trust question is up: Escape opens Restricted Mode and
+    /// Enter trusts the folder, wherever the focus is. Whether it took the
+    /// key.
+    pub(crate) fn trust_keys(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.trust.state != Trust::Asking {
+            return false;
+        }
+        match event.keystroke.key.as_str() {
+            "escape" => self.stay_restricted(cx),
+            "enter" => self.trust_folder(window, cx),
+            _ => return false,
+        }
+        true
+    }
+
     /// Trusts the open project's folder on its device, then starts what
     /// waited for it.
     fn trust_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -272,19 +292,12 @@ impl Workbench {
                     .justify_center()
                     .bg(p.shadow.opacity(0.35))
                     .child(card)
-                    // Dismissing it trusts nothing.
+                    // Dismissing it trusts nothing. Its keys are taken at the
+                    // window (`trust_keys`): the card holds no focus.
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| this.stay_restricted(cx)),
-                    )
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                        match event.keystroke.key.as_str() {
-                            "escape" => this.stay_restricted(cx),
-                            "enter" => this.trust_folder(window, cx),
-                            _ => return,
-                        }
-                        cx.stop_propagation();
-                    })),
+                    ),
             )
             .with_priority(3)
             .into_any_element(),

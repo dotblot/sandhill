@@ -54,4 +54,5 @@ where an older plan differs, this wins.
   The question is a card in the quit and close cards' style (Huan,
   2026-11-16): the project's icon and "Trust x?" on one row, under it the
   device and the folder it is in, one sentence, then full-width buttons
-  stacked: Trust Folder (default) and Open in Restricted Mode.
+  stacked: Trust Folder (default, Enter) and Open in Restricted Mode
+  (Escape, or a click outside the card).
