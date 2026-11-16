@@ -69,7 +69,7 @@ impl AppWindow {
         let mut kinds = h_flex().w_full().flex_wrap().gap_y(px(8.)).pt(px(10.));
         for (ix, (kind, label)) in WRAP_KINDS.into_iter().enumerate() {
             kinds = kinds.child(
-                div().w(px(160.)).child(
+                div().w(relative(0.25)).whitespace_nowrap().child(
                     Checkbox::new(("general-wrap", ix))
                         .label(label)
                         .checked(crate::prefs::editor_soft_wrap(kind))
