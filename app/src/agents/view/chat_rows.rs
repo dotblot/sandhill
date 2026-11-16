@@ -389,10 +389,13 @@ impl Agents {
             .when(open, |d| d.bg(p.ink(6.)))
             .child(row)
             .when(open, |d| {
-                let file = view
-                    .file
-                    .clone()
-                    .filter(|f| crate::editor::notebook::format_of(f).is_some());
+                // Only a file the step got to, in the project: a failed
+                // read or a file elsewhere can't be opened.
+                let file = view.file.clone().filter(|f| {
+                    step.status == StepStatus::Done
+                        && crate::editor::notebook::format_of(f).is_some()
+                        && self.project_file(f).is_some()
+                });
                 d.child(
                     v_flex()
                         .gap(px(4.))

@@ -479,16 +479,22 @@ impl Agents {
         }
     }
 
-    /// Opens a file the agent named in the editor, if it is in the project.
-    pub(crate) fn open_path(&mut self, path: &str, cx: &mut Context<Self>) {
+    /// A file the agent named, relative to the project; `None` when it is
+    /// outside it (another folder, the home folder, or up with "..").
+    pub(crate) fn project_file(&self, path: &str) -> Option<String> {
         let root = format!("{}/", self.project.trim_end_matches('/'));
         let rel = path.strip_prefix(&root).unwrap_or(path);
-        if rel.starts_with('/') {
+        let outside = rel.starts_with(['/', '~']) || rel.split('/').any(|part| part == "..");
+        (!outside).then(|| rel.to_string())
+    }
+
+    /// Opens a file the agent named in the editor, if it is in the project.
+    pub(crate) fn open_path(&mut self, path: &str, cx: &mut Context<Self>) {
+        let Some(rel) = self.project_file(path) else {
             self.problem = Some(format!("{path} is outside the project"));
             cx.notify();
             return;
-        }
-        let rel = rel.to_string();
+        };
         if let Some(w) = self.workbench.upgrade() {
             w.update(cx, |w, cx| w.open_file(rel, cx));
         }
