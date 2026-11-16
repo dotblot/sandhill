@@ -50,7 +50,8 @@ differs, this wins.
   Oh My Pi: Always ask, Write, YOLO, Plan). pi has no modes and runs
   everything; Sandhill's own Restricted and Ask modes are gone. There is
   no web-search switch: each agent keeps its own default. Following the
-  agent's edits is only in Welcome → General.
+  agent's edits is only in Welcome → General. How full the conversation
+  is shows as a ring and a percentage, "◔ 42%" (Huan, 2026-11-16).
 - "/" in the message box (Huan, 2026-11-16; `docs/design/done/slash-plan.md`):
   typed at the start of a message (or from the @ list's "Commands and
   skills…"), it lists Sandhill's own (Compact while a conversation runs,

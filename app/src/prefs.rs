@@ -160,6 +160,47 @@ pub(crate) fn save_resources_shown(shown: bool) {
     write("resourcesShown", json!(shown));
 }
 
+/// Whether the window is frosted glass (the default) or solid (Huan,
+/// 2026-11-16: a choice on Welcome's General page). Read on every palette
+/// change, so cached.
+static GLASS: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(None);
+
+pub(crate) fn glass() -> bool {
+    if let Some(on) = *GLASS.read().unwrap() {
+        return on;
+    }
+    let on = read()["glass"].as_bool().unwrap_or(true);
+    *GLASS.write().unwrap() = Some(on);
+    on
+}
+
+pub(crate) fn save_glass(on: bool) {
+    *GLASS.write().unwrap() = Some(on);
+    write("glass", json!(on));
+}
+
+/// The height an input box was dragged to (`"console"`, `"agent"`); `None`
+/// is its own size (Huan, 2026-11-16).
+pub(crate) fn input_height(which: &str) -> Option<f32> {
+    read()["inputHeights"][which].as_f64().map(|h| h as f32)
+}
+
+pub(crate) fn save_input_height(which: &str, height: Option<f32>) {
+    let mut all = read()["inputHeights"].clone();
+    if !all.is_object() {
+        all = json!({});
+    }
+    match height {
+        Some(h) => all[which] = json!(h.round()),
+        None => {
+            if let Some(map) = all.as_object_mut() {
+                map.remove(which);
+            }
+        }
+    }
+    write("inputHeights", all);
+}
+
 /// Icons chosen for projects: host → folder → icon path such as
 /// `folders/folder-src` (Huan, 2026-11-12). Kept in memory like names.
 pub(crate) type ProjectIcons =

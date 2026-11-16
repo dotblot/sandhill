@@ -147,6 +147,21 @@ fn brand_colors(dark: bool) -> ThemeColor {
     c
 }
 
+/// Whether the window is frosted glass: on a Mac, unless turned off on
+/// Welcome's General page (Huan, 2026-11-16). Elsewhere it is solid.
+pub fn frosted() -> bool {
+    cfg!(target_os = "macos") && crate::prefs::glass()
+}
+
+/// The window background for `frosted`: the system's blur, or solid.
+pub fn window_background() -> WindowBackgroundAppearance {
+    if frosted() {
+        WindowBackgroundAppearance::Blurred
+    } else {
+        WindowBackgroundAppearance::Opaque
+    }
+}
+
 impl Palette {
     fn new(dark: bool) -> Self {
         let colors = brand_colors(dark);
@@ -177,15 +192,9 @@ impl Palette {
             hover: c.list_hover,
             term: c.background,
             warn: c.warning,
-            wall: alpha(
-                c.title_bar,
-                if cfg!(target_os = "macos") {
-                    166. / 255.
-                } else {
-                    1.
-                },
-            ),
-            glass: alpha(c.background, 0.62),
+            wall: alpha(c.title_bar, if frosted() { 166. / 255. } else { 1. }),
+            // Solid panes without the glass (Huan, 2026-11-16).
+            glass: alpha(c.background, if frosted() { 0.62 } else { 1. }),
             glass_edge: alpha(c.window_border, if dark { 140. / 255. } else { 26. / 255. }),
             glass_hi: alpha(
                 if dark { c.foreground } else { c.background },
@@ -1125,6 +1134,56 @@ pub fn capsule_divider(p: &Palette) -> Div {
         .mx(px(3.))
         .flex_none()
         .bg(p.ink(16.))
+}
+
+/// What is dragged by an input box's top edge (the Console's, the AI
+/// pane's; Huan, 2026-11-16): which box. Nothing follows the pointer.
+pub struct ResizeInput(pub &'static str);
+
+impl Render for ResizeInput {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
+/// How tall an input box dragged to `pointer_y` is, its bottom staying at
+/// `bottom`: at least `least`, and leaving the window's top 40% to the
+/// panes above.
+pub fn resized_input(bottom: Pixels, pointer_y: Pixels, least: f32, window: &Window) -> f32 {
+    let most = f32::from(window.viewport_size().height) * 0.6;
+    f32::from(bottom - pointer_y).clamp(least, most.max(least))
+}
+
+/// An input box's top edge, to drag up (taller, borrowing room from the
+/// pane above) or down; a double click puts it back to its own size. Its
+/// owner, `relative()`, handles `DragMoveEvent<ResizeInput>` and the reset.
+pub fn resize_grip(id: &'static str, p: &Palette) -> Stateful<Div> {
+    let group: SharedString = format!("{id}-grip").into();
+    div()
+        .id(id)
+        .group(group.clone())
+        .absolute()
+        .top(px(-4.))
+        .left_0()
+        .right_0()
+        .h(px(8.))
+        .flex()
+        .justify_center()
+        .cursor(CursorStyle::ResizeUpDown)
+        .child(
+            div()
+                .mt(px(3.))
+                .w(px(28.))
+                .h(px(2.))
+                .rounded_full()
+                .bg(p.accent)
+                .opacity(0.)
+                .group_hover(group, |d| d.opacity(0.8)),
+        )
+        .on_drag(ResizeInput(id), |drag, _, _, cx| {
+            cx.stop_propagation();
+            cx.new(|_| ResizeInput(drag.0))
+        })
 }
 
 /// The picked tab in a capsule: a solid pill on a soft shadow, no edge.

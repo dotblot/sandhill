@@ -182,13 +182,9 @@ fn window_options(bounds: WindowBounds, welcome: bool) -> WindowOptions {
             appears_transparent: true,
             traffic_light_position: Some(point(px(12.), px(10.))),
         }),
-        // On a Mac the window is frosted glass: the system blurs what is
-        // behind it, and `look::wall` tints it. Elsewhere it is solid.
-        window_background: if cfg!(target_os = "macos") {
-            WindowBackgroundAppearance::Blurred
-        } else {
-            WindowBackgroundAppearance::Opaque
-        },
+        // On a Mac the window is frosted glass unless turned off: the
+        // system blurs what is behind it, and `look::wall` tints it.
+        window_background: look::window_background(),
         ..Default::default()
     }
 }

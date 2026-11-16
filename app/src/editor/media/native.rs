@@ -445,12 +445,19 @@ impl Preview {
         }
     }
 
-    fn geometry(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) -> Result<()> {
+    /// Places the native view over `bounds`; the hitbox it blocks GPUI's
+    /// mouse with, when shown.
+    fn geometry(
+        &self,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &App,
+    ) -> Result<Option<Hitbox>> {
         let clip = bounds.intersect(&window.content_mask().bounds);
         if self.hidden.get() || clip.is_empty() {
             self.show_hand(false);
             self.surface.platform_surface()?.set_visible(false)?;
-            return Ok(());
+            return Ok(None);
         }
         self.surface
             .platform_surface()?
@@ -494,8 +501,7 @@ impl Preview {
         }
         self.show_hand(self.hand.get());
         self.surface.platform_surface()?.set_visible(true)?;
-        window.insert_hitbox(clip, HitboxBehavior::BlockMouse);
-        Ok(())
+        Ok(Some(window.insert_hitbox(clip, HitboxBehavior::BlockMouse)))
     }
 }
 
@@ -522,14 +528,25 @@ impl Drop for Preview {
 }
 
 pub(super) fn element(preview: Rc<Preview>) -> impl IntoElement {
+    let painted = preview.clone();
     canvas(
-        move |bounds, window, cx| {
-            if let Err(err) = preview.geometry(bounds, window, cx) {
+        move |bounds, window, cx| match preview.geometry(bounds, window, cx) {
+            Ok(hitbox) => hitbox,
+            Err(err) => {
                 preview.hide(true);
                 tracing::error!("media preview geometry failed: {err:#}");
+                None
             }
         },
-        |_, _, _, _| {},
+        // GPUI sets the cursor on every mouse move, so the open hand must
+        // be its own (the native view shows the closed hand while dragging).
+        move |_, hitbox, window, _| {
+            if let Some(hitbox) = hitbox
+                && painted.hand.get()
+            {
+                window.set_cursor_style(CursorStyle::OpenHand, &hitbox);
+            }
+        },
     )
     .size_full()
 }

@@ -25,6 +25,8 @@ pub(crate) enum Choice {
     Agent(&'static str, bool),
     /// Whether the status bar shows, and the daemon measures, resources.
     Resources(bool),
+    /// Whether the window is frosted glass (`prefs::glass`).
+    Glass(bool),
 }
 
 /// Saves a choice, then applies it to every open project once the current
@@ -39,6 +41,21 @@ pub(crate) fn choose(choice: Choice, cx: &mut App) {
         Choice::Wrap(kind, on) => crate::prefs::save_editor_soft_wrap(kind, on),
         Choice::Agent(kind, on) => crate::prefs::save_agent_off(kind, !on),
         Choice::Resources(shown) => crate::prefs::save_resources_shown(shown),
+        Choice::Glass(on) => crate::prefs::save_glass(on),
+    }
+    if matches!(choice, Choice::Glass(_)) {
+        // Every window, Welcome's too: its background, then the palette
+        // that tints it.
+        cx.defer(|cx| {
+            for handle in cx.windows() {
+                let _ = handle.update(cx, |_, window, cx| {
+                    window.set_background_appearance(crate::look::window_background());
+                    crate::look::set_appearance(window.appearance(), cx);
+                });
+            }
+            cx.refresh_windows();
+        });
+        return;
     }
     cx.defer(move |cx| {
         crate::shell::app_window::update_projects(cx, move |workbench, window, cx| {
@@ -95,6 +112,8 @@ impl Workbench {
                     self.machine.resource = None;
                 }
             }
+            // Applied to every window by `choose`.
+            Choice::Glass(_) => {}
         }
         cx.notify();
     }

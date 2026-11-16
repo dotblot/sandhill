@@ -24,7 +24,9 @@ Settled decisions about how Sandhill looks. Moved here unchanged from
   Kit's Default Light/Dark themes supply neutral surfaces, semantic status,
   chart and terminal ANSI colours. Interactive accents use the crane icon's
   navy `#142844`, with a lighter blue counterpart in dark mode (Huan, 2026-11-08).
-  Preserve glass opacity and fonts; file/folder icons use Sandhill's palette
+  Glass can be turned off on Welcome → General (Huan, 2026-11-16; on by
+  default, this Mac's choice): the window is then solid and the
+  translucent panes opaque. Preserve glass opacity and fonts; file/folder icons use Sandhill's palette
   below, other icons their source colours. Code syntax keeps
   Xcode's Default colours and italic rules. Kit widgets and custom UI share
   the same brand palette; do not tint all surfaces blue or cream.

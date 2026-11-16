@@ -104,13 +104,7 @@ impl Agents {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let lines = self
-            .composer
-            .read(cx)
-            .value()
-            .split('\n')
-            .count()
-            .clamp(2, LINES);
+        let editor_height = self.composer_editor_height(cx);
         let t = current.filter(|_| self.show != Show::New);
         let working = t.is_some_and(|t| self.working(t));
         let typed = !self.composer.read(cx).value().trim().is_empty()
@@ -134,13 +128,12 @@ impl Agents {
         let status = t
             .and_then(|t| t.agent.as_ref())
             .map(|a| a["status"].clone());
-        let used = status.as_ref().and_then(|s| {
-            let percent = s["context"].as_f64()?;
-            Some(match s["context_size"].as_u64() {
-                Some(size) => tokens((size as f64 * percent / 100.).round() as u64),
-                None => format!("{}%", percent.round()),
-            })
-        });
+        // How full the conversation is: the ring and "42%" (Huan,
+        // 2026-11-16); the numbers are in the ring's panel.
+        let used = status
+            .as_ref()
+            .and_then(|s| s["context"].as_f64())
+            .map(|percent| format!("{}%", percent.clamp(0., 100.).round()));
         let percent = status
             .as_ref()
             .and_then(|s| s["context"].as_f64())
@@ -290,6 +283,8 @@ impl Agents {
             .when_some(menu, |d, menu| d.child(menu))
             .child(
                 v_flex()
+                    .id("agent-box")
+                    .relative()
                     .gap(px(6.))
                     .px(px(8.))
                     .pt(px(8.))
@@ -297,6 +292,45 @@ impl Agents {
                     .rounded(px(RADIUS))
                     .border_1()
                     .border_color(edge)
+                    // Dragged by its top edge (Huan, 2026-11-16): taller
+                    // borrows room from the conversation above. The box's
+                    // other rows keep their size; the text takes the rest.
+                    .on_drag_move(cx.listener(
+                        |this, event: &DragMoveEvent<look::ResizeInput>, window, cx| {
+                            if event.drag(cx).0 != "agent-box-grip" {
+                                return;
+                            }
+                            let current = this.composer_editor_height(cx);
+                            let others = f32::from(event.bounds.size.height) - current;
+                            let least = 2. * LINE + 8.;
+                            let box_h = look::resized_input(
+                                event.bounds.bottom(),
+                                event.event.position.y,
+                                least + others,
+                                window,
+                            );
+                            let h = box_h - others;
+                            this.composer_height = (h > least + 1.).then_some(h);
+                            cx.notify();
+                        },
+                    ))
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.save_composer_height()),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.save_composer_height()),
+                    )
+                    .child(look::resize_grip("agent-box-grip", &p).on_click(cx.listener(
+                        |this, event: &ClickEvent, _, cx| {
+                            if event.click_count() == 2 {
+                                this.composer_height = None;
+                                crate::prefs::save_input_height("agent", None);
+                                cx.notify();
+                            }
+                        },
+                    )))
                     // Files dragged in from Finder are attached.
                     .drag_over::<ExternalPaths>(move |d, _, _, _| d.border_color(p.accent))
                     .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
@@ -312,7 +346,7 @@ impl Agents {
                             .font_family(".SystemUIFont")
                             .text_size(px(look::CHROME))
                             .line_height(px(LINE))
-                            .h(px(lines as f32 * LINE + 8.)),
+                            .h(px(editor_height)),
                     )
                     .child(
                         h_flex()
@@ -439,6 +473,27 @@ impl Agents {
                             ),
                     ),
             )
+    }
+
+    /// The message text's height: its lines (2 to 8), or more when the box
+    /// was dragged taller.
+    pub(crate) fn composer_editor_height(&self, cx: &App) -> f32 {
+        let lines = self
+            .composer
+            .read(cx)
+            .value()
+            .split('\n')
+            .count()
+            .clamp(2, LINES);
+        let own = lines as f32 * LINE + 8.;
+        self.composer_height.map_or(own, |h| h.max(own))
+    }
+
+    /// Keeps the message box's dragged height, when it changed.
+    fn save_composer_height(&mut self) {
+        if crate::prefs::input_height("agent") != self.composer_height {
+            crate::prefs::save_input_height("agent", self.composer_height);
+        }
     }
 
     /// The open menu, drawn above the box.
@@ -1029,23 +1084,17 @@ impl Agents {
     }
 }
 
-/// How full the context is, as a ring.
+/// How full the context is, as a ring: amber from 70%, red from 90%, as
+/// in the context panel.
 fn ring(percent: f64, p: &Palette) -> AnyElement {
-    let hot = percent >= 80.;
-    // A bar in a capsule: GPUI draws no arcs.
-    div()
-        .w(px(16.))
-        .h(px(6.))
-        .rounded_full()
-        .bg(p.ink(12.))
-        .child(
-            div()
-                .h_full()
-                .w(relative((percent / 100.).clamp(0.05, 1.) as f32))
-                .rounded_full()
-                .bg(if hot { p.err } else { p.muted }),
-        )
-        .into_any_element()
+    let color = if percent >= 90. {
+        p.err
+    } else if percent >= 70. {
+        p.warn
+    } else {
+        p.accent
+    };
+    crate::shell::meter::ring(Some((percent / 100.) as f32), color, p.ink(14.))
 }
 
 /// How much context is used, and Compact now.

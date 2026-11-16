@@ -323,6 +323,8 @@ pub struct Workbench {
     pub(crate) console: Vec<String>,
     console_session: Option<String>,
     pub(crate) console_input: Entity<EditorState>,
+    /// The height the Console input was dragged to; `None` is its own.
+    pub(crate) console_input_height: Option<f32>,
     pub(crate) language: crate::editor::language::Language,
     pub(crate) console_scroll: ScrollHandle,
     pub(crate) vars: Vars,
@@ -595,6 +597,7 @@ impl Workbench {
             console: Vec::new(),
             console_session: None,
             console_input,
+            console_input_height: crate::prefs::input_height("console"),
             language: Default::default(),
             console_scroll: ScrollHandle::new(),
             vars: Vars::default(),

@@ -251,15 +251,18 @@ impl Workbench {
                 )
                 .handle(&self.console_scroll),
             )
-            .child(
+            .child({
+                let own = lines as f32 * LINE_HEIGHT + EDITOR_PADDING;
+                let height = self.console_input_height.map_or(own, |h| h.max(own));
                 div()
+                    .id("console-input")
+                    .relative()
                     .flex_none()
                     .m(px(6.))
                     .rounded(px(RADIUS))
                     .border_1()
                     .border_color(edge)
                     .px(px(4.))
-                    .overflow_hidden()
                     .on_action(
                         cx.listener(|this, _: &RunCell, window, cx| this.run_console(window, cx)),
                     )
@@ -274,15 +277,61 @@ impl Workbench {
                             cx.stop_propagation();
                         }
                     }))
+                    // Dragged by its top edge (Huan, 2026-11-16): taller
+                    // borrows room from the runs above.
+                    .on_drag_move(cx.listener(
+                        move |this, event: &DragMoveEvent<look::ResizeInput>, window, cx| {
+                            if event.drag(cx).0 != "console-input-grip" {
+                                return;
+                            }
+                            let least = LINE_HEIGHT + EDITOR_PADDING;
+                            let h = look::resized_input(
+                                event.bounds.bottom(),
+                                event.event.position.y,
+                                least,
+                                window,
+                            );
+                            this.console_input_height = (h > least + 1.).then_some(h);
+                            cx.notify();
+                        },
+                    ))
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.save_console_input_height()),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, _| this.save_console_input_height()),
+                    )
                     .child(
-                        Editor::new(&self.console_input)
-                            .bordered(false)
-                            .appearance(false)
-                            .line_height(px(LINE_HEIGHT))
-                            .h(px(lines as f32 * LINE_HEIGHT + EDITOR_PADDING)),
-                    ),
-            )
+                        div().overflow_hidden().child(
+                            Editor::new(&self.console_input)
+                                .bordered(false)
+                                .appearance(false)
+                                .line_height(px(LINE_HEIGHT))
+                                .h(px(height)),
+                        ),
+                    )
+                    .child(
+                        look::resize_grip("console-input-grip", &p).on_click(cx.listener(
+                            |this, event: &ClickEvent, _, cx| {
+                                if event.click_count() == 2 {
+                                    this.console_input_height = None;
+                                    crate::prefs::save_input_height("console", None);
+                                    cx.notify();
+                                }
+                            },
+                        )),
+                    )
+            })
             .into_any_element()
+    }
+
+    /// Keeps the Console input's dragged height, when it changed.
+    fn save_console_input_height(&mut self) {
+        if crate::prefs::input_height("console") != self.console_input_height {
+            crate::prefs::save_input_height("console", self.console_input_height);
+        }
     }
 
     pub(crate) fn render_terminal(&self, cx: &mut Context<Self>) -> AnyElement {

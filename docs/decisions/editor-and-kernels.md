@@ -24,6 +24,9 @@ by sentence); where an older plan differs, this wins.
   changing width or showing a left selection stripe. Text outputs use I-beam
   and retain selection/copy. Console and AI inputs remain transparent with a
   slightly stronger neutral inactive border and brand accent when focused.
+  Both can be made taller by dragging their top edge (Huan, 2026-11-16),
+  taking room from the pane above (at most 60% of the window); a double
+  click on the edge puts the box back. The height is kept on this Mac.
   The line between a code cell and its outputs reads `#3  Output [5]
   0.2s` (no "Cell" word; Huan, 2026-11-14); the gutter holds no number. The wheel over an
   output box scrolls the box while it can move, then the notebook.

@@ -1299,6 +1299,14 @@ preview and R's imports weren't seen.
   `vendor/gpui-component` guard theirs as Kit's crates do. The
   gpui-component copy is 0.10.0's files with Sandhill's five kept (its
   `SANDHILL.md`).
+- **Glass, input heights, ring, hand** (Huan, 2026-11-16): `prefs::glass`
+  (Welcome → General, `Choice::Glass`) picks `look::window_background` and
+  the palette's `wall`/`glass` alphas; `choices::choose` updates every
+  window. `look::resize_grip` and `ResizeInput(id)` drag the Console's and
+  the message box's top edges (`prefs::input_height`). The message box's
+  ring is `shell::meter::ring` with "42%". Previews in hand mode set GPUI's
+  cursor over their hitbox (`media/native.rs`): GPUI's cursor rects
+  otherwise showed the arrow over the native view's hand.
 
 
 ## Running it

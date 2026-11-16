@@ -345,6 +345,8 @@ pub struct Agents {
     pub(crate) compact_focus: Option<Entity<InputState>>,
     /// The conversation writing a summary to start a new one from.
     pub(crate) summarizing: Option<String>,
+    /// The height the message text was dragged to; `None` is its own.
+    pub(crate) composer_height: Option<f32>,
     pub(crate) popup_triggers: crate::shell::popup::PopupTriggers,
     /// The model menu's tab: an agent's kind, or "fav".
     pub(crate) model_tab: Option<String>,
@@ -448,6 +450,7 @@ impl Agents {
             menu: None,
             compact_focus: None,
             summarizing: None,
+            composer_height: crate::prefs::input_height("agent"),
             popup_triggers: crate::shell::popup::PopupTriggers::default(),
             model_tab: None,
             favourites: crate::prefs::favourites(),

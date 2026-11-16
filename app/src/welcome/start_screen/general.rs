@@ -91,9 +91,22 @@ impl AppWindow {
             )
             .child(look::settings_group(
                 "Appearance",
-                vec![row("Theme", Some("System follows the Mac's light or dark appearance."), &p)
-                    .child(themes)
-                    .into_any_element()],
+                std::iter::once(
+                    row("Theme", Some("System follows the Mac's light or dark appearance."), &p)
+                        .child(themes)
+                        .into_any_element(),
+                )
+                .chain(cfg!(target_os = "macos").then(|| {
+                    switch_row(
+                        "general-glass",
+                        "Glass",
+                        "The window shows a blur of what is behind it. Off, it is solid.",
+                        crate::prefs::glass(),
+                        |on, cx| choose(Choice::Glass(on), cx),
+                        &p,
+                    )
+                }))
+                .collect(),
                 &p,
             ))
             .child(look::settings_group(
