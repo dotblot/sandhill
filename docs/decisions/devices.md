@@ -51,3 +51,7 @@ where an older plan differs, this wins.
   enforced by the daemon. Projects opened before it existed are trusted. Tell
   agents per run where they allow it (Codex, pi); never edit an agent's
   configuration or answer its own trust question for the user.
+  The question is a card in the quit and close cards' style (Huan,
+  2026-11-16): the project's icon and "Trust x?" on one row, under it the
+  device and the folder it is in, one sentence, then full-width buttons
+  stacked: Trust Folder (default) and Open in Restricted Mode.

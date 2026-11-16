@@ -182,6 +182,9 @@ impl Workbench {
         )
     }
 
+    /// The question on a folder's first open, in the style of the quit and
+    /// close cards (Huan, 2026-11-16): the project's icon and "Trust x?" on
+    /// one row with where it is, one sentence, full-width buttons stacked.
     pub(crate) fn render_trust_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.trust.state != Trust::Asking {
             return None;
@@ -192,13 +195,14 @@ impl Workbench {
         let host = self.host();
         let device = crate::welcome::start_screen::host_label(&host);
         let saving = self.trust.saving;
+        let wide = |button: Button| button.w_full();
         let card = v_flex()
             .id("trust-card")
             .occlude()
-            .w(px(520.))
-            .max_w(relative(0.9))
-            .gap(px(12.))
+            .w(px(380.))
+            .max_w(relative(0.95))
             .p(px(20.))
+            .gap(px(14.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
             .border_1()
@@ -207,75 +211,55 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 h_flex()
-                    .gap(px(8.))
-                    .child(icon("lock").size(px(16.)).text_color(p.muted))
+                    .gap(px(12.))
                     .child(
-                        div()
-                            .text_size(px(16.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("Do you trust the files in {name}?")),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap(px(6.))
-                    .text_size(px(look::SMALL))
-                    .text_color(p.muted)
-                    .child(
-                        icon(if host == sandhill_link::LOCAL {
-                            "device.laptop"
-                        } else {
-                            "device.server"
-                        })
-                        .size(px(13.)),
+                        look::picture(&look::project_icon(&host, &project, &name))
+                            .size(px(40.))
+                            .flex_none(),
                     )
-                    .child(device)
                     .child(
-                        div()
+                        v_flex()
                             .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .font_family(look::MONO)
-                            .child(project),
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_size(px(16.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(format!("Trust {name}?")),
+                            )
+                            // Where it is: with the name above, the whole path.
+                            .child(
+                                div()
+                                    .text_size(px(look::SMALL))
+                                    .text_color(p.muted)
+                                    .child(format!("{device} · in {}", place(&host, &project))),
+                            ),
                     ),
             )
-            .child(
-                div()
-                    .whitespace_normal()
-                    .child("Trusting it lets R, Python, the Terminal, jobs, Git and AI agents start here. They act on files in the folder, such as .Rprofile, env files and agent instructions, so trust only folders whose authors you trust."),
-            )
-            .child(
-                div()
-                    .text_size(px(look::SMALL))
-                    .text_color(p.muted)
-                    .whitespace_normal()
-                    .child("Restricted Mode shows files, saved outputs and previews, and starts nothing. Trust is remembered; an untrusted folder asks again when you next open it."),
-            )
+            .child(div().text_color(p.muted).child(
+                "Trusting it lets R, Python, the Terminal, Git and AI agents run code its files set up. Restricted Mode only shows its files.",
+            ))
             .when_some(self.trust.error.clone(), |d, error| {
-                d.child(div().text_color(p.err).whitespace_normal().child(error))
+                d.child(div().text_color(p.err).child(error))
             })
             .child(
-                h_flex()
-                    .justify_end()
+                v_flex()
                     .gap(px(8.))
-                    .child(
-                        Button::new("trust-restricted")
-                            .small()
-                            .label("Open in Restricted Mode")
-                            .disabled(saving)
-                            .on_click(cx.listener(|this, _, _, cx| this.stay_restricted(cx))),
-                    )
-                    .child(
+                    .child(wide(
                         Button::new("trust-folder")
-                            .small()
                             .primary()
                             .label(if saving { "Trusting…" } else { "Trust Folder" })
                             .disabled(saving)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.trust_folder(window, cx)),
                             ),
-                    ),
+                    ))
+                    .child(wide(
+                        Button::new("trust-restricted")
+                            .label("Open in Restricted Mode")
+                            .disabled(saving)
+                            .on_click(cx.listener(|this, _, _, cx| this.stay_restricted(cx))),
+                    )),
             );
         Some(
             deferred(
@@ -306,6 +290,22 @@ impl Workbench {
             .into_any_element(),
         )
     }
+}
+
+/// The folder `project` is in, the home folder as `~` on this Mac.
+fn place(host: &str, project: &str) -> String {
+    let parent = match project.trim_end_matches('/').rsplit_once('/') {
+        Some(("", _)) | None => "/".to_string(),
+        Some((parent, _)) => parent.to_string(),
+    };
+    if host == sandhill_link::LOCAL
+        && let Some(home) = std::env::var_os("HOME")
+        && let Some(rest) = parent.strip_prefix(home.to_string_lossy().trim_end_matches('/'))
+        && (rest.is_empty() || rest.starts_with('/'))
+    {
+        return format!("~{rest}");
+    }
+    parent
 }
 
 /// "Restricted Mode: trust this folder to run code."
