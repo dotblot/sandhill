@@ -163,19 +163,21 @@ impl Agents {
         }
     }
 
-    /// The "/" list: Compact while a conversation runs, the commands a
-    /// running OpenScience or Oh My Pi conversation reported, then what the
-    /// daemon finds for the agent (its commands and skills, and Sandhill's
-    /// guides).
+    /// The "/" list: Compact while a conversation of an agent that can
+    /// compact runs, the commands a running OpenScience or Oh My Pi
+    /// conversation reported, then what the daemon finds for the agent (its
+    /// commands and skills, and Sandhill's guides).
     fn load_commands(&mut self, cx: &mut Context<Self>) {
         let running = self.box_terminal().filter(|t| t.running);
         let mut list: Vec<Value> = Vec::new();
         if let Some(t) = running {
-            list.push(json!({
-                "kind": "compact",
-                "name": "compact",
-                "description": "Replace the conversation with a summary, to make room",
-            }));
+            if composer::can_compact(&t.kind) {
+                list.push(json!({
+                    "kind": "compact",
+                    "name": "compact",
+                    "description": "Replace the conversation with a summary, to make room",
+                }));
+            }
             list.extend(composer::reported_commands(t));
         }
         let listed = self.daemon.call::<Vec<Value>>(Call::AgentCommands {

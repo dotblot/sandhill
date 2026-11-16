@@ -794,6 +794,13 @@ pub fn is_slash(item: &Value) -> bool {
     matches!(ref_kind(item), "command" | "skill" | "guide")
 }
 
+/// Agents Sandhill can ask to compact: Claude Code (its /compact), Codex
+/// (app-server's compact) and pi (its RPC compact). Antigravity and the ACP
+/// agents have no such request.
+pub fn can_compact(kind: &str) -> bool {
+    matches!(kind, "claude" | "codex" | "pi")
+}
+
 /// The commands a running OpenScience or Oh My Pi conversation reported.
 pub fn reported_commands(t: &TerminalInfo) -> Vec<Value> {
     report(t, "commands")
