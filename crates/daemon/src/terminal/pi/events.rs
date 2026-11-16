@@ -80,6 +80,14 @@ impl Translator {
                     Some("aborted") => {}
                     _ => self.error = None,
                 }
+                // Its tokens and pi's own cost, for Usage (the host records it).
+                let usage = &message["usage"];
+                if usage.is_object() {
+                    out.push(json!({"kind": "usage", "model": message["model"],
+                        "input": usage["input"], "cache_read": usage["cacheRead"],
+                        "cache_write": usage["cacheWrite"], "output": usage["output"],
+                        "cost": usage["cost"]["total"]}));
+                }
             }
             "tool_execution_start" => {
                 out.extend(self.flush(true));

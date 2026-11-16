@@ -65,6 +65,11 @@ struct Shared {
     live: broadcast::Sender<Live>,
     agent: Mutex<Value>,
     kind: String,
+    /// Where usage is recorded, and what each record says of this
+    /// conversation (see `crate::usage`).
+    usage_root: Option<std::path::PathBuf>,
+    project: Option<String>,
+    account: Option<String>,
     /// Locked before agent/child when checking idle retirement.
     activity: Mutex<Option<super::idle::Activity>>,
     exit: Mutex<Option<TerminalExit>>,
@@ -138,6 +143,12 @@ pub async fn run(options: HostOptions) -> Result<()> {
         agent: Mutex::new(super::read_json(&paths.agent()).unwrap_or(Value::Null)),
         exit: Mutex::new(None),
         kind: kind.to_string(),
+        // `<state>/terminals/<id>`: usage goes in `<state>/usage`.
+        usage_root: super::idle::is_agent(kind)
+            .then(|| options.dir.parent()?.parent().map(Path::to_path_buf))
+            .flatten(),
+        project: meta.as_ref().and_then(|meta| meta.project.clone()),
+        account: meta.as_ref().and_then(|meta| meta.options.account.clone()),
         activity: Mutex::new(super::idle::is_agent(kind).then(super::idle::Activity::new)),
         input,
         master: master.clone(),
@@ -565,11 +576,12 @@ impl Shared {
         if let Some(activity) = activity.as_mut() {
             activity.touch();
         }
-        let merged = {
+        let (merged, before) = {
             let mut agent = self.agent.lock().unwrap();
             if !agent.is_object() {
                 *agent = json!({});
             }
+            let before = agent["status"].clone();
             if let (Some(agent), Some(update)) = (agent.as_object_mut(), value.as_object()) {
                 // A new state replaces the message that came with the old one.
                 if update.contains_key("state") && !update.contains_key("message") {
@@ -580,16 +592,55 @@ impl Shared {
                 }
                 agent.insert("ts_ms".into(), json!(now_ms()));
             }
-            agent.clone()
+            (agent.clone(), before)
         };
         drop(activity);
         let _ = write_json(&self.paths.agent(), &merged);
         crate::accounts::observe(&self.kind, &value);
+        self.record_status(&before, &value["status"]);
         let _ = self.live.send(Live::Agent(merged));
+    }
+
+    /// A status line (Claude Code's) or token report (Codex's) with a new
+    /// last request: that request's usage (see [`crate::usage::new_request`]).
+    fn record_status(&self, before: &Value, status: &Value) {
+        if let Some((counts, model, cost)) = crate::usage::new_request(before, status) {
+            self.record_usage(&counts, model, cost);
+        }
+    }
+
+    /// Records a request's usage: `counts` in the shape `{input,
+    /// cache_read, cache_write, output, reasoning}`.
+    fn record_usage(&self, counts: &Value, model: Option<String>, cost: Option<f64>) {
+        let Some(root) = &self.usage_root else {
+            return;
+        };
+        let mut record = crate::usage::Record {
+            ts_ms: now_ms(),
+            agent: self.kind.clone(),
+            account: self.account.clone(),
+            project: self.project.clone(),
+            model,
+            cost,
+            ..Default::default()
+        };
+        if record.tokens(counts)
+            && let Err(err) = crate::usage::append(root, &record)
+        {
+            eprintln!("cannot record usage: {err}");
+        }
     }
 
     /// Keeps an entry of the agent's conversation and tells the clients.
     fn add_chat(&self, event: Value) {
+        // A bridge's report of a request's usage (pi, ACP agents): recorded,
+        // not part of the conversation.
+        if event["kind"] == "usage" {
+            let cost = event["cost"].as_f64();
+            let model = event["model"].as_str().map(str::to_string);
+            self.record_usage(&event, model, cost);
+            return;
+        }
         self.touch();
         let mut chat = self.chat.lock().unwrap();
         match chat.append(event) {

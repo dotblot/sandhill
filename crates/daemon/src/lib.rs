@@ -48,6 +48,7 @@ pub mod system;
 pub mod tables;
 pub mod terminal;
 pub mod tunnels;
+pub mod usage;
 pub mod variable_search;
 pub mod variables;
 pub mod version;

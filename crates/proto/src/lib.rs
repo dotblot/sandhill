@@ -18,6 +18,7 @@ mod sessions;
 mod system;
 mod tables;
 mod terminals;
+mod usage;
 
 pub use files::*;
 pub use git::*;
@@ -27,6 +28,7 @@ pub use sessions::*;
 pub use system::*;
 pub use tables::*;
 pub use terminals::*;
+pub use usage::*;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -696,6 +698,13 @@ pub enum Call {
     },
     /// The folders trusted on this machine. Returns `Vec<TrustedFolder>`.
     ListTrustedFolders,
+    /// What the agents in Sandhill's conversations used on this device on
+    /// the last `days` days, today included, counted in the asker's time
+    /// zone (minutes east of UTC). Returns [`UsageStats`].
+    UsageStats {
+        days: u32,
+        tz_offset_minutes: i32,
+    },
     /// A project's shared settings, from `.sandhill/project.toml`, and the
     /// environments its files point to. Returns [`ProjectSetup`].
     GetProjectSettings {

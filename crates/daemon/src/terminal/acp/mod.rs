@@ -299,6 +299,35 @@ struct Bridge {
     /// prompt over ACP, so its first message carries it).
     instructed: bool,
     view_mode: &'static str,
+    /// The session's total cost as the agent last said (`usage_update`),
+    /// and how much of it is already in Usage's records.
+    cost_total: Option<f64>,
+    cost_counted: Option<f64>,
+    /// Whether this bridge has sent a message yet: a total seen before is
+    /// from earlier, not this run's.
+    prompted: bool,
+}
+
+impl Bridge {
+    /// A turn's tokens (ACP's `usage` in the prompt's answer) and the cost
+    /// the session's total rose by since, for Usage (the host records it).
+    async fn record_usage(&mut self, usage: &Value) -> Result<()> {
+        if !usage.is_object() {
+            return Ok(());
+        }
+        let cost = match (self.cost_total, self.cost_counted) {
+            (Some(total), Some(counted)) if total >= counted => Some(total - counted),
+            // The agent started counting again.
+            (Some(total), _) => Some(total),
+            _ => None,
+        };
+        self.cost_counted = self.cost_total;
+        self.chat(json!({"kind": "usage", "model": self.model,
+            "input": usage["inputTokens"], "cache_read": usage["cachedReadTokens"],
+            "cache_write": usage["cachedWriteTokens"], "output": usage["outputTokens"],
+            "reasoning": usage["thoughtTokens"], "cost": cost}))
+            .await
+    }
 }
 
 pub async fn run(options: Options) -> Result<i32> {
@@ -380,6 +409,9 @@ pub async fn run(options: Options) -> Result<i32> {
         selected_effort: options.options.effort.clone(),
         session: options.session.clone().unwrap_or_default(),
         instructed: options.session.is_some(),
+        cost_total: None,
+        cost_counted: None,
+        prompted: false,
         options,
         dir,
         cwd,
@@ -661,7 +693,10 @@ impl Bridge {
                         self.mode = Some(mode);
                         self.report(json!({})).await?;
                     }
-                    Request::Prompt => self.finish(result["stopReason"] == "cancelled").await?,
+                    Request::Prompt => {
+                        self.record_usage(&result["usage"]).await?;
+                        self.finish(result["stopReason"] == "cancelled").await?
+                    }
                 }
             }
         }
@@ -837,6 +872,7 @@ impl Bridge {
                 parts.push(json!({"type": "text", "text": crate::agents::instructions(&self.options.options)}));
             }
             self.instructed = true;
+            self.prompted = true;
             if let Some(context) = prompt.context {
                 parts.push(json!({"type": "text", "text": context}));
             }
@@ -941,6 +977,18 @@ impl Bridge {
                 let todos: Vec<Value> = update["entries"].as_array().into_iter().flatten().map(|entry| json!({"content": entry["content"], "status": entry["status"], "priority": entry["priority"]})).collect();
                 self.chat(json!({"kind": "step", "turn": self.turn, "id": id, "tool": "TodoWrite", "input": {"todos": todos}})).await?;
                 self.chat(json!({"kind": "step_done", "turn": self.turn, "id": id, "tool": "TodoWrite", "output": {}})).await?;
+            }
+            "usage_update" => {
+                if let Some(amount) = update["cost"]["amount"].as_f64() {
+                    self.cost_total = Some(amount);
+                    // Before this run's first message, every total is from
+                    // earlier (a loaded session's replay), not this run's.
+                    if !self.prompted {
+                        self.cost_counted = Some(amount);
+                    } else if self.cost_counted.is_none() {
+                        self.cost_counted = Some(0.0);
+                    }
+                }
             }
             "current_mode_update" => {
                 self.mode = update["currentModeId"].as_str().map(str::to_string);

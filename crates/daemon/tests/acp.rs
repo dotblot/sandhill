@@ -64,9 +64,17 @@ def text(kind, value):
     update(kind, content=dict(type='text', text=value))
 
 
+spent = 0.0
+
+
 def complete(value):
-    global active
-    reply(active, dict(stopReason=value))
+    global active, spent
+    # Each turn costs 0.25 and uses 1000 new and 400 cached input tokens,
+    # the total cost reported first, as Oh My Pi does.
+    spent += 0.25
+    update('usage_update', used=1400, size=200000, cost=dict(amount=spent, currency='USD'))
+    reply(active, dict(stopReason=value, usage=dict(inputTokens=1000, cachedReadTokens=400,
+                                                    outputTokens=50, totalTokens=1450)))
     active = None
 
 
@@ -772,6 +780,20 @@ async fn openscience_acp_chat_round_trip_and_resume() {
             .filter(|call| call["message"]["method"] == "initialize")
             .count(),
         2
+    );
+    // Each turn is in Usage with its tokens and the cost the session's
+    // total rose by; the total replayed by `session/load` isn't counted.
+    let client = sandhill_proto::client::Client::connect_unix(&socket)
+        .await
+        .unwrap();
+    let usage = client.usage_stats(2, 0).await.unwrap().totals;
+    assert!(usage.requests > 0, "{usage:?}");
+    assert_eq!(usage.input, 1000 * usage.requests, "{usage:?}");
+    assert_eq!(usage.cache_read, 400 * usage.requests, "{usage:?}");
+    assert_eq!(usage.unpriced, 0, "{usage:?}");
+    assert!(
+        (usage.cost - 0.25 * usage.requests as f64).abs() < 1e-9,
+        "{usage:?}"
     );
     terminals.close(&info.id).await.unwrap();
 }

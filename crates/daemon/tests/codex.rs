@@ -374,6 +374,17 @@ async fn codex_works_through_the_chat() {
         agent["status"]["context"].as_f64().unwrap() > 0.0,
         "{agent}"
     );
+    // Each request Codex reported is in Usage, by agent, model and project.
+    let client = sandhill_proto::client::Client::connect_unix(&socket)
+        .await
+        .unwrap();
+    let usage = client.usage_stats(2, 0).await.unwrap();
+    assert!(usage.totals.requests > 0, "{usage:?}");
+    assert!(usage.totals.tokens() > 0, "{usage:?}");
+    assert_eq!(usage.models[0].agent, "codex", "{usage:?}");
+    assert_eq!(usage.projects[0].label, project_name, "{usage:?}");
+    // Codex gives no cost: none is made up.
+    assert_eq!(usage.totals.unpriced, usage.totals.requests);
 
     // Full Access from now on: the command runs without asking.
     for command in [

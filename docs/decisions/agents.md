@@ -141,3 +141,15 @@ differs, this wins.
   account) asks. Otherwise the status bar shows what the last check saved
   on the device, until its window resets; the panel says beside each Refresh
   button how old the numbers are ("Updated 3h ago").
+- Usage (Huan, 2026-11-16; `docs/design/done/usage-stats-plan.md`): a
+  Welcome page beside Agents, one device at a time, like `omp stats`. For
+  7 days, 30 days, 90 days or a year: requests, tokens (in and out), cache
+  rate, estimated cost and active days; a bar for each day, coloured by
+  agent; tables by agent and model and by project. Sandhill counts only
+  its own conversations, from when this was built: each model request an
+  agent reports to it (Claude Code's status line, Codex's token reports,
+  pi's replies, OpenScience's and Oh My Pi's turns), kept on the device in
+  `usage/<month>.jsonl` of its state folder. It never reads the agents'
+  own folders. Costs are the agents' own estimates at list prices; Codex
+  gives none, so its cost shows "–". Read when shown and on Refresh, never
+  on a timer.

@@ -26,6 +26,7 @@ mod devices;
 mod general;
 mod projects;
 mod trusted;
+mod usage;
 
 const SIDEBAR_WIDTH: f32 = 260.;
 /// The page column's widest, and the room around it.
@@ -71,6 +72,8 @@ pub(crate) enum Page {
     Resources,
     Trusted,
     Accounts,
+    /// What the agents in Sandhill's conversations used (Huan, 2026-11-16).
+    Usage,
     General,
 }
 
@@ -132,6 +135,9 @@ pub(crate) struct Start {
     trusted: HashMap<String, Result<Vec<TrustedFolder>, String>>,
     /// Bound to both the selected device and that device's attach generation.
     accounts: Option<(String, u64, Entity<AccountManager>)>,
+    /// The Usage page's figures, bound to a device and its attach
+    /// generation as `accounts` is.
+    usage: Option<(String, u64, Entity<usage::UsageView>)>,
     /// The page on the right (Huan, 2026-11-12: Projects first).
     pub(crate) page: Page,
     _subscriptions: Vec<Subscription>,
@@ -190,6 +196,7 @@ impl Start {
             opening: false,
             trusted: HashMap::new(),
             accounts: None,
+            usage: None,
             page: Page::Device,
             _subscriptions: subscriptions,
         }
@@ -542,6 +549,10 @@ impl AppWindow {
                     let host = this.start.selected_host.clone();
                     this.show_start(StartMode::Accounts(host), window, cx);
                 })),
+            )
+            .child(
+                sidebar_row("start-usage", "history", "Usage", page == Page::Usage, &p)
+                    .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Usage, cx))),
             );
         let sidebar = side_pane(&p)
             .rounded_none()
@@ -596,6 +607,7 @@ impl AppWindow {
             Page::Resources => self.resource_page(window, cx),
             Page::Trusted => self.trusted_folders(list_height, cx),
             Page::Accounts => self.agent_accounts_page(cx),
+            Page::Usage => self.usage_page(cx),
             Page::General => self.general_page(cx),
         };
         let footnote = matches!(page, Page::Projects | Page::Device);
@@ -704,6 +716,9 @@ impl AppWindow {
         }
         if page != Page::Accounts {
             self.start.accounts = None;
+        }
+        if page != Page::Usage {
+            self.start.usage = None;
         }
         if matches!(page, Page::Projects | Page::Device) {
             self.start.refresh(cx);

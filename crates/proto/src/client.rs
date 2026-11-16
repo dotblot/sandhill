@@ -727,6 +727,18 @@ impl Client {
         self.call(Call::ListTrustedFolders).await
     }
 
+    pub async fn usage_stats(
+        &self,
+        days: u32,
+        tz_offset_minutes: i32,
+    ) -> Result<crate::UsageStats> {
+        self.call(Call::UsageStats {
+            days,
+            tz_offset_minutes,
+        })
+        .await
+    }
+
     pub async fn stat_files(&self, paths: Vec<String>) -> Result<Vec<FileStat>> {
         self.call(Call::StatFiles { paths }).await
     }

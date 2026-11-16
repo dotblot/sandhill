@@ -541,6 +541,20 @@ async fn pi_works_through_the_chat() {
         terminals.info(&info.id).unwrap().agent.unwrap()["thread"],
         thread.as_str()
     );
+    // Each of pi's replies is in Usage, with the tokens its model reported.
+    let client = sandhill_proto::client::Client::connect_unix(&socket)
+        .await
+        .unwrap();
+    let usage = client.usage_stats(2, 0).await.unwrap();
+    // The message that was stopped never finished, so it has none.
+    let finished = requests.lock().unwrap().len() as u64 - 1;
+    assert_eq!(usage.totals.requests, finished, "{:?}", usage.totals);
+    assert_eq!(
+        usage.totals.input + usage.totals.cache_read,
+        1200 * finished
+    );
+    assert_eq!(usage.totals.output, 30 * finished);
+    assert_eq!(usage.models[0].agent, "pi", "{usage:?}");
     terminals.close(&info.id).await.unwrap();
 }
 

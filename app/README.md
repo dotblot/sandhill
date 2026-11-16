@@ -1335,6 +1335,12 @@ preview and R's imports weren't seen.
   to Tab's menus; `...` items are dropped and `signature::Hint::useful`
   hides `c(...)`/`f()` hints; `editor/indent.rs` `continuation` indents
   Enter inside open calls (captured in `view/cells.rs`).
+- **Usage** (Huan, 2026-11-16; `docs/design/done/usage-stats-plan.md`):
+  the terminal host records each request an agent reports
+  (`record_status` for status lines and token reports, `kind: "usage"`
+  chat events from the pi and ACP bridges) into `crate::usage`'s monthly
+  files; `Call::UsageStats { days, tz_offset_minutes }` adds them up.
+  Welcome's `start_screen/usage.rs` draws the page.
 
 
 ## Running it

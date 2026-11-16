@@ -613,6 +613,16 @@ impl Daemon {
                 let journal = self.journal.clone();
                 serde_json::to_value(blocking(move || projects::trust::list(&journal)).await?)?
             }
+            Call::UsageStats {
+                days,
+                tz_offset_minutes,
+            } => {
+                let root = self.state.root().to_path_buf();
+                serde_json::to_value(
+                    blocking(move || Ok(crate::usage::stats(&root, days, tz_offset_minutes)))
+                        .await?,
+                )?
+            }
             Call::SystemStats { path } => self.system_stats(path).await?,
             Call::ReadLog { bytes } => self.read_log(bytes).await?,
             Call::PrepareAttach { build } => self.prepare_attach(&build)?,
