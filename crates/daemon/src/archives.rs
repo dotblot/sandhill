@@ -485,7 +485,9 @@ fn add_to_zip(
 /// A file's modification time as zip stores it: local time, from 1980.
 fn zip_time(mtime: i64) -> DateTime {
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let time = mtime as libc::time_t;
+    // The type `localtime_r` takes, without naming `libc::time_t` (deprecated
+    // on musl, which is changing its width).
+    let time = mtime as _;
     // SAFETY: both pointers are valid for the call; localtime_r is the
     // thread-safe form.
     if unsafe { libc::localtime_r(&time, &mut tm) }.is_null() {
