@@ -265,18 +265,21 @@ impl Agents {
                     cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|this, _: &Paste, _, cx| {
+            .capture_action(cx.listener(|this, _: &Paste, window, cx| {
                 // An image or files on the clipboard are attached; text
-                // pastes as usual.
-                if this.paste_attachments(cx) {
+                // pastes as usual. Not in the context panel's own field.
+                let here = this.composer.read(cx).focus_handle(cx).is_focused(window);
+                if here && this.paste_attachments(cx) {
                     cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|this, _: &Backspace, _, cx| {
+            .capture_action(cx.listener(|this, _: &Backspace, window, cx| {
                 // Backspace at the start takes the last chip away.
                 let at_start = {
                     let c = this.composer.read(cx);
-                    c.selected_range().is_empty() && c.cursor() == 0
+                    c.focus_handle(cx).is_focused(window)
+                        && c.selected_range().is_empty()
+                        && c.cursor() == 0
                 };
                 if at_start && !this.refs.is_empty() {
                     this.refs.pop();
@@ -450,7 +453,15 @@ impl Agents {
             Menu::Mention { .. } => (self.render_mentions(p, cx), false),
             Menu::Mode => (self.render_modes(p, cx), false),
             Menu::Model => (self.render_models(p, window, cx), true),
-            Menu::Context => (render_context(t?, p, cx), true),
+            Menu::Context => {
+                let t = t?;
+                let body = if crate::agents::context_panel::has_panel(&t.kind) {
+                    self.render_context_panel(t, p, cx)
+                } else {
+                    render_context(t, p, cx)
+                };
+                (body, true)
+            }
         };
         let trigger = match self.menu.as_ref()? {
             Menu::Mode => "agent-mode",

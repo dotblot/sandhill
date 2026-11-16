@@ -49,9 +49,58 @@ impl Bridge {
                         .await;
                 }
             }
+            "undo" => self.undo().await,
             "login" => self.login(command["method"].as_str() == Some("code")).await,
             _ => {}
         }
+    }
+
+    async fn undo(self: &Arc<Self>) {
+        let target = {
+            let mut state = self.state.lock().unwrap();
+            let target = state
+                .undo_target()
+                .map(|(thread, turn)| (thread.to_owned(), turn.to_owned()));
+            if target.is_ok() {
+                // Reserve the conversation, as say does while starting a turn:
+                // queued messages must not start during the history replacement.
+                state.turn = Some(String::new());
+            }
+            target
+        };
+        let (thread, turn) = match target {
+            Ok(target) => target,
+            Err(err) => {
+                self.chat(json!({"kind": "error", "text": err.to_string()}))
+                    .await;
+                return;
+            }
+        };
+        match self
+            .rpc
+            .call(
+                "thread/revert",
+                json!({"threadId": thread, "beforeTurnId": turn}),
+            )
+            .await
+        {
+            // Notifications may update context during the revert, but only a
+            // subsequent usage notification is authoritative for the new counts.
+            Ok(_) => {
+                let event = {
+                    let mut state = self.state.lock().unwrap();
+                    state.turn = None;
+                    state.reverted(&turn)
+                };
+                self.chat(event).await;
+            }
+            Err(err) => {
+                self.state.lock().unwrap().turn = None;
+                self.chat(json!({"kind": "error", "text": format!("Codex couldn't undo the last exchange: {err:#}")})).await;
+            }
+        }
+        self.report(json!({})).await;
+        self.next();
     }
 
     /// Starts a turn with the user's message, or keeps it for the next turn
@@ -299,5 +348,27 @@ mod tests {
                 json!({"type": "skill", "name": "scan", "path": "/skills/scan/SKILL.md"})
             ]
         );
+    }
+
+    #[test]
+    fn undo_uses_the_completed_turn_id_and_writes_a_revert_entry() {
+        let mut state = State {
+            thread: "thread-1".into(),
+            completed: vec!["turn-1".into(), "turn-2".into()],
+            ..State::default()
+        };
+        state.history.extend(state.completed.iter().cloned());
+        assert_eq!(state.undo_target().unwrap(), ("thread-1", "turn-2"));
+        state.turn = Some("turn-3".into());
+        assert!(state.undo_target().is_err());
+        state.turn = None;
+        assert_eq!(
+            state.reverted("turn-2"),
+            json!({"kind": "revert", "turn": "turn-2"})
+        );
+        assert!(!state.history.contains("turn-2"));
+        assert_eq!(state.undo_target().unwrap(), ("thread-1", "turn-1"));
+        state.reverted("turn-1");
+        assert!(state.undo_target().is_err());
     }
 }

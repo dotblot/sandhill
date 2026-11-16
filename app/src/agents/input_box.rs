@@ -203,6 +203,29 @@ impl Agents {
         .detach();
     }
 
+    /// Saves `text` as `name` in the attachments folder, then adds it as a
+    /// chip (a conversation's summary, for the new one).
+    pub(crate) fn attach_text(&mut self, name: String, text: String, cx: &mut Context<Self>) {
+        let daemon = self.daemon.clone();
+        let folder = self.full_path(ATTACHMENTS);
+        cx.spawn(async move |this, cx| {
+            let saved = save_attachment(&daemon, &folder, &name, text, false).await;
+            this.update(cx, |this, cx| {
+                match saved {
+                    Ok(()) => this.add_ref(json!({
+                        "kind": "attach",
+                        "name": name,
+                        "path": format!("{ATTACHMENTS}/{name}"),
+                    })),
+                    Err(err) => this.problem = Some(format!("Could not save the summary: {err:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// The project's files and the variables of its running kernels.
     fn load_mentions(&mut self, cx: &mut Context<Self>) {
         let daemon = self.daemon.clone();
@@ -679,6 +702,12 @@ impl Agents {
         if !same {
             if menu == Menu::Model {
                 self.model_tab = None;
+            }
+            if menu == Menu::Context && self.compact_focus.is_none() {
+                self.compact_focus =
+                    Some(cx.new(|cx| {
+                        InputState::new(window, cx).placeholder("Keep in mind… (optional)")
+                    }));
             }
             self.menu = Some(menu);
         }

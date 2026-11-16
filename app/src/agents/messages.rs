@@ -214,7 +214,7 @@ impl Agents {
 
     /// Sends a message: to the bridge of an agent Sandhill drives, or as if
     /// typed into the agent's terminal.
-    fn send(
+    pub(crate) fn send(
         &mut self,
         t: &TerminalInfo,
         text: &str,

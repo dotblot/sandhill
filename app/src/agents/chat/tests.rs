@@ -257,6 +257,32 @@ fn puts_parts_together_and_marks_stopped_and_denied_steps() {
 }
 
 #[test]
+fn an_undone_exchange_leaves_the_chat() {
+    let chat = build(
+        &entries(vec![
+            json!({"turn": "t1", "kind": "prompt", "text": "one", "at_ms": 1}),
+            json!({"turn": "t1", "kind": "stop", "at_ms": 2}),
+            json!({"turn": "t2", "kind": "prompt", "text": "two", "at_ms": 3}),
+            json!({"turn": "t2", "kind": "step", "id": "b", "tool": "Bash", "input": {"command": "ls"}, "at_ms": 4}),
+            json!({"turn": "t2", "kind": "stop", "at_ms": 5}),
+            json!({"kind": "revert", "turn": "t2", "at_ms": 6}),
+        ]),
+        false,
+    );
+    let users: Vec<_> = chat
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            Item::User { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(users, ["one"]);
+    assert!(steps(&chat).is_empty());
+    assert_eq!(kinds(&chat).last(), Some(&"note"));
+}
+
+#[test]
 fn shows_questions_codex_requests_and_errors() {
     let chat = build(
         &entries(vec![

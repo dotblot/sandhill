@@ -11,6 +11,7 @@ pub(crate) mod cell_ai;
 pub(crate) mod chat;
 pub(crate) mod composer;
 pub(crate) mod composer_view;
+pub(crate) mod context_panel;
 pub(crate) mod edits;
 pub(crate) mod effort_bar;
 pub(crate) mod ghost;
@@ -339,6 +340,11 @@ pub struct Agents {
     /// What a new conversation's screen knows of the project.
     pub(crate) start: crate::agents::start::StartContext,
     pub(crate) menu: Option<Menu>,
+    /// The context panel's "keep in mind" for Claude Code's compact, made
+    /// when the panel first opens.
+    pub(crate) compact_focus: Option<Entity<InputState>>,
+    /// The conversation writing a summary to start a new one from.
+    pub(crate) summarizing: Option<String>,
     pub(crate) popup_triggers: crate::shell::popup::PopupTriggers,
     /// The model menu's tab: an agent's kind, or "fav".
     pub(crate) model_tab: Option<String>,
@@ -440,6 +446,8 @@ impl Agents {
             refs: Vec::new(),
             start: Default::default(),
             menu: None,
+            compact_focus: None,
+            summarizing: None,
             popup_triggers: crate::shell::popup::PopupTriggers::default(),
             model_tab: None,
             favourites: crate::prefs::favourites(),

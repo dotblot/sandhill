@@ -1282,6 +1282,16 @@ preview and R's imports weren't seen.
   ref (`composer::is_slash`); `say` turns it into what the agent takes with
   `composer::slash_message`. Enter with nothing matching sends the text as
   typed (`slash_unmatched`).
+- **Context panel** (Huan, 2026-11-16; `docs/design/done/context-plan.md`):
+  `agents/context_panel.rs` draws the ring's popup for Claude Code and
+  Codex from `agent.status` (`context`, `context_size`, `last`, `total`,
+  `cost_usd`, `duration_ms`, `api_duration_ms`, `lines_added/removed`,
+  `instructions`); others keep `composer_view::render_context`. Undo is a
+  `{kind: "undo"}` command, answered by a `revert` chat entry that
+  `chat::build` turns into dropping that turn; Continue as new starts Codex
+  with `AgentOptions.fork`. The summary is a message (`SUMMARY_PROMPT`)
+  whose reply `summary_outcome` waits for, then `open_with_summary` saves
+  with `attach_text` and opens a new conversation.
 
 
 ## Running it

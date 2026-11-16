@@ -62,6 +62,17 @@ differs, this wins.
   descriptions only), Codex's and pi's from asking them, OpenScience's and
   Oh My Pi's from their running conversation; Posit Assistant keeps its
   own screen's "/".
+- Context panel (Huan, 2026-11-16; `docs/design/done/context-plan.md`):
+  for Claude Code and Codex, the ring in the box opens a panel with how
+  full the conversation is (number, %, a bar of the last request's parts,
+  room left), the last request (read from cache, written to cache, new
+  input, reply, Codex's reasoning), the conversation's totals (Claude Code
+  also cost "at API prices", time and lines changed), Codex's instruction
+  files, and actions: Compact (Claude Code with an optional "keep in
+  mind"), Claude Code's full breakdown (its own /context), Codex's Undo
+  last exchange and Continue as new, and "New conversation with a summary"
+  (the agent writes a summary, which opens attached to a new conversation
+  with the same agent, model and mode). Other agents keep the plain popup.
 
 ## The agents
 - Agents: Claude Code and Codex run as unmodified CLIs. Do not read or reuse

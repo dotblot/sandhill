@@ -698,3 +698,498 @@ for line in sys.stdin:
     }
     terminals.close(&info.id).await.unwrap();
 }
+
+/// The same real bridge/host harness, with strict RPC validation for context
+/// actions. Each process owns its own durable thread, just as app-server does.
+#[tokio::test]
+async fn codex_context_undo_and_fork_preserve_report_and_chat_history() {
+    let Some(python) = sandhill_daemon::agents::find("python3") else {
+        eprintln!("skipping: python3 is needed for the fake Codex process");
+        return;
+    };
+    let dir = common::tempdir().unwrap();
+    let instruction = dir.path().canonicalize().unwrap().join("AGENTS.md");
+    let fake = dir.path().join("codex-context");
+    let script = r#"
+import json, pathlib, sys
+root = pathlib.Path(__file__).resolve().parent
+thread = None
+active = None
+turns = []
+number = 0
+def send(message):
+    print(json.dumps(message), flush=True)
+def event(method, **params):
+    send(dict(method=method, params=params))
+def save():
+    (root / (thread + '.json')).write_text(json.dumps(turns))
+def usage():
+    count = len(turns)
+    last = dict(inputTokens=12000, cachedInputTokens=10000, cacheWriteInputTokens=100,
+                outputTokens=350, reasoningOutputTokens=120, totalTokens=12350)
+    total = {key: value * count for key, value in last.items()}
+    event('thread/tokenUsage/updated', threadId=thread, turnId=turns[-1]['id'] if turns else '',
+          tokenUsage=dict(last=last if count else {key: 0 for key in last},
+                          total=total, modelContextWindow=200000))
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request['method']
+    params = request.get('params', {})
+    with (root / 'calls.jsonl').open('a') as out:
+        out.write(json.dumps(dict(kind='rpc', method=method, params=params)) + '\n')
+    result = {}
+    after = None
+    if method == 'initialize':
+        assert params['capabilities']['experimentalApi']
+    elif method == 'initialized':
+        continue
+    elif method in ('thread/start', 'thread/resume', 'thread/fork'):
+        assert params['cwd'] == str(root)
+        assert params['approvalPolicy'] == 'on-request'
+        assert params['sandbox'] == 'workspace-write'
+        assert params['developerInstructions']
+        if method == 'thread/start':
+            assert 'threadId' not in params
+            thread = 'context-thread'
+        elif method == 'thread/fork':
+            assert params['threadId'] == 'context-thread'
+            assert params['excludeTurns'] is False
+            turns = json.loads((root / 'context-thread.json').read_text())
+            thread = 'fork-thread'
+        else:
+            thread = params['threadId']
+            assert params['excludeTurns'] is False
+            turns = json.loads((root / (thread + '.json')).read_text())
+        number = max([int(turn['id'].split('-')[-1]) for turn in turns] + [0])
+        save()
+        result = dict(thread=dict(id=thread, turns=turns), model='test-model',
+                      instructionSources=[str(root / 'AGENTS.md'), '/shared/AGENTS.md'])
+        after = 'usage'
+    elif method == 'model/list':
+        result = dict(data=[])
+    elif method == 'account/read':
+        result = dict(account=None, requiresOpenaiAuth=False)
+    elif method == 'turn/start':
+        assert active is None
+        assert params['threadId'] == thread
+        number += 1
+        text = params['input'][0]['text']
+        active = dict(id='turn-' + str(number), status='inProgress', items=[
+            dict(type='userMessage', id='user-' + str(number), content=[dict(type='text', text=text)])
+        ])
+        turns.append(active)
+        save()
+        event('turn/started', turn=active)
+        result = dict(turn=active)
+        after = 'complete' if text != 'active' else None
+    elif method == 'turn/interrupt':
+        assert active is not None
+        assert params == dict(threadId=thread, turnId=active['id'])
+        active['status'] = 'interrupted'
+        after = 'interrupt'
+    elif method == 'thread/revert':
+        assert active is None
+        assert params == dict(threadId=thread, beforeTurnId=turns[-1]['id'])
+        if (root / 'fail-revert').exists():
+            send(dict(id=request['id'], error=dict(code=-32000, message='test revert failure')))
+            continue
+        turns.pop()
+        save()
+        result = dict(thread=dict(id=thread, turns=turns))
+        after = 'usage'
+    else:
+        raise AssertionError('unexpected RPC: ' + method)
+    send(dict(id=request['id'], result=result))
+    if after in ('complete', 'interrupt'):
+        if after == 'complete':
+            active['status'] = 'completed'
+            item = dict(type='agentMessage', id='reply-' + active['id'], text='reply: ' + text)
+            active['items'].append(item)
+            event('item/completed', turnId=active['id'], item=item)
+        save()
+        event('turn/completed', turn=active)
+        active = None
+        usage()
+    elif after == 'usage':
+        usage()
+"#;
+    std::fs::write(&fake, format!("#!{}\n{script}", python.display())).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let terminals = Terminals::new(
+        dir.path().join("terminals"),
+        env!("CARGO_BIN_EXE_sandhilld").into(),
+    );
+    let source = start_context_conversation(&terminals, dir.path(), &fake, None, None).await;
+    let (out, mut events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&source.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut entries = Vec::new();
+    let mut output = String::new();
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, agent| {
+            entries.iter().any(|e| e["kind"] == "session") && agent["status"]["total"]["input"] == 0
+        },
+    )
+    .await;
+    assert_eq!(
+        terminals.info(&source.id).unwrap().agent.unwrap()["status"]["instructions"],
+        json!([instruction, "/shared/AGENTS.md"])
+    );
+    command(&terminals, &source.id, json!({"kind": "undo"})).await;
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, _| {
+            entries.iter().any(|e| {
+                e["kind"] == "error" && e["text"].as_str().unwrap().contains("no exchange")
+            })
+        },
+    )
+    .await;
+    command(
+        &terminals,
+        &source.id,
+        json!({"kind": "say", "text": "active"}),
+    )
+    .await;
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, agent| {
+            agent["state"] == "busy"
+                && entries
+                    .iter()
+                    .any(|e| e["kind"] == "prompt" && e["text"] == "active")
+        },
+    )
+    .await;
+    command(&terminals, &source.id, json!({"kind": "undo"})).await;
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, _| {
+            entries.iter().any(|e| {
+                e["kind"] == "error" && e["text"].as_str().unwrap().contains("running turn")
+            })
+        },
+    )
+    .await;
+    assert!(
+        !records(dir.path())
+            .iter()
+            .any(|r| r["method"] == "thread/revert")
+    );
+    command(&terminals, &source.id, json!({"kind": "interrupt"})).await;
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, agent| {
+            agent["state"] == "idle"
+                && entries
+                    .iter()
+                    .any(|e| e["kind"] == "stop" && e["turn"] == "turn-1")
+        },
+    )
+    .await;
+    command(&terminals, &source.id, json!({"kind": "undo"})).await;
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, agent| {
+            agent["status"]["total"]["input"] == 0
+                && entries
+                    .iter()
+                    .any(|e| e["kind"] == "revert" && e["turn"] == "turn-1")
+        },
+    )
+    .await;
+    for (text, turn, input) in [("First", "turn-2", 12000), ("Second", "turn-3", 24000)] {
+        command(&terminals, &source.id, json!({"kind": "say", "text": text})).await;
+        until(
+            &terminals,
+            &source.id,
+            &mut events,
+            &mut entries,
+            &mut output,
+            |entries, _, agent| {
+                agent["status"]["total"]["input"] == input
+                    && entries
+                        .iter()
+                        .any(|e| e["kind"] == "stop" && e["turn"] == turn)
+                    && entries
+                        .iter()
+                        .any(|e| e["kind"] == "prompt" && e["turn"] == turn && e["text"] == text)
+            },
+        )
+        .await;
+    }
+    let status = terminals.info(&source.id).unwrap().agent.unwrap()["status"].clone();
+    assert_eq!(status["context"], 6.2);
+    assert_eq!(status["context_size"], 200000);
+    assert_eq!(
+        status["last"],
+        json!({"input": 2000, "cache_read": 10000, "cache_write": 100,
+        "output": 350, "reasoning": 120})
+    );
+    assert_eq!(
+        status["total"],
+        json!({"input": 24000, "output": 700, "reasoning": 240})
+    );
+    assert_eq!(
+        status["instructions"],
+        json!([instruction, "/shared/AGENTS.md"])
+    );
+    std::fs::write(dir.path().join("fail-revert"), "").unwrap();
+    command(&terminals, &source.id, json!({"kind": "undo"})).await;
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, _| {
+            entries.iter().any(|e| {
+                e["kind"] == "error" && e["text"].as_str().unwrap().contains("test revert failure")
+            })
+        },
+    )
+    .await;
+    assert!(
+        !entries
+            .iter()
+            .any(|e| e["kind"] == "revert" && e["turn"] == "turn-3")
+    );
+    std::fs::remove_file(dir.path().join("fail-revert")).unwrap();
+    command(&terminals, &source.id, json!({"kind": "undo"})).await;
+    until(
+        &terminals,
+        &source.id,
+        &mut events,
+        &mut entries,
+        &mut output,
+        |entries, _, agent| {
+            agent["status"]["total"]["input"] == 12000
+                && entries
+                    .iter()
+                    .any(|e| e["kind"] == "revert" && e["turn"] == "turn-3")
+        },
+    )
+    .await;
+    let source_chat =
+        sandhill_daemon::terminal::chat::read(&dir.path().join("terminals").join(&source.id), 0);
+    let fork =
+        start_context_conversation(&terminals, dir.path(), &fake, Some(source.id.clone()), None)
+            .await;
+    let (out, mut fork_events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&fork.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut fork_entries = Vec::new();
+    let mut fork_output = String::new();
+    until(
+        &terminals,
+        &fork.id,
+        &mut fork_events,
+        &mut fork_entries,
+        &mut fork_output,
+        |entries, _, agent| {
+            agent["thread"] == "fork-thread"
+                && agent["status"]["total"]["input"] == 12000
+                && entries.iter().any(|e| e["source"] == "fork")
+        },
+    )
+    .await;
+    let fork_dir = dir.path().join("terminals").join(&fork.id);
+    let copied = sandhill_daemon::terminal::chat::read(&fork_dir, 0);
+    assert_eq!(&copied[..source_chat.len()], source_chat.as_slice());
+    assert!(
+        copied
+            .iter()
+            .enumerate()
+            .all(|(seq, entry)| entry.seq == seq as u64)
+    );
+    // Reverted entries and markers are copied intact; the app removes those
+    // exchanges on replay. The actual Codex fork contains only the prefix.
+    let durable: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("fork-thread.json")).unwrap())
+            .unwrap();
+    assert_eq!(durable.as_array().unwrap().len(), 1);
+    assert_eq!(durable[0]["id"], "turn-2");
+    assert_eq!(
+        terminals.info(&fork.id).unwrap().agent.unwrap()["status"]["instructions"],
+        status["instructions"]
+    );
+    // Forks can immediately undo their inherited last exchange.
+    command(&terminals, &fork.id, json!({"kind": "undo"})).await;
+    until(
+        &terminals,
+        &fork.id,
+        &mut fork_events,
+        &mut fork_entries,
+        &mut fork_output,
+        |entries, _, agent| {
+            agent["status"]["total"]["input"] == 0
+                && entries
+                    .iter()
+                    .any(|e| e["kind"] == "revert" && e["turn"] == "turn-2")
+        },
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &std::fs::read(dir.path().join("context-thread.json")).unwrap()
+        )
+        .unwrap(),
+        durable
+    );
+    terminals.close(&fork.id).await.unwrap();
+    terminals.close(&source.id).await.unwrap();
+    // Resume obtains instruction sources again and retains the durable undo target.
+    let resumed =
+        start_context_conversation(&terminals, dir.path(), &fake, None, Some("context-thread"))
+            .await;
+    let (out, mut resumed_events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&resumed.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    let mut resumed_entries = Vec::new();
+    let mut resumed_output = String::new();
+    until(
+        &terminals,
+        &resumed.id,
+        &mut resumed_events,
+        &mut resumed_entries,
+        &mut resumed_output,
+        |entries, _, agent| {
+            agent["status"]["instructions"].is_array()
+                && entries.iter().any(|e| e["source"] == "resume")
+        },
+    )
+    .await;
+    command(&terminals, &resumed.id, json!({"kind": "undo"})).await;
+    until(
+        &terminals,
+        &resumed.id,
+        &mut resumed_events,
+        &mut resumed_entries,
+        &mut resumed_output,
+        |entries, _, _| {
+            entries
+                .iter()
+                .any(|e| e["kind"] == "revert" && e["turn"] == "turn-2")
+        },
+    )
+    .await;
+    terminals.close(&resumed.id).await.unwrap();
+    let missing = dir.path().join("terminals").join("missing-thread");
+    std::fs::create_dir_all(&missing).unwrap();
+    std::fs::write(missing.join("agent.json"), "{}").unwrap();
+    let failed = start_context_conversation(
+        &terminals,
+        dir.path(),
+        &fake,
+        Some("missing-thread".into()),
+        None,
+    )
+    .await;
+    let (out, mut failed_events) = mpsc::unbounded_channel();
+    tokio::spawn(
+        terminals
+            .open(&failed.id, Some(0), Some(0))
+            .await
+            .unwrap()
+            .forward(out),
+    );
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            if let Some(ServerMessage::Terminal { terminal }) = failed_events.recv().await
+                && let Some(entry) = terminal.chat
+                && entry.event["kind"] == "error"
+            {
+                assert!(
+                    entry.event["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("source conversation has no Codex thread")
+                );
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    terminals.close(&failed.id).await.unwrap();
+}
+
+async fn start_context_conversation(
+    terminals: &Terminals,
+    dir: &Path,
+    codex: &Path,
+    fork: Option<String>,
+    thread: Option<&str>,
+) -> sandhill_proto::TerminalInfo {
+    let options = AgentOptions {
+        fork,
+        ..AgentOptions::default()
+    };
+    let mut args = vec![
+        "--socket".into(),
+        dir.join("unused.sock").to_string_lossy().into_owned(),
+        "codex-chat".into(),
+        "--codex".into(),
+        codex.to_string_lossy().into_owned(),
+        "--options".into(),
+        serde_json::to_string(&options).unwrap(),
+    ];
+    if let Some(thread) = thread {
+        args.extend(["--thread".into(), thread.into()]);
+    }
+    terminals
+        .start(Launch {
+            kind: "codex".into(),
+            title: "Codex context".into(),
+            program: env!("CARGO_BIN_EXE_sandhilld").into(),
+            args,
+            env: vec![],
+            cwd: dir.to_path_buf(),
+            project: None,
+            options,
+            size: None,
+            job: None,
+        })
+        .await
+        .unwrap()
+}

@@ -157,11 +157,17 @@ enum Part {
 /// agent says it is busy: a turn the agent was stopped in has no `stop`.
 pub fn build(entries: &[Entry], working: bool) -> Chat {
     let mut answers: HashMap<String, Value> = HashMap::new();
+    // Exchanges undone (Codex's Undo last exchange): their entries go.
+    let mut undone: Vec<&str> = Vec::new();
     for entry in entries {
-        if str_of(&entry.event, "kind") == Some("answered")
-            && let Some(id) = str_of(&entry.event, "id")
-        {
-            answers.insert(id.to_string(), entry.event["answer"].clone());
+        match str_of(&entry.event, "kind") {
+            Some("answered") => {
+                if let Some(id) = str_of(&entry.event, "id") {
+                    answers.insert(id.to_string(), entry.event["answer"].clone());
+                }
+            }
+            Some("revert") => undone.extend(str_of(&entry.event, "turn")),
+            _ => {}
         }
     }
     // Turns in the order they started, with the notes between them.
@@ -174,12 +180,19 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
         if kind == "answered" {
             continue;
         }
+        if kind == "revert" {
+            order.push(Part::Loose(entry.clone()));
+            continue;
+        }
         let Some(turn_id) = str_of(event, "turn") else {
             if matches!(kind, "session" | "error" | "account") {
                 order.push(Part::Loose(entry.clone()));
             }
             continue;
         };
+        if undone.contains(&turn_id) {
+            continue;
+        }
         let ix = *by_id.entry(turn_id.to_string()).or_insert_with(|| {
             turns.push(Turn {
                 id: turn_id.to_string(),
@@ -212,6 +225,11 @@ pub fn build(entries: &[Entry], working: bool) -> Chat {
                     chat.items.push(Item::Account {
                         key: format!("account{}", entry.seq),
                         name: str_of(&entry.event, "name").unwrap_or("account").into(),
+                    });
+                } else if str_of(&entry.event, "kind") == Some("revert") {
+                    chat.items.push(Item::Note {
+                        key: format!("n{}", entry.seq),
+                        text: "The last exchange was undone.".into(),
                     });
                 } else if let Some(text) = session_note(&entry.event) {
                     chat.items.push(Item::Note {

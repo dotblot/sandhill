@@ -701,7 +701,7 @@ others.
 running, exit?: {code?, signal?, ended_ms, idle?}, end, options?, agent?,
 outdated?, name?, job?, output_paths?}`. `started_ms` is when its program last started. `end`
 is the number of output bytes so far. `options` is what the agent was started
-with: `{model?, effort?, permission?, documents?, code?, pin?, web?, refs?, account?}`,
+with: `{model?, effort?, permission?, documents?, code?, pin?, web?, refs?, account?, fork?}`,
 where `permission` is `supervised`, `edits`, `auto`, `full`, `plan`,
 `restricted` or `ask`, `code: "console"` sends the agent's code to the
 Console (below), and the rest are the message box's choices (below).
@@ -712,6 +712,13 @@ build's MCP server, hooks and instructions until it is started again, so the
 app suggests a new session. Without `cwd`, a terminal starts in the `project`
 folder, else the home folder. An agent's `prompt` is its first message, which
 it answers as it starts.
+For Codex, `options.fork` is the source terminal ID for a new conversation.
+The bridge reads its `agent.thread`, copies its chat entries through the new
+terminal host (preserving timestamps and `revert` markers, assigning sequential
+entry numbers), then calls `thread/fork`. The new conversation gets its own
+thread; restarting it resumes that thread rather than forking again. A source
+without a thread produces a visible chat error.
+
 
 `restart_terminal` starts a terminal's program again in the same terminal,
 ending it first if it still runs (an exit with `ended_ms` before the new
@@ -782,10 +789,16 @@ Agents report through hooks that run `sandhilld terminal-event`: `agent` is
 `mode` is Claude Code's permission mode as its hooks last reported it
 (`default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`...), so a mode
 changed in the terminal shows.
-`status` comes from Claude Code's status line: `{model, model_id, context,
-context_size, effort?, rate_limits?, cost_usd?, version}`, with `context` the
-percent of the context window in use and `rate_limits` the plan's 5-hour and
-weekly use.
+`status` comes from Claude Code's status line: `{model?, model_id?, context?,
+context_size?, effort?, rate_limits?, cost_usd?, version?, last?, total?,
+duration_ms?, api_duration_ms?, lines_added?, lines_removed?}`. `context` is
+the percentage of the context window in use, `context_size` is tokens, and
+`rate_limits` is the plan's 5-hour and weekly use. `last` has token counts
+`{input?, cache_read?, cache_write?, output?}` from the current request;
+`total` has conversation token counts `{input?, output?}`. Cost is USD at API
+prices, durations are milliseconds (wall time and API time respectively), and
+line counts are conversation additions/removals. Missing measurements are
+omitted, including `last` when Claude reports no current usage.
 
 Claude Code's hooks also record its conversation, so the app can show it as
 a chat while the agent runs unmodified in its terminal. With `chat_from`,
@@ -813,6 +826,9 @@ for all of it), then each new entry, as terminal messages with `chat`:
   resumes, is cleared or compacted.
 - `error {turn?, text}`: something went wrong, such as a turn Codex couldn't
   start or finish; without `turn` it is about the conversation.
+- `revert {turn}`: Codex undid this exchange. Remove every entry with that
+  turn ID, including the user's `prompt`, when applying or replaying the log.
+  The append-only log retains those entries and this marker.
 - `account {account, name}`: the daemon's account-switch divider, where
   `account` is the selected account ID and `name` its display name. It is
   retained across terminal restarts and replayed with the conversation.
@@ -846,13 +862,28 @@ what it is thinking). `permissions` asks for more access
 (`{reason, permissions}`). What the user does in the chat goes to the bridge
 with `tell_terminal`; `command` is one of `{kind: "say", text}`,
 `{kind: "interrupt"}`, `{kind: "set", model?, effort?, permission?}` (from
-the next turn on; `model: null` is Codex's default), `{kind: "compact"}` and
-`{kind: "login", method: "browser" | "code"}`. Commands sent while the bridge
+the next turn on; `model: null` is Codex's default), `{kind: "compact"}`,
+`{kind: "undo"}` and `{kind: "login", method: "browser" | "code"}`.
+Undo calls `thread/revert` before the most recently ended durable turn and
+appends `revert` with that turn's ID on success. It refuses while a turn runs
+or when there is no exchange, and reports failures as chat errors. It changes
+conversation history only, not local files. Commands sent while the bridge
 isn't connected wait for it. Its `agent` reports also have `thread` (Codex's
 thread id), `permission` (the mode it is in, named as in `options`), `models` (`[{id, label, efforts?,
 effort?, default?}]`), `account` (`{type, email?, plan?}`, or null when it
 isn't signed in), `auth_required` and `login` (`{url, code?}` while signing
 in, or `{error}`).
+Codex's `agent.status` also carries `context` (percent), `context_size` (tokens),
+`last: {input?, cache_read?, cache_write?, output?, reasoning?}` and
+`total: {input?, output?, reasoning?}` (all token counts). Last-request `input`
+is `max(0, inputTokens - cachedInputTokens)`; total input includes cache hits.
+Reasoning is the agent's reported reasoning output, not extra output to add
+to `output`. Counts remain available even without a known context window.
+`instructions`, when supplied, is an array of absolute instruction-source
+paths from thread start/resume/fork; it survives subsequent status updates.
+Undo leaves usage to the next Codex token-usage notification rather than
+estimating a replacement.
+
 
 Antigravity runs the same way, with its own bridge, `sandhilld agy-chat`,
 which runs `agy` in its headless mode once per message and goes on with

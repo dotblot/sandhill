@@ -653,6 +653,7 @@ pub fn live_options(t: &TerminalInfo) -> AgentOptions {
         pin: None,
         refs: Vec::new(),
         account: t.options.account.clone(),
+        fork: None,
     }
 }
 

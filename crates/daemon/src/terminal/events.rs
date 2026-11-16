@@ -235,8 +235,48 @@ fn status(input: &Value) -> Value {
         "effort": input["effort"]["level"],
         "rate_limits": input["rate_limits"],
         "cost_usd": input["cost"]["total_cost_usd"],
+        "duration_ms": input["cost"]["total_duration_ms"],
+        "api_duration_ms": input["cost"]["total_api_duration_ms"],
+        "lines_added": input["cost"]["total_lines_added"],
+        "lines_removed": input["cost"]["total_lines_removed"],
         "version": input["version"],
     });
+    for (key, fields) in [
+        (
+            "last",
+            &[
+                ("input", "input_tokens"),
+                ("cache_read", "cache_read_input_tokens"),
+                ("cache_write", "cache_creation_input_tokens"),
+                ("output", "output_tokens"),
+            ][..],
+        ),
+        (
+            "total",
+            &[
+                ("input", "total_input_tokens"),
+                ("output", "total_output_tokens"),
+            ][..],
+        ),
+    ] {
+        let source = if key == "last" {
+            &input["context_window"]["current_usage"]
+        } else {
+            &input["context_window"]
+        };
+        let values: serde_json::Map<String, Value> = fields
+            .iter()
+            .filter_map(|(to, from)| {
+                source
+                    .get(*from)
+                    .filter(|value| !value.is_null())
+                    .map(|value| ((*to).into(), value.clone()))
+            })
+            .collect();
+        if !values.is_empty() {
+            out[key] = Value::Object(values);
+        }
+    }
     if let Some(map) = out.as_object_mut() {
         map.retain(|_, v| !v.is_null());
     }
@@ -342,6 +382,33 @@ mod tests {
                 "context_size": 200000,
                 "rate_limits": {"five_hour": {"used_percentage": 42, "resets_at": "2026-10-12T05:00:00Z"}},
             })
+        );
+        let input = json!({
+            "context_window": {
+                "used_percentage": 42, "context_window_size": 200000,
+                "current_usage": {"input_tokens": 1200, "cache_read_input_tokens": 80000,
+                    "cache_creation_input_tokens": 2000, "output_tokens": 350},
+                "total_input_tokens": 180000, "total_output_tokens": 12000
+            },
+            "cost": {"total_cost_usd": 1.25, "total_duration_ms": 90000,
+                "total_api_duration_ms": 32000, "total_lines_added": 42, "total_lines_removed": 7}
+        });
+        assert_eq!(
+            status(&input),
+            json!({
+                "context": 42, "context_size": 200000,
+                "last": {"input": 1200, "cache_read": 80000, "cache_write": 2000, "output": 350},
+                "total": {"input": 180000, "output": 12000}, "cost_usd": 1.25,
+                "duration_ms": 90000, "api_duration_ms": 32000, "lines_added": 42, "lines_removed": 7
+            })
+        );
+        assert_eq!(
+            status(&json!({"context_window": {"current_usage": null}})),
+            json!({})
+        );
+        assert_eq!(
+            status(&json!({"context_window": {"current_usage": {"output_tokens": 0}}})),
+            json!({"last": {"output": 0}})
         );
     }
 }

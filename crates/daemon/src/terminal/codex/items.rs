@@ -488,13 +488,57 @@ pub fn mode_settings(permission: Option<&str>) -> Value {
     json!({"approvalPolicy": approval, "sandboxPolicy": sandbox, "approvalsReviewer": reviewer})
 }
 
-/// How much of the model's context the conversation uses, from Codex's
-/// token counts: `{context: percent, context_size}`.
+/// Context fullness and request/conversation token counts reported by Codex.
+/// `inputTokens` includes cached input; the last request shows only new input.
 pub fn context(usage: &Value) -> Option<Value> {
-    let size = usage["modelContextWindow"].as_f64().filter(|s| *s > 0.0)?;
-    let used = usage["last"]["totalTokens"].as_f64()?;
-    let percent = (used * 100.0 / size).min(100.0);
-    Some(json!({"context": (percent * 10.0).round() / 10.0, "context_size": size as u64}))
+    let mut out = serde_json::Map::new();
+    if let Some(size) = usage["modelContextWindow"].as_f64().filter(|s| *s > 0.0)
+        && let Some(used) = usage["last"]["totalTokens"].as_f64()
+    {
+        let percent = (used * 100.0 / size).min(100.0);
+        out.insert("context".into(), json!((percent * 10.0).round() / 10.0));
+        out.insert("context_size".into(), json!(size as u64));
+    }
+    for (key, fields) in [
+        (
+            "last",
+            &[
+                ("input", "inputTokens"),
+                ("cache_read", "cachedInputTokens"),
+                ("cache_write", "cacheWriteInputTokens"),
+                ("output", "outputTokens"),
+                ("reasoning", "reasoningOutputTokens"),
+            ][..],
+        ),
+        (
+            "total",
+            &[
+                ("input", "inputTokens"),
+                ("output", "outputTokens"),
+                ("reasoning", "reasoningOutputTokens"),
+            ][..],
+        ),
+    ] {
+        let mut counts: serde_json::Map<String, Value> = fields
+            .iter()
+            .filter_map(|(to, from)| {
+                usage[key]
+                    .get(*from)
+                    .filter(|v| !v.is_null())
+                    .map(|v| ((*to).into(), v.clone()))
+            })
+            .collect();
+        if key == "last"
+            && let Some(input) = usage[key]["inputTokens"].as_i64()
+        {
+            let cached = usage[key]["cachedInputTokens"].as_i64().unwrap_or(0);
+            counts.insert("input".into(), json!(input.saturating_sub(cached).max(0)));
+        }
+        if !counts.is_empty() {
+            out.insert(key.into(), Value::Object(counts));
+        }
+    }
+    (!out.is_empty()).then_some(Value::Object(out))
 }
 
 /// Preserve Codex's actual window duration. Omitted windows are unchanged;
@@ -754,10 +798,15 @@ mod tests {
     fn usage_and_limits_preserve_actual_windows() {
         let messages = recorded();
         let usage = &find(&messages, "thread/tokenUsage/updated", "")["params"]["tokenUsage"];
+        let context = context(usage).unwrap();
+        assert_eq!(context["context"], 0.5);
+        assert_eq!(context["context_size"], 258400);
         assert_eq!(
-            context(usage).unwrap(),
-            json!({"context": 0.5, "context_size": 258400})
+            context["last"]["input"],
+            usage["last"]["inputTokens"].as_i64().unwrap()
+                - usage["last"]["cachedInputTokens"].as_i64().unwrap()
         );
+        assert_eq!(context["total"]["input"], usage["total"]["inputTokens"]);
         let limits = rate_limits(
             &Value::Null,
             &json!({"primary": {"usedPercent": 42.0, "windowDurationMins": 300, "resetsAt": 1792270000}, "secondary": null}),
@@ -774,6 +823,33 @@ mod tests {
         assert!(limits["secondary"]["window_minutes"].is_null());
         let limits = rate_limits(&limits, &json!({"primary": null}));
         assert!(limits.get("primary").is_none());
+    }
+
+    #[test]
+    fn usage_keeps_counts_without_a_known_context_window() {
+        let usage = json!({
+            "modelContextWindow": null,
+            "last": {"totalTokens": 12350, "inputTokens": 12000, "cachedInputTokens": 10000,
+                "cacheWriteInputTokens": 100, "outputTokens": 350, "reasoningOutputTokens": 120},
+            "total": {"totalTokens": 48700, "inputTokens": 48000, "cachedInputTokens": 30000,
+                "outputTokens": 700, "reasoningOutputTokens": 240}
+        });
+        assert_eq!(
+            context(&usage).unwrap(),
+            json!({
+                "last": {"input": 2000, "cache_read": 10000, "cache_write": 100, "output": 350, "reasoning": 120},
+                "total": {"input": 48000, "output": 700, "reasoning": 240}
+            })
+        );
+        assert_eq!(
+            context(&json!({"last": {"inputTokens": 5, "cachedInputTokens": 7}})).unwrap(),
+            json!({"last": {"input": 0, "cache_read": 7}})
+        );
+        assert_eq!(
+            context(&json!({"last": {"outputTokens": 0}})).unwrap(),
+            json!({"last": {"output": 0}})
+        );
+        assert!(context(&Value::Null).is_none());
     }
 
     #[test]

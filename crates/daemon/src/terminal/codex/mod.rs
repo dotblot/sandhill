@@ -520,6 +520,8 @@ struct State {
     view_mode: String,
     /// Durable turns already represented in Sandhill's chat.
     history: HashSet<String>,
+    /// Ended durable turns in conversation order, for Undo last exchange.
+    completed: Vec<String>,
     /// The turn Codex is working on.
     turn: Option<String>,
     /// The user's choices; `None` leaves Codex's own.
@@ -555,6 +557,27 @@ struct State {
     status: serde_json::Map<String, Value>,
     models: Value,
     todos: u32,
+}
+
+impl State {
+    fn undo_target(&self) -> Result<(&str, &str)> {
+        anyhow::ensure!(
+            !self.paused && self.turn.is_none() && self.waiting == 0,
+            "Stop the running turn before undoing its exchange."
+        );
+        let turn = self
+            .completed
+            .last()
+            .context("There is no exchange to undo.")?;
+        Ok((&self.thread, turn))
+    }
+
+    fn reverted(&mut self, turn: &str) -> Value {
+        self.completed.pop();
+        self.history.remove(turn);
+        self.shown.retain(|id| id != turn);
+        json!({"kind": "revert", "turn": turn})
+    }
 }
 
 #[derive(Default)]
@@ -783,6 +806,40 @@ impl Bridge {
                 params["excludeTurns"] = json!(false);
                 self.rpc.call("thread/resume", params).await?
             }
+            None if options.options.fork.is_some() => {
+                let source = options.options.fork.as_deref().unwrap();
+                anyhow::ensure!(
+                    Path::new(source).components().count() == 1
+                        && matches!(
+                            Path::new(source).components().next(),
+                            Some(std::path::Component::Normal(_))
+                        ),
+                    "Invalid source conversation"
+                );
+                let source = self
+                    .dir
+                    .parent()
+                    .context("No conversations folder")?
+                    .join(source);
+                let report: Value = serde_json::from_slice(
+                    &tokio::fs::read(Paths::new(&source).agent())
+                        .await
+                        .context("The source conversation has no Codex thread")?,
+                )?;
+                let thread = report["thread"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .context("The source conversation has no Codex thread")?;
+                // The host already owns the destination log. Append through it so
+                // replay, live subscribers and subsequent sequence numbers agree.
+                // Keep revert entries: clients apply them just as in the source.
+                for entry in super::chat::read(&source, 0) {
+                    self.host.send(&ToHost::Chat { event: entry.event }).await?;
+                }
+                params["threadId"] = json!(thread);
+                params["excludeTurns"] = json!(false);
+                self.rpc.call("thread/fork", params).await?
+            }
             None => {
                 params["serviceName"] = json!("sandhill");
                 self.rpc.call("thread/start", params).await?
@@ -803,6 +860,21 @@ impl Bridge {
             state
                 .status
                 .insert("model".into(), started["model"].clone());
+            if let Some(sources) = started["instructionSources"].as_array() {
+                let paths: Vec<PathBuf> = sources
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|path| {
+                        let path = Path::new(path);
+                        if path.is_absolute() {
+                            path.to_path_buf()
+                        } else {
+                            self.cwd.join(path)
+                        }
+                    })
+                    .collect();
+                state.status.insert("instructions".into(), json!(paths));
+            }
             if state.effort.is_none() {
                 state.effort = effort;
             }
@@ -822,6 +894,8 @@ impl Bridge {
         // The conversation has started, as Claude Code's SessionStart hook says.
         let source = if options.thread.is_some() {
             "resume"
+        } else if options.options.fork.is_some() {
+            "fork"
         } else {
             "startup"
         };
@@ -835,6 +909,9 @@ impl Bridge {
             for turn in history.as_array().into_iter().flatten() {
                 if let Some(id) = turn["id"].as_str() {
                     state.history.insert(id.to_string());
+                    if turn["status"] != "inProgress" {
+                        state.completed.push(id.to_string());
+                    }
                 }
             }
         }

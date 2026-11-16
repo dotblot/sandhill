@@ -151,6 +151,9 @@ pub struct AgentOptions {
     /// a conversation, which goes on where it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// Codex only: start a new thread from this source terminal's conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<String>,
 }
 
 impl AgentOptions {
@@ -288,5 +291,18 @@ mod tests {
         assert_eq!(options.permission.as_deref(), Some("ask"));
         assert_eq!(options.model.as_deref(), Some("opus"));
         assert!(serde_json::to_value(options).unwrap().get("web").is_none());
+        let options: AgentOptions =
+            serde_json::from_value(json!({"fork": "source-terminal"})).unwrap();
+        assert_eq!(options.fork.as_deref(), Some("source-terminal"));
+        assert_eq!(
+            serde_json::to_value(options).unwrap(),
+            json!({"fork": "source-terminal"})
+        );
+        assert!(
+            serde_json::to_value(AgentOptions::default())
+                .unwrap()
+                .get("fork")
+                .is_none()
+        );
     }
 }

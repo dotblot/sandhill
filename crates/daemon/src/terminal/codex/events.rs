@@ -297,6 +297,9 @@ impl Bridge {
         let (plan, errored, shown) = {
             let mut state = self.state.lock().unwrap();
             state.history.insert(id.clone());
+            if !state.completed.contains(&id) {
+                state.completed.push(id.clone());
+            }
             state.turn = None;
             state.started = false;
             state.stopping = false;
