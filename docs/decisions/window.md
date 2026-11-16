@@ -10,6 +10,15 @@ differs, this wins.
   other (the two groups split 1:1). Middle: the editor, with Console,
   Terminal and Jobs under it. Right: the AI pane. Resource indicators follow
   the device connection at the left of the status bar (Huan, 2026-11-08).
+  The status bar (Huan, 2026-11-15; `docs/design/done/status-bar-plan.md`)
+  is 20px round capsules with 13px text: the device with its resources as
+  numbers ("CPU 12%", red at 80%), then Restricted in amber, a running
+  task with × to cancel, the latest message (problems red with × to
+  dismiss, full text on hover), and at the right each agent's limits as
+  what is left ("5h 62%  7d 88%", green/amber/red, "–" until checked). A
+  chevron hides the resources, and hidden they are not measured at all
+  (this Mac's choice, for every device). Narrow windows drop the resource
+  numbers, then the agents' numbers.
   The AI pane and the right side pane are shown by default. Each pane's tab
   bar ends with a maximize button: the pane fills the space between the title
   and status bars until clicked again or Escape. A title-bar toggle between

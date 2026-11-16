@@ -23,6 +23,9 @@ use crate::agents::{Agents, Show};
 use crate::daemon::Daemon;
 use crate::look::{self, Palette};
 
+/// Below this window width the status bar shows only the agents' marks.
+const NUMBERS_WIDTH: f32 = 820.;
+
 /// OpenScience, Oh My Pi and pi use the user's own model accounts and keys,
 /// and Posit Assistant manages its own models: none has a quota to show.
 /// Agents turned off for now are never asked.
@@ -736,7 +739,9 @@ impl QuotaMonitor {
 }
 
 impl Render for QuotaMonitor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // On a narrow window only the agents' marks stay.
+        let numbers = window.viewport_size().width >= px(NUMBERS_WIDTH);
         let p = *Palette::get(cx);
         let hover = p.ink(7.);
         let now = chrono::Utc::now().timestamp_millis();
@@ -747,7 +752,7 @@ impl Render for QuotaMonitor {
         let mut strip = h_flex()
             .id("account-quota")
             .flex_none()
-            .gap(px(5.))
+            .gap(px(8.))
             .text_size(px(look::SMALL))
             .text_color(p.muted);
         let mut visible = false;
@@ -830,10 +835,12 @@ impl Render for QuotaMonitor {
                 let mut item = h_flex()
                     .id(kind)
                     .flex_none()
-                    .h(px(24.))
-                    .px(px(6.))
+                    .h(px(20.))
+                    .pl(px(6.))
+                    .pr(px(if numbers { 8. } else { 6. }))
                     .gap(px(5.))
-                    .rounded(px(6.))
+                    .rounded_full()
+                    .bg(p.cap_bg)
                     .cursor_pointer()
                     .when(self.quota_open == Some(provider_popup), |d| d.bg(hover))
                     .hover(move |d| d.bg(hover))
@@ -850,23 +857,34 @@ impl Render for QuotaMonitor {
                         cx.notify();
                     }))
                     .child(crate::agents::view::provider(kind).size(px(14.)));
-                for window in windows.iter().take(if kind == "antigravity" {
+                // What is left in each window, coloured as the panel's bars:
+                // "5h 62%  7d 88%"; "–" until checked.
+                let shown = windows.iter().take(if kind == "antigravity" {
                     windows.len()
                 } else {
                     2
-                }) {
+                });
+                for (ix, window) in shown.enumerate().filter(|_| numbers) {
                     let value = (selected.is_none_or(|account| {
                         account.method != "api_key" && account.signed_in == Some(true)
                     }) && now >= account.observed_at)
                         .then(|| window.remaining(now))
                         .flatten();
-                    item = item.child(crate::shell::meter::labelled_ring(
-                        value.map(|left| left / 100.),
-                        value.map_or(p.faint, |left| remaining_color(left, &p)),
-                        p.faint,
-                        window.ring_label.clone(),
-                        p.text,
-                    ));
+                    item = item.child(
+                        h_flex()
+                            .gap(px(3.))
+                            .when(ix > 0, |d| d.ml(px(3.)))
+                            .child(div().text_color(p.muted).child(window.ring_label.clone()))
+                            .child(
+                                div()
+                                    .text_color(
+                                        value.map_or(p.faint, |left| remaining_color(left, &p)),
+                                    )
+                                    .child(value.map_or("–".to_string(), |left| {
+                                        format!("{}%", left.round() as i64)
+                                    })),
+                            ),
+                    );
                 }
                 strip = strip.child(item);
             }
@@ -1015,8 +1033,9 @@ impl Render for QuotaMonitor {
                 h_flex()
                     .id("quota-accounts")
                     .h(px(20.))
-                    .px(px(6.))
-                    .rounded(px(6.))
+                    .px(px(8.))
+                    .rounded_full()
+                    .bg(p.cap_bg)
                     .cursor_pointer()
                     .when(self.quota_open == Some(QuotaPopup::All), |d| d.bg(hover))
                     .hover(move |d| d.bg(hover))

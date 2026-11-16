@@ -141,6 +141,25 @@ pub(crate) fn save_agent_off(kind: &str, off: bool) {
     write("agentsOff", json!(all));
 }
 
+/// Whether the status bar shows, and the daemon is asked for, the device's
+/// CPU, memory, GPU and disk (Huan, 2026-11-15): hidden, nothing is
+/// measured. On this Mac for every device, shown at first.
+static RESOURCES_SHOWN: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(None);
+
+pub(crate) fn resources_shown() -> bool {
+    if let Some(shown) = *RESOURCES_SHOWN.read().unwrap() {
+        return shown;
+    }
+    let shown = read()["resourcesShown"].as_bool().unwrap_or(true);
+    *RESOURCES_SHOWN.write().unwrap() = Some(shown);
+    shown
+}
+
+pub(crate) fn save_resources_shown(shown: bool) {
+    *RESOURCES_SHOWN.write().unwrap() = Some(shown);
+    write("resourcesShown", json!(shown));
+}
+
 /// Icons chosen for projects: host → folder → icon path such as
 /// `folders/folder-src` (Huan, 2026-11-12). Kept in memory like names.
 pub(crate) type ProjectIcons =

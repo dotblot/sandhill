@@ -223,7 +223,7 @@ impl Render for Workbench {
                     .child(self.render_workspace(window, cx)),
             )
             .children(self.render_document_notice(cx))
-            .child(self.render_status(cx))
+            .child(self.render_status(window, cx))
             .children(self.render_resource_popup(cx))
             .children(self.render_zoom(window, cx))
             .children(self.render_settings_dialog(cx))
@@ -325,41 +325,69 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// The status bar: the current device and its resources, then the
-    /// latest problem or notice.
-    fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The status bar (Huan, 2026-11-15; `docs/design/done/status-bar-plan.md`):
+    /// where you are (the device and its resources, Restricted Mode), what
+    /// is happening (a running task, the latest message), then the AI
+    /// limits. All in 20px capsules; on a narrow window the message
+    /// shortens first, then the resource numbers hide.
+    fn render_status(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
+        let wide = window.viewport_size().width >= px(STATUS_WIDE);
+        let message = self
+            .problem
+            .clone()
+            .map(|text| (text, true))
+            .or_else(|| self.notice.clone().map(|text| (text, false)));
         h_flex()
             .flex_none()
             .w_full()
             .h(px(look::STATUS_BAR))
-            .pl(px(14.))
-            .pr(px(12.))
-            .gap(px(14.))
+            .pl(px(10.))
+            .pr(px(10.))
+            .gap(px(8.))
             .whitespace_nowrap()
             .overflow_hidden()
+            .text_size(px(look::SMALL))
             .text_color(p.text)
-            .child(self.render_connection_status(cx))
+            .child(self.render_device_capsule(wide, cx))
             .children(self.render_restricted_chip(cx))
-            .children(self.render_resources(cx))
             .children(self.render_archive_progress(cx))
-            .children(
-                self.problem
-                    .clone()
-                    .or_else(|| self.notice.clone())
-                    .map(|text| {
+            .children(message.map(|(text, problem)| {
+                let full = text.clone();
+                h_flex()
+                    .id("status-message")
+                    .min_w_0()
+                    .flex_shrink(1.)
+                    .gap(px(4.))
+                    .child(
                         div()
                             .min_w_0()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .when(self.problem.is_some(), |d| d.text_color(p.err))
-                            .child(text)
-                    }),
-            )
+                            .text_color(if problem { p.err } else { p.muted })
+                            .child(text),
+                    )
+                    .tooltip(move |w, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(full.clone()).build(w, cx)
+                    })
+                    .when(problem, |d| {
+                        d.child(
+                            look::close_circle("status-dismiss", &p)
+                                .child(look::icon("close").size(px(12.)))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.problem = None;
+                                    cx.notify();
+                                })),
+                        )
+                    })
+            }))
             .child(div().flex_1())
             .when_some(self.quota.clone(), |bar, quota| bar.child(quota))
     }
 }
+
+/// Below this window width the status bar drops its resource numbers.
+const STATUS_WIDE: f32 = 1000.;
 
 /// How a run ended, when that wasn't fine (or a plain error, which its
 /// output already shows).

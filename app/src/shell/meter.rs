@@ -7,35 +7,6 @@ pub(crate) fn ring(value: Option<f32>, color: Hsla, track: Hsla) -> AnyElement {
     ring_track(value, color, track, 14., true)
 }
 
-/// Quota windows keep their duration readable even when usage is unavailable.
-pub(crate) fn labelled_ring(
-    value: Option<f32>,
-    color: Hsla,
-    track: Hsla,
-    label: SharedString,
-    text: Hsla,
-) -> AnyElement {
-    div()
-        .relative()
-        .size(px(22.))
-        .flex_none()
-        .child(ring_track(value, color, track, 22., false))
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(8.))
-                .line_height(px(10.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(text)
-                .child(label),
-        )
-        .into_any_element()
-}
-
 fn ring_track(value: Option<f32>, color: Hsla, track: Hsla, size: f32, slash: bool) -> AnyElement {
     let value = value.filter(|v| v.is_finite()).map(|v| v.clamp(0., 1.));
     let radius = size / 2. - 1.5;

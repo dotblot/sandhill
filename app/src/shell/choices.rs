@@ -23,6 +23,8 @@ pub(crate) enum Choice {
     Wrap(&'static str, bool),
     /// Whether an agent is offered (Welcome's Agents page).
     Agent(&'static str, bool),
+    /// Whether the status bar shows, and the daemon measures, resources.
+    Resources(bool),
 }
 
 /// Saves a choice, then applies it to every open project once the current
@@ -36,6 +38,7 @@ pub(crate) fn choose(choice: Choice, cx: &mut App) {
         Choice::Sort(by) => crate::prefs::save_tree_sort(by.key()),
         Choice::Wrap(kind, on) => crate::prefs::save_editor_soft_wrap(kind, on),
         Choice::Agent(kind, on) => crate::prefs::save_agent_off(kind, !on),
+        Choice::Resources(shown) => crate::prefs::save_resources_shown(shown),
     }
     cx.defer(move |cx| {
         crate::shell::app_window::update_projects(cx, move |workbench, window, cx| {
@@ -88,6 +91,14 @@ impl Workbench {
                         }
                         cx.notify();
                     });
+                }
+            }
+            Choice::Resources(shown) => {
+                if shown {
+                    self.read_stats(cx);
+                } else {
+                    self.machine.stats = None;
+                    self.machine.resource = None;
                 }
             }
         }

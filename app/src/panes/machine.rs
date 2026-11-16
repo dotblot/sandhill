@@ -287,9 +287,20 @@ pub(crate) fn resource_rows(
     rows
 }
 
+/// A resource's name in the status bar.
+fn resource_label(key: &str) -> &'static str {
+    match key {
+        "cpu" => "CPU",
+        "mem" => "Mem",
+        "gpu" => "GPU",
+        _ => "Disk",
+    }
+}
+
 impl Workbench {
     /// Asks the daemon how its machine is doing, now and every few seconds
-    /// for as long as this connection lasts.
+    /// for as long as this connection lasts. The resources are measured
+    /// only while the status bar shows them; the sessions always.
     pub(crate) fn watch_machine(&mut self, generation: u64, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
@@ -305,16 +316,24 @@ impl Workbench {
                 let Some((daemon, path)) = link else {
                     break;
                 };
-                let stats = daemon.call::<SystemStats>(Call::SystemStats { path });
+                let stats = crate::prefs::resources_shown()
+                    .then(|| daemon.call::<SystemStats>(Call::SystemStats { path }));
                 let sessions = daemon.call::<Vec<SessionInfo>>(Call::ListSessions);
                 drop(daemon);
-                let (stats, sessions) = (stats.await, sessions.await);
+                let stats = match stats {
+                    Some(stats) => Some(stats.await),
+                    None => None,
+                };
+                let sessions = sessions.await;
                 let alive = this.update(cx, |this, cx| {
                     if this.generation != generation {
                         return false;
                     }
                     // An older daemon can't say; the section stays hidden.
-                    if let Ok(stats) = stats {
+                    // Hidden since asked, the answer is dropped.
+                    if let Some(Ok(stats)) = stats
+                        && crate::prefs::resources_shown()
+                    {
                         this.machine.stats = Some(stats);
                     }
                     if let Ok(sessions) = sessions {
@@ -339,6 +358,29 @@ impl Workbench {
                     break;
                 }
                 cx.background_executor().timer(POLL).await;
+            }
+        })
+        .detach();
+    }
+
+    /// Measures the resources once, now: they were just shown again.
+    pub(crate) fn read_stats(&mut self, cx: &mut Context<Self>) {
+        let Some(daemon) = self.daemon() else {
+            return;
+        };
+        let generation = self.generation;
+        let stats = daemon.call::<SystemStats>(Call::SystemStats {
+            path: self.project.clone(),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(stats) = stats.await {
+                this.update(cx, |this, cx| {
+                    if this.generation == generation && crate::prefs::resources_shown() {
+                        this.machine.stats = Some(stats);
+                        cx.notify();
+                    }
+                })
+                .ok();
             }
         })
         .detach();
@@ -582,67 +624,92 @@ impl Workbench {
         .into_any_element()
     }
 
-    /// The machine's CPU, memory, GPUs and disk after the status connection:
-    /// a tiny ring each; clicking one shows its details above it.
-    pub(crate) fn render_resources(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let stats = self.machine.stats.as_ref()?;
-        if !matches!(self.link, Link::Ready(_)) {
-            return None;
-        }
+    /// The status bar's left capsule: the device, then (while shown and
+    /// `wide`) its CPU, memory, GPUs and disk as numbers, each opening its
+    /// details above it, and a chevron that hides or shows them. Hidden,
+    /// they aren't measured at all (Huan, 2026-11-15).
+    pub(crate) fn render_device_capsule(&self, wide: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let rows = resource_rows(stats, &self.machine.sessions, &self.kernels);
-        let hover = p.ink(7.);
-        let items: Vec<AnyElement> = rows
-            .iter()
-            .map(|r| {
+        let shown = crate::prefs::resources_shown();
+        let ready = matches!(self.link, Link::Ready(_));
+        let hover = p.ink(8.);
+        let mut items: Vec<AnyElement> = Vec::new();
+        if let Some(stats) = self
+            .machine
+            .stats
+            .as_ref()
+            .filter(|_| shown && ready && wide)
+        {
+            for r in resource_rows(stats, &self.machine.sessions, &self.kernels) {
                 let key = r.key;
                 let picked = self.machine.resource == Some(key);
-                h_flex()
-                    .id(SharedString::from(format!("res-{key}")))
-                    .on_prepaint(self.popup_triggers.track(key))
-                    .flex_none()
-                    .h(px(20.))
-                    .px(px(6.))
-                    .gap(px(5.))
-                    .rounded(px(6.))
-                    .text_size(px(look::SMALL))
-                    .text_color(if r.percent.is_some_and(|p| p >= 80) {
-                        p.err
+                let high = r.percent.is_some_and(|v| v >= 80);
+                items.push(
+                    h_flex()
+                        .id(SharedString::from(format!("res-{key}")))
+                        .on_prepaint(self.popup_triggers.track(key))
+                        .flex_none()
+                        .h(px(16.))
+                        .px(px(5.))
+                        .gap(px(4.))
+                        .rounded_full()
+                        .cursor_pointer()
+                        .when(picked, |d| d.bg(hover))
+                        .hover(move |d| d.bg(hover))
+                        .child(div().text_color(p.muted).child(resource_label(key)))
+                        .child(
+                            div()
+                                .text_color(if high { p.err } else { p.text })
+                                .child(r.percent.map_or("–".to_string(), |v| format!("{v}%"))),
+                        )
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.machine.resource = if this.machine.resource == Some(key) {
+                                None
+                            } else {
+                                Some(key)
+                            };
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        let toggle = (ready && wide).then(|| {
+            look::close_circle("status-resources", &p)
+                .child(
+                    icon(if shown {
+                        "chevron.left"
                     } else {
-                        p.text
+                        "chevron.right"
                     })
-                    .cursor_pointer()
-                    .when(picked, |d| d.bg(hover))
-                    .hover(move |d| d.bg(hover))
-                    .child(icon(r.icon).size(px(13.)))
-                    .child(crate::shell::meter::ring(
-                        r.percent.map(|v| v as f32 / 100.),
-                        if r.percent.is_some_and(|v| v >= 80) {
-                            p.err
-                        } else {
-                            p.accent
-                        },
-                        p.ink(24.),
-                    ))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.machine.resource = if this.machine.resource == Some(key) {
-                            None
-                        } else {
-                            Some(key)
-                        };
-                        cx.notify();
-                    }))
-                    .into_any_element()
+                    .size(px(12.)),
+                )
+                .tooltip(move |w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(if shown {
+                        "Hide CPU, memory, GPU and disk (stops measuring them)"
+                    } else {
+                        "Show CPU, memory, GPU and disk"
+                    })
+                    .build(w, cx)
+                })
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    crate::shell::choices::choose(
+                        crate::shell::choices::Choice::Resources(!shown),
+                        cx,
+                    )
+                }))
+        });
+        look::capsule(&p, 20.)
+            .gap(px(1.))
+            .min_w_0()
+            .flex_shrink(1.)
+            .child(self.render_connection_status(cx))
+            .when(!items.is_empty(), |d| {
+                d.child(look::capsule_divider(&p)).children(items)
             })
-            .collect();
-        Some(
-            h_flex()
-                .flex_none()
-                .gap(px(2.))
-                .children(items)
-                .into_any_element(),
-        )
+            .children(toggle)
+            .into_any_element()
     }
 
     /// The resource details open above their status-bar trigger.
@@ -664,8 +731,10 @@ impl Workbench {
                 h_flex()
                     .justify_between()
                     .child(
-                        div()
+                        h_flex()
+                            .gap(px(6.))
                             .font_weight(FontWeight::SEMIBOLD)
+                            .child(icon(r.icon).size(px(14.)))
                             .child(r.name.clone()),
                     )
                     .child(

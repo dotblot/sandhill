@@ -1256,6 +1256,15 @@ preview and R's imports weren't seen.
   model menu's providers are read each time (`model_providers`). Devices
   are named by `start_screen::host_label` everywhere; `machine_name`
   ("Local") and `machine::host_name` are gone.
+- **Status bar** (Huan, 2026-11-15; `docs/design/done/status-bar-plan.md`):
+  `view.rs::render_status` lays out 20px capsules. The device and its
+  resources are `machine::render_device_capsule` (numbers instead of
+  `meter::ring`, which the resource popup still uses; `labelled_ring` is
+  gone); its chevron goes through `shell::choices::Choice::Resources` to
+  `prefs::resources_shown`, which `watch_machine` checks before asking for
+  `Call::SystemStats` (`read_stats` asks once on showing). The quota strip
+  shows what is left as numbers and only marks below 820px; resource
+  numbers go below 1000px. Problems get a × that clears `problem`.
 
 
 ## Running it

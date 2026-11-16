@@ -6,12 +6,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use gpui_kit::component::h_flex;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{ArchiveFormat, ArchiveProgress, CANCELLED_ERROR, Call, FileWritten};
 
-use crate::look::{self, Palette, bar_button};
+use crate::look::{self, Palette};
 use crate::panes::files::{base_name, join_path};
 use crate::workbench::Workbench;
 
@@ -157,8 +156,9 @@ impl Workbench {
         .detach();
     }
 
-    /// The latest task's progress in the status bar: its name, a bar, how
-    /// far, and Cancel; "+1 more" when others run too.
+    /// The latest task's progress in the status bar: a capsule with its
+    /// name, a bar, how far, "+1 more" when others run too, and × to
+    /// cancel.
     pub(crate) fn render_archive_progress(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let task = self.archive_tasks.last()?;
         let p = *Palette::get(cx);
@@ -170,15 +170,16 @@ impl Workbench {
         let more = self.archive_tasks.len() - 1;
         let id = task.id.clone();
         Some(
-            h_flex()
-                .flex_none()
+            look::capsule(&p, 20.)
+                .pl(px(8.))
+                .pr(px(2.))
                 .gap(px(8.))
                 .text_size(px(look::SMALL))
                 .child(div().text_color(p.text).child(format!("{}…", task.label)))
                 .child(
                     div()
                         .w(px(BAR_WIDTH))
-                        .h(px(5.))
+                        .h(px(4.))
                         .rounded_full()
                         .bg(p.ink(12.))
                         .child(
@@ -191,7 +192,7 @@ impl Workbench {
                 )
                 .child(
                     div()
-                        .min_w(px(32.))
+                        .min_w(px(30.))
                         .text_color(p.muted)
                         .child(format!("{}%", (share * 100.).floor() as u32)),
                 )
@@ -200,12 +201,16 @@ impl Workbench {
                 })
                 .child(if task.cancelling {
                     div()
+                        .pr(px(6.))
                         .text_color(p.muted)
                         .child("Stopping…")
                         .into_any_element()
                 } else {
-                    bar_button("archive-cancel", "Cancel", None, &p)
-                        .h(px(18.))
+                    look::close_circle("archive-cancel", &p)
+                        .child(look::icon("close").size(px(12.)))
+                        .tooltip(|w, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Cancel").build(w, cx)
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| this.cancel_archive(&id, cx)))
                         .into_any_element()
                 })

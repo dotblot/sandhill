@@ -562,9 +562,11 @@ impl AssetSource for Assets {
 /// (unless given one): `name` as the registry calls it, such as `run` or
 /// `chevron.right`.
 pub fn icon(name: &str) -> Icon {
-    // The registry draws arrows up only; down is the same turned over.
+    // The registry has no down arrow or left chevron: they are the up arrow
+    // and the right chevron turned over.
     let (name, turned) = match name {
         "arrow.down" => ("arrow.up", true),
+        "chevron.left" => ("chevron.right", true),
         name => (name, false),
     };
     Icon {
