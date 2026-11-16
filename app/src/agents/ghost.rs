@@ -59,16 +59,12 @@ pub(crate) fn outputs_text(outputs: &[Value]) -> String {
 }
 
 impl Workbench {
-    /// Turns ghost cells on or off; off drops the one shown.
+    /// Turns ghost cells on or off in every project; off drops the one shown.
     pub(crate) fn toggle_ghost_cells(&mut self, cx: &mut Context<Self>) {
-        self.ghost_cells = !self.ghost_cells;
-        crate::prefs::save_ghost_cells(self.ghost_cells);
-        if !self.ghost_cells
-            && let Some(open) = self.open.as_mut()
-        {
-            open.ghost = None;
-        }
-        cx.notify();
+        crate::shell::choices::choose(
+            crate::shell::choices::Choice::GhostCells(!self.ghost_cells),
+            cx,
+        );
     }
 
     /// A run of a cell the user ran finished: when it went well and nothing

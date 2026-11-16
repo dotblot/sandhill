@@ -134,11 +134,12 @@ impl Agents {
         self.start(kind, Some(prompt), options, window, cx);
     }
 
-    /// The switch for notebooks following the agent's edits.
+    /// The switch for notebooks following the agent's edits, in every project.
     pub(crate) fn toggle_follow_edits(&mut self, cx: &mut Context<Self>) {
-        self.follow_edits = !self.follow_edits;
-        crate::prefs::save_follow_agent(self.follow_edits);
-        cx.notify();
+        crate::shell::choices::choose(
+            crate::shell::choices::Choice::FollowAgent(!self.follow_edits),
+            cx,
+        );
     }
 
     /// Starts a conversation in the project's folder, with its first

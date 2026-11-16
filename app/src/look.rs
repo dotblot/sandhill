@@ -487,13 +487,19 @@ pub fn set_appearance(appearance: WindowAppearance, cx: &mut App) {
     );
 }
 
+/// The theme picked on General ("light", "dark", or `None` to follow the
+/// system), kept for next time.
+pub fn choose_appearance(theme: Option<&str>, window: &Window, cx: &mut App) {
+    crate::prefs::save_appearance(theme);
+    set_appearance(window.appearance(), cx);
+    cx.refresh_windows();
+}
+
 /// The title bar's theme button: light to dark and back, kept for next
 /// time.
 pub fn toggle_appearance(window: &Window, cx: &mut App) {
     let dark = Palette::get(cx).dark;
-    crate::prefs::save_appearance(if dark { "light" } else { "dark" });
-    set_appearance(window.appearance(), cx);
-    cx.refresh_windows();
+    choose_appearance(Some(if dark { "light" } else { "dark" }), window, cx);
 }
 
 const FONTS: [&[u8]; 4] = [

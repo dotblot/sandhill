@@ -208,7 +208,11 @@ mod local_settings_tests {
 /// Whether a notebook scrolls to, and lights up, the cells an agent adds
 /// or changes (the switch in the AI pane).
 pub fn follow_agent() -> bool {
-    read()["followAgent"].as_bool().unwrap_or(true)
+    follow_agent_in(&read())
+}
+
+fn follow_agent_in(all: &Value) -> bool {
+    all["followAgent"].as_bool().unwrap_or(true)
 }
 
 pub fn save_follow_agent(on: bool) {
@@ -336,7 +340,11 @@ mod account_tests {
 
 /// Whether a notebook suggests the next cell after each run (ghost cells).
 pub fn ghost_cells() -> bool {
-    read()["ghostCells"].as_bool().unwrap_or(false)
+    ghost_cells_in(&read())
+}
+
+fn ghost_cells_in(all: &Value) -> bool {
+    all["ghostCells"].as_bool().unwrap_or(false)
 }
 
 pub fn save_ghost_cells(on: bool) {
@@ -345,7 +353,11 @@ pub fn save_ghost_cells(on: bool) {
 
 /// Whether the Data Explorer shows its column list and stats.
 pub fn column_stats() -> bool {
-    read()["deColumnStats"].as_bool().unwrap_or(true)
+    column_stats_in(&read())
+}
+
+fn column_stats_in(all: &Value) -> bool {
+    all["deColumnStats"].as_bool().unwrap_or(true)
 }
 
 pub fn save_column_stats(shown: bool) {
@@ -387,7 +399,11 @@ pub fn save_settings_asked(project: &str) {
 /// Whether notebooks' and Quarto documents' runs show in the Console too
 /// (the ☰ menu); off, as in the Tauri app.
 pub fn notebook_console() -> bool {
-    read()["notebookConsole"].as_bool().unwrap_or(false)
+    notebook_console_in(&read())
+}
+
+fn notebook_console_in(all: &Value) -> bool {
+    all["notebookConsole"].as_bool().unwrap_or(false)
 }
 
 pub fn save_notebook_console(on: bool) {
@@ -396,7 +412,11 @@ pub fn save_notebook_console(on: bool) {
 
 /// Whether notebooks' plots show in Plots too, not only under their cells.
 pub fn notebook_plots() -> bool {
-    read()["notebookPlots"].as_bool().unwrap_or(false)
+    notebook_plots_in(&read())
+}
+
+fn notebook_plots_in(all: &Value) -> bool {
+    all["notebookPlots"].as_bool().unwrap_or(false)
 }
 
 pub fn save_notebook_plots(on: bool) {
@@ -535,19 +555,31 @@ pub fn save_windows(windows: &[crate::shell::app_window::Places]) {
     let _ = std::fs::write(path, json!({ "windows": windows }).to_string());
 }
 
-/// The theme picked with the title bar's button, "light" or "dark"; none
-/// follows the system.
+/// The theme picked on General or with the title bar's button, "light" or
+/// "dark"; none follows the system.
 pub fn appearance() -> Option<String> {
-    read()["appearance"].as_str().map(str::to_string)
+    appearance_in(&read())
 }
 
-pub fn save_appearance(theme: &str) {
-    write("appearance", json!(theme));
+fn appearance_in(all: &Value) -> Option<String> {
+    all["appearance"].as_str().map(str::to_string)
+}
+
+/// `None` follows the system again.
+pub fn save_appearance(theme: Option<&str>) {
+    write(
+        "appearance",
+        theme.map_or(Value::Null, |theme| json!(theme)),
+    );
 }
 
 /// How the files pane sorts: "name", "size" or "modified".
 pub fn tree_sort() -> String {
-    read()["treeSort"].as_str().unwrap_or("name").to_string()
+    tree_sort_in(&read())
+}
+
+fn tree_sort_in(all: &Value) -> String {
+    all["treeSort"].as_str().unwrap_or("name").to_string()
 }
 
 pub fn save_tree_sort(by: &str) {
@@ -682,11 +714,43 @@ pub(crate) fn save_plot_rasterize(host: &str, project: &str, on: bool) {
 /// Whether the plot window shows its settings column (Huan, 2026-11-14);
 /// one choice on this Mac, shown at first.
 pub(crate) fn plot_settings_shown() -> bool {
-    read()["plotSettingsShown"].as_bool().unwrap_or(true)
+    plot_settings_shown_in(&read())
+}
+
+fn plot_settings_shown_in(all: &Value) -> bool {
+    all["plotSettingsShown"].as_bool().unwrap_or(true)
 }
 
 pub(crate) fn save_plot_settings_shown(on: bool) {
     write("plotSettingsShown", json!(on));
+}
+
+/// The choices for every project on this Mac that Welcome's General page
+/// shows (Huan, 2026-11-15), read in one go. Wrapping is per file type:
+/// `editor_soft_wrap`.
+pub(crate) struct General {
+    pub appearance: Option<String>,
+    pub notebook_console: bool,
+    pub notebook_plots: bool,
+    pub ghost_cells: bool,
+    pub follow_agent: bool,
+    pub tree_sort: String,
+    pub plot_settings: bool,
+    pub column_panel: bool,
+}
+
+pub(crate) fn general() -> General {
+    let all = read();
+    General {
+        appearance: appearance_in(&all),
+        notebook_console: notebook_console_in(&all),
+        notebook_plots: notebook_plots_in(&all),
+        ghost_cells: ghost_cells_in(&all),
+        follow_agent: follow_agent_in(&all),
+        tree_sort: tree_sort_in(&all),
+        plot_settings: plot_settings_shown_in(&all),
+        column_panel: column_stats_in(&all),
+    }
 }
 
 pub(crate) fn plot_folder(host: &str, project: &str) -> Option<String> {

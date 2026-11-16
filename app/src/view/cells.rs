@@ -397,9 +397,7 @@ impl Workbench {
                 .tooltip(|window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new("Wrap long lines").build(window, cx)
                 })
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.toggle_editor_wrap(window, cx);
-                }))
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_editor_wrap(cx)))
         });
         if open.notebook.is_text_document() {
             return h_flex()

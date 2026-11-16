@@ -517,26 +517,15 @@ impl Workbench {
         )
     }
 
-    pub(crate) fn toggle_editor_wrap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_editor_wrap(&mut self, cx: &mut Context<Self>) {
         let Some(kind) = self.open.as_ref().and_then(Self::editor_wrap_type) else {
             return;
         };
         let wrap = !crate::prefs::editor_soft_wrap(kind);
-        crate::prefs::save_editor_soft_wrap(kind, wrap);
-        self.apply_editor_wrap(kind, wrap, window, cx);
-        let current = cx.entity_id();
-        self.with_shell(window, cx, move |shell, window, cx| {
-            for tab in &shell.tabs {
-                if tab.workbench.entity_id() != current {
-                    tab.workbench.update(cx, |workbench, cx| {
-                        workbench.apply_editor_wrap(kind, wrap, window, cx);
-                    });
-                }
-            }
-        });
+        crate::shell::choices::choose(crate::shell::choices::Choice::Wrap(kind, wrap), cx);
     }
 
-    pub(super) fn apply_editor_wrap(
+    pub(crate) fn apply_editor_wrap(
         &mut self,
         kind: &str,
         wrap: bool,

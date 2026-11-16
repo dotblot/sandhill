@@ -23,6 +23,7 @@ use crate::shell::app_window::AppWindow;
 use crate::welcome::folder_dialog::{FolderDialog, FolderDialogDone, Place as FolderPlace};
 
 mod devices;
+mod general;
 mod projects;
 mod trusted;
 
@@ -56,6 +57,8 @@ pub(crate) enum StartMode {
     Resources(String),
     /// Agent accounts on this device.
     Accounts(String),
+    /// This Mac's choices for every project (⌘,).
+    General,
 }
 
 /// What Welcome's right side shows; the sidebar selects it.
@@ -68,6 +71,7 @@ pub(crate) enum Page {
     Resources,
     Trusted,
     Accounts,
+    General,
 }
 
 pub(crate) enum MachineLink {
@@ -274,6 +278,7 @@ impl Start {
                 self.selected_host = host;
                 self.page = Page::Accounts;
             }
+            StartMode::General => self.page = Page::General,
             StartMode::Picking(host) => {
                 self.selected_host = host.clone();
                 self.page = Page::Device;
@@ -495,6 +500,16 @@ impl AppWindow {
             .child(sidebar_heading("Manage", &p).mt(px(18.)))
             .child(
                 sidebar_row(
+                    "start-general",
+                    "settings",
+                    "General",
+                    page == Page::General,
+                    &p,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::General, cx))),
+            )
+            .child(
+                sidebar_row(
                     "start-resources",
                     "cpu",
                     "Resources and Storage",
@@ -581,6 +596,7 @@ impl AppWindow {
             Page::Resources => self.resource_page(window, cx),
             Page::Trusted => self.trusted_folders(list_height, cx),
             Page::Accounts => self.agent_accounts_page(cx),
+            Page::General => self.general_page(cx),
         };
         let footnote = matches!(page, Page::Projects | Page::Device);
         wall(&p)

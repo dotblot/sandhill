@@ -4,6 +4,7 @@
 
 pub(crate) mod app_window;
 pub(crate) mod archive_tasks;
+pub(crate) mod choices;
 pub(crate) mod close_file;
 pub(crate) mod command_palette;
 pub(crate) mod download;

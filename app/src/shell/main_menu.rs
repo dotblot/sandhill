@@ -13,8 +13,9 @@ use crate::shell::command_palette::Cmd;
 use crate::workbench::Workbench;
 use crate::{
     About, CloseTab, CloseWindow, ConnectServer, HideOthers, HideSandhill, Minimize, NewFile,
-    NewFolder, NewProject, NewWindow, OpenProject, Quit, RunAll, Save, SaveAll, ShowAll,
-    ToggleAgents, ToggleConsole, ToggleFiles, ToggleFullScreen, TogglePalette, ToggleRight, Zoom,
+    NewFolder, NewProject, NewWindow, OpenProject, OpenSettings, Quit, RunAll, Save, SaveAll,
+    ShowAll, ToggleAgents, ToggleConsole, ToggleFiles, ToggleFullScreen, TogglePalette,
+    ToggleRight, Zoom,
 };
 
 /// The menu bar. Shortcuts show beside the items from the key bindings.
@@ -22,6 +23,8 @@ pub fn app_menus() -> Vec<Menu> {
     vec![
         Menu::new("Sandhill").items([
             MenuItem::action("About Sandhill", About),
+            MenuItem::separator(),
+            MenuItem::action("Settings…", OpenSettings),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),

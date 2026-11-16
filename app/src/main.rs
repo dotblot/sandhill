@@ -49,6 +49,7 @@ actions!(
         TogglePalette,
         HelpAtCursor,
         About,
+        OpenSettings,
         HideSandhill,
         HideOthers,
         ShowAll,
@@ -182,6 +183,10 @@ fn main() -> anyhow::Result<()> {
             // With no window open, a new one.
             // One main window: a new window is Welcome, to open a project.
             cx.on_action(|_: &NewWindow, cx| app_window::show_welcome(None, cx));
+            // ⌘, opens Welcome's General page, as Settings… does on a Mac.
+            cx.on_action(|_: &OpenSettings, cx| {
+                app_window::show_welcome(Some(welcome::start_screen::StartMode::General), cx)
+            });
             register_r();
             register_r_editing(cx);
             main_menu::install_app_actions(cx);
@@ -211,6 +216,7 @@ fn main() -> anyhow::Result<()> {
                 KeyBinding::new(k("mod-o"), OpenProject, g),
                 KeyBinding::new(k("shift-mod-o"), ConnectServer, g),
                 KeyBinding::new(k("shift-mod-n"), NewProject, g),
+                KeyBinding::new(k("mod-,"), OpenSettings, g),
                 // In a cell's editor, Shift+Enter runs the cell instead of
                 // adding a line, as in Jupyter.
                 KeyBinding::new("shift-enter", RunCell, Some("Input")),

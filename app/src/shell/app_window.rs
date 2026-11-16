@@ -298,6 +298,22 @@ pub(crate) fn show_welcome(mode: Option<StartMode>, cx: &mut App) {
     });
 }
 
+/// Does something to every project open in the main window, with its window.
+pub(crate) fn update_projects(
+    cx: &mut App,
+    f: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+) {
+    let Some(main) = cx.global::<Windows>().main.clone() else {
+        return;
+    };
+    main.update(cx, |shell, window, cx| {
+        for tab in &shell.tabs {
+            tab.workbench
+                .update(cx, |workbench, cx| f(workbench, window, cx));
+        }
+    });
+}
+
 /// Opens a project in the main window, opening that window if needed, and
 /// closes Welcome.
 pub(crate) fn open_in_main(host: String, path: String, cx: &mut App) {

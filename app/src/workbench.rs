@@ -1117,17 +1117,22 @@ impl Workbench {
         .detach();
     }
 
-    /// Sorts the files another way, for every project from now on. Folder
-    /// sizes are only worked out when sorting by size.
+    /// Sorts the files another way, for every project from now on.
     pub(crate) fn set_sort(&mut self, by: tree::SortBy, cx: &mut Context<Self>) {
         self.files_ui.sort_menu = false;
+        cx.notify();
+        if self.tree.sort != by {
+            crate::shell::choices::choose(crate::shell::choices::Choice::Sort(by), cx);
+        }
+    }
+
+    /// Folder sizes are only worked out when sorting by size.
+    pub(crate) fn apply_sort(&mut self, by: tree::SortBy, cx: &mut Context<Self>) {
         if self.tree.sort == by {
-            cx.notify();
             return;
         }
         let sizes = by == tree::SortBy::Size || self.tree.sort == tree::SortBy::Size;
         self.tree.sort = by;
-        crate::prefs::save_tree_sort(by.key());
         if sizes {
             self.refresh_files(cx);
         }

@@ -42,6 +42,7 @@ pub(crate) enum Cmd {
     OpenProject,
     Connect,
     ProjectSettings,
+    Settings,
     CloseProject,
 }
 
@@ -198,6 +199,7 @@ impl Workbench {
             list.push(c("Project settings…", "", Cmd::ProjectSettings));
             list.push(c("Close project", "", Cmd::CloseProject));
         }
+        list.push(c("Settings…", "⌘,", Cmd::Settings));
         list.push(c("Open project…", "⌘O", Cmd::OpenProject));
         list.push(c("Connect to server…", "⇧⌘O", Cmd::Connect));
         list
@@ -251,17 +253,14 @@ impl Workbench {
                     }
                 }
             }
-            Cmd::NotebookConsole => {
-                self.notebook_console = !self.notebook_console;
-                crate::prefs::save_notebook_console(self.notebook_console);
-            }
-            Cmd::NotebookPlots => {
-                self.notebook_plots = !self.notebook_plots;
-                crate::prefs::save_notebook_plots(self.notebook_plots);
-                // Plots reads its sessions' plots again, with or without
-                // notebooks'.
-                self.plot_history = Default::default();
-            }
+            Cmd::NotebookConsole => crate::shell::choices::choose(
+                crate::shell::choices::Choice::NotebookConsole(!self.notebook_console),
+                cx,
+            ),
+            Cmd::NotebookPlots => crate::shell::choices::choose(
+                crate::shell::choices::Choice::NotebookPlots(!self.notebook_plots),
+                cx,
+            ),
             Cmd::ToggleAgents => {
                 self.toggle_column(crate::shell::pane_sizes::Panel::Agents, window, cx)
             }
@@ -284,6 +283,9 @@ impl Workbench {
                 shell.show_start(StartMode::Adding, window, cx)
             }),
             Cmd::ProjectSettings => self.show_project_settings(window, cx),
+            Cmd::Settings => self.with_shell(window, cx, |shell, window, cx| {
+                shell.show_start(StartMode::General, window, cx)
+            }),
             Cmd::CloseProject => {
                 let id = cx.entity_id();
                 self.with_shell(window, cx, move |shell, window, cx| {

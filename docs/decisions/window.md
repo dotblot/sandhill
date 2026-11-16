@@ -64,3 +64,12 @@ differs, this wins.
   Servers keep Sandhill's own chooser, read through the daemon, with
   places, a clickable path, filter/typed paths, keyboard, New Folder,
   hidden-name toggle, faded files and Git/Sandhill marks.
+- Settings (Huan, 2026-11-15): Welcome's Manage section starts with
+  General, this Mac's choices for every project: the theme (System, Light,
+  Dark), notebooks' runs in the Console and plots in Plots, suggesting the
+  next cell, following the AI's edits, wrapping long lines per kind of
+  file, the Files sort order, and whether plot windows' settings column and
+  the Data Explorer's column panel show at first. ⌘, and Sandhill →
+  Settings… open it; there is no separate settings window. Each choice
+  also stays beside what it changes, and changing it anywhere applies to
+  every open project at once. Project settings stay per project.

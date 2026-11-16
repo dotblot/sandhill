@@ -43,7 +43,7 @@ draw; each folder's head file (`agents.rs`, `editor.rs`…) declares it.
 | `panes/` | Kernels and resources (`machine`, `kernel_menu`, `irkernel`), Help, Packages, Files (`files`, `tree`, `tree_actions`), Plots, the Viewer, the data explorer, the Terminal, Jobs |
 | `git/` | Git: `git.rs`, `pane` (+ `pane/`), `diff`, `log`, `rewrite` |
 | `welcome/` | Welcome (`start_screen` + folder), `folder_dialog`, `trust`, `resource_manager`, `app_uninstall`, `project_settings` |
-| `shell/` | The window's frame: `app_window` (+ `quit`), `main_menu`, `command_palette`, `pane_sizes`, `focus_mode`, `popup`, `meter`, `archive_tasks`, `close_file`, `download` |
+| `shell/` | The window's frame: `app_window` (+ `quit`), `main_menu`, `command_palette`, `choices` (this Mac's choices for every open project), `pane_sizes`, `focus_mode`, `popup`, `meter`, `archive_tasks`, `close_file`, `download` |
 
 Notes below from before that date name files by their old places:
 `agents_box`, `agents_start`, `agents_view`, `agent_accounts` and
@@ -1216,6 +1216,17 @@ preview and R's imports weren't seen.
   whose program is missing (`runnable`: a path must be a file, a bare name
   must be on the kernel's `PATH`); `find` still resolves them, so a
   document that chose one gets the clear "wasn't found" error.
+- **General settings** (Huan, 2026-11-15): Welcome's Manage → General
+  (`welcome/start_screen/general.rs`) shows this Mac's choices for every
+  project, read in one go by `prefs::general`. ⌘, (`OpenSettings`), the
+  Sandhill menu's Settings… and the palette open it. Choices open projects
+  must follow (notebook runs and plots, Suggest, following the AI, Wrap,
+  the Files sort) go through `shell::choices::choose`, which saves once and
+  applies to every project in the main window (`app_window::update_projects`);
+  the ☰ menu, Suggest, the AI pane's follow switch, Wrap and the Files sort
+  menu use it too, so they now change all open projects, not only the shown
+  one. The theme gained System (`look::choose_appearance(None)`), which the
+  title bar's button alone could not return to.
 
 
 ## Running it
