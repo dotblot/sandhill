@@ -1292,6 +1292,13 @@ preview and R's imports weren't seen.
   with `AgentOptions.fork`. The summary is a message (`SUMMARY_PROMPT`)
   whose reply `summary_outcome` waits for, then `open_with_summary` saves
   with `attach_text` and opens a new conversation.
+- **GPUI Kit 0.10** (Huan, 2026-11-16; `docs/design/done/kit-010-plan.md`):
+  Kit/Base/Component/WebView 0.10.0 and Fast 0.1.16. Fast now gives every
+  `Element` its `IntoElement`, so the app's own impls on `OutputText`,
+  `OutputTable` and `signature::AboveCaret` went, and `vendor/gpui-cn` and
+  `vendor/gpui-component` guard theirs as Kit's crates do. The
+  gpui-component copy is 0.10.0's files with Sandhill's five kept (its
+  `SANDHILL.md`).
 
 
 ## Running it

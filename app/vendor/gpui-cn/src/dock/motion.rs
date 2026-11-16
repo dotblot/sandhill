@@ -106,6 +106,7 @@ impl LayoutMotion {
     }
 }
 
+#[cfg(not(feature = "gpui-fast"))]
 impl IntoElement for LayoutMotion {
     type Element = Self;
 

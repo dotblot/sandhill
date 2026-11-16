@@ -23,7 +23,7 @@ sandhill-link = { path = "../crates/link" }
 sandhill-daemon = { path = "../crates/daemon" }
 # The Terminal: Ghostty's terminal engine (libghostty-vt, built from source
 # with Zig 0.17: set ZIG, or have `zig` on PATH) and gpui-cn's GPUI element for it.
-# Latest gpui-cn release, adapted locally to GPUI Kit 0.9.1 (see README).
+# Latest gpui-cn release with the terminal, adapted locally to GPUI Kit 0.10.0 (see README).
 gpui-cn = { path = "vendor/gpui-cn", version = "=0.8.0", features = ["ghostty"] }
 anyhow = "1"
 libc = "0.2"
@@ -45,8 +45,8 @@ data-url = "=0.3.2"
 # by the notebook it scrolls in; both crates must have it. JSON's grammar
 # is built in; YAML and TOML colour standalone text files; SQL, diff, HTML,
 # CSS and JavaScript colour code blocks in AI replies.
-gpui-kit = { version = "=0.9.1", features = ["tree-sitter-python", "tree-sitter-markdown", "tree-sitter-bash", "tree-sitter-yaml", "tree-sitter-toml", "tree-sitter-sql", "tree-sitter-diff", "tree-sitter-html", "tree-sitter-css", "tree-sitter-javascript", "gpui-fast"] }
-gpui-webview = { version = "=0.9.1", features = ["gpui-fast"] }
+gpui-kit = { version = "=0.10.0", features = ["tree-sitter-python", "tree-sitter-markdown", "tree-sitter-bash", "tree-sitter-yaml", "tree-sitter-toml", "tree-sitter-sql", "tree-sitter-diff", "tree-sitter-html", "tree-sitter-css", "tree-sitter-javascript", "gpui-fast"] }
+gpui-webview = { version = "=0.10.0", features = ["gpui-fast"] }
 # The web engine behind gpui-webview (WebKit on the Mac, WebKitGTK on Linux).
 wry = { package = "lb-wry", version = "0.53.3" }
 # The icons drawn in docs/design/ui/icons, put into the binary.
@@ -76,12 +76,12 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 opt-level = 3
 
 [dev-dependencies]
-gpui-kit = { version = "=0.9.1", features = ["test-support"] }
+gpui-kit = { version = "=0.10.0", features = ["test-support"] }
 tempfile = "3"
 
-# GPUI Component 0.9.1 (Apache-2.0), vendored with one change: caret menus
-# open above the caret when they don't fit below it (the Console input sits
-# at the window's bottom). See vendor/gpui-component/SANDHILL.md; return to
-# the crates.io release once upstream has it.
+# GPUI Component 0.10.0 (Apache-2.0), vendored with Sandhill's changes to its
+# caret menus, completion list and hover popups. See
+# vendor/gpui-component/SANDHILL.md; return to the crates.io release once
+# upstream has them.
 [patch.crates-io]
 gpui-component = { path = "vendor/gpui-component" }

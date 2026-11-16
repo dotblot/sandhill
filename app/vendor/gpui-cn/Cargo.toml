@@ -316,15 +316,15 @@ optional = true
 version = "0.8.0"
 optional = true
 
-# Sandhill adaptation (2026-11-06, moved to 0.9.1 on 2026-11-13): use the
-# GPUI Kit 0.9 release stack.
+# Sandhill adaptation (2026-11-06, moved to 0.9.1 on 2026-11-13, to 0.10.0
+# on 2026-11-16): use the GPUI Kit release stack.
 [dependencies.gpui-kit]
-version = "=0.9.1"
+version = "=0.10.0"
 features = ["assets"]
 default-features = false
 
 [dependencies.gpui-webview]
-version = "=0.9.1"
+version = "=0.10.0"
 optional = true
 default-features = false
 
@@ -340,7 +340,7 @@ optional = true
 package = "lb-wry"
 
 [dev-dependencies.gpui-kit]
-version = "=0.9.1"
+version = "=0.10.0"
 features = ["test-support"]
 default-features = false
 

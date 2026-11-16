@@ -45,6 +45,7 @@ fn within<R>(key: &str, cx: &mut App, f: impl FnOnce(&mut App) -> R) -> R {
     result
 }
 
+#[cfg(not(feature = "gpui-fast"))]
 impl IntoElement for ThemeScope {
     type Element = Self;
 

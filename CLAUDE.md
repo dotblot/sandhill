@@ -64,16 +64,14 @@ its date.
   access to tip.files.ghostty.org, deps.files.ghostty.org and codeberg.org.
   Where those hosts are blocked, `DOCS_RS=1 cargo clippy` still checks the
   code (it skips building the library, so nothing links).
-  Current stack: Kit/Base/Component/WebView 0.9.1, Fast 0.1.15, Pre 0.3.12.
-  Fast stays at 0.1.15 with Kit 0.9: 0.1.16 belongs to Kit 0.10 and doesn't
-  build with 0.9 (checked 2026-11-16). After a plain `cargo update` in
-  `app/`, put every `gpui-fast*` package back to 0.1.15 (`cargo update -p
-  <name>@0.1.16 --precise 0.1.15`, repeated until each one takes).
+  Current stack: Kit/Base/Component/WebView 0.10.0, Fast 0.1.16, Pre 0.3.12
+  (moved from 0.9.1 on 2026-11-16).
   `app/vendor/gpui-cn` retains the latest terminal library release (0.8.0),
-  adapted to Kit 0.9; keep its upstream licences and recorded provenance.
-  `app/vendor/gpui-component` is Component 0.9.1 through `[patch.crates-io]`
-  with one change (caret menus open above the caret when they don't fit
-  below; Huan, 2026-11-13; `SANDHILL.md`); drop it when upstream has it.
+  adapted to Kit 0.10; keep its upstream licences and recorded provenance.
+  `app/vendor/gpui-component` is Component 0.10.0 through
+  `[patch.crates-io]` with Sandhill's changes to the caret menus, the
+  completion list and the hover popup (listed in its `SANDHILL.md`); drop
+  it when upstream has them.
   `tree-sitter` stays at 0.26, Kit's own version, until Kit moves (Huan,
   2026-11-13): Cargo allows only one copy of it.
 - Rust workspace at the repo root; crates live in `crates/`. The app is not

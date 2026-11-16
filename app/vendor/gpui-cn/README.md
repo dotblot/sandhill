@@ -10,7 +10,9 @@ from that theme.
 
 ## Sandhill vendored changes
 
-- The terminal is retained from gpui-cn 0.8.0 and adapted to Kit 0.9 (0.9.1).
+- The terminal is retained from gpui-cn 0.8.0 and adapted to Kit 0.10
+  (0.10.0, 2026-11-16: `IntoElement` impls guarded by
+  `#[cfg(not(feature = "gpui-fast"))]`, as Kit 0.10's own crates do).
 - Terminal file references support POSIX absolute and relative paths, optional
   one-based `:line:column` suffixes, and quoted Python traceback filenames.
   `FileLinkHovered` asks the embedding app for asynchronous validation;

@@ -83,6 +83,7 @@ impl Glide {
     }
 }
 
+#[cfg(not(feature = "gpui-fast"))]
 impl IntoElement for Glide {
     type Element = Self;
 

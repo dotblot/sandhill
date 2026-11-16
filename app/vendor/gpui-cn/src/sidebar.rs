@@ -1586,6 +1586,7 @@ impl SidebarScoped {
     }
 }
 
+#[cfg(not(feature = "gpui-fast"))]
 impl IntoElement for SidebarScoped {
     type Element = Self;
 

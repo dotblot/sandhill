@@ -553,14 +553,6 @@ struct AboveCaret {
     content: Option<AnyElement>,
 }
 
-impl IntoElement for AboveCaret {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for AboveCaret {
     type RequestLayoutState = ();
     type PrepaintState = ();

@@ -1,19 +1,25 @@
-# Sandhill's copy of GPUI Component 0.9.1
+# Sandhill's copy of GPUI Component 0.10.0
 
-Source: the crates.io release `gpui-component` 0.9.1
+Source: the crates.io release `gpui-component` 0.10.0
 (<https://github.com/longbridge/gpui-kit>), Apache-2.0 (`LICENSE-APACHE`),
-used through `[patch.crates-io]` in `app/Cargo.toml` (Huan, 2026-11-13).
+used through `[patch.crates-io]` in `app/Cargo.toml` (Huan, 2026-11-13;
+rebased from 0.9.1 on 2026-11-16: 0.10.0's files, with the five files below
+kept as Sandhill had them plus 0.10's own small changes to them, the
+`IntoElement` impls guarded by `#[cfg(not(feature = "gpui-fast"))]`).
 
 ## Sandhill changes
 
 - `src/input/popovers/caret_anchored.rs`: caret-anchored menus (completion,
   code actions) open above the caret when they don't fit below it and there
   is more room above. The Console input sits at the bottom of the window, so
-  its completion list was cut off by the window's edge. Menus also stay clear
-  of the bands `set_popup_insets` names (Sandhill's title and status bars;
-  2026-11-14). A side panel (the completion documentation) is placed after
-  the menu, which is placed by its own size: right of it, else left, else
-  under (over, when it opened upward), inside those bands.
+  its completion list was cut off by the window's edge. (0.10 now does this
+  too; Sandhill's version stays, as it also keeps clear of the bars below.)
+  Menus also stay clear of the bands `set_popup_insets` names (Sandhill's
+  title and status bars; 2026-11-14). A side panel (the completion
+  documentation) is placed after the menu, which is placed by its own size:
+  right of it, else left, else under (over, when it opened upward), inside
+  those bands.
+- `src/input/mod.rs`: exports for the above.
 - `src/input/popovers/completion_menu.rs` (2026-11-14): a lettered,
   coloured badge before each item says its kind. The documentation is a
   side panel of one size for every item (scrolling inside), so browsing

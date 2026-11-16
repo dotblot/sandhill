@@ -54,14 +54,6 @@ impl Render for SelectionOwner {
     }
 }
 
-impl IntoElement for OutputText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for OutputText {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();

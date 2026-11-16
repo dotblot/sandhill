@@ -336,14 +336,6 @@ impl Render for SelectionOwner {
     }
 }
 
-impl IntoElement for OutputTable {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for OutputTable {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();

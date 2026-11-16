@@ -1,7 +1,12 @@
 # Moving the app to GPUI Kit 0.10
 
-Huan, 2026-11-16: approved planning the move after the dependency check.
-Status: waiting for Huan's approval.
+Huan, 2026-11-16: approved planning the move after the dependency check,
+then the plan ("go ahead on a branch"). Status: built on the `kit-0.10`
+branch the same day. Kit 0.10's own crates guard their `IntoElement`
+impls with `#[cfg(not(feature = "gpui-fast"))]`, as GPUI Fast 0.1.16 now
+gives every `Element` one; the same was the only change needed in our two
+copies and in three of the app's own elements (`OutputText`,
+`OutputTable`, `signature::AboveCaret`, whose impls went).
 
 ## What moves
 

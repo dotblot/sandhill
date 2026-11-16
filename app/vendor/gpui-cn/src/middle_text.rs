@@ -5,7 +5,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui_kit::{
     AbsoluteLength, App, AvailableSpace, Bounds, DefiniteLength, Element, ElementId, FontWeight,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, ShapedLine,
+    GlobalElementId, Hsla, InspectorElementId, LayoutId, Pixels, ShapedLine,
     SharedString, Size, Style, TextAlign, TextRun, Window,
 };
 
@@ -96,7 +96,8 @@ impl MiddleText {
     }
 }
 
-impl IntoElement for MiddleText {
+#[cfg(not(feature = "gpui-fast"))]
+impl gpui_kit::IntoElement for MiddleText {
     type Element = Self;
 
     fn into_element(self) -> Self {
