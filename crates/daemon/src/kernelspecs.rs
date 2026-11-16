@@ -214,16 +214,40 @@ pub struct Found {
 }
 
 /// The kernels to offer, without duplicates or kernels whose program is
-/// gone, sorted by name.
+/// gone, sorted by name. R and Python kernels are named by
+/// [`sandhill_proto::kernel_label`]; others keep their own name.
 pub fn list(search: &Search) -> Vec<KernelspecInfo> {
-    let mut specs: Vec<KernelspecInfo> = discover(search)
+    let found: Vec<Found> = discover(search)
         .into_iter()
         .filter(|k| !k.duplicate && runnable(&k.dir.kernelspec, search))
-        .map(|k| KernelspecInfo {
-            name: k.dir.kernel_name,
-            display_name: shown_name(&k.dir.kernelspec),
-            language: k.dir.kernelspec.language,
-            env: k.env,
+        .collect();
+    let specs: Vec<&JupyterKernelspec> = found.iter().map(|k| &k.dir.kernelspec).collect();
+    let versions = crate::kernel_versions::versions(&specs, search.path.as_deref());
+    let mut specs: Vec<KernelspecInfo> = found
+        .into_iter()
+        .zip(versions)
+        .map(|(k, version)| {
+            let spec = k.dir.kernelspec;
+            let engine = crate::kernel_versions::engine(&spec);
+            let language = spec.language.to_ascii_lowercase();
+            let display_name = if language == "r" || language.starts_with("python") {
+                sandhill_proto::kernel_label(
+                    &spec.language,
+                    version.as_deref(),
+                    k.env.as_deref(),
+                    engine,
+                )
+            } else {
+                spec.display_name.clone()
+            };
+            KernelspecInfo {
+                name: k.dir.kernel_name,
+                display_name,
+                language: spec.language,
+                env: k.env,
+                version,
+                engine: engine.map(str::to_string),
+            }
         })
         .collect();
     specs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -254,20 +278,6 @@ fn runnable(spec: &JupyterKernelspec, search: &Search) -> bool {
         .map(OsString::from)
         .or_else(|| search.path.clone());
     path.is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
-}
-
-/// Ark is "Ark R" however it was registered: `ark --install` writes "Ark R
-/// Kernel" (Huan, 2026-11-14).
-fn shown_name(spec: &JupyterKernelspec) -> String {
-    let program = spec.argv.first().map(Path::new);
-    if program
-        .and_then(|p| p.file_name())
-        .is_some_and(|name| name == "ark")
-    {
-        ARK_NAME.into()
-    } else {
-        spec.display_name.clone()
-    }
 }
 
 const ARK_NAME: &str = "Ark R";
@@ -1104,7 +1114,17 @@ mod tests {
         std::fs::write(&ark, "").unwrap();
         let r = tmp.path().join("r/bin");
         std::fs::create_dir_all(&r).unwrap();
-        std::fs::write(r.join("R"), "").unwrap();
+        // An R that says its version, as `R --version` does.
+        std::fs::write(
+            r.join("R"),
+            "#!/bin/sh\necho 'R version 4.6.2 (2025-10-31) -- \"Example\"'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            r.join("R"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
         let mut search = Search {
             ark: Some(ark.clone()),
             path: Some(format!("/nowhere/bin:{}", r.display()).into()),
@@ -1135,8 +1155,11 @@ mod tests {
             found[0].dir.kernelspec.argv[0],
             registered.to_str().unwrap()
         );
-        // Its "Ark R Kernel" is offered under the same short name.
-        assert_eq!(list(&search)[0].display_name, "Ark R");
+        // Its "Ark R Kernel" is offered in Sandhill's format, with the
+        // version its R gives.
+        let listed = &list(&search)[0];
+        assert_eq!(listed.display_name, "R 4.6.2 · Ark");
+        assert_eq!(listed.engine.as_deref(), Some("Ark"));
 
         // Without R there is nothing for Ark to run.
         search.user_dir = None;

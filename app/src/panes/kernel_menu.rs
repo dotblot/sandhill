@@ -539,6 +539,8 @@ mod tests {
             display_name: name.into(),
             language: language.into(),
             env: None,
+            version: None,
+            engine: None,
         }
     }
 

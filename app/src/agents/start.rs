@@ -8,7 +8,7 @@ use gpui_kit::component::input::RopeExt as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::{Call, SessionInfo, SessionStatus, TerminalInfo, Variables};
+use sandhill_proto::{Call, KernelspecInfo, SessionInfo, SessionStatus, TerminalInfo, Variables};
 use serde_json::{Value, json};
 
 use crate::agents::composer::Mention;
@@ -62,7 +62,11 @@ impl Agents {
         let daemon = self.daemon.clone();
         let project = self.project.clone();
         let sessions = daemon.call::<Vec<SessionInfo>>(Call::ListSessions);
+        let specs = daemon.call::<Vec<KernelspecInfo>>(Call::ListProjectKernelspecs {
+            path: project.clone(),
+        });
         cx.spawn(async move |this, cx| {
+            let specs = specs.await.unwrap_or_default();
             let sessions: Vec<SessionInfo> = sessions
                 .await
                 .unwrap_or_default()
@@ -98,7 +102,7 @@ impl Agents {
             let live = sessions
                 .iter()
                 .map(|s| LiveSession {
-                    label: session_label(s),
+                    label: crate::panes::machine::session_label(s, &specs),
                     busy: s.pending_runs > 0,
                 })
                 .collect();
@@ -470,57 +474,4 @@ fn section(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -> Div {
                 .child(title),
         )
         .children(rows)
-}
-
-/// "Python 3.12", "R 4.6": the language and its version to the minor one.
-fn session_label(s: &SessionInfo) -> String {
-    let language = match s.language.to_lowercase().as_str() {
-        "python" => "Python".to_string(),
-        "r" => "R".to_string(),
-        other => {
-            let mut chars = other.chars();
-            chars
-                .next()
-                .map(|c| c.to_uppercase().chain(chars).collect())
-                .unwrap_or_default()
-        }
-    };
-    let version = s
-        .language_version
-        .as_deref()
-        .map(|v| v.split('.').take(2).collect::<Vec<_>>().join("."));
-    match version.filter(|v| !v.is_empty()) {
-        Some(v) => format!("{language} {v}"),
-        None => language,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::session_label;
-    use sandhill_proto::{SessionInfo, SessionStatus};
-
-    #[test]
-    fn sessions_are_named_by_language_and_minor_version() {
-        let session = |language: &str, version: Option<&str>| SessionInfo {
-            id: "s".into(),
-            kernel: "k".into(),
-            language: language.into(),
-            cwd: "/".into(),
-            pid: None,
-            status: SessionStatus::Running,
-            created_ms: 0,
-            ended_ms: None,
-            last_seq: 0,
-            project: None,
-            pending_runs: 0,
-            language_version: version.map(str::to_string),
-        };
-        assert_eq!(
-            session_label(&session("python", Some("3.12.4"))),
-            "Python 3.12"
-        );
-        assert_eq!(session_label(&session("R", Some("4.6.2"))), "R 4.6");
-        assert_eq!(session_label(&session("julia", None)), "Julia");
-    }
 }

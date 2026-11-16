@@ -217,10 +217,18 @@ async fn a_project_runs_python_in_its_own_venv_with_its_env_file() {
         })
         .await
         .unwrap();
-    let venv_kernel = listed.iter().find(|k| k.name == "project-venv-py");
-    assert_eq!(
-        venv_kernel.map(|k| k.display_name.as_str()),
-        Some("Python (.venv)")
+    let venv_kernel = listed
+        .iter()
+        .find(|k| k.name == "project-venv-py")
+        .unwrap_or_else(|| panic!("the project's venv is not listed: {listed:?}"));
+    // Named in Sandhill's format, with the version its Python gives.
+    assert!(
+        venv_kernel.display_name.starts_with("Python 3."),
+        "{venv_kernel:?}"
+    );
+    assert!(
+        venv_kernel.display_name.ends_with(" (.venv)"),
+        "{venv_kernel:?}"
     );
     let everywhere = client.list_kernelspecs().await.unwrap();
     assert!(!everywhere.iter().any(|k| k.name == "project-venv-py"));

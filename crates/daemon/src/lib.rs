@@ -21,6 +21,7 @@ pub mod irkernel;
 pub mod jobs;
 pub mod journal;
 pub mod kernel;
+pub mod kernel_versions;
 pub mod kernelspecs;
 pub mod lifecycle;
 pub mod logfile;

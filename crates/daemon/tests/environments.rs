@@ -105,7 +105,13 @@ async fn a_conda_environment_runs_its_own_python() {
         .iter()
         .find(|k| k.name == "conda-env-omicverse-py")
         .unwrap_or_else(|| panic!("the environment's kernel is not listed: {specs:?}"));
-    assert_eq!(spec.display_name, "Python (omicverse)");
+    // Named in Sandhill's format, with the version its Python gives.
+    assert!(spec.version.is_some(), "{spec:?}");
+    assert_eq!(
+        spec.display_name,
+        sandhill_proto::kernel_label("python", spec.version.as_deref(), Some("omicverse"), None)
+    );
+    assert!(spec.display_name.starts_with("Python 3."), "{spec:?}");
     assert_eq!(spec.env.as_deref(), Some("omicverse"));
     assert!(
         specs.iter().any(|k| k.name == "conda-env-scenicplus-py"),

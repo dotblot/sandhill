@@ -94,84 +94,46 @@ fn temperature_label(value: Option<f64>) -> String {
     )
 }
 
-/// "R", "Python", or the language as the kernel names it.
-fn language_label(language: &str) -> String {
-    match language.to_lowercase().as_str() {
-        "r" => "R".into(),
-        "python" | "python3" => "Python".into(),
-        _ => {
-            let mut chars = language.chars();
-            chars
-                .next()
-                .map(|c| c.to_uppercase().chain(chars).collect())
-                .unwrap_or_default()
-        }
-    }
-}
-
-/// "4.4.1", "3.12": only the number; Python's minor version, as people say it.
-fn language_version(session: &SessionInfo) -> String {
-    let said = session.language_version.clone().unwrap_or_default();
-    let number = said
-        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .find(|w| w.contains('.') && w.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        .map(|w| w.trim_end_matches('.').to_string())
-        .unwrap_or(said);
-    if language_label(&session.language) == "Python" {
-        number.split('.').take(2).collect::<Vec<_>>().join(".")
-    } else {
-        number
-    }
-}
-
-fn with_env(text: String, session: &SessionInfo, specs: &[KernelspecInfo]) -> String {
-    match specs
-        .iter()
-        .find(|k| k.name == session.kernel)
-        .and_then(|k| k.env.clone())
-    {
-        Some(env) if !env.is_empty() => format!("{text} ({env})"),
-        _ => text,
-    }
-}
-
 /// Which R kernel runs a session, when it is R: Ark or IRkernel (Huan,
-/// 2026-11-15: their sessions otherwise read the same). Conda's R kernels
-/// (`conda-env-…-r`) are IRkernel.
-fn r_kernel(session: &SessionInfo, specs: &[KernelspecInfo]) -> Option<&'static str> {
-    if language_label(&session.language) != "R" {
+/// 2026-11-15: their sessions otherwise read the same), as the daemon
+/// says, else from the kernel's name for daemons that don't say. Conda's
+/// R kernels (`conda-env-…-r`) are IRkernel.
+fn r_engine(session: &SessionInfo, spec: Option<&KernelspecInfo>) -> Option<String> {
+    if sandhill_proto::language_label(&session.language) != "R" {
         return None;
     }
-    let spec = specs.iter().find(|k| k.name == session.kernel);
+    if let Some(engine) = spec.and_then(|k| k.engine.clone()) {
+        return Some(engine);
+    }
     let name = session.kernel.to_ascii_lowercase();
     let display = spec.map_or(String::new(), |k| k.display_name.to_ascii_lowercase());
     if name.contains("ark") || display.contains("ark") {
-        Some("Ark")
+        Some("Ark".into())
     } else if display.contains("irkernel")
         || name == "ir"
         || name.starts_with("ir-")
         || name.starts_with("ir_")
         || (name.starts_with("conda-") && name.ends_with("-r"))
     {
-        Some("IRkernel")
+        Some("IRkernel".into())
     } else {
         None
     }
 }
 
-/// "Ark R 4.4.1", "IRkernel R 4.6.2", "Python 3.12 (omicverse)".
+/// A session's name in the shared format: "R 4.6.2 · Ark", "Python 3.12
+/// (omicverse)". The version is the one the running kernel reported.
 pub(crate) fn session_label(session: &SessionInfo, specs: &[KernelspecInfo]) -> String {
-    let mut name = language_label(&session.language);
-    if let Some(kernel) = r_kernel(session, specs) {
-        name = format!("{kernel} {name}");
-    }
-    let version = language_version(session);
-    let text = if version.is_empty() {
-        name
-    } else {
-        format!("{name} {version}")
-    };
-    with_env(text, session, specs)
+    let spec = specs.iter().find(|k| k.name == session.kernel);
+    sandhill_proto::kernel_label(
+        &session.language,
+        session
+            .language_version
+            .as_deref()
+            .or_else(|| spec.and_then(|k| k.version.as_deref())),
+        spec.and_then(|k| k.env.as_deref()),
+        r_engine(session, spec).as_deref(),
+    )
 }
 
 /// One host resource, including explicitly unavailable measurements.
@@ -844,10 +806,7 @@ fn small_button(id: &'static str, label: &'static str, danger: bool, p: &Palette
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MemoryWarnings, format_bytes, kernel_memory_high, language_version, resource_rows,
-        session_label,
-    };
+    use super::{MemoryWarnings, format_bytes, kernel_memory_high, resource_rows, session_label};
     use sandhill_proto::{KernelspecInfo, SessionInfo, SessionStatus};
 
     #[test]
@@ -934,37 +893,49 @@ mod tests {
     #[test]
     fn names_versions_and_sizes() {
         assert_eq!(
-            language_version(&session("R", "R version 4.6.1 (2026-06-24)")),
-            "4.6.1"
+            session_label(&session("R", "R version 4.6.1 (2026-06-24)"), &[]),
+            "R 4.6.1"
         );
-        assert_eq!(language_version(&session("python", "3.12.4")), "3.12");
+        assert_eq!(
+            session_label(&session("python", "3.12.4"), &[]),
+            "Python 3.12"
+        );
         assert_eq!(format_bytes(56 * 1024), "56 KB");
         assert_eq!(format_bytes(412 * 1024 * 1024), "412 MB");
         assert_eq!(format_bytes(2_254_857_830), "2.1 GB");
     }
 
     #[test]
-    fn ark_and_irkernel_sessions_are_told_apart() {
-        let spec = |name: &str, display: &str| KernelspecInfo {
-            name: name.into(),
-            display_name: display.into(),
-            language: "R".into(),
-            env: None,
-        };
+    fn sessions_are_named_in_the_shared_format() {
+        let spec =
+            |name: &str, display: &str, env: Option<&str>, engine: Option<&str>| KernelspecInfo {
+                name: name.into(),
+                display_name: display.into(),
+                language: "R".into(),
+                env: env.map(str::to_string),
+                version: None,
+                engine: engine.map(str::to_string),
+            };
         let specs = [
-            spec("ark", "Ark R Kernel"),
-            spec("ir", "R 4.6.2 (IRkernel)"),
-            spec("conda-env-omicverse-r", "R [conda env:omicverse]"),
+            spec("ark", "R 4.6.2 · Ark", None, Some("Ark")),
+            // From an older daemon, which names neither kernel.
+            spec("ir", "R 4.6.2 (IRkernel)", None, None),
+            spec(
+                "conda-env-omicverse-r",
+                "R [conda env:omicverse]",
+                Some("omicverse"),
+                None,
+            ),
         ];
         let on = |kernel: &str| SessionInfo {
             kernel: kernel.into(),
             ..session("R", "4.6.2")
         };
-        assert_eq!(session_label(&on("ark"), &specs), "Ark R 4.6.2");
-        assert_eq!(session_label(&on("ir"), &specs), "IRkernel R 4.6.2");
+        assert_eq!(session_label(&on("ark"), &specs), "R 4.6.2 · Ark");
+        assert_eq!(session_label(&on("ir"), &specs), "R 4.6.2 · IRkernel");
         assert_eq!(
             session_label(&on("conda-env-omicverse-r"), &specs),
-            "IRkernel R 4.6.2"
+            "R 4.6.2 (omicverse) · IRkernel"
         );
         assert_eq!(
             session_label(&session("python", "3.12.4"), &specs),

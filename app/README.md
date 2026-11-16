@@ -1236,6 +1236,15 @@ preview and R's imports weren't seen.
   down); where documents run and where chats are kept are capsule tabs;
   the R and Python notes are one grey line each; IRkernel offers sit under
   the R row. What is saved is unchanged.
+- **Kernel names** (Huan, 2026-11-15): one format everywhere, made by
+  `sandhill_proto::kernel_label`: "R 4.6.2 · Ark", "R 4.4.1 (omicverse) ·
+  IRkernel", "Python 3.12 (omicverse)". The daemon's `kernelspecs::list`
+  names R and Python kernels with it, with `version` and `engine` added to
+  `KernelspecInfo`; `kernel_versions.rs` asks each kernel's Python or R
+  `--version` once (in parallel, 5 s limit, kept while the program's
+  modification time is unchanged). `machine::session_label` uses the same
+  function with the running kernel's version, and the AI pane's new
+  conversation screen now uses `session_label` instead of its own.
 
 
 ## Running it

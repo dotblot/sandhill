@@ -66,6 +66,8 @@ fn spec(name: &str, language: &str) -> KernelspecInfo {
         name: name.into(),
         display_name: name.into(),
         language: language.into(),
+        version: None,
+        engine: None,
         env: None,
     }
 }
@@ -520,6 +522,8 @@ fn reads_and_writes_scripts_whole() {
         name: "python3".into(),
         display_name: "Python 3".into(),
         language: "python".into(),
+        version: None,
+        engine: None,
         env: None,
     };
     assert_eq!(

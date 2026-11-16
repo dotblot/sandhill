@@ -39,17 +39,21 @@ by sentence); where an older plan differs, this wins.
   moves the Console to that session; Variables, Help and Packages show the
   Console's kernel, so opening a file without one keeps them (Huan,
   2026-11-13). A Kernels row is one line: icon, name and version, then the
-  open files using it; R sessions name their kernel, "Ark R 4.6.2" or
-  "IRkernel R 4.6.2" (Huan, 2026-11-15). Above 80% of device memory used by
+  open files using it. Above 80% of device memory used by
   kernels, warn once per crossing.
 - The Files
   pane has no toolbar row: sort, new and refresh sit in its tab bar. The
   Console keeps an unsent draft per session, and its picker sits against
   the restart button.
-- Kernel
-  pickers drop the grey environment line when the name already shows it.
-- Full status/errors remain in tooltips. Ark is named "Ark R" however it was
-  registered (Huan, 2026-11-14). List only runnable kernels, including
+- Kernel names (Huan, 2026-11-15) have one format everywhere: language,
+  version, environment in brackets, and for R the kernel after a dot:
+  "R 4.6.2 · Ark", "R 4.4.1 (omicverse) · IRkernel", "Python 3.12
+  (omicverse)", "Python 3.13". Python shows two parts of its version, R
+  three; no environment, no brackets. The kernel's own `display_name` is
+  never shown; a kernel that isn't running gets its version from its R or
+  Python, asked once by the daemon. Kernel pickers drop the grey
+  environment line when the name already shows it.
+- Full status/errors remain in tooltips. List only runnable kernels, including
   conda/mamba kernels; do not add a separate environment inventory or disabled
   rows for environments without a kernel (Huan, 2026-11-08). Kernels whose
   program is gone (left behind by an upgraded or removed R or Python) are

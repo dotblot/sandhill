@@ -28,12 +28,81 @@ pub struct InspectReply {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KernelspecInfo {
     pub name: String,
+    /// Sandhill's name for it, made by [`kernel_label`].
     pub display_name: String,
     pub language: String,
     /// The environment the kernel runs in (a conda env, a venv, a pyenv
     /// version), so a notebook that names its environment finds it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
+    /// The R or Python version it runs, as that program says it (`4.6.2`,
+    /// `3.12.4`); none when it couldn't be asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// For R, which kernel it is: `Ark` or `IRkernel`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+}
+
+/// How Sandhill names a kernel everywhere (Huan, 2026-11-15): the
+/// language, its version, the environment in brackets and, for R, the
+/// kernel after a dot. "R 4.6.2 · Ark", "R 4.4.1 (omicverse) · IRkernel",
+/// "Python 3.12 (omicverse)", "Python 3.13". Python shows two parts of its
+/// version, R three. An environment named for its version (a pyenv
+/// version such as `3.12.4`) adds nothing and is left out.
+pub fn kernel_label(
+    language: &str,
+    version: Option<&str>,
+    env: Option<&str>,
+    engine: Option<&str>,
+) -> String {
+    let mut label = language_label(language);
+    if let Some(version) = version
+        .map(|said| version_number(&label, said))
+        .filter(|v| !v.is_empty())
+    {
+        label = format!("{label} {version}");
+    }
+    if let Some(env) = env.filter(|env| env.chars().next().is_some_and(|c| !c.is_ascii_digit())) {
+        label = format!("{label} ({env})");
+    }
+    if let Some(engine) = engine.filter(|engine| !engine.is_empty()) {
+        label = format!("{label} · {engine}");
+    }
+    label
+}
+
+/// "R", "Python", or the language as the kernel names it, capitalised.
+pub fn language_label(language: &str) -> String {
+    match language.to_lowercase().as_str() {
+        "r" => "R".into(),
+        "python" | "python3" => "Python".into(),
+        _ => {
+            let mut chars = language.chars();
+            chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
+    }
+}
+
+/// The version number in what a program says of itself ("R version 4.6.2
+/// (2025-10-31)", "Python 3.12.4", "3.12.4 | packaged by conda-forge").
+pub fn version_in(said: &str) -> Option<String> {
+    said.split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|w| w.contains('.') && w.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(|w| w.trim_end_matches('.').to_string())
+}
+
+/// The version as shown: two parts of it for Python, all of it for R.
+fn version_number(language: &str, said: &str) -> String {
+    let number = version_in(said).unwrap_or_default();
+    if language == "Python" {
+        number.split('.').take(2).collect::<Vec<_>>().join(".")
+    } else {
+        number
+    }
 }
 
 /// An R installation without IRkernel (see [`Call::ListRWithoutIrkernel`]).

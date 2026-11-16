@@ -222,6 +222,8 @@ mod tests {
             display_name: name.into(),
             language: language.into(),
             env: env.map(String::from),
+            version: None,
+            engine: None,
         }
     }
 

@@ -288,6 +288,8 @@ mod tests {
             display_name: "Python".into(),
             language: "python".into(),
             env: None,
+            version: None,
+            engine: None,
         };
         let empty = parse("report.qmd", "").unwrap();
         let kernel = recover_kernel(&empty, std::slice::from_ref(&spec), None, None, None);
