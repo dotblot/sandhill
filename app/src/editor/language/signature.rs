@@ -138,6 +138,17 @@ pub(crate) struct Hint {
     pub active: Option<usize>,
 }
 
+impl Hint {
+    /// Whether the hint helps: a call with no parameters, or only R's
+    /// `...` (`c(...)`), shows none (Huan, 2026-11-16).
+    fn useful(self) -> Option<Self> {
+        self.params
+            .iter()
+            .any(|range| self.label[range.clone()].trim() != "...")
+            .then_some(self)
+    }
+}
+
 /// `textDocument/signatureHelp`'s answer, if it has a signature.
 pub(crate) fn from_lsp(value: Value, call: &CallSite) -> Option<Hint> {
     let help = serde_json::from_value::<Option<SignatureHelp>>(value).ok()??;
@@ -180,11 +191,12 @@ pub(crate) fn from_lsp(value: Value, call: &CallSite) -> Option<Hint> {
         .or(help.active_parameter)
         .map(|active| active as usize);
     let active = active_parameter(&label, &params, call, server);
-    Some(Hint {
+    Hint {
         label,
         params,
         active,
-    })
+    }
+    .useful()
 }
 
 /// A kernel's `inspect_reply` text: IPython's `Signature:` line, or an R
@@ -245,11 +257,12 @@ pub(crate) fn from_inspect(text: &str, call: &CallSite) -> Option<Hint> {
     }
     push_param(&label, start..close, &mut params);
     let active = active_parameter(&label, &params, call, None);
-    Some(Hint {
+    Hint {
         label,
         params,
         active,
-    })
+    }
+    .useful()
 }
 
 fn push_param(label: &str, range: Range<usize>, params: &mut Vec<Range<usize>>) {
@@ -770,5 +783,12 @@ mod tests {
         .unwrap();
         assert_eq!(r.label, "f(x, trim = 0, na.rm = FALSE, ...)");
         assert_eq!(param(&r).as_deref(), Some("na.rm = FALSE"));
+        // `c(...)` and `f()` say nothing worth showing.
+        assert_eq!(from_inspect("function (...) \nNULL", &site(0, None)), None);
+        assert_eq!(from_inspect("function () \nNULL", &site(0, None)), None);
+        assert_eq!(
+            from_inspect("Signature: f()\nDocstring: x", &site(0, None)),
+            None
+        );
     }
 }

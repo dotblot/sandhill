@@ -171,7 +171,9 @@ async fn launch(
 ) -> Result<(Vec<Transport>, Value)> {
     let root = PathBuf::from(project);
     let uri = discovery::file_uri(&root);
-    let base = json!({"processId":std::process::id(),"clientInfo":{"name":"Sandhill"},"rootUri":uri,"workspaceFolders":[{"uri":uri,"name":root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false}},"publishDiagnostics":{"relatedInformation":true}},"workspace":{"configuration":false,"workspaceFolders":true}},"trace":"off"});
+    // Hovers in Markdown: without it ty sends plain text, and the signature
+    // in the explanation box isn't coloured as code (Huan, 2026-11-16).
+    let base = json!({"processId":std::process::id(),"clientInfo":{"name":"Sandhill"},"rootUri":uri,"workspaceFolders":[{"uri":uri,"name":root.file_name().unwrap_or_default().to_string_lossy()}],"capabilities":{"general":{"positionEncodings":["utf-16"]},"textDocument":{"synchronization":{"didSave":true},"completion":{"completionItem":{"snippetSupport":false}},"hover":{"contentFormat":["markdown","plaintext"]},"publishDiagnostics":{"relatedInformation":true}},"workspace":{"configuration":false,"workspaceFolders":true}},"trace":"off"});
     match language {
         "python" => {
             let mut ty =

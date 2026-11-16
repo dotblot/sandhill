@@ -10,8 +10,8 @@ use gpui_kit::component::input::{
 use gpui_kit::*;
 use lsp_types::{
     CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit,
-    Documentation, Hover, InsertTextFormat, Location, LocationLink, MarkupContent, MarkupKind,
-    Position, Range, TextEdit,
+    Documentation, Hover, HoverContents, InsertTextFormat, Location, LocationLink, MarkupContent,
+    MarkupKind, Position, Range, TextEdit,
 };
 use sandhill_proto::{Call, CompletionReply, HelpPage, InspectReply, Packages};
 use serde_json::{Value, json};
@@ -39,6 +39,12 @@ const MAX_DOCS: usize = 512;
 /// The key in a kernel item's `data` naming its help topic (`sc.AnnData`).
 const HELP_TOPIC: &str = "sandhill_help";
 
+thread_local! {
+    /// The editor whose next completion request is Tab's: only Tab lists
+    /// files and folders (Huan, 2026-11-16).
+    static TAB_ASKED: Cell<Option<EntityId>> = const { Cell::new(None) };
+}
+
 #[derive(Clone)]
 struct Provider {
     workbench: WeakEntity<Workbench>,
@@ -58,6 +64,9 @@ struct Provider {
     /// Documentation found for items (by `docs_key`); `None` when there
     /// is none, so it isn't asked again.
     docs: Rc<RefCell<HashMap<String, Option<String>>>>,
+    /// The open menu was asked for with Tab, so it keeps files and folders
+    /// as more is typed.
+    tab_menu: Rc<Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -143,6 +152,7 @@ pub(super) fn install(
         pause: Rc::new(Cell::new(0)),
         asked: Rc::new(RefCell::new(None)),
         docs: Rc::new(RefCell::new(HashMap::new())),
+        tab_menu: Rc::new(Cell::new(false)),
     });
     // The completion menu asks for the documentation items came without.
     let id = editor.entity_id();
@@ -490,6 +500,14 @@ impl CompletionProvider for Provider {
     ) -> Task<Result<CompletionResponse>> {
         // A request (typed, Tab, or a pause's end) overtakes a waiting show.
         self.pause.set(self.pause.get() + 1);
+        // Tab's request starts a Tab menu, which typing then refines; any
+        // other request with no menu open starts a plain one.
+        let id = self.editor.entity_id();
+        if TAB_ASKED.with(|asked| asked.take()) == Some(id) {
+            self.tab_menu.set(true);
+        } else if !self.menu_open.get() {
+            self.tab_menu.set(false);
+        }
         let text = text.to_string();
         let provider = self.clone();
         cx.spawn(async move |cx| {
@@ -655,6 +673,18 @@ impl CompletionProvider for Provider {
                 });
                 variables_first(&mut items, &names);
             }
+            // Files and folders only when Tab asked (Huan, 2026-11-16).
+            if !provider.tab_menu.get() {
+                items.retain(|item| {
+                    !matches!(
+                        item.kind,
+                        Some(CompletionItemKind::FILE | CompletionItemKind::FOLDER)
+                    )
+                });
+            }
+            // R's `...` is no argument to type: `c(` offers nothing (Huan,
+            // 2026-11-16).
+            items.retain(|item| item.label.trim_end_matches('=').trim() != "...");
             let python = context.language == "python";
             let found: Vec<Accept> = items
                 .iter_mut()
@@ -805,10 +835,28 @@ impl HoverProvider for Provider {
             if let Some(hover) = &mut hover {
                 // The editor then takes the name under the pointer.
                 hover.range = None;
+                if let HoverContents::Markup(content) = &mut hover.contents
+                    && let Some(markdown) = hover_docstring(&content.value)
+                {
+                    content.value = markdown;
+                }
             }
             Ok(hover)
         })
     }
+}
+
+/// ty's hover: the signature fenced as Python, `---`, then the docstring
+/// as written (plain text). The docstring made markdown, as completion
+/// documentation is; `None` for anything else.
+fn hover_docstring(value: &str) -> Option<String> {
+    let close = value.strip_prefix("```")?.find("\n```\n")? + 3;
+    let (code, rest) = value.split_at(close + 5);
+    let docstring = rest.strip_prefix("---\n")?;
+    Some(format!(
+        "{code}\n{}",
+        crate::editor::doc_text::docstring_markdown(docstring)
+    ))
 }
 
 impl DefinitionProvider for Provider {
@@ -977,12 +1025,17 @@ impl Workbench {
             || cursor > text.len()
             || !text.is_char_boundary(cursor)
             || !text.chars_at(cursor).reversed().next().is_some_and(|ch| {
-                ch.is_alphanumeric() || matches!(ch, '_' | '.' | '$' | '@' | ':' | '(' | ',' | '[')
+                ch.is_alphanumeric()
+                    || matches!(
+                        ch,
+                        '_' | '.' | '$' | '@' | ':' | '(' | ',' | '[' | '/' | '"' | '\''
+                    )
             })
         {
             return false;
         }
         gpui_kit::component::input::show_completion_docs_now(cursor);
+        TAB_ASKED.with(|asked| asked.set(Some(editor.entity_id())));
         editor.update(cx, |editor, cx| editor.show_completions(window, cx));
         // An open menu shows its documentation now.
         window.refresh();

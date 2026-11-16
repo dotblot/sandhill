@@ -14,6 +14,7 @@ pub(crate) mod find;
 pub(crate) mod html_table;
 pub(crate) mod import_dialog;
 pub(crate) mod imports;
+pub(crate) mod indent;
 pub(crate) mod language;
 pub(crate) mod md_images;
 pub(crate) mod media;

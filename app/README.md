@@ -1329,6 +1329,12 @@ preview and R's imports weren't seen.
   closes the box when it leaves. `completion_items::variables_first` and
   `assigned_names`. The device popup (`connection.rs`) with
   `prefs::usage_in_status_bar` and `Workbench::measuring`.
+- **Editor details** (Huan, 2026-11-16): the daemon asks language servers
+  for Markdown hovers (ty sent plain text) and `hover_docstring` makes
+  ty's docstring Markdown; `TAB_ASKED`/`tab_menu` keep files and folders
+  to Tab's menus; `...` items are dropped and `signature::Hint::useful`
+  hides `c(...)`/`f()` hints; `editor/indent.rs` `continuation` indents
+  Enter inside open calls (captured in `view/cells.rs`).
 
 
 ## Running it

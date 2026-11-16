@@ -312,6 +312,14 @@ impl Workbench {
                 }),
             )
             .on_mouse_move(hover_leaves(&open.editors[0]))
+            .capture_action({
+                let editor = open.editors[0].clone();
+                move |action: &gpui_kit::component::input::Enter, window, cx| {
+                    if crate::editor::indent::enter_in_brackets(&editor, action, window, cx) {
+                        cx.stop_propagation();
+                    }
+                }
+            })
             .child(
                 Editor::new(&open.editors[0])
                     .extend_context_menu(ask_ai_item(&open.editors[0]))
@@ -686,6 +694,14 @@ impl Workbench {
                 }),
             )
             .on_mouse_move(hover_leaves(editor))
+            .capture_action({
+                let editor = editor.clone();
+                move |action: &gpui_kit::component::input::Enter, window, cx| {
+                    if crate::editor::indent::enter_in_brackets(&editor, action, window, cx) {
+                        cx.stop_propagation();
+                    }
+                }
+            })
             .child(
                 Editor::new(editor)
                     .extend_context_menu(ask_ai_item(editor))

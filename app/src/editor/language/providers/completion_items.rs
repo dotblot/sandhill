@@ -18,6 +18,7 @@ fn kernel_kinds(metadata: &Value) -> HashMap<String, CompletionItemKind> {
                 "keyword" => CompletionItemKind::KEYWORD,
                 "instance" | "statement" | "param" => CompletionItemKind::VARIABLE,
                 "property" => CompletionItemKind::PROPERTY,
+                "path" => CompletionItemKind::FILE,
                 _ => return None,
             };
             Some((entry.get("text")?.as_str()?.to_string(), kind))

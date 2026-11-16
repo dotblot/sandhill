@@ -115,6 +115,15 @@ by sentence); where an older plan differs, this wins.
   and covers that name only, not the list or call around it; leaving the
   name closes it (Huan, 2026-11-16). In completion lists, names in the
   Variables pane or assigned in the document come first (Huan, 2026-11-16).
+- Editor details (Huan, 2026-11-16): Python's explanation box shows its
+  signature coloured as code, like R's (Sandhill asks the language server
+  for Markdown). Files and folders are offered only when Tab asks, never
+  while typing in a string. R's `...` is never offered as an argument and
+  a call whose only parameter is `...` (`c(`) or that has none shows no
+  hint. Enter inside an open call or list lines the new line up under the
+  first argument, or one step in when the bracket ends its line (R 2,
+  Python 4 spaces); after the call closes, the next line goes back to its
+  statement's indent.
 
 ## Data explorer
 - The data explorer's column edges drag to resize (Huan, 2026-11-14): no
