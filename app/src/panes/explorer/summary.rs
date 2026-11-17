@@ -290,8 +290,7 @@ impl Explorer {
                                 this.show_column(column, *on, cx);
                             })),
                     );
-                v_flex()
-                    .flex_none()
+                column_list_item()
                     .child(row)
                     .when(open, |d| d.child(this.render_stats(column, c, cx)))
                     .into_any_element()
@@ -718,6 +717,12 @@ impl Explorer {
     }
 }
 
+/// List items are independent layout roots: unlike the old flex-column
+/// children, auto-width items shrink to each name's intrinsic width.
+fn column_list_item() -> Div {
+    v_flex().flex_none().w_full()
+}
+
 /// A category value's colour, as a small square.
 pub(super) fn swatch(color: Hsla) -> Div {
     div().size(px(8.)).flex_none().rounded(px(2.)).bg(color)
@@ -756,7 +761,13 @@ pub(super) fn missing_share(missing: u64, rows: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::missing_share;
+    use super::{SIDE_ROW, SPARK_HEIGHT, SPARK_WIDTH, column_list_item, missing_share};
+    use gpui_kit::component::h_flex;
+    use gpui_kit::{
+        AppContext, Bounds, Context, IntoElement, ListAlignment, ListState, ParentElement, Pixels,
+        Render, Styled, TestAppContext, Window, canvas, div, list, point, px, size,
+    };
+    use std::rc::Rc;
 
     #[test]
     fn missing_shares_round_without_hiding_rare_or_total_gaps() {
@@ -766,5 +777,62 @@ mod tests {
         assert_eq!(missing_share(10, 100), "10%");
         assert_eq!(missing_share(99_999, 100_000), "100%");
         assert_eq!(missing_share(5, 0), "0%");
+    }
+
+    #[gpui_kit::test]
+    fn virtual_column_rows_align_statistics_for_different_name_lengths(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let positions = Rc::new(std::cell::RefCell::new([None, None]));
+        let painted = positions.clone();
+        struct ColumnRows(Rc<std::cell::RefCell<[Option<Bounds<Pixels>>; 2]>>);
+        impl Render for ColumnRows {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let painted = self.0.clone();
+                list(
+                    ListState::new(2, ListAlignment::Top, px(0.)),
+                    move |i, _, _| {
+                        let painted = painted.clone();
+                        column_list_item()
+                            .child(
+                                h_flex()
+                                    .h(px(SIDE_ROW))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(["FAM138A", "MIR1302-10"][i]),
+                                    )
+                                    .child(
+                                        canvas(
+                                            move |bounds, _, _| {
+                                                painted.borrow_mut()[i] = Some(bounds);
+                                            },
+                                            |_, _, _, _| {},
+                                        )
+                                        .w(px(SPARK_WIDTH))
+                                        .h(px(SPARK_HEIGHT))
+                                        .flex_none(),
+                                    ),
+                            )
+                            .into_any_element()
+                    },
+                )
+                .size_full()
+            }
+        }
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(320.), px(80.)),
+            move |_, cx| cx.new(|_| ColumnRows(painted)).into_any_element(),
+        );
+        let positions = positions.borrow();
+        let short = positions[0].expect("short-name row painted");
+        let long = positions[1].expect("long-name row painted");
+        assert_eq!(
+            short.left(),
+            long.left(),
+            "statistics must share one column"
+        );
+        assert_eq!(short.right(), px(320.), "each row must fill the list width");
     }
 }
