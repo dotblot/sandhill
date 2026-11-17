@@ -18,7 +18,8 @@
 //!
 //! An environment with ipykernel installed but no `kernel.json` for it (pip
 //! and conda don't always write one) still gets the `python3` kernel Jupyter
-//! would start from it.
+//! would start from it. Venvs that enable system site-packages can inherit
+//! ipykernel from their base Python instead of installing another copy.
 //!
 //! Ark, the R kernel the app installs on servers (see
 //! [`sandhill_proto::ARK_PATH`]), is offered as `ark` when R is on `PATH`,
@@ -544,7 +545,7 @@ fn ipykernel_python(prefix: &Path) -> Option<String> {
                     .join("site-packages/ipykernel_launcher.py")
                     .is_file()
         });
-    if !installed {
+    if !installed && !system_ipykernel(prefix) {
         return None;
     }
     ["python3", "python"]
@@ -552,6 +553,37 @@ fn ipykernel_python(prefix: &Path) -> Option<String> {
         .map(|exe| prefix.join("bin").join(exe))
         .find(|path| path.is_file())
         .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// A venv can use its base Python's packages, but only when its config
+/// enables them, and only for the same Python version as the venv.
+fn system_ipykernel(prefix: &Path) -> bool {
+    let Ok(config) = std::fs::read_to_string(prefix.join("pyvenv.cfg")) else {
+        return false;
+    };
+    let mut enabled = false;
+    let mut home = None;
+    for (key, value) in config.lines().filter_map(|line| line.split_once('=')) {
+        match key.trim() {
+            "include-system-site-packages" => enabled = value.trim().eq_ignore_ascii_case("true"),
+            "home" => home = Some(Path::new(value.trim())),
+            _ => {}
+        }
+    }
+    let Some(base) = home.and_then(Path::parent).filter(|_| enabled) else {
+        return false;
+    };
+    std::fs::read_dir(prefix.join("lib")).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let version = entry.file_name();
+            version.to_string_lossy().starts_with("python3")
+                && base
+                    .join("lib")
+                    .join(version)
+                    .join("site-packages/ipykernel_launcher.py")
+                    .is_file()
+        })
+    })
 }
 
 /// Reads `<data_dir>/kernels/*/kernel.json`, skipping what doesn't parse.

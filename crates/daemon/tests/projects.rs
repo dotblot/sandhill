@@ -101,33 +101,17 @@ fn python(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Makes `<prefix>` a venv that sees the system's ipykernel, as `uv sync`
-/// would make `.venv` with ipykernel among a project's dependencies.
+/// Makes `<prefix>` a venv that inherits the system's ipykernel, without
+/// installing or linking the launcher into the venv itself.
 fn venv_with_ipykernel(prefix: &Path) -> bool {
-    let Some(launcher) = python(&["-c", "import ipykernel_launcher as l; print(l.__file__)"])
-    else {
+    if python(&["-c", "import ipykernel_launcher"]).is_none() {
         return false;
-    };
-    let made = std::process::Command::new("python3")
+    }
+    std::process::Command::new("python3")
         .args(["-m", "venv", "--without-pip", "--system-site-packages"])
         .arg(prefix)
         .status()
-        .is_ok_and(|s| s.success());
-    if !made {
-        return false;
-    }
-    let output = std::process::Command::new(prefix.join("bin/python"))
-        .args([
-            "-c",
-            "import sysconfig; print(sysconfig.get_paths()['purelib'])",
-        ])
-        .output()
-        .unwrap();
-    let site = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    std::fs::create_dir_all(&site).unwrap();
-    // What tells Sandhill (and Jupyter) that ipykernel is installed here.
-    std::os::unix::fs::symlink(&launcher, site.join("ipykernel_launcher.py")).unwrap();
-    true
+        .is_ok_and(|s| s.success())
 }
 
 async fn setup(client: &Client, project: &Path) -> ProjectSetup {
@@ -173,6 +157,70 @@ async fn run(client: &mut Client, session: &str, code: &str) -> String {
             return out;
         }
     }
+}
+
+#[tokio::test]
+async fn a_project_finds_ipykernel_in_system_site_packages() {
+    let tmp = common::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    let project = base.join("atlas");
+    let venv = project.join(".venv");
+    if !venv_with_ipykernel(&venv) {
+        eprintln!("skipping: can't make a venv with system ipykernel (python3 -m venv)");
+        return;
+    }
+    let imported = std::process::Command::new(venv.join("bin/python"))
+        .args(["-c", "import ipykernel_launcher as l; print(l.__file__)"])
+        .output()
+        .unwrap();
+    assert!(imported.status.success(), "{imported:?}");
+    let launcher = PathBuf::from(String::from_utf8(imported.stdout).unwrap().trim());
+    assert!(launcher.is_file(), "{launcher:?}");
+    assert!(!launcher.starts_with(&venv), "{launcher:?}");
+
+    let daemon = TestDaemon::start(&base.join("state")).await;
+    let mut client = daemon.client().await;
+    let found = setup(&client, &project).await;
+    assert_eq!(
+        found.python.as_deref(),
+        Some("project-venv-py"),
+        "{found:?}"
+    );
+    let environment = found.found.iter().find(|f| f.file == ".venv").unwrap();
+    assert_eq!(environment.kernel.as_deref(), Some("project-venv-py"));
+    assert_eq!(environment.hint, None);
+
+    let session = start(&client, "project-venv-py", &project, &project).await;
+    let out = run(&mut client, &session.id, "import sys\nprint(sys.prefix)").await;
+    assert_eq!(out.trim(), venv.to_str().unwrap());
+    client.shutdown(&session.id).await.unwrap();
+
+    // The same base installation must not leak into an isolated venv.
+    let config = venv.join("pyvenv.cfg");
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        text.contains("include-system-site-packages = true"),
+        "{text}"
+    );
+    std::fs::write(
+        config,
+        text.replace(
+            "include-system-site-packages = true",
+            "include-system-site-packages = false",
+        ),
+    )
+    .unwrap();
+    let found = setup(&client, &project).await;
+    let environment = found.found.iter().find(|f| f.file == ".venv").unwrap();
+    assert_eq!(environment.kernel, None, "{environment:?}");
+    assert!(
+        environment
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("no Python kernel"),
+        "{environment:?}"
+    );
 }
 
 #[tokio::test]
