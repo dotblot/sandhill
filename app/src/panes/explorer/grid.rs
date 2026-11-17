@@ -4,6 +4,20 @@ use super::summary::swatch;
 use super::*;
 
 impl Explorer {
+    pub(super) fn column_viewport(&self, columns: &[u32]) -> viewport::ColumnViewport {
+        viewport::column_viewport(
+            columns,
+            &self.widths,
+            self.pinned_shown(),
+            f32::from(
+                (-self.across.offset().x)
+                    .min(self.across.max_offset().x)
+                    .max(px(0.)),
+            ),
+            f32::from(self.across.bounds().size.width).max(1.),
+            self.label_width,
+        )
+    }
     /// A menu row: an icon, a label and a shortcut; dimmed when it can't
     /// be used.
     pub(super) fn menu_item(
@@ -323,7 +337,14 @@ impl Explorer {
     /// first rows' values, as the window draws them (at most
     /// [`FIT_WIDTH`]); widths the user dragged are kept.
     pub(super) fn fit_column_widths(&mut self, window: &mut Window) {
-        let (Some(shape), Some(Block::Ready(rows))) = (&self.shape, self.blocks.get(&0)) else {
+        if self.row_columns.is_empty() {
+            return;
+        }
+        let ready = self.blocks.values().find_map(|block| match block {
+            Block::Ready(rows) => Some(rows),
+            _ => None,
+        });
+        let (Some(shape), Some(rows)) = (&self.shape, ready) else {
             return;
         };
         let style = window.text_style();
@@ -351,14 +372,24 @@ impl Explorer {
                 .map(|t| measure(t, bold_text))
                 .fold(0., f32::max)
         };
-        let mut widths = self.widths.clone();
-        for (i, column) in shape.columns.iter().enumerate() {
-            if self.resized.contains(&(i as u32)) || i >= widths.len() {
+        for &original in &self.row_columns {
+            let i = original as usize;
+            let column = &shape.columns[i];
+            if !self.fitted_columns.insert(original)
+                || self.resized.contains(&original)
+                || i >= self.widths.len()
+            {
                 continue;
             }
             let cells: Vec<String> = rows
                 .iter()
-                .filter_map(|row| row.cells.get(i))
+                .filter_map(|row| {
+                    let slot = row
+                        .slots
+                        .as_ref()
+                        .map_or(Some(i), |slots| slots.get(&(i as u32)).copied())?;
+                    row.cells.get(slot)
+                })
                 .map(|v| format_cell(v, &self.language).0)
                 .collect();
             // Category colours put a swatch before the value.
@@ -371,7 +402,7 @@ impl Explorer {
             let cell = widest(cells, false) + 30. + swatch;
             // Room for a sort arrow after the name.
             let header = widest(vec![column.name.clone()], true) + 18. + 16.;
-            widths[i] = cell.max(header).clamp(MIN_COLUMN_WIDTH, FIT_WIDTH).ceil();
+            self.widths[i] = cell.max(header).clamp(MIN_COLUMN_WIDTH, FIT_WIDTH).ceil();
         }
         let labels: Vec<String> = rows
             .iter()
@@ -379,7 +410,6 @@ impl Explorer {
             .chain([shape.total.to_string()])
             .collect();
         self.label_width = (widest(labels, false) + 18.).clamp(44., 240.).ceil();
-        self.widths = widths;
         self.fit_widths = false;
     }
 
@@ -398,6 +428,10 @@ impl Explorer {
                 .into_any_element();
         };
         let visible = self.visible_columns();
+        let viewport = self.column_viewport(&visible);
+        let shown_pinned = viewport.pinned.len();
+        let before = viewport.before;
+        let displayed: Vec<usize> = viewport.pinned.chain(viewport.scrolling).collect();
         let pinned = self.pinned_shown();
         let widths = self.widths.clone();
         let label_width = self.label_width;
@@ -420,10 +454,10 @@ impl Explorer {
             .max(px(0.));
         let selected = self.selection.range();
         let hover_ink = p.ink(8.);
-        let mut header_cells: Vec<AnyElement> = visible
+        let mut header_cells: Vec<AnyElement> = displayed
             .iter()
-            .enumerate()
-            .map(|(display, &original)| {
+            .map(|&display| {
+                let original = visible[display];
                 let ix = original as usize;
                 let column = &shape.columns[ix];
                 let key = self.sort.iter().position(|s| s.column == original);
@@ -566,7 +600,7 @@ impl Explorer {
                     .into_any_element()
             })
             .collect();
-        let header_pinned: Vec<AnyElement> = header_cells.drain(..pinned).collect();
+        let header_pinned: Vec<AnyElement> = header_cells.drain(..shown_pinned).collect();
         let header = h_flex()
             .flex_none()
             .relative()
@@ -575,6 +609,7 @@ impl Explorer {
             .border_color(p.line)
             .bg(p.panel)
             .child(div().w(px(fixed_width)).h_full().flex_none())
+            .child(div().w(px(before)).h_full().flex_none())
             .children(header_cells)
             .child(
                 h_flex()
@@ -664,10 +699,10 @@ impl Explorer {
                                 },
                             ))
                             .child(label);
-                        let mut cells: Vec<AnyElement> = visible
+                        let mut cells: Vec<AnyElement> = displayed
                             .iter()
-                            .enumerate()
-                            .map(|(display, &original)| {
+                            .map(|&display| {
+                                let original = visible[display];
                                 let col = original as usize;
                                 let value = row.as_ref().and_then(|r| {
                                     let slot = r
@@ -748,8 +783,9 @@ impl Explorer {
                                     .into_any_element()
                             })
                             .collect();
-                        let fixed: Vec<AnyElement> = cells.drain(..pinned).collect();
+                        let fixed: Vec<AnyElement> = cells.drain(..shown_pinned).collect();
                         line.child(div().w(px(fixed_width)).h_full().flex_none())
+                            .child(div().w(px(before)).h_full().flex_none())
                             .children(cells)
                             .child(
                                 h_flex()
@@ -781,12 +817,23 @@ impl Explorer {
         })
         .flex_1();
         div()
+            .on_children_prepainted({
+                let bounds = self.across.bounds();
+                let scroll = self.across.clone();
+                move |_, window, _| {
+                    // Layout may discover new bounds after the render.
+                    if bounds.size != scroll.bounds().size {
+                        window.refresh();
+                    }
+                }
+            })
             .id("table")
             .flex_1()
             .min_h_0()
             .overflow_x_scroll()
             .track_scroll(&self.across)
             .restrict_scroll_to_axis()
+            .on_scroll(cx.listener(|_, _, _, cx| cx.notify()))
             .child(
                 v_flex()
                     .w(px(width))

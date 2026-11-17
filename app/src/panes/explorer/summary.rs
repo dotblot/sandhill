@@ -2,43 +2,96 @@
 
 use super::*;
 
+const BATCH: u32 = 32;
+
 impl Explorer {
-    /// Reads the columns' summaries, with the filters on.
-    pub(super) fn read_summary(&mut self, cx: &mut Context<Self>) {
-        let generation = self.generation;
+    /// Forget statistics on a new table/filter generation. Visible list
+    /// items request small batches on demand, with one request in flight.
+    pub(super) fn read_summary(&mut self, _cx: &mut Context<Self>) {
+        self.summary_generation += 1;
+        self.summary_pending = None;
+        self.summary_blocks.clear();
+        self.summary.clear();
+        self.overall.clear();
+        self.colors
+            .retain(|c, _| self.summary_visible.contains(&(c / BATCH)));
+    }
+
+    pub(super) fn ensure_summary(&mut self, column: u32, cx: &mut Context<Self>) {
+        const CACHE: usize = 8;
+        let block = column / BATCH;
+        self.summary_visible.insert(block);
+        if self.busy
+            || self.refresh_shape
+            || self.summary_pending.is_some()
+            || self.summary_blocks.contains(&block)
+        {
+            return;
+        }
+        self.summary_pending = Some(block);
+        let generation = self.summary_generation;
         let filtered = !self.filters.is_empty() || !self.search.is_empty();
-        let read = self.daemon.call::<TableSummary>(Call::TableSummary {
+        let request = Call::TableSummary {
             session: self.session.clone(),
             path: self.path.clone(),
             filters: self.filters.clone(),
             search: self.search.clone(),
-            column_offset: 0,
-            column_limit: Some(COLUMNS),
+            column_offset: block * BATCH,
+            column_limit: Some(BATCH),
+        };
+        let overall = filtered.then(|| Call::TableSummary {
+            session: self.session.clone(),
+            path: self.path.clone(),
+            filters: Vec::new(),
+            search: String::new(),
+            column_offset: block * BATCH,
+            column_limit: Some(BATCH),
         });
+        let daemon = self.daemon.clone();
         cx.spawn(async move |this, cx| {
-            let read = read.await;
-            this.update(cx, |this, cx| {
-                if this.generation != generation {
+            let read = daemon.call::<TableSummary>(request).await;
+            let overall = match overall {
+                Some(request) => daemon.call::<TableSummary>(request).await.ok(),
+                None => None,
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.summary_generation != generation {
                     return;
                 }
-                match read {
-                    Ok(read) => {
-                        this.summary = read.columns.iter().map(|c| (c.column, c.clone())).collect();
-                        this.summary_generation = generation;
-                        if !filtered {
-                            this.overall = this.summary.clone();
-                        }
-                        this.color_values(&read.columns);
-                    }
-                    Err(err) => {
-                        if !format!("{err:#}").contains(BUSY) {
-                            this.summary.clear();
-                        }
+                this.summary_pending = None;
+                this.summary_blocks.push_back(block);
+                while this.summary_blocks.len() > CACHE + this.summary_visible.len() {
+                    let old = this
+                        .summary_blocks
+                        .iter()
+                        .position(|b| !this.summary_visible.contains(b))
+                        .and_then(|i| this.summary_blocks.remove(i));
+                    if let Some(old) = old {
+                        this.summary.retain(|&c, _| c / BATCH != old);
+                        this.overall.retain(|&c, _| c / BATCH != old);
+                        this.colors.retain(|&c, _| c / BATCH != old);
+                    } else {
+                        break;
                     }
                 }
+                if let Ok(read) = read {
+                    this.color_values(&read.columns);
+                    if !filtered {
+                        this.overall
+                            .extend(read.columns.iter().cloned().map(|c| (c.column, c)));
+                    }
+                    this.summary
+                        .extend(read.columns.into_iter().map(|c| (c.column, c)));
+                }
+                if let Some(overall) = overall {
+                    this.overall
+                        .extend(overall.columns.into_iter().map(|c| (c.column, c)));
+                }
+                // Expanded statistics may change height after their reply.
+                let count = this.side_list.item_count();
+                this.side_list.splice(0..count, count);
                 cx.notify();
-            })
-            .ok();
+            });
         })
         .detach();
     }
@@ -78,7 +131,7 @@ impl Explorer {
     /// a Find column field, then one line per column (fold arrow, type
     /// badge, name, sparkline, missing share, shown checkbox) with its
     /// statistics folded under it. Clicking a column scrolls the table to it.
-    pub(super) fn render_side(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_side(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let Some(shape) = &self.shape else {
             return div().into_any_element();
@@ -86,17 +139,28 @@ impl Explorer {
         let shown_rows = shape.rows;
         let find = self.column_find.read(cx).value().trim().to_lowercase();
         let hover = p.hover;
-        let rows: Vec<AnyElement> = shape
+        let columns: Vec<usize> = shape
             .columns
             .iter()
             .enumerate()
             .filter(|(_, c)| find.is_empty() || c.name.to_lowercase().contains(&find))
-            .map(|(i, c)| {
+            .map(|(i, _)| i)
+            .collect();
+        let none_found = columns.is_empty() && !find.is_empty();
+        if self.side_list.item_count() != columns.len() {
+            self.side_list.reset(columns.len());
+        }
+        let rows = list(
+            self.side_list.clone(),
+            cx.processor(move |this: &mut Explorer, item: usize, _, cx| {
+                let i = columns[item];
                 let column = i as u32;
-                let summary = self.summary.get(&column);
-                let on = self.picked == i;
-                let shown = !self.hidden.contains(&column);
-                let open = self.expanded.contains(&column);
+                this.ensure_summary(column, cx);
+                let c: &TableColumn = &this.shape.as_ref().unwrap().columns[i];
+                let summary = this.summary.get(&column);
+                let on = this.picked == i;
+                let shown = !this.hidden.contains(&column);
+                let open = this.expanded.contains(&column);
                 let missing = summary.map(|s| s.missing);
                 let share = missing.map(|m| missing_share(m, shown_rows));
                 let missing_tip = missing.map(|m| {
@@ -104,7 +168,7 @@ impl Explorer {
                         "{} of {} values missing ({})",
                         format_number(m as f64),
                         format_number(shown_rows as f64),
-                        missing_text(&self.language)
+                        missing_text(&this.language)
                     )
                 });
                 let name_tip = format!("{} · {}", c.name, column_note(c, summary));
@@ -151,6 +215,8 @@ impl Explorer {
                                 if !this.expanded.remove(&column) {
                                     this.expanded.insert(column);
                                 }
+                                let count = this.side_list.item_count();
+                                this.side_list.splice(0..count, count);
                                 cx.notify();
                             })),
                     )
@@ -194,7 +260,7 @@ impl Explorer {
                                             .build(w, cx)
                                     }),
                             )
-                            .child(self.spark(column, summary, &p))
+                            .child(this.spark(column, summary, &p))
                             .child(
                                 div()
                                     .id(("de-missing", i))
@@ -227,10 +293,11 @@ impl Explorer {
                 v_flex()
                     .flex_none()
                     .child(row)
-                    .when(open, |d| d.child(self.render_stats(column, c, cx)))
+                    .when(open, |d| d.child(this.render_stats(column, c, cx)))
                     .into_any_element()
-            })
-            .collect();
+            }),
+        )
+        .flex_1();
         let total = shape.columns.len();
         let shown = total
             - self
@@ -238,7 +305,6 @@ impl Explorer {
                 .iter()
                 .filter(|&&c| (c as usize) < total)
                 .count();
-        let none_found = rows.is_empty() && !find.is_empty();
         v_flex()
             .flex_none()
             .w(px(SIDE_WIDTH))
@@ -294,9 +360,9 @@ impl Explorer {
                     .id("de-cols")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.side_scroll)
-                    .child(v_flex().gap(px(1.)).children(rows))
+                    .flex()
+                    .flex_col()
+                    .child(rows)
                     .when(none_found, |d| {
                         d.child(
                             div()

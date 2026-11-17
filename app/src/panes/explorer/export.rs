@@ -118,6 +118,7 @@ impl Explorer {
 
     pub(super) fn copy_code(&mut self, cx: &mut Context<Self>) {
         let Some(shape) = &self.shape else { return };
+        let hidden: Vec<u32> = self.hidden.iter().copied().collect();
         let code = table_code(
             &self.language,
             &shape.code,
@@ -126,7 +127,7 @@ impl Explorer {
             TableCodeView {
                 sort: &self.sort,
                 filters: &self.filters,
-                hidden: &self.hidden,
+                hidden: &hidden,
                 search: &self.search,
             },
         );

@@ -326,6 +326,7 @@ pub fn table_code(
         python_code(code, matrix, columns, sort, filters, search)
     };
     if !hidden.is_empty() {
+        let hidden: std::collections::BTreeSet<u32> = hidden.iter().copied().collect();
         let visible: Vec<usize> = (0..columns.len())
             .filter(|i| !hidden.contains(&(*i as u32)))
             .collect();

@@ -323,11 +323,12 @@ __WALK__
         idx = idx[order.index.to_numpy()]
 
     if mode == "rows":
+        dtypes = t.dtypes.tolist() if headers else None
         line("SANDHILL_TABLE", n, len(idx), width, esc(code), int(t is not v))
         if headers:
             for c in (range(width) if projection is None else cols):
-                line("SANDHILL_COL", esc(str(t.columns[c])), kind_of(t.dtypes.iloc[c]), str(t.dtypes.iloc[c]))
-        line("SANDHILL_KINDS", *[kind_of(t.dtypes.iloc[c]) for c in cols])
+                line("SANDHILL_COL", esc(str(t.columns[c])), kind_of(dtypes[c]), str(dtypes[c]))
+        line("SANDHILL_KINDS", *[kind_of(dtypes[c] if dtypes is not None else t.iloc[:, c].dtype) for c in cols])
         page = idx[offset:offset + limit]
         if len(page):
             labels = [esc(str(x)) for x in t.index[page]]

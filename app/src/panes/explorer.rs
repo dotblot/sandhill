@@ -6,7 +6,7 @@
 //! kernel, so a table of a million cells scrolls like one of a hundred. The
 //! table is read again after each run in its session, so it stays live.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use gpui_kit::base::ElementExt as _;
@@ -36,14 +36,15 @@ mod row_loading;
 mod saved_views;
 mod summary;
 mod toolbar;
+mod viewport;
 
 /// Rows read at a time.
 const BLOCK: u64 = 200;
 /// How narrow and wide a column can be dragged.
 const MIN_COLUMN_WIDTH: f32 = 40.;
 const MAX_COLUMN_WIDTH: f32 = 1200.;
-/// Columns read; wider tables show their first ones.
-const COLUMNS: u32 = 200;
+/// Initial cells; later requests contain only columns intersecting the viewport.
+const COLUMNS: u32 = 32;
 /// The Tauri app's sizes, a little taller for text 2px larger.
 const ROW_HEIGHT: f32 = 26.;
 /// The header holds the column's name and its ⋮ menu.
@@ -166,12 +167,16 @@ pub struct Explorer {
     sort: Vec<TableSort>,
     filters: Vec<TableFilter>,
     /// Original column indices, never compacted when a column is hidden.
-    hidden: Vec<u32>,
+    hidden: BTreeSet<u32>,
     /// The sorting and filters kept from last time, until the table's
     /// columns are known and they are moved onto them.
     saved: Option<SavedView>,
     blocks: HashMap<u64, Block>,
+    /// Current horizontal cell projection; changing it drops the row cache.
+    row_columns: Vec<u32>,
+    refresh_shape: bool,
     widths: Vec<f32>,
+    fitted_columns: std::collections::HashSet<u32>,
     /// The columns whose width the user set, which the project keeps.
     resized: Vec<u32>,
     /// A column being resized by its header's right edge: the column, where
@@ -182,8 +187,11 @@ pub struct Explorer {
     /// value a filter can pick from.
     summary: HashMap<u32, ColumnSummary>,
     overall: HashMap<u32, ColumnSummary>,
-    /// The read (`generation`) the summary belongs to.
+    /// Invalidates summary replies when the table or its filters change.
     summary_generation: u64,
+    summary_pending: Option<u32>,
+    summary_blocks: std::collections::VecDeque<u32>,
+    summary_visible: std::collections::HashSet<u32>,
     /// Each category value's theme colour index, kept as filters change.
     colors: HashMap<u32, Vec<(String, usize)>>,
     picked: usize,
@@ -208,7 +216,7 @@ pub struct Explorer {
     generation: u64,
     scroll: UniformListScrollHandle,
     across: ScrollHandle,
-    side_scroll: ScrollHandle,
+    side_list: ListState,
     /// Pinned columns (original indices), shown first and kept at the left
     /// while the table scrolls sideways.
     pinned: Vec<u32>,
@@ -342,8 +350,9 @@ impl Explorer {
                     this.debounce_search(cx);
                 }
             }),
-            cx.subscribe_in(&column_find, window, |_, _, event, _, cx| {
+            cx.subscribe_in(&column_find, window, |this, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.side_list.reset(0);
                     cx.notify();
                 }
             }),
@@ -381,16 +390,22 @@ impl Explorer {
             note: None,
             sort,
             filters,
-            hidden: Vec::new(),
+            hidden: BTreeSet::new(),
             saved,
             blocks: HashMap::new(),
+            row_columns: Vec::new(),
+            refresh_shape: true,
             widths: Vec::new(),
+            fitted_columns: std::collections::HashSet::new(),
             resized: Vec::new(),
             resizing: None,
             label_width: 60.,
             summary: HashMap::new(),
             overall: HashMap::new(),
             summary_generation: 0,
+            summary_pending: None,
+            summary_blocks: std::collections::VecDeque::new(),
+            summary_visible: std::collections::HashSet::new(),
             colors: HashMap::new(),
             picked: 0,
             selection: Selection::default(),
@@ -412,7 +427,7 @@ impl Explorer {
             generation: 0,
             scroll: UniformListScrollHandle::new(),
             across: ScrollHandle::new(),
-            side_scroll: ScrollHandle::new(),
+            side_list: ListState::new(0, ListAlignment::Top, px(SIDE_ROW)),
             pinned: Vec::new(),
             expanded: std::collections::HashSet::new(),
             column_menu: None,
@@ -455,7 +470,7 @@ impl Explorer {
             sort: self.sort.clone(),
             filters: self.filters.clone(),
             search: self.search.clone(),
-            hidden_columns: self.hidden.clone(),
+            hidden_columns: self.hidden.iter().copied().collect(),
             selected_column: (self.picked < shape.columns.len()).then_some(self.picked as u32),
             selected_cells: self.selected_cells(),
             shown_rows: shape.rows,
@@ -559,6 +574,7 @@ impl Explorer {
         }
         self.stale = false;
         self.generation += 1;
+        self.refresh_shape = true;
         self.blocks.clear();
         self.error = None;
         self.note = None;
@@ -573,13 +589,7 @@ impl Explorer {
     /// selected columns.
     fn visible_columns(&self) -> Vec<u32> {
         let count = self.shape.as_ref().map_or(0, |s| s.columns.len()) as u32;
-        let shown = |i: &u32| *i < count && !self.hidden.contains(i);
-        self.pinned
-            .iter()
-            .copied()
-            .filter(shown)
-            .chain((0..count).filter(|i| shown(i) && !self.pinned.contains(i)))
-            .collect()
+        viewport::display_columns(count, &self.hidden, &self.pinned)
     }
 
     /// How many shown columns are pinned.
@@ -659,9 +669,9 @@ impl Explorer {
     }
 
     fn show_column(&mut self, column: u32, shown: bool, cx: &mut Context<Self>) {
-        self.hidden.retain(|&i| i != column);
+        self.hidden.remove(&column);
         if !shown {
-            self.hidden.push(column);
+            self.hidden.insert(column);
         }
         self.save_view();
         self.selection.clear();
@@ -673,7 +683,7 @@ impl Explorer {
 
     fn show_all_columns(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.hidden = if shown {
-            Vec::new()
+            BTreeSet::new()
         } else {
             (0..self.shape.as_ref().map_or(0, |s| s.columns.len()) as u32).collect()
         };
@@ -691,7 +701,8 @@ impl Explorer {
             .iter()
             .filter_map(|&c| Some((c, *self.widths.get(c as usize)?)))
             .collect();
-        SavedView::of(&self.sort, &self.filters, columns, &self.hidden).with_layout(
+        let hidden: Vec<u32> = self.hidden.iter().copied().collect();
+        SavedView::of(&self.sort, &self.filters, columns, &hidden).with_layout(
             columns,
             &self.pinned,
             &widths,
@@ -752,8 +763,17 @@ impl Explorer {
 
 impl Render for Explorer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.summary_visible.clear();
+        self.update_row_columns(cx);
         if self.fit_widths {
             self.fit_column_widths(window);
+            self.update_row_columns(cx);
+        }
+        if let Some(edit) = &self.edit {
+            self.ensure_summary(edit.column, cx);
+        }
+        for index in 0..self.row_columns.len() {
+            self.ensure_summary(self.row_columns[index], cx);
         }
         let p = *Palette::get(cx);
         let mut body = h_flex().flex_1().min_h_0().items_stretch();

@@ -1,6 +1,33 @@
 use super::*;
 
 impl Explorer {
+    pub(super) fn update_row_columns(&mut self, cx: &mut Context<Self>) {
+        if self.shape.is_none() || self.refresh_shape || self.across.bounds().size.width <= px(0.) {
+            return;
+        }
+        let columns = self.visible_columns();
+        let view = self.column_viewport(&columns);
+        let projection: Vec<u32> = view
+            .pinned
+            .chain(view.scrolling)
+            .map(|i| columns[i])
+            .collect();
+        if projection != self.row_columns {
+            self.row_columns = projection;
+            self.fit_widths = self
+                .row_columns
+                .iter()
+                .any(|c| !self.fitted_columns.contains(c));
+            self.generation += 1;
+            self.blocks.clear();
+        }
+        // A reload keeps its metadata until the fresh first page arrives.
+        if self.blocks.is_empty() && !self.busy {
+            let top = (-f32::from(self.scroll.0.borrow().base_handle.offset().y) / ROW_HEIGHT)
+                .max(0.) as u64;
+            self.load(top / BLOCK, cx);
+        }
+    }
     pub(super) fn rows_request(&self, block: u64) -> Call {
         Call::TableRows {
             session: self.session.clone(),
@@ -12,9 +39,9 @@ impl Explorer {
             search: self.search.clone(),
             column_offset: 0,
             column_limit: Some(COLUMNS),
-            cells_only: block != 0,
-            // The first block keeps complete column metadata for the sidebar.
-            columns: (block != 0).then(|| self.visible_columns()),
+            cells_only: !self.refresh_shape || block != 0,
+            // A fresh read includes all names, but only a small cell page.
+            columns: (!self.refresh_shape || block != 0).then(|| self.row_columns.clone()),
         }
     }
     pub(super) fn invalidate_rows(&mut self, cx: &mut Context<Self>) {
@@ -24,28 +51,31 @@ impl Explorer {
             self.stale = true;
         } else {
             self.load(0, cx);
-            if self.summary.is_empty() {
-                self.read_summary(cx);
-            }
+            // Visibility does not invalidate column statistics.
         }
     }
 
     pub(super) fn load(&mut self, block: u64, cx: &mut Context<Self>) {
+        // Retain only nearby pages, not every row ever scrolled past.
+        self.blocks.retain(|&cached, _| cached.abs_diff(block) <= 2);
         if self.blocks.contains_key(&block) {
             return;
         }
         self.blocks.insert(block, Block::Loading);
         let generation = self.generation;
-        let first = block == 0;
+        let first = self.refresh_shape && block == 0;
         let rows = self.daemon.call::<TableRows>(self.rows_request(block));
         cx.spawn(async move |this, cx| {
             let rows = rows.await;
             this.update(cx, |this, cx| {
-                if this.generation != generation {
+                if this.generation != generation || !this.blocks.contains_key(&block) {
                     return;
                 }
                 match rows {
                     Ok(rows) => {
+                        if first {
+                            this.refresh_shape = false;
+                        }
                         if first && this.took_shape(&rows) {
                             // The kept filters moved to other columns.
                             this.reload(cx);
@@ -113,6 +143,7 @@ impl Explorer {
             .flatten();
         if !same {
             self.resized.clear();
+            self.fitted_columns.clear();
             // A first guess from character counts, measured properly once
             // the window can lay the first rows out (`fit_column_widths`).
             self.fit_widths = true;
@@ -153,20 +184,12 @@ impl Explorer {
             total: rows.total,
             rows: rows.rows,
         });
-        // The summary of this same read can arrive before its first rows:
-        // its category colours wait until the columns are known.
-        if !same && self.summary_generation == self.generation {
-            let summaries: Vec<ColumnSummary> = self.summary.values().cloned().collect();
-            self.color_values(&summaries);
-            if self.filters.is_empty() && self.search.is_empty() {
-                self.overall = self.summary.clone();
-            }
-        }
+        // Summary requests start only after this metadata is available.
         let Some(saved) = self.saved.take().or(previous) else {
             return false;
         };
         let (sort, filters) = saved.on(&rows.columns);
-        self.hidden = saved.hidden_on(&rows.columns);
+        self.hidden = saved.hidden_on(&rows.columns).into_iter().collect();
         self.pinned = saved.pinned_on(&rows.columns);
         for (column, width) in saved.widths_on(&rows.columns) {
             if let Some(slot) = self.widths.get_mut(column as usize) {

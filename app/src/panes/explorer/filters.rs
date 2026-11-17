@@ -204,57 +204,72 @@ impl Explorer {
                 }
                 cx.notify();
             }));
-        let column_list =
-            edit.columns_open.then(|| {
-                div()
-                    .id("df-columns")
-                    .ml(px(78.))
-                    .max_h(px(200.))
-                    .overflow_y_scroll()
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(p.line)
-                    .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                        if let Some(edit) = &mut this.edit
-                            && !edit
-                                .popup_triggers
-                                .contains("filter-column", event.position)
-                        {
-                            edit.columns_open = false;
-                            cx.notify();
-                        }
-                    }))
-                    .children(shape.columns.iter().enumerate().map(|(i, c)| {
-                        let on = i as u32 == edit.column;
-                        h_flex()
-                            .id(("df-col", i))
-                            .h(px(24.))
-                            .px(px(8.))
-                            .gap(px(6.))
-                            .cursor_pointer()
-                            .when(on, |d| d.bg(p.sel))
-                            .hover(move |d| d.bg(hover))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .child(c.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_size(px(look::SMALL))
-                                    .text_color(p.faint)
-                                    .child(c.kind_detail.clone()),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.pick_filter_column(i as u32, cx)
-                            }))
-                    }))
-            });
+        let column_list = edit.columns_open.then(|| {
+            div()
+                .id("df-columns")
+                .ml(px(78.))
+                .h(px((shape.columns.len() as f32 * 24.).min(200.)))
+                .overflow_hidden()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(p.line)
+                .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    if let Some(edit) = &mut this.edit
+                        && !edit
+                            .popup_triggers
+                            .contains("filter-column", event.position)
+                    {
+                        edit.columns_open = false;
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    uniform_list(
+                        "df-column-options",
+                        shape.columns.len(),
+                        cx.processor(
+                            move |this: &mut Explorer, range: std::ops::Range<usize>, _, cx| {
+                                let shape = this.shape.as_ref().unwrap();
+                                let picked = this.edit.as_ref().map(|edit| edit.column);
+                                range
+                                    .map(|i| {
+                                        let c = &shape.columns[i];
+                                        let on = Some(i as u32) == picked;
+                                        h_flex()
+                                            .id(("df-col", i))
+                                            .h(px(24.))
+                                            .px(px(8.))
+                                            .gap(px(6.))
+                                            .cursor_pointer()
+                                            .when(on, |d| d.bg(p.sel))
+                                            .hover(move |d| d.bg(hover))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .text_ellipsis()
+                                                    .whitespace_nowrap()
+                                                    .child(c.name.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_none()
+                                                    .text_size(px(look::SMALL))
+                                                    .text_color(p.faint)
+                                                    .child(c.kind_detail.clone()),
+                                            )
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.pick_filter_column(i as u32, cx)
+                                            }))
+                                    })
+                                    .collect::<Vec<_>>()
+                            },
+                        ),
+                    )
+                    .size_full(),
+                )
+        });
         let conditions =
             h_flex()
                 .flex_1()
