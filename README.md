@@ -1,48 +1,88 @@
 # Sandhill
 
-A fast, low-memory IDE with AI coding agents for R and Python bioinformatics,
-built for Apple silicon Macs that work against a remote Ubuntu server (or locally).
+A fast, light IDE for R and Python bioinformatics on Apple silicon Macs, with
+AI agents that work in your live R and Python sessions. Run your analysis on
+the Mac or on a Linux server over ssh; it keeps running when you close the
+laptop.
 
-Think "Positron without Electron": inline outputs in Jupyter and Quarto that are
-saved and come back when you reopen a file, R and Python sessions that keep
-running on the server after you close the app, and Claude Code, Codex or open
-and local models (through omp) working directly in your live sessions.
+> **Status:** early development (version 0.1.0). The app is for Macs with
+> Apple silicon; servers can be any 64-bit Linux.
 
-> Status: early development. The Mac app opens projects of Quarto and Jupyter
-> notebooks and R and Python scripts, runs them on this Mac or on a Linux
-> server over ssh, and runs Claude Code and Codex next to them. See the
-> roadmap below.
+## Why Sandhill
 
-## How it fits together
+**It stays fast with very large files.** Sandhill is a native Mac app,
+written in Rust, with no Electron and no extension host. It only lays out
+what is on screen, so a notebook of two thousand cells or a table of
+thirty thousand columns opens in about a second.
 
-```
-Mac app (Rust, GPUI)           ──ssh or local socket──▶  sandhilld (Rust daemon)
-                                                            ├─ Python / R kernels (Jupyter protocol)
-                                                            ├─ output journal (SQLite + blobs)
-                                                            ├─ jobs, terminals, language servers
-                                                            └─ AI agents + MCP tools for live sessions
-```
+**It leaves your memory for your data.** In every test we ran, Positron used
+about 7 to 23 times as much memory as Sandhill. The memory goes to your R and
+Python sessions instead.
 
-The full design, including the reasoning behind each choice, is in
-[docs/design.md](docs/design.md).
+**Work keeps running when you leave.** R and Python sessions, long jobs,
+terminals and AI agents run in a small background program, on the Mac or on
+your server. Quit the app, close the laptop or lose the network: everything
+keeps going, and when you come back, every output is there, including what
+was printed while you were away.
 
-## Repository layout
+**Every agent in your live sessions.** Claude Code, Codex, Antigravity, Posit
+Assistant, OpenScience, Oh My Pi and pi run unchanged inside Sandhill. Each
+one can see the variables, tables and plots you already have in memory and
+run code in your sessions, instead of starting over from your files.
 
-| Path | What |
-|---|---|
-| `app/` | The Mac app, drawn with GPUI (its own Cargo project; see [app/README.md](app/README.md)) |
-| `crates/daemon` | `sandhilld`: kernel sessions, output journal, socket server |
-| `crates/proto` | Wire protocol types and the async client the app and CLI share |
-| `crates/link` | How the app reaches sandhilld: on this Mac, or over ssh (installing it there) |
-| `crates/cli` | `sandhill`: terminal client, useful for scripting and testing |
-| `packaging/` | systemd (server) and launchd (Mac local mode) service files |
-| `docs/` | [Design](docs/design.md) and [protocol](docs/protocol.md) |
+### Measured against Positron
 
-## Try the Mac app
+The same Mac, the same files and the same steps for both apps; the middle of
+five runs.
 
-You need Rust and Jupyter kernels for the languages you want: ipykernel in
-your Python environment (conda environments are found on their own; others
-need `python -m ipykernel install --user`), and for R,
+| Test | Sandhill | Positron |
+|---|---|---|
+| Open a 2,002-cell notebook (400 plots) | **0.64 s, 195 MB** | 180 s, 4.5 GB |
+| Open a table of 2,700 rows x 32,738 columns | 1.05 s, **137 MB** | **0.57 s**, 1.6 GB |
+| Open a 30,005-line R script | 0.76 s, **155 MB** | **0.58 s**, 1.0 GB |
+| Start-up | **2.1 s, 137 MB** | 3.5 s, 955 MB |
+| Scroll the large notebook | 57 fps, **0.34 cores** | **60 fps**, 1.12 cores |
+
+Memory is everything the app runs, not counting the R and Python sessions,
+which hold your data. Positron is faster at opening the R script and the
+wide table, and scrolls the large notebook a little more steadily. It also
+runs on Windows and Linux and has the VS Code extension marketplace.
+[How we measured, and the full results](docs/comparison/positron.md)
+(Apple M1 Ultra, macOS 27.2.1, Positron 2026.11.1, November 2026).
+
+## What's in it
+
+- **Notebooks and scripts:** Jupyter (`.ipynb`), Quarto (`.qmd`) and
+  R Markdown (`.Rmd`) notebooks with outputs under each cell, and R and
+  Python scripts. Outputs are saved and come back when you reopen a file;
+  Quarto and R Markdown outputs are kept next to the file in `.<name>.out/`.
+- **The panes you know from RStudio and Positron:** Console, Variables, Data
+  Explorer (sort, filter and column statistics, worked out in your session),
+  Plots, Help, Packages, Viewer (HTML widgets, Shiny apps, Quarto preview),
+  Git, Jobs and a Terminal.
+- **R and Python, set up for you:** Sandhill finds conda, mamba and virtual
+  environments and asks each project once which R and Python it uses. On a
+  server with R it installs Ark, Posit's R kernel, so R runs with no setup.
+- **Projects:** each analysis folder opens in its own window; open projects
+  come back with their tabs at the next launch.
+- **Skills and connectors:** add skills (instructions agents can follow) and
+  connectors (databases and services agents can query, such as BioMCP, Open
+  Targets, Consensus and Synapse) once, and every agent can use them.
+- **Bioinformatics guides and checks** for agents doing single-cell and
+  study-design work. These are still awaiting review by domain experts; see
+  [their limits](docs/design/bioinformatics-assistance-plan.md).
+
+## Get Sandhill
+
+Every push to `main` builds Sandhill.app, with the background program
+inside and Linux builds of it to install on servers. Open the **Mac app** run
+on GitHub's Actions tab and download **Sandhill-macos-arm64** under
+Artifacts (builds are kept for a week). The app isn't notarized yet, so after
+unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once, or macOS
+will refuse to open it.
+
+To build it yourself you need Rust, and Jupyter kernels for your languages:
+ipykernel in your Python environment, and for R,
 [Ark](https://github.com/posit-dev/ark) or IRkernel.
 
 ```sh
@@ -51,101 +91,61 @@ cd app
 cargo run -- /path/to/project         # the folder is optional
 ```
 
-Every push to `main` (and every pull request that touches the app) builds
-Sandhill.app, with sandhilld inside and Linux builds of it and Ark to install
-on servers: open the **Mac app** run on GitHub's Actions tab and download
-**Sandhill-macos-arm64** under Artifacts (to build one without a push, pick
-**Mac app** there, then **Run workflow**). The app isn't notarized, so after
-unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once, or macOS
-will refuse to open it. `.github/workflows/mac-app.yml` shows how the bundle
-is put together.
-
-The app opens on a start window: open a folder with your analysis as a
-project, and it gets its own window. Projects open at Quit come back at the
-next launch with their tabs, and each document reattaches to the kernels that
-last ran it. Code keeps running after you quit; reopening a file shows its
-outputs again, including output printed while the app was closed. Quarto and
-R Markdown outputs are saved next to the file in `.<name>.out/`.
-
-### Work on a server
+## Work on a server
 
 On the start window, click **+ Server…** and type the server as you would
-after `ssh`: a `Host` from `~/.ssh/config`, or `user@host`. Pick it, open a
-folder there, and the project window works as it does on the Mac.
+after `ssh`: a `Host` from `~/.ssh/config`, or `user@host`. Open a folder
+there, and the project window works as it does on the Mac.
 
-- The app runs your Mac's own `ssh`, so `~/.ssh/config`, keys, the ssh agent
-  and jump hosts work as they do in Terminal. It can't type a password for
-  you: `ssh yourserver` must log in without asking for one (set up a key
-  with `ssh-copy-id yourserver`).
-- The first time, the app installs sandhilld in `~/.local/bin` on the
-  server, and replaces it when a newer app brings another build. It needs
-  no root and opens no ports, and runs on any 64-bit Linux, Intel or ARM.
-- Kernels start with the `PATH` your login shell sets up, so conda and the
-  tools your shell startup files add are found. Python runs in any conda,
-  mamba or virtual environment that has `ipykernel`.
-- When the server has R, the app also installs Ark, Posit's R kernel, in
-  `~/.local/share/sandhill/bin`, so R chunks run with no setup. R kernels
-  you installed yourself, such as IRkernel, are listed too.
-- Code keeps running on the server when the app quits or the network drops.
-  The app reconnects on its own and shows what was printed in the meantime.
+- The app uses your Mac's own `ssh`, so your config, keys, ssh agent and
+  jump hosts work as they do in Terminal. `ssh yourserver` must log in
+  without a password (set up a key with `ssh-copy-id yourserver`).
+- The first time, the app installs its background program, `sandhilld`, in
+  `~/.local/bin` on the server. It needs no root, opens no ports, and runs on
+  any 64-bit Linux, Intel or ARM.
+- Sessions start with the `PATH` your login shell sets up, so conda and your
+  usual tools are found.
+- When the network drops, the app reconnects on its own and shows what was
+  printed in the meantime.
 
-### Agents
+## Agents
 
-The chat button in the toolbar (⌘I) opens the Agents pane. Pick Claude Code
-or Codex, a model, how much it may do without asking, and the files it should
-start from, then **Start session**. The agent is the real CLI, running in a
-terminal in the project's folder on the machine the project is on (the server,
-for a server project), so it works exactly as it does in Terminal: its own
-login, settings, slash commands and keys.
+The chat button in the toolbar (⌘I) opens the AI pane. Each agent is the
+real program, running in the project's folder on the machine the project is
+on, with its own login and settings; Sandhill never sees your login.
 
-- The agent must be installed there. If it isn't, the pane offers to install
-  it in the Console's Terminal tab. The first session asks you to sign in,
-  as it would in Terminal; Sandhill never sees the login.
-- Agents can use your live R and Python sessions through MCP tools
-  (`list_sessions`, `list_variables`, `run_code`, `get_outputs`), so they
-  look at the objects you already have in memory instead of recomputing them.
-- Files an agent edits reload in the editor. If you changed the file too,
+- Agents reach your live sessions through Sandhill's tools: they list
+  sessions and variables, run code and read outputs and plots, and the code
+  they write lands in your document.
+- Files an agent edits reload in the editor; if you changed the file too,
   you choose which version to keep.
-- Agent sessions and terminals keep running when the app quits, like
-  kernels, and come back with their scrollback when the project reopens.
-- The box under the terminal sends messages, adds files as `@path` context,
-  and switches model and permissions. The status bar shows when an agent is
-  waiting for you, and Claude's plan usage.
+- Conversations keep running when the app quits, and come back when the
+  project reopens.
 
-The Console also has a **Terminal** tab: a login shell in the project's folder.
+## How it fits together
 
-### Bioinformatics guides and checks
+```
+Mac app (Rust, GPUI)           ──ssh or local socket──▶  sandhilld (Rust)
+                                                            ├─ Python / R kernels (Jupyter protocol)
+                                                            ├─ output journal (SQLite + blobs)
+                                                            ├─ jobs, terminals, language servers
+                                                            └─ AI agents + tools for live sessions
+```
 
-The existing agents share four daemon-provided MCP tools: `get_bio_guide`,
-`begin_analysis`, `check_analysis` and `get_analysis`. Ask the agent to use
-Sandhill's bioinformatics checks for an explicitly requested study design or
-exploratory single-cell analysis. Guide discovery and history are read-only;
-creating a record or running a check is blocked in Ask and Plan modes.
+The design, with the reasoning behind each choice, is in
+[docs/design.md](docs/design.md).
 
-Python analysis and plotting prefer the installed **omicverse** interfaces,
-using Scanpy or other tools where needed; R uses **Seurat**. Neither discovery
-nor record creation installs packages, downloads data or starts another kernel.
-Analysis code stays in your document and runs in the selected existing session.
-The guides describe exact inputs, QC exclusions, saved-object and marker tables.
-Execution replies and Console history expose actual run IDs for result evidence.
+| Path | What |
+|---|---|
+| `app/` | The Mac app, drawn with GPUI (its own Cargo project; see [app/README.md](app/README.md)) |
+| `crates/daemon` | `sandhilld`: kernel sessions, output journal, agents, socket server |
+| `crates/proto` | Wire protocol types and the async client the app and CLI share |
+| `crates/link` | How the app reaches sandhilld: on this Mac, or over ssh (installing it there) |
+| `crates/cli` | `sandhill`: terminal client, useful for scripting and testing |
+| `packaging/` | systemd (server) and launchd (Mac local mode) service files |
+| `docs/` | [Design](docs/design.md), [protocol](docs/protocol.md) and [decisions](docs/decisions/) |
 
-Checks write authoritative evidence into the daemon's existing journal and
-readable exports into `.sandhill/analysis/<id>/`; results normally go into
-`results/<id>/`. Read the returned `analysis.id`, then request `design`, or
-`input`, `qc` and `result` checkpoints. Result checks reopen the saved `.h5ad` or
-`.rds`, compare it with the live object, verify cited expression summaries and
-retain actual completed execution IDs. Handwritten reports are not check results.
-Historical records are not current revalidation; recheck after changes.
-
-All initial guides are **awaiting human domain review**, not reviewed default
-recommendations. A technical pass is not scientific approval: experimental
-design, QC decisions, annotations and conclusions still need human review.
-PBMC3k is single-donor tutorial data, not evidence of treatment effects.
-The agents' own shell/file tools are not sandboxed by these checks.
-See the [analysis contract and limitations](docs/design/bioinformatics-assistance-plan.md).
-
-
-## Try the daemon
+### Try the background program on its own
 
 ```sh
 cargo build --release                                # sandhilld and the sandhill CLI
@@ -156,22 +156,10 @@ id=$(./target/release/sandhill start python3)
 ./target/release/sandhill history "$id"             # everything that ran, even while you were away
 ```
 
-Against a server, copy `sandhilld` to `~/.local/bin` there and add
-`--ssh yourserver --remote-daemon '~/.local/bin/sandhilld'` to any `sandhill`
-command; the daemon starts on first use.
-
 Run the tests with `cargo test --workspace`, and `cargo test` in `app/` for
 the app (on Linux it needs `libxkbcommon-dev libxkbcommon-x11-dev
 libwebkit2gtk-4.1-dev` and X11). Kernel tests skip when a kernel isn't
 installed.
-
-## Roadmap
-
-1. **Server core** (done): `sandhilld` starts Python and R kernels, runs code, and records every output so a client can disconnect and replay later.
-2. **First Mac app loop** (done): open `.qmd`/`.ipynb`, run a chunk, see inline output, close and reopen with outputs intact.
-3. **Server and projects** (done): RStudio-style projects, each in its own window; connect to an Ubuntu server over ssh, with work that keeps running when the app closes.
-4. **Agents** (in progress): Claude Code and Codex in a terminal pane and MCP tools for live sessions are done; omp chat for open and local models is next.
-5. **Positron-style panes**: Variables, Data Explorer, Plots, Help, Viewer.
 
 ## License
 
@@ -180,6 +168,9 @@ there is no paid version. It is licensed under the GNU General Public License,
 version 3 or (at your option) any later version; see [LICENSE](LICENSE). You
 may use, change and share it, and a changed version you share must be under
 the same license, with its source code.
+
+Sandhill is not affiliated with Posit; Positron and Posit Assistant are
+Posit's products.
 
 The Maple Mono NF font the app ships is under the SIL Open Font License
 ([app/assets/fonts/OFL.txt](app/assets/fonts/OFL.txt)), and the libraries

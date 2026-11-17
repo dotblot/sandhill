@@ -11,8 +11,14 @@ GitHub page. Nothing is published until Huan has seen and approved it.
   and dragging a pane's edge, with a huge document open. If there is no
   difference, there are no movies.
 - Huan's own desktop and private information must never show.
-- Huan's Ubuntu server may be used for the server tests.
+- Huan's Ubuntu server may be used for the server tests. Later dropped:
+  no server test (Huan, 2026-11-17).
 - Both apps in the light theme only (Huan, 2026-11-16).
+- Fix the Sandhill bugs the tests found before publishing, then measure
+  Sandhill again (Huan, 2026-11-17).
+- No movies on the page after all: Huan saw no obvious difference in them
+  (2026-11-17). The README gets the results, to show why to choose
+  Sandhill; the full page is `docs/comparison/positron.md`.
 
 ## Keeping it fair
 - Same Mac, same files, same tasks, same window, one app at a time.
