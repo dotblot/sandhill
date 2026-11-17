@@ -143,6 +143,8 @@ Responses can arrive out of order; match them by `id`.
 | `export_connector` | `name` | `ConnectorAdd`, without a secret |
 | `connector_tools` | `name?` | Enabled connector summaries, or one connector's full tool schemas |
 | `call_connector` | `name`, `tool`, `arguments`, `read_only` | MCP tool result, with content items and `isError` |
+| `begin_connector_sign_in` | `target`, `redirect_uri` | `{state, authorize_url, service}`; begins browser sign-in |
+| `finish_connector_sign_in` | `state`, `code?`, `error?` | `ConnectorInfo`; exchanges the code and adds or reconnects |
 
 Management calls are device-wide, not project-wide. Clients must show affected
 resources/projects and obtain confirmation before destructive operations.
@@ -1211,19 +1213,21 @@ own skill folders or run installed scripts on their behalf.
 
 Connectors are MCP servers added per device: a web address or a program.
 `list_connectors` reads the index without connecting. `add_connector` takes
-`suggested {id}` or `custom {title, spec, secret?}`; a spec is
+`suggested {id}` or `custom {title, spec, secret?, client_id?}`; a spec is
 `http {url, header?}` or `command {command, args, env}`. Add initializes
 the server and lists its tools before saving anything. Suggested entries
 use their ids; custom names are lowercased safe title slugs with numeric
-suffixes for duplicates. Only Suggested entries marked read-only in
-Sandhill's catalog may be queried without approval.
+suffixes for duplicates. `sign_in` identifies account-based services.
+Only Suggested entries may be queried without approval, either as a
+read-only connector or for a tool the service marks read-only.
 
 The state folder's `connectors/index.json` records enabled state, source,
 cached tool summaries and the last error. `connectors/secrets.json` keeps
-header values by name, mode 0600 from creation. Both use atomic writes;
+header values or OAuth tokens by name, mode 0600 from creation. Both use atomic writes;
 mutations are serialized. Replies, agent tool results, errors and exports
 never include secret values. Export returns a Suggested id or a Custom
-definition without its secret, for Add on another device.
+definition without its secret or tokens, keeping a client id the user typed,
+for Add and a separate browser sign-in on another device.
 
 The daemon speaks MCP 2025-06-18, 2025-03-26 and 2024-11-05 over stdio or
 Streamable HTTP (JSON and SSE, session ids, protocol-version headers and
@@ -1237,14 +1241,40 @@ minutes unused, when disabled or removed, and with their daemon.
 Suggested BioMCP is downloaded only on Add, checked against the catalog's
 pinned SHA-256 and extracted into `connectors/bin/biomcp-<version>/`.
 BioContextAI requires uv on the device; Open Targets uses its web address.
-No OAuth sign-in is implemented in this phase.
+Consensus, Synapse, Wiley Scholar Gateway and BioRender use browser sign-in.
+
+An Add or Test error starting with `Sign-in needed:` (`CONNECTOR_SIGN_IN`)
+asks the app to offer browser sign-in; it is also stored on a connector
+whose account needs signing in again. A 401 without an OAuth description
+keeps the ordinary sign-in-or-key error.
+
+`begin_connector_sign_in` takes `target: {kind: "add", add}` or
+`{kind: "existing", name}` and an app-owned `http://127.0.0.1:<port>/…` or
+`http://localhost:<port>/…` redirect. The daemon discovers RFC 9728 protected
+resource metadata and RFC 8414/OIDC authorization metadata, registers
+Sandhill dynamically (RFC 7591), or uses the custom client id. It returns
+the service name, random state and authorize URL carrying a PKCE S256
+challenge, resource and scopes. Pending sign-ins stay in memory for 15
+minutes and disappear on daemon restart.
+
+`finish_connector_sign_in` consumes the state even on refusal. The daemon
+exchanges the code using its private verifier and exact redirect, then
+connects and lists tools before saving an Add. Tokens stay on that device
+in `secrets.json`: access token, refresh token, expiry, token endpoint,
+client id, optional client secret, resource and scope. Legacy header-string
+entries remain supported. Bearer tokens are refreshed within 60 seconds
+of expiry and once on a 401; failures require signing in again. Tokens,
+codes, verifiers and client secrets never appear in replies, exports,
+agent tool output or daemon logs.
 
 Agents get `list_connectors {connector?}`: without a name, cached
 `{connectors: [{name, title, description, read_only, tools: [{name,
-description}]}]}` for enabled connectors; with one, live `{name, title,
-read_only, tools: [{name, description, inputSchema}]}` with full tool
+description, read_only}]}]}` for enabled connectors; with one, live `{name, title,
+read_only, tools: [{name, description, inputSchema, read_only}]}` with full tool
 descriptions. `query_connector {connector, tool, arguments}` is read-only
-and refuses custom connectors. `call_connector` takes the same arguments
+and refuses custom connectors; a Suggested connector also allows querying
+its individually read-only tools. Unknown tools trigger one cache refresh.
+`call_connector` takes the same arguments
 but is not read-only and is refused in Plan mode. Both preserve the
 server's text/image content and tool-error flag. Missing or disabled
 connectors are unavailable to agents; call failures update the row's

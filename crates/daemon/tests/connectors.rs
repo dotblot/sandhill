@@ -1,5 +1,7 @@
 //! Real daemon/socket and MCP integration, with local stand-in servers and no kernels.
 mod common;
+#[path = "connectors/oauth.rs"]
+mod connector_oauth;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -14,7 +16,10 @@ use std::time::{Duration, Instant};
 
 use sandhill_daemon::mcp::Tools;
 use sandhill_proto::client::Client;
-use sandhill_proto::{Call, ConnectorAdd, ConnectorInfo, ConnectorList, ConnectorSpec};
+use sandhill_proto::{
+    CONNECTOR_SIGN_IN, Call, ConnectorAdd, ConnectorInfo, ConnectorList, ConnectorSignIn,
+    ConnectorSpec, SignInTarget,
+};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
@@ -118,6 +123,7 @@ impl Machine {
                 env: BTreeMap::new(),
             },
             secret: None,
+            client_id: None,
         }
     }
 
@@ -507,6 +513,7 @@ impl Http {
                 header: secret.then(|| "X-Test-Key".into()),
             },
             secret: secret.then(|| SECRET.into()),
+            client_id: None,
         }
     }
 }
@@ -688,5 +695,347 @@ async fn failed_add_timeout_error_refresh_and_bad_download() {
         .unwrap();
     assert!(tested.error.is_none());
     machine.remove(&info.name).await;
+    machine.finish().await;
+}
+
+fn remote(error: sandhill_proto::client::ClientError) -> String {
+    match error {
+        sandhill_proto::client::ClientError::Remote(message) => message,
+        other => panic!("{other}"),
+    }
+}
+
+async fn begin_oauth(machine: &Machine, target: SignInTarget) -> ConnectorSignIn {
+    machine
+        .client
+        .call(Call::BeginConnectorSignIn {
+            target,
+            redirect_uri: "http://127.0.0.1:43123/callback".into(),
+        })
+        .await
+        .unwrap()
+}
+
+async fn finish_oauth(
+    machine: &Machine,
+    server: &connector_oauth::OAuth,
+    sign_in: &ConnectorSignIn,
+) -> ConnectorInfo {
+    let browser = server.browser(sign_in.authorize_url.clone()).await;
+    assert_eq!(browser["state"], sign_in.state);
+    machine
+        .client
+        .call(Call::FinishConnectorSignIn {
+            state: sign_in.state.clone(),
+            code: browser["code"].as_str().map(str::to_owned),
+            error: None,
+        })
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn oauth_add_refresh_revoke_and_sign_in_again() {
+    let server = connector_oauth::OAuth::start();
+    let machine = Machine::start().await;
+    let error = machine
+        .client
+        .call::<Value>(Call::AddConnector {
+            add: server.add("/mcp", None),
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).starts_with(CONNECTOR_SIGN_IN));
+    assert!(machine.list().await.added.is_empty());
+    let error = machine
+        .client
+        .call::<Value>(Call::AddConnector {
+            add: ConnectorAdd::Suggested {
+                id: "consensus".into(),
+            },
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        remote(error).starts_with(CONNECTOR_SIGN_IN),
+        "Suggested sign-in entries do not connect before signing in"
+    );
+    assert!(
+        machine
+            .list()
+            .await
+            .suggested
+            .iter()
+            .find(|s| s.id == "consensus")
+            .unwrap()
+            .sign_in
+    );
+    let target = SignInTarget::Add {
+        add: server.add("/mcp", None),
+    };
+    let error = machine
+        .client
+        .call::<Value>(Call::BeginConnectorSignIn {
+            target: target.clone(),
+            redirect_uri: "https://example.org/callback".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).contains("loopback"));
+    let sign_in = begin_oauth(&machine, target).await;
+    assert_eq!(sign_in.service, "127.0.0.1");
+    assert!(sign_in.authorize_url.contains("code_challenge="));
+    assert!(sign_in.authorize_url.contains("resource="));
+    assert!(sign_in.authorize_url.contains("scope=read%20write"));
+    assert!(
+        !sign_in
+            .authorize_url
+            .contains("private-registration-secret")
+    );
+    let info = finish_oauth(&machine, &server, &sign_in).await;
+    assert!(info.sign_in);
+    assert!(!info.has_secret);
+    assert_eq!(info.tools[0].name, "lookup");
+    assert!(
+        server.refreshes.load(Ordering::Acquire) >= 1,
+        "the first access token expires within 60 seconds"
+    );
+    let result = machine.call(&info.name, "lookup").await;
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("TP53")
+    );
+    let before = server.refreshes.load(Ordering::Acquire);
+    server.revoked.store(true, Ordering::Release);
+    machine.call(&info.name, "lookup").await;
+    assert_eq!(
+        server.refreshes.load(Ordering::Acquire),
+        before + 1,
+        "401 refreshes exactly once"
+    );
+    let outputs = [
+        serde_json::to_string(&machine.list().await).unwrap(),
+        machine
+            .client
+            .call::<Value>(Call::ExportConnector {
+                name: info.name.clone(),
+            })
+            .await
+            .unwrap()
+            .to_string(),
+        machine.tools(None).await.to_string(),
+        machine.tools(Some(&info.name)).await.to_string(),
+        result.to_string(),
+        fs::read_to_string(machine.state.join("sandhilld.log")).unwrap_or_default(),
+    ];
+    for value in &outputs {
+        for secret in server.sensitive() {
+            assert!(
+                !value.contains(&secret),
+                "credentials must stay on the device"
+            );
+        }
+    }
+    let secret_path = machine.state.join("connectors/secrets.json");
+    assert_eq!(
+        fs::metadata(&secret_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let secrets: Value = serde_json::from_slice(&fs::read(&secret_path).unwrap()).unwrap();
+    assert!(
+        secrets[&info.name]["access_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("private-access-")
+    );
+    assert!(secrets[&info.name]["client_secret"].is_string());
+    assert!(secrets[&info.name]["expires_at_ms"].is_number());
+    server.fail_refresh.store(true, Ordering::Release);
+    server.revoked.store(true, Ordering::Release);
+    let error = machine
+        .client
+        .call::<Value>(Call::CallConnector {
+            name: info.name.clone(),
+            tool: "lookup".into(),
+            arguments: json!({}),
+            read_only: false,
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).starts_with(CONNECTOR_SIGN_IN));
+    assert!(
+        machine.list().await.added[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .starts_with(CONNECTOR_SIGN_IN)
+    );
+    let error = machine
+        .client
+        .call::<Value>(Call::TestConnector {
+            name: info.name.clone(),
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).starts_with(CONNECTOR_SIGN_IN));
+    server.fail_refresh.store(false, Ordering::Release);
+    let sign_in = begin_oauth(
+        &machine,
+        SignInTarget::Existing {
+            name: info.name.clone(),
+        },
+    )
+    .await;
+    assert_eq!(sign_in.service, info.title);
+    let signed_in = finish_oauth(&machine, &server, &sign_in).await;
+    assert!(signed_in.error.is_none());
+    machine.call(&info.name, "lookup").await;
+    let error = machine
+        .client
+        .call::<Value>(Call::FinishConnectorSignIn {
+            state: sign_in.state,
+            code: Some("already-used".into()),
+            error: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).contains("this sign-in has expired; sign in again"));
+    let error = machine
+        .client
+        .call::<Value>(Call::FinishConnectorSignIn {
+            state: "wrong-state".into(),
+            code: Some("code".into()),
+            error: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).contains("this sign-in has expired; sign in again"));
+    let export: ConnectorAdd = machine
+        .client
+        .call(Call::ExportConnector {
+            name: info.name.clone(),
+        })
+        .await
+        .unwrap();
+    let second = Machine::start().await;
+    let error = second
+        .client
+        .call::<Value>(Call::AddConnector { add: export })
+        .await
+        .unwrap_err();
+    assert!(remote(error).starts_with(CONNECTOR_SIGN_IN));
+    assert!(second.list().await.added.is_empty());
+    second.finish().await;
+    machine.finish().await;
+}
+
+#[tokio::test]
+async fn oauth_discovery_variants_typed_ids_and_failed_adds() {
+    let server = connector_oauth::OAuth::start();
+    let machine = Machine::start().await;
+    for path in ["/fallback", "/root-fallback", "/direct", "/oidc"] {
+        let sign_in = begin_oauth(
+            &machine,
+            SignInTarget::Add {
+                add: server.add(path, None),
+            },
+        )
+        .await;
+        let info = finish_oauth(&machine, &server, &sign_in).await;
+        machine.call(&info.name, "lookup").await;
+        machine.remove(&info.name).await;
+    }
+    let before = server.registrations();
+    let error = machine
+        .client
+        .call::<Value>(Call::BeginConnectorSignIn {
+            target: SignInTarget::Add {
+                add: server.add("/typed", None),
+            },
+            redirect_uri: "http://localhost:43123/callback".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        remote(error),
+        "this service needs a client id; ask its makers for one and add it as a web address with that id"
+    );
+    let sign_in = begin_oauth(
+        &machine,
+        SignInTarget::Add {
+            add: server.add("/typed", Some("typed-client")),
+        },
+    )
+    .await;
+    let info = finish_oauth(&machine, &server, &sign_in).await;
+    assert_eq!(
+        server.registrations(),
+        before,
+        "a typed id skips registration"
+    );
+    let export: Value = machine
+        .client
+        .call(Call::ExportConnector {
+            name: info.name.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(export["client_id"], "typed-client");
+    assert!(export.get("secret").is_none());
+    machine.remove(&info.name).await;
+    let sign_in = begin_oauth(
+        &machine,
+        SignInTarget::Add {
+            add: server.add("/mcp", None),
+        },
+    )
+    .await;
+    let error = machine
+        .client
+        .call::<Value>(Call::FinishConnectorSignIn {
+            state: sign_in.state.clone(),
+            code: None,
+            error: Some("access_denied".into()),
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).contains("access_denied"));
+    let error = machine
+        .client
+        .call::<Value>(Call::FinishConnectorSignIn {
+            state: sign_in.state,
+            code: None,
+            error: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(remote(error).contains("expired"));
+    let sign_in = begin_oauth(
+        &machine,
+        SignInTarget::Add {
+            add: server.add("/mcp", None),
+        },
+    )
+    .await;
+    let browser = server.browser(sign_in.authorize_url).await;
+    server.fail_tools.store(true, Ordering::Release);
+    assert!(
+        machine
+            .client
+            .call::<Value>(Call::FinishConnectorSignIn {
+                state: sign_in.state,
+                code: browser["code"].as_str().map(str::to_owned),
+                error: None
+            })
+            .await
+            .is_err()
+    );
+    assert!(machine.list().await.added.is_empty());
+    let secrets: Value =
+        serde_json::from_slice(&fs::read(machine.state.join("connectors/secrets.json")).unwrap())
+            .unwrap();
+    assert_eq!(secrets, json!({}), "failed adds save no tokens");
     machine.finish().await;
 }

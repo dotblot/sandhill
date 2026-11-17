@@ -155,6 +155,11 @@ impl Render for ConnectorsView {
             let name = connector.name.clone();
             let menu_name = name.clone();
             let switch_name = name.clone();
+            let sign_in_name = name.clone();
+            let needs_sign_in = connector
+                .error
+                .as_ref()
+                .is_some_and(|error| error.contains(CONNECTOR_SIGN_IN));
             let menu_open = self.menu.as_ref().is_some_and(
                 |(m, _)| matches!(m, Menu::Connector(n) | Menu::Copy(n) if n == &name),
             );
@@ -216,6 +221,25 @@ impl Render for ConnectorsView {
                             .into_any_element(),
                         &p,
                     ))
+                    .when(needs_sign_in, |row| {
+                        row.child(
+                            Button::new(SharedString::from(format!("connector-sign-in-{name}")))
+                                .small()
+                                .label("Sign In Again")
+                                .disabled(self.busy || self.loading)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.begin_sign_in(
+                                        SignInTarget::Existing {
+                                            name: sign_in_name.clone(),
+                                        },
+                                        this.daemon.clone(),
+                                        Completion::Reload,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                    })
                     .child(
                         Switch::new(SharedString::from(format!("connector-switch-{name}")))
                             .small()

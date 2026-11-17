@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use super::{Tools, text_item};
 
-pub(crate) const GUIDANCE: &str = "Databases and services the user connected in Sandhill are listed by list_connectors; prefer them to scraping websites. Use query_connector for connectors marked read_only and call_connector for the rest.";
+pub(crate) const GUIDANCE: &str = "Databases and services the user connected in Sandhill are listed by list_connectors; prefer them to scraping websites. Use query_connector for connectors marked read_only, or read_only tools of Suggested connectors; use call_connector for the rest.";
 
 impl Tools {
     pub(super) async fn connector_result(&self, name: &str, args: &Value) -> Result<Value> {
@@ -82,7 +82,7 @@ pub(super) fn tool_list() -> Vec<Value> {
         (
             "query_connector",
             true,
-            "Query a connector marked read_only in list_connectors. Read its tool's input schema with list_connectors {connector} first. Custom connectors require call_connector instead.",
+            "Query a connector marked read_only, or a read_only tool of a Suggested connector. Read its tool's input schema with list_connectors {connector} first. Custom connectors require call_connector instead.",
         ),
         (
             "call_connector",

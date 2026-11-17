@@ -643,6 +643,8 @@ impl Daemon {
             }
             call @ (Call::ListConnectors
             | Call::AddConnector { .. }
+            | Call::BeginConnectorSignIn { .. }
+            | Call::FinishConnectorSignIn { .. }
             | Call::SetConnectorEnabled { .. }
             | Call::RemoveConnector { .. }
             | Call::TestConnector { .. }

@@ -1,7 +1,7 @@
 # Connectors: databases and services every agent can query
 
-Status: **approved by Huan, 2026-11-16; phase 1 built the same day**.
-Phase 2 (sign-in connectors) is not built. Follows
+Status: **approved by Huan, 2026-11-16; phase 1 built the same day**;
+phase 2 in `docs/design/done/connector-sign-in-plan.md`. Follows
 `docs/design/done/skills-plan.md`.
 
 ## What Huan asked for

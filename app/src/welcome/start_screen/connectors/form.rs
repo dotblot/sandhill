@@ -6,6 +6,7 @@ pub(super) struct Form {
     pub address: Entity<InputState>,
     pub header: Entity<InputState>,
     pub secret: Entity<InputState>,
+    pub client_id: Entity<InputState>,
     pub command: Entity<InputState>,
     pub env: Entity<TextareaState>,
 }
@@ -22,6 +23,7 @@ impl Form {
                     .masked(true)
                     .placeholder("Header value")
             }),
+            client_id: cx.new(|cx| InputState::new(window, cx).placeholder("Client ID")),
             command: cx.new(|cx| InputState::new(window, cx).placeholder("Command and arguments")),
             env: cx.new(|cx| TextareaState::new(window, cx).placeholder("KEY=value, one per line")),
         };
@@ -31,6 +33,7 @@ impl Form {
             &form.address,
             &form.header,
             &form.secret,
+            &form.client_id,
             &form.command,
         ] {
             subscriptions.push(cx.subscribe_in(
@@ -54,6 +57,7 @@ impl Form {
             &self.address,
             &self.header,
             &self.secret,
+            &self.client_id,
             &self.command,
         ] {
             input.update(cx, |input, cx| input.set_value("", window, cx));
@@ -80,6 +84,7 @@ impl Form {
 
     pub fn web(&self, cx: &App) -> ConnectorAdd {
         let header = self.header.read(cx).value().trim().to_string();
+        let client_id = self.client_id.read(cx).value().trim().to_string();
         ConnectorAdd::Custom {
             title: self.name.read(cx).value().trim().to_string(),
             spec: ConnectorSpec::Http {
@@ -87,6 +92,7 @@ impl Form {
                 header: (!header.is_empty()).then_some(header.clone()),
             },
             secret: (!header.is_empty()).then(|| self.secret.read(cx).value().to_string()),
+            client_id: (!client_id.is_empty()).then_some(client_id),
         }
     }
 
@@ -104,6 +110,7 @@ impl Form {
                 env: environment(&self.env.read(cx).value())?,
             },
             secret: None,
+            client_id: None,
         })
     }
 }

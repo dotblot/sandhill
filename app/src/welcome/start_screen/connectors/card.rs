@@ -8,7 +8,10 @@ impl ConnectorsView {
         let card = self.card.as_ref()?;
         let p = welcome_palette(cx);
         let (title, primary) = match card {
-            Card::Suggested(s) => (format!("Add {}?", s.title), Some("Add")),
+            Card::Suggested(s) => (
+                format!("Add {}?", s.title),
+                Some(if s.sign_in { "Sign In" } else { "Add" }),
+            ),
             Card::Web => ("Add a Web Address".into(), Some("Add")),
             Card::Command => ("Add a Command".into(), Some("Add")),
             Card::Secret { destination, .. } => (
@@ -16,6 +19,7 @@ impl ConnectorsView {
                 Some("Copy"),
             ),
             Card::Busy(text) => (text.clone(), None),
+            Card::SignIn(service) => (format!("Sign in to {service}"), None),
             Card::Tools(c) => (format!("{} tools", c.title), None),
             Card::Remove(c) => (format!("Remove {}?", c.title), Some("Remove")),
             Card::Error(_) => ("Could not manage connectors".into(), None),
@@ -32,7 +36,17 @@ impl ConnectorsView {
                 body = body
                     .child(grey(&s.action, &p))
                     .child(grey(&s.description, &p).line_clamp(4))
-                    .child(grey(&format!("Licence: {}", s.licence), &p))
+                    .child(grey(
+                        &if s.sign_in {
+                            format!(
+                                "You sign in with your own {} account, in your browser.",
+                                s.title
+                            )
+                        } else {
+                            format!("Licence: {}", s.licence)
+                        },
+                        &p,
+                    ))
                     .child(
                         grey("Each database has its own terms: read them", &p)
                             .text_color(p.accent)
@@ -52,6 +66,11 @@ impl ConnectorsView {
                         &p,
                     ))
                     .child(field("Header value", Input::new(&self.form.secret), &p))
+                    .child(field(
+                        "Client ID (only if the service gave you one)",
+                        Input::new(&self.form.client_id),
+                        &p,
+                    ))
                     .children(
                         self.form_error
                             .clone()
@@ -130,6 +149,7 @@ impl ConnectorsView {
                 ))
             }
             Card::Error(error) => body = body.child(div().text_color(p.err).child(error.clone())),
+            Card::SignIn(_) => body = body.child(grey("Finish signing in in your browser.", &p)),
             Card::Busy(_) => {}
         }
         let close_only = matches!(card, Card::Tools(_) | Card::Error(_));
@@ -206,7 +226,7 @@ impl ConnectorsView {
         )
     }
 
-    pub(super) fn primary(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn primary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
@@ -221,16 +241,18 @@ impl ConnectorsView {
                 ConnectorAdd::Suggested { id: s.id.clone() },
                 self.daemon.clone(),
                 Completion::Reload,
+                window,
                 cx,
             ),
             Card::Web => self.add(
                 self.form.web(cx),
                 self.daemon.clone(),
                 Completion::Reload,
+                window,
                 cx,
             ),
             Card::Command => match self.form.command(cx) {
-                Ok(add) => self.add(add, self.daemon.clone(), Completion::Reload, cx),
+                Ok(add) => self.add(add, self.daemon.clone(), Completion::Reload, window, cx),
                 Err(error) => self.fail(error, cx),
             },
             Card::Secret {
@@ -246,7 +268,7 @@ impl ConnectorsView {
                     name: name.clone(),
                     device: host_label(&destination.host),
                 };
-                self.add(add, destination.daemon.clone(), completion, cx);
+                self.add(add, destination.daemon.clone(), completion, window, cx);
             }
             Card::Remove(c) => self.mutate(
                 Call::RemoveConnector {
@@ -255,7 +277,7 @@ impl ConnectorsView {
                 cx,
             ),
             Card::Tools(_) | Card::Error(_) => self.dismiss(cx),
-            Card::Busy(_) => {}
+            Card::Busy(_) | Card::SignIn(_) => {}
         }
     }
 }

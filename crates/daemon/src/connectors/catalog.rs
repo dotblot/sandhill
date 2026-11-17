@@ -34,6 +34,8 @@ pub(super) struct Entry {
     pub title: String,
     pub description: String,
     pub read_only: bool,
+    #[serde(default)]
+    pub sign_in: bool,
     by: String,
     licence: String,
     homepage: String,
@@ -94,8 +96,16 @@ impl Entry {
             action,
             needs,
             needs_url,
+            sign_in: self.sign_in,
             added,
         }
+    }
+    pub fn web_address(&self) -> Result<&str> {
+        Ok(&self
+            .http
+            .as_ref()
+            .context("only web connectors support browser sign-in")?
+            .url)
     }
 
     pub fn spec(&self, root: &Path) -> Result<(ConnectorSpec, bool)> {

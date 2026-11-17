@@ -52,6 +52,62 @@
       "http": {
         "url": "https://mcp.platform.opentargets.org/mcp"
       }
+    },
+    {
+      "id": "consensus",
+      "title": "Consensus",
+      "description": "Search peer-reviewed research papers and get answers grounded in them.",
+      "by": "Consensus",
+      "licence": "Account needed",
+      "homepage": "https://consensus.app",
+      "terms": "https://consensus.app/home/terms-of-service/",
+      "read_only": false,
+      "sign_in": true,
+      "http": {
+        "url": "https://mcp.consensus.app/mcp"
+      }
+    },
+    {
+      "id": "synapse",
+      "title": "Synapse",
+      "description": "Projects, files, wikis and tables in Synapse, Sage Bionetworks' platform for sharing biomedical data.",
+      "by": "Sage Bionetworks",
+      "licence": "Account needed",
+      "homepage": "https://www.synapse.org",
+      "terms": "https://www.synapse.org/TrustCenter:TermsOfService",
+      "read_only": false,
+      "sign_in": true,
+      "http": {
+        "url": "https://mcp.synapse.org/mcp"
+      }
+    },
+    {
+      "id": "wiley-scholar-gateway",
+      "title": "Wiley Scholar Gateway",
+      "description": "Search and read Wiley's peer-reviewed journals and books.",
+      "by": "Wiley",
+      "licence": "Account needed",
+      "homepage": "https://scholargateway.ai",
+      "terms": "https://www.wiley.com/en-us/terms-of-use",
+      "read_only": false,
+      "sign_in": true,
+      "http": {
+        "url": "https://connector.scholargateway.ai/mcp"
+      }
+    },
+    {
+      "id": "biorender",
+      "title": "BioRender",
+      "description": "Find BioRender icons and templates for scientific figures.",
+      "by": "BioRender",
+      "licence": "Account needed",
+      "homepage": "https://www.biorender.com",
+      "terms": "https://www.biorender.com/terms-of-service",
+      "read_only": false,
+      "sign_in": true,
+      "http": {
+        "url": "https://mcp.services.biorender.com/mcp"
+      }
     }
   ]
 }

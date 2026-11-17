@@ -75,9 +75,11 @@ impl ConnectorsView {
                             },
                         )),
                     )
-                    .child(item("connector-test", "Test", true, &p).on_click(
-                        cx.listener(move |this, _, _, cx| this.test(test_name.clone(), cx)),
-                    ))
+                    .child(
+                        item("connector-test", "Test", true, &p).on_click(cx.listener(
+                            move |this, _, window, cx| this.test(test_name.clone(), window, cx),
+                        )),
+                    )
                     .child(
                         item("connector-copy", "Copy to…", connected, &p)
                             .tooltip(move |w, cx| {

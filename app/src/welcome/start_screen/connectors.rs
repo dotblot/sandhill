@@ -3,13 +3,16 @@ use super::manage::{card_shell, grey, item};
 use super::*;
 use gpui_kit::component::input::{Textarea, TextareaState};
 use sandhill_proto::{
-    ConnectorAdd, ConnectorInfo, ConnectorList, ConnectorSpec, SuggestedConnector,
+    CONNECTOR_SIGN_IN, ConnectorAdd, ConnectorInfo, ConnectorList, ConnectorSignIn, ConnectorSpec,
+    SignInTarget, SuggestedConnector,
 };
 
 mod card;
 mod form;
+mod loopback;
 mod menu;
 mod page;
+mod sign_in;
 
 #[derive(Clone)]
 struct Destination {
@@ -33,6 +36,7 @@ enum Card {
         name: String,
     },
     Busy(String),
+    SignIn(String),
     Tools(ConnectorInfo),
     Remove(ConnectorInfo),
     Error(String),
@@ -56,6 +60,7 @@ pub(crate) struct ConnectorsView {
     generation: u64,
     notice: Option<(String, String, bool)>,
     card: Option<Card>,
+    sign_in: Option<loopback::Loopback>,
     /// Why the Web Address or Command card's last Add failed.
     form_error: Option<String>,
     menu: Option<(Menu, Point<Pixels>)>,
@@ -79,6 +84,7 @@ impl ConnectorsView {
             generation: 0,
             notice: None,
             card: None,
+            sign_in: None,
             form_error: None,
             menu: None,
             focus: cx.focus_handle(),
@@ -126,6 +132,7 @@ impl ConnectorsView {
 
     fn open_card(&mut self, card: Card, window: &mut Window, cx: &mut Context<Self>) {
         self.generation += 1;
+        self.sign_in = None;
         self.notice = None;
         self.menu = None;
         self.card = Some(card);
@@ -139,12 +146,14 @@ impl ConnectorsView {
             return;
         }
         self.generation += 1;
+        self.sign_in = None;
         self.card = None;
         self.menu = None;
         cx.notify();
     }
 
     fn fail(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        self.sign_in = None;
         let text = Self::error_text(error);
         if text.starts_with("Update Sandhill") {
             self.problem = Some(text.clone());
@@ -159,9 +168,19 @@ impl ConnectorsView {
         add: ConnectorAdd,
         daemon: Rc<Daemon>,
         completion: Completion,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.busy {
+            return;
+        }
+        if let ConnectorAdd::Suggested { id } = &add
+            && self
+                .list
+                .as_ref()
+                .is_some_and(|list| list.suggested.iter().any(|s| &s.id == id && s.sign_in))
+        {
+            self.begin_sign_in(SignInTarget::Add { add }, daemon, completion, window, cx);
             return;
         }
         self.busy = true;
@@ -172,20 +191,21 @@ impl ConnectorsView {
         };
         self.form_error = None;
         self.card = Some(Card::Busy("Connecting…".into()));
-        let asked = daemon.call::<ConnectorInfo>(Call::AddConnector { add });
-        cx.spawn(async move |this, cx| {
+        let asked = daemon.call::<ConnectorInfo>(Call::AddConnector { add: add.clone() });
+        cx.spawn_in(window, async move |this, cx| {
             let result = asked.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
-                    Ok(_) => {
-                        this.card = None;
-                        match completion {
-                            Completion::Reload => this.load(cx),
-                            Completion::Copied { name, device } => {
-                                this.set_notice(name, format!("Copied to {device}"), false, cx)
-                            }
-                        }
+                    Ok(_) => this.complete(completion, cx),
+                    Err(error) if format!("{error:#}").contains(CONNECTOR_SIGN_IN) => {
+                        this.begin_sign_in(
+                            SignInTarget::Add { add },
+                            daemon,
+                            completion,
+                            window,
+                            cx,
+                        );
                     }
                     Err(error) => match back {
                         Some(card) => {
@@ -251,7 +271,7 @@ impl ConnectorsView {
         .detach();
     }
 
-    fn test(&mut self, name: String, cx: &mut Context<Self>) {
+    fn test(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
@@ -261,9 +281,9 @@ impl ConnectorsView {
         let asked = self
             .daemon
             .call::<ConnectorInfo>(Call::TestConnector { name: name.clone() });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = asked.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
                     Ok(info) => {
@@ -272,19 +292,40 @@ impl ConnectorsView {
                             .error
                             .clone()
                             .unwrap_or_else(|| format!("Working · {} tools", info.tools.len()));
+                        let sign_in = text.contains(CONNECTOR_SIGN_IN);
                         if let Some(list) = &mut this.list
                             && let Some(old) = list.added.iter_mut().find(|c| c.name == name)
                         {
                             *old = info;
                         }
-                        this.set_notice(name, text, error, cx);
+                        if sign_in {
+                            this.begin_sign_in(
+                                SignInTarget::Existing { name },
+                                this.daemon.clone(),
+                                Completion::Reload,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            this.set_notice(name, text, error, cx);
+                        }
                     }
                     Err(error) => {
                         let text = Self::error_text(error);
-                        if text.starts_with("Update Sandhill") {
-                            this.problem = Some(text.clone());
+                        if text.contains(CONNECTOR_SIGN_IN) {
+                            this.begin_sign_in(
+                                SignInTarget::Existing { name },
+                                this.daemon.clone(),
+                                Completion::Reload,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            if text.starts_with("Update Sandhill") {
+                                this.problem = Some(text.clone());
+                            }
+                            this.set_notice(name, text, true, cx);
                         }
-                        this.set_notice(name, text, true, cx);
                     }
                 }
                 cx.notify();
@@ -339,7 +380,7 @@ impl ConnectorsView {
                                 name,
                                 device: host_label(&destination.host),
                             };
-                            this.add(add, destination.daemon, completion, cx);
+                            this.add(add, destination.daemon, completion, window, cx);
                         }
                     }
                     Err(error) => this.fail(error, cx),

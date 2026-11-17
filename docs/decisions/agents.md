@@ -132,7 +132,11 @@ differs, this wins.
   run without the agent's approval. Sandhill's list: BioMCP, BioContextAI
   Knowledgebase and Open Targets, none needing an account. Anthropic's
   hosted PubMed, bioRxiv, Clinical Trials and ChEMBL addresses are left
-  out. Sign-in (OAuth) connectors come later, in their own step.
+  out. Sign-in connectors (Huan, 2026-11-16, phase 2; `docs/design/done/
+  connector-sign-in-plan.md`): Consensus, Synapse, Wiley Scholar Gateway
+  and BioRender join the list; the browser on the Mac signs in to the
+  user's own account, the device keeps and renews the tokens, and nothing
+  is copied between devices.
 
 ## Accounts and quota
 - Agent accounts (Huan, 2026-11-13; `docs/design/done/agent-accounts-plan.md`):

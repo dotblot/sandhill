@@ -1357,6 +1357,12 @@ preview and R's imports weren't seen.
   remove and copy to another ready device, asking for that device's header
   value without copying secrets. `start_screen/manage.rs` shares the card
   shell, muted lines and menu items with Skills.
+- **Connector sign-in** (Huan, 2026-11-16;
+  `docs/design/done/connector-sign-in-plan.md`): `start_screen/connectors/
+  loopback.rs` listens on `127.0.0.1:<free port>/callback` for the
+  browser's return, `connectors/sign_in.rs` runs Begin, opens the page,
+  and Finish on the device being managed. Sign-in errors from Add, Test or
+  Copy to… start it; rows that need it again get "Sign In Again".
 
 
 ## Running it

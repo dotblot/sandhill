@@ -785,8 +785,9 @@ pub enum Call {
     },
     /// For agents (`query_connector`, `call_connector`): runs `tool` of
     /// connector `name`. With `read_only`, only on connectors marked
-    /// `read_only`. Returns the MCP `tools/call` result (`content`,
-    /// `isError`).
+    /// `read_only`, or on a connector from Sandhill's list whose service
+    /// marks that tool read-only. Returns the MCP `tools/call` result
+    /// (`content`, `isError`).
     CallConnector {
         name: String,
         tool: String,
@@ -794,6 +795,25 @@ pub enum Call {
         arguments: Value,
         #[serde(default)]
         read_only: bool,
+    },
+    /// Starts a browser sign-in to a connector's service: discovers its
+    /// authorization server, registers Sandhill as a client there (unless
+    /// the user gave a client id) and makes the PKCE pair. The browser is
+    /// sent back to `redirect_uri` (the Mac app's loopback address).
+    /// Returns [`ConnectorSignIn`].
+    BeginConnectorSignIn {
+        target: SignInTarget,
+        redirect_uri: String,
+    },
+    /// Ends a sign-in with what came back on the redirect: exchanges `code`
+    /// for tokens kept on the device, then adds or reconnects the connector.
+    /// `error` is the service's refusal, if any. Returns [`ConnectorInfo`].
+    FinishConnectorSignIn {
+        state: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// A project's shared settings, from `.sandhill/project.toml`, and the
     /// environments its files point to. Returns [`ProjectSetup`].

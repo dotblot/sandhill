@@ -4,10 +4,14 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use sandhill_proto::ConnectorSpec;
+use sandhill_proto::{CONNECTOR_SIGN_IN, ConnectorSpec};
 use serde_json::{Value, json};
 
-use super::programs::Child;
+use super::{
+    oauth,
+    programs::Child,
+    store::{self, Secret},
+};
 
 const VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_RESULT: usize = 1 << 20;
@@ -35,7 +39,9 @@ struct HttpState {
 
 pub(super) struct Client {
     spec: ConnectorSpec,
-    secret: Option<String>,
+    title: String,
+    secret: tokio::sync::Mutex<Option<Secret>>,
+    protected: Mutex<Vec<String>>,
     next_id: AtomicU64,
     initialized: tokio::sync::Mutex<bool>,
     http: Arc<Mutex<HttpState>>,
@@ -46,10 +52,16 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub fn new(spec: ConnectorSpec, secret: Option<String>) -> Arc<Self> {
+    pub fn new(title: String, spec: ConnectorSpec, secret: Option<Secret>) -> Arc<Self> {
+        let protected = secret
+            .as_ref()
+            .map(|s| s.sensitive().into_iter().map(str::to_owned).collect())
+            .unwrap_or_default();
         let client = Arc::new(Self {
             spec,
-            secret,
+            title,
+            secret: tokio::sync::Mutex::new(secret),
+            protected: Mutex::new(protected),
             next_id: AtomicU64::new(1),
             initialized: tokio::sync::Mutex::new(false),
             http: Arc::default(),
@@ -76,6 +88,18 @@ impl Client {
             }
         });
         client
+    }
+    pub async fn secret(&self) -> Option<Secret> {
+        self.secret.lock().await.clone()
+    }
+
+    pub fn protect(&self, values: &[String]) {
+        let mut protected = self.protected.lock().unwrap();
+        for value in values {
+            if !value.is_empty() && !protected.contains(value) {
+                protected.push(value.clone());
+            }
+        }
     }
 
     pub async fn stop(&self) {
@@ -156,6 +180,12 @@ impl Client {
                     *initialized = true;
                     return Ok(());
                 }
+                Err(error)
+                    if error.downcast_ref::<Unauthorized>().is_some()
+                        || error.to_string().starts_with(CONNECTOR_SIGN_IN) =>
+                {
+                    return Err(error);
+                }
                 Err(error) => last_error = Some(error),
             }
         }
@@ -191,18 +221,92 @@ impl Client {
                 child.send(&message).await
             }
             ConnectorSpec::Http { url, header } => {
-                let (url, header, secret, state) = (
-                    url.clone(),
-                    header.clone(),
-                    self.secret.clone(),
-                    self.http.clone(),
-                );
-                tokio::task::spawn_blocking(move || {
-                    http(&url, header.as_deref(), secret.as_deref(), &state, &message)
-                })
-                .await?
+                let mut secret = self.secret.lock().await;
+                if let Some(Secret::OAuth(tokens)) = secret.as_ref()
+                    && tokens.expiring()
+                {
+                    let refreshed = tokens
+                        .refresh()
+                        .await
+                        .map_err(|_| oauth::needed(&self.title, true))?;
+                    *secret = Some(Secret::OAuth(refreshed));
+                }
+                self.protect_secret(secret.as_ref());
+                let mut result = self
+                    .http_send(url, header.as_deref(), secret.clone(), &message)
+                    .await;
+                if result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.downcast_ref::<Unauthorized>().is_some())
+                    && let Some(Secret::OAuth(tokens)) = secret.as_ref()
+                {
+                    let refreshed = tokens
+                        .refresh()
+                        .await
+                        .map_err(|_| oauth::needed(&self.title, true))?;
+                    *secret = Some(Secret::OAuth(refreshed));
+                    self.protect_secret(secret.as_ref());
+                    result = self
+                        .http_send(url, header.as_deref(), secret.clone(), &message)
+                        .await;
+                    if result
+                        .as_ref()
+                        .err()
+                        .is_some_and(|e| e.downcast_ref::<Unauthorized>().is_some())
+                    {
+                        return Err(oauth::needed(&self.title, true));
+                    }
+                }
+                match result {
+                    Err(error)
+                        if error
+                            .downcast_ref::<Unauthorized>()
+                            .is_some_and(|e| e.sign_in) =>
+                    {
+                        Err(oauth::needed(&self.title, false))
+                    }
+                    Ok(value) => {
+                        let protected = self.protected.lock().unwrap();
+                        Ok(store::sanitize_values(
+                            value,
+                            &protected.iter().map(String::as_str).collect::<Vec<_>>(),
+                        ))
+                    }
+                    other => other,
+                }
             }
         }
+    }
+    fn protect_secret(&self, secret: Option<&Secret>) {
+        if let Some(secret) = secret {
+            self.protect(
+                &secret
+                    .sensitive()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    async fn http_send(
+        &self,
+        url: &str,
+        header: Option<&str>,
+        secret: Option<Secret>,
+        message: &Value,
+    ) -> Result<Value> {
+        let (url, header, state, message) = (
+            url.to_owned(),
+            header.map(str::to_owned),
+            self.http.clone(),
+            message.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            http(&url, header.as_deref(), secret.as_ref(), &state, &message)
+        })
+        .await?
     }
 
     pub async fn tools(&self) -> Result<Vec<Value>> {
@@ -273,10 +377,21 @@ impl std::fmt::Display for Expired {
 }
 impl std::error::Error for Expired {}
 
+#[derive(Debug)]
+struct Unauthorized {
+    sign_in: bool,
+}
+impl std::fmt::Display for Unauthorized {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the service needs a sign-in or a key (HTTP 401)")
+    }
+}
+impl std::error::Error for Unauthorized {}
+
 fn http(
     url: &str,
     header: Option<&str>,
-    secret: Option<&str>,
+    secret: Option<&Secret>,
     state: &Mutex<HttpState>,
     message: &Value,
 ) -> Result<Value> {
@@ -298,8 +413,16 @@ fn http(
             request = request.header("MCP-Protocol-Version", version);
         }
     }
-    if let (Some(header), Some(secret)) = (header, secret) {
-        request = request.header(header, secret);
+    match secret {
+        Some(Secret::Header(value)) => {
+            if let Some(header) = header {
+                request = request.header(header, value);
+            }
+        }
+        Some(Secret::OAuth(tokens)) => {
+            request = request.header("Authorization", format!("Bearer {}", tokens.access_token))
+        }
+        None => {}
     }
     // Reasons only: ureq's own messages can carry the address, whose query
     // string may hold a key.
@@ -317,7 +440,16 @@ fn http(
     }
     match status {
         200..=299 => {}
-        401 | 403 => bail!("the service needs a sign-in or a key (HTTP {status})"),
+        401 => {
+            let header = response
+                .headers()
+                .get("WWW-Authenticate")
+                .and_then(|v| v.to_str().ok());
+            let sign_in =
+                !matches!(secret, Some(Secret::OAuth(_))) && oauth::discover(url, header).is_some();
+            return Err(Unauthorized { sign_in }.into());
+        }
+        403 => bail!("the service needs a sign-in or a key (HTTP {status})"),
         404 | 405 => bail!("no MCP server answers at this address (HTTP {status})"),
         _ => bail!("the service answered with an error (HTTP {status})"),
     }

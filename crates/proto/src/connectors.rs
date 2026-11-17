@@ -53,9 +53,14 @@ pub struct ConnectorInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested: Option<String>,
     /// Agents may query it without asking: from Sandhill's list and marked
-    /// there as only looking things up.
+    /// there as only looking things up. (Other connectors from the list may
+    /// still be queried tool by tool, where the service marks the tool
+    /// read-only.)
     #[serde(default)]
     pub read_only: bool,
+    /// Reached with a browser sign-in (OAuth) to the user's own account.
+    #[serde(default)]
+    pub sign_in: bool,
     pub enabled: bool,
     pub added_ms: i64,
     /// A header value is kept for it.
@@ -64,7 +69,8 @@ pub struct ConnectorInfo {
     /// As of the last time it answered.
     #[serde(default)]
     pub tools: Vec<ConnectorTool>,
-    /// Why it last failed, cleared when it answers again.
+    /// Why it last failed, cleared when it answers again. Starts with
+    /// [`CONNECTOR_SIGN_IN`] when it needs signing in again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -90,6 +96,9 @@ pub struct SuggestedConnector {
     pub needs: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub needs_url: Option<String>,
+    /// Adding it signs in to the user's own account in the browser.
+    #[serde(default)]
+    pub sign_in: bool,
     pub added: bool,
 }
 
@@ -109,11 +118,42 @@ pub enum ConnectorAdd {
     /// An entry of Sandhill's list.
     Suggested { id: String },
     /// One the user describes. `name` is made safe and unique; `secret` is
-    /// the value of the spec's `header`.
+    /// the value of the spec's `header`. `client_id` is for a sign-in
+    /// service that doesn't let Sandhill register itself and gave the user
+    /// an id.
     Custom {
         title: String,
         spec: ConnectorSpec,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         secret: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
     },
+}
+
+/// [`crate::Call::AddConnector`] and [`crate::Call::TestConnector`] errors,
+/// and [`ConnectorInfo::error`], start with this when the service needs a
+/// browser sign-in: the app then runs [`crate::Call::BeginConnectorSignIn`].
+pub const CONNECTOR_SIGN_IN: &str = "Sign-in needed:";
+
+/// What a sign-in is for.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SignInTarget {
+    /// Adds the connector once signed in.
+    Add { add: ConnectorAdd },
+    /// Signs an added connector in again.
+    Existing { name: String },
+}
+
+/// The answer to [`crate::Call::BeginConnectorSignIn`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConnectorSignIn {
+    /// Names this sign-in in [`crate::Call::FinishConnectorSignIn`]; it is
+    /// also OAuth's `state`, which comes back on the redirect.
+    pub state: String,
+    /// The page to open in the browser.
+    pub authorize_url: String,
+    /// The service's name for the card: its title, or the address's host.
+    pub service: String,
 }
