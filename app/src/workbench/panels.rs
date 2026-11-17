@@ -229,15 +229,31 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.hide_object_explorer();
-        let (Some(daemon), Some(session)) = (self.daemon(), self.vars.session.clone()) else {
+        let Some(session) = self.vars.session.clone() else {
             return;
         };
-        self.reveal_middle();
         let language = self
-            .active_kernel()
-            .and_then(|k| self.kernels.iter().find(|s| s.name == k))
-            .map_or_else(|| "python".to_string(), |s| s.language.to_ascii_lowercase());
+            .session_language(&session)
+            .unwrap_or("python")
+            .to_string();
+        self.open_session_explorer(session, language, path, window, cx);
+    }
+
+    /// Code requests carry their own session, which need not be the one
+    /// currently shown in Variables or the active editor.
+    pub(super) fn open_session_explorer(
+        &mut self,
+        session: String,
+        language: String,
+        path: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(daemon) = self.daemon() else {
+            return;
+        };
+        self.hide_object_explorer();
+        self.reveal_middle();
         let project = self.project.clone();
         self.explorer =
             Some(cx.new(|cx| Explorer::new(daemon, session, language, path, project, window, cx)));

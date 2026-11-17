@@ -1,6 +1,8 @@
 //! Workbench kernel sessions and runs: choosing kernels, running code, kernel events.
 use super::*;
 
+mod view;
+
 impl Workbench {
     /// The project's running kernels, as the daemon last listed them.
     pub(crate) fn project_kernels(&self) -> Vec<String> {
@@ -783,6 +785,10 @@ impl Workbench {
         if !self.accepts_console_replay(&event) {
             return;
         }
+        if event.msg_type == sandhill_proto::EVENT_VIEW {
+            self.view_from_code(&event, cx);
+            return;
+        }
         let active = self.console_target() == Some(event.session.as_str());
         if event.msg_type == EVENT_SESSION_ENDED {
             for run in self
@@ -914,5 +920,78 @@ impl Workbench {
             self.advance_queue(&session, ts_ms, cx);
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use std::sync::Arc;
+
+    use gpui_kit::{AppContext, TestAppContext, WeakEntity, WindowOptions};
+    use sandhill_link::Target;
+    use sandhill_proto::Event;
+
+    use super::{Session, Workbench, notebook};
+
+    #[gpui_kit::test]
+    fn view_events_from_a_script_session_are_handled(cx: &mut TestAppContext) {
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let (handle, workbench) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::look::install(cx);
+            // Never connect to the user's daemon or project.
+            crate::welcome::resource_manager::block_host(sandhill_link::LOCAL, cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    Workbench::new(
+                        rt,
+                        Target::Local,
+                        None,
+                        WeakEntity::new_invalid(),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            workbench.update(cx, |this, cx| {
+                let nb = notebook::parse("/wide_table.py", "counts = None\n").unwrap();
+                this.tabs.push(nb.path.clone());
+                this.show_notebook(nb, 0, window, cx);
+                this.open.as_mut().unwrap().session = Session::Ready("file-session".into());
+                // The event must use the script's session, not the current
+                // Variables or Console session.
+                this.loose = Session::Ready("other-session".into());
+                for (seq, run) in [(1, Some("view-run".into())), (2, None)] {
+                    this.problem = None;
+                    this.on_event(
+                        Event {
+                            seq,
+                            session: "file-session".into(),
+                            run,
+                            msg_type: sandhill_proto::EVENT_VIEW.into(),
+                            ts_ms: 0,
+                            content: serde_json::json!({"title": "counts"}),
+                        },
+                        cx,
+                    );
+                    // With no connection, a handled request reports why it
+                    // cannot open; it must not silently become Console output.
+                    assert_eq!(
+                        this.problem.as_deref(),
+                        Some("Could not open counts: not connected to the daemon.")
+                    );
+                    assert!(!this.runs.contains_key("view-run"));
+                }
+            });
+        })
+        .unwrap();
     }
 }
