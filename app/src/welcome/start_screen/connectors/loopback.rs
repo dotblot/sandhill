@@ -86,6 +86,9 @@ fn listen(
         );
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // macOS hands accepted sockets the listener's non-blocking
+                // mode; the timeouts below only apply to a blocking socket.
+                stream.set_nonblocking(false)?;
                 stream.set_read_timeout(Some(Duration::from_millis(250)))?;
                 stream.set_write_timeout(Some(Duration::from_millis(250)))?;
                 let callback = read_callback(&stream).ok().flatten();
@@ -122,8 +125,15 @@ fn listen(
 }
 
 fn read_callback(stream: &TcpStream) -> anyhow::Result<Option<Callback>> {
+    let mut reader = BufReader::new(stream.take(8192));
     let mut request = String::new();
-    BufReader::new(stream.take(8192)).read_line(&mut request)?;
+    reader.read_line(&mut request)?;
+    // Read the headers too: closing with unread bytes resets the connection
+    // on macOS, and the browser never shows the reply.
+    let mut header = String::new();
+    while reader.read_line(&mut header).unwrap_or(0) > 0 && !header.trim().is_empty() {
+        header.clear();
+    }
     let mut parts = request.split_whitespace();
     if parts.next() != Some("GET") {
         return Ok(None);
@@ -267,6 +277,36 @@ mod tests {
         assert_eq!(
             receive.blocking_recv().unwrap().unwrap().code.as_deref(),
             Some("yes")
+        );
+    }
+
+    #[test]
+    fn loopback_waits_for_a_request_sent_after_connecting() {
+        // Browsers may open the connection before sending the request.
+        let (listener, receive) = Loopback::bind().unwrap();
+        listener.expect("right".into(), "Service".into()).unwrap();
+        let address = listener
+            .redirect_uri
+            .strip_prefix("http://")
+            .unwrap()
+            .strip_suffix("/callback")
+            .unwrap();
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        write!(
+            stream,
+            "GET /callback?state=right&code=late HTTP/1.1\r\nHost: {address}\r\n\r\n"
+        )
+        .unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).unwrap();
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert_eq!(
+            receive.blocking_recv().unwrap().unwrap().code.as_deref(),
+            Some("late")
         );
     }
 

@@ -451,6 +451,21 @@ async fn ready(machine: &Machine, terminal: &str) -> TerminalInfo {
     .unwrap()
 }
 
+/// Waits for the stand-in's `launch`th start. `ready` alone can't tell:
+/// a restart keeps the earlier session id so the conversation resumes.
+async fn launched(machine: &Machine, launch: usize) {
+    let root = machine.root();
+    let root = root.to_str().unwrap();
+    let file = machine.dir.path().join("launches");
+    tokio::time::timeout(TIMEOUT, async {
+        while std::fs::read_to_string(&file).map_or(0, |l| l.matches(root).count()) < launch {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
 async fn chat(state: &Path, terminal: &str) -> Vec<ChatEntry> {
     let mut client = connect(state).await;
     client.subscribe_chat(terminal, Some(0), 0).await.unwrap();
@@ -526,6 +541,7 @@ async fn switching_accounts_restarts_the_same_chat_and_replays_one_divider() {
         Some(second.id.as_str())
     );
     assert!(switched.started_ms >= terminal.started_ms);
+    launched(&machine, 2).await;
     ready(&machine, &terminal.id).await;
     // Restarting the same account must not manufacture another switch.
     let _: TerminalInfo = machine
@@ -539,6 +555,7 @@ async fn switching_accounts_restarts_the_same_chat_and_replays_one_divider() {
         })
         .await
         .unwrap();
+    launched(&machine, 3).await;
     ready(&machine, &terminal.id).await;
     machine.client.stop_terminal(&terminal.id).await.unwrap();
     tokio::time::timeout(TIMEOUT, async {
