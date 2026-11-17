@@ -32,23 +32,15 @@ run code in your sessions, instead of starting over from your files.
 
 ### Measured against Positron
 
-The same Mac, the same files and the same steps for both apps; the middle of
-five runs.
+The same Mac, the same files and the same steps for both apps.
 
-| Test | Sandhill | Positron |
-|---|---|---|
-| Open a 2,002-cell notebook (400 plots) | **0.64 s, 195 MB** | 180 s, 4.5 GB |
-| Open a table of 2,700 rows x 32,738 columns | 1.05 s, **137 MB** | **0.57 s**, 1.6 GB |
-| Open a 30,005-line R script | 0.76 s, **155 MB** | **0.58 s**, 1.0 GB |
-| Start-up | **2.1 s, 137 MB** | 3.5 s, 955 MB |
-| Scroll the large notebook | 57 fps, **0.34 cores** | **60 fps**, 1.12 cores |
+![Chart: Sandhill opened a 2,002-cell notebook in 0.64 s using 195 MB, Positron in 180 s using 4.5 GB; a 32,738-column table in 1.05 s using 137 MB, Positron in 0.57 s using 1.6 GB; a 30,005-line R script in 0.76 s using 155 MB, Positron in 0.58 s using 1.0 GB; start-up 2.05 s and 137 MB, Positron 3.49 s and 955 MB. Scrolling, Sandhill used 0.34 cores for the notebook and 0.22 for the R script, Positron 1.12 and 0.40.](docs/readme/performance.svg)
 
-Memory is everything the app runs, not counting the R and Python sessions,
-which hold your data. Positron is faster at opening the R script and the
-wide table, and scrolls the large notebook a little more steadily. It also
-runs on Windows and Linux and has the VS Code extension marketplace.
-[How we measured, and the full results](docs/comparison/positron.md)
-(Apple M1 Ultra, macOS 27.2.1, Positron 2026.11.1, November 2026).
+Positron is faster at opening the R script and the wide table, and scrolls
+the large notebook a little more steadily (60 frames a second against
+Sandhill's 57). It also runs on Windows and Linux and has the VS Code
+extension marketplace.
+[How we measured, and the full results](docs/comparison/positron.md).
 
 ## What's in it
 
@@ -124,13 +116,7 @@ on, with its own login and settings; Sandhill never sees your login.
 
 ## How it fits together
 
-```
-Mac app (Rust, GPUI)           ──ssh or local socket──▶  sandhilld (Rust)
-                                                            ├─ Python / R kernels (Jupyter protocol)
-                                                            ├─ output journal (SQLite + blobs)
-                                                            ├─ jobs, terminals, language servers
-                                                            └─ AI agents + tools for live sessions
-```
+![The Sandhill app on your Mac connects over ssh, or a local socket on the Mac, to sandhilld, a background program on the Mac or a Linux server. sandhilld runs the R and Python sessions, keeps every output in a journal, runs jobs, terminals and language servers, and runs the AI agents, which reach the live sessions, skills and connectors through its tool server.](docs/readme/architecture.svg)
 
 The design, with the reasoning behind each choice, is in
 [docs/design.md](docs/design.md).

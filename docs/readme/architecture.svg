@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="960" height="480" role="img" aria-labelledby="title desc">
+  <title id="title">How Sandhill fits together</title>
+  <desc id="desc">The Sandhill app on the Mac connects over ssh, or a local socket on the Mac, to sandhilld, a background program on the Mac or a Linux server. sandhilld runs the R and Python sessions, keeps every output in a journal, runs jobs, terminals and language servers, runs the AI agents, and gives them a tool server for live sessions, skills and connectors to outside databases.</desc>
+  <defs>
+    <marker id="navy" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#142844"/>
+    </marker>
+    <marker id="grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#59636e"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1f2328; }
+    .title { font-size: 20px; font-weight: 700; }
+    .region { font-size: 11.5px; font-weight: 600; letter-spacing: 1px; fill: #59636e; }
+    .head { font-size: 16px; font-weight: 700; fill: #142844; }
+    .sub { font-size: 12px; fill: #59636e; }
+    .item { font-size: 12.5px; }
+    .name { font-size: 13px; font-weight: 600; }
+    .small { font-size: 11.5px; fill: #59636e; }
+    .note { font-size: 12.5px; fill: #59636e; }
+  </style>
+
+  <rect x="1" y="1" width="958" height="478" rx="14" fill="#ffffff" stroke="#d0d7de"/>
+  <text class="title" x="32" y="44">How Sandhill fits together</text>
+
+  <!-- The Mac -->
+  <rect x="32" y="70" width="260" height="300" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text class="region" x="48" y="94">YOUR MAC</text>
+  <rect x="46" y="108" width="232" height="246" rx="10" fill="#ffffff" stroke="#142844" stroke-width="2"/>
+  <text class="head" x="62" y="136">Sandhill app</text>
+  <text class="sub" x="62" y="156">Native: Rust and GPUI, no Electron</text>
+  <g>
+    <rect x="60" y="172" width="204" height="28" rx="7" fill="#eef2f7"/>
+    <text class="item" x="74" y="191">Notebooks and scripts</text>
+    <rect x="60" y="206" width="204" height="28" rx="7" fill="#eef2f7"/>
+    <text class="item" x="74" y="225">Console and Variables</text>
+    <rect x="60" y="240" width="204" height="28" rx="7" fill="#eef2f7"/>
+    <text class="item" x="74" y="259">Data Explorer and Plots</text>
+    <rect x="60" y="274" width="204" height="28" rx="7" fill="#eef2f7"/>
+    <text class="item" x="74" y="293">Help, Viewer, Git, Jobs</text>
+    <rect x="60" y="308" width="204" height="28" rx="7" fill="#eef2f7"/>
+    <text class="item" x="74" y="327">AI pane: seven agents</text>
+  </g>
+
+  <!-- The connection -->
+  <line x1="298" y1="210" x2="414" y2="210" stroke="#142844" stroke-width="2" marker-start="url(#navy)" marker-end="url(#navy)"/>
+  <text class="item" x="356" y="194" text-anchor="middle">ssh to a server</text>
+  <text class="small" x="356" y="232" text-anchor="middle">or a local socket</text>
+  <text class="small" x="356" y="248" text-anchor="middle">on this Mac</text>
+
+  <!-- The machine the project is on -->
+  <rect x="420" y="70" width="508" height="300" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text class="region" x="436" y="94">THIS MAC OR A LINUX SERVER</text>
+  <rect x="436" y="108" width="476" height="246" rx="10" fill="#ffffff" stroke="#142844" stroke-width="2"/>
+  <text class="head" x="452" y="136">sandhilld, the background program</text>
+  <text class="sub" x="452" y="156">Keeps running when the app quits or the network drops</text>
+
+  <rect x="452" y="172" width="220" height="50" rx="8" fill="#eef2f7"/>
+  <text class="name" x="466" y="193">R and Python sessions</text>
+  <text class="small" x="466" y="211">ipykernel, Ark, IRkernel</text>
+
+  <rect x="452" y="232" width="220" height="50" rx="8" fill="#eef2f7"/>
+  <text class="name" x="466" y="253">Output journal</text>
+  <text class="small" x="466" y="271">every output, kept for replay</text>
+
+  <rect x="452" y="292" width="220" height="50" rx="8" fill="#eef2f7"/>
+  <text class="name" x="466" y="313">Jobs and terminals</text>
+  <text class="small" x="466" y="331">and language servers</text>
+
+  <rect x="688" y="172" width="208" height="50" rx="8" fill="#eef2f7"/>
+  <text class="name" x="702" y="193">Tool server (MCP)</text>
+  <text class="small" x="702" y="211">sessions, skills, connectors</text>
+
+  <rect x="688" y="240" width="208" height="102" rx="8" fill="#eef2f7"/>
+  <text class="name" x="702" y="261">AI agents</text>
+  <text class="small" x="702" y="281">Claude Code, Codex,</text>
+  <text class="small" x="702" y="298">Antigravity, Posit Assistant,</text>
+  <text class="small" x="702" y="315">OpenScience, Oh My Pi, pi</text>
+
+  <!-- Agents use the tool server, which reaches the live sessions -->
+  <line x1="792" y1="240" x2="792" y2="224" stroke="#142844" stroke-width="2" marker-end="url(#navy)"/>
+  <line x1="688" y1="197" x2="674" y2="197" stroke="#142844" stroke-width="2" marker-end="url(#navy)"/>
+
+  <!-- Connectors -->
+  <path d="M896 197 H942 V421 H914" fill="none" stroke="#59636e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#grey)"/>
+  <rect x="688" y="394" width="224" height="54" rx="8" fill="#ffffff" stroke="#59636e" stroke-dasharray="5 4"/>
+  <text class="name" x="702" y="416">Databases and services</text>
+  <text class="small" x="702" y="435">BioMCP, Open Targets, Consensus…</text>
+
+  <text class="note" x="32" y="416">Each project window talks to the sandhilld on the machine its folder is on,</text>
+  <text class="note" x="32" y="435">so the same app works with files on this Mac and on any number of servers.</text>
+</svg>
