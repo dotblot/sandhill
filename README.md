@@ -8,6 +8,13 @@ laptop.
 > **Status:** early development (version 0.1.0). The app is for Macs with
 > Apple silicon; servers can be any 64-bit Linux.
 
+![Sandhill in the light theme: a single-cell notebook with UMAP plots and a marker table, the AnnData object open in Variables, a dot plot of the top markers in the Console, and an agent in the AI pane explaining the project after reading the live session through Sandhill's tools.](docs/readme/screenshot-light.png)
+
+![The same window in the dark theme.](docs/readme/screenshot-dark.png)
+
+*Light and dark themes, with the window's frosted glass on (Welcome →
+General).*
+
 ## Why Sandhill
 
 **It stays fast with very large files.** Sandhill is a native Mac app,
