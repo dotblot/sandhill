@@ -824,10 +824,15 @@ impl Actor {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        let deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+        let started = tokio::time::Instant::now();
+        let deadline = started + SHUTDOWN_GRACE;
         let msg = JupyterMessage::new(ShutdownRequest { restart: false }, None);
         // A vanished/disconnected kernel must not hang management forever.
-        let _ = tokio::time::timeout_at(deadline, self.conn.control.send(msg)).await;
+        let sent = match tokio::time::timeout_at(deadline, self.conn.control.send(msg)).await {
+            Ok(Ok(())) => "sent",
+            Ok(Err(_)) => "could not be sent",
+            Err(_) => "timed out sending",
+        };
         // A kernel in the middle of a run gets to the request only when the
         // run ends: interrupt it, as stopping the kernel gives the run up
         // anyway. An interrupt is not a kill, so this is still graceful. An
@@ -844,7 +849,19 @@ impl Actor {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         if self.kernel_alive() {
-            bail!("kernel did not stop gracefully; explicit force is required");
+            // Says what happened, so a stop that fails only now and then
+            // (seen on CI) can be told apart: a request that never got there,
+            // or a kernel that got it and was slow to exit.
+            bail!(
+                "kernel did not stop gracefully; explicit force is required \
+                 (shutdown request {sent}; {}; still running after {:.1} s)",
+                if busy {
+                    "a run was interrupted"
+                } else {
+                    "it was idle"
+                },
+                started.elapsed().as_secs_f32(),
+            );
         }
         self.finish("shut down");
         Ok(())
