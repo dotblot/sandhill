@@ -1,0 +1,57 @@
+{
+  "_comment": "Sandhill's Suggested connectors (Huan, 2026-11-16; docs/design/done/connectors-plan.md). None needs an account; all only look things up (read_only), so agents query them without asking. Nothing runs or downloads until the user presses Add.",
+  "connectors": [
+    {
+      "id": "biomcp",
+      "title": "BioMCP",
+      "description": "Genes, variants, proteins, pathways, diseases, drugs, trials and articles: MyGene, UniProt, ClinVar, gnomAD, GWAS Catalog, GTEx, Protein Atlas, STRING, InterPro, ClinGen, CIViC, cBioPortal, ChEMBL, OpenFDA, ClinicalTrials.gov, PubMed and more.",
+      "by": "GenomOncology",
+      "licence": "MIT",
+      "homepage": "https://biomcp.org",
+      "terms": "https://biomcp.org/reference/source-licensing/",
+      "read_only": true,
+      "program": {
+        "version": "0.9.3",
+        "url": "https://github.com/genomoncology/biomcp/releases/download/v0.9.3/biomcp-{platform}.tar.gz",
+        "sha256": {
+          "darwin-arm64": "e637062c18c6692f3ec49c5847e69b29f6feee7f7909345970bd504d72174994",
+          "darwin-x86_64": "9a6d6511565a2e24ab46e8c8a37df0fb9e62ed4be837c5e691dfe3548c6db094",
+          "linux-arm64": "fb76b9ec47c580ba020ed9395877e118bef3ef1ead1670229fe2553eea5a1a49",
+          "linux-x86_64": "c21292950988962eb32de2df56a5c56ccff707f83365b0f2e94a358fa9a0b5d0"
+        },
+        "binary": "biomcp",
+        "args": ["mcp"]
+      }
+    },
+    {
+      "id": "biocontext-kb",
+      "title": "BioContextAI Knowledgebase",
+      "description": "Ensembl, UniProt, AlphaFold DB, InterPro, PRIDE, Reactome, STRING, Protein Atlas, PanglaoDB markers, bioRxiv and medRxiv, Europe PMC, Antibody Registry and more.",
+      "by": "BioContextAI",
+      "licence": "Apache-2.0",
+      "homepage": "https://biocontext.ai",
+      "terms": "https://github.com/biocontext-ai/knowledgebase-mcp#data-sources-and-licensing",
+      "read_only": true,
+      "command": {
+        "command": "uvx",
+        "args": ["--with", "bibtexparser<2", "biocontext_kb==0.2.1"],
+        "env": {"UV_PYTHON": "3.12", "MCP_ENVIRONMENT": "DEVELOPMENT"},
+        "needs": "uv",
+        "needs_url": "https://docs.astral.sh/uv/getting-started/installation/"
+      }
+    },
+    {
+      "id": "open-targets",
+      "title": "Open Targets",
+      "description": "Target–disease associations, genetics, drugs and evidence from the Open Targets Platform.",
+      "by": "Open Targets",
+      "licence": "Data CC0",
+      "homepage": "https://platform.opentargets.org",
+      "terms": "https://platform-docs.opentargets.org/licence",
+      "read_only": true,
+      "http": {
+        "url": "https://mcp.platform.opentargets.org/mcp"
+      }
+    }
+  ]
+}

@@ -12,6 +12,7 @@
 //! `read_job_log`.
 
 pub(crate) mod bio;
+pub(crate) mod connectors;
 mod documents;
 pub mod http;
 mod jobs;
@@ -157,7 +158,7 @@ impl Tools {
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "sandhill", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{INSTRUCTIONS} {} {}", bio::GUIDANCE, skills::GUIDANCE),
+                    "instructions": format!("{INSTRUCTIONS} {} {} {}", bio::GUIDANCE, skills::GUIDANCE, connectors::GUIDANCE),
                 })
             }
             "ping" => json!({}),
@@ -165,8 +166,18 @@ impl Tools {
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                match self.call(name, &args).await {
-                    Ok(content) => json!({"content": content, "isError": false}),
+                let result = if matches!(
+                    name,
+                    "list_connectors" | "query_connector" | "call_connector"
+                ) {
+                    self.connector_result(name, &args).await
+                } else {
+                    self.call(name, &args)
+                        .await
+                        .map(|content| json!({"content": content, "isError": false}))
+                };
+                match result {
+                    Ok(result) => result,
                     Err(err) => json!({
                         "content": [{"type": "text", "text": format!("{err:#}")}],
                         "isError": true,
@@ -185,6 +196,9 @@ impl Tools {
                 self.bio_tool(name, args).await
             }
             "get_skill" => self.get_skill(args).await,
+            "list_connectors" | "query_connector" | "call_connector" => {
+                self.connector_tool(name, args).await
+            }
             "list_sessions" => self.list_sessions().await,
             "list_variables" => self.list_variables(text("session"), text("language")).await,
             "run_code" => {
@@ -898,6 +912,10 @@ fn tool_list() -> Value {
     ]);
     tools.as_array_mut().unwrap().extend(bio::tool_list());
     tools.as_array_mut().unwrap().push(skills::tool());
+    tools
+        .as_array_mut()
+        .unwrap()
+        .extend(connectors::tool_list());
     tools
 }
 

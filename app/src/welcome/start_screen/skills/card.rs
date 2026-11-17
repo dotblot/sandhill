@@ -123,21 +123,7 @@ impl SkillsView {
                 _ => false,
             };
         let close_only = matches!(card, Card::Files { .. } | Card::Error(_));
-        let card = v_flex()
-            .id("skill-card")
-            .track_focus(&self.focus)
-            .occlude()
-            .w(px(380.))
-            .max_w(relative(0.95))
-            .max_h(relative(0.9))
-            .p(px(20.))
-            .gap(px(14.))
-            .rounded(px(look::RADIUS))
-            .bg(p.panel)
-            .border_1()
-            .border_color(p.glass_edge)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        let card = card_shell("skill-card", &self.focus, &p)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 match event.keystroke.key.as_str() {
                     "escape" => this.dismiss(cx),
@@ -217,15 +203,6 @@ impl SkillsView {
             _ => {}
         }
     }
-}
-
-/// A grey line of the card.
-fn grey(text: &str, p: &Palette) -> Div {
-    div()
-        .min_w_0()
-        .text_size(px(13.))
-        .text_color(p.muted)
-        .child(text.to_string())
 }
 
 fn licence(licence: &Option<String>, p: &Palette) -> Div {

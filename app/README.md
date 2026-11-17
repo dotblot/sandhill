@@ -1349,6 +1349,14 @@ preview and R's imports weren't seen.
   removal and copies to other connected devices. Confirmation cards keep
   keyboard focus, and local folder reads skip links and metadata and enforce
   the 2,048-file / 20 MB limits before sending files.
+- **Connectors** (Huan, 2026-11-16; `docs/design/done/connectors-plan.md`):
+  Welcome's `start_screen/connectors.rs` binds its list and cards to the
+  selected device and attach generation, alongside Skills. Suggested servers,
+  web addresses with masked header values, and commands with environment
+  lines connect and list tools before saving. Row menus show tools, test,
+  remove and copy to another ready device, asking for that device's header
+  value without copying secrets. `start_screen/manage.rs` shares the card
+  shell, muted lines and menu items with Skills.
 
 
 ## Running it

@@ -1,6 +1,7 @@
 //! Welcome → Skills: device-owned instructions shared by every agent
 //! (Huan, 2026-11-16; `docs/design/done/skills-plan.md`).
 
+use super::manage::{card_shell, grey, item};
 use super::*;
 use sandhill_proto::{SkillExport, SkillFetch, SkillInfo, SkillList, SkillPreview, SkillSource};
 

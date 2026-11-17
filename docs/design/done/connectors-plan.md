@@ -1,7 +1,8 @@
 # Connectors: databases and services every agent can query
 
-Status: **waiting for Huan's approval** (written 2026-11-16). Nothing is
-built yet. Follows `docs/design/done/skills-plan.md`.
+Status: **approved by Huan, 2026-11-16; phase 1 built the same day**.
+Phase 2 (sign-in connectors) is not built. Follows
+`docs/design/done/skills-plan.md`.
 
 ## What Huan asked for
 - Connectors like Claude Science's (2026-11-16), after skills; "all of
@@ -23,13 +24,12 @@ are reachable through these, all needing no account:
 | **BioMCP** (GenomOncology) | MyGene, UniProt, GO, Reactome, OLS, MyVariant (dbSNP), ClinVar, gnomAD, GWAS Catalog, GTEx, Human Protein Atlas, STRING, InterPro, Complex Portal, ClinGen, CIViC, Open Targets, cBioPortal, ChEMBL, MyChem, OpenFDA, ClinicalTrials.gov, PubMed/PubTator/Europe PMC, NIH RePORTER, KEGG, WikiPathways, Monarch/HPO | a program on the device, v0.9.3, one file per platform | MIT |
 | **BioContextAI Knowledgebase** | Ensembl, InterPro, PRIDE, Reactome, STRING, AlphaFold DB, Human Protein Atlas, PanglaoDB, bioRxiv/medRxiv, Europe PMC, Antibody Registry, OLS | a Python program run with `uvx`, 0.2.1 | Apache-2.0 |
 | **Open Targets** | Open Targets Platform | web address of the Open Targets team | (service) |
-| **PubMed** | PubMed | web address hosted by Anthropic | (service) |
-| **bioRxiv** | bioRxiv, medRxiv | web address hosted by Anthropic | (service) |
-| **Clinical Trials** | ClinicalTrials.gov | web address hosted by Anthropic | (service) |
-| **ChEMBL** | ChEMBL | web address hosted by Anthropic | (service) |
 
-The last four are the ones Anthropic lists for Claude Code in its
-Apache-2.0 `bio-research` plugin; they answered without a sign-in.
+Anthropic also lists four web addresses for Claude Code in its Apache-2.0
+`bio-research` plugin (PubMed, bioRxiv, Clinical Trials, ChEMBL). They
+answered without a sign-in, but Huan chose to leave them out (2026-11-16):
+through Sandhill every agent would use them, and BioMCP and BioContextAI
+reach the same databases through the databases' own public services.
 
 How Claude Science's Featured list is covered by these:
 
@@ -63,13 +63,13 @@ all seven agents and nothing is written into the agents' own settings.
   would fill every conversation's context:
   - `list_connectors`: the connectors that are on, each with its tools'
     names and one-line descriptions (read-only).
-  - `query_connector {connector, tool, arguments}`: runs a tool that its
-    server marks read-only, on a connector from Sandhill's list. Read-only,
-    so agents run it without asking, as Claude Science does for Featured
-    connectors.
-  - `call_connector {connector, tool, arguments}`: any other tool, or any
-    tool of a connector the user added. Not read-only, so each agent's own
-    approval card asks first. Refused in Plan mode.
+  - `query_connector {connector, tool, arguments}`: runs a tool of a
+    connector from Sandhill's list whose entry says it only looks things
+    up (all three do). Read-only, so agents run it without asking, as
+    Claude Science does for Featured connectors.
+  - `call_connector {connector, tool, arguments}`: any tool of a
+    connector the user added. Not read-only, so each agent's own approval
+    card asks first. Refused in Plan mode.
   - A tool's full input description comes back with `list_connectors
     {connector}` for one connector.
 - One instruction line for agents: "Databases and services the user
@@ -95,13 +95,14 @@ never copied by Copy to….
 **Sandhill's list** (`crates/daemon/assets/connectors/catalog.json`), all
 on once added, none added until the user presses Add:
 - BioMCP: Add downloads `biomcp-<platform>.tar.gz` v0.9.3 from its GitHub
-  release into `connectors/bin/`, checks the published SHA-256, and runs
-  `biomcp mcp`.
-- BioContextAI Knowledgebase: runs `uvx biocontext_kb==0.2.1` with
-  `UV_PYTHON=3.12` and `MCP_ENVIRONMENT=DEVELOPMENT`. Needs `uv` on the
-  device; without it the row says so and links to uv's install page.
-- Open Targets, PubMed, bioRxiv, Clinical Trials, ChEMBL: their web
-  addresses.
+  release into `connectors/bin/`, checks it against the SHA-256 pinned in
+  Sandhill's list, and runs `biomcp mcp`.
+- BioContextAI Knowledgebase: runs `uvx --with "bibtexparser<2"
+  biocontext_kb==0.2.1` with `UV_PYTHON=3.12` and
+  `MCP_ENVIRONMENT=DEVELOPMENT` (0.2.1 fails to start with bibtexparser 2;
+  checked 2026-11-16: 52 tools). Needs `uv` on the device; without it the
+  row says so and links to uv's install page.
+- Open Targets: its web address.
 
 **Add Connector** menu: Web Address… (a URL, an optional header name and
 value) and Command… (a command line and optional environment lines). A
@@ -125,8 +126,9 @@ tool server). Types in `crates/proto/src/connectors.rs`; added to
 
 **MCP client in the daemon**: Streamable HTTP (JSON and event-stream
 replies, `Mcp-Session-Id`) and stdio, protocol versions 2025-06-18 back to
-2024-11-05, `initialize`, `tools/list`, `tools/call`. No new language or
-runtime.
+2024-11-05, `initialize`, `tools/list`, `tools/call`. Web requests and the
+BioMCP download use `ureq` 3.5.2 with rustls, the client and version the
+Mac app already uses. No new language or runtime.
 
 ### Phase 2: sign-in connectors
 For web addresses that answer 401 with MCP's OAuth discovery: the card's
@@ -171,9 +173,9 @@ In the app, on screen in light and dark.
   database has terms (KEGG is free only for academic use, some ClinVar or
   OpenFDA data have conditions). Each Suggested row links to its source's
   terms page; the user is responsible, as in Claude Science.
-- **Anthropic-hosted addresses.** Anthropic publishes the four addresses
-  for Claude Code without a sign-in, but Sandhill would also let Codex,
-  Antigravity and the others use them. See the question below.
+- **The three are run by others.** BioMCP and BioContextAI are pinned
+  versions; an upstream outage or API change shows as an error on the
+  row, and Test tells which.
 - **This plan assumes agents call `list_connectors` when a question needs
   a database.** The instruction line and the tool descriptions say so; if
   an agent ignores them, the user can name the connector in the message.
@@ -182,9 +184,6 @@ In the app, on screen in light and dark.
 - **Rollback:** deleting `connectors/` on a device returns it to today;
   stopping the daemon stops every connector program.
 
-## For Huan to decide
-1. Offer Anthropic's four hosted addresses (PubMed, bioRxiv, Clinical
-   Trials, ChEMBL) in Sandhill's list, for every agent, or leave them out
-   (BioMCP and BioContextAI already reach PubMed, ClinicalTrials.gov,
-   ChEMBL and bioRxiv, through the databases' own public services)?
-2. Phase 1 now and sign-in connectors later, as planned?
+## Huan's decisions (2026-11-16)
+1. Leave Anthropic's four hosted addresses out.
+2. Phase 1 now; sign-in connectors later, as planned.

@@ -7783,6 +7783,7 @@ dependencies = [
  "toml_edit 0.25.19+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "ureq",
  "uuid",
  "zeromq",
  "zip",

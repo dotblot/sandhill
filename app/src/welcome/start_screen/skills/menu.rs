@@ -164,19 +164,3 @@ impl SkillsView {
         )
     }
 }
-
-fn item(id: impl Into<ElementId>, label: &str, enabled: bool, p: &Palette) -> Stateful<Div> {
-    let hover = p.ink(6.);
-    h_flex()
-        .id(id)
-        .h(px(30.))
-        .px(px(8.))
-        .rounded(px(look::RADIUS - 4.))
-        .when(enabled, |d| {
-            d.cursor_pointer()
-                .hover(move |d| d.bg(hover))
-                .active(|d| d.opacity(0.8))
-        })
-        .when(!enabled, |d| d.opacity(0.4).cursor_default())
-        .child(label.to_string())
-}

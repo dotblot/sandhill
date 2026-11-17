@@ -88,6 +88,7 @@ pub struct Daemon {
     pub(crate) stopping: AtomicBool,
     pub(crate) analysis_gate: tokio::sync::Mutex<()>,
     skills_gate: tokio::sync::Mutex<()>,
+    connectors: crate::connectors::Connectors,
 }
 
 /// The window a git action came from, on its connection.
@@ -164,6 +165,7 @@ impl Daemon {
             stopping: AtomicBool::new(false),
             analysis_gate: tokio::sync::Mutex::new(()),
             skills_gate: tokio::sync::Mutex::new(()),
+            connectors: crate::connectors::Connectors::default(),
         });
         for record in journal.sessions()? {
             if record.status == SessionStatus::Ended {
@@ -639,6 +641,14 @@ impl Daemon {
                 let _gate = self.skills_gate.lock().await;
                 crate::skills::call(self.state.root(), call).await?
             }
+            call @ (Call::ListConnectors
+            | Call::AddConnector { .. }
+            | Call::SetConnectorEnabled { .. }
+            | Call::RemoveConnector { .. }
+            | Call::TestConnector { .. }
+            | Call::ExportConnector { .. }
+            | Call::ConnectorTools { .. }
+            | Call::CallConnector { .. }) => self.connectors.call(self.state.root(), call).await?,
             Call::SystemStats { path } => self.system_stats(path).await?,
             Call::ReadLog { bytes } => self.read_log(bytes).await?,
             Call::PrepareAttach { build } => self.prepare_attach(&build)?,

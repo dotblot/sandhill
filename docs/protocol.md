@@ -135,6 +135,14 @@ Responses can arrive out of order; match them by `id`.
 | `remove_skill` | `name` | `null`; deletes its files and index record |
 | `export_skill` | `name` | `SkillExport`: files as base64, executable bits and original source |
 | `get_skill` | `name?`, `file?` | Enabled skill summaries, or text, path and file list |
+| `list_connectors` | | `ConnectorList`: added by title and Suggested entries |
+| `add_connector` | `add` | `ConnectorInfo`; connects and lists tools before saving |
+| `set_connector_enabled` | `name`, `enabled` | `null`; off stops its program |
+| `remove_connector` | `name` | `null`; deletes the record, secret and unshared downloaded program |
+| `test_connector` | `name` | `ConnectorInfo`; reconnects, refreshing tools or recording an error |
+| `export_connector` | `name` | `ConnectorAdd`, without a secret |
+| `connector_tools` | `name?` | Enabled connector summaries, or one connector's full tool schemas |
+| `call_connector` | `name`, `tool`, `arguments`, `read_only` | MCP tool result, with content items and `isError` |
 
 Management calls are device-wide, not project-wide. Clients must show affected
 resources/projects and obtain confirmation before destructive operations.
@@ -1198,6 +1206,49 @@ are not readable through this tool. Enabled skills also appear after the
 four guides in `agent_commands`, as `kind: "guide"` picks that instruct
 the agent to read the skill first. Sandhill does not write to agents'
 own skill folders or run installed scripts on their behalf.
+
+### Connectors
+
+Connectors are MCP servers added per device: a web address or a program.
+`list_connectors` reads the index without connecting. `add_connector` takes
+`suggested {id}` or `custom {title, spec, secret?}`; a spec is
+`http {url, header?}` or `command {command, args, env}`. Add initializes
+the server and lists its tools before saving anything. Suggested entries
+use their ids; custom names are lowercased safe title slugs with numeric
+suffixes for duplicates. Only Suggested entries marked read-only in
+Sandhill's catalog may be queried without approval.
+
+The state folder's `connectors/index.json` records enabled state, source,
+cached tool summaries and the last error. `connectors/secrets.json` keeps
+header values by name, mode 0600 from creation. Both use atomic writes;
+mutations are serialized. Replies, agent tool results, errors and exports
+never include secret values. Export returns a Suggested id or a Custom
+definition without its secret, for Add on another device.
+
+The daemon speaks MCP 2025-06-18, 2025-03-26 and 2024-11-05 over stdio or
+Streamable HTTP (JSON and SSE, session ids, protocol-version headers and
+one reinitialization on an expired session). Initialization precedes the
+initialized notification and paginated tool discovery. Calls time out at
+60 seconds, including initialization; tool results over 1 MiB of JSON
+are replaced with a truncation notice. Program connectors share one child
+across conversations, use the user's login PATH, and stop after ten
+minutes unused, when disabled or removed, and with their daemon.
+
+Suggested BioMCP is downloaded only on Add, checked against the catalog's
+pinned SHA-256 and extracted into `connectors/bin/biomcp-<version>/`.
+BioContextAI requires uv on the device; Open Targets uses its web address.
+No OAuth sign-in is implemented in this phase.
+
+Agents get `list_connectors {connector?}`: without a name, cached
+`{connectors: [{name, title, description, read_only, tools: [{name,
+description}]}]}` for enabled connectors; with one, live `{name, title,
+read_only, tools: [{name, description, inputSchema}]}` with full tool
+descriptions. `query_connector {connector, tool, arguments}` is read-only
+and refuses custom connectors. `call_connector` takes the same arguments
+but is not read-only and is refused in Plan mode. Both preserve the
+server's text/image content and tool-error flag. Missing or disabled
+connectors are unavailable to agents; call failures update the row's
+error. No connector is written into an agent's own settings.
 
 ### Agent accounts
 

@@ -32,6 +32,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 zeromq.workspace = true
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls"] }
 # Archives from the file tree; pure Rust, so server builds need no C
 # libraries. MIT, MIT/Apache-2.0 (noodles-bgzf: MIT).
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }

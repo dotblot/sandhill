@@ -22,8 +22,10 @@ use crate::look::{self, Palette, icon, icon_button, side_pane, wall};
 use crate::shell::app_window::AppWindow;
 use crate::welcome::folder_dialog::{FolderDialog, FolderDialogDone, Place as FolderPlace};
 
+mod connectors;
 mod devices;
 mod general;
+mod manage;
 mod projects;
 mod skills;
 mod trusted;
@@ -73,6 +75,7 @@ pub(crate) enum Page {
     Resources,
     Trusted,
     Skills,
+    Connectors,
     Accounts,
     /// What the agents in Sandhill's conversations used (Huan, 2026-11-16).
     Usage,
@@ -142,6 +145,8 @@ pub(crate) struct Start {
     usage: Option<(String, u64, Entity<usage::UsageView>)>,
     /// Skills belong to the selected device and its attach generation.
     skills: Option<(String, u64, Entity<skills::SkillsView>)>,
+    /// Connectors belong to the selected device and its attach generation.
+    connectors: Option<(String, u64, Entity<connectors::ConnectorsView>)>,
     /// The page on the right (Huan, 2026-11-12: Projects first).
     pub(crate) page: Page,
     _subscriptions: Vec<Subscription>,
@@ -202,6 +207,7 @@ impl Start {
             accounts: None,
             usage: None,
             skills: None,
+            connectors: None,
             page: Page::Device,
             _subscriptions: subscriptions,
         }
@@ -266,6 +272,7 @@ impl Start {
     pub(crate) fn set_mode(&mut self, mode: StartMode, window: &mut Window, cx: &mut App) {
         self.problem = None;
         self.skills = None;
+        self.connectors = None;
         self.close_dialogs(window, cx);
         if !matches!(&mode, StartMode::Accounts(host) if host == &self.selected_host && self.page == Page::Accounts)
         {
@@ -561,6 +568,16 @@ impl AppWindow {
                     .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Skills, cx))),
             )
             .child(
+                sidebar_row(
+                    "start-connectors",
+                    "link",
+                    "Connectors",
+                    page == Page::Connectors,
+                    &p,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Connectors, cx))),
+            )
+            .child(
                 sidebar_row("start-usage", "history", "Usage", page == Page::Usage, &p)
                     .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Usage, cx))),
             );
@@ -619,6 +636,7 @@ impl AppWindow {
             Page::Accounts => self.agent_accounts_page(cx),
             Page::Usage => self.usage_page(cx),
             Page::Skills => self.skills_page(window, cx),
+            Page::Connectors => self.connectors_page(window, cx),
             Page::General => self.general_page(cx),
         };
         let footnote = matches!(page, Page::Projects | Page::Device);
@@ -657,6 +675,7 @@ impl AppWindow {
             .children(self.render_device_menu(cx))
             .children(self.render_project_menu(cx))
             .children(self.skills_overlay(cx))
+            .children(self.connectors_overlay(cx))
             .children(self.render_start_dialog(cx))
             .children(self.start.folder_dialog.clone())
             .into_any_element()
@@ -734,6 +753,9 @@ impl AppWindow {
         }
         if page != Page::Skills {
             self.start.skills = None;
+        }
+        if page != Page::Connectors {
+            self.start.connectors = None;
         }
         if matches!(page, Page::Projects | Page::Device) {
             self.start.refresh(cx);

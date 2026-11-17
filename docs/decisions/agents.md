@@ -123,6 +123,16 @@ differs, this wins.
   connectors are inside its app and are not copied. No Sandhill-written
   skills for other tools until Huan asks. No automatic updates. Connectors
   come after skills, in their own plan.
+- Connectors (Huan, 2026-11-16; `docs/design/done/connectors-plan.md`):
+  Welcome → Connectors adds MCP servers per device (Sandhill's list, a web
+  address with an optional key, or a command), with Copy to…. The daemon
+  holds the connections and every agent reaches them through Sandhill's
+  tool server (`list_connectors`, `query_connector`, `call_connector`), never
+  through the agents' own settings; only connectors from Sandhill's list
+  run without the agent's approval. Sandhill's list: BioMCP, BioContextAI
+  Knowledgebase and Open Targets, none needing an account. Anthropic's
+  hosted PubMed, bioRxiv, Clinical Trials and ChEMBL addresses are left
+  out. Sign-in (OAuth) connectors come later, in their own step.
 
 ## Accounts and quota
 - Agent accounts (Huan, 2026-11-13; `docs/design/done/agent-accounts-plan.md`):

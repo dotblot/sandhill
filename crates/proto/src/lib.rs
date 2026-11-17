@@ -10,6 +10,7 @@
 pub mod analysis;
 mod bounded;
 pub mod client;
+mod connectors;
 mod files;
 mod git;
 mod packages;
@@ -21,6 +22,7 @@ mod tables;
 mod terminals;
 mod usage;
 
+pub use connectors::*;
 pub use files::*;
 pub use git::*;
 pub use packages::*;
@@ -744,6 +746,54 @@ pub enum Call {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         file: Option<String>,
+    },
+    /// The connectors on this device: added and Sandhill's list. Returns
+    /// [`ConnectorList`].
+    ListConnectors,
+    /// Adds a connector after connecting to it and listing its tools (an
+    /// entry of Sandhill's list may first download its program). Fails,
+    /// saving nothing, when it doesn't answer. Returns [`ConnectorInfo`].
+    AddConnector {
+        add: ConnectorAdd,
+    },
+    /// Turns a connector on or off for agents. Returns `null`.
+    SetConnectorEnabled {
+        name: String,
+        enabled: bool,
+    },
+    /// Removes a connector, stopping its program. Returns `null`.
+    RemoveConnector {
+        name: String,
+    },
+    /// Connects again and lists its tools. Returns [`ConnectorInfo`], with
+    /// `error` set when it failed.
+    TestConnector {
+        name: String,
+    },
+    /// What Copy to… adds on another device: Sandhill's list entry, or the
+    /// spec without its secret. Returns [`ConnectorAdd`].
+    ExportConnector {
+        name: String,
+    },
+    /// For agents (`list_connectors`): with no `name`, the connectors that
+    /// are on, each with its tools' names and one-line descriptions; with a
+    /// name, that connector's tools with their full descriptions and input
+    /// schemas. Returns JSON.
+    ConnectorTools {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    /// For agents (`query_connector`, `call_connector`): runs `tool` of
+    /// connector `name`. With `read_only`, only on connectors marked
+    /// `read_only`. Returns the MCP `tools/call` result (`content`,
+    /// `isError`).
+    CallConnector {
+        name: String,
+        tool: String,
+        #[serde(default)]
+        arguments: Value,
+        #[serde(default)]
+        read_only: bool,
     },
     /// A project's shared settings, from `.sandhill/project.toml`, and the
     /// environments its files point to. Returns [`ProjectSetup`].
