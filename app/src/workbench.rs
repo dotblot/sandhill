@@ -96,6 +96,17 @@ pub(crate) struct Run {
     snapshot_seq: i64,
     /// The output event prefix independently reconstructed from the journal.
     output_replay_seq: i64,
+    /// The question the running code is waiting on, unanswered.
+    pub asking: Option<Question>,
+}
+
+/// A question running code asked (`input()`, R's `browser()`), answered in
+/// the Console.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Question {
+    pub prompt: String,
+    /// Typed into a hidden field, and not shown after.
+    pub password: bool,
 }
 
 pub(crate) enum Plot {
@@ -323,6 +334,12 @@ pub struct Workbench {
     pub(crate) console: Vec<String>,
     console_session: Option<String>,
     pub(crate) console_input: Entity<EditorState>,
+    /// Takes the answer to a password question in place of the Console
+    /// input, which can't hide what is typed.
+    pub(crate) console_password: Entity<InputState>,
+    /// The run whose password question has the field, to move focus to it
+    /// and back once.
+    console_password_for: Option<String>,
     /// The height the Console input was dragged to; `None` is its own.
     pub(crate) console_input_height: Option<f32>,
     pub(crate) language: crate::editor::language::Language,
@@ -516,19 +533,35 @@ impl Workbench {
                     cx.notify();
                 }
             });
-        let mut subscriptions = vec![cx.subscribe_in(
-            &console_input,
-            window,
-            |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter {
-                    secondary: false,
-                    shift: false,
-                } = event
-                {
-                    this.run_console(window, cx);
-                }
-            },
-        )];
+        let console_password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("Password")
+        });
+        let mut subscriptions = vec![
+            cx.subscribe_in(
+                &console_input,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter {
+                        secondary: false,
+                        shift: false,
+                    } = event
+                    {
+                        this.run_console(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &console_password,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        this.answer_console_password(window, cx);
+                    }
+                },
+            ),
+        ];
         subscriptions.extend(help_subscriptions);
         subscriptions.extend(package_subscriptions);
         subscriptions.extend(job_subscriptions);
@@ -602,6 +635,8 @@ impl Workbench {
             console: Vec::new(),
             console_session: None,
             console_input,
+            console_password,
+            console_password_for: None,
             console_input_height: crate::prefs::input_height("console"),
             language: Default::default(),
             console_scroll: ScrollHandle::new(),

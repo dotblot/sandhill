@@ -9,7 +9,8 @@ use jupyter_protocol::{ConnectionInfo, JupyterMessage, connection_info::Transpor
 use jupyter_zmq_client::{
     DealerSendConnection, KernelspecDir, create_client_control_connection,
     create_client_heartbeat_connection, create_client_iopub_connection,
-    create_client_shell_connection_with_identity, peer_identity_for_session,
+    create_client_shell_connection_with_identity, create_client_stdin_connection_with_identity,
+    peer_identity_for_session,
 };
 use sandhill_proto::KernelspecInfo;
 use tokio::process::Child;
@@ -157,13 +158,17 @@ pub enum KernelMsg {
     IoPub(JupyterMessage),
     Shell(JupyterMessage),
     Control(JupyterMessage),
+    /// A question for the user (`input_request`), from code that is running.
+    Stdin(JupyterMessage),
 }
 
 /// Sockets to one kernel. Incoming messages are forwarded to the channel
-/// passed to [`connect`]; outgoing requests go through `shell` and `control`.
+/// passed to [`connect`]; outgoing requests go through `shell` and `control`,
+/// and answers to the kernel's questions through `stdin`.
 pub struct KernelConnection {
     pub shell: DealerSendConnection,
     pub control: DealerSendConnection,
+    pub stdin: DealerSendConnection,
     readers: Vec<JoinHandle<()>>,
 }
 
@@ -189,11 +194,18 @@ pub async fn connect(
     let shell =
         create_client_shell_connection_with_identity(info, client_session, identity).await?;
     let control = create_client_control_connection(info, client_session).await?;
+    // The kernel sends its questions to the client with the shell
+    // socket's identity, so stdin must share it.
+    let identity = peer_identity_for_session(client_session)?;
+    let stdin =
+        create_client_stdin_connection_with_identity(info, client_session, identity).await?;
     let (shell_send, mut shell_recv) = shell.split();
     let (control_send, mut control_recv) = control.split();
+    let (stdin_send, mut stdin_recv) = stdin.split();
 
     let iopub_tx = tx.clone();
     let shell_tx = tx.clone();
+    let stdin_tx = tx.clone();
     let control_tx = tx;
     let readers = vec![
         tokio::spawn(async move {
@@ -241,10 +253,26 @@ pub async fn connect(
                 }
             }
         }),
+        tokio::spawn(async move {
+            loop {
+                match crate::quirks::read(&mut stdin_recv).await {
+                    Ok(msg) => {
+                        if stdin_tx.send(KernelMsg::Stdin(msg)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) if skippable(&err) => {
+                        tracing::warn!("skipped a kernel message: {err}")
+                    }
+                    Err(_) => break,
+                }
+            }
+        }),
     ];
     Ok(KernelConnection {
         shell: shell_send,
         control: control_send,
+        stdin: stdin_send,
         readers,
     })
 }

@@ -77,6 +77,13 @@ by sentence); where an older plan differs, this wins.
   that run after a second; that is still graceful, and killing it stays a
   separately confirmed choice. A kernel that loses one of its ports to
   something else before binding it is started again, up to twice (2026-11-14).
+- Code that asks something (R's `browser()`, `readline()`, `menu()`;
+  Python's `input()`, `getpass()`, pdb, `breakpoint()`, `%debug`) is
+  answered in the Console: it shows the prompt above its input, Enter sends
+  the answer, and a password goes in a hidden field. A tool's quiet run that
+  asks is interrupted; an agent is told its code waits for the user. A
+  visual debugger (breakpoints in the editor) stays out (Huan, 2026-11-17;
+  `docs/design/done/console-input-plan.md`).
 
 ## Plots
 - Console plots stay inline unless sent to

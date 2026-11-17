@@ -231,8 +231,25 @@ impl Workbench {
                     .when_some(failed, |d, s| {
                         d.child(div().text_color(p.err).child(format!("Run ended: {s}")))
                     })
-                    .when(!run.finished, |d| {
-                        d.child(div().text_color(p.busy).child("running…"))
+                    .map(|d| match (&run.asking, run.finished) {
+                        (Some(question), false) => d.child(
+                            h_flex()
+                                .gap_2()
+                                .font_family(look::MONO)
+                                .text_size(px(look::CODE))
+                                .child(
+                                    div()
+                                        .text_color(p.accent)
+                                        .child(question.prompt.trim_end().to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(p.faint)
+                                        .child("waiting for your answer below"),
+                                ),
+                        ),
+                        (None, false) => d.child(div().text_color(p.busy).child("running…")),
+                        _ => d,
                     })
             })
             .collect::<Vec<_>>();
@@ -243,6 +260,7 @@ impl Workbench {
             .split('\n')
             .count()
             .clamp(1, 8);
+        let question = self.console_question().map(|(_, q)| q.clone());
         v_flex()
             .size_full()
             .child(
@@ -264,6 +282,28 @@ impl Workbench {
                 )
                 .handle(&self.console_scroll),
             )
+            // Above the input, as a cell's runs may be left out of the
+            // Console (`notebook_console`).
+            .when_some(question.clone(), |d, question| {
+                d.child(
+                    h_flex()
+                        .px(px(14.))
+                        .pt_1()
+                        .gap_2()
+                        .text_size(px(look::SMALL))
+                        .child(
+                            div()
+                                .font_family(look::MONO)
+                                .text_color(p.accent)
+                                .child(question.prompt.trim_end().to_string()),
+                        )
+                        .child(div().text_color(p.faint).child(if question.password {
+                            "The code asks for a password: type it below; it stays hidden"
+                        } else {
+                            "The code is waiting for your answer: Enter sends it"
+                        })),
+                )
+            })
             .child({
                 let own = lines as f32 * LINE_HEIGHT + EDITOR_PADDING;
                 let height = self.console_input_height.map_or(own, |h| h.max(own));
@@ -316,15 +356,22 @@ impl Workbench {
                         MouseButton::Left,
                         cx.listener(|this, _, _, _| this.save_console_input_height()),
                     )
-                    .child(
-                        div().overflow_hidden().child(
-                            Editor::new(&self.console_input)
-                                .bordered(false)
+                    .map(|d| match &question {
+                        Some(question) if question.password => d.child(
+                            Input::new(&self.console_password)
                                 .appearance(false)
-                                .line_height(px(LINE_HEIGHT))
-                                .h(px(height)),
+                                .h(px(LINE_HEIGHT + EDITOR_PADDING)),
                         ),
-                    )
+                        _ => d.child(
+                            div().overflow_hidden().child(
+                                Editor::new(&self.console_input)
+                                    .bordered(false)
+                                    .appearance(false)
+                                    .line_height(px(LINE_HEIGHT))
+                                    .h(px(height)),
+                            ),
+                        ),
+                    })
                     .child(
                         look::resize_grip("console-input-grip", &p).on_click(cx.listener(
                             |this, event: &ClickEvent, _, cx| {

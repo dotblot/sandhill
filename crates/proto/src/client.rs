@@ -331,6 +331,15 @@ impl Client {
         .await
     }
 
+    /// Answers the question the session's running code asked.
+    pub async fn input(&self, session: &str, value: &str) -> Result<()> {
+        self.call(Call::Input {
+            session: session.into(),
+            value: value.into(),
+        })
+        .await
+    }
+
     pub async fn shutdown(&self, session: &str) -> Result<()> {
         self.call(Call::Shutdown {
             session: session.into(),

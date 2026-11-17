@@ -143,6 +143,50 @@ async fn agents_run_python_in_the_users_session() {
     }
 }
 
+/// An agent's code that asks a question is not waited on until the timeout:
+/// the agent hears it waits for the user's answer, which then ends it.
+#[tokio::test]
+async fn agents_hear_when_their_code_waits_for_input() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = common::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let tools = Tools::new(
+        daemon.socket.clone(),
+        Some(project.to_string_lossy().into()),
+    );
+    let started = std::time::Instant::now();
+    let ran = call(
+        &tools,
+        "run_code",
+        json!({"code": "print('asking')\nname = input('name? ')\nprint('hi', name)", "language": "python", "timeout_seconds": 60}),
+    )
+    .await;
+    assert!(started.elapsed() < Duration::from_secs(30), "{ran}");
+    assert!(ran.contains("waiting for input"), "{ran}");
+    assert!(ran.contains("\"name?\""), "{ran}");
+    assert!(ran.contains("asking"), "{ran}");
+
+    let mut client = daemon.client().await;
+    let session = client.list_sessions().await.unwrap()[0].id.clone();
+    client.subscribe(&session, None).await.unwrap();
+    client.input(&session, "Huan").await.unwrap();
+    let printed = loop {
+        let event = tokio::time::timeout(TIMEOUT, client.next_event())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.msg_type == "stream" && event.content["text"] == "hi Huan\n" {
+            break event;
+        }
+    };
+    assert_eq!(printed.content["name"], "stdout");
+    client.shutdown(&session).await.unwrap();
+}
+
 #[tokio::test]
 async fn agents_see_r_data_frames() {
     let kernel = if have_kernel("ark").await {

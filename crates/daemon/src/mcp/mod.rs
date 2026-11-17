@@ -29,8 +29,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    BLOB_KEY, Call, CellRef, EVENT_RUN_FINISHED, FileOutputs, KernelspecInfo, ProjectSetup,
-    RunFinished, SessionInfo, SessionStatus,
+    BLOB_KEY, Call, CellRef, EVENT_INPUT_REPLY, EVENT_INPUT_REQUEST, EVENT_RUN_FINISHED,
+    FileOutputs, KernelspecInfo, ProjectSetup, RunFinished, SessionInfo, SessionStatus,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -583,8 +583,14 @@ struct Outcome {
     stdout: String,
     status: Option<String>,
     finished: bool,
+    /// The prompt of the question the code is waiting on, unanswered.
+    asking: Option<String>,
     elapsed_ms: i64,
 }
+
+/// How long a question waits for an answer already on its way (replayed
+/// events come together) before the agent is told the code is waiting.
+const ASK_GRACE: Duration = Duration::from_millis(500);
 
 /// Runs an agent's code in a session, marked as `by`'s, and collects its
 /// output until it finishes or `timeout` passes. With `cell`, the run
@@ -626,15 +632,17 @@ async fn run(
 }
 
 /// Collects the events of `run` from the client's subscriptions until it
-/// finishes or `deadline` passes.
+/// finishes, it waits for the user to answer a question, or `deadline`
+/// passes.
 async fn follow(
     client: &mut Client,
     run: &str,
     outcome: &mut Outcome,
     deadline: tokio::time::Instant,
 ) -> Result<()> {
+    let mut until = deadline;
     loop {
-        let event = match tokio::time::timeout_at(deadline, client.next_event()).await {
+        let event = match tokio::time::timeout_at(until, client.next_event()).await {
             Ok(Some(event)) => event,
             Ok(None) => bail!("lost the connection to sandhilld"),
             Err(_) => return Ok(()),
@@ -646,7 +654,18 @@ async fn follow(
             let finished: RunFinished = serde_json::from_value(event.content)?;
             outcome.status = Some(finished.status);
             outcome.finished = true;
+            outcome.asking = None;
             return Ok(());
+        }
+        if event.msg_type == EVENT_INPUT_REQUEST {
+            outcome.asking = Some(event.content["prompt"].as_str().unwrap_or("").to_string());
+            until = deadline.min(tokio::time::Instant::now() + ASK_GRACE);
+            continue;
+        }
+        if event.msg_type == EVENT_INPUT_REPLY {
+            outcome.asking = None;
+            until = deadline;
+            continue;
         }
         if event.msg_type == "stream" && event.content["name"] == "stdout" {
             outcome
@@ -922,10 +941,14 @@ fn tool_list() -> Value {
 /// A run's result for the agent: `head`, how it ended, what it printed,
 /// and its plots.
 async fn report(client: &Client, head: &str, outcome: &Outcome) -> Vec<Value> {
-    let status = match (&outcome.status, outcome.finished) {
-        (Some(status), _) => status.clone(),
-        (None, true) => "unknown".into(),
-        (None, false) => format!(
+    let status = match (&outcome.status, outcome.finished, &outcome.asking) {
+        (Some(status), _, _) => status.clone(),
+        (None, true, _) => "unknown".into(),
+        (None, false, Some(prompt)) => format!(
+            "waiting for input at the prompt {:?}; the user answers it in Sandhill's Console (or interrupts it), and the code keeps running in the session",
+            prompt.trim_end()
+        ),
+        (None, false, None) => format!(
             "still running after {}; it keeps running in the session",
             text::duration_ms(outcome.elapsed_ms)
         ),

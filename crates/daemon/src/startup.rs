@@ -1,8 +1,9 @@
 //! The code a new session runs, out of sight, before anything else:
 //! Sandhill's `View` and `%view` (see `view`), in R a viewer for web pages
 //! (see `viewer`), keeping the plots IRkernel and Python show so they can be
-//! drawn again at another size (see `redraw`), and in R started in a
-//! project's folder, moving to the session's own.
+//! drawn again at another size (see `redraw`), in Python `breakpoint()`
+//! stopping in the debugger, and in R started in a project's folder, moving
+//! to the session's own.
 
 use std::path::Path;
 
@@ -21,10 +22,21 @@ pub fn code(language: &str, chdir: Option<&Path>) -> Option<String> {
             ),
             None => format!("{}\n{}\n{}", view::R, viewer::R, redraw::R_KEEP),
         }),
-        "python" => Some(format!("{}\n{}", view::PYTHON, redraw::PYTHON_KEEP)),
+        "python" => Some(format!(
+            "{}\n{}\n{PYTHON_BREAKPOINT}",
+            view::PYTHON,
+            redraw::PYTHON_KEEP
+        )),
         _ => None,
     }
 }
+
+/// ipykernel 6+ hands `breakpoint()` to debugpy, which does nothing unless a
+/// visual debugger is attached, and Sandhill has none: Python's own hook
+/// stops in pdb, answered in the Console (and still follows
+/// `PYTHONBREAKPOINT`).
+const PYTHON_BREAKPOINT: &str =
+    "__import__('sys').breakpointhook = __import__('sys').__breakpointhook__";
 
 #[cfg(test)]
 mod tests {

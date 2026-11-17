@@ -16,7 +16,7 @@ use sandhill_proto::{
 };
 use serde_json::{Value, json};
 
-use super::{Run, Session, Workbench};
+use super::{Question, Run, Session, Workbench};
 use crate::look::{self, Palette, icon_button};
 
 const HISTORY_STORED: usize = 100;
@@ -249,6 +249,28 @@ impl Run {
         self.events.extend(events);
         self.output_replay_seq = seq;
         self.rebuild_output();
+        self.question_from_events();
+    }
+
+    /// The question still open: the last asked with no answer after it,
+    /// while the run goes on.
+    pub(super) fn question_from_events(&mut self) {
+        self.asking = None;
+        if self.finished {
+            return;
+        }
+        for (msg_type, content) in self.events.values() {
+            match msg_type.as_str() {
+                sandhill_proto::EVENT_INPUT_REQUEST => {
+                    self.asking = Some(Question {
+                        prompt: content["prompt"].as_str().unwrap_or_default().to_string(),
+                        password: content["password"].as_bool().unwrap_or(false),
+                    })
+                }
+                sandhill_proto::EVENT_INPUT_REPLY => self.asking = None,
+                _ => {}
+            }
+        }
     }
 
     fn rebuild_output(&mut self) {
@@ -266,6 +288,110 @@ impl Workbench {
     /// The Console target is independent of the document being edited.
     pub(crate) fn console_target(&self) -> Option<&str> {
         self.loose.id()
+    }
+
+    /// The Console's session's open question, and the run asking it.
+    pub(crate) fn console_question(&self) -> Option<(&str, &Question)> {
+        let session = self.console_target()?;
+        self.runs.iter().find_map(|(id, run)| {
+            (run.session == session && !run.finished)
+                .then_some(run.asking.as_ref())
+                .flatten()
+                .map(|question| (id.as_str(), question))
+        })
+    }
+
+    /// Sends what was typed as the answer to the Console's open question.
+    /// An empty answer counts: in R's `browser()` it means "go on".
+    fn answer_console(&mut self, value: String, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(session)) =
+            (self.daemon(), self.console_target().map(str::to_string))
+        else {
+            return;
+        };
+        // Answered: a second Enter must not answer the next question
+        // before it is asked.
+        if let Some(run) = self.console_question().map(|(run, _)| run.to_string())
+            && let Some(run) = self.runs.get_mut(&run)
+        {
+            run.asking = None;
+        }
+        let answered = daemon.call_in_order::<Value>(Call::Input { session, value });
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = answered.await {
+                this.update(cx, |this, cx| {
+                    this.problem = Some(format!("Answering the code failed: {err:#}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        self.problem = None;
+    }
+
+    /// Enter in the Console input while the code waits for an answer.
+    /// Returns false when nothing is being asked.
+    pub(crate) fn answer_console_input(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.console_question().is_none_or(|(_, q)| q.password) {
+            return false;
+        }
+        let value = self.console_input.read(cx).value().to_string();
+        self.console_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.answer_console(value, cx);
+        true
+    }
+
+    pub(crate) fn answer_console_password(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.console_question().is_some_and(|(_, q)| q.password) {
+            return;
+        }
+        let value = self.console_password.read(cx).value().to_string();
+        self.console_password
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.answer_console(value, cx);
+    }
+
+    /// A password question takes focus to its hidden field, and gives it
+    /// back to the Console input once answered, when the Console had it.
+    pub(crate) fn sync_console_question(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let asking = self
+            .console_question()
+            .filter(|(_, q)| q.password)
+            .map(|(run, _)| run.to_string());
+        if asking == self.console_password_for {
+            return;
+        }
+        let had_focus = self
+            .console_input
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+            || self
+                .console_password
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx);
+        if had_focus {
+            match asking {
+                Some(_) => self
+                    .console_password
+                    .read(cx)
+                    .focus_handle(cx)
+                    .focus(window, cx),
+                None => self
+                    .console_input
+                    .read(cx)
+                    .focus_handle(cx)
+                    .focus(window, cx),
+            }
+        }
+        self.console_password_for = asking;
     }
 
     pub(crate) fn console_bound_file(&self) -> Option<&str> {
@@ -1275,6 +1401,68 @@ mod tests {
         assert_eq!(run.outputs[0]["text"], "first second third");
         run.append_output(4, "clear_output".into(), json!({"wait":false}));
         assert!(run.outputs.is_empty());
+    }
+
+    /// A Console reopened while code waits for an answer shows the open
+    /// question, not one already answered, and none once the run ended.
+    #[test]
+    fn console_rebuilt_from_the_journal_shows_only_the_open_question() {
+        let asked = |seq: i64, prompt: &str| {
+            (
+                seq,
+                (
+                    sandhill_proto::EVENT_INPUT_REQUEST.to_string(),
+                    json!({"prompt": prompt, "password": false, "header": {}}),
+                ),
+            )
+        };
+        let answered = |seq: i64| {
+            (
+                seq,
+                (sandhill_proto::EVENT_INPUT_REPLY.to_string(), json!({})),
+            )
+        };
+        let echo = (
+            2,
+            (
+                "stream".to_string(),
+                json!({"name": "stdout", "text": "Browse[1]> n\n"}),
+            ),
+        );
+        let mut run = Run {
+            snapshot_seq: 4,
+            ..Default::default()
+        };
+        run.install_output_replay(
+            4,
+            BTreeMap::from([
+                asked(1, "Browse[1]> "),
+                echo.clone(),
+                answered(3),
+                asked(4, "Browse[2]> "),
+            ]),
+        );
+        assert_eq!(run.asking.as_ref().unwrap().prompt, "Browse[2]> ");
+        // The question events are not outputs.
+        assert_eq!(run.outputs.len(), 1, "{:?}", run.outputs);
+
+        let mut run = Run {
+            snapshot_seq: 3,
+            ..Default::default()
+        };
+        run.install_output_replay(
+            3,
+            BTreeMap::from([asked(1, "name? "), echo.clone(), answered(3)]),
+        );
+        assert!(run.asking.is_none());
+
+        let mut run = Run {
+            snapshot_seq: 1,
+            finished: true,
+            ..Default::default()
+        };
+        run.install_output_replay(1, BTreeMap::from([asked(1, "name? ")]));
+        assert!(run.asking.is_none());
     }
 
     #[test]

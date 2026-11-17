@@ -496,6 +496,10 @@ impl Daemon {
                 self.live(&session)?.interrupt().await?;
                 Value::Null
             }
+            Call::Input { session, value } => {
+                self.live(&session)?.input(value).await?;
+                Value::Null
+            }
             Call::Shutdown { session } => {
                 let handle = self.live(&session)?;
                 handle.shutdown().await?;

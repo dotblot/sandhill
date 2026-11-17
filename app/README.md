@@ -1380,6 +1380,15 @@ preview and R's imports weren't seen.
     (`vendor/gpui-component`, listed in its `SANDHILL.md`). Scrolling the
     2,002-cell test notebook uses about 0.32 cores instead of 0.55; it still
     drops an occasional frame, cause not found yet.
+- **Answering code that asks** (Huan, 2026-11-17;
+  `docs/design/done/console-input-plan.md`): R's `browser()`, `readline()` and
+  `menu()` and Python's `input()`, `getpass()`, pdb, `breakpoint()` and
+  `%debug` are answered in the Console. `browser()` had hung the session.
+  The daemon listens on the kernel's stdin channel (`kernel.rs`,
+  `session.rs`); the Console shows the prompt above its input, and Enter
+  sends the answer (`workbench/console.rs`, `view/console_pane.rs`). A
+  password question gets a hidden one-line field. Tests:
+  `crates/daemon/tests/input.rs`.
 
 
 ## Running it

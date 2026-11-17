@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use jupyter_protocol::{
-    CommClose, CommId, CommOpen, CompleteRequest, ExecuteRequest, ExecutionState, InspectRequest,
-    InterruptRequest, JupyterMessage, JupyterMessageContent, KernelInfoRequest, ReplyStatus,
-    ShutdownRequest,
+    CommClose, CommId, CommOpen, CompleteRequest, ExecuteRequest, ExecutionState, Header,
+    InputReply, InspectRequest, InterruptRequest, JupyterMessage, JupyterMessageContent,
+    KernelInfoRequest, ReplyStatus, ShutdownRequest,
 };
 use sandhill_proto::{
-    CellRef, CompletionReply, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED,
-    EVENT_VIEW, Event, InspectReply, RunFinished, RunStarted, SessionStatus,
+    CellRef, CompletionReply, EVENT_INPUT_REPLY, EVENT_INPUT_REQUEST, EVENT_RUN_FINISHED,
+    EVENT_RUN_STARTED, EVENT_SESSION_ENDED, EVENT_VIEW, Event, InspectReply, RunFinished,
+    RunStarted, SessionStatus,
 };
 use serde_json::json;
 use tokio::process::Child;
@@ -74,6 +75,10 @@ enum Command {
         reply: oneshot::Sender<Result<u16>>,
     },
     Interrupt {
+        reply: oneshot::Sender<Result<()>>,
+    },
+    Input {
+        value: String,
         reply: oneshot::Sender<Result<()>>,
     },
     Shutdown {
@@ -269,17 +274,20 @@ impl SessionHandle {
         match attempt.await {
             Ok((mut conn, rx)) => {
                 let mut runs = HashMap::new();
-                for run in journal.unfinished_runs(&record.id)? {
+                let unfinished = journal.unfinished_runs(&record.id)?;
+                for run in &unfinished {
                     runs.insert(
                         run.msg_id.clone(),
                         RunState {
-                            run_id: run.id,
+                            run_id: run.id.clone(),
                             reply: None,
                             idle: false,
                             recovered: true,
+                            quiet: false,
                         },
                     );
                 }
+                let asking = open_question(&journal, &unfinished);
                 // Shell requests are handled in order, so when this reply
                 // arrives every earlier run has finished.
                 let probe = JupyterMessage::new(KernelInfoRequest {}, None);
@@ -296,6 +304,7 @@ impl SessionHandle {
                     .is_ok_and(|spec| {
                         is_ark_spec(&spec.kernelspec.language, &spec.kernelspec.argv)
                     }),
+                    asking,
                     ..Begin::default()
                 };
                 Ok(Self::spawn(record, journal, conn, rx, begin))
@@ -337,6 +346,7 @@ impl SessionHandle {
             completions: HashMap::new(),
             inspections: HashMap::new(),
             lsp_starts: HashMap::new(),
+            asking: begin.asking,
         };
         let task = tokio::spawn(actor.run());
         SessionHandle {
@@ -434,6 +444,13 @@ impl SessionHandle {
         rx.await.map_err(|_| ended())?
     }
 
+    /// Answers the question the running code asked.
+    pub async fn input(&self, value: String) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Command::Input { value, reply }).await?;
+        rx.await.map_err(|_| ended())?
+    }
+
     pub async fn shutdown(&self) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         self.send(Command::Shutdown { reply }).await?;
@@ -497,6 +514,8 @@ struct Begin {
     /// The code run at start (see `startup`).
     prelude: Option<String>,
     ark: bool,
+    /// The question a run was waiting on when the daemon restarted.
+    asking: Option<Asking>,
 }
 
 struct RunState {
@@ -507,6 +526,19 @@ struct RunState {
     idle: bool,
     /// Started before a daemon restart; its reply may never arrive.
     recovered: bool,
+    /// A tool's run: a question from it is answered by interrupting it.
+    quiet: bool,
+}
+
+/// A question the running code asked, waiting for the user's answer.
+struct Asking {
+    /// The `msg_id` of the run's execute request.
+    msg_id: String,
+    run_id: String,
+    prompt: String,
+    password: bool,
+    /// The kernel's `input_request` header, the parent of the answer.
+    header: Header,
 }
 
 struct PendingLanguage<T> {
@@ -536,6 +568,7 @@ struct Actor {
     completions: HashMap<String, PendingLanguage<CompletionReply>>,
     inspections: HashMap<String, PendingLanguage<InspectReply>>,
     lsp_starts: HashMap<String, PendingLanguage<u16>>,
+    asking: Option<Asking>,
 }
 
 impl Actor {
@@ -712,6 +745,9 @@ impl Actor {
             Command::Interrupt { reply } => {
                 let _ = reply.send(self.interrupt().await);
             }
+            Command::Input { value, reply } => {
+                let _ = reply.send(self.answer(value).await);
+            }
             Command::Shutdown { .. } | Command::Force { .. } => unreachable!("handled in run()"),
         }
     }
@@ -775,7 +811,8 @@ impl Actor {
             silent: false,
             store_history: !quiet,
             user_expressions: None,
-            allow_stdin: false,
+            // A tool must never leave the session waiting for an answer.
+            allow_stdin: !quiet,
             stop_on_error: !quiet,
         };
         let msg = JupyterMessage::new(request, None);
@@ -795,6 +832,7 @@ impl Actor {
                 reply: None,
                 idle: false,
                 recovered: false,
+                quiet,
             },
         );
         let mut started = json!({ "code": code, "cell": cell });
@@ -821,6 +859,32 @@ impl Actor {
             kernel::send_signal(pid, libc::SIGINT)?;
         }
         Ok(())
+    }
+
+    /// Answers the open question: the prompt and the answer go into the
+    /// run's output as a console would show them, then the kernel gets it.
+    async fn answer(&mut self, value: String) -> Result<()> {
+        let asking = self
+            .asking
+            .take()
+            .context("nothing is being asked: the code isn't waiting for input")?;
+        let shown = if asking.password { "" } else { value.as_str() };
+        self.publish(
+            Some(&asking.run_id),
+            "stream",
+            json!({ "name": "stdout", "text": format!("{}{shown}\n", asking.prompt) }),
+        );
+        self.publish(Some(&asking.run_id), EVENT_INPUT_REPLY, json!({}));
+        let mut reply = JupyterMessage::new(
+            InputReply {
+                value,
+                status: ReplyStatus::Ok,
+                error: None,
+            },
+            None,
+        );
+        reply.parent_header = Some(asking.header);
+        Ok(self.conn.stdin.send(reply).await?)
     }
 
     async fn shutdown(&mut self) -> Result<()> {
@@ -899,7 +963,46 @@ impl Actor {
             KernelMsg::IoPub(msg) => self.on_iopub(msg).await,
             KernelMsg::Shell(msg) => self.on_shell(msg),
             KernelMsg::Control(_) => {}
+            KernelMsg::Stdin(msg) => self.on_stdin(msg).await,
         }
+    }
+
+    /// A question from running code. The user's runs show it and wait for
+    /// the answer; anything else (a tool's quiet run, the code run at
+    /// start) is interrupted instead, as nobody would see the question.
+    async fn on_stdin(&mut self, msg: JupyterMessage) {
+        let JupyterMessageContent::InputRequest(request) = &msg.content else {
+            return;
+        };
+        let parent = msg.parent_header.as_ref().map(|h| h.msg_id.clone());
+        let run = parent
+            .as_deref()
+            .and_then(|p| self.runs.get(p).map(|run| (p, run)))
+            .filter(|(_, run)| !run.quiet);
+        let Some((msg_id, run)) = run else {
+            tracing::info!("interrupting a question nobody sees: {:?}", request.prompt);
+            if let Err(err) = self.interrupt().await {
+                tracing::warn!("cannot interrupt the kernel's question: {err:#}");
+            }
+            return;
+        };
+        let asking = Asking {
+            msg_id: msg_id.to_string(),
+            run_id: run.run_id.clone(),
+            prompt: request.prompt.clone(),
+            password: request.password,
+            header: msg.header.clone(),
+        };
+        self.publish(
+            Some(&asking.run_id),
+            EVENT_INPUT_REQUEST,
+            json!({
+                "prompt": asking.prompt,
+                "password": asking.password,
+                "header": msg.header,
+            }),
+        );
+        self.asking = Some(asking);
     }
 
     async fn on_iopub(&mut self, msg: JupyterMessage) {
@@ -1084,6 +1187,10 @@ impl Actor {
             _ => return,
         };
         let run = self.runs.remove(msg_id).unwrap();
+        // A run that ends (interrupted, or failed) asks nothing any more.
+        if self.asking.as_ref().is_some_and(|a| a.msg_id == msg_id) {
+            self.asking = None;
+        }
         if let Err(err) = self.journal.finish_run(&run.run_id, &status, count) {
             tracing::error!("cannot record end of run {}: {err}", run.run_id);
         }
@@ -1175,7 +1282,10 @@ async fn wait_until_ready(
         let (mut reply, mut iopub_seen) = (None, false);
         let deadline = tokio::time::Instant::now() + Duration::from_millis(1000);
         while let Ok(Some(msg)) = tokio::time::timeout_at(deadline, rx.recv()).await {
-            let (KernelMsg::IoPub(m) | KernelMsg::Shell(m) | KernelMsg::Control(m)) = &msg;
+            let (KernelMsg::IoPub(m)
+            | KernelMsg::Shell(m)
+            | KernelMsg::Control(m)
+            | KernelMsg::Stdin(m)) = &msg;
             let is_ours =
                 m.parent_header.as_ref().map(|h| h.msg_id.as_str()) == Some(request_id.as_str());
             match &msg {
@@ -1228,6 +1338,30 @@ fn end_session(journal: &Journal, session_id: &str, reason: &str) -> Option<Even
         )
         .map_err(|err| tracing::error!("cannot journal end of {session_id}: {err}"))
         .ok()
+}
+
+/// The question a run was left waiting on when the daemon stopped: its last
+/// `input_request` with no answer after it.
+fn open_question(journal: &Journal, unfinished: &[crate::journal::RunRecord]) -> Option<Asking> {
+    for run in unfinished.iter().rev() {
+        let events = journal.run_events(&run.id, i64::MAX).ok()?;
+        let last = events
+            .iter()
+            .rev()
+            .find(|(msg_type, _)| msg_type == EVENT_INPUT_REQUEST || msg_type == EVENT_INPUT_REPLY);
+        let Some((EVENT_INPUT_REQUEST, asked)) = last.map(|(t, c)| (t.as_str(), c)) else {
+            continue;
+        };
+        let header = serde_json::from_value(asked["header"].clone()).ok()?;
+        return Some(Asking {
+            msg_id: run.msg_id.clone(),
+            run_id: run.id.clone(),
+            prompt: asked["prompt"].as_str()?.to_string(),
+            password: asked["password"].as_bool().unwrap_or(false),
+            header,
+        });
+    }
+    None
 }
 
 #[cfg(test)]

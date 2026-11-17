@@ -48,6 +48,14 @@ pub const EVENT_SESSION_ENDED: &str = "sandhill.session_ended";
 /// `View(df)` (R) or `%view df` (Python) ran: `{title}` is what to open in
 /// the Data Explorer, as typed.
 pub const EVENT_VIEW: &str = "sandhill.view";
+/// Running code asks the user something (`input()`, R's `browser()`):
+/// `{prompt, password, header}`, on the run that asks. `header` is the
+/// kernel's request header, for the daemon's own use. Answered with
+/// [`Call::Input`].
+pub const EVENT_INPUT_REQUEST: &str = "sandhill.input_request";
+/// The question of the run was answered; the answer itself is journaled as
+/// the run's stdout, after the prompt (a password as the prompt alone).
+pub const EVENT_INPUT_REPLY: &str = "sandhill.input_reply";
 
 /// Where the app installs Ark (Posit's R kernel) on a server, relative to
 /// the home folder. The daemon offers it as the `ark` kernel when R is on
@@ -502,6 +510,12 @@ pub enum Call {
     },
     Interrupt {
         session: String,
+    },
+    /// Answers the question the session's running code asked (see
+    /// [`EVENT_INPUT_REQUEST`]). Fails when nothing is being asked.
+    Input {
+        session: String,
+        value: String,
     },
     /// Stops the kernel for good.
     Shutdown {

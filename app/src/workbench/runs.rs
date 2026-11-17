@@ -692,8 +692,12 @@ impl Workbench {
         .detach();
     }
 
-    /// Runs what is typed in the Console in the active kernel.
+    /// Runs what is typed in the Console in the active kernel, or answers
+    /// the question its running code asked.
     pub(crate) fn run_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.answer_console_input(window, cx) {
+            return;
+        }
         let code = self.console_input.read(cx).value().to_string();
         if code.trim().is_empty() {
             return;
@@ -893,6 +897,7 @@ impl Workbench {
                 self.plots_run_finished(&event.session, &run_id, cx);
                 let run = self.runs.entry(run_id.clone()).or_default();
                 run.finished = true;
+                run.asking = None;
                 run.status = event.content["status"].as_str().map(str::to_string);
                 run.execution_count = event.content["execution_count"].as_u64();
                 run.finished_ms = Some(event.ts_ms);
@@ -902,6 +907,14 @@ impl Workbench {
                 }
                 self.suggest_after_run(&run_id, cx);
                 self.explore_when_made(&run_id, cx);
+            }
+            sandhill_proto::EVENT_INPUT_REQUEST | sandhill_proto::EVENT_INPUT_REPLY => {
+                run.append_output(event.seq, event.msg_type, event.content);
+                run.question_from_events();
+                // The question is answered in the Console.
+                if active && run.asking.is_some() {
+                    self.console_tab = ConsoleTab::Console;
+                }
             }
             _ if run.quiet => {}
             msg_type => {

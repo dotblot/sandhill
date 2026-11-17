@@ -4,7 +4,7 @@
 
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{self, Editor};
+use gpui_kit::component::input::{self, Editor, Input};
 use gpui_kit::component::text::TextViewStyle;
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -64,6 +64,7 @@ impl Render for Workbench {
             window.focus(&self.focus, cx);
         }
         self.place_cells(window);
+        self.sync_console_question(window, cx);
         self.fetch_notebook_plots(cx);
         self.sync_markdown_images(cx);
         self.sync_pages(window, cx);
