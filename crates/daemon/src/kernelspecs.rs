@@ -575,15 +575,28 @@ fn system_ipykernel(prefix: &Path) -> bool {
     };
     std::fs::read_dir(prefix.join("lib")).is_ok_and(|entries| {
         entries.flatten().any(|entry| {
-            let version = entry.file_name();
-            version.to_string_lossy().starts_with("python3")
-                && base
-                    .join("lib")
-                    .join(version)
-                    .join("site-packages/ipykernel_launcher.py")
-                    .is_file()
+            let version = entry.file_name().to_string_lossy().into_owned();
+            version.starts_with("python3")
+                && base_site_dirs(base, &version)
+                    .iter()
+                    .any(|dir| dir.join("ipykernel_launcher.py").is_file())
         })
     })
+}
+
+/// Where a base Python at `base` (its `sys.prefix`) keeps packages for
+/// `version` ("python3.12"): python.org, Homebrew and conda use
+/// `lib/<version>/site-packages`, Fedora also `lib64`, and Debian and Ubuntu
+/// `lib/python3/dist-packages` (apt) and `local/lib/<version>/dist-packages`
+/// (pip).
+fn base_site_dirs(base: &Path, version: &str) -> [PathBuf; 5] {
+    [
+        base.join("lib").join(version).join("site-packages"),
+        base.join("lib64").join(version).join("site-packages"),
+        base.join("lib/python3/dist-packages"),
+        base.join("lib").join(version).join("dist-packages"),
+        base.join("local/lib").join(version).join("dist-packages"),
+    ]
 }
 
 /// Reads `<data_dir>/kernels/*/kernel.json`, skipping what doesn't parse.
@@ -847,6 +860,53 @@ mod tests {
         let dir = data_dir.join("kernels").join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("kernel.json"), spec.to_string()).unwrap();
+    }
+
+    /// A venv on `base` with system site-packages `on`, and ipykernel
+    /// installed only in the base Python's `site` (relative to `base`).
+    fn inheriting_venv(tmp: &Path, site: &str, on: bool) -> PathBuf {
+        let base = tmp.join("base");
+        std::fs::create_dir_all(base.join("bin")).unwrap();
+        let site = base.join(site);
+        std::fs::create_dir_all(&site).unwrap();
+        std::fs::write(site.join("ipykernel_launcher.py"), "").unwrap();
+        let venv = tmp.join("venv");
+        std::fs::create_dir_all(venv.join("lib/python3.12/site-packages")).unwrap();
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            format!(
+                "home = {}\ninclude-system-site-packages = {on}\nversion = 3.12.3\n",
+                base.join("bin").display()
+            ),
+        )
+        .unwrap();
+        venv
+    }
+
+    #[test]
+    fn venvs_inherit_ipykernel_from_every_base_layout() {
+        for site in [
+            "lib/python3.12/site-packages",
+            "lib64/python3.12/site-packages",
+            "lib/python3/dist-packages",
+            "lib/python3.12/dist-packages",
+            "local/lib/python3.12/dist-packages",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            assert!(
+                system_ipykernel(&inheriting_venv(tmp.path(), site, true)),
+                "{site}"
+            );
+            let tmp = tempfile::tempdir().unwrap();
+            assert!(
+                !system_ipykernel(&inheriting_venv(tmp.path(), site, false)),
+                "{site}"
+            );
+        }
+        // Another Python version's packages aren't the venv's.
+        let tmp = tempfile::tempdir().unwrap();
+        let venv = inheriting_venv(tmp.path(), "lib/python3.11/site-packages", true);
+        assert!(!system_ipykernel(&venv));
     }
 
     fn ipykernel(argv0: &str) -> serde_json::Value {
