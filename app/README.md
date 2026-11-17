@@ -1363,6 +1363,23 @@ preview and R's imports weren't seen.
   browser's return, `connectors/sign_in.rs` runs Begin, opens the page,
   and Finish on the device being managed. Sign-in errors from Add, Test or
   Copy to… start it; rows that need it again get "Sign In Again".
+- **Fixes from the Positron comparison** (Huan, 2026-11-17;
+  `docs/design/positron-comparison-plan.md`):
+  - `View(df)` and `%view df` open the table again: `workbench/runs.rs`
+    handles the daemon's `sandhill.view` event (it had fallen into the
+    Console output unseen since the move to GPUI) and `runs/view.rs` opens
+    it in the session that sent it, including sessions started by Run file.
+  - The Data Explorer builds only what is on screen (`panes/explorer/
+    viewport.rs`): columns and their widths, the column list and stats, and
+    rows of visible columns, with stats read 32 columns at a time. A
+    2,700 x 32,738 table had taken 20 s to settle and 10 GB in the app.
+    Hidden columns are a set, so Hide All stays quick on wide tables.
+  - Notebooks lay out off-screen cells as a few spacers rather than one
+    element per cell (`editor/cell_view.rs`, `view/cells.rs`), and the
+    vendored highlighter compiles each language's queries once
+    (`vendor/gpui-component`, listed in its `SANDHILL.md`). Scrolling the
+    2,002-cell test notebook uses about 0.32 cores instead of 0.55; it still
+    drops an occasional frame, cause not found yet.
 
 
 ## Running it

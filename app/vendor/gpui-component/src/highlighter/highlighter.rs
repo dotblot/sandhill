@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use gpui::{HighlightStyle, SharedString};
 use gpui_base::input::RopeExt as _;
 use ropey::{ChunkCursor, Rope};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -25,19 +25,29 @@ const MAX_INJECTION_LANGUAGE_BYTES: usize = 64;
 const MAX_NON_COMBINED_INJECTION_PARSES: usize = 512;
 const INJECTION_PARSE_TIMEOUT: Duration = Duration::from_millis(20);
 
+/// Immutable grammar work is shared; each editor still owns its parser and tree.
+#[derive(Clone)]
+struct CompiledQueries {
+    query: Arc<Query>,
+    injections_query: Option<Arc<Query>>,
+    locals_pattern_index: usize,
+    highlights_pattern_index: usize,
+    non_local_variable_patterns: Arc<[bool]>,
+}
+
 /// A syntax highlighter that supports incremental parsing, multiline text,
 /// and caching of highlight results.
 #[allow(unused)]
 pub struct SyntaxHighlighter {
     language: SharedString,
-    query: Option<Query>,
+    query: Option<Arc<Query>>,
     /// The full injections query. This is used to build injection layers during parsing.
     injections_query: Option<Arc<Query>>,
 
     locals_pattern_index: usize,
     highlights_pattern_index: usize,
     // highlight_indices: Vec<Option<Highlight>>,
-    non_local_variable_patterns: Vec<bool>,
+    non_local_variable_patterns: Arc<[bool]>,
     injection_content_capture_index: Option<u32>,
     injection_language_capture_index: Option<u32>,
     local_scope_capture_index: Option<u32>,
@@ -399,7 +409,7 @@ impl SyntaxHighlighter {
             injections_query: None,
             locals_pattern_index: 0,
             highlights_pattern_index: 0,
-            non_local_variable_patterns: Vec::new(),
+            non_local_variable_patterns: Arc::from([]),
             injection_content_capture_index: None,
             injection_language_capture_index: None,
             local_scope_capture_index: None,
@@ -436,54 +446,13 @@ impl SyntaxHighlighter {
             .set_language(&grammar)
             .context("parse set_language")?;
 
-        // Concatenate the query strings, keeping track of the start offset of each section.
-        let mut query_source = String::new();
-        query_source.push_str(&config.injections);
-        let locals_query_offset = query_source.len();
-        query_source.push_str(&config.locals);
-        let highlights_query_offset = query_source.len();
-        query_source.push_str(&config.highlights);
-
-        // Construct a single query by concatenating the three query strings, but record the
-        // range of pattern indices that belong to each individual string.
-        let mut query = Query::new(&grammar, &query_source).context("new query")?;
-
-        let mut locals_pattern_index = 0;
-        let mut highlights_pattern_index = 0;
-        for i in 0..(query.pattern_count()) {
-            let pattern_offset = query.start_byte_for_pattern(i);
-            if pattern_offset < highlights_query_offset {
-                if pattern_offset < highlights_query_offset {
-                    highlights_pattern_index += 1;
-                }
-                if pattern_offset < locals_query_offset {
-                    locals_pattern_index += 1;
-                }
-            }
-        }
-
-        let injections_query = if !config.injections.is_empty() {
-            Query::new(&grammar, &config.injections).ok().map(Arc::new)
-        } else {
-            None
-        };
-
-        // Injection layers are computed separately during parsing, so do not
-        // emit injection captures from the main highlight query.
-        for pattern_index in 0..locals_pattern_index {
-            query.disable_pattern(pattern_index);
-        }
-
-        // Find all of the highlighting patterns that are disabled for nodes that
-        // have been identified as local variables.
-        let non_local_variable_patterns = (0..query.pattern_count())
-            .map(|i| {
-                query
-                    .property_predicates(i)
-                    .iter()
-                    .any(|(prop, positive)| !*positive && prop.key.as_ref() == "local")
-            })
-            .collect();
+        let CompiledQueries {
+            query,
+            injections_query,
+            locals_pattern_index,
+            highlights_pattern_index,
+            non_local_variable_patterns,
+        } = Self::compiled_queries(lang, &grammar, &config)?;
 
         // Store the numeric ids for all of the special captures.
         let injection_content_capture_index = injections_query.as_ref().and_then(|q| {
@@ -534,6 +503,74 @@ impl SyntaxHighlighter {
             tree: None,
             injection_layers: Vec::new(),
         })
+    }
+
+    fn compiled_queries(
+        lang: &str,
+        grammar: &tree_sitter::Language,
+        config: &super::GrammarConfig,
+    ) -> Result<CompiledQueries> {
+        // Re-registering a grammar or its queries must not reuse stale captures.
+        type QueryCache = HashMap<
+            SharedString,
+            (tree_sitter::Language, super::GrammarConfig, CompiledQueries),
+        >;
+        static CACHE: LazyLock<Mutex<QueryCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+        let mut cache = CACHE.lock().unwrap();
+        if let Some((cached_grammar, cached_config, queries)) = cache.get(lang)
+            && cached_grammar == grammar
+            && cached_config == config
+        {
+            return Ok(queries.clone());
+        }
+
+        let mut query_source = String::new();
+        query_source.push_str(&config.injections);
+        let locals_query_offset = query_source.len();
+        query_source.push_str(&config.locals);
+        let highlights_query_offset = query_source.len();
+        query_source.push_str(&config.highlights);
+        let mut query = Query::new(grammar, &query_source).context("new query")?;
+        let mut locals_pattern_index = 0;
+        let mut highlights_pattern_index = 0;
+        for i in 0..query.pattern_count() {
+            let offset = query.start_byte_for_pattern(i);
+            if offset < highlights_query_offset {
+                highlights_pattern_index += 1;
+            }
+            if offset < locals_query_offset {
+                locals_pattern_index += 1;
+            }
+        }
+        let injections_query = if config.injections.is_empty() {
+            None
+        } else {
+            Query::new(grammar, &config.injections).ok().map(Arc::new)
+        };
+        // Injection layers are parsed separately, not emitted by the host query.
+        for pattern_index in 0..locals_pattern_index {
+            query.disable_pattern(pattern_index);
+        }
+        let non_local_variable_patterns = (0..query.pattern_count())
+            .map(|i| {
+                query
+                    .property_predicates(i)
+                    .iter()
+                    .any(|(prop, positive)| !*positive && prop.key.as_ref() == "local")
+            })
+            .collect();
+        let queries = CompiledQueries {
+            query: Arc::new(query),
+            injections_query,
+            locals_pattern_index,
+            highlights_pattern_index,
+            non_local_variable_patterns,
+        };
+        cache.insert(
+            lang.to_string().into(),
+            (grammar.clone(), config.clone(), queries.clone()),
+        );
+        Ok(queries)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1360,6 +1397,39 @@ mod tests {
 
     use super::*;
     use crate::Colorize as _;
+
+    #[test]
+    fn editors_share_compiled_queries_but_not_parse_trees() {
+        let mut first = SyntaxHighlighter::new("json");
+        let mut second = SyntaxHighlighter::new("json");
+        let first_query: &Query = first.query.as_ref().unwrap();
+        let second_query: &Query = second.query.as_ref().unwrap();
+        assert!(std::ptr::eq(first_query, second_query));
+        first.update(None, &Rope::from("{\"first\": 1}"), None);
+        second.update(None, &Rope::from("[true, false]"), None);
+        assert_eq!(first.tree().unwrap().root_node().kind(), "document");
+        assert_ne!(
+            first.tree().unwrap().root_node().id(),
+            second.tree().unwrap().root_node().id()
+        );
+        assert_eq!(first.text.to_string(), "{\"first\": 1}");
+        assert_eq!(second.text.to_string(), "[true, false]");
+    }
+
+    #[test]
+    fn registering_changed_queries_replaces_cached_template() {
+        let registry = LanguageRegistry::singleton();
+        let mut config = registry.language("json").unwrap();
+        config.name = "sandhill-query-cache-test".into();
+        registry.register("sandhill-query-cache-test", &config);
+        let first = SyntaxHighlighter::new("sandhill-query-cache-test");
+        config.highlights = "(number) @number".into();
+        registry.register("sandhill-query-cache-test", &config);
+        let changed = SyntaxHighlighter::new("sandhill-query-cache-test");
+        assert!(!Arc::ptr_eq(first.query.as_ref().unwrap(), changed.query.as_ref().unwrap()));
+        let again = SyntaxHighlighter::new("sandhill-query-cache-test");
+        assert!(Arc::ptr_eq(changed.query.as_ref().unwrap(), again.query.as_ref().unwrap()));
+    }
 
     fn color_style(color: Hsla) -> HighlightStyle {
         let mut style = HighlightStyle::default();

@@ -40,6 +40,11 @@ kept as Sandhill had them plus 0.10's own small changes to them, the
 - `src/input/input.rs` and `src/input/editor.rs` (2026-11-16):
   `extend_context_menu` adds items after the right-click menu's own (or a
   custom one's), for the editor's "Ask AI About Selection".
+- `src/highlighter/highlighter.rs` (2026-11-17): share immutable compiled
+  highlight/injection queries between editors of the same language, while
+  retaining separate parsers and trees. Building Python's queries for each
+  newly visible notebook cell stalled scrolling; grammar/query changes replace
+  the cached template rather than reusing stale captures.
 
 Everything else is unchanged. Return to the crates.io release once upstream
 offers the same, and remove the patch.

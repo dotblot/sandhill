@@ -65,14 +65,92 @@ pub(crate) struct Placed {
     drawn: RefCell<(String, Vec<String>, bool)>,
     /// Each cell's top (from the top of the notebook) and height, by id.
     places: HashMap<String, (Pixels, Pixels)>,
+    /// Logical add/cell rows mapped into the coalesced layout children:
+    /// child index, offset inside a reservation, and reserved height (zero
+    /// for a real row whose height comes from layout).
+    rows: RefCell<Vec<(usize, Pixels, Pixels)>>,
     /// Whether each cell is drawn this frame.
     pub(crate) near: Vec<bool>,
+}
+
+/// Coalesce reservations, not cells: layout must scale with the visible rows.
+/// Keep logical row coordinates so navigation and anchors do not depend on
+/// where a run of reservations happens to be split this frame.
+#[derive(Default)]
+struct CellRows {
+    children: Vec<AnyElement>,
+    positions: Vec<(usize, Pixels, Pixels)>,
+    reserved: Pixels,
+    gap: Pixels,
+}
+
+impl CellRows {
+    fn push(&mut self, row: Option<AnyElement>, height: Pixels) {
+        if let Some(row) = row {
+            self.flush();
+            self.positions.push((self.children.len(), px(0.), px(0.)));
+            self.children.push(row);
+        } else {
+            self.positions
+                .push((self.children.len(), self.reserved, height));
+            self.reserved += height + self.gap;
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.reserved > px(0.) {
+            self.children.push(
+                div()
+                    .flex_none()
+                    .w_full()
+                    .h(self.reserved - self.gap)
+                    .into_any_element(),
+            );
+            self.reserved = px(0.);
+        }
+    }
 }
 
 impl Placed {
     /// Whether cell `ix` is drawn this frame.
     pub(crate) fn shows(&self, ix: usize) -> bool {
         self.near.get(ix).copied().unwrap_or(true)
+    }
+
+    pub(crate) fn bounds_for_item(
+        &self,
+        scroll: &ScrollHandle,
+        logical: usize,
+    ) -> Option<Bounds<Pixels>> {
+        let (child, top, height) = *self.rows.borrow().get(logical)?;
+        let mut bounds = scroll.bounds_for_item(child)?;
+        bounds.origin.y += top;
+        if height > px(0.) {
+            bounds.size.height = height;
+        }
+        Some(bounds)
+    }
+
+    /// A logical row stays the same when its containing spacer is split.
+    pub(crate) fn logical_scroll_top(&self, scroll: &ScrollHandle) -> Option<(usize, Pixels)> {
+        let (child, within) = scroll.logical_scroll_top();
+        let rows = self.rows.borrow();
+        let first = rows.partition_point(|(ix, _, _)| *ix < child);
+        let rest = rows.get(first..)?;
+        let count = rest.partition_point(|(ix, top, _)| *ix == child && *top <= -within);
+        let logical = first + count.saturating_sub(1);
+        let (_, top, _) = rows.get(logical)?;
+        Some((logical, within + *top))
+    }
+
+    /// Convert an anchor to the new layout's physical child coordinates.
+    pub(crate) fn scroll_anchor(&self, logical: usize, within: Pixels) -> Option<(usize, Pixels)> {
+        let (child, top, _) = *self.rows.borrow().get(logical)?;
+        Some((child, within - top))
+    }
+
+    pub(crate) fn scroll_child(&self, logical: usize) -> Option<usize> {
+        self.rows.borrow().get(logical).map(|(child, _, _)| *child)
     }
 }
 
@@ -123,10 +201,10 @@ impl Workbench {
             } else {
                 for (ix, id) in ids.iter().enumerate() {
                     let child = if *adds { ix * 2 + 1 } else { ix };
-                    if let Some(b) = scroll.bounds_for_item(child) {
-                        placed
-                            .places
-                            .insert(id.clone(), (b.top() - view.top(), b.size.height));
+                    if let Some(b) = placed.bounds_for_item(scroll, child)
+                        && let Some(place) = placed.places.get_mut(id)
+                    {
+                        *place = (b.top() - view.top(), b.size.height);
                     }
                 }
             }
@@ -139,10 +217,11 @@ impl Workbench {
                 0.
             });
         for cell in &open.notebook.cells {
-            let (y, height) = *placed
-                .places
-                .entry(cell.id.clone())
-                .or_insert_with(|| (next_y, estimated_cell_height(cell)));
+            let (y, height) = placed.places.get(&cell.id).copied().unwrap_or_else(|| {
+                let place = (next_y, estimated_cell_height(cell));
+                placed.places.insert(cell.id.clone(), place);
+                place
+            });
             next_y = y + height + px(gap);
         }
         let top = -scroll.offset().y;
@@ -160,6 +239,7 @@ impl Workbench {
             .map(|(ix, cell)| {
                 self.find.replaying
                     || open.current == Some(ix)
+                    || self.notebook_scroll_target.get() == Some(Self::child_of_cell(open, ix))
                     || open.editing.contains(&cell.id)
                     || open.lit.as_ref().is_some_and(|(id, _)| *id == cell.id)
                     || placed
@@ -182,61 +262,77 @@ impl Workbench {
     ) -> Vec<AnyElement> {
         let adds = open.notebook.can_add_cells();
         let count = bodies.len();
-        let mut children = Vec::with_capacity(count * 2 + 1);
+        let mut rows = CellRows {
+            positions: std::mem::take(&mut *self.placed.rows.borrow_mut()),
+            gap: if adds { px(0.) } else { px(TOOLS_HEIGHT + 4.) },
+            ..CellRows::default()
+        };
+        rows.positions.clear();
         for (ix, body) in bodies.into_iter().enumerate() {
             if adds {
-                children.push(self.add_row_after_deleted(open, ix, false, cx));
+                rows.push(
+                    self.add_row_after_deleted(open, ix, false, cx),
+                    px(TOOLS_HEIGHT + 4.),
+                );
             }
-            children.push(match body {
-                Some(body) => self.cell_frame(open, ix, body, window, cx),
-                None => {
-                    let id = &open.notebook.cells[ix].id;
-                    let height = self.placed.places.get(id).map_or(px(0.), |(_, h)| *h);
-                    div().flex_none().w_full().h(height).into_any_element()
-                }
-            });
+            let id = &open.notebook.cells[ix].id;
+            let height = self.placed.places.get(id).map_or(px(0.), |(_, h)| *h);
+            rows.push(
+                body.map(|body| self.cell_frame(open, ix, body, window, cx)),
+                height,
+            );
         }
         if adds {
-            children.push(self.add_row_after_deleted(open, count, true, cx));
+            rows.push(self.add_row_after_deleted(open, count, true, cx), px(36.));
         }
-        *self.placed.drawn.borrow_mut() = (
-            open.notebook.path.clone(),
-            open.notebook.cells.iter().map(|c| c.id.clone()).collect(),
-            adds,
-        );
-        children
+        rows.flush();
+        *self.placed.rows.borrow_mut() = rows.positions;
+        let mut drawn = self.placed.drawn.borrow_mut();
+        if drawn.0 != open.notebook.path
+            || drawn.2 != adds
+            || drawn.1.len() != count
+            || drawn
+                .1
+                .iter()
+                .zip(&open.notebook.cells)
+                .any(|(id, cell)| *id != cell.id)
+        {
+            *drawn = (
+                open.notebook.path.clone(),
+                open.notebook.cells.iter().map(|c| c.id.clone()).collect(),
+                adds,
+            );
+        }
+        rows.children
     }
 
-    /// The row that adds a cell at `at`, under the lines where an agent
-    /// deleted cells there: one child, so cells keep their places among
-    /// the children.
+    /// Agent suggestions and deletion markers keep real rows even offscreen;
+    /// ordinary offscreen add rows can share the surrounding reservation.
     fn add_row_after_deleted(
         &self,
         open: &Open,
         at: usize,
         always: bool,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Option<AnyElement> {
         let ghost = self.render_ghost(open, at, cx);
         let deleted = self.render_agent_deleted(open, at, cx);
         if deleted.is_empty() && ghost.is_none() {
             let last = open.notebook.cells.len().saturating_sub(1);
             if !self.placed.shows(at.min(last)) && !self.placed.shows(at.saturating_sub(1)) {
-                return div()
-                    .flex_none()
-                    .w_full()
-                    .h(px(if always { 36. } else { TOOLS_HEIGHT + 4. }))
-                    .into_any_element();
+                return None;
             }
-            return self.add_row(at, always, cx);
+            return Some(self.add_row(at, always, cx));
         }
-        v_flex()
-            .flex_none()
-            .w_full()
-            .children(ghost)
-            .children(deleted)
-            .child(self.add_row(at, always, cx))
-            .into_any_element()
+        Some(
+            v_flex()
+                .flex_none()
+                .w_full()
+                .children(ghost)
+                .children(deleted)
+                .child(self.add_row(at, always, cx))
+                .into_any_element(),
+        )
     }
 
     /// Scrolls the notebook so cell `ix` shows.
@@ -251,7 +347,7 @@ impl Workbench {
         }
     }
 
-    /// Where cell `ix` is among the children `render_cells` makes.
+    /// Cell `ix`'s logical row, independent of offscreen spacer coalescing.
     pub(crate) fn child_of_cell(open: &Open, ix: usize) -> usize {
         if open.notebook.can_add_cells() {
             ix * 2 + 1
@@ -729,5 +825,43 @@ impl Workbench {
         open.current = Some(ix);
         editor.update(cx, |e, cx| e.focus(window, cx));
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::CellRows;
+    use gpui_kit::component::highlighter::{HighlightTheme, SyntaxHighlighter};
+    use gpui_kit::component::input::Rope;
+    use gpui_kit::px;
+
+    #[test]
+    fn offscreen_cells_share_one_layout_reservation() {
+        let mut rows = CellRows::default();
+        for _ in 0..2002 {
+            rows.push(None, px(28.));
+            rows.push(None, px(100.));
+        }
+        rows.flush();
+        assert_eq!(rows.children.len(), 1);
+        assert_eq!(rows.positions[4003], (0, px(256156.), px(100.)));
+    }
+
+    #[test]
+    fn registered_notebook_languages_keep_highlighting() {
+        crate::register_r();
+        let theme = HighlightTheme::default_light();
+        for (language, code) in [
+            ("r", "library(Seurat)\ncounts <- matrix(1, nrow = 2)"),
+            ("python", "import scanpy as sc\ncounts = [1, 2]"),
+        ] {
+            for _ in 0..2 {
+                let mut highlighter = SyntaxHighlighter::new(language);
+                assert_eq!(highlighter.language().as_ref(), language);
+                highlighter.update(None, &Rope::from(code), None);
+                assert!(!highlighter.tree().unwrap().root_node().has_error());
+                assert!(!highlighter.styles(&(0..code.len()), &*theme).is_empty());
+            }
+        }
     }
 }

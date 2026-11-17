@@ -1247,6 +1247,10 @@ mod opening_tests {
             window.draw(cx).clear(cx);
         })
         .unwrap();
+        cx.read(|cx| {
+            let count = workbench.read(cx).notebook_scroll.children_count();
+            assert!(count < 100, "offscreen layout reservations: {count}");
+        });
         // Newly measured output views above the viewport must not move its anchor.
         let anchor = cx
             .update_window(handle, |_, _, cx| {
@@ -1256,7 +1260,7 @@ mod opening_tests {
                         x: px(0.),
                         y: -scroll.max_offset().y / 2.,
                     });
-                    let anchor = scroll.logical_scroll_top();
+                    let anchor = this.placed.logical_scroll_top(scroll).unwrap();
                     cx.notify();
                     anchor
                 })
@@ -1270,8 +1274,11 @@ mod opening_tests {
             .unwrap();
         }
         cx.read(|cx| {
-            let scroll = &workbench.read(cx).notebook_scroll;
-            let after = scroll.logical_scroll_top();
+            let this = workbench.read(cx);
+            let after = this
+                .placed
+                .logical_scroll_top(&this.notebook_scroll)
+                .unwrap();
             assert_eq!(after.0, anchor.0);
             assert!((after.1 - anchor.1).abs() <= px(0.5));
         });

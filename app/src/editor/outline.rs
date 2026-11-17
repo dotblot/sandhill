@@ -373,7 +373,7 @@ impl Workbench {
                         };
                         let child = Self::child_of_cell(open, cell);
                         let scroll = &this.notebook_scroll;
-                        if let Some(bounds) = scroll.bounds_for_item(child) {
+                        if let Some(bounds) = this.placed.bounds_for_item(scroll, child) {
                             let row = editor
                                 .read(cx)
                                 .display_map()

@@ -158,6 +158,8 @@ impl Workbench {
                 .child(self.render_source_document(open, cx))
                 .into_any_element();
         }
+        let scroll = self.notebook_scroll.clone();
+        let anchor = self.placed.logical_scroll_top(&scroll);
         let bodies = open
             .notebook
             .cells
@@ -188,9 +190,12 @@ impl Workbench {
         let cells = self.render_cells(open, bodies, window, cx);
         let commanding = self.cells_focus.is_focused(window);
         let header_height = self.notebook_header_height();
-        let target = self.notebook_scroll_target.take();
-        let scroll = self.notebook_scroll.clone();
-        let anchor = (scroll.children_count() > 0).then(|| scroll.logical_scroll_top());
+        let target = self
+            .notebook_scroll_target
+            .take()
+            .and_then(|logical| self.placed.scroll_child(logical));
+        let anchor =
+            anchor.and_then(|(logical, within)| self.placed.scroll_anchor(logical, within));
         let original_offset = scroll.offset();
         let scroller = div()
             .on_children_prepainted(move |_, window, _| {
