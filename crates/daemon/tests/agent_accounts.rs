@@ -401,45 +401,27 @@ async fn installed_clis_start_with_isolated_account_environments_without_authent
         );
         registry.remove(&account.id, &[]).unwrap();
     }
-    let Some(agy) = sandhill_daemon::agents::find("agy") else {
-        eprintln!("skipping Antigravity API-key launch: agy is not installed");
-        return;
-    };
-    #[cfg(target_os = "macos")]
-    let (env, account_id) = {
-        eprintln!(
-            "Antigravity smoke uses direct launch env on macOS; no real Keychain entry is read or written"
-        );
-        (
-            vec![
-                ("GEMINI_API_KEY".into(), KEY.into()),
-                ("SANDHILL_AGY_API_KEY".into(), "1".into()),
-            ],
-            None::<String>,
-        )
-    };
+    // Antigravity's API-key account is checked without starting the real
+    // agy: run in a scratch home it opened a Google sign-in page (Huan,
+    // 2026-11-16, after Google suspended an account Sandhill kept checking).
+    // On macOS the key lives in the Keychain, which tests leave alone.
     #[cfg(not(target_os = "macos"))]
-    let (env, account_id) = {
+    {
         let account = registry
             .add("antigravity", "Disposable API key", Some(KEY))
             .unwrap();
         let env = registry
             .environment("antigravity", Some(&account.id))
             .unwrap();
-        let serialized = serde_json::to_string(&account).unwrap();
-        assert!(!serialized.contains(KEY));
-        (env, Some(account.id))
-    };
-    assert_eq!(
-        env.iter()
-            .find(|(name, _)| name == "GEMINI_API_KEY")
-            .unwrap()
-            .1,
-        KEY
-    );
-    version_with_env(&agy, &home, &env, &["--version"]).await;
-    if let Some(id) = account_id {
-        registry.remove(&id, &[]).unwrap();
+        assert!(!serde_json::to_string(&account).unwrap().contains(KEY));
+        assert_eq!(
+            env.iter()
+                .find(|(name, _)| name == "GEMINI_API_KEY")
+                .unwrap()
+                .1,
+            KEY
+        );
+        registry.remove(&account.id, &[]).unwrap();
     }
 }
 
