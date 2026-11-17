@@ -12,20 +12,35 @@ GitHub page. Nothing is published until Huan has seen and approved it.
   difference, there are no movies.
 - Huan's own desktop and private information must never show.
 - Huan's Ubuntu server may be used for the server tests.
+- Both apps in the light theme only (Huan, 2026-11-16).
 
 ## Keeping it fair
-- Same Mac, same files, same tasks, same window size, one app at a time.
-  The Mac: Apple M1 Ultra, 64 GB, macOS 27.2.1, two 60 Hz displays.
-- Versions are written down: Positron 2026.11.1 (build 4), and the
-  Sandhill commit the test build comes from.
+- Same Mac, same files, same tasks, same window, one app at a time.
+  The Mac: Apple M1 Ultra, 64 GB, macOS 27.2.1, two 60 Hz displays. The
+  window is 1878 x 1040 on the main display: both apps size new windows to
+  the second, smaller display here, and that is the frame Positron settles
+  on, so Sandhill is moved to match.
+- Versions are written down: Positron 2026.11.1 (build 4), and Sandhill
+  built from f916b05.
 - Positron runs as a fresh install: empty `--user-data-dir` and
-  `--extensions-dir`, so only its built-in extensions (R and Python among
-  them) load. Huan's own Positron and its extensions are not touched; it
-  is quit during the measurements.
+  `--extensions-dir`. On its first start it installs 15 extensions (Jupyter,
+  Quarto, Ruff, Pyrefly, Air, Posit Assistant and others); those stay, as a
+  new user gets them. Huan's own Positron and its extensions are not
+  touched; it is quit during the measurements.
+- Positron uses Huan's real home folder: with an empty one it stops at
+  start-up waiting for the Mac's keychain (Huan chose this, 2026-11-16).
+  R's and Python's start-up files are switched off for it.
 - Sandhill runs from a test build with an empty home and state folder, never
   `/Applications/Sandhill.app` or its daemon.
+- Every run starts from the same saved state of each app (no open files, no
+  running sessions), with the other app not running.
 - Scrolling and dragging are sent by a script, identical for both apps.
-- Each measurement is taken five times; the page gives the middle value.
+- Each measurement is taken five times, after one warm-up run that isn't
+  kept; the page gives the middle value.
+- Memory is what Activity Monitor shows (`footprint`), added up over all of
+  an app's processes except R and Python sessions themselves. Positron
+  starts R and Python when it opens, and Python again when a notebook
+  opens; Sandhill starts them only when code runs.
 - Measuring and filming are separate runs.
 - The page says where Positron is better (Windows and Linux, the extension
   marketplace, the debugger, maturity, Posit behind it) and that Sandhill is
@@ -79,6 +94,7 @@ Built from public data only, the same files for both apps:
 ## Where things go
 | What | Where | Public? |
 |---|---|---|
-| Recordings, test runs, empty homes, demo files | `~/Documents/projects/sandhill-comparison-work/`, outside the repository | No |
+| Recordings, test runs, measuring scripts | `~/Documents/projects/sandhill-comparison-work/`, outside the repository | No |
+| Demo project, data and the apps' empty homes | `/Users/Shared/sandhill-demo/`, so no path on screen contains Huan's user name | No |
 | The page and approved screenshots | `docs/comparison/positron.md`, `docs/comparison/positron/` | After Huan approves |
 | Approved movies | Uploaded through GitHub's web editor (kept outside the repository's history), later the website | After Huan approves |
