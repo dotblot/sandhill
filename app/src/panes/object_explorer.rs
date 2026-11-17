@@ -590,8 +590,11 @@ impl Workbench {
         let language = tab.language.clone();
         let project = self.project.clone();
         self.reveal_middle();
+        let busy = self.session_is_busy(&session);
         self.explorer =
-            Some(cx.new(|cx| Explorer::new(daemon, session, language, path, project, window, cx)));
+            Some(cx.new(|cx| {
+                Explorer::new(daemon, session, busy, language, path, project, window, cx)
+            }));
         if let Some(explorer) = &self.explorer {
             cx.subscribe_in(
                 explorer,

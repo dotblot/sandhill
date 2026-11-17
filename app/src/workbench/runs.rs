@@ -35,6 +35,13 @@ impl Workbench {
         }
     }
 
+    /// Visible runs drive the Explorer's busy/idle notifications.
+    pub(crate) fn session_is_busy(&self, session: &str) -> bool {
+        self.runs
+            .values()
+            .any(|run| run.session == session && !run.finished && !run.quiet)
+    }
+
     /// The kernel Variables, Help and Packages show: the Console's.
     /// Activating or running a document moves the Console to its kernel; a
     /// document without one (or opening another file) leaves it where it is.

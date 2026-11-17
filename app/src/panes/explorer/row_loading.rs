@@ -109,14 +109,13 @@ impl Explorer {
                     }
                     Err(err) => {
                         let err = format!("{err:#}");
-                        // A busy kernel can't answer: scrolling there again
-                        // retries, and the end of the run reads it all again.
                         this.blocks.insert(block, Block::Failed);
                         if err.contains(BUSY) {
                             this.stale = true;
-                        } else {
-                            this.error = Some(err);
                         }
+                        // If idle was delivered before this reply, still
+                        // explain the refusal instead of leaving a spinner.
+                        this.error = Some(err);
                     }
                 }
                 cx.notify();

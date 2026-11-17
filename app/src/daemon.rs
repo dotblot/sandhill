@@ -195,6 +195,41 @@ impl Daemon {
         }
     }
 
+    /// A connection to a test-owned daemon, without consulting global socket
+    /// settings or connecting to the user's daemon.
+    #[cfg(test)]
+    pub(crate) fn from_test_connection(
+        rt: Arc<Runtime>,
+        mut connection: sandhill_link::Connection,
+    ) -> Self {
+        let lsp = connection.client.take_lsp_messages().unwrap();
+        let client = Arc::new(connection.client);
+        let (language, _) =
+            crate::editor::language::transport::Transport::new(client.clone(), lsp, &rt);
+        let (queue, mut queued) = tokio::sync::mpsc::unbounded_channel::<Queued>();
+        let sender = client.clone();
+        rt.spawn(async move {
+            while let Some((call, reply)) = queued.recv().await {
+                let _ = reply.send(
+                    sender
+                        .call::<serde_json::Value>(call)
+                        .await
+                        .map_err(Into::into),
+                );
+            }
+        });
+        Self {
+            rt,
+            client,
+            language,
+            queue,
+            ports: Default::default(),
+            forwards: Default::default(),
+            child: Arc::new(tokio::sync::Mutex::new(connection.child)),
+            bundled_build: Default::default(),
+        }
+    }
+
     /// Observe EOF without retaining the attach process or stopping its daemon.
     pub(crate) fn closed(&self) -> impl Future<Output = ()> + Send + 'static {
         let client = self.client.clone();
@@ -398,6 +433,13 @@ impl Daemon {
     }
 }
 
+// Kills every daemon and kernel started from a test's folder when it's
+// dropped: connecting can start a replacement daemon the test doesn't own,
+// and two were found still running a day later.
+#[cfg(test)]
+#[path = "../../crates/daemon/tests/common/mod.rs"]
+pub(crate) mod test_common;
+
 #[cfg(test)]
 mod tests {
     //! Runs a notebook cell the way the window does, against a real daemon
@@ -416,6 +458,8 @@ mod tests {
     use crate::editor::notebook;
     use crate::editor::shown::{Shown, show};
 
+    use super::test_common as common;
+
     /// The workspace's own build of sandhilld (`cargo build -p sandhill-daemon`).
     fn sandhilld() -> Option<PathBuf> {
         let path = std::env::var_os("SANDHILL_DAEMON")
@@ -433,7 +477,7 @@ mod tests {
             return;
         };
         let rt = Arc::new(Runtime::new().unwrap());
-        let dir = tempfile::tempdir().unwrap();
+        let dir = common::tempdir().unwrap();
         let state = dir.path().join("state");
         let socket = state.join("sandhilld.sock");
         let _serve = rt.block_on(async {

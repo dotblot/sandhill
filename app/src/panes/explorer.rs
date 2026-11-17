@@ -38,6 +38,9 @@ mod summary;
 mod toolbar;
 mod viewport;
 
+#[cfg(test)]
+mod loading_tests;
+
 /// Rows read at a time.
 const BLOCK: u64 = 200;
 /// How narrow and wide a column can be dragged.
@@ -312,9 +315,11 @@ impl Render for ExplorerWindow {
 }
 
 impl Explorer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         daemon: Rc<Daemon>,
         session: String,
+        busy: bool,
         language: String,
         path: Vec<String>,
         project: Option<String>,
@@ -416,7 +421,7 @@ impl Explorer {
             search: String::new(),
             search_generation: 0,
             side_shown: crate::prefs::column_stats(),
-            busy: false,
+            busy,
             stale: false,
             edit: None,
             value_a,
@@ -553,7 +558,9 @@ impl Explorer {
     /// Code started or stopped running in the table's session: once it
     /// stops the table is read again, as the kernel has it now.
     pub fn set_busy(&mut self, busy: bool, cx: &mut Context<Self>) {
-        if self.busy == busy {
+        // A request can discover a busy session before its start event reaches
+        // this view. Its idle event must retry even if our flag was false.
+        if self.busy == busy && (busy || !self.stale) {
             return;
         }
         self.busy = busy;
