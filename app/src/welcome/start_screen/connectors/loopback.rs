@@ -66,6 +66,11 @@ impl Drop for Loopback {
     }
 }
 
+/// How long a connection may take to send its request. Browsers open
+/// connections ahead of the request, so this is generous; each connection
+/// is read on its own thread, and a quiet one holds up no other.
+const REQUEST_WAIT: Duration = Duration::from_secs(10);
+
 fn listen(
     listener: &TcpListener,
     commands: Receiver<Control>,
@@ -73,6 +78,7 @@ fn listen(
 ) -> anyhow::Result<Callback> {
     let deadline = Instant::now() + timeout;
     let mut expected = None;
+    let (read_tx, read) = mpsc::channel::<(TcpStream, Option<Callback>)>();
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -84,30 +90,36 @@ fn listen(
             Instant::now() < deadline,
             "Sign-in timed out. Try signing in again."
         );
+        while let Ok((mut stream, callback)) = read.try_recv() {
+            if let Some(callback) = callback
+                && let Some((state, service)) = &expected
+                && callback.state == *state
+            {
+                let message = if let Some(error) = &callback.error {
+                    format!("Sign-in failed: {error}")
+                } else {
+                    format!(
+                        "Signed in to {service}. You can close this tab and go back to Sandhill."
+                    )
+                };
+                // Browser acknowledgement only; the daemon still exchanges the code.
+                let _ = respond(&mut stream, "200 OK", &message);
+                return Ok(callback);
+            }
+            let _ = respond(&mut stream, "404 Not Found", "Not found.");
+        }
         match listener.accept() {
-            Ok((mut stream, _)) => {
+            Ok((stream, _)) => {
                 // macOS hands accepted sockets the listener's non-blocking
                 // mode; the timeouts below only apply to a blocking socket.
                 stream.set_nonblocking(false)?;
-                stream.set_read_timeout(Some(Duration::from_millis(250)))?;
-                stream.set_write_timeout(Some(Duration::from_millis(250)))?;
-                let callback = read_callback(&stream).ok().flatten();
-                if let Some(callback) = callback
-                    && let Some((state, service)) = &expected
-                    && callback.state == *state
-                {
-                    let message = if let Some(error) = &callback.error {
-                        format!("Sign-in failed: {error}")
-                    } else {
-                        format!(
-                            "Signed in to {service}. You can close this tab and go back to Sandhill."
-                        )
-                    };
-                    // Browser acknowledgement only; the daemon still exchanges the code.
-                    let _ = respond(&mut stream, "200 OK", &message);
-                    return Ok(callback);
-                }
-                let _ = respond(&mut stream, "404 Not Found", "Not found.");
+                stream.set_read_timeout(Some(REQUEST_WAIT))?;
+                stream.set_write_timeout(Some(Duration::from_secs(1)))?;
+                let read_tx = read_tx.clone();
+                std::thread::spawn(move || {
+                    let callback = read_callback(&stream).ok().flatten();
+                    let _ = read_tx.send((stream, callback));
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -282,7 +294,9 @@ mod tests {
 
     #[test]
     fn loopback_waits_for_a_request_sent_after_connecting() {
-        // Browsers may open the connection before sending the request.
+        // Browsers may open the connection well before sending the request
+        // (and a busy machine can delay it): longer than the quarter second
+        // a connection was once given, which failed CI on 2026-11-17.
         let (listener, receive) = Loopback::bind().unwrap();
         listener.expect("right".into(), "Service".into()).unwrap();
         let address = listener
@@ -295,7 +309,7 @@ mod tests {
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(600));
         write!(
             stream,
             "GET /callback?state=right&code=late HTTP/1.1\r\nHost: {address}\r\n\r\n"
