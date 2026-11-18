@@ -104,3 +104,8 @@ differs, this wins.
   There Sandhill draws close, minimise and maximise in its title bar, on
   the right as Ubuntu puts them, and all three always show, whatever the
   desktop's own button setting says.
+- Linux on hold (Huan, 2026-11-18): the Ubuntu version works (checked on
+  Huan's Ubuntu 26.04), but it waits until the Mac app is as stable as
+  possible. Its code stays in the app, behind platform checks that leave
+  the Mac unchanged; its GitHub check and package run only when started by
+  hand, and no `.deb` is released.

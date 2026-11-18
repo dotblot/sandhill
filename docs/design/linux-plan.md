@@ -1,6 +1,10 @@
 # Sandhill on Ubuntu
 
-Status: approved by Huan (2026-11-18).
+Status: approved by Huan and built (2026-11-18); on hold until the Mac app
+is stable (Huan, 2026-11-18). Steps 1 to 5 are done and Huan checked the
+installed `.deb` on his Ubuntu 26.04. Left for when it resumes: the
+GitHub check's automatic triggers (see `.github/workflows/linux-app.yml`),
+a first `.deb` release, and moving this plan to `docs/design/done/`.
 
 ## What Huan asked for
 - A Linux version of Sandhill, starting with Ubuntu: one Ubuntu first,

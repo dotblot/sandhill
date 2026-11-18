@@ -1,16 +1,12 @@
 name: Linux app
 
-# Checks the app in app/ alongside the Mac app and the daemon's CI. A
-# version tag also builds an Ubuntu package and adds it to the Mac app release.
+# Checks the app in app/ on Ubuntu, and for a version tag builds an Ubuntu
+# package and adds it to the Mac app release. The Ubuntu version is on hold
+# while the Mac app is made stable (Huan, 2026-11-18), so this runs only when
+# started by hand from the Actions tab. To resume, restore the triggers:
+#   push: branches [main], tags ["v*"], with the paths filter;
+#   pull_request: the same paths.
 on:
-  push:
-    branches: [main]
-    # Path filters don't apply to tags: every version tag builds.
-    tags: ["v*"]
-    paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "notices/**", "packaging/linux/**", "tests/fixtures/**", "Cargo.toml", "Cargo.lock", ".github/workflows/linux-app.yml"]
-  pull_request:
-    paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "notices/**", "packaging/linux/**", "tests/fixtures/**", "Cargo.toml", "Cargo.lock", ".github/workflows/linux-app.yml"]
-  # Can also be started by hand from the Actions tab.
   workflow_dispatch:
 
 # Adding the package to the release needs to write to the repository.
