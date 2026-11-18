@@ -86,8 +86,9 @@ async fn until_asked_or_done(client: &mut Client, run: &str) -> Vec<Event> {
 }
 
 /// Waits for the run's question and returns its prompt and whether it is a
-/// password, with what the run printed before it.
-async fn asked(client: &mut Client, run: &str) -> (String, bool, String) {
+/// password. What the run printed may come after the question: the kernel
+/// sends output and questions on different channels.
+async fn asked(client: &mut Client, run: &str) -> (String, bool) {
     let events = until_asked_or_done(client, run).await;
     let question = events.last().unwrap();
     assert_eq!(
@@ -97,8 +98,17 @@ async fn asked(client: &mut Client, run: &str) -> (String, bool, String) {
     (
         question.content["prompt"].as_str().unwrap().to_string(),
         question.content["password"].as_bool().unwrap(),
-        stdout_of(&events),
     )
+}
+
+/// Everything a finished run printed, from the journal.
+async fn printed_by(client: &Client, session: &str, run: &str) -> String {
+    let history = client.history(session, 0, None).await.unwrap().events;
+    let events: Vec<Event> = history
+        .into_iter()
+        .filter(|e| e.run.as_deref() == Some(run))
+        .collect();
+    stdout_of(&events)
 }
 
 /// Waits for the run to finish: its status and its events.
@@ -147,7 +157,7 @@ async fn python_input_and_passwords_are_answered() {
 
     let code = "name = input('name? ')\nprint('hi', name)";
     let run = client.execute(&session, code, None).await.unwrap().run;
-    let (prompt, password, _) = asked(&mut client, &run).await;
+    let (prompt, password) = asked(&mut client, &run).await;
     assert_eq!((prompt.as_str(), password), ("name? ", false));
     client.input(&session, "Huan").await.unwrap();
     let (status, events) = finished(&mut client, &run).await;
@@ -158,7 +168,7 @@ async fn python_input_and_passwords_are_answered() {
 
     let code = "import getpass\nsecret = getpass.getpass('pw: ')\nlen(secret)";
     let run = client.execute(&session, code, None).await.unwrap().run;
-    let (prompt, password, _) = asked(&mut client, &run).await;
+    let (prompt, password) = asked(&mut client, &run).await;
     assert_eq!((prompt.as_str(), password), ("pw: ", true));
     client.input(&session, "hunter2").await.unwrap();
     let (status, events) = finished(&mut client, &run).await;
@@ -186,15 +196,16 @@ async fn python_breakpoint_and_debug_stop_in_the_debugger() {
 
     let code = "def f(x):\n    y = x * 2\n    breakpoint()\n    return y + 1\nf(10)";
     let run = client.execute(&session, code, None).await.unwrap().run;
-    let (prompt, _, _) = asked(&mut client, &run).await;
+    let (prompt, _) = asked(&mut client, &run).await;
     assert!(prompt.contains("db> "), "{prompt:?}");
     client.input(&session, "p y").await.unwrap();
-    let (_, _, printed) = asked(&mut client, &run).await;
-    assert!(printed.contains("20\n"), "{printed:?}");
+    asked(&mut client, &run).await;
     client.input(&session, "c").await.unwrap();
     let (status, events) = finished(&mut client, &run).await;
     assert_eq!(status, "ok");
     assert_eq!(result_text(&events).as_deref(), Some("21"));
+    let printed = printed_by(&client, &session, &run).await;
+    assert!(printed.contains("p y\n20\n"), "{printed:?}");
 
     // %debug looks at the last error.
     let run = client
@@ -206,10 +217,11 @@ async fn python_breakpoint_and_debug_stop_in_the_debugger() {
     let run = client.execute(&session, "%debug", None).await.unwrap().run;
     asked(&mut client, &run).await;
     client.input(&session, "p z * 6").await.unwrap();
-    let (_, _, printed) = asked(&mut client, &run).await;
-    assert!(printed.contains("42\n"), "{printed:?}");
+    asked(&mut client, &run).await;
     client.input(&session, "q").await.unwrap();
     finished(&mut client, &run).await;
+    let printed = printed_by(&client, &session, &run).await;
+    assert!(printed.contains("p z * 6\n42\n"), "{printed:?}");
 
     client.shutdown(&session).await.unwrap();
 }
@@ -227,15 +239,16 @@ async fn r_browser_steps_through_a_function() {
 
     let code = "f <- function(x) { y <- x * 2; browser(); y + 1 }\nf(10)";
     let run = client.execute(&session, code, None).await.unwrap().run;
-    let (prompt, _, _) = asked(&mut client, &run).await;
+    let (prompt, _) = asked(&mut client, &run).await;
     assert_eq!(prompt, "Browse[1]> ");
     client.input(&session, "y").await.unwrap();
-    let (_, _, printed) = asked(&mut client, &run).await;
-    assert!(printed.contains("[1] 20"), "{printed:?}");
+    asked(&mut client, &run).await;
     client.input(&session, "c").await.unwrap();
     let (status, events) = finished(&mut client, &run).await;
     assert_eq!(status, "ok");
     assert_eq!(result_text(&events).as_deref(), Some("[1] 21"));
+    let printed = printed_by(&client, &session, &run).await;
+    assert!(printed.contains("Browse[1]> y\n[1] 20"), "{printed:?}");
 
     client.shutdown(&session).await.unwrap();
 }

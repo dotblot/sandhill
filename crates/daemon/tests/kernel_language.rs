@@ -127,11 +127,30 @@ async fn completion_uses_runtime_without_execution(name: &str, setup: &str, pref
         .journal
         .events_since(&test.session.id, 0, 1000)
         .unwrap();
-    let reply = test
+    // A fresh kernel's first completion loads its completer (jedi in
+    // ipykernel: 0.19 s here against 0.01 s after), which can pass the
+    // 2 s limit on a busy CI machine (macOS, 2026-11-15 and 2026-11-18).
+    // Its answer, or its timeout, is not what this test checks.
+    let _ = test
         .session
         .complete(prefix.into(), prefix.chars().count())
-        .await
-        .unwrap();
+        .await;
+    // The kernel is busy with it until its idle status, which comes on
+    // another channel than its reply.
+    let mut tries = 0;
+    let reply = loop {
+        match test
+            .session
+            .complete(prefix.into(), prefix.chars().count())
+            .await
+        {
+            Err(err) if err.to_string().starts_with("kernel_busy") && tries < 40 => {
+                tries += 1;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            reply => break reply.unwrap(),
+        }
+    };
     assert!(
         reply
             .matches
