@@ -655,7 +655,7 @@ impl Render for FolderDialog {
             }))
             .child(
                 div()
-                    .text_size(px(16.))
+                    .text_size(px(look::TITLE))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(self.title.clone()),
             )

@@ -8,6 +8,7 @@ use gpui_kit::*;
 use sandhill_proto::{Call, PreviewInfo};
 
 use crate::editor::shown::Page;
+use crate::look;
 use crate::workbench::{BottomTab, Workbench};
 
 /// A page the Viewer was asked to show.
@@ -129,9 +130,10 @@ impl Workbench {
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;");
+        let font_size = look::CODE;
         let html = format!(
             "<!doctype html><meta charset=\"utf-8\"><style>body{{margin:0;padding:12px 16px;\
-             font:13px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}}\
+             font:{font_size}px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}}\
              @media (prefers-color-scheme: dark){{body{{background:#1f1f24;color:#dddddf}}}}</style>{escaped}"
         );
         self.add_extra(Extra {

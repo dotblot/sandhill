@@ -366,14 +366,13 @@ impl Workbench {
                     TextViewStyle::default()
                         .paragraph_gap(rems(0.5))
                         .heading_font_size(|level, _| {
-                            px(look::CHROME
-                                * match level {
-                                    1 => 1.6,
-                                    2 => 1.35,
-                                    3 => 1.15,
-                                    _ => 1.0,
-                                })
-                        }),
+                            px(match level {
+                                1 => look::TITLE,
+                                2 => look::CHROME,
+                                _ => look::TAB_TEXT,
+                            })
+                        })
+                        .code_block(StyleRefinement::default().text_size(px(look::DOC_CODE))),
                 ),
             )
             .into_any_element()
@@ -542,7 +541,7 @@ impl Workbench {
             .children(self.language_status(&open.notebook.path).map(|reason| {
                 div()
                     .id("language-status")
-                    .text_size(px(11.))
+                    .text_size(px(look::TINY))
                     .text_color(p.muted)
                     .child("Analysis unavailable")
                     .tooltip(move |window, cx| {

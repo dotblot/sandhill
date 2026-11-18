@@ -267,7 +267,7 @@ impl Workbench {
                                 .rounded_full()
                                 .bg(color.opacity(0.14))
                                 .text_color(color)
-                                .text_size(px(look::SMALL - 1.))
+                                .text_size(px(look::SMALL))
                                 .child(icon(name).size(px(11.)))
                                 .child(
                                     div()
@@ -281,7 +281,7 @@ impl Workbench {
                         .when(extra > 0, |d| {
                             d.child(
                                 div()
-                                    .text_size(px(look::SMALL - 1.))
+                                    .text_size(px(look::SMALL))
                                     .text_color(p.faint)
                                     .child(format!("+{extra}")),
                             )
@@ -319,7 +319,7 @@ impl Workbench {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_size(px(7.5))
+                        .text_size(px(look::TINY))
                         .font_weight(FontWeight::BOLD)
                         .text_color(avatar_text(&p, colors))
                         .when(is_head, |d| {
@@ -421,7 +421,7 @@ impl Workbench {
             .flex_none()
             .px(px(8.))
             .h(px(20.))
-            .text_size(px(look::SMALL - 1.))
+            .text_size(px(look::SMALL))
             .text_color(p.faint)
             .child(div().w(px(REFS_WIDTH)).child("Branch / Tag"))
             .child(div().w(px(graph_width)).flex_none().child("Graph"))
@@ -592,7 +592,7 @@ fn badge(text: String, color: Hsla) -> Div {
         .rounded_full()
         .bg(color.opacity(0.14))
         .text_color(color)
-        .text_size(px(look::SMALL - 1.))
+        .text_size(px(look::SMALL))
         .child(text)
 }
 

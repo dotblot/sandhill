@@ -128,7 +128,7 @@ impl Workbench {
             .id("plot-size-menu")
             .occlude()
             .w(px(310.))
-            .text_size(px(13.))
+            .text_size(px(look::SMALL))
             .child(rows)
             .child(
                 div()

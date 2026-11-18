@@ -140,7 +140,7 @@ impl SkillsView {
                     .child(
                         div()
                             .min_w_0()
-                            .text_size(px(16.))
+                            .text_size(px(look::TITLE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     ),
@@ -220,7 +220,7 @@ fn file_list(id: SharedString, paths: &[String], p: &Palette) -> Stateful<Div> {
         .max_h(px(160.))
         .overflow_y_scroll()
         .gap(px(2.))
-        .text_size(px(12.))
+        .text_size(px(look::SMALL))
         .text_color(p.muted)
         .children(paths.iter().map(|path| div().child(path.clone())))
 }

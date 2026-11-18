@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use crate::agents::chat::{self, Entry, Item, Step, StepStatus};
 use crate::agents::{Agents, kind_of};
+use crate::look;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Format {
@@ -101,9 +102,16 @@ fn html(entries: &[Entry], info: &Info) -> String {
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>{}</title>\n<style>{STYLE}</style>\n</head>\n<body>\n<main>\n{body}\n</main>\n\
+         <title>{}</title>\n<style>\n\
+         :root {{ --body-size: {}px; --title-size: {}px; --small-size: {}px; --code-size: {}px; --code-inset: {}px; }}\n\
+         {STYLE}</style>\n</head>\n<body>\n<main>\n{body}\n</main>\n\
          </body>\n</html>\n",
-        escape_text(&info.title)
+        escape_text(&info.title),
+        look::CHROME,
+        look::TITLE,
+        look::SMALL,
+        look::DOC_CODE,
+        look::DOC_CODE_INSET,
     )
 }
 
@@ -364,14 +372,15 @@ const STYLE: &str = r#"
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1d1c1a; --fg: #e8e4dc; --muted: #a39d93; --line: #3a3733; --code: #282623; }
 }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: var(--body-size)/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 main { max-width: 780px; margin: 0 auto; padding: 32px 16px 64px; }
-h1 { font-size: 22px; margin: 0 0 4px; }
-h1 + p { color: var(--muted); font-size: 13px; margin-top: 0; }
-h2 { font-size: 15px; margin: 28px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
+h1 { font-size: var(--title-size); margin: 0 0 4px; }
+h1 + p { color: var(--muted); font-size: var(--small-size); margin-top: 0; }
+h2 { font-size: var(--body-size); margin: 28px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
 section > :first-child { margin-top: 12px; }
-pre { background: var(--code); border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.45; }
-code { font-family: ui-monospace, Menlo, monospace; font-size: 0.92em; }
+pre { background: var(--code); border-radius: 6px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--code-size); line-height: 1.45; }
+code { font-family: ui-monospace, Menlo, monospace; font-size: calc(1em - var(--code-inset)); }
+pre code { font-size: inherit; }
 blockquote { margin: 12px 0; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
 img { display: block; max-width: 100%; margin: 8px 0; border-radius: 4px; background: #fff; }
 table { border-collapse: collapse; } td, th { border: 1px solid var(--line); padding: 3px 8px; }

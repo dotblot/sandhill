@@ -520,7 +520,7 @@ impl Explorer {
                                 d.child(
                                     h_flex()
                                         .flex_none()
-                                        .text_size(px(11.))
+                                        .text_size(px(look::TINY))
                                         .text_color(p.accent)
                                         .child(
                                             icon(if descending {

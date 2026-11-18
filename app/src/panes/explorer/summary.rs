@@ -237,7 +237,7 @@ impl Explorer {
                                     .justify_center()
                                     .rounded(px(4.))
                                     .bg(tint.map_or(p.ink(8.), |t| p.ansi[t].opacity(0.2)))
-                                    .text_size(px(11.))
+                                    .text_size(px(look::TINY))
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(badge)
                                     .tooltip(move |w, cx| {
@@ -320,7 +320,7 @@ impl Explorer {
                     .gap(px(6.))
                     .child(
                         div()
-                            .text_size(px(look::SMALL - 1.))
+                            .text_size(px(look::SMALL))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.faint)
                             .child("COLUMNS"),

@@ -16,6 +16,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::daemon::Daemon;
 use crate::editor::shown::{Page, plotly_page};
+use crate::look;
 
 /// What a web view is given: a page's HTML, or an address to load.
 enum Content {
@@ -262,7 +263,7 @@ impl Render for PageView {
         let note = |s: String| {
             div()
                 .p_2()
-                .text_xs()
+                .text_size(px(look::SMALL))
                 .italic()
                 .text_color(theme.muted_foreground)
                 .child(s)

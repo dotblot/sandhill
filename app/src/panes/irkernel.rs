@@ -236,7 +236,7 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .text_size(px(16.))
+                    .text_size(px(look::TITLE))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("Install IRkernel for {}?", r_name(offer))),
             )

@@ -42,7 +42,7 @@ impl Agents {
                             .when_some(view.detail.clone(), |d, detail| {
                                 d.child(
                                     div()
-                                        .text_size(px(look::SMALL + 1.))
+                                        .text_size(px(look::SMALL))
                                         .text_color(p.muted)
                                         .child(detail),
                                 )
@@ -51,7 +51,7 @@ impl Agents {
                     .when_some(view.view.added.filter(|n| *n > 0), |d, n| {
                         d.child(
                             div()
-                                .text_size(px(look::SMALL + 1.))
+                                .text_size(px(look::TINY))
                                 .text_color(p.ok)
                                 .child(format!("+{n}")),
                         )
@@ -111,7 +111,7 @@ impl Agents {
             return card
                 .child(
                     div()
-                        .text_size(px(look::SMALL + 1.))
+                        .text_size(px(look::SMALL))
                         .text_color(p.faint)
                         .child(text),
                 )
@@ -154,7 +154,7 @@ impl Agents {
                         .when_some(desc.clone(), |d, desc| {
                             d.child(
                                 div()
-                                    .text_size(px(look::SMALL + 1.))
+                                    .text_size(px(look::SMALL))
                                     .text_color(p.muted)
                                     .child(desc),
                             )

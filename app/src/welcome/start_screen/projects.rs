@@ -564,24 +564,26 @@ impl AppWindow {
         if !pinned.is_empty() {
             summary.push(format!("{} pinned", pinned.len()));
         }
-        let mut column =
-            v_flex().w_full().flex_none().gap(px(16.)).child(
-                v_flex()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .text_size(px(24.))
-                            .font_weight(FontWeight::BOLD)
-                            .child("Projects"),
-                    )
-                    .child(div().text_size(px(14.)).text_color(p.muted).child(
-                        if summary.is_empty() {
+        let mut column = v_flex().w_full().flex_none().gap(px(16.)).child(
+            v_flex()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .text_size(px(look::WELCOME_TITLE))
+                        .font_weight(FontWeight::BOLD)
+                        .child("Projects"),
+                )
+                .child(
+                    div()
+                        .text_size(px(look::TAB_TEXT))
+                        .text_color(p.muted)
+                        .child(if summary.is_empty() {
                             "Nothing open, running or pinned".to_string()
                         } else {
                             summary.join(" · ")
-                        },
-                    )),
-            );
+                        }),
+                ),
+        );
         let groups = [
             ("Pinned", pinned),
             ("Open", open_rows),
@@ -603,7 +605,7 @@ impl AppWindow {
                     .gap(px(6.))
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(look::SMALL))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.muted)
                             .child(title),
@@ -629,7 +631,7 @@ impl AppWindow {
             ));
         }
         if unconnected > 0 {
-            column = column.child(div().text_size(px(12.5)).text_color(p.muted).child(
+            column = column.child(div().text_size(px(look::SMALL)).text_color(p.muted).child(
                 if unconnected == 1 {
                     "Projects on 1 device that isn't connected are not shown.".to_string()
                 } else {
@@ -701,7 +703,7 @@ impl AppWindow {
                     .gap(px(2.))
                     .child(
                         div()
-                            .text_size(px(15.))
+                            .text_size(px(look::CHROME))
                             .font_weight(FontWeight::SEMIBOLD)
                             .overflow_hidden()
                             .text_ellipsis()
@@ -712,7 +714,7 @@ impl AppWindow {
                         h_flex()
                             .min_w_0()
                             .gap(px(6.))
-                            .text_size(px(12.))
+                            .text_size(px(look::SMALL))
                             .text_color(p.muted)
                             .child(
                                 icon(if entry.host == sandhill_link::LOCAL {
@@ -737,7 +739,7 @@ impl AppWindow {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(12.5))
+                    .text_size(px(look::SMALL))
                     .text_color(p.muted)
                     .child(status),
             )
@@ -837,7 +839,7 @@ impl AppWindow {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_size(px(24.))
+                    .text_size(px(look::WELCOME_TITLE))
                     .font_weight(FontWeight::BOLD)
                     .child(host_label(&host)),
             )
@@ -856,7 +858,7 @@ impl AppWindow {
         let mut column = v_flex().w_full().flex_none().gap(px(16.)).child(
             v_flex().gap(px(6.)).child(title).child(
                 div()
-                    .text_size(px(14.))
+                    .text_size(px(look::TAB_TEXT))
                     .text_color(if matches!(link, Some(MachineLink::Failed(_))) {
                         p.err
                     } else {
@@ -978,7 +980,7 @@ impl AppWindow {
                     .when(local, |d| {
                         d.child(
                             div()
-                                .text_size(px(12.5))
+                                .text_size(px(look::SMALL))
                                 .text_color(p.muted)
                                 .child("or drag folders here from Finder"),
                         )
@@ -1072,7 +1074,7 @@ impl AppWindow {
                     .gap(px(2.))
                     .child(
                         div()
-                            .text_size(px(15.))
+                            .text_size(px(look::CHROME))
                             .font_weight(FontWeight::SEMIBOLD)
                             .overflow_hidden()
                             .text_ellipsis()
@@ -1084,7 +1086,7 @@ impl AppWindow {
                         div()
                             .text_color(p.muted)
                             .font_family(look::MONO)
-                            .text_size(px(12.))
+                            .text_size(px(look::SMALL))
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
@@ -1094,7 +1096,7 @@ impl AppWindow {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(12.5))
+                    .text_size(px(look::SMALL))
                     .text_color(p.muted)
                     .child(status),
             )

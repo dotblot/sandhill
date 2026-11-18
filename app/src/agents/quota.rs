@@ -523,7 +523,7 @@ impl QuotaMonitor {
             header = header.child(
                 Button::new(SharedString::from(format!("quota-sign-in-{}", entry.id)))
                     .small()
-                    .text_size(px(13.))
+                    .text_size(px(look::SMALL))
                     .label("Sign In")
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.dismiss_popup(cx);
@@ -547,7 +547,7 @@ impl QuotaMonitor {
             header = header.child(
                 Button::new(SharedString::from(format!("quota-use-{}", entry.id)))
                     .small()
-                    .text_size(px(13.))
+                    .text_size(px(look::SMALL))
                     .label(if for_new_chats {
                         "Use for new chats"
                     } else {
@@ -641,7 +641,7 @@ impl QuotaMonitor {
                     .child(
                         Button::new(SharedString::from(format!("quota-reset-{}", entry.id)))
                             .small()
-                            .text_size(px(13.))
+                            .text_size(px(look::SMALL))
                             .label(if pending {
                                 "Using reset…"
                             } else {
@@ -677,7 +677,7 @@ impl QuotaMonitor {
                             h_flex().justify_end().gap(px(8.))
                                 .child(
                                     Button::new(SharedString::from(format!("quota-reset-cancel-{}", entry.id)))
-                                        .small().text_size(px(13.)).label("Cancel").disabled(pending)
+                                        .small().text_size(px(look::SMALL)).label("Cancel").disabled(pending)
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             if this.reset_pending.is_none() {
                                                 this.reset_confirm = None;
@@ -687,7 +687,7 @@ impl QuotaMonitor {
                                 )
                                 .child(
                                     Button::new(SharedString::from(format!("quota-reset-confirm-{}", entry.id)))
-                                        .small().text_size(px(13.)).primary()
+                                        .small().text_size(px(look::SMALL)).primary()
                                         .label(if pending { "Using reset…" } else { "Use Reset" })
                                         .disabled(self.reset_pending.is_some())
                                         .on_click(cx.listener(|this, _, _, cx| this.use_reset(cx))),
@@ -758,7 +758,7 @@ impl Render for QuotaMonitor {
         let mut visible = false;
         let mut details = crate::agents::composer_view::popup(&p)
             .id("account-quota-details")
-            .text_size(px(13.))
+            .text_size(px(look::SMALL))
             .w(px(460.))
             // The status bar keeps its chips on one line; explanations wrap.
             .whitespace_normal()

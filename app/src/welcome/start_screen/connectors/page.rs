@@ -82,9 +82,9 @@ impl AppWindow {
         });
         let mut page = v_flex().w_full().gap(px(16.))
             .child(h_flex().w_full().gap(px(12.))
-                .child(div().flex_1().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Connectors"))
+                .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Connectors"))
                 .children(add))
-            .child(div().text_size(px(14.)).text_color(p.muted).child("Connectors let agents look things up in databases and services. They are kept on each device and shared by every agent."))
+            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child("Connectors let agents look things up in databases and services. They are kept on each device and shared by every agent."))
             .child(h_flex().child(tabs));
         if let Some((_, _, view)) = &self.start.connectors {
             page = page.child(view.clone());
@@ -132,7 +132,7 @@ fn detail(title: &str, description: &str, caption: AnyElement, p: &Palette) -> D
 impl Render for ConnectorsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = welcome_palette(cx);
-        let mut page = v_flex().w_full().gap(px(16.)).text_size(px(13.));
+        let mut page = v_flex().w_full().gap(px(16.)).text_size(px(look::SMALL));
         if let Some(error) = &self.problem {
             return page
                 .child(div().text_color(p.err).child(error.clone()))

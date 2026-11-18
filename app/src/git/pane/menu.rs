@@ -21,7 +21,7 @@ impl Workbench {
                 .px(px(8.))
                 .pt(px(4.))
                 .pb(px(2.))
-                .text_size(px(look::SMALL - 1.))
+                .text_size(px(look::SMALL))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.faint)
                 .child(text)

@@ -589,11 +589,11 @@ impl AppWindow {
             .gap(px(10.))
             .child(
                 div()
-                    .text_size(px(24.))
+                    .text_size(px(look::WELCOME_TITLE))
                     .font_weight(FontWeight::BOLD)
                     .child("Resources and Storage"),
             )
-            .child(div().text_size(px(14.)).text_color(p.muted).child(
+            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
                 "Only the devices you tick are affected. Project folders are never removed.",
             ))
             .child(
@@ -667,7 +667,12 @@ impl AppWindow {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(title.to_string()),
                 )
-                .child(div().text_size(px(12.5)).text_color(p.muted).child(extra))
+                .child(
+                    div()
+                        .text_size(px(look::SMALL))
+                        .text_color(p.muted)
+                        .child(extra),
+                )
         };
         let mut card = v_flex()
             .w_full()
@@ -691,14 +696,14 @@ impl AppWindow {
                     )
                     .child(
                         div()
-                            .text_size(px(15.))
+                            .text_size(px(look::CHROME))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(crate::welcome::start_screen::host_label(host)),
                     )
                     .child(div().flex_1())
                     .child(
                         div()
-                            .text_size(px(12.5))
+                            .text_size(px(look::SMALL))
                             .text_color(p.muted)
                             .child(device.status.clone()),
                     ),
@@ -714,7 +719,7 @@ impl AppWindow {
                     .rounded(px(6.))
                     .bg(p.chunk)
                     .font_family(look::MONO)
-                    .text_size(px(12.))
+                    .text_size(px(look::SMALL))
                     .text_color(p.muted)
                     .child(error.clone())
                     .into_any_element()
@@ -778,7 +783,7 @@ impl AppWindow {
                                     .when_some(resource["project"].as_str(), |d, path| {
                                         d.child(
                                             div()
-                                                .text_size(px(12.))
+                                                .text_size(px(look::SMALL))
                                                 .font_family(look::MONO)
                                                 .text_color(p.muted)
                                                 .overflow_hidden()
@@ -791,7 +796,7 @@ impl AppWindow {
                             .child(
                                 div()
                                     .flex_none()
-                                    .text_size(px(12.5))
+                                    .text_size(px(look::SMALL))
                                     .text_color(p.muted)
                                     .child(text(resource, "state")),
                             ),
@@ -847,7 +852,7 @@ impl AppWindow {
                     h_flex()
                         .flex_wrap()
                         .gap(px(14.))
-                        .text_size(px(12.5))
+                        .text_size(px(look::SMALL))
                         .text_color(p.muted)
                         .child(legend(p.accent, format!("{} removable", bytes(removable))))
                         .child(legend(p.busy, format!("{} in use", bytes(active))))
@@ -934,7 +939,7 @@ impl AppWindow {
                                             h_flex()
                                                 .min_w_0()
                                                 .gap(px(4.))
-                                                .text_size(px(12.))
+                                                .text_size(px(look::SMALL))
                                                 .text_color(p.muted)
                                                 .child(
                                                     icon(if open {
@@ -970,7 +975,7 @@ impl AppWindow {
                                     |d| {
                                         d.child(
                                             div()
-                                                .text_size(px(12.))
+                                                .text_size(px(look::SMALL))
                                                 .text_color(p.muted)
                                                 .child(if in_use { "In use" } else { "Protected" }),
                                         )
@@ -982,7 +987,7 @@ impl AppWindow {
                                 items.into_iter().map(|item| {
                                     v_flex()
                                         .min_w_0()
-                                        .text_size(px(12.))
+                                        .text_size(px(look::SMALL))
                                         .text_color(p.muted)
                                         .child(
                                             h_flex()
@@ -1065,7 +1070,7 @@ impl AppWindow {
                         d.children(device.projects.iter().map(|path| {
                             div()
                                 .pl(px(18.))
-                                .text_size(px(12.))
+                                .text_size(px(look::SMALL))
                                 .font_family(look::MONO)
                                 .text_color(p.muted)
                                 .child(path.clone())
@@ -1114,7 +1119,7 @@ impl AppWindow {
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.5))
+                                    .text_size(px(look::SMALL))
                                     .text_color(p.muted)
                                     .whitespace_normal()
                                     .child(detail),
@@ -1230,7 +1235,7 @@ impl AppWindow {
                 .child(
                     div()
                         .pl(px(26.))
-                        .text_size(px(12.))
+                        .text_size(px(look::SMALL))
                         .font_family(look::MONO)
                         .text_color(p.muted)
                         .child(path),

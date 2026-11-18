@@ -539,7 +539,7 @@ impl Workbench {
                             .rounded(px(4.))
                             .border_1()
                             .border_color(p.glass_edge)
-                            .text_size(px(look::SMALL - 1.))
+                            .text_size(px(look::SMALL))
                             .child("esc"),
                     ),
             )

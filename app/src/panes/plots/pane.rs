@@ -184,7 +184,7 @@ impl Workbench {
                         .flex_none()
                         .px(px(10.))
                         .pb(px(4.))
-                        .text_size(px(13.))
+                        .text_size(px(look::SMALL))
                         .text_color(p.muted)
                         .child(note.clone()),
                 )

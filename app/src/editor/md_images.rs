@@ -17,7 +17,7 @@ use sandhill_proto::{Call, FileBytes, MAX_READ_BYTES};
 
 use crate::daemon::Daemon;
 use crate::editor::notebook::{CellKind, Format};
-use crate::look::Palette;
+use crate::look::{self, Palette};
 use crate::workbench::{Open, Workbench};
 
 const MAX_BYTES: u64 = 20 * 1024 * 1024;
@@ -398,7 +398,8 @@ fn placeholder(alt: &str, reason: &str, foreground: &str, border: &str) -> Arc<I
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;");
-    Arc::new(Image::from_bytes(ImageFormat::Svg, format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="30"><rect x="0.5" y="0.5" width="{}" height="29" rx="4" fill="none" stroke="{border}"/><text x="10" y="20" font-family="sans-serif" font-size="13" fill="{foreground}">{label}</text></svg>"#, width - 1).into_bytes()))
+    let font_size = look::SMALL;
+    Arc::new(Image::from_bytes(ImageFormat::Svg, format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="30"><rect x="0.5" y="0.5" width="{}" height="29" rx="4" fill="none" stroke="{border}"/><text x="10" y="20" font-family="sans-serif" font-size="{font_size}" fill="{foreground}">{label}</text></svg>"#, width - 1).into_bytes()))
 }
 
 fn attachment(attachments: &serde_json::Value, name: &str) -> Load {

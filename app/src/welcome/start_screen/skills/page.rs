@@ -82,9 +82,9 @@ impl AppWindow {
         });
         let mut page = v_flex().w_full().gap(px(16.))
             .child(h_flex().w_full().gap(px(12.))
-                .child(div().flex_1().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Skills"))
+                .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Skills"))
                 .children(add))
-            .child(div().text_size(px(14.)).text_color(p.muted).child("Skills are instructions agents load when the work calls for them. They are kept on each device and given to every agent."))
+            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child("Skills are instructions agents load when the work calls for them. They are kept on each device and given to every agent."))
             .child(h_flex().child(tabs));
         if let Some((_, _, view)) = &self.start.skills {
             page = page.child(view.clone());
@@ -95,7 +95,12 @@ impl AppWindow {
                 _ => "Connect to this device to manage its skills.".into(),
             };
             page = page
-                .child(div().text_size(px(13.)).text_color(p.muted).child(message))
+                .child(
+                    div()
+                        .text_size(px(look::SMALL))
+                        .text_color(p.muted)
+                        .child(message),
+                )
                 .child(self.welcome_connection_button(host, "skills-connect", "Connect", cx));
         }
         page.into_any_element()
@@ -123,12 +128,17 @@ fn detail(name: String, description: String, source: String, p: &Palette) -> Div
                 .whitespace_nowrap()
                 .child(description),
         )
-        .child(div().text_size(px(12.)).text_color(p.faint).child(source))
+        .child(
+            div()
+                .text_size(px(look::SMALL))
+                .text_color(p.faint)
+                .child(source),
+        )
 }
 impl Render for SkillsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = welcome_palette(cx);
-        let mut page = v_flex().w_full().gap(px(16.)).text_size(px(13.));
+        let mut page = v_flex().w_full().gap(px(16.)).text_size(px(look::SMALL));
         if let Some(error) = &self.problem {
             return page
                 .child(div().text_color(p.err).child(error.clone()))

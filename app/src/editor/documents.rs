@@ -13,7 +13,7 @@ use sandhill_proto::{Call, FileBytes, FileText, MAX_READ_BYTES};
 use crate::daemon::Daemon;
 use crate::editor::delimited::TEXT_LIMIT;
 use crate::editor::notebook;
-use crate::look::Palette;
+use crate::look::{self, Palette};
 use crate::workbench::{Open, Workbench};
 
 /// The last codepoint may be cut by the prefix request, but invalid UTF-8
@@ -264,7 +264,7 @@ impl Workbench {
                 .gap(px(8.))
                 .px(px(12.))
                 .py(px(6.))
-                .text_size(px(13.))
+                .text_size(px(look::SMALL))
                 .text_color(p.muted)
                 .bg(p.chrome)
                 .child("Read-only: showing the first 5 MB of this file.")

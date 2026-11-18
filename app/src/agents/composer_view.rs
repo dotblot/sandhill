@@ -72,7 +72,7 @@ fn heading(text: impl Into<SharedString>, p: &Palette) -> Div {
         .px(px(8.))
         .pt(px(4.))
         .pb(px(2.))
-        .text_size(px(look::SMALL - 1.))
+        .text_size(px(look::SMALL))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.faint)
         .child(text.into())
@@ -606,7 +606,7 @@ impl Agents {
                                 .whitespace_nowrap()
                                 .text_color(p.faint)
                                 .when(sign != '/', |d| d.font_family(look::MONO))
-                                .text_size(px(look::SMALL - 1.))
+                                .text_size(px(look::SMALL))
                                 .child(m.detail.clone().unwrap_or_default()),
                         )
                         .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())

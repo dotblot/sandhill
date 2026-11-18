@@ -234,7 +234,7 @@ impl Workbench {
                 .px(px(8.))
                 .pt(px(6.))
                 .pb(px(2.))
-                .text_size(px(look::SMALL - 1.))
+                .text_size(px(look::SMALL))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.faint)
                 .child(text)
@@ -293,7 +293,7 @@ impl Workbench {
                             .min_w_0()
                             .truncate()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(look::SMALL + 1.))
+                            .text_size(px(look::TAB_TEXT))
                             .child(crate::welcome::start_screen::host_label(&host)),
                     )
                     .child(
@@ -563,7 +563,7 @@ impl Workbench {
                 div()
                     .px(px(8.))
                     .pt(px(4.))
-                    .text_size(px(look::SMALL - 1.))
+                    .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(version),
             )

@@ -243,7 +243,7 @@ impl Workbench {
                             .gap(px(2.))
                             .child(
                                 div()
-                                    .text_size(px(16.))
+                                    .text_size(px(look::TITLE))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(format!("Trust {name}?")),
                             )

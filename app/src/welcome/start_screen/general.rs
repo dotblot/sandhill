@@ -84,8 +84,8 @@ impl AppWindow {
             .child(
                 v_flex()
                     .gap(px(6.))
-                    .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).child("General"))
-                    .child(div().text_size(px(14.)).text_color(p.muted).child(
+                    .child(div().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("General"))
+                    .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
                         "Choices for every project on this Mac. The buttons beside the editor, notebooks and panes change the same choices.",
                     )),
             )

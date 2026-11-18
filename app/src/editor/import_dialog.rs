@@ -525,7 +525,7 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .text_size(px(16.))
+                    .text_size(px(look::TITLE))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!(
                         "{} into {}",
@@ -603,7 +603,7 @@ impl Workbench {
                     .rounded(px(6.))
                     .bg(p.chunk)
                     .font_family(look::MONO)
-                    .text_size(px(look::CODE - 1.))
+                    .text_size(px(look::CODE))
                     .whitespace_normal()
                     .child(match &code {
                         Some((code, _)) => code.clone(),

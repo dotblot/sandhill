@@ -830,7 +830,7 @@ impl Workbench {
                     .gap(px(8.))
                     .child(
                         div()
-                            .text_size(px(20.))
+                            .text_size(px(look::TITLE))
                             .font_weight(FontWeight::BOLD)
                             .child(
                                 r.percent

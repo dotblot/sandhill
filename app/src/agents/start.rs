@@ -261,14 +261,14 @@ impl Agents {
             )
             .child(
                 div()
-                    .text_size(px(look::CHROME + 1.))
+                    .text_size(px(look::TITLE))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(p.text)
                     .child(chosen.name),
             )
             .child(
                 div()
-                    .text_size(px(look::SMALL + 1.))
+                    .text_size(px(look::SMALL))
                     .text_color(p.muted)
                     .child(subtitle),
             )
@@ -280,7 +280,7 @@ impl Agents {
                 d.child(
                     div()
                         .pt(px(6.))
-                        .text_size(px(look::SMALL + 1.))
+                        .text_size(px(look::SMALL))
                         .text_color(p.faint)
                         .child(format!(
                             "Opens {}'s own screen here. Enter starts it without a message.",
@@ -302,7 +302,7 @@ impl Agents {
                 .child(
                     div()
                         .font_family(look::MONO)
-                        .text_size(px(look::SMALL + 1.))
+                        .text_size(px(look::CODE))
                         .child(install),
                 )
         });
@@ -328,7 +328,7 @@ impl Agents {
                 .rounded(px(4.))
                 .border_1()
                 .border_color(p.ink(14.))
-                .text_size(px(look::SMALL - 1.))
+                .text_size(px(look::SMALL))
                 .text_color(p.muted)
                 .child(text)
         };

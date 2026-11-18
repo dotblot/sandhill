@@ -89,7 +89,7 @@ fn last_reply(items: &[Item]) -> String {
 
 fn heading(text: &'static str, p: &Palette) -> Div {
     div()
-        .text_size(px(look::SMALL - 1.))
+        .text_size(px(look::SMALL))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.muted)
         .child(text)
@@ -131,13 +131,13 @@ fn tile(value: AnyElement, label: String, p: &Palette) -> Div {
         .pb(px(8.))
         .child(
             div()
-                .text_size(px(look::CHROME + 3.))
+                .text_size(px(look::TITLE))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(value),
         )
         .child(
             div()
-                .text_size(px(look::SMALL - 1.))
+                .text_size(px(look::SMALL))
                 .text_color(p.muted)
                 .child(label),
         )
@@ -146,7 +146,7 @@ fn tile(value: AnyElement, label: String, p: &Palette) -> Div {
 fn note(text: &'static str, p: &Palette) -> Div {
     div()
         .pt(px(6.))
-        .text_size(px(look::SMALL - 1.))
+        .text_size(px(look::SMALL))
         .text_color(p.muted)
         .child(text)
 }
@@ -245,7 +245,7 @@ impl Agents {
                     .pb(px(8.))
                     .child(
                         div()
-                            .text_size(px(26.))
+                            .text_size(px(look::TITLE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .line_height(px(28.))
                             .child(used.map_or(format!("{}%", percent.round()), tokens)),
@@ -274,7 +274,7 @@ impl Agents {
                 d.child(
                     div()
                         .pt(px(6.))
-                        .text_size(px(look::SMALL - 1.))
+                        .text_size(px(look::SMALL))
                         .text_color(p.muted)
                         .child(free),
                 )
@@ -384,7 +384,7 @@ impl Agents {
                     )
                     .child(
                         div()
-                            .text_size(px(look::SMALL - 1.))
+                            .text_size(px(look::SMALL))
                             .text_color(p.muted)
                             .child(place),
                     )

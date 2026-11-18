@@ -16,6 +16,8 @@ Done so far:
 - **UI values and buttons**: `app/src/look.rs` names the shared values
   for later pane passes. Labelled actions use Kit's button at 20, 26,
   or 30px, and destructive actions share one red button style.
+- **Text sizes**: the app uses the shared title, body, label, small and
+  tiny sizes. Code is 15px, or 14px alongside documentation prose.
 
 Huan: "It seems like a lot of inconsistent." This plan keeps the look that
 is settled (glass window, floating panes, round tabs, navy accent, fonts,

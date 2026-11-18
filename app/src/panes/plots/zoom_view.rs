@@ -142,7 +142,7 @@ impl Workbench {
         let beside = card_width >= px(720.);
         let heading = |text: &'static str| {
             div()
-                .text_size(px(look::SMALL - 1.))
+                .text_size(px(look::SMALL))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.faint)
                 .child(text)

@@ -31,6 +31,8 @@ pub const CHROME: f32 = 15.;
 pub const CODE: f32 = 15.;
 /// Kernel and resource rows, popups and drop-downs: 11px there.
 pub const SMALL: f32 = 13.;
+/// Code displayed alongside body prose in documentation.
+pub const DOC_CODE: f32 = CHROME - DOC_CODE_INSET;
 /// Pane tab titles and toolbar buttons: 1pt below the chrome's text.
 pub const TAB_TEXT: f32 = 14.;
 /// The room either side of a tab's label, the same in every pane.
@@ -1120,7 +1122,7 @@ pub fn settings_group(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -
         .child(
             div()
                 .px(px(14.))
-                .text_size(px(12.))
+                .text_size(px(SMALL))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.muted)
                 .child(title),
@@ -1152,7 +1154,7 @@ pub fn settings_box(rows: Vec<AnyElement>, p: &Palette) -> Div {
 /// The grey line under a settings row's name.
 pub fn settings_detail(text: impl Into<SharedString>, p: &Palette) -> Div {
     div()
-        .text_size(px(12.5))
+        .text_size(px(SMALL))
         .text_color(p.muted)
         .whitespace_normal()
         .child(text.into())

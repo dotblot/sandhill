@@ -26,7 +26,7 @@ pub(super) fn card_shell(
 pub(super) fn grey(text: &str, p: &Palette) -> Div {
     div()
         .min_w_0()
-        .text_size(px(13.))
+        .text_size(px(look::SMALL))
         .text_color(p.muted)
         .child(text.to_string())
 }

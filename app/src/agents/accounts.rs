@@ -649,7 +649,7 @@ impl AccountManager {
             .border_color(p.glass_edge)
             .shadow_lg()
             .text_color(p.text)
-            .text_size(px(13.))
+            .text_size(px(look::SMALL))
             .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -1072,7 +1072,7 @@ impl AccountManager {
                                         .rounded_full()
                                         .bg(p.accent_soft)
                                         .text_color(p.accent)
-                                        .text_size(px(look::SMALL - 1.))
+                                        .text_size(px(look::SMALL))
                                         .child("Default for new chats"),
                                 )
                             }),

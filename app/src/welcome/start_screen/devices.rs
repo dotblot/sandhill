@@ -363,7 +363,7 @@ impl AppWindow {
             card = card
                 .child(
                     div()
-                        .text_size(px(16.))
+                        .text_size(px(look::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Rename {}", host_label(host))),
                 )
@@ -433,7 +433,7 @@ impl AppWindow {
             card = card
                 .child(
                     div()
-                        .text_size(px(16.))
+                        .text_size(px(look::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Icon for {}", crate::panes::files::base_name(path))),
                 )
@@ -463,7 +463,7 @@ impl AppWindow {
             let connecting = self.start.connecting_server.is_some();
             let empty = self.start.server_input.read(cx).value().trim().is_empty();
             card = card
-                .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child("Connect to Server"))
+                .child(div().text_size(px(look::TITLE)).font_weight(FontWeight::SEMIBOLD).child("Connect to Server"))
                 .child(Input::new(&self.start.server_input).small().disabled(connecting))
                 .child(div().text_color(p.muted).child(
                     "Sandhill connects with ssh, using your ~/.ssh/config and keys, so a name from there works. The first time, it installs sandhilld in ~/.local/bin on the server.",
@@ -495,7 +495,7 @@ impl AppWindow {
                 .track_focus(&self.start.dialog_focus)
                 .child(
                     div()
-                        .text_size(px(16.))
+                        .text_size(px(look::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Open Folder on {}", host_label(host))),
                 )

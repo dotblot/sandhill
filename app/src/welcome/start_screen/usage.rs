@@ -83,10 +83,10 @@ impl AppWindow {
                 h_flex()
                     .w_full()
                     .gap(px(12.))
-                    .child(div().flex_1().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Usage"))
+                    .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Usage"))
                     .children(refresh),
             )
-            .child(div().text_size(px(14.)).text_color(p.muted).child(
+            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
                 "What the agents in Sandhill's conversations used on this device: requests, tokens and their cost estimates.",
             ))
             .child(h_flex().child(devices));
@@ -99,7 +99,12 @@ impl AppWindow {
                 _ => "Connect to this device to see its usage.".into(),
             };
             page = page
-                .child(div().text_size(px(13.)).text_color(p.muted).child(message))
+                .child(
+                    div()
+                        .text_size(px(look::SMALL))
+                        .text_color(p.muted)
+                        .child(message),
+                )
                 .child(self.welcome_connection_button(host, "usage-connect", "Connect", cx));
         }
         page.into_any_element()
@@ -283,13 +288,13 @@ impl UsageView {
                 )
                 .child(
                     div()
-                        .text_size(px(22.))
+                        .text_size(px(look::TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(value),
                 )
                 .children(note.map(|note| {
                     div()
-                        .text_size(px(look::SMALL - 1.))
+                        .text_size(px(look::SMALL))
                         .text_color(p.faint)
                         .child(note)
                 }))
@@ -374,7 +379,7 @@ impl UsageView {
             .child(
                 h_flex()
                     .w_full()
-                    .text_size(px(look::SMALL - 1.))
+                    .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(div().flex_1().child(first))
                     .child(last),

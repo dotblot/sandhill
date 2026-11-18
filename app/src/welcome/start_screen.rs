@@ -615,13 +615,13 @@ impl AppWindow {
                     )
                     .children(option_env!("SANDHILL_COMMIT").map(|build| {
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(look::SMALL))
                             .text_color(p.muted)
                             .child(format!("build {}", build.get(..7).unwrap_or(build)))
                     }))
                     .child(
                         div()
-                            .text_size(px(12.5))
+                            .text_size(px(look::SMALL))
                             .text_color(p.muted)
                             .text_center()
                             .child("Elegance in discovery."),
@@ -668,7 +668,7 @@ impl AppWindow {
                                 d.child(div().mt(px(12.)).text_color(p.err).child(problem))
                             })
                             .child(div().flex_1().min_h(px(28.)))
-                            .when(footnote, |d| d.child(div().flex_none().text_size(px(12.5)).text_color(p.muted)
+                            .when(footnote, |d| d.child(div().flex_none().text_size(px(look::SMALL)).text_color(p.muted)
                                 .child("Kernels keep running after you close a project. Reopening it reattaches to them and restores your tabs."))))),
             )
             .child(self.start_title_bar(cx))
@@ -770,7 +770,7 @@ fn sidebar_heading(label: &'static str, p: &Palette) -> Div {
     div()
         .px(px(10.))
         .py(px(6.))
-        .text_size(px(12.))
+        .text_size(px(look::SMALL))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.muted)
         .child(label)

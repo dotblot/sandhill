@@ -103,7 +103,7 @@ impl Render for Agents {
                         .py(px(6.))
                         .rounded(px(RADIUS))
                         .bg(p.err_soft)
-                        .text_size(px(look::SMALL + 1.))
+                        .text_size(px(look::SMALL))
                         .child(div().flex_1().min_w_0().child(problem))
                         .child(
                             icon_button("agent-error-close", "close", &p, false)
@@ -471,7 +471,7 @@ impl Agents {
                     .px(px(10.))
                     .pt(px(10.))
                     .pb(px(2.))
-                    .text_size(px(look::SMALL + 1.))
+                    .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(name)
                     .into_any_element(),
@@ -497,7 +497,7 @@ impl Agents {
                         div()
                             .px(px(10.))
                             .pt(px(14.))
-                            .text_size(px(look::SMALL + 1.))
+                            .text_size(px(look::SMALL))
                             .text_color(p.faint)
                             .child("Conversations are kept by sandhilld. Reopening one resumes the agent's own conversation."),
                     ),
@@ -618,7 +618,7 @@ impl Agents {
                     )
                     .child(
                         div()
-                            .text_size(px(look::SMALL + 1.))
+                            .text_size(px(look::SMALL))
                             .text_color(if self.waiting(t) { p.accent } else { p.faint })
                             .child(sub),
                     ),
@@ -672,7 +672,7 @@ impl Agents {
                     .border_b_1()
                     .border_color(p.line)
                     .text_color(p.muted)
-                    .text_size(px(look::SMALL + 1.))
+                    .text_size(px(look::SMALL))
                     .child(icon("terminal").size(px(14.)))
                     .child(
                         div()
@@ -763,7 +763,7 @@ pub(super) fn step_card(
             .border_color(p.line)
             .bg(bg)
             .font_family(look::MONO)
-            .text_size(px(look::SMALL + 1.))
+            .text_size(px(look::CODE))
             .line_height(rems(1.5))
             .text_color(color)
             .whitespace_nowrap()
@@ -800,7 +800,7 @@ pub(super) fn step_card(
                 .border_color(p.line)
                 .bg(p.chunk)
                 .font_family(look::MONO)
-                .text_size(px(look::SMALL + 1.))
+                .text_size(px(look::CODE))
                 .line_height(rems(1.5))
                 .children(lines),
         );

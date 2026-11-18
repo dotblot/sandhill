@@ -858,7 +858,7 @@ impl Workbench {
                         .flex_none()
                         .px(px(4.))
                         .rounded(px(4.))
-                        .text_size(px(look::SMALL - 2.))
+                        .text_size(px(look::TINY))
                         .bg(p.ink(8.))
                         .text_color(p.muted)
                         .child(if python { "Py" } else { "R" }),
@@ -1065,7 +1065,7 @@ impl Workbench {
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(look::CHROME + 2.))
+                            .text_size(px(look::TITLE))
                             .child(if page.topic.is_empty() {
                                 page.package.clone()
                             } else {
@@ -1263,7 +1263,7 @@ fn note(text: String, color: Hsla, _p: &Palette) -> AnyElement {
     div()
         .px(px(14.))
         .py(px(6.))
-        .text_size(px(look::SMALL + 1.))
+        .text_size(px(look::SMALL))
         .text_color(color)
         .child(text)
         .into_any_element()
@@ -1274,7 +1274,7 @@ fn note(text: String, color: Hsla, _p: &Palette) -> AnyElement {
 fn help_style() -> TextViewStyle {
     TextViewStyle::default()
         .paragraph_gap(rems(0.5))
-        .code_block(StyleRefinement::default().text_size(px(look::CHROME - 1.)))
+        .code_block(StyleRefinement::default().text_size(px(look::DOC_CODE)))
 }
 
 /// Code as the AI pane shows it: the code font, its language's colours.

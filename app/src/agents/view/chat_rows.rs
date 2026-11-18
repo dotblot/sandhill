@@ -33,7 +33,7 @@ impl Agents {
                 .is_some_and(crate::agents::account_at_limit)
                 || (!self.working(t) && chat::latest_usage_limit(&chat));
             if limited {
-                let mut alternatives = v_flex().gap(px(6.)).text_size(px(13.));
+                let mut alternatives = v_flex().gap(px(6.)).text_size(px(look::SMALL));
                 for account in self.accounts.iter().filter(|account| {
                     account.kind == t.kind
                         && account.id != account_id
@@ -138,7 +138,7 @@ impl Agents {
                             )
                             .child(
                                 div()
-                                    .text_size(px(look::SMALL + 1.))
+                                    .text_size(px(look::SMALL))
                                     .text_color(p.muted)
                                     .child(format!(
                                         "Claude Code asks once for each folder before it reads, edits or runs files in it: {folder}"
@@ -265,7 +265,7 @@ impl Agents {
                         .border(px(0.5))
                         .border_color(p.accent.opacity(0.4))
                         .bg(p.accent_soft)
-                        .text_size(px(look::SMALL + 1.))
+                        .text_size(px(look::SMALL))
                         .text_color(p.accent)
                         .cursor_pointer()
                         .hover(move |d| d.border_color(p.accent))
@@ -293,7 +293,7 @@ impl Agents {
             Item::Account { name, .. } => h_flex()
                 .gap(px(8.))
                 .my(px(6.))
-                .text_size(px(13.))
+                .text_size(px(look::SMALL))
                 .text_color(p.muted)
                 .child(div().flex_1().h(px(1.)).bg(p.line))
                 .child(format!("Switched to {name}"))
@@ -311,7 +311,7 @@ impl Agents {
                 .into_any_element(),
             Item::Thinking { .. } => h_flex()
                 .gap(px(7.))
-                .text_size(px(look::SMALL + 1.))
+                .text_size(px(look::SMALL))
                 .text_color(p.faint)
                 .child(icon("think").size(px(14.)))
                 .child(format!("{agent} is working…"))
@@ -432,7 +432,7 @@ impl Agents {
             .px(px(6.))
             .rounded(px(RADIUS))
             .cursor_pointer()
-            .text_size(px(look::SMALL + 1.))
+            .text_size(px(look::SMALL))
             .hover(move |d| d.bg(hover))
             .child(icon(icon_name).size(px(15.)).text_color(color))
             .child(

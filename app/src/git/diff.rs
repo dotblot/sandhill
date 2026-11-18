@@ -553,7 +553,7 @@ impl Workbench {
                 h_flex()
                     .min_h(px(19.))
                     .font_family(look::MONO)
-                    .text_size(px(look::CODE - 1.))
+                    .text_size(px(look::CODE))
                     .when_some(bg, |d, bg| d.bg(bg))
                     .child(numbers)
                     .child(div().w(px(16.)).flex_none().text_color(p.faint).child(mark))

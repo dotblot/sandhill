@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::runtime::Runtime;
 
 use crate::daemon::Daemon;
-use crate::look::{Palette, bar_button, icon_button};
+use crate::look::{self, Palette, bar_button, icon_button};
 use crate::workbench::Workbench;
 
 pub(crate) mod cache;
@@ -323,7 +323,7 @@ impl MediaView {
             .flex_none()
             .px(px(6.))
             .gap(px(6.))
-            .text_size(px(13.))
+            .text_size(px(look::SMALL))
             .text_color(p.muted);
         if self.pages > 0 {
             bar = bar

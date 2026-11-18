@@ -305,7 +305,7 @@ impl Workbench {
                     .child(
                         div()
                             .min_w_0()
-                            .text_size(px(16.))
+                            .text_size(px(look::TITLE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Close {name}?")),
                     ),
