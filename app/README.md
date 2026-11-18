@@ -1421,6 +1421,16 @@ preview and R's imports weren't seen.
   can't filter) says which ones it does. Seen on screen on this Mac, through
   to a DataFrame in Variables; the server chooser's file mode was not tried
   on a server.
+- **Stop All and Quit blocked by a reused PID** (Huan, 2026-11-18): both
+  Stop All and Force Stop failed with "kernel: ark (ownership_unverified)"
+  though nothing ran. An Ark session ended on Nov 10; on Nov 17 macOS gave
+  its PID to MTLCompilerService, which leads its own group and session, and
+  the daemon counted that group as the old kernel's. A PID is reused only
+  once no group or session has its number, so a group of a root PID now
+  held by another process is that process's (`ownership.rs`:
+  `refresh_with_liveness`, `unrecorded_kernel_alive`). On a copy of the
+  affected state, the old daemon listed the kernel and the fixed one lists
+  nothing. Test: `a_reused_root_pid_and_its_new_group_are_not_the_kernel`.
 
 
 ## Running it

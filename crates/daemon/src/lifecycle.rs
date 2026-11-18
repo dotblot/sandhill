@@ -238,12 +238,11 @@ impl Daemon {
                 .is_some_and(|r| !r.members.is_empty() || !r.unverified.is_empty());
             let unknown_live = owner.is_none()
                 && session.pid.is_some_and(|pid| {
-                    all.values().any(|p| {
-                        !p.zombie
-                            && (p.group == pid
-                                || p.session == Some(pid)
-                                || p.identity.pid == pid && session.status != SessionStatus::Ended)
-                    })
+                    ownership::unrecorded_kernel_alive(
+                        pid,
+                        session.status == SessionStatus::Ended,
+                        &all,
+                    )
                 });
             if known_live || unknown_live {
                 resources.push(Resource {

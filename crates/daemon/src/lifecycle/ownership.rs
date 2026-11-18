@@ -166,17 +166,23 @@ fn refresh_with_liveness(
     record.members = members;
     // A group may have outlived its leader before the first inspection. Do
     // not lose it from inventory, but do not manufacture signal ownership:
-    // a historical group number alone could have been reused.
+    // a historical group number alone could have been reused. It can't be
+    // while the group lives: the OS hands out a PID again only once no group
+    // or session has that number. So when another process now holds a
+    // root's PID, a group or session of that number is the new process's.
+    let reused = |root: &ProcessIdentity| {
+        all.get(&root.pid)
+            .is_some_and(|holder| holder.identity != *root)
+    };
     let mut unverified: Vec<_> = all
         .values()
         .filter(|p| {
             !p.zombie
                 && p.identity.uid == unsafe { libc::getuid() }
                 && !record.members.contains(&p.identity)
-                && record
-                    .roots
-                    .iter()
-                    .any(|root| p.group == root.pid || p.session == Some(root.pid))
+                && record.roots.iter().any(|root| {
+                    !reused(root) && (p.group == root.pid || p.session == Some(root.pid))
+                })
         })
         .map(|p| p.identity.clone())
         .collect();
@@ -184,6 +190,19 @@ fn refresh_with_liveness(
     let changed = changed || unverified != record.unverified;
     record.unverified = unverified;
     Ok(changed)
+}
+
+/// Whether a kernel with no ownership record (started by an older Sandhill)
+/// still has processes: its own PID while its session runs, or its group or
+/// session after it exited. Once its session ended, a live process holding
+/// its PID is a reuse, and a group or session of that number is that
+/// process's (see `refresh_with_liveness`).
+pub(super) fn unrecorded_kernel_alive(pid: u32, ended: bool, all: &HashMap<u32, Process>) -> bool {
+    if all.get(&pid).is_some_and(|holder| !holder.zombie) {
+        return !ended;
+    }
+    all.values()
+        .any(|p| !p.zombie && (p.group == pid || p.session == Some(pid)))
 }
 
 #[cfg(test)]
@@ -270,6 +289,46 @@ mod tests {
         refresh_with_liveness(&mut unknown, &all, |_| true).unwrap();
         assert!(unknown.members.is_empty());
         assert_eq!(unknown.unverified.len(), 2);
+    }
+
+    /// macOS gave an ended Ark kernel's PID to MTLCompilerService, which leads
+    /// its own group and session. Matching that group by number listed the
+    /// old kernel as running forever, so Stop All could never finish (Huan,
+    /// 2026-11-18).
+    #[test]
+    fn a_reused_root_pid_and_its_new_group_are_not_the_kernel() {
+        let uid = unsafe { libc::getuid() };
+        let old_root = ProcessIdentity {
+            pid: 100,
+            uid,
+            birth: "old".into(),
+        };
+        let process = |pid: u32, birth: &str| Process {
+            identity: ProcessIdentity {
+                pid,
+                uid,
+                birth: birth.into(),
+            },
+            parent: 1,
+            group: 100,
+            session: Some(100),
+            zombie: false,
+        };
+        let all = HashMap::from([(100, process(100, "new")), (101, process(101, "helper"))]);
+        let mut record = Ownership {
+            roots: vec![old_root],
+            members: vec![],
+            unverified: vec![],
+        };
+        refresh_with_liveness(&mut record, &all, |_| true).unwrap();
+        assert!(record.members.is_empty());
+        assert!(record.unverified.is_empty(), "{:?}", record.unverified);
+        // Without a record, an ended session's PID held by another process
+        // is not the kernel either; an orphaned group with no holder is.
+        assert!(!unrecorded_kernel_alive(100, true, &all));
+        assert!(unrecorded_kernel_alive(100, false, &all));
+        let orphans = HashMap::from([(101, process(101, "helper"))]);
+        assert!(unrecorded_kernel_alive(100, true, &orphans));
     }
 
     #[test]
