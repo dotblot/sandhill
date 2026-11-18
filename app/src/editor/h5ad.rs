@@ -229,12 +229,30 @@ fn matrix(matrix: &H5adMatrix) -> SharedString {
         H5adStorage::Csc { nnz, share } => ("CSC", nnz, share),
     };
     format!(
-        "Sparse ({storage}) · {} · {}% non-zero ({})",
+        "Sparse ({storage}) · {} · {}% non-zero ({} stored value{})",
         matrix.dtype,
-        format_number(share * 100.),
-        number(nnz)
+        percent(share),
+        number(nnz),
+        if nnz == 1 { "" } else { "s" }
     )
     .into()
+}
+
+/// A share as a percentage with two significant digits below 1%
+/// ("0.82", "0.0031"), one decimal below 10% and none above.
+fn percent(share: f64) -> String {
+    let p = share * 100.;
+    if p <= 0. || !p.is_finite() {
+        return "0".into();
+    }
+    let decimals = if p >= 10. {
+        0
+    } else if p >= 1. {
+        1
+    } else {
+        ((1. - p.log10().floor()) as usize).min(6)
+    };
+    format!("{p:.decimals$}")
 }
 
 fn kind(kind: H5adColumnKind) -> SharedString {
