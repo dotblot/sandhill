@@ -1,11 +1,12 @@
 # Four ideas borrowed from other apps
 
-Huan, 2026-11-18. Status: proposed, waiting for Huan's approval.
+Huan, 2026-11-18. Status: approved by Huan (2026-11-18): this order, the
+recipe switch off until switched on, the file history limits below, and
+those limits changeable in General.
 
 Huan liked four ideas from other tools (2026-11-18) and asked for a plan
 to bring them into Sandhill. The Mac app's stability still comes first:
-each part below is small, ships on its own, and is built only when Huan
-says so. They are in the order I recommend.
+each part below is small and ships on its own, in this order.
 
 | Part | Borrowed from | What it answers |
 |---|---|---|
@@ -87,10 +88,18 @@ This works without Git and on servers, as the daemon keeps the history.
   Jupyter notebooks. A notebook keeps its cells' code and text, not their
   outputs; restoring it brings back the code, and cells whose code changes
   lose their outputs, as an agent's edit does now.
-- Limits, all fixed (no settings): files up to 2 MB; versions older than
-  30 days are dropped, and at most 100 per file; identical versions are
-  stored once; all history on a device together stays under 500 MB,
-  dropping the oldest first.
+- Limits: files up to 2 MB; versions older than 30 days are dropped, and
+  at most 100 per file; identical versions are stored once; all history on
+  a device together stays under 500 MB, dropping the oldest first.
+- Those four numbers can be changed in Welcome → General, in a new "File
+  history" group (Huan, 2026-11-18): Keep versions for (days), Versions
+  per file, Largest file (MB), Space on each computer (MB), each a stepper
+  like the font sizes, with the defaults above. Like the rest of General,
+  they are this Mac's choices; the app sends them to every computer it is
+  connected to, now and whenever they change. Each daemon keeps the last
+  ones it was sent (in its state folder), so a server keeps them while the
+  Mac is away. Lowering a limit drops the versions it no longer allows the
+  next time that daemon tidies its history (at most a minute later).
 - A renamed or moved file starts a new history (as in VS Code).
 
 ### How
@@ -102,7 +111,9 @@ This works without Git and on servers, as the daemon keeps the history.
   (`crates/daemon/src/server/document_calls.rs`) record the version; the
   document read used when a file opens records "Opened" versions.
 - New protocol calls in `crates/proto`: `Call::FileVersions { path }` lists
-  them, `Call::FileVersion { path, id }` returns one's text.
+  them, `Call::FileVersion { path, id }` returns one's text, and
+  `Call::SetFileHistoryLimits { days, per_file, file_mb, total_mb }` sets
+  the limits.
 - App: a new `HistoryTab` in `app/src/editor/`, drawing rows the way
   `app/src/git/diff.rs` does, fed by the shared `diff(before, after)`.
 
@@ -151,7 +162,8 @@ for a full guarantee. A plot from the Console says "from the Console".
   code, marked "code as the cell reads now; it may differ from what made
   the plot" when part 1 says it was edited.
 - Written with the existing `Call::WriteFile`, so it works on servers.
-- The switch is remembered on this Mac with the other save choices.
+- The switch starts off (Huan, 2026-11-18) and is remembered on this Mac
+  with the other save choices.
 
 ### Checks
 - Daemon integration test with a real Python kernel and a real R kernel:
@@ -202,14 +214,7 @@ matrix, so a 20 GB file opens in about a second, on a server too.
 - A promise that a recipe recreates a figure (it records; it can't freeze
   input data).
 - Writing to `.h5ad` files, or a general HDF5 browser.
-- Any setting beyond the recipe switch.
-
-## Choices for Huan
-1. Order: as listed (smallest and most useful first)?
-2. The recipe switch: off until switched on (my suggestion, since it adds
-   a file next to every figure), or on by default?
-3. File history limits: 30 days, 100 versions a file, 2 MB a file, 500 MB
-   per device. Change any?
+- Any setting beyond the recipe switch and the four file history limits.
 
 ## Risks
 - File history keeps copies of code on the device or server. A file with a
