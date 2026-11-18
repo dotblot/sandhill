@@ -543,7 +543,14 @@ async fn force_stop_kills_a_kernel_this_daemon_started_or_adopted() {
     let pid = adopted.pid.unwrap();
     if cfg!(target_os = "linux") {
         forced.unwrap();
-        assert!(!sandhill_daemon::kernel::pid_alive(pid));
+        // This test started the first daemon in-process, so the killed
+        // kernel is the test's own child and stays a zombie until reaped:
+        // gone, which `pid_alive` (a plain `kill 0`) can't tell.
+        let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        let zombie_or_gone = state
+            .rsplit_once(')')
+            .is_none_or(|(_, rest)| rest.trim_start().starts_with('Z'));
+        assert!(zombie_or_gone, "kernel {pid} still running: {state}");
     } else {
         let err = forced.unwrap_err().to_string();
         assert!(err.contains("cannot signal a saved PID"), "{err}");
