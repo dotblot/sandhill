@@ -1,0 +1,88 @@
+name: Linux app
+
+# Checks the app in app/ alongside the Mac app and the daemon's CI. A
+# version tag also builds an Ubuntu package and adds it to the Mac app release.
+on:
+  push:
+    branches: [main]
+    # Path filters don't apply to tags: every version tag builds.
+    tags: ["v*"]
+    paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "notices/**", "packaging/linux/**", "tests/fixtures/**", "Cargo.toml", "Cargo.lock", ".github/workflows/linux-app.yml"]
+  pull_request:
+    paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "notices/**", "packaging/linux/**", "tests/fixtures/**", "Cargo.toml", "Cargo.lock", ".github/workflows/linux-app.yml"]
+  # Can also be started by hand from the Actions tab.
+  workflow_dispatch:
+
+# Adding the package to the release needs to write to the repository.
+permissions:
+  contents: write
+env:
+  CARGO_TERM_COLOR: always
+  # Full debug info for GPUI exceeds the Ubuntu runner's disk space.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux:
+    name: Linux (x86-64, app)
+    # The oldest supported Ubuntu, so the release build also runs on 26.04.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the app's build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev libwebkit2gtk-4.1-dev
+      - name: Install the Python kernel, and zig
+        # ghostty-vt-sys runs the program named by ZIG, as on the Mac.
+        run: |
+          python -m pip install ipykernel pandas ziglang==0.17.0
+          python -m ipykernel install --user
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/bin/sh\nexec "%s" -m ziglang "$@"\n' "$(command -v python)" > "$HOME/.local/bin/zig"
+          chmod +x "$HOME/.local/bin/zig"
+          echo "ZIG=$HOME/.local/bin/zig" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app -> target
+      - name: Build sandhilld
+        run: cargo build --locked --release -p sandhill-daemon
+      - name: Check the Linux app
+        working-directory: app
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          SANDHILL_DAEMON="$GITHUB_WORKSPACE/target/release/sandhilld" cargo test
+      - uses: taiki-e/install-action@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          tool: cargo-about@0.9.3
+      - name: Build the Ubuntu package
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SANDHILL_COMMIT: ${{ github.sha }}
+        run: |
+          sudo apt-get install -y --no-install-recommends dpkg-dev jq librsvg2-bin
+          bash packaging/linux/build-deb.sh "$RUNNER_TEMP/sandhill-deb"
+          dpkg-deb -I "$RUNNER_TEMP"/sandhill-deb/*.deb
+      - name: Add the Ubuntu package to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The workflows run in parallel. Let mac-app.yml create the release
+          # with the approved notes and DMG before uploading the Linux files.
+          until gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; do
+            sleep 15
+          done
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP"/sandhill-deb/*.deb{,.sha256}

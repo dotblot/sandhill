@@ -1460,6 +1460,14 @@ preview and R's imports weren't seen.
   hidden GNOME Shell on Ubuntu 26.04: the buttons, closing to the quit
   question, and General. Tests: `mac_shortcuts_read_as_ctrl_alt_shift`,
   `a_gnome_font_setting_gives_its_family`.
+- **Ubuntu package and checks** (2026-11-18): the Linux app is checked
+  on Ubuntu 24.04 alongside the Mac app. Version tags add an amd64
+  `.deb` and its `.sha256` to the same GitHub release as the Mac DMG.
+  The package installs the app, its local `sandhilld`, a desktop launcher
+  and icon, and the licences. It does not carry the Mac bundle's server
+  installers or copies of Ark, ty or Ruff. Use kernels and language tools
+  installed on this computer, and connect over SSH to servers that already
+  have a matching `sandhilld`.
 
 
 ## Running it
@@ -1494,9 +1502,33 @@ The development Cargo config selects that directory and the root workspace's
 debug `sandhilld`; explicit environment overrides still win. Rebuild the daemon
 and matching Linux payloads after changing daemon code.
 
-On Linux GPUI also needs `libxkbcommon-dev libxkbcommon-x11-dev`,
-`libwebkit2gtk-4.1-dev` for the web view, a Vulkan driver
-(`mesa-vulkan-drivers` works, even without a GPU) and X11 (not Wayland).
+On Ubuntu, install the build libraries:
+
+```sh
+sudo apt-get install build-essential pkg-config libxkbcommon-dev \
+  libxkbcommon-x11-dev libwebkit2gtk-4.1-dev
+```
+
+Building the terminal also needs Zig 0.17 on `PATH` or set in `ZIG`.
+To run the app, install `libvulkan1` and a Vulkan driver such as
+`mesa-vulkan-drivers` (which includes a software driver). File and folder
+choosers use `xdg-desktop-portal` and a desktop backend such as
+`xdg-desktop-portal-gtk`. On Wayland desktops, Sandhill uses `xwayland`
+because gpui-webview embeds WebKitGTK only on X11.
+
+To build the `.deb`, run this from the repository root on Ubuntu:
+
+```sh
+sudo apt-get install dpkg-dev jq librsvg2-bin
+cargo install cargo-about --version 0.9.3 --locked
+bash packaging/linux/build-deb.sh
+```
+
+The `.deb` and its SHA-256 checksum go into `target/deb/`. Build on
+Ubuntu 24.04 for a package that can also be installed on Ubuntu 26.04.
+From the folder holding the downloaded `.deb`, use `sudo apt install`
+with its local path (`./` followed by the filename). APT installs the
+runtime libraries for you.
 
 `cargo test` here includes a test that runs a cell in a real Python kernel; it
 skips when sandhilld isn't built or no Python kernel is installed.

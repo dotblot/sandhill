@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sandhill
+Comment=R and Python IDE for bioinformatics
+Exec=sandhill %f
+Icon=sandhill
+Terminal=false
+Categories=Development;Science;
+MimeType=inode/directory;
+StartupWMClass=sandhill

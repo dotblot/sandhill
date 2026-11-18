@@ -68,8 +68,13 @@ its date.
 - `app/` is its own Cargo project (`[workspace]` of its own, own
   `Cargo.lock`, pinned `gpui-kit`/`gpui-webview` versions), so a root
   `cargo build` doesn't build it. Check it with `cargo fmt`, `cargo clippy
-  --all-targets -- -D warnings` and `cargo test` inside `app/`. On Linux it
-  needs `libxkbcommon-dev libxkbcommon-x11-dev libwebkit2gtk-4.1-dev` and X11.
+  --all-targets -- -D warnings` and `cargo test` inside `app/`. On Ubuntu
+  build with `build-essential pkg-config libxkbcommon-dev
+  libxkbcommon-x11-dev libwebkit2gtk-4.1-dev`. Running needs `libvulkan1`
+  and a driver such as `mesa-vulkan-drivers`; file and folder choosers
+  need `xdg-desktop-portal` and a backend such as `xdg-desktop-portal-gtk`.
+  On Wayland the app uses `xwayland` because gpui-webview embeds
+  WebKitGTK only on X11. See [app/README.md](app/README.md) for packaging.
   The terminal links Ghostty's libghostty-vt, built from source by
   `ghostty-vt-sys`: it needs Zig 0.17 (`ZIG=...` or `zig` on PATH) and
   access to tip.files.ghostty.org, deps.files.ghostty.org and codeberg.org.
