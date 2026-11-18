@@ -151,10 +151,17 @@ impl Agents {
             None => (text, refs),
         };
         if let Some(off) = kind.filter(|kind| turned_off(kind)).and_then(kind_of) {
-            self.problem = Some(format!(
-                "{} is turned off. Turn it on in Welcome → Agents.",
-                off.name
-            ));
+            self.problem = Some(if sandhill_proto::agent_paused(off.kind) {
+                format!(
+                    "{} is paused in Sandhill for now; this conversation can be read but not continued.",
+                    off.name
+                )
+            } else {
+                format!(
+                    "{} is turned off. Turn it on in Welcome → Agents.",
+                    off.name
+                )
+            });
             cx.notify();
             return false;
         }

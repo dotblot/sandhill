@@ -308,6 +308,82 @@ async fn account_rpcs_preserve_shared_targets_and_default_logins() {
     machine.finish().await;
 }
 
+/// Paused agents (Huan, 2026-11-18) are never listed, started, signed in or
+/// asked anything through the daemon's requests: Google suspended an
+/// account whose Antigravity Sandhill had been driving.
+#[tokio::test]
+async fn paused_agents_are_never_started_or_asked() {
+    let machine = Machine::start(false).await;
+    // An installed agy that leaves a mark whenever anything runs it.
+    let ran = machine.dir.path().join("agy-ran");
+    let agy = machine.dir.path().join("bin/agy");
+    std::fs::write(
+        &agy,
+        format!("#!/bin/sh\necho \"$@\" >> '{}'\n", ran.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let listed: Vec<Value> = machine.client.call(Call::ListAgents).await.unwrap();
+    let kinds: Vec<&str> = listed.iter().filter_map(|a| a["kind"].as_str()).collect();
+    assert_eq!(kinds, ["claude", "codex"]);
+
+    for kind in sandhill_proto::PAUSED_AGENTS {
+        let started = machine
+            .client
+            .call::<Value>(Call::StartTerminal {
+                kind: kind.into(),
+                cwd: Some(machine.home.to_string_lossy().into_owned()),
+                project: None,
+                cols: None,
+                rows: None,
+                options: AgentOptions::default(),
+                prompt: None,
+            })
+            .await;
+        let err = started.unwrap_err().to_string();
+        assert!(err.contains("is paused in Sandhill"), "{kind}: {err}");
+        let models = machine
+            .client
+            .call::<Value>(Call::AgentModels { kind: kind.into() })
+            .await;
+        assert!(models.is_err(), "{kind}");
+    }
+    let added = machine
+        .client
+        .call::<Value>(Call::AddAgentAccount {
+            kind: "antigravity".into(),
+            name: "Key".into(),
+            api_key: Some(KEY.into()),
+        })
+        .await;
+    assert!(added.is_err());
+    let signed_in = machine
+        .client
+        .call::<Value>(Call::SignInAgentAccount {
+            id: "antigravity".into(),
+            cols: None,
+            rows: None,
+        })
+        .await;
+    assert!(signed_in.is_err());
+    let _: Value = machine.client.call(Call::AgentAccounts).await.unwrap();
+    let _: Vec<AgentAccount> = machine
+        .client
+        .call(Call::ListAgentAccounts {
+            refresh: true,
+            ids: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        !ran.exists(),
+        "agy ran: {:?}",
+        std::fs::read_to_string(&ran)
+    );
+    machine.finish().await;
+}
+
 fn registry(home: &Path) -> Registry {
     Registry::new(
         home.join(".local/share/sandhill/accounts"),

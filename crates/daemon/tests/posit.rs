@@ -147,8 +147,8 @@ async fn posit_assistant_reaches_the_live_session() {
     // before starting anything that reads it.
     unsafe { std::env::set_var("PATH", &path) };
 
-    let listed = agents::list().await;
-    let info = listed.iter().find(|a| a.kind == agents::POSIT).unwrap();
+    // Posit Assistant is paused (left out of `agents::list`); its code stays.
+    let info = agents::describe(agents::POSIT).await.unwrap();
     assert_eq!(info.path.as_deref(), Some(pa.to_string_lossy().as_ref()));
     assert_eq!(info.version.as_deref(), Some("0.1.0"));
 

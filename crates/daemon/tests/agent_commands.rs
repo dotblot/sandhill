@@ -165,18 +165,34 @@ async fn agent_commands_scans_project_and_user_metadata_then_appends_guides() {
         &machine.home.join(".codex/skills/unsupported/SKILL.md"),
         "---\nname: not-an-agy-skill\n---\n",
     );
-    let items = machine.list("antigravity").await;
-    assert_guides(&items);
-    assert_eq!(items.len(), 6);
-    assert!(items.iter().any(|i| i["name"] == "agy-global"));
-    assert!(items.iter().any(|i| i["name"] == "agy-local"));
+    // A paused agent's request is refused; its scan comes back with it.
+    for kind in sandhill_proto::PAUSED_AGENTS {
+        let refused = machine
+            .client
+            .agent_commands(kind, machine.project.to_str().unwrap())
+            .await;
+        assert!(refused.is_err(), "{kind}");
+    }
+    if !sandhill_proto::agent_paused("antigravity") {
+        let items = machine.list("antigravity").await;
+        assert_guides(&items);
+        assert_eq!(items.len(), 6);
+        assert!(items.iter().any(|i| i["name"] == "agy-global"));
+        assert!(items.iter().any(|i| i["name"] == "agy-local"));
+    }
     for kind in ["openscience", "omp", "posit", "unknown"] {
+        if sandhill_proto::agent_paused(kind) {
+            continue;
+        }
         let items = machine.list(kind).await;
         assert_guides(&items);
         assert_eq!(items.len(), 4);
     }
     // Process startup failures are a successful guides-only response.
     for kind in ["codex", "pi"] {
+        if sandhill_proto::agent_paused(kind) {
+            continue;
+        }
         let items: Vec<Value> = machine
             .client
             .agent_commands(kind, machine.dir.path().join("missing").to_str().unwrap())
@@ -189,6 +205,10 @@ async fn agent_commands_scans_project_and_user_metadata_then_appends_guides() {
 }
 
 async fn installed_skills(kind: &str, folder: &str, name: &str) {
+    if sandhill_proto::agent_paused(kind) {
+        eprintln!("skipping: {kind} is paused in Sandhill");
+        return;
+    }
     let Some(program) = sandhill_daemon::agents::find(kind) else {
         eprintln!("skipping: {kind} is not installed");
         return;

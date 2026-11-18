@@ -1223,9 +1223,13 @@ impl Render for AccountManager {
     }
 }
 
-/// Turned-on agents first, each group by name.
+/// Turned-on agents first, each group by name. Paused agents are left out:
+/// they can't be turned on.
 fn agent_order() -> Vec<&'static crate::agents::Kind> {
-    let mut kinds: Vec<&'static crate::agents::Kind> = crate::agents::KINDS.iter().collect();
+    let mut kinds: Vec<&'static crate::agents::Kind> = crate::agents::KINDS
+        .iter()
+        .filter(|kind| !sandhill_proto::agent_paused(kind.kind))
+        .collect();
     kinds.sort_by_key(|kind| {
         (
             crate::agents::turned_off(kind.kind),

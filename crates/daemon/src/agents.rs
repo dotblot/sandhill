@@ -137,24 +137,49 @@ pub fn resume_id(kind: &str, report: Option<&serde_json::Value>) -> Option<Strin
         .map(str::to_string)
 }
 
-/// The agents and whether this machine has their CLIs.
+/// Fails for an agent paused in Sandhill (`sandhill_proto::PAUSED_AGENTS`):
+/// requests never start or ask one. Its code stays, and tests drive it
+/// directly.
+pub fn ensure_offered(kind: &str) -> Result<()> {
+    if sandhill_proto::agent_paused(kind) {
+        let name = AGENTS
+            .iter()
+            .find(|agent| agent.kind == kind)
+            .map_or(kind, |agent| agent.name);
+        bail!("{name} is paused in Sandhill: only Claude Code and Codex run for now");
+    }
+    Ok(())
+}
+
+/// The agents Sandhill offers and whether this machine has their CLIs.
+/// Paused agents are left out before anything runs them.
 pub async fn list() -> Vec<AgentInfo> {
     let mut list = Vec::new();
     for agent in &AGENTS {
-        let path = find(agent.program);
-        let version = match &path {
-            Some(path) => version(path).await,
-            None => None,
-        };
-        list.push(AgentInfo {
-            kind: agent.kind.into(),
-            name: agent.name.into(),
-            path: path.map(|p| p.to_string_lossy().into_owned()),
-            version,
-            install: agent.install.into(),
-        });
+        if !sandhill_proto::agent_paused(agent.kind)
+            && let Some(info) = describe(agent.kind).await
+        {
+            list.push(info);
+        }
     }
     list
+}
+
+/// One agent and whether this machine has its CLI (it runs `--version`).
+pub async fn describe(kind: &str) -> Option<AgentInfo> {
+    let agent = AGENTS.iter().find(|agent| agent.kind == kind)?;
+    let path = find(agent.program);
+    let version = match &path {
+        Some(path) => version(path).await,
+        None => None,
+    };
+    Some(AgentInfo {
+        kind: agent.kind.into(),
+        name: agent.name.into(),
+        path: path.map(|p| p.to_string_lossy().into_owned()),
+        version,
+        install: agent.install.into(),
+    })
 }
 
 /// The models `kind` offers before any conversation, for a new one's model
@@ -223,7 +248,10 @@ pub async fn accounts(kinds: Option<&[String]>, force: bool) -> Result<Value> {
                 (CODEX, &CODEX_CACHE),
                 (CLAUDE, &CLAUDE_CACHE),
                 (ANTIGRAVITY, &ANTIGRAVITY_CACHE),
-            ],
+            ]
+            .into_iter()
+            .filter(|(kind, _)| !sandhill_proto::agent_paused(kind))
+            .collect::<Vec<_>>(),
             query_account
         )
         .await

@@ -294,6 +294,7 @@ impl Registry {
 
     pub fn sign_in(&self, id: &str) -> Result<Launch> {
         let account = self.account(id)?;
+        crate::agents::ensure_offered(&account.kind)?;
         if account.method == "api_key" {
             bail!("API-key accounts do not need sign-in");
         }
@@ -353,7 +354,10 @@ impl Registry {
         };
         if refresh {
             for account in &mut accounts {
-                if ids.is_some_and(|ids| !ids.contains(&account.id)) {
+                // A paused agent is never asked: it keeps what was last known.
+                if ids.is_some_and(|ids| !ids.contains(&account.id))
+                    || sandhill_proto::agent_paused(&account.kind)
+                {
                     continue;
                 }
                 if account.method == "api_key" {

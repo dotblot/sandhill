@@ -57,6 +57,17 @@ pub const EVENT_INPUT_REQUEST: &str = "sandhill.input_request";
 /// the run's stdout, after the prompt (a password as the prompt alone).
 pub const EVENT_INPUT_REPLY: &str = "sandhill.input_reply";
 
+/// Agents paused in Sandhill (Huan, 2026-11-18) until Claude Code and Codex
+/// fit it well: the daemon neither lists, starts nor asks them anything,
+/// and the app offers them nowhere; their old conversations stay readable.
+/// Their code and tests stay; to bring one back, take it off this list.
+pub const PAUSED_AGENTS: [&str; 5] = ["antigravity", "openscience", "omp", "pi", "posit"];
+
+/// Whether the agent `kind` is paused (see [`PAUSED_AGENTS`]).
+pub fn agent_paused(kind: &str) -> bool {
+    PAUSED_AGENTS.contains(&kind)
+}
+
 /// Where the app installs Ark (Posit's R kernel) on a server, relative to
 /// the home folder. The daemon offers it as the `ark` kernel when R is on
 /// `PATH`. It is kept off `PATH`: KDE has a program called `ark` too.

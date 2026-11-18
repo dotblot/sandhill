@@ -667,10 +667,16 @@ impl Daemon {
                 serde_json::to_value(blocking(move || Ok(files::stat(&paths))).await?)?
             }
             Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
-            Call::AgentModels { kind } => crate::agents::models(&kind).await?,
-            Call::AgentCommands { kind, cwd } => serde_json::to_value(
-                crate::agent_commands::list(&kind, &cwd, self.state.root()).await,
-            )?,
+            Call::AgentModels { kind } => {
+                crate::agents::ensure_offered(&kind)?;
+                crate::agents::models(&kind).await?
+            }
+            Call::AgentCommands { kind, cwd } => {
+                crate::agents::ensure_offered(&kind)?;
+                serde_json::to_value(
+                    crate::agent_commands::list(&kind, &cwd, self.state.root()).await,
+                )?
+            }
             Call::AgentAccounts => self.agent_accounts(None, false).await?,
             Call::AgentAccountsQuery { kinds, force } => {
                 self.agent_accounts(Some(&kinds), force).await?
@@ -684,11 +690,14 @@ impl Daemon {
                 kind,
                 name,
                 api_key,
-            } => serde_json::to_value(crate::accounts::Registry::from_env().add(
-                &kind,
-                &name,
-                api_key.as_deref(),
-            )?)?,
+            } => {
+                crate::agents::ensure_offered(&kind)?;
+                serde_json::to_value(crate::accounts::Registry::from_env().add(
+                    &kind,
+                    &name,
+                    api_key.as_deref(),
+                )?)?
+            }
             Call::RenameAgentAccount { id, name } => {
                 serde_json::to_value(crate::accounts::Registry::from_env().rename(&id, &name)?)?
             }

@@ -100,6 +100,17 @@ differs, this wins.
   with the same agent, model and mode). Other agents keep the plain popup.
 
 ## The agents
+- Paused (Huan, 2026-11-18): only Claude Code and Codex run, until they fit
+  Sandhill well. Antigravity, OpenScience, Oh My Pi, pi and Posit
+  Assistant are on `sandhill_proto::PAUSED_AGENTS`: the daemon doesn't
+  list, start, restart, sign in or ask them anything (not even
+  `--version`), and the app offers them nowhere, Welcome → Agents
+  included. Their old conversations stay readable. Their code and tests
+  are kept; tests that reach them through requests check the refusal
+  instead. To bring one back, take it off the list. Why: Google suspended
+  an account whose Antigravity Sandhill drove, and its FAQ says wrapping
+  `agy` in another app isn't supported on personal plans; Oh My Pi and pi
+  are only as safe as the logins they hold.
 - Agents: Claude Code and Codex run as unmodified CLIs. Do not read or reuse
   their OAuth tokens. OpenScience runs unmodified over ACP, chat only
   (Huan, 2026-11-11): deny its built-in `python` and `r` tools and direct

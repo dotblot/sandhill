@@ -34,6 +34,7 @@ impl Daemon {
         options: sandhill_proto::AgentOptions,
         prompt: Option<String>,
     ) -> Result<Value> {
+        crate::agents::ensure_offered(&kind)?;
         let project = project.map(|p| projects::normalize(&p)).transpose()?;
         let cwd = match cwd.or_else(|| project.clone()) {
             Some(cwd) => files::resolve(&cwd)?,
@@ -97,6 +98,8 @@ impl Daemon {
         prompt: Option<String>,
     ) -> Result<Value> {
         let info = self.terminals.info(&terminal)?;
+        // An old conversation of a paused agent stays readable, not resumable.
+        crate::agents::ensure_offered(&info.kind)?;
         // It may have run on another machine, or have to start afresh.
         let resume = chats::prepare(&info, &self.homes, &self.machine)?;
         let prompt = match &resume.note {

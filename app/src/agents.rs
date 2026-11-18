@@ -129,11 +129,12 @@ pub(crate) fn kind_of(kind: &str) -> Option<&'static Kind> {
     KINDS.iter().find(|k| k.kind == kind)
 }
 
-/// Agents turned off on Welcome's Agents page (Huan, 2026-11-15): not
+/// Agents turned off on Welcome's Agents page (Huan, 2026-11-15), or paused
+/// in Sandhill (`sandhill_proto::PAUSED_AGENTS`, Huan, 2026-11-18): not
 /// offered for new conversations, never asked for models, accounts or
 /// quota, and their conversations take no messages.
 pub(crate) fn turned_off(kind: &str) -> bool {
-    crate::prefs::agent_off(kind)
+    sandhill_proto::agent_paused(kind) || crate::prefs::agent_off(kind)
 }
 
 /// The agent a new conversation starts with (Huan, 2026-11-14): Codex, else

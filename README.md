@@ -32,10 +32,10 @@ your server. Quit the app, close the laptop or lose the network: everything
 keeps going, and when you come back, every output is there, including what
 was printed while you were away.
 
-**Every agent in your live sessions.** Claude Code, Codex, Antigravity, Posit
-Assistant, OpenScience, Oh My Pi and pi run unchanged inside Sandhill. Each
-one can see the variables, tables and plots you already have in memory and
-run code in your sessions, instead of starting over from your files.
+**AI agents in your live sessions.** Claude Code and Codex run unchanged
+inside Sandhill. Each can see the variables, tables and plots you already
+have in memory and run code in your sessions, instead of starting over from
+your files.
 
 ### Measured against Positron
 

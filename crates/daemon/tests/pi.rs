@@ -801,6 +801,12 @@ async fn pi_lists_its_models_before_a_conversation() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let client = client.expect("sandhilld did not start");
+    if sandhill_proto::agent_paused("pi") {
+        let refused = client.agent_models("pi").await.unwrap_err().to_string();
+        assert!(refused.contains("paused"), "{refused}");
+        eprintln!("skipping the rest: pi is paused in Sandhill");
+        return;
+    }
     let models = client.agent_models("pi").await.unwrap();
     assert_eq!(
         models,

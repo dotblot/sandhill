@@ -1389,6 +1389,10 @@ preview and R's imports weren't seen.
   sends the answer (`workbench/console.rs`, `view/console_pane.rs`). A
   password question gets a hidden one-line field. Tests:
   `crates/daemon/tests/input.rs`.
+- **Agents paused** (Huan, 2026-11-18; `docs/decisions/agents.md`): only
+  Claude Code and Codex are offered. `sandhill_proto::PAUSED_AGENTS` lists
+  the others; `agents::turned_off` counts them as off everywhere, and
+  Welcome → Agents leaves them out (`agents/accounts.rs`).
 
 
 ## Running it
