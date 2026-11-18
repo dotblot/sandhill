@@ -2,7 +2,9 @@
 
 Huan, 2026-11-18. Status: approved by Huan (2026-11-18): this order, the
 recipe switch off until switched on, the file history limits below, and
-those limits changeable in General.
+those limits changeable in General. Built on 2026-11-18. Notebook
+versions in File History are compared as readable cells (a "Cell 1 ·
+code" line, then the cell's source), not as the stored JSON.
 
 Huan liked four ideas from other tools (2026-11-18) and asked for a plan
 to bring them into Sandhill. The Mac app's stability still comes first:
