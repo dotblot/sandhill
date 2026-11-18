@@ -40,6 +40,7 @@ impl Journal {
         text: &str,
         reason: FileVersionReason,
         limits: FileHistoryLimits,
+        notebook: bool,
     ) -> Result<()> {
         if text.len() as u64 > file_bytes(limits)
             || limits.days == 0
@@ -63,9 +64,26 @@ impl Journal {
             .and_then(|hash| blobs.get(&hash).ok())
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .unwrap_or_default();
+        let readable;
+        let (before, after) = if notebook {
+            let before = if previous.is_empty() {
+                String::new()
+            } else {
+                sandhill_proto::NotebookHistory::from_version(&previous)?.readable_text()
+            };
+            let after = sandhill_proto::NotebookHistory::from_version(text)?.readable_text();
+            readable = (before, after);
+            (readable.0.as_str(), readable.1.as_str())
+        } else {
+            (previous.as_str(), text)
+        };
+        let (before, after) = (
+            before.lines().collect::<Vec<_>>(),
+            after.lines().collect::<Vec<_>>(),
+        );
         let (added, removed) = TextDiff::configure()
             .timeout(Duration::from_millis(500))
-            .diff_lines(previous.as_str(), text)
+            .diff_slices(&before, &after)
             .iter_all_changes()
             .fold((0_u32, 0_u32), |(add, del), line| match line.tag() {
                 ChangeTag::Insert => (add + 1, del),

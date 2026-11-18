@@ -1,5 +1,6 @@
 //! Earlier text versions, compared with the current document.
 
+use std::ops::RangeInclusive;
 use std::rc::Rc;
 
 use gpui_kit::component::{Disableable, h_flex, v_flex};
@@ -26,15 +27,71 @@ pub(crate) struct HistoryTab {
     details: Option<Comparison>,
     error: Option<String>,
     anchor: Option<usize>,
-    selection: Option<std::ops::RangeInclusive<usize>>,
+    selection: Option<RangeInclusive<usize>>,
     all: bool,
     scroll: ScrollHandle,
 }
 
 struct Comparison {
     text: String,
+    /// Jupyter restore needs cell IDs, kinds and sources from the JSON.
+    snapshot: Option<String>,
     diff: Vec<DiffLine>,
     notice: Option<String>,
+}
+
+impl Comparison {
+    fn new(version: String, now: anyhow::Result<String>, notebook: bool) -> anyhow::Result<Self> {
+        let (text, snapshot) = if notebook {
+            (
+                NotebookHistory::from_version(&version)?.readable_text(),
+                Some(version),
+            )
+        } else {
+            (version, None)
+        };
+        let (now, mut notice) = match now {
+            Ok(now) => (now, None),
+            Err(err) => (
+                String::new(),
+                Some(format!("Could not read the current file: {err:#}")),
+            ),
+        };
+        let rows = diff(&text, &now);
+        if notice.is_none()
+            && !rows
+                .iter()
+                .any(|line| matches!(line, DiffLine::Added(_) | DiffLine::Removed(_)))
+        {
+            notice = Some(
+                if text == now {
+                    "Same as the current file."
+                } else {
+                    "Only line endings differ."
+                }
+                .into(),
+            );
+        }
+        Ok(Self {
+            text,
+            snapshot,
+            diff: rows,
+            notice,
+        })
+    }
+
+    fn copy_text(&self, selection: Option<&RangeInclusive<usize>>) -> String {
+        selection.map_or_else(
+            || self.text.clone(),
+            |range| {
+                self.text
+                    .split_inclusive('\n')
+                    .skip(*range.start() - 1)
+                    .take(range.end() - range.start() + 1)
+                    .collect()
+            },
+        )
+    }
 }
 
 impl Workbench {
@@ -114,12 +171,13 @@ impl Workbench {
         let token = Rc::new(());
         tab.token = token.clone();
         let path = tab.path.clone();
+        let notebook = format_of(&path) == Some(Format::Ipynb);
         let current = self
             .open
             .iter()
             .chain(&self.others)
             .find(|doc| doc.notebook.path == path && !doc.notebook.truncated)
-            .map(|doc| doc.notebook.history_text(&doc.sources(cx)));
+            .map(|doc| doc.notebook.history_comparison_text(&doc.sources(cx)));
         let question = daemon.call_in_project::<String>(
             self.project.clone(),
             Call::FileVersion {
@@ -131,53 +189,22 @@ impl Workbench {
             let result = match question.await {
                 Err(err) => Err(err),
                 Ok(text) => {
-                    let now =
-                        match current {
-                            Some(current) => current,
-                            None if format_of(&path) == Some(Format::Ipynb) => daemon
-                                .call::<FileText>(Call::ReadNotebook { path })
-                                .await
-                                .and_then(|file| {
-                                    Ok(serde_json::from_str::<NotebookHistory>(&file.text)?
-                                        .render()?)
-                                }),
-                            None => daemon
-                                .call::<FileText>(Call::ReadFile { path })
-                                .await
-                                .map(|file| file.text),
-                        };
-                    Ok(cx
-                        .background_spawn(async move {
-                            match now {
-                                Ok(now) => {
-                                    let rows = diff(&text, &now);
-                                    let notice = (!rows.iter().any(|l| {
-                                        matches!(l, DiffLine::Added(_) | DiffLine::Removed(_))
-                                    }))
-                                    .then(|| {
-                                        if text == now {
-                                            "Same as the current file."
-                                        } else {
-                                            "Only line endings differ."
-                                        }
-                                        .into()
-                                    });
-                                    Comparison {
-                                        text,
-                                        diff: rows,
-                                        notice,
-                                    }
-                                }
-                                Err(err) => Comparison {
-                                    diff: diff(&text, ""),
-                                    text,
-                                    notice: Some(format!(
-                                        "Could not read the current file: {err:#}"
-                                    )),
-                                },
-                            }
-                        })
-                        .await)
+                    let now = match current {
+                        Some(current) => current,
+                        None if notebook => daemon
+                            .call::<FileText>(Call::ReadNotebook { path })
+                            .await
+                            .and_then(|file| {
+                                Ok(serde_json::from_str::<NotebookHistory>(&file.text)?
+                                    .readable_text())
+                            }),
+                        None => daemon
+                            .call::<FileText>(Call::ReadFile { path })
+                            .await
+                            .map(|file| file.text),
+                    };
+                    cx.background_spawn(async move { Comparison::new(text, now, notebook) })
+                        .await
                 }
             };
             let _ = this.update(cx, |this, cx| {
@@ -344,8 +371,17 @@ impl Workbench {
         } else {
             rows.len().min(FIRST_ROWS)
         };
+        // Scroll extents come from direct children. Put the unwrapped rows
+        // in the scroll container itself so wide code adds to its extent.
         let content = v_flex()
-            .min_w_full()
+            .id("history-diff")
+            .items_start()
+            .h_full()
+            .flex_1()
+            .min_w_0()
+            .overflow_scroll()
+            .track_scroll(&tab.scroll)
+            .restrict_scroll_to_axis()
             .when_some(notice, |d, (label, color)| {
                 d.child(
                     div()
@@ -405,7 +441,7 @@ impl Workbench {
                             None,
                             None,
                             " ",
-                            format!("{n} unchanged lines"),
+                            format!("{n} unchanged {}", if *n == 1 { "line" } else { "lines" }),
                             Some(p.chunk),
                         )
                     }
@@ -424,13 +460,12 @@ impl Workbench {
                     .px(px(look::GAP_4))
                     .font_family(look::mono())
                     .text_size(px(look::code()))
-                    .whitespace_nowrap()
                     .when_some(tint, |d, color| d.bg(color))
                     .when(selected, |d| d.bg(p.accent.opacity(0.28)))
                     .child(number(left))
                     .child(number(right))
                     .child(mark)
-                    .child(text)
+                    .child(div().flex_none().whitespace_nowrap().child(text))
                     .when_some(left, |d, line| {
                         d.cursor_pointer().on_click(cx.listener(
                             move |this, click: &ClickEvent, _, cx| {
@@ -472,17 +507,7 @@ impl Workbench {
                     .min_h_0()
                     .overflow_hidden()
                     .child(list.h_full())
-                    .child(
-                        div()
-                            .id("history-diff")
-                            .h_full()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_scroll()
-                            .track_scroll(&tab.scroll)
-                            .restrict_scroll_to_axis()
-                            .child(content),
-                    ),
+                    .child(content),
             )
             .into_any_element()
     }
@@ -514,17 +539,112 @@ impl Workbench {
     fn copy_file_history(&self, cx: &mut App) {
         let Some(tab) = &self.history else { return };
         let Some(details) = &tab.details else { return };
-        let text = tab.selection.as_ref().map_or_else(
-            || details.text.clone(),
-            |range| {
-                details
-                    .text
-                    .split_inclusive('\n')
-                    .skip(*range.start() - 1)
-                    .take(range.end() - range.start() + 1)
-                    .collect()
-            },
-        );
+        let text = details.copy_text(tab.selection.as_ref());
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use gpui_kit::{AppContext, ScrollHandle, TestAppContext, WeakEntity, WindowOptions, px};
+
+    use super::{Comparison, DiffLine, HistoryTab, Workbench};
+
+    #[test]
+    fn notebook_history_compares_and_copies_code_not_snapshot_json() {
+        let version = r##"[
+            {"id":"a","cell_type":"code","source":["  plt.title('old')\n"]},
+            {"id":"b","cell_type":"markdown","source":["# Notes"]}
+        ]"##;
+        let current = crate::editor::notebook::parse(
+            "/p/test.ipynb",
+            r##"{"cells":[
+            {"id":"a","cell_type":"code","source":"  plt.title('new')\n"},
+            {"id":"b","cell_type":"markdown","source":"# Notes"}
+        ]}"##,
+        )
+        .unwrap();
+
+        let sources = current
+            .cells
+            .iter()
+            .map(|cell| cell.source.clone())
+            .collect::<Vec<_>>();
+        let comparison = Comparison::new(
+            version.into(),
+            current.history_comparison_text(&sources),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            comparison.copy_text(None),
+            "Cell 1 · code\n  plt.title('old')\n\nCell 2 · markdown\n# Notes\n\n"
+        );
+        assert_eq!(comparison.copy_text(Some(&(2..=2))), "  plt.title('old')\n");
+        assert_eq!(comparison.snapshot.as_deref(), Some(version));
+        assert_eq!(
+            comparison
+                .diff
+                .iter()
+                .filter(|line| matches!(line, DiffLine::Added(_) | DiffLine::Removed(_)))
+                .collect::<Vec<_>>(),
+            [
+                &DiffLine::Removed("  plt.title('old')".into()),
+                &DiffLine::Added("  plt.title('new')".into())
+            ]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn long_history_lines_extend_the_horizontal_scroll_range(cx: &mut TestAppContext) {
+        let scroll = ScrollHandle::new();
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
+        let (_, _workbench) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::look::install(cx);
+            crate::welcome::resource_manager::block_host(sandhill_link::LOCAL, cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| {
+                    let mut workbench = Workbench::new(
+                        rt,
+                        sandhill_link::Target::Local,
+                        None,
+                        WeakEntity::new_invalid(),
+                        window,
+                        cx,
+                    );
+                    workbench.history = Some(HistoryTab {
+                        path: "/p/long.py".into(),
+                        token: Rc::new(()),
+                        versions: None,
+                        selected: None,
+                        details: Some(
+                            Comparison::new("x".repeat(1024), Ok(String::new()), false).unwrap(),
+                        ),
+                        error: None,
+                        anchor: None,
+                        selection: None,
+                        all: false,
+                        scroll: scroll.clone(),
+                    });
+                    workbench.show_file_history();
+                    workbench
+                })
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+        assert!(
+            scroll.max_offset().x > px(0.),
+            "long code must increase the real scroll extent"
+        );
     }
 }

@@ -63,8 +63,10 @@ wins.
 - File history (Huan, 2026-11-18): Files and the command palette open a
   tab with saved and opened versions on the left and a diff against the
   current file on the right. Restore is one undoable editor edit, not a
-  save. Jupyter versions contain cell code and text, not outputs;
-  restoring clears outputs for cells whose code changes. History stays
+  save. Jupyter versions contain cell code and text, not outputs. Their
+  diffs and copied text show numbered cell headings followed by the
+  original source, not the notebook's JSON (Huan, 2026-11-18). Restoring
+  clears outputs for cells whose code changes. History stays
   with the daemon, keyed by project and canonical path, and does not
   follow renames. The defaults are 30 days, 100 versions per file, 2 MB
   per version and 500 MB on each computer. Identical text is stored once.

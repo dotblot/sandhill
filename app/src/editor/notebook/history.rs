@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use sandhill_proto::NotebookHistoryCell;
+use sandhill_proto::{NotebookHistoryCell, notebook_readable_text};
 
 use super::*;
 
@@ -21,6 +21,16 @@ impl Notebook {
             })
             .collect();
         Ok(serde_json::to_string_pretty(&cells)?)
+    }
+
+    pub(crate) fn history_comparison_text(&self, sources: &[String]) -> Result<String> {
+        if self.format == Format::Ipynb {
+            Ok(notebook_readable_text(self.cells.iter().zip(sources).map(
+                |(cell, source)| (cell_type(cell), std::iter::once(source.as_str())),
+            )))
+        } else {
+            self.render(sources)
+        }
     }
 
     /// Replace cell order, kinds and sources, retaining only outputs whose

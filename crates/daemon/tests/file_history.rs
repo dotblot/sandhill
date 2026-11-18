@@ -280,6 +280,8 @@ async fn notebook_history_ignores_outputs_and_normalizes_source_layout() {
     write(notebook.to_string()).await.unwrap();
     let versions = daemon.versions(&path).await;
     assert_eq!(versions.len(), 2);
+    assert_eq!((versions[1].added, versions[1].removed), (7, 0));
+    assert_eq!((versions[0].added, versions[0].removed), (1, 1));
     for version in &versions {
         let text = daemon.version(&path, version.id).await;
         assert!(!text.contains("outputs"));

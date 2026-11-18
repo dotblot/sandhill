@@ -80,7 +80,8 @@ impl Workbench {
         let Some(version) = tab.details.as_ref() else {
             return;
         };
-        let (path, text) = (tab.path.clone(), version.text.clone());
+        let path = tab.path.clone();
+        let text = version.snapshot.as_ref().unwrap_or(&version.text).clone();
         if self.open_at(&path).is_some() {
             self.show_file_tab(&path, cx);
             self.apply_file_version(text, window, cx);

@@ -71,8 +71,7 @@ impl From<FileHistoryLimits> for Call {
     }
 }
 
-/// An output-free Jupyter cell. Sources are split into lines so a version's
-/// JSON can be compared as text without treating a whole cell as one line.
+/// An output-free Jupyter cell. The snapshot preserves the source lines.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotebookHistoryCell {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,6 +100,42 @@ impl NotebookHistory {
         }
         serde_json::to_string_pretty(&self.cells)
     }
+
+    /// Reads the stored cell array, which has no notebook-level fields.
+    pub fn from_version(version: &str) -> serde_json::Result<Self> {
+        Ok(Self {
+            cells: serde_json::from_str(version)?,
+        })
+    }
+
+    /// Text shown, compared and copied in File History.
+    pub fn readable_text(&self) -> String {
+        notebook_readable_text(self.cells.iter().map(|cell| {
+            (
+                cell.cell_type.as_str(),
+                cell.source.iter().map(String::as_str),
+            )
+        }))
+    }
+}
+
+pub fn notebook_readable_text<'a>(
+    cells: impl IntoIterator<Item = (&'a str, impl IntoIterator<Item = &'a str>)>,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut text = String::new();
+    for (index, (kind, source)) in cells.into_iter().enumerate() {
+        let _ = writeln!(text, "Cell {} · {kind}", index + 1);
+        for line in source {
+            text.push_str(line);
+        }
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push('\n');
+    }
+    text
 }
 
 pub fn notebook_cell_id(index: usize, seen: &std::collections::HashSet<String>) -> String {

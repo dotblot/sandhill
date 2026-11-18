@@ -88,7 +88,7 @@ pub(super) fn remember(
         }
         if let Some(text) = snapshot(path, text)? {
             let (project, key) = history_key(journal, project, path)?;
-            journal.record_file_version(&project, &key, &text, reason, limits)?;
+            journal.record_file_version(&project, &key, &text, reason, limits, is_ipynb(path))?;
         }
         Ok(())
     };
@@ -108,7 +108,7 @@ pub(super) fn before_first_write(
     limits: FileHistoryLimits,
     project: Option<&str>,
     path: &str,
-) -> Option<(String, String, String)> {
+) -> Option<BeforeWrite> {
     if !enabled(limits) {
         return None;
     }
@@ -132,17 +132,40 @@ pub(super) fn before_first_write(
         }
         text
     };
-    Some((project, key, text))
+    Some(BeforeWrite {
+        project,
+        path: key,
+        text,
+        notebook: is_ipynb(path),
+    })
+}
+
+pub(super) struct BeforeWrite {
+    project: String,
+    path: String,
+    text: String,
+    notebook: bool,
 }
 
 pub(super) fn remember_before_write(
     journal: &Journal,
     limits: FileHistoryLimits,
-    prior: Option<(String, String, String)>,
+    prior: Option<BeforeWrite>,
 ) {
-    if let Some((project, path, text)) = prior
-        && let Err(err) =
-            journal.record_file_version(&project, &path, &text, FileVersionReason::Opened, limits)
+    if let Some(BeforeWrite {
+        project,
+        path,
+        text,
+        notebook,
+    }) = prior
+        && let Err(err) = journal.record_file_version(
+            &project,
+            &path,
+            &text,
+            FileVersionReason::Opened,
+            limits,
+            notebook,
+        )
     {
         tracing::warn!(%err, "could not record the file before its first save");
     }
