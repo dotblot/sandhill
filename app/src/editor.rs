@@ -30,3 +30,4 @@ pub(crate) mod shown;
 pub(crate) mod statements;
 pub(crate) mod table;
 pub(crate) mod table_selection;
+pub(crate) mod text_diff;

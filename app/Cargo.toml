@@ -33,6 +33,9 @@ base64 = "0.23"
 resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
 # The HTML export of a conversation.
 markdown = "1"
+# Comparing texts line by line (editor/text_diff.rs); already used by a
+# dependency, so nothing new is built.
+similar = "2.7"
 # Bounded HTTPS Markdown images, without cookies or non-TLS redirects.
 ureq = { version = "=3.5.2", default-features = false, features = ["rustls"] }
 # Validate the same raster formats as the read-only document previews.

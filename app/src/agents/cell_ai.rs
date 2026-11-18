@@ -11,16 +11,12 @@ use gpui_kit::*;
 use serde_json::{Value, json};
 
 use crate::editor::notebook;
+use crate::editor::text_diff::{DiffLine, diff};
 use crate::look::{self, ButtonSize::Row, Palette, icon};
 use crate::workbench::{Open, Workbench};
 
 /// How long a cell the agent added or changed stays lit.
 const LIT_FOR: Duration = Duration::from_millis(1600);
-/// Unchanged lines shown around a change in a diff.
-const CONTEXT_LINES: usize = 2;
-/// Cells longer than this (in lines) are not compared line by line: all of
-/// the old text shows as removed and the new as added.
-const MAX_DIFF_LINES: usize = 2000;
 
 /// A cell the agent changed, until the user keeps the change or undoes it.
 pub(crate) struct AgentChange {
@@ -37,85 +33,6 @@ pub(crate) struct AgentDeleted {
     pub cell: notebook::Cell,
     pub source: String,
     pub by: String,
-}
-
-/// One line of a cell's diff.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DiffLine {
-    Same(String),
-    Removed(String),
-    Added(String),
-    /// Unchanged lines left out.
-    Gap(usize),
-}
-
-/// The lines of `before` and `after`, removed, added or the same, with
-/// long runs of unchanged lines left out.
-pub(crate) fn diff(before: &str, after: &str) -> Vec<DiffLine> {
-    let old: Vec<&str> = before.lines().collect();
-    let new: Vec<&str> = after.lines().collect();
-    let mut lines = Vec::new();
-    if old.len() > MAX_DIFF_LINES || new.len() > MAX_DIFF_LINES {
-        lines.extend(old.iter().map(|l| DiffLine::Removed(l.to_string())));
-        lines.extend(new.iter().map(|l| DiffLine::Added(l.to_string())));
-        return lines;
-    }
-    // The longest common subsequence, from the end, then walked forward.
-    let (n, m) = (old.len(), new.len());
-    let mut common = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            common[i][j] = if old[i] == new[j] {
-                common[i + 1][j + 1] + 1
-            } else {
-                common[i + 1][j].max(common[i][j + 1])
-            };
-        }
-    }
-    let (mut i, mut j) = (0, 0);
-    while i < n || j < m {
-        if i < n && j < m && old[i] == new[j] {
-            lines.push(DiffLine::Same(old[i].to_string()));
-            i += 1;
-            j += 1;
-        } else if i < n && (j == m || common[i + 1][j] >= common[i][j + 1]) {
-            // Removed lines go before the lines that replace them.
-            lines.push(DiffLine::Removed(old[i].to_string()));
-            i += 1;
-        } else {
-            lines.push(DiffLine::Added(new[j].to_string()));
-            j += 1;
-        }
-    }
-    fold_unchanged(lines)
-}
-
-/// Leaves out unchanged lines further than [`CONTEXT_LINES`] from a change.
-fn fold_unchanged(lines: Vec<DiffLine>) -> Vec<DiffLine> {
-    let changed: Vec<usize> = lines
-        .iter()
-        .enumerate()
-        .filter(|(_, l)| !matches!(l, DiffLine::Same(_)))
-        .map(|(i, _)| i)
-        .collect();
-    let near = |i: usize| changed.iter().any(|&c| c.abs_diff(i) <= CONTEXT_LINES);
-    let mut folded = Vec::new();
-    let mut gap = 0;
-    for (i, line) in lines.into_iter().enumerate() {
-        if matches!(line, DiffLine::Same(_)) && !near(i) {
-            gap += 1;
-            continue;
-        }
-        if gap > 0 {
-            folded.push(DiffLine::Gap(gap));
-            gap = 0;
-        }
-        folded.push(line);
-    }
-    if gap > 0 {
-        folded.push(DiffLine::Gap(gap));
-    }
-    folded
 }
 
 impl Workbench {
@@ -550,38 +467,5 @@ impl Workbench {
                 )
                 .into_any_element(),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{DiffLine, diff};
-
-    #[test]
-    fn shows_what_the_agent_changed() {
-        use DiffLine::*;
-        assert_eq!(
-            diff("a\nb\nc", "a\nB\nc\nd"),
-            vec![
-                Same("a".into()),
-                Removed("b".into()),
-                Added("B".into()),
-                Same("c".into()),
-                Added("d".into()),
-            ]
-        );
-        // Unchanged lines far from a change are left out.
-        let before = "1\n2\n3\n4\n5\n6\n7\n8";
-        let after = "1\n2\n3\n4\n5\n6\n7\nX";
-        assert_eq!(
-            diff(before, after),
-            vec![
-                Gap(5),
-                Same("6".into()),
-                Same("7".into()),
-                Removed("8".into()),
-                Added("X".into()),
-            ]
-        );
     }
 }
