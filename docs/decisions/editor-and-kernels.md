@@ -101,6 +101,9 @@ by sentence); where an older plan differs, this wins.
   (under it when narrow), hidden or shown by a title-row button remembered
   on this Mac; a PDF can be saved rasterized (matplotlib's data layers, R's
   whole plot).
+- "Save recipe beside it" starts off and is remembered on this Mac
+  (Huan, 2026-11-18). With it on, replacing a figure also replaces its
+  recipe after the figure's confirmation.
 
 ## Completion, documentation and Help
 - Code completion (Huan,

@@ -21,6 +21,7 @@ use crate::prefs::{PlotSizing, PlotUnit};
 use crate::workbench::{BottomTab, Plot, Workbench, is_script, plot_key};
 
 mod pane;
+mod recipe;
 mod save;
 mod size_menu;
 mod zoom;
@@ -62,6 +63,8 @@ pub(crate) struct PlotItem {
     pub exact: bool,
     pub cell: Option<(String, String)>,
     pub by: Option<String>,
+    /// Source already supplied by the journal, for plots without a local Run.
+    journal_code: Option<SharedString>,
     pub mime: String,
     pub value: Value,
 }
@@ -85,6 +88,7 @@ pub(crate) struct Zoom {
     initial_picture: Option<Size<Pixels>>,
     follow: bool,
     redraw_preview: bool,
+    save_recipe: bool,
     unit: PlotUnit,
     units_open: bool,
     /// Save a PDF as pixels at `dpi` (Huan, 2026-11-14).
@@ -310,6 +314,7 @@ fn plot_item(
         exact,
         cell,
         by,
+        journal_code: None,
         mime: mime.to_string(),
         value,
     })
@@ -483,19 +488,19 @@ impl Workbench {
                     Ok(read) => {
                         let items: Vec<PlotItem> = read
                             .plots
-                            .iter()
+                            .into_iter()
                             .filter_map(|p| {
-                                let cell = p.cell.clone().map(|c| (c.file, c.cell_id));
+                                let cell = p.cell.map(|c| (c.file, c.cell_id));
                                 let item = plot_item(
-                                    &p.run,
-                                    &session,
-                                    p.ts_ms,
-                                    true,
-                                    cell,
-                                    p.by.clone(),
-                                    &p.data,
+                                    &p.run, &session, p.ts_ms, true, cell, p.by, &p.data,
                                 )?;
-                                this.plot_allowed(&item).then_some(item)
+                                if !this.plot_allowed(&item) {
+                                    return None;
+                                }
+                                Some(PlotItem {
+                                    journal_code: Some(p.code.into()),
+                                    ..item
+                                })
                             })
                             .collect();
                         if this.plot_history.console_auto {
@@ -663,13 +668,14 @@ impl Workbench {
                                 (
                                     cell,
                                     event.content["by"].as_str().map(str::to_string),
+                                    event.content["code"].as_str().map(SharedString::from),
                                     event.content["quiet"].as_bool().unwrap_or(false),
                                 ),
                             );
                         } else if matches!(
                             event.msg_type.as_str(),
                             "display_data" | "execute_result" | "update_display_data"
-                        ) && let Some((cell, by, false)) = runs.get(&run)
+                        ) && let Some((cell, by, code, false)) = runs.get(&run)
                             && !from_notebook(cell)
                             && let Some(item) = plot_item(
                                 &run,
@@ -681,7 +687,10 @@ impl Workbench {
                                 &event.content["data"],
                             )
                         {
-                            items.push(item);
+                            items.push(PlotItem {
+                                journal_code: code.clone(),
+                                ..item
+                            });
                         }
                     }
                     if page.next_seq <= since_seq {

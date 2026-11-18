@@ -43,11 +43,7 @@ impl Workbench {
             .get(&cell.id)
             .and_then(|id| self.runs.get(id).map(|run| (id, run)));
         let (outputs, run_id, session) = match run {
-            Some((id, run)) => (
-                &run.outputs,
-                id.clone(),
-                open.session.id().unwrap_or_default().to_string(),
-            ),
+            Some((id, run)) => (&run.outputs, id.clone(), run.session.clone()),
             None => (&cell.outputs, format!("saved-{}", cell.id), String::new()),
         };
         let place = Some((open.notebook.path.clone(), cell.id.clone()));
@@ -211,6 +207,7 @@ impl Workbench {
             initial_picture: Some(picture),
             follow: matches!(self.plot_history.sizing, PlotSizing::Fit),
             redraw_preview: true,
+            save_recipe: crate::prefs::plot_recipe(),
             unit,
             units_open: false,
             rasterize: self

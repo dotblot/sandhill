@@ -270,13 +270,25 @@ async fn plots_are_drawn_again_at_a_new_size() {
         } else {
             ("plot(1:10)".to_string(), String::new())
         };
-        run(&mut client, &session, &plot, None, None, false).await;
-        let plots = client.session_plots(&session, None).await.unwrap().plots;
-        if kernel == "python3" && plots.is_empty() {
+        let stdout = if kernel == "python3" {
+            let code = format!(
+                "from importlib.util import find_spec\nif find_spec('matplotlib') is None:\n    print('matplotlib is not installed')\nelse:\n    {}",
+                plot.replace('\n', "\n    ")
+            );
+            run(&mut client, &session, &code, None, None, false).await
+        } else {
+            run(&mut client, &session, &plot, None, None, false).await
+        };
+        if kernel == "python3"
+            && stdout
+                .lines()
+                .any(|line| line == "matplotlib is not installed")
+        {
             eprintln!("skipping Python: matplotlib is not installed");
             client.shutdown(&session).await.unwrap();
             continue;
         }
+        let plots = client.session_plots(&session, None).await.unwrap().plots;
         assert_eq!(plots.len(), 1, "{kernel}: {plots:#?}");
         let asked = redraw(&mut client, &session, &plots[0], None, "png", (0.0, 0.0, 0))
             .await
@@ -296,6 +308,21 @@ async fn plots_are_drawn_again_at_a_new_size() {
         .unwrap();
         assert!(saved.can, "{kernel}: {saved:?}");
         assert_eq!(png_size(&png), (600, 400), "{kernel}");
+        // Figure recipes ask the same session after a save. Installed is not
+        // enough: the plotting package must be marked loaded and have a version.
+        let package = if kernel == "python3" {
+            "matplotlib"
+        } else {
+            "graphics"
+        };
+        let listed = client.list_packages(&session).await.unwrap();
+        assert!(
+            listed
+                .packages
+                .iter()
+                .any(|p| { p.name == package && p.loaded && !p.version.trim().is_empty() }),
+            "{kernel}: no loaded {package} with a version"
+        );
         // Again, bigger: the plot's own size was put back in between.
         redraw(
             &mut client,

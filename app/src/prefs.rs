@@ -882,6 +882,15 @@ pub(crate) fn save_plot_settings_shown(on: bool) {
     write("plotSettingsShown", json!(on));
 }
 
+/// Whether the plot save window also saves a recipe, off at first.
+pub(crate) fn plot_recipe() -> bool {
+    read()["plotRecipe"].as_bool().unwrap_or(false)
+}
+
+pub(crate) fn save_plot_recipe(on: bool) {
+    write("plotRecipe", json!(on));
+}
+
 /// The choices for every project on this Mac that Welcome's General page
 /// shows (Huan, 2026-11-15), read in one go. Wrapping is per file type:
 /// `editor_soft_wrap`.

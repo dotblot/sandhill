@@ -133,7 +133,7 @@ fn push_code(out: &mut Vec<String>, lines: &[&str]) {
 }
 
 /// A fence longer than any run of backticks inside the code.
-fn fence_for(code: &str) -> String {
+pub(crate) fn fence_for(code: &str) -> String {
     let longest = code.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     "`".repeat(longest.max(2) + 1)
 }

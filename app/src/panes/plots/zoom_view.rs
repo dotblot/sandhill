@@ -296,6 +296,22 @@ impl Workbench {
                     .into_any_element(),
                 "Redraw preview",
             ))
+            .child(switch_row(
+                Switch::new("zoom-save-recipe")
+                    .small()
+                    .color(p.accent)
+                    .checked(zoom.save_recipe)
+                    .accessibility_label("Save recipe beside it")
+                    .on_change(cx.listener(|this, on: &bool, _, cx| {
+                        if let Some(zoom) = &mut this.plot_history.zoom {
+                            zoom.save_recipe = *on;
+                            crate::prefs::save_plot_recipe(*on);
+                            cx.notify();
+                        }
+                    }))
+                    .into_any_element(),
+                "Save recipe beside it",
+            ))
             .child(div().h(px(look::GAP_4)))
             .child(heading("SAVE TO"))
             .child(

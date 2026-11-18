@@ -1,5 +1,6 @@
 //! Saving plots and choosing their folder.
 
+use super::recipe::{self, RECIPE_TIMEOUT};
 use super::*;
 
 impl Workbench {
@@ -143,6 +144,7 @@ impl Workbench {
         let (width, height) = (physical.0 * f64::from(dpi), physical.1 * f64::from(dpi));
         let room = zoom.room.clone();
         let replace = zoom.replace.clone();
+        let save_recipe = zoom.save_recipe;
         zoom.working = true;
         zoom.note = None;
         crate::prefs::save_plot_folder(&host, &project, &folder);
@@ -153,8 +155,11 @@ impl Workbench {
             .as_str()
             .map(str::to_string);
         let near = self.open.as_ref().map(|o| o.notebook.path.clone());
+        let mut recipe = save_recipe.then(|| self.plot_recipe(&item, &host, cx));
         cx.spawn_in(window, async move |this, cx| {
             let mut unavailable = None;
+            let mut packages = None;
+            let mut cell_number = None;
             let outcome: anyhow::Result<Option<String>> = async {
                 let exists = stat.await?.first().is_some_and(|s| s.mtime_ms.is_some());
                 if exists && replace.as_deref() != Some(path.as_str()) {
@@ -170,6 +175,18 @@ impl Workbench {
                     .is_some_and(|stat| stat.mtime_ms.is_some())
                 {
                     daemon.call::<Value>(Call::MakeDir { path: folder }).await?;
+                }
+                if recipe
+                    .as_ref()
+                    .is_some_and(|recipe| recipe.needs_cell_number())
+                    && from_notebook(&item.cell)
+                    && let Some((path, id)) = &item.cell
+                {
+                    cell_number = Some(recipe::closed_cell_number(
+                        &daemon,
+                        path.clone(),
+                        id.clone(),
+                    ));
                 }
                 if redrawn {
                     let reply = daemon
@@ -218,6 +235,13 @@ impl Workbench {
                         }
                     }
                 }
+                if let Some(recipe) = &recipe {
+                    packages = Some(recipe::package_probe(
+                        &daemon,
+                        &item.session,
+                        recipe.stopped,
+                    ));
+                }
                 // As drawn: the image's own text (base64 for a PNG).
                 let text = match (&item.value, blob) {
                     (Value::String(text), _) => text.clone(),
@@ -242,6 +266,46 @@ impl Workbench {
                 Ok(Some("as drawn".into()))
             }
             .await;
+            let recipe_problem = if let (Ok(Some(_)), Some(recipe)) = (&outcome, &mut recipe) {
+                let saved_at = chrono::Local::now().fixed_offset();
+                // A redraw and a package probe use the same kernel. Start the
+                // probe after a successful redraw so it cannot hold up the image.
+                let packages = packages
+                    .unwrap_or_else(|| {
+                        recipe::package_probe(&daemon, &item.session, recipe.stopped)
+                    })
+                    .await;
+                if let Some(number) = cell_number
+                    && let Some(number) = number.await
+                {
+                    recipe.set_cell_number(number);
+                }
+                let text = recipe::markdown(
+                    &path,
+                    saved_at,
+                    recipe,
+                    packages
+                        .as_ref()
+                        .map(|listed| listed.packages.as_slice())
+                        .map_err(|err| *err),
+                );
+                daemon
+                    .call_within::<Value>(
+                        Call::WriteFile {
+                            path: format!("{path}.recipe.md"),
+                            text,
+                            expected_mtime_ms: None,
+                            base64: false,
+                            // Replace the pair only after the figure's confirmation.
+                            create: replace.as_deref() != Some(path.as_str()),
+                        },
+                        RECIPE_TIMEOUT,
+                    )
+                    .await
+                    .err()
+            } else {
+                None
+            };
             this.update_in(cx, |this, window, cx| {
                 let shown = this.relative_path(&path);
                 if let Some(zoom) = this.plot_history.zoom.as_mut() {
@@ -267,7 +331,17 @@ impl Workbench {
                     match outcome {
                         Ok(Some(size)) => {
                             zoom.replace = None;
-                            zoom.note = Some(format!("Saved {shown}, {size}."));
+                            zoom.note = Some(match recipe_problem {
+                                Some(err) => {
+                                    format!(
+                                        "Saved {shown}, {size}. Could not save its recipe: {err:#}"
+                                    )
+                                }
+                                None if save_recipe => {
+                                    format!("Saved {shown}, {size}, with its recipe.")
+                                }
+                                None => format!("Saved {shown}, {size}."),
+                            });
                         }
                         Ok(None) => {
                             zoom.replace = Some(path.clone());
