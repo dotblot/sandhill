@@ -47,7 +47,14 @@ Status: approved by Huan (2026-11-18).
   - automatic sleep is off;
   - only a close button is shown, on the right (its `button-layout`
     setting is `appmenu:close`);
-  - the default code font is DejaVu Sans Mono.
+  - the desktop's fonts are Ubuntu Sans for the interface and Ubuntu Sans
+    Mono for code (GNOME's settings; fontconfig's own default for code is
+    DejaVu Sans Mono).
+- **Found while building (2026-11-18):** the web view (WebKitGTK) works
+  only on X11, so on Ubuntu's Wayland desktop Sandhill runs through
+  XWayland, the X11 layer Ubuntu includes. It looks and behaves as a normal
+  window; the difference shows only with fractional display scaling, where
+  X11 apps can look slightly soft.
 
 ## The change
 1. **Build it on `ubuntu-lab`.**
@@ -64,7 +71,7 @@ Status: approved by Huan (2026-11-18).
    - **Colours:** solid, as the Mac's look is with glass turned off;
      light and dark follow Ubuntu's own setting.
    - **Fonts:** the interface uses Ubuntu's interface font. Code uses the
-     desktop's default monospaced font, named "System (DejaVu Sans
+     desktop's default monospaced font, named "System (Ubuntu Sans
      Mono)" in General. The rest of the font list works as on the Mac.
    - **Shortcuts:** check every Ctrl shortcut; fix any that GNOME already
      uses.
