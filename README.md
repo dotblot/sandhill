@@ -173,5 +173,6 @@ Lucide and Developer Icons under their upstream MIT/ISC licenses; see the
 [icon attribution notices](docs/design/ui/icons/vendor/NOTICE.txt) and
 [source mapping](docs/design/ui/icons/MAPPING.md). Vendor trademarks remain
 their owners' property.
-The Posit Assistant and Antigravity marks use user-supplied references; their
-public-release permissions are not supplied by those icon-library licenses.
+The Posit Assistant and Antigravity marks in this repository come from
+user-supplied references; the app leaves them out until their owners allow
+them.

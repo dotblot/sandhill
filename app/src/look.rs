@@ -536,12 +536,16 @@ fn add_fonts(cx: &mut App) {
 }
 
 /// The icons drawn in `docs/design/ui/icons` (by its `build.py`), served
-/// under `sandhill/`, ahead of gpui-kit's own.
+/// under `sandhill/`, ahead of gpui-kit's own. Antigravity's and Posit
+/// Assistant's marks stay in the repository but out of the app until their
+/// owners allow it (Huan, 2026-11-18).
 #[derive(RustEmbed)]
 #[folder = "../docs/design/ui/icons/"]
 #[include = "*/*.svg"]
 #[include = "registry.json"]
 #[exclude = "vendor/**"]
+#[exclude = "agents/antigravity.svg"]
+#[exclude = "agents/posit.svg"]
 struct Icons;
 
 pub struct Assets;

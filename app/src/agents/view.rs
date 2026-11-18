@@ -689,10 +689,13 @@ impl Agents {
 /// Shared integration artwork, including the user-supplied provider marks.
 /// One-colour marks (OpenAI's for Codex, Synthetic Sciences' for
 /// OpenScience) follow the text colour, so they read on light and dark
-/// without a background; the rest keep their colours.
+/// without a background; the rest keep their colours. Antigravity's and
+/// Posit Assistant's marks are left out of the shipped app until their
+/// owners allow it (Huan, 2026-11-18; `look::Icons`): the generic one
+/// stands in.
 pub(crate) fn provider(kind: &str) -> Provider {
     let name = match kind {
-        "claude" | "codex" | "antigravity" | "openscience" | "omp" | "pi" | "posit" => kind,
+        "claude" | "codex" | "openscience" | "omp" | "pi" => kind,
         _ => "generic",
     };
     Provider {
