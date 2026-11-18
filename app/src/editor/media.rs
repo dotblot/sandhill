@@ -193,7 +193,7 @@ impl MediaView {
                         loaded.and_then(|file| native::Preview::new(file, pdf, window, cx));
                     #[cfg(not(target_os = "macos"))]
                     let loaded: Result<()> = loaded.and_then(|_| {
-                        let _ = pdf;
+                        let _ = (pdf, window);
                         anyhow::bail!("media previews require macOS")
                     });
                     this.state = match loaded {
@@ -281,6 +281,7 @@ impl MediaView {
         self.changed(cx);
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     fn step_zoom(&mut self, factor: f64, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         if let State::Ready(view) = &self.state {

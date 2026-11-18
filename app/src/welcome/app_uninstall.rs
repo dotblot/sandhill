@@ -1,10 +1,15 @@
 //! The explicit, final uninstall step for the currently running packaged app.
 //! Development executables are never interpreted as removable applications.
 
-use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "macos", test))]
+use std::path::Path;
+use std::path::PathBuf;
 
-use anyhow::{Context as _, Result, ensure};
+#[cfg(any(target_os = "macos", test))]
+use anyhow::ensure;
+use anyhow::{Context as _, Result};
 
+#[cfg(any(target_os = "macos", test))]
 fn bundle_for_executable(executable: &Path) -> Result<Option<PathBuf>> {
     let Some(macos) = executable.parent() else {
         return Ok(None);

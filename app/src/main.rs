@@ -174,123 +174,126 @@ fn main() -> anyhow::Result<()> {
             .build()?,
     );
 
-    gpui_kit::application()
-        .with_assets(look::Assets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            panes::terminal::init(cx);
-            look::install(cx);
-            cx.on_action(|_: &Quit, cx| app_window::quit(cx));
-            // With no window open, a new one.
-            // One main window: a new window is Welcome, to open a project.
-            cx.on_action(|_: &NewWindow, cx| app_window::show_welcome(None, cx));
-            // ⌘, opens Welcome's General page, as Settings… does on a Mac.
-            cx.on_action(|_: &OpenSettings, cx| {
-                app_window::show_welcome(Some(welcome::start_screen::StartMode::General), cx)
-            });
-            register_r();
-            register_r_editing(cx);
-            main_menu::install_app_actions(cx);
-            // The Tauri app's shortcuts: ⌘ on a Mac, Ctrl elsewhere.
-            let m = if cfg!(target_os = "macos") {
-                "cmd"
-            } else {
-                "ctrl"
-            };
-            // Bindings keep their keys for the life of the app.
-            let k =
-                |keys: &str| -> &'static str { Box::leak(keys.replace("mod", m).into_boxed_str()) };
-            // Elsewhere Ctrl keys belong to the shell in the terminal.
-            let g = if cfg!(target_os = "macos") {
-                None
-            } else {
-                Some("!Terminal")
-            };
-            let mut keys = vec![
-                KeyBinding::new(k("mod-q"), Quit, g),
-                KeyBinding::new(k("mod-s"), Save, g),
-                KeyBinding::new(k("alt-mod-s"), SaveAll, g),
-                KeyBinding::new(k("mod-w"), CloseTab, g),
-                KeyBinding::new(k("shift-mod-w"), CloseWindow, g),
-                KeyBinding::new(k("mod-n"), NewFile, g),
-                KeyBinding::new(k("alt-mod-n"), NewFolder, g),
-                KeyBinding::new(k("mod-o"), OpenProject, g),
-                KeyBinding::new(k("shift-mod-o"), ConnectServer, g),
-                KeyBinding::new(k("shift-mod-n"), NewProject, g),
-                KeyBinding::new(k("mod-,"), OpenSettings, g),
-                // In a cell's editor, Shift+Enter runs the cell instead of
-                // adding a line, as in Jupyter.
-                KeyBinding::new("shift-enter", RunCell, Some("Input")),
-                // ⌘↵ runs the line or statement in a script, and the cell
-                // (staying on it) in a notebook.
-                KeyBinding::new(k("mod-enter"), RunLine, Some("Input")),
-                KeyBinding::new(k("alt-mod-r"), RunAll, g),
-                KeyBinding::new(k("mod-shift-enter"), RunAll, g),
-                KeyBinding::new(k("mod-."), Interrupt, g),
-                KeyBinding::new(k("mod-b"), ToggleFiles, g),
-                KeyBinding::new(k("alt-mod-b"), ToggleRight, g),
-                KeyBinding::new(k("mod-i"), ToggleAgents, g),
-                KeyBinding::new(k("mod-j"), ToggleConsole, g),
-                KeyBinding::new(k("mod-k"), TogglePalette, g),
-                KeyBinding::new(k("shift-mod-k"), Preview, g),
-                KeyBinding::new("f1", HelpAtCursor, None),
-                // A notebook's cells, when none is being edited (Esc
-                // leaves a cell's editor), as in Jupyter.
-                KeyBinding::new("a", AddCellAbove, Some(CELLS)),
-                KeyBinding::new("b", AddCellBelow, Some(CELLS)),
-                KeyBinding::new("d d", DeleteCell, Some(CELLS)),
-                KeyBinding::new("z", UndoDeleteCell, Some(CELLS)),
-                KeyBinding::new("y", CellToCode, Some(CELLS)),
-                KeyBinding::new("m", CellToMarkdown, Some(CELLS)),
-                KeyBinding::new("up", SelectPrevCell, Some(CELLS)),
-                KeyBinding::new("k", SelectPrevCell, Some(CELLS)),
-                KeyBinding::new("down", SelectNextCell, Some(CELLS)),
-                KeyBinding::new("j", SelectNextCell, Some(CELLS)),
-                KeyBinding::new("enter", EditCell, Some(CELLS)),
-                KeyBinding::new("shift-enter", RunCell, Some(CELLS)),
-                KeyBinding::new(k("mod-enter"), RunLine, Some(CELLS)),
-            ];
-            if cfg!(target_os = "macos") {
-                keys.push(KeyBinding::new("cmd-m", Minimize, None));
-                keys.push(KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None));
-                keys.push(KeyBinding::new(
-                    "ctrl-cmd-enter",
-                    crate::shell::focus_mode::FocusEditor,
-                    None,
-                ));
-            }
-            cx.bind_keys(keys);
-            cx.set_menus(main_menu::app_menus());
-            // The project named on the command line opens in a window of
-            // its own; otherwise the windows open when the app last quit.
-            let places = match project.clone() {
-                Some(path) => {
-                    let place = app_window::Place {
-                        host: host.clone(),
-                        path,
-                    };
-                    vec![app_window::Places {
-                        tabs: vec![place.clone()],
-                        current: Some(place),
-                    }]
-                }
-                None if host != sandhill_link::LOCAL => {
-                    let place = app_window::Place {
-                        host: host.clone(),
-                        path: String::new(),
-                    };
-                    vec![app_window::Places {
-                        tabs: vec![place.clone()],
-                        current: Some(place),
-                    }]
-                }
-                None => prefs::windows(),
-            };
-            // Completion menus and their documentation stay clear of the
-            // title and status bars.
-            gpui_kit::component::input::set_popup_insets(px(look::TITLE_BAR), px(look::STATUS_BAR));
-            app_window::start(rt.clone(), places, cx);
-            cx.activate(true);
+    // The web view (WebKitGTK) works only on X11, so on a Wayland desktop
+    // Sandhill runs through XWayland.
+    #[cfg(target_os = "linux")]
+    let app = gpui_kit::platform::linux(WindowingModes::X11);
+    #[cfg(not(target_os = "linux"))]
+    let app = gpui_kit::application();
+    app.with_assets(look::Assets).run(move |cx| {
+        gpui_kit::init(cx);
+        panes::terminal::init(cx);
+        look::install(cx);
+        cx.on_action(|_: &Quit, cx| app_window::quit(cx));
+        // With no window open, a new one.
+        // One main window: a new window is Welcome, to open a project.
+        cx.on_action(|_: &NewWindow, cx| app_window::show_welcome(None, cx));
+        // ⌘, opens Welcome's General page, as Settings… does on a Mac.
+        cx.on_action(|_: &OpenSettings, cx| {
+            app_window::show_welcome(Some(welcome::start_screen::StartMode::General), cx)
         });
+        register_r();
+        register_r_editing(cx);
+        main_menu::install_app_actions(cx);
+        // The Tauri app's shortcuts: ⌘ on a Mac, Ctrl elsewhere.
+        let m = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        // Bindings keep their keys for the life of the app.
+        let k = |keys: &str| -> &'static str { Box::leak(keys.replace("mod", m).into_boxed_str()) };
+        // Elsewhere Ctrl keys belong to the shell in the terminal.
+        let g = if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some("!Terminal")
+        };
+        let mut keys = vec![
+            KeyBinding::new(k("mod-q"), Quit, g),
+            KeyBinding::new(k("mod-s"), Save, g),
+            KeyBinding::new(k("alt-mod-s"), SaveAll, g),
+            KeyBinding::new(k("mod-w"), CloseTab, g),
+            KeyBinding::new(k("shift-mod-w"), CloseWindow, g),
+            KeyBinding::new(k("mod-n"), NewFile, g),
+            KeyBinding::new(k("alt-mod-n"), NewFolder, g),
+            KeyBinding::new(k("mod-o"), OpenProject, g),
+            KeyBinding::new(k("shift-mod-o"), ConnectServer, g),
+            KeyBinding::new(k("shift-mod-n"), NewProject, g),
+            KeyBinding::new(k("mod-,"), OpenSettings, g),
+            // In a cell's editor, Shift+Enter runs the cell instead of
+            // adding a line, as in Jupyter.
+            KeyBinding::new("shift-enter", RunCell, Some("Input")),
+            // ⌘↵ runs the line or statement in a script, and the cell
+            // (staying on it) in a notebook.
+            KeyBinding::new(k("mod-enter"), RunLine, Some("Input")),
+            KeyBinding::new(k("alt-mod-r"), RunAll, g),
+            KeyBinding::new(k("mod-shift-enter"), RunAll, g),
+            KeyBinding::new(k("mod-."), Interrupt, g),
+            KeyBinding::new(k("mod-b"), ToggleFiles, g),
+            KeyBinding::new(k("alt-mod-b"), ToggleRight, g),
+            KeyBinding::new(k("mod-i"), ToggleAgents, g),
+            KeyBinding::new(k("mod-j"), ToggleConsole, g),
+            KeyBinding::new(k("mod-k"), TogglePalette, g),
+            KeyBinding::new(k("shift-mod-k"), Preview, g),
+            KeyBinding::new("f1", HelpAtCursor, None),
+            // A notebook's cells, when none is being edited (Esc
+            // leaves a cell's editor), as in Jupyter.
+            KeyBinding::new("a", AddCellAbove, Some(CELLS)),
+            KeyBinding::new("b", AddCellBelow, Some(CELLS)),
+            KeyBinding::new("d d", DeleteCell, Some(CELLS)),
+            KeyBinding::new("z", UndoDeleteCell, Some(CELLS)),
+            KeyBinding::new("y", CellToCode, Some(CELLS)),
+            KeyBinding::new("m", CellToMarkdown, Some(CELLS)),
+            KeyBinding::new("up", SelectPrevCell, Some(CELLS)),
+            KeyBinding::new("k", SelectPrevCell, Some(CELLS)),
+            KeyBinding::new("down", SelectNextCell, Some(CELLS)),
+            KeyBinding::new("j", SelectNextCell, Some(CELLS)),
+            KeyBinding::new("enter", EditCell, Some(CELLS)),
+            KeyBinding::new("shift-enter", RunCell, Some(CELLS)),
+            KeyBinding::new(k("mod-enter"), RunLine, Some(CELLS)),
+        ];
+        if cfg!(target_os = "macos") {
+            keys.push(KeyBinding::new("cmd-m", Minimize, None));
+            keys.push(KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None));
+            keys.push(KeyBinding::new(
+                "ctrl-cmd-enter",
+                crate::shell::focus_mode::FocusEditor,
+                None,
+            ));
+        }
+        cx.bind_keys(keys);
+        cx.set_menus(main_menu::app_menus());
+        // The project named on the command line opens in a window of
+        // its own; otherwise the windows open when the app last quit.
+        let places = match project.clone() {
+            Some(path) => {
+                let place = app_window::Place {
+                    host: host.clone(),
+                    path,
+                };
+                vec![app_window::Places {
+                    tabs: vec![place.clone()],
+                    current: Some(place),
+                }]
+            }
+            None if host != sandhill_link::LOCAL => {
+                let place = app_window::Place {
+                    host: host.clone(),
+                    path: String::new(),
+                };
+                vec![app_window::Places {
+                    tabs: vec![place.clone()],
+                    current: Some(place),
+                }]
+            }
+            None => prefs::windows(),
+        };
+        // Completion menus and their documentation stay clear of the
+        // title and status bars.
+        gpui_kit::component::input::set_popup_insets(px(look::TITLE_BAR), px(look::STATUS_BAR));
+        app_window::start(rt.clone(), places, cx);
+        cx.activate(true);
+    });
     Ok(())
 }
