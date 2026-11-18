@@ -111,6 +111,24 @@ async fn printed_by(client: &Client, session: &str, run: &str) -> String {
     stdout_of(&events)
 }
 
+/// Waits until the run has printed `text`. A person reads the output before
+/// answering the next question; answering at once could journal the next
+/// prompt and its answer before output still on its way from the kernel.
+async fn until_printed(client: &Client, session: &str, run: &str, text: &str) {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let printed = printed_by(client, session, run).await;
+        if printed.contains(text) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{text:?} was never printed: {printed:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// Waits for the run to finish: its status and its events.
 async fn finished(client: &mut Client, run: &str) -> (String, Vec<Event>) {
     let events = until_asked_or_done(client, run).await;
@@ -200,6 +218,7 @@ async fn python_breakpoint_and_debug_stop_in_the_debugger() {
     assert!(prompt.contains("db> "), "{prompt:?}");
     client.input(&session, "p y").await.unwrap();
     asked(&mut client, &run).await;
+    until_printed(&client, &session, &run, "20\n").await;
     client.input(&session, "c").await.unwrap();
     let (status, events) = finished(&mut client, &run).await;
     assert_eq!(status, "ok");
@@ -218,6 +237,7 @@ async fn python_breakpoint_and_debug_stop_in_the_debugger() {
     asked(&mut client, &run).await;
     client.input(&session, "p z * 6").await.unwrap();
     asked(&mut client, &run).await;
+    until_printed(&client, &session, &run, "42\n").await;
     client.input(&session, "q").await.unwrap();
     finished(&mut client, &run).await;
     let printed = printed_by(&client, &session, &run).await;
