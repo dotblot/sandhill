@@ -26,13 +26,27 @@ use gpui_kit::*;
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 
+mod keys;
 mod typography;
+mod window_buttons;
 
+pub use keys::keys;
 use typography::shift;
 pub use typography::{
     CODE_SIZES, DEFAULT_SIZE, Typography, UI_SIZES, choose_typography, code, mono, mono_css,
-    monospaced_families,
+    monospaced_families, system_mono, ui_font,
 };
+pub use window_buttons::window_buttons;
+
+/// Wording that names the Mac there and this computer elsewhere, such as
+/// `mac_or("on this Mac", "on this computer")`.
+pub const fn mac_or(mac: &'static str, other: &'static str) -> &'static str {
+    if cfg!(target_os = "macos") {
+        mac
+    } else {
+        other
+    }
+}
 
 /// Height of one line of text at `size`: a third more than the size, so
 /// 20px for the default 15px.
@@ -417,6 +431,7 @@ fn theme_config(default: &ThemeConfig) -> Rc<ThemeConfig> {
     }
     .into();
     config.font_size = Some(chrome());
+    config.font_family = Some(ui_font());
     config.mono_font_family = Some(mono());
     config.mono_font_size = Some(code());
     config.radius = Some(CONTROL_RADIUS as usize);

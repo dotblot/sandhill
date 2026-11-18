@@ -465,10 +465,13 @@ impl Agents {
                 cx.background_executor().timer(MODE_STEP).await;
             }
             this.update(cx, |this, cx| {
-                this.problem = Some(format!(
-                    "Claude Code didn't switch to {} here. Its terminal shows the modes it offers: ⇧Tab switches.",
-                    mode.label
-                ));
+                this.problem = Some(
+                    crate::look::keys(format!(
+                        "Claude Code didn't switch to {} here. Its terminal shows the modes it offers: ⇧Tab switches.",
+                        mode.label
+                    ))
+                    .to_string(),
+                );
                 cx.notify();
             })
             .ok();

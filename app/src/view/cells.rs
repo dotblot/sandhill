@@ -575,13 +575,9 @@ impl Workbench {
                     bar.child(
                         bar_button("preview", "Preview", Some("globe"), &p)
                             .tooltip(|w, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(
-                                    if cfg!(target_os = "macos") {
-                                        "Preview with Quarto in the Viewer (⇧⌘K)"
-                                    } else {
-                                        "Preview with Quarto in the Viewer (Ctrl+Shift+K)"
-                                    },
-                                )
+                                gpui_kit::component::tooltip::Tooltip::new(look::keys(
+                                    "Preview with Quarto in the Viewer (⇧⌘K)",
+                                ))
                                 .build(w, cx)
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -719,7 +715,7 @@ impl Workbench {
                     .appearance(false)
                     .line_height(px(line))
                     .when(!boxed, |e| {
-                        e.font_family(".SystemUIFont").text_size(px(look::chrome()))
+                        e.font_family(look::ui_font()).text_size(px(look::chrome()))
                     })
                     .h(px(lines as f32 * line + EDITOR_PADDING))
             })

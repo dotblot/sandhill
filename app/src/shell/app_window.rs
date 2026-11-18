@@ -164,6 +164,15 @@ pub fn quit(cx: &mut App) {
     quit::request(cx);
 }
 
+/// Called as the project window closes. Linux has no Dock to bring back an
+/// app with no window, so there, with Welcome not open either, closing it
+/// quits, asking about background work as Quit does.
+fn quit_if_last(cx: &mut App) {
+    if cfg!(target_os = "linux") && cx.global::<Windows>().welcome.is_none() {
+        cx.defer(quit);
+    }
+}
+
 /// The window options shared by Sandhill's windows; Welcome's can't be
 /// made smaller than 800×600 (Huan, 2026-11-13).
 fn window_options(bounds: WindowBounds, welcome: bool) -> WindowOptions {
@@ -185,6 +194,12 @@ fn window_options(bounds: WindowBounds, welcome: bool) -> WindowOptions {
         // On a Mac the window is frosted glass unless turned off: the
         // system blurs what is behind it, and `look::wall` tints it.
         window_background: look::window_background(),
+        // On Linux Sandhill draws its own title bar and window buttons
+        // (`look::window_buttons`); Kit's root draws the frame, its shadow
+        // and the resize edges.
+        window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
+        // The desktop matches windows to the launcher's entry by this.
+        app_id: Some("sandhill".into()),
         ..Default::default()
     }
 }
@@ -549,6 +564,7 @@ impl AppWindow {
             }
             if !this.read(cx).any_dirty(cx) {
                 this.update(cx, |this, cx| quit::retain(this, cx));
+                quit_if_last(cx);
                 return true;
             }
             this.update(cx, |this, cx| this.save_and_close(window, cx));
@@ -1022,7 +1038,11 @@ impl AppWindow {
                 .unwrap_or(true);
             if saved && !cx.update(|_, cx| quit::active(cx)).unwrap_or(true) {
                 this.update(cx, |this, cx| quit::retain(this, cx)).ok();
-                cx.update(|window, _| window.remove_window()).ok();
+                cx.update(|window, cx| {
+                    window.remove_window();
+                    quit_if_last(cx);
+                })
+                .ok();
             }
         })
         .detach();

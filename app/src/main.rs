@@ -261,6 +261,16 @@ fn main() -> anyhow::Result<()> {
                 crate::shell::focus_mode::FocusEditor,
                 None,
             ));
+        } else {
+            // Elsewhere: F11 for full screen, as GNOME's apps use, and
+            // Ctrl+Alt+Enter for Focus Editor, which the menus show for
+            // ⌃⌘↩ (`look::keys`); Ctrl+Enter runs the line.
+            keys.push(KeyBinding::new("f11", ToggleFullScreen, None));
+            keys.push(KeyBinding::new(
+                "ctrl-alt-enter",
+                crate::shell::focus_mode::FocusEditor,
+                g,
+            ));
         }
         cx.bind_keys(keys);
         cx.set_menus(main_menu::app_menus());

@@ -743,14 +743,18 @@ impl Render for FolderDialog {
                     .gap(px(look::GAP_8))
                     .child(
                         icon_button("folder-dialog-up", "arrow.up", &p, false)
-                            .tooltip(|w, cx| Tooltip::new("Enclosing folder  ⌘↑").build(w, cx))
+                            .tooltip(|w, cx| {
+                                Tooltip::new(crate::look::keys("Enclosing folder  ⌘↑")).build(w, cx)
+                            })
                             .on_click(cx.listener(|this, _, window, cx| this.go_up(window, cx))),
                     )
                     .child(trail)
                     .when(!choosing_files, |d| {
                         d.child(
                             icon_button("folder-dialog-new", "folder.new", &p, false)
-                                .tooltip(|w, cx| Tooltip::new("New Folder  ⌥⌘N").build(w, cx))
+                                .tooltip(|w, cx| {
+                                    Tooltip::new(crate::look::keys("New Folder  ⌥⌘N")).build(w, cx)
+                                })
                                 .on_click(
                                     cx.listener(|this, _, window, cx| {
                                         this.start_naming(window, cx)
@@ -853,7 +857,7 @@ impl Render for FolderDialog {
                             .primary()
                             .label(self.confirm.clone())
                             .disabled(target.is_none())
-                            .tooltip("⌘↩")
+                            .tooltip(crate::look::keys("⌘↩"))
                             .on_click(cx.listener(|this, _, _, cx| this.finish(cx))),
                     ),
             );

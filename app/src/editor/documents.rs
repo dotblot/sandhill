@@ -274,7 +274,10 @@ impl Workbench {
                         .label(if self.target == Target::Local {
                             "Open with Default App"
                         } else {
-                            "Download to This Mac and Open"
+                            look::mac_or(
+                                "Download to This Mac and Open",
+                                "Download to This Computer and Open",
+                            )
                         })
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.open_external(path.clone(), cx)),
@@ -291,11 +294,21 @@ impl Workbench {
         cx.spawn(async move |this, cx| {
             let title = format!("Open “{}” with its default app?", crate::panes::files::base_name(&path));
             let detail = if remote {
-                "This file is on the server. Download a copy to this Mac and open that copy with its default app? No application will run on the server."
+                look::mac_or(
+                    "This file is on the server. Download a copy to this Mac and open that copy with its default app? No application will run on the server.",
+                    "This file is on the server. Download a copy to this computer and open that copy with its default app? No application will run on the server.",
+                )
             } else {
-                "This file is not supported by the editor. Open it with this Mac's default application?"
+                look::mac_or(
+                    "This file is not supported by the editor. Open it with this Mac's default application?",
+                    "This file is not supported by the editor. Open it with this computer's default application?",
+                )
             };
-            let action = if remote { "Download to This Mac and Open" } else { "Open with Default App" };
+            let action = if remote {
+                look::mac_or("Download to This Mac and Open", "Download to This Computer and Open")
+            } else {
+                "Open with Default App"
+            };
             let Ok(answer) = this.update_in(cx, |_, window, cx| {
                 window.prompt(PromptLevel::Info, &title, Some(detail), &[action, "Cancel"], cx)
             }) else { return };

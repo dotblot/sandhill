@@ -68,7 +68,12 @@ pub(crate) fn row<V: 'static>(
         .hover(move |d| d.bg(hover))
         .child(div().flex_1().whitespace_nowrap().child(label))
         .when(!keys.is_empty(), |d| {
-            d.child(div().flex_none().text_color(p.faint).child(keys))
+            d.child(
+                div()
+                    .flex_none()
+                    .text_color(p.faint)
+                    .child(look::keys(keys)),
+            )
         })
         .on_click(cx.listener(move |this, _, window, cx| {
             run(this, window, cx);

@@ -564,7 +564,10 @@ impl Workbench {
                 if local {
                     "Open with Default App"
                 } else {
-                    "Download to This Mac and Open"
+                    look::mac_or(
+                        "Download to This Mac and Open",
+                        "Download to This Computer and Open",
+                    )
                 },
                 "",
                 &p,
@@ -700,11 +703,7 @@ impl Workbench {
             rows.push(menu_item(
                 "tm-reveal",
                 Some("folder"),
-                if cfg!(target_os = "macos") {
-                    "Reveal in Finder"
-                } else {
-                    "Show in folder"
-                },
+                look::mac_or("Reveal in Finder", "Show in Folder"),
                 "",
                 &p,
                 cx,
@@ -716,7 +715,7 @@ impl Workbench {
             rows.push(menu_item(
                 "tm-download",
                 Some("doc.download"),
-                "Download to this Mac…",
+                look::mac_or("Download to this Mac…", "Download to this computer…"),
                 "",
                 &p,
                 cx,
@@ -979,7 +978,12 @@ pub(crate) fn menu_item(
                 .children(icon_name.map(|n| icon(n).size(px(look::ICON)))),
         )
         .child(div().flex_1().whitespace_nowrap().child(label.to_string()))
-        .child(div().flex_none().text_color(p.faint).child(keys))
+        .child(
+            div()
+                .flex_none()
+                .text_color(p.faint)
+                .child(look::keys(keys)),
+        )
         .on_click(cx.listener(move |this, _, window, cx| {
             this.files_ui.menu = None;
             this.files_ui.new_menu = false;

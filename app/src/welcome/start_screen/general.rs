@@ -93,13 +93,23 @@ impl AppWindow {
                     .gap(px(look::GAP_6))
                     .child(div().text_size(px(look::welcome_title())).font_weight(FontWeight::BOLD).child("General"))
                     .child(div().text_size(px(look::tab_text())).text_color(p.muted).child(
-                        "Choices for every project on this Mac. The buttons beside the editor, notebooks and panes change the same choices.",
+                        look::mac_or(
+                            "Choices for every project on this Mac. The buttons beside the editor, notebooks and panes change the same choices.",
+                            "Choices for every project on this computer. The buttons beside the editor, notebooks and panes change the same choices.",
+                        ),
                     )),
             )
             .child(look::settings_group(
                 "Appearance",
                 std::iter::once(
-                    row("Theme", Some("System follows the Mac's light or dark appearance."), &p)
+                    row(
+                        "Theme",
+                        Some(look::mac_or(
+                            "System follows the Mac's light or dark appearance.",
+                            "System follows the desktop's light or dark style.",
+                        )),
+                        &p,
+                    )
                         .child(themes)
                         .into_any_element(),
                 )
@@ -218,9 +228,11 @@ impl AppWindow {
             .unwrap_or_default();
         let font_detail = match &now.missing {
             Some(font) => format!("{font} is not installed, so code uses the system font."),
-            None => {
-                "Any monospaced font on this Mac. The interface always uses the system font.".into()
-            }
+            None => look::mac_or(
+                "Any monospaced font on this Mac. The interface always uses the system font.",
+                "Any monospaced font on this computer. The interface always uses the system font.",
+            )
+            .into(),
         };
         let font = now.code_font.clone();
         let ui_size = now.ui_size;
@@ -257,7 +269,13 @@ impl AppWindow {
                     }
                 }))
                 .into_any_element(),
-                row("Defaults", Some("SF Mono for code, and 15 for both sizes."), p)
+                look::settings_row(
+                    "Defaults",
+                    Some(look::settings_detail(
+                        format!("{} for code, and 15 for both sizes.", system_mono_name()),
+                        p,
+                    )),
+                )
                     .child(
                         look::button("general-fonts-reset", "Restore", None, look::ButtonSize::Row)
                             .disabled(default)
@@ -283,13 +301,9 @@ impl AppWindow {
     fn font_select(&self, now: &look::Typography, p: &Palette, cx: &mut Context<Self>) -> Div {
         const TRIGGER: &str = "general-code-font";
         let p = *p;
-        let system = if cfg!(target_os = "macos") {
-            "System (SF Mono)"
-        } else {
-            "System"
-        };
+        let system: SharedString = format!("System ({})", system_mono_name()).into();
         let current = now.code_font.clone().filter(|_| now.missing.is_none());
-        let shown: SharedString = current.clone().map_or(system.into(), Into::into);
+        let shown: SharedString = current.clone().map_or(system.clone(), Into::into);
         let hover = p.ink(look::BUTTON_HOVER);
         let button = h_flex()
             .id(TRIGGER)
@@ -329,7 +343,7 @@ impl AppWindow {
             }));
         let list = self.start.font_menu.then(|| {
             let finding = self.start.mono_fonts.is_none();
-            let options = std::iter::once((None, SharedString::from(system))).chain(
+            let options = std::iter::once((None, system.clone())).chain(
                 self.start
                     .mono_fonts
                     .iter()
@@ -474,6 +488,15 @@ fn stepper(
 /// control.
 fn row(label: &'static str, detail: Option<&'static str>, p: &Palette) -> Div {
     look::settings_row(label, detail.map(|detail| look::settings_detail(detail, p)))
+}
+
+/// The system's code font by the name people know it by.
+fn system_mono_name() -> SharedString {
+    if cfg!(target_os = "macos") {
+        "SF Mono".into()
+    } else {
+        look::system_mono()
+    }
 }
 
 fn switch_row(

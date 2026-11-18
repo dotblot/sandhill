@@ -238,7 +238,14 @@ impl AppWindow {
             Ok(Some(path)) => (Some(path.display().to_string()), None),
             Ok(None) => (
                 None,
-                Some("Current app Trash is unavailable for this development executable.".into()),
+                Some(match crate::welcome::app_uninstall::package_removal() {
+                    Some(command) => format!(
+                        "The app itself is a system package: remove it afterwards with `{command}`."
+                    ),
+                    None => {
+                        "Current app Trash is unavailable for this development executable.".into()
+                    }
+                }),
             ),
             Err(error) => (
                 None,

@@ -26,10 +26,13 @@ static CODE_SIZE: AtomicU32 = AtomicU32::new(DEFAULT_SIZE.to_bits());
 static UI_SIZE: AtomicU32 = AtomicU32::new(DEFAULT_SIZE.to_bits());
 /// The code font picked, `None` for the system's.
 static CODE_FONT: RwLock<Option<SharedString>> = RwLock::new(None);
-/// Elsewhere than a Mac: Kit's own monospaced default, which it has already
-/// checked is installed.
+/// Elsewhere than a Mac: the desktop's code and interface fonts (GNOME's
+/// settings, else fontconfig's defaults), when installed; otherwise Kit's
+/// monospaced default and GPUI's system font name.
 #[cfg(not(target_os = "macos"))]
 static OTHER_SYSTEM_MONO: OnceLock<SharedString> = OnceLock::new();
+#[cfg(not(target_os = "macos"))]
+static OTHER_SYSTEM_UI: OnceLock<SharedString> = OnceLock::new();
 
 /// What General shows and saves: the code font (`None` for the system's)
 /// and the two sizes. A global, so views that keep their own copy of the
@@ -65,7 +68,8 @@ pub fn mono() -> SharedString {
     system_mono()
 }
 
-fn system_mono() -> SharedString {
+/// The system's code font: SF Mono on a Mac, the desktop's elsewhere.
+pub fn system_mono() -> SharedString {
     #[cfg(target_os = "macos")]
     {
         SharedString::new_static(SYSTEM_MONO)
@@ -79,16 +83,34 @@ fn system_mono() -> SharedString {
     }
 }
 
+/// The interface font, which is always the system's.
+pub fn ui_font() -> SharedString {
+    #[cfg(target_os = "macos")]
+    {
+        SharedString::new_static(".SystemUIFont")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        OTHER_SYSTEM_UI
+            .get()
+            .cloned()
+            .unwrap_or_else(|| SharedString::new_static(".SystemUIFont"))
+    }
+}
+
 /// The code font for a web page's CSS: the picked font first, then the
-/// system's (`ui-monospace` is SF Mono in WebKit).
+/// system's (`ui-monospace` is SF Mono in WebKit; WebKitGTK knows neither
+/// it nor Menlo, so there the desktop's font is named).
 pub fn mono_css() -> String {
     let picked = CODE_FONT.read().ok().and_then(|font| font.clone());
+    let system = if cfg!(target_os = "macos") {
+        "ui-monospace, Menlo, monospace".to_string()
+    } else {
+        format!("\"{}\", monospace", system_mono().replace('"', ""))
+    };
     match picked {
-        Some(font) => format!(
-            "\"{}\", ui-monospace, Menlo, monospace",
-            font.replace('"', "")
-        ),
-        None => "ui-monospace, Menlo, monospace".into(),
+        Some(font) => format!("\"{}\", {system}", font.replace('"', "")),
+        None => system,
     }
 }
 
@@ -110,9 +132,49 @@ pub(super) fn load(cx: &mut App) {
     #[cfg(not(target_os = "macos"))]
     {
         use gpui_kit::component::ActiveTheme;
-        let _ = OTHER_SYSTEM_MONO.set(cx.theme().mono_font_family.clone());
+        let installed = cx.text_system().all_font_names();
+        let usable = |font: &Option<String>| {
+            font.clone()
+                .filter(|font| installed.iter().any(|name| name == font))
+        };
+        let mono = usable(&desktop_font("monospace-font-name", "monospace"))
+            .map_or_else(|| cx.theme().mono_font_family.clone(), Into::into);
+        let _ = OTHER_SYSTEM_MONO.set(mono);
+        if let Some(ui) = usable(&desktop_font("font-name", "sans-serif")) {
+            let _ = OTHER_SYSTEM_UI.set(ui.into());
+        }
     }
     use_typography(crate::prefs::typography(), cx);
+}
+
+/// A font family the desktop names: GNOME's setting `key` (such as
+/// `'Ubuntu Sans Mono 11'`, a family then a size), else fontconfig's match
+/// for `generic`.
+#[cfg(not(target_os = "macos"))]
+fn desktop_font(key: &str, generic: &str) -> Option<String> {
+    let run = |program: &str, args: &[&str]| {
+        std::process::Command::new(program)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    run("gsettings", &["get", "org.gnome.desktop.interface", key])
+        .and_then(|setting| gnome_family(&setting))
+        .or_else(|| run("fc-match", &["--format", "%{family[0]}", generic]))
+        .filter(|family| !family.is_empty())
+}
+
+/// The family in a GNOME font setting: quotes and the size dropped.
+#[cfg(any(not(target_os = "macos"), test))]
+fn gnome_family(setting: &str) -> Option<String> {
+    let name = setting.trim().trim_matches('\'');
+    let family = match name.rsplit_once(' ') {
+        Some((family, size)) if size.parse::<f32>().is_ok() => family,
+        _ => name,
+    };
+    Some(family.trim().to_string()).filter(|family| !family.is_empty())
 }
 
 /// Saves and uses what General picked, then rebuilds the theme with it,
@@ -184,9 +246,31 @@ pub fn monospaced_families() -> Vec<String> {
     families
 }
 
+/// Fontconfig's monospaced families with Latin letters (dual width too, as
+/// CJK code fonts are; emoji fonts count as monospaced but have no
+/// letters). Fontconfig works a font's spacing out from its letters' widths
+/// when it scans it, so here too a font need not call itself monospaced.
 #[cfg(not(target_os = "macos"))]
 pub fn monospaced_families() -> Vec<String> {
-    Vec::new()
+    let mut families: Vec<String> = [":spacing=mono:lang=en", ":spacing=dual:lang=en"]
+        .iter()
+        .filter_map(|pattern| {
+            std::process::Command::new("fc-list")
+                .args(["--format", "%{family[0]}\n", pattern])
+                .output()
+                .ok()
+        })
+        .flat_map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|name| name.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .filter(|name| !name.is_empty() && !name.starts_with('.'))
+        .collect();
+    families.sort_by_key(|name| name.to_lowercase());
+    families.dedup();
+    families
 }
 
 #[cfg(target_os = "macos")]
@@ -240,5 +324,28 @@ mod tests {
         assert!(!monospaced("Helvetica"));
         assert!(!monospaced("Times New Roman"));
         assert!(!monospaced("No Such Font Anywhere"));
+    }
+}
+
+#[cfg(test)]
+mod gnome_tests {
+    use super::gnome_family;
+
+    #[test]
+    fn a_gnome_font_setting_gives_its_family() {
+        assert_eq!(
+            gnome_family("'Ubuntu Sans Mono 11'").as_deref(),
+            Some("Ubuntu Sans Mono")
+        );
+        assert_eq!(
+            gnome_family("'Cantarell 10.5'").as_deref(),
+            Some("Cantarell")
+        );
+        // A family whose name ends in a word, with no size given.
+        assert_eq!(
+            gnome_family("'Source Code Pro'").as_deref(),
+            Some("Source Code Pro")
+        );
+        assert_eq!(gnome_family("''"), None);
     }
 }

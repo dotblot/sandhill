@@ -353,7 +353,7 @@ impl Agents {
                         Editor::new(&self.composer)
                             .bordered(false)
                             .appearance(false)
-                            .font_family(".SystemUIFont")
+                            .font_family(look::ui_font())
                             .text_size(px(look::chrome()))
                             .line_height(px(line()))
                             .h(px(editor_height)),
@@ -1006,7 +1006,7 @@ impl Agents {
                                     .flex_none()
                                     .text_size(px(look::small()))
                                     .text_color(p.faint)
-                                    .child(format!("⌥{}", i + 1)),
+                                    .child(look::keys(format!("⌥{}", i + 1))),
                             )
                         })
                         .child(

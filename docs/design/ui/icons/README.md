@@ -1,6 +1,6 @@
 # Sandhill icons
 
-Sandhill's 176 shared interface, file, folder, language and integration icons
+Sandhill's 180 shared interface, file, folder, language and integration icons
 use [Gruvbox Material Icons](https://github.com/navernoedenis/gruvbox-material-icons),
 [Lucide](https://github.com/lucide-icons/lucide) and
 [Developer Icons](https://github.com/xandemon/developer-icons), selected by
@@ -19,7 +19,7 @@ Open [`preview.html`](preview.html) for every icon in light and dark themes;
 
 | Output folder | Purpose | Count |
 |---|---|---|
-| `system/` | Window, toolbar, editor, run, resources, Git and agent controls | 107 |
+| `system/` | Window, toolbar, editor, run, resources, Git and agent controls | 111 |
 | `bio/` | File types, including bioinformatics formats | 43 |
 | `folders/` | Project, data, results, figures, notebooks, QC, FASTQ, BAM, 10x output and other folders, each in its own colour | 14 |
 | `agents/` | Agent integrations | 8 |
@@ -61,7 +61,7 @@ embedded asset set; only normalized output SVGs and the registry are embedded.
 
 - Original geometry is proportionally fitted into a 16px viewBox, including
   source files with negative viewBox origins.
-- Lucide supplies 104 of the 107 interface icons; Sandhill draws the pane
+- Lucide supplies 108 of the 111 interface icons; Sandhill draws the pane
   height controls (collapse to the title row, fill the column, restore the
   split) in the same stroke style. They use `currentColor` and follow
   the control's normal, hovered, selected and disabled text colours. The

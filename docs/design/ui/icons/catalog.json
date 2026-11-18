@@ -200,6 +200,34 @@
         "i-restw"
       ]
     },
+    "titlebar.minimize": {
+      "file": "system/titlebar.minimize.svg",
+      "kind": "system",
+      "group": "window",
+      "label": "Minimise the window (Linux)",
+      "v31": []
+    },
+    "titlebar.maximize": {
+      "file": "system/titlebar.maximize.svg",
+      "kind": "system",
+      "group": "window",
+      "label": "Maximise the window (Linux)",
+      "v31": []
+    },
+    "titlebar.restore": {
+      "file": "system/titlebar.restore.svg",
+      "kind": "system",
+      "group": "window",
+      "label": "Restore the window from maximised (Linux)",
+      "v31": []
+    },
+    "titlebar.close": {
+      "file": "system/titlebar.close.svg",
+      "kind": "system",
+      "group": "window",
+      "label": "Close the window (Linux)",
+      "v31": []
+    },
     "preview.hand": {
       "file": "system/preview.hand.svg",
       "kind": "system",

@@ -298,6 +298,53 @@
     "note": "Two overlapping windows: back to the split, from a folded or filled pane."
    }
   },
+  "titlebar.minimize": {
+   "file": "system/titlebar.minimize.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Minimise the window (Linux)",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/minus.svg",
+    "note": "Linux window buttons, drawn by Sandhill on the right as Ubuntu puts them (Huan, 2026-11-18)."
+   }
+  },
+  "titlebar.maximize": {
+   "file": "system/titlebar.maximize.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Maximise the window (Linux)",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/square.svg",
+    "note": "One window: maximise."
+   }
+  },
+  "titlebar.restore": {
+   "file": "system/titlebar.restore.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Restore the window from maximised (Linux)",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/copy.svg",
+    "note": "Two overlapping windows: back from maximised, as GNOME's restore."
+   }
+  },
+  "titlebar.close": {
+   "file": "system/titlebar.close.svg",
+   "kind": "system",
+   "group": "window",
+   "label": "Close the window (Linux)",
+   "v31": [],
+   "source": {
+    "library": "lucide",
+    "path": "icons/x.svg"
+   }
+  },
   "preview.hand": {
    "file": "system/preview.hand.svg",
    "kind": "system",

@@ -540,15 +540,20 @@ impl Workbench {
             .child(
                 icon_button("find-prev", "arrow.up", &p, false)
                     .tooltip(|w, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new("Previous match (⇧⌘G)")
-                            .build(w, cx)
+                        gpui_kit::component::tooltip::Tooltip::new(crate::look::keys(
+                            "Previous match (⇧⌘G)",
+                        ))
+                        .build(w, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| this.find_next(true, window, cx))),
             )
             .child(
                 icon_button("find-next", "chevron.down", &p, false)
                     .tooltip(|w, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new("Next match (⌘G)").build(w, cx)
+                        gpui_kit::component::tooltip::Tooltip::new(crate::look::keys(
+                            "Next match (⌘G)",
+                        ))
+                        .build(w, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| this.find_next(false, window, cx))),
             )

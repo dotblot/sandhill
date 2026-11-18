@@ -1441,6 +1441,25 @@ preview and R's imports weren't seen.
   daemon started is still signalled through its unreaped child. Tests:
   `interrupt_reaches_only_the_recorded_process` and
   `interrupt_reaches_a_kernel_adopted_after_a_restart`.
+- **Linux window, fonts and wording** (Huan, 2026-11-18;
+  `docs/design/linux-plan.md` step 2): on Linux the app runs on X11
+  (XWayland under GNOME), as the web view needs, and asks for client-side
+  decorations: Kit's root draws the frame, shadow and resize edges, and
+  `look::window_buttons` draws minimise, maximise (restore when maximised)
+  and close at the right of the title bar and Welcome's title strip, always
+  all three. Close is ⇧Ctrl+W's `CloseWindow`; closing the last project
+  window with Welcome shut quits through the quit question (`quit_if_last`),
+  as Linux has no Dock to reopen a windowless app. The interface and code
+  fonts are GNOME's settings (else fontconfig's), General lists fontconfig's
+  monospaced families with Latin letters, and web pages name the desktop's
+  code font. Shortcut labels pass through `look::keys` (⇧⌘K reads
+  Ctrl+Shift+K); F11 is full screen and Ctrl+Alt+Enter Focus Editor there.
+  "This Mac", Finder and the Mac's appearance read as this computer, Files
+  and the desktop's style (`look::mac_or`). Uninstall points to
+  `sudo apt remove sandhill` when run from `/usr/lib/sandhill`. Checked in a
+  hidden GNOME Shell on Ubuntu 26.04: the buttons, closing to the quit
+  question, and General. Tests: `mac_shortcuts_read_as_ctrl_alt_shift`,
+  `a_gnome_font_setting_gives_its_family`.
 
 
 ## Running it

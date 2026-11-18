@@ -28,6 +28,10 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `window.minimize` | i-minw | `sandhill/icons/pane-collapse.svg` | A pane folded to its title row: a short window (Huan, 2026-11-14). |
 | `window.maximize` | i-maxw | `sandhill/icons/pane-fill.svg` | A pane filling its column: a tall window with its title bar. |
 | `window.restore` | i-restw | `sandhill/icons/pane-restore.svg` | Two overlapping windows: back to the split, from a folded or filled pane. |
+| `titlebar.minimize` |  | `lucide/icons/minus.svg` | Linux window buttons, drawn by Sandhill on the right as Ubuntu puts them (Huan, 2026-11-18). |
+| `titlebar.maximize` |  | `lucide/icons/square.svg` | One window: maximise. |
+| `titlebar.restore` |  | `lucide/icons/copy.svg` | Two overlapping windows: back from maximised, as GNOME's restore. |
+| `titlebar.close` |  | `lucide/icons/x.svg` |  |
 | `preview.hand` |  | `lucide/icons/hand.svg` | Hand tool for panning PDF, SVG and image previews. |
 | `theme.light` |  | `lucide/icons/sun.svg` |  |
 | `theme.dark` |  | `lucide/icons/moon.svg` |  |

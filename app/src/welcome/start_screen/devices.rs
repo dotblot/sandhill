@@ -143,7 +143,9 @@ impl AppWindow {
         }
         let target = match Target::parse(&host) {
             Ok(Target::Local) => {
-                self.start.server_problem = Some("\"local\" is this Mac".into());
+                self.start.server_problem = Some(
+                    look::mac_or("\"local\" is this Mac", "\"local\" is this computer").into(),
+                );
                 cx.notify();
                 return;
             }
@@ -369,9 +371,13 @@ impl AppWindow {
                 )
                 .child(Input::new(&self.start.rename_input).small())
                 .child(div().text_color(p.muted).child(if host == sandhill_link::LOCAL {
-                    "The name shows only in Sandhill on this Mac. Leave it empty for the default.".to_string()
+                    look::mac_or(
+                        "The name shows only in Sandhill on this Mac. Leave it empty for the default.",
+                        "The name shows only in Sandhill on this computer. Leave it empty for the default.",
+                    )
+                    .to_string()
                 } else {
-                    format!("The name shows only in Sandhill on this Mac; Sandhill still connects to {host}. Leave it empty for the default.")
+                    format!("The name shows only in Sandhill on {}; Sandhill still connects to {host}. Leave it empty for the default.", look::mac_or("this Mac", "this computer"))
                 }))
                 .child(
                     h_flex()
@@ -438,7 +444,10 @@ impl AppWindow {
                         .child(format!("Icon for {}", crate::panes::files::base_name(path))),
                 )
                 .child(div().text_color(p.muted).child(
-                    "Shown for this project in Sandhill on this Mac. The project folder is not changed.",
+                    look::mac_or(
+                        "Shown for this project in Sandhill on this Mac. The project folder is not changed.",
+                        "Shown for this project in Sandhill on this computer. The project folder is not changed.",
+                    ),
                 ))
                 .child(grid)
                 .child(

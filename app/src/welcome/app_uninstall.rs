@@ -139,6 +139,17 @@ pub(crate) fn preview_path() -> Result<Option<PathBuf>> {
     }
 }
 
+/// On Linux the package manager removes the app, not Sandhill: the command
+/// for it when this is the installed package (`/usr/lib/sandhill`).
+pub(crate) fn package_removal() -> Option<&'static str> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    exe.starts_with("/usr/lib/sandhill")
+        .then_some("sudo apt remove sandhill")
+}
+
 /// Moves only the running .app to the user's Trash using NSFileManager.
 /// Call only after explicit confirmation and successful device teardown. This
 /// does not quit the process, delete preferences or touch any other app copy.

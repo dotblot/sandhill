@@ -998,7 +998,11 @@ impl AppWindow {
                             div()
                                 .text_size(px(look::small()))
                                 .text_color(p.muted)
-                                .child("or drag folders here from Finder"),
+                                .child(if cfg!(target_os = "macos") {
+                                    "or drag folders here from Finder"
+                                } else {
+                                    "or drag folders here from Files"
+                                }),
                         )
                     }),
             )

@@ -379,10 +379,8 @@ pub(crate) fn host_label(host: &str) -> String {
         name
     } else if host != sandhill_link::LOCAL {
         host.into()
-    } else if cfg!(target_os = "macos") {
-        "This Mac".into()
     } else {
-        "This computer".into()
+        look::mac_or("This Mac", "This computer").into()
     }
 }
 
@@ -682,7 +680,7 @@ impl AppWindow {
                             .when(footnote, |d| d.child(div().flex_none().text_size(px(look::small())).text_color(p.muted)
                                 .child("Kernels keep running after you close a project. Reopening it reattaches to them and restores your tabs."))))),
             )
-            .child(self.start_title_bar(cx))
+            .child(self.start_title_bar(window, cx))
             .children(self.render_device_menu(cx))
             .children(self.render_project_menu(cx))
             .children(self.skills_overlay(cx))
@@ -694,8 +692,9 @@ impl AppWindow {
 
     /// The Start screen's title strip, floating over the top of both columns:
     /// the window can be dragged by it, and the theme switch sits at its
-    /// right. Welcome draws no project capsules; its sidebar lists projects.
-    fn start_title_bar(&self, cx: &App) -> impl IntoElement {
+    /// right, then on Linux the window buttons. Welcome draws no project
+    /// capsules; its sidebar lists projects.
+    fn start_title_bar(&self, window: &Window, cx: &App) -> impl IntoElement {
         let p = *Palette::get(cx);
         div()
             .absolute()
@@ -745,7 +744,8 @@ impl AppWindow {
                         })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(|_, window, cx| look::toggle_appearance(window, cx)),
-                    ),
+                    )
+                    .children(look::window_buttons(window, &p)),
             )
     }
 

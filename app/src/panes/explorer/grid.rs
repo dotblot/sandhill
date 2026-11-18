@@ -45,7 +45,7 @@ impl Explorer {
                     .child(icon(icon_name).size(px(look::ICON))),
             )
             .child(div().flex_1().child(label))
-            .children(shortcut.map(|s| div().pl(px(16.)).text_color(p.faint).child(s)))
+            .children(shortcut.map(|s| div().pl(px(16.)).text_color(p.faint).child(look::keys(s))))
     }
 
     /// A column's ⋮ menu, as Positron's data explorer has it.
@@ -60,8 +60,10 @@ impl Explorer {
         };
         let separator = || div().h(px(1.)).my(px(4.)).mx(px(6.)).bg(p.line);
         let shift_tip = |w: &mut Window, cx: &mut App| {
-            gpui_kit::component::tooltip::Tooltip::new("Hold ⇧ to add it to the current sort")
-                .build(w, cx)
+            gpui_kit::component::tooltip::Tooltip::new(look::keys(
+                "Hold ⇧ to add it to the current sort",
+            ))
+            .build(w, cx)
         };
         let body = crate::agents::composer_view::popup(&p)
             .id("de-column-menu-popup")

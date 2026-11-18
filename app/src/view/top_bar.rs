@@ -125,9 +125,9 @@ impl Workbench {
                             .child(
                                 icon_button("palette", "search", &p, true)
                                     .tooltip(|w, cx| {
-                                        gpui_kit::component::tooltip::Tooltip::new(
+                                        gpui_kit::component::tooltip::Tooltip::new(look::keys(
                                             "Go to a file or run a command ⌘K",
-                                        )
+                                        ))
                                         .build(w, cx)
                                     })
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -184,7 +184,8 @@ impl Workbench {
                                         crate::shell::app_window::show_welcome(None, cx)
                                     }),
                             ),
-                    ),
+                    )
+                    .children(look::window_buttons(window, &p)),
             )
     }
 

@@ -390,7 +390,7 @@ impl Workbench {
         });
         let commands = self.commands().into_iter().map(|c| Item {
             label: c.label,
-            detail: (!c.keys.is_empty()).then(|| c.keys.to_string()),
+            detail: (!c.keys.is_empty()).then(|| look::keys(c.keys).to_string()),
             choice: Choice::Cmd(c.cmd),
         });
         let query = self.palette_input.read(cx).value().trim().to_string();
