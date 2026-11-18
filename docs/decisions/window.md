@@ -82,7 +82,10 @@ differs, this wins.
   window; folders dragged from Finder onto Welcome open as projects here.
   Servers keep Sandhill's own chooser, read through the daemon, with
   places, a clickable path, filter/typed paths, keyboard, New Folder,
-  hidden-name toggle, faded files and Git/Sandhill marks.
+  hidden-name toggle, faded files and Git/Sandhill marks. Files are chosen
+  the same way (Huan, 2026-11-18): Variables' Import asks for its dataset
+  in the system's window on this Mac and in Sandhill's chooser, in its file
+  mode, on servers, instead of a file list of its own.
 - Settings (Huan, 2026-11-15): Welcome's Manage section starts with
   General, this Mac's choices for every project: the theme (System, Light,
   Dark), notebooks' runs in the Console and plots in Plots, suggesting the

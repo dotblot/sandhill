@@ -1,7 +1,9 @@
 //! Variables' Import button, as the Tauri app has it (`ImportDialog.tsx`):
-//! a menu of ways to read a dataset into the session, then a dialog to pick
-//! the file, name the variable and see the code before it runs. The code
-//! runs in the session like any other, so it shows in the Console.
+//! a menu of ways to read a dataset into the session, then the file chosen
+//! the way Open Folder chooses (the system's window on this Mac, Sandhill's
+//! own chooser on servers), then a card to name the variable and see the
+//! code before it runs. The code runs in the session like any other, so it
+//! shows in the Console.
 
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
@@ -9,14 +11,16 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::{Call, DirEntry, EntryKind, RunStarted, SessionInfo, SessionStatus};
+use sandhill_proto::{Call, RunStarted, SessionInfo, SessionStatus};
 
 use crate::editor::imports::{
     generated_import_code, importable, imports_for, valid_variable, variable_name,
 };
 use crate::look::{self, Palette, bar_button, icon, picture};
+use crate::welcome::folder_dialog::{FolderDialog, FolderDialogDone, Place, choose_local_path};
 use crate::workbench::Workbench;
 
+#[derive(Clone)]
 pub(crate) struct ImportDialog {
     /// Which of the language's imports.
     kind: usize,
@@ -24,20 +28,21 @@ pub(crate) struct ImportDialog {
     session: String,
     /// The session's folder, which paths in the code are relative to.
     cwd: Option<String>,
-    dir: String,
-    entries: Option<Result<Vec<DirEntry>, String>>,
-    file: Option<String>,
+    /// The file (or 10x folder) chosen.
+    file: String,
+    /// Whether the import reads it; the system's window can't be told
+    /// which files to offer.
+    fits: bool,
     running: bool,
     error: Option<String>,
-    generation: u64,
-    /// File-tree imports arrive with their file already selected.
-    preselected: bool,
 }
 
 #[derive(Default)]
 pub(crate) struct Import {
     pub menu: bool,
     pub dialog: Option<ImportDialog>,
+    /// Sandhill's own chooser, for a session on a server.
+    pub chooser: Option<(Entity<FolderDialog>, Subscription)>,
 }
 
 pub(crate) fn new_import_input(
@@ -58,21 +63,6 @@ pub(crate) fn new_import_input(
 
 fn language_name(language: &str) -> &'static str {
     if language == "r" { "R" } else { "Python" }
-}
-
-fn join(dir: &str, name: &str) -> String {
-    if dir.ends_with('/') {
-        format!("{dir}{name}")
-    } else {
-        format!("{dir}/{name}")
-    }
-}
-
-fn parent(dir: &str) -> String {
-    match dir.trim_end_matches('/').rsplit_once('/') {
-        Some(("", _)) | None => "/".into(),
-        Some((up, _)) => up.into(),
-    }
 }
 
 impl Workbench {
@@ -98,7 +88,7 @@ impl Workbench {
             _ => "Start R or Python to import a dataset".into(),
         };
         // An icon only, beside the Variables filter.
-        bar_button("import", "", Some("table"), &p)
+        bar_button("import", "", Some("data.import"), &p)
             .px(px(5.))
             .gap(px(2.))
             .on_prepaint(self.popup_triggers.track("import-kind"))
@@ -166,7 +156,7 @@ impl Workbench {
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.import.menu = false;
-                        this.open_import(i, window, cx);
+                        this.choose_import_file(i, window, cx);
                     }))
                     .into_any_element(),
             );
@@ -194,34 +184,115 @@ impl Workbench {
         )
     }
 
-    fn open_import(&mut self, kind: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Asks for the file to import as Open Folder asks for a folder: the
+    /// system's window on this Mac, Sandhill's own chooser on a server.
+    fn choose_import_file(&mut self, kind: usize, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(session), Some(language)) = (
             self.variables_session().map(str::to_string),
             self.active_language(),
         ) else {
             return;
         };
-        let cwd = self.session_folder();
-        let dir = cwd
-            .clone()
-            .or_else(|| self.project.clone())
-            .unwrap_or_else(|| "/".into());
-        self.import_name
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.import.dialog = Some(ImportDialog {
+        let Some(daemon) = self.daemon() else { return };
+        let reads = &imports_for(&language)[kind];
+        let title = format!(
+            "{} into {}",
+            reads.label.trim_end_matches('…'),
+            language_name(&language)
+        );
+        // Filled in with the chosen file.
+        let asked = ImportDialog {
             kind,
             language,
             session,
-            cwd,
-            dir: dir.clone(),
-            entries: None,
-            file: None,
+            cwd: self.session_folder(),
+            file: String::new(),
+            fits: true,
             running: false,
             error: None,
-            generation: 0,
-            preselected: false,
+        };
+        if self.host() == sandhill_link::LOCAL {
+            let chosen = choose_local_path("Choose", true, reads.folder, cx);
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(file) = chosen.await else { return };
+                let fits = importable(reads, &file)
+                    || (reads.folder && std::path::Path::new(&file).is_dir());
+                this.update_in(cx, |this, window, cx| {
+                    this.open_import(
+                        ImportDialog {
+                            file,
+                            fits,
+                            ..asked
+                        },
+                        window,
+                        cx,
+                    )
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+        let start = asked.cwd.clone().or_else(|| self.project.clone());
+        let places = self
+            .project
+            .iter()
+            .map(|project| Place {
+                label: project
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(project)
+                    .to_string()
+                    .into(),
+                path: project.clone(),
+            })
+            .collect();
+        let chooser = cx.new(|cx| {
+            FolderDialog::new(
+                daemon,
+                title.into(),
+                "Choose".into(),
+                start,
+                places,
+                window,
+                cx,
+            )
+            .files(move |name| importable(reads, name), reads.folder)
         });
-        self.list_import_dir(dir, window, cx);
+        let subscription = cx.subscribe_in(
+            &chooser,
+            window,
+            move |this, _, event: &FolderDialogDone, window, cx| {
+                this.import.chooser = None;
+                match &event.0 {
+                    Some(file) => {
+                        let file = file.clone();
+                        this.open_import(
+                            ImportDialog {
+                                file,
+                                ..asked.clone()
+                            },
+                            window,
+                            cx,
+                        )
+                    }
+                    None => cx.notify(),
+                }
+            },
+        );
+        self.import.chooser = Some((chooser, subscription));
+        cx.notify();
+    }
+
+    /// Shows the card for a chosen file, its variable named after it.
+    fn open_import(&mut self, dialog: ImportDialog, window: &mut Window, cx: &mut Context<Self>) {
+        let name = variable_name(&dialog.file);
+        self.import_name.update(cx, |input, cx| {
+            input.set_value(name, window, cx);
+            input.focus(window, cx);
+        });
+        self.import.dialog = Some(dialog);
+        cx.notify();
     }
 
     pub(crate) fn open_preselected_import(
@@ -237,104 +308,28 @@ impl Workbench {
             cx.notify();
             return;
         }
-        let name = variable_name(&path);
-        self.import_name.update(cx, |input, cx| {
-            input.set_value(name, window, cx);
-            input.focus(window, cx);
-        });
         self.import.menu = false;
-        self.import.dialog = Some(ImportDialog {
+        let dialog = ImportDialog {
             kind: 0,
             language,
             session: session.id,
             cwd: Some(session.cwd),
-            dir: parent(&path),
-            entries: Some(Ok(Vec::new())),
-            file: Some(path),
+            file: path,
+            fits: true,
             running: false,
             error: None,
-            generation: 0,
-            preselected: true,
-        });
-        cx.notify();
-    }
-
-    fn list_import_dir(&mut self, dir: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(daemon) = self.daemon() else { return };
-        let Some(dialog) = &mut self.import.dialog else {
-            return;
         };
-        dialog.generation += 1;
-        dialog.dir = dir.clone();
-        dialog.entries = None;
-        dialog.file = None;
-        let generation = dialog.generation;
-        // For 10x output the folder itself is what's read.
-        let kind = &imports_for(&dialog.language)[dialog.kind];
-        if kind.folder {
-            let name = variable_name(&dir);
-            self.import_name
-                .update(cx, |input, cx| input.set_value(name, window, cx));
-        }
-        let listed = daemon.call::<Vec<DirEntry>>(Call::ListDir {
-            path: dir,
-            sizes: false,
-            marks: false,
-        });
-        cx.spawn(async move |this, cx| {
-            let listed = listed.await;
-            this.update(cx, |this, cx| {
-                let Some(dialog) = &mut this.import.dialog else {
-                    return;
-                };
-                if dialog.generation != generation {
-                    return;
-                }
-                let kind = &imports_for(&dialog.language)[dialog.kind];
-                dialog.entries = Some(
-                    listed
-                        .map(|entries| {
-                            entries
-                                .into_iter()
-                                .filter(|e| {
-                                    !e.name.starts_with('.')
-                                        && (e.kind == EntryKind::Dir
-                                            || (e.kind == EntryKind::File
-                                                && importable(kind, &e.name)))
-                                })
-                                .collect()
-                        })
-                        .map_err(|err| format!("{err:#}")),
-                );
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    fn pick_import_file(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(dialog) = &mut self.import.dialog else {
-            return;
-        };
-        dialog.file = Some(path.clone());
-        let name = variable_name(&path);
-        self.import_name.update(cx, |input, cx| {
-            input.set_value(name, window, cx);
-            input.focus(window, cx);
-        });
-        cx.notify();
+        self.open_import(dialog, window, cx);
     }
 
     /// What the dialog would run now, and whether the name is a bad one.
     pub(crate) fn import_code(&self, cx: &App) -> Option<(String, bool)> {
         let dialog = self.import.dialog.as_ref()?;
+        if !dialog.fits {
+            return None;
+        }
         let kind = &imports_for(&dialog.language)[dialog.kind];
-        let chosen = dialog
-            .file
-            .clone()
-            .or_else(|| kind.folder.then(|| dialog.dir.clone()))?;
+        let chosen = dialog.file.clone();
         let typed = self.import_name.read(cx).value().trim().to_string();
         let named = kind.named(&chosen);
         let bad = named && !typed.is_empty() && !valid_variable(&typed, &dialog.language);
@@ -431,87 +426,37 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Pick the file (or 10x folder), name the variable, see the code, run
-    /// it.
+    /// The chosen file (or 10x folder), the variable's name and the code,
+    /// in a card styled as the server chooser's.
     pub(crate) fn render_import_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dialog = self.import.dialog.as_ref()?;
         let p = *Palette::get(cx);
         let kind = &imports_for(&dialog.language)[dialog.kind];
-        let hover = p.ink(look::ROW_HOVER);
-        let list: AnyElement = match &dialog.entries {
-            None => div()
-                .p(px(8.))
-                .text_color(p.faint)
-                .child("Loading…")
-                .into_any_element(),
-            Some(Err(err)) => div()
-                .p(px(8.))
-                .text_color(p.err)
-                .child(err.clone())
-                .into_any_element(),
-            Some(Ok(entries)) if entries.is_empty() => div()
-                .p(px(8.))
-                .text_color(p.faint)
-                .child(if kind.folder {
-                    "No folders or .h5 files here"
-                } else {
-                    "No files it reads here"
-                })
-                .into_any_element(),
-            Some(Ok(entries)) => v_flex()
-                .children(entries.iter().enumerate().map(|(i, entry)| {
-                    let path = join(&dialog.dir, &entry.name);
-                    let dir = entry.kind == EntryKind::Dir;
-                    let on = dialog.file.as_deref() == Some(path.as_str());
-                    h_flex()
-                        .id(("import-entry", i))
-                        .h(px(look::row()))
-                        .px(px(look::GAP_8))
-                        .gap(px(look::GAP_4))
-                        .rounded(px(look::CONTROL_RADIUS))
-                        .cursor_pointer()
-                        .when(on, |d| d.bg(p.sel))
-                        .when(!on, |d| d.hover(move |d| d.bg(hover)))
-                        .child(picture(&if dir {
-                            look::folder_icon(&entry.name)
-                        } else {
-                            look::file_icon(&entry.name)
-                        }))
-                        .child(
-                            div()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .child(entry.name.clone()),
-                        )
-                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                            if dir {
-                                this.list_import_dir(path.clone(), window, cx);
-                            } else if event.click_count() >= 2 {
-                                this.pick_import_file(path.clone(), window, cx);
-                                this.run_import(cx);
-                            } else {
-                                this.pick_import_file(path.clone(), window, cx);
-                            }
-                        }))
-                }))
-                .into_any_element(),
-        };
         let code = self.import_code(cx);
-        let named = dialog
-            .file
-            .as_deref()
-            .or(kind.folder.then_some(dialog.dir.as_str()))
-            .is_none_or(|path| kind.named(path));
+        let named = kind.named(&dialog.file);
         let bad = code.as_ref().is_some_and(|(_, bad)| *bad);
-        let at_root = dialog.dir == "/";
-        let dir = dialog.dir.clone();
+        let blocked = code.is_none() || bad || dialog.running;
+        let file_name = dialog
+            .file
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let mark = if dialog.fits && !importable(kind, &dialog.file) {
+            look::folder_icon(&file_name)
+        } else {
+            look::file_icon(&file_name)
+        };
+        let again = dialog.kind;
+        let button = |id: &'static str, label: &'static str| Button::new(id).small().label(label);
         let card = v_flex()
             .id("import-card")
             .occlude()
             .w(px(560.))
+            .max_w(relative(0.9))
             .max_h(relative(0.9))
+            .overflow_y_scroll()
             .gap(px(look::GAP_12))
             .p(px(20.))
             .rounded(px(look::RADIUS))
@@ -519,6 +464,8 @@ impl Workbench {
             .border_1()
             .border_color(p.glass_edge)
             .shadow_lg()
+            .text_color(p.text)
+            .text_size(px(look::small()))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
@@ -530,53 +477,42 @@ impl Workbench {
                         language_name(&dialog.language)
                     )),
             )
-            .when(!dialog.preselected, |d| d.child(
-                v_flex()
-                    .rounded(px(look::CONTROL_RADIUS))
-                    .border_1()
-                    .border_color(p.line)
+            .child(
+                h_flex()
+                    .gap(px(look::GAP_8))
                     .child(
                         h_flex()
-                            .h(px(look::row()))
-                            .px(px(look::GAP_4))
+                            .flex_1()
+                            .min_w_0()
                             .gap(px(look::GAP_4))
-                            .border_b_1()
-                            .border_color(p.line)
-                            .child(
-                                look::icon_button("import-up", "arrow.up", &p, false)
-                                    .when(at_root, |d| d.opacity(0.35))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        if !at_root {
-                                            this.list_import_dir(parent(&dir), window, cx);
-                                        }
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .whitespace_nowrap()
-                                    .text_color(p.muted)
-                                    .child(dialog.dir.clone()),
-                            ),
+                            .text_color(p.muted)
+                            .font_family(look::mono())
+                            .child(picture(&mark).size(px(look::ICON)).flex_none())
+                            .child(div().min_w_0().truncate().child(dialog.file.clone())),
                     )
                     .child(
-                        div()
-                            .id("import-list")
-                            .h(px(240.))
-                            .overflow_y_scroll()
-                            .p(px(look::GAP_4))
-                            .child(list),
+                        look::button("import-change", "Choose Another…", None, look::ButtonSize::Row)
+                            .disabled(dialog.running)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.import.dialog = None;
+                                this.choose_import_file(again, window, cx);
+                            })),
                     ),
-            ))
-            .when(dialog.preselected, |d| d.child(
-                v_flex().gap(px(look::GAP_4))
-                    .child(div().text_color(p.muted).child(format!("Session: {}", dialog.session)))
-                    .child(div().font_family(look::mono()).whitespace_normal()
-                        .child(dialog.file.clone().unwrap_or_default())),
-            ))
-            .when(named, |d| {
+            )
+            .when(!dialog.fits, |d| {
+                d.child(div().text_color(p.err).child(format!(
+                    "{} doesn't read {file_name}. Choose a {} file{}.",
+                    kind.function,
+                    kind.exts
+                        .iter()
+                        .filter(|ext| **ext != "gz")
+                        .map(|ext| format!(".{ext}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if kind.folder { ", or a folder of 10x output" } else { "" },
+                )))
+            })
+            .when(dialog.fits && named, |d| {
                 d.child(
                     h_flex()
                         .gap(px(look::GAP_8))
@@ -589,27 +525,27 @@ impl Workbench {
                         language_name(&dialog.language)
                     )))
                 })
+                .child(div().text_color(p.muted).child(
+                    "Existing variables are protected. Choose a new name if this name is already in use.",
+                ))
             })
-            .when(named, |d| d.child(div().text_size(px(look::small())).text_color(p.muted)
-                .child("Existing variables are protected. Choose a new name if this name is already in use.")))
-            .when(!named, |d| d.child(div().text_size(px(look::small())).text_color(p.warn)
-                .child("Loading R data can replace existing variables with the same names.")))
-            .child(
-                div()
-                    .p(px(look::GAP_8))
-                    .rounded(px(look::CODE_RADIUS))
-                    .bg(p.chunk)
-                    .font_family(look::mono())
-                    .text_size(px(look::code()))
-                    .whitespace_normal()
-                    .child(match &code {
-                        Some((code, _)) => code.clone(),
-                        None if kind.folder => {
-                            "Open the folder with the 10x output, or pick an .h5 file".into()
-                        }
-                        None => "Pick a file".into(),
-                    }),
-            )
+            .when(dialog.fits && !named, |d| {
+                d.child(div().text_color(p.warn).child(
+                    "Loading R data can replace existing variables with the same names.",
+                ))
+            })
+            .when_some(code.as_ref().map(|(code, _)| code.clone()), |d, code| {
+                d.child(
+                    div()
+                        .p(px(look::GAP_8))
+                        .rounded(px(look::CODE_RADIUS))
+                        .bg(p.chunk)
+                        .font_family(look::mono())
+                        .text_size(px(look::code()))
+                        .whitespace_normal()
+                        .child(code),
+                )
+            })
             .when_some(dialog.error.clone(), |d, err| {
                 d.child(div().text_color(p.err).child(err))
             })
@@ -618,29 +554,28 @@ impl Workbench {
                     .justify_end()
                     .gap(px(look::GAP_8))
                     .flex_wrap()
-                    .child(Button::new("import-copy").small().h(px(look::control_card())).label("Copy Code")
-                        .disabled(code.is_none() || bad || dialog.running)
-                        .on_click(cx.listener(|this, _, _, cx| this.copy_import_code(cx))))
-                    .child(Button::new("import-insert").small().h(px(look::control_card())).label("Insert into Document")
-                        .disabled(code.is_none() || bad || dialog.running || !self.can_insert_into_active_document(cx))
-                        .on_click(cx.listener(|this, _, window, cx| this.insert_import_code(window, cx))))
                     .child(
-                        Button::new("import-cancel")
-                            .small()
-                            .h(px(look::control_card()))
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.import.dialog = None;
-                                cx.notify();
-                            })),
+                        button("import-copy", "Copy Code")
+                            .disabled(blocked)
+                            .on_click(cx.listener(|this, _, _, cx| this.copy_import_code(cx))),
                     )
                     .child(
-                        Button::new("import-run")
-                            .small()
-                            .h(px(look::control_card()))
+                        button("import-insert", "Insert into Document")
+                            .disabled(blocked || !self.can_insert_into_active_document(cx))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.insert_import_code(window, cx)
+                            })),
+                    )
+                    .child(button("import-cancel", "Cancel").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.import.dialog = None;
+                            cx.notify();
+                        },
+                    )))
+                    .child(
+                        button("import-run", "Import")
                             .primary()
-                            .label("Import")
-                            .disabled(code.is_none() || bad || dialog.running)
+                            .disabled(blocked)
                             .on_click(cx.listener(|this, _, _, cx| this.run_import(cx))),
                     ),
             );
@@ -667,18 +602,12 @@ impl Workbench {
             .into_any_element(),
         )
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::{join, parent};
-
-    #[test]
-    fn walks_folders() {
-        assert_eq!(join("/p", "data"), "/p/data");
-        assert_eq!(join("/", "home"), "/home");
-        assert_eq!(parent("/p/data"), "/p");
-        assert_eq!(parent("/p"), "/");
-        assert_eq!(parent("/"), "/");
+    /// Sandhill's own chooser, while it asks which file to import.
+    pub(crate) fn render_import_chooser(&self) -> Option<Entity<FolderDialog>> {
+        self.import
+            .chooser
+            .as_ref()
+            .map(|(chooser, _)| chooser.clone())
     }
 }

@@ -10,7 +10,8 @@ impl Workbench {
         };
         if self.host() == sandhill_link::LOCAL {
             // This Mac's folders: the system's own window.
-            let chosen = crate::welcome::folder_dialog::choose_local_folder("Choose", cx);
+            let chosen =
+                crate::welcome::folder_dialog::choose_local_path("Choose", false, true, cx);
             cx.spawn(async move |this, cx| {
                 if let Some(folder) = chosen.await {
                     this.update(cx, |this, cx| this.set_plot_folder(folder, cx))

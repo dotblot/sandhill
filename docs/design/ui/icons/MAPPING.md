@@ -49,6 +49,7 @@ Original files and licenses are in `vendor/`; pinned revisions are in `vendor/li
 | `filter` | i-filter | `lucide/icons/funnel.svg` |  |
 | `sort` | i-sort | `lucide/icons/arrow-down-a-z.svg` |  |
 | `table` | i-table | `lucide/icons/table-2.svg` |  |
+| `data.import` |  | `lucide/icons/import.svg` | An arrow into a box, so Variables' Import differs from the Data Explorer's table (Huan, 2026-11-18). |
 | `outline` | i-outline | `lucide/icons/list-tree.svg` |  |
 | `share` | i-share | `lucide/icons/share-2.svg` |  |
 | `upload` | i-upload | `lucide/icons/upload.svg` |  |

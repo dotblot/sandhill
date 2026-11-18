@@ -1,6 +1,6 @@
 # Sandhill icons
 
-Sandhill's 175 shared interface, file, folder, language and integration icons
+Sandhill's 176 shared interface, file, folder, language and integration icons
 use [Gruvbox Material Icons](https://github.com/navernoedenis/gruvbox-material-icons),
 [Lucide](https://github.com/lucide-icons/lucide) and
 [Developer Icons](https://github.com/xandemon/developer-icons), selected by
@@ -11,14 +11,15 @@ Lucide's stroke style (Huan, 2026-11-14). Posit Assistant and Antigravity use Hu
 references, and Oh My Pi and pi their official MIT-licensed marks, instead of
 generic symbols. This replaces Atom Material completely.
 Sandhill's crane and macOS app icon remain separate in
-[`../brand/`](../brand/README.md). Fonts are unchanged.
+[`../brand/`](../brand/README.md). Code is in SF Mono and the interface in
+the system font (2026-11-18).
 
 Open [`preview.html`](preview.html) for every icon in light and dark themes;
 [`../icon-sheet.png`](../icon-sheet.png) is a browser capture of that page.
 
 | Output folder | Purpose | Count |
 |---|---|---|
-| `system/` | Window, toolbar, editor, run, resources, Git and agent controls | 106 |
+| `system/` | Window, toolbar, editor, run, resources, Git and agent controls | 107 |
 | `bio/` | File types, including bioinformatics formats | 43 |
 | `folders/` | Project, data, results, figures, notebooks, QC, FASTQ, BAM, 10x output and other folders, each in its own colour | 14 |
 | `agents/` | Agent integrations | 8 |
@@ -40,7 +41,7 @@ package, icon font or network connection is needed to rebuild the assets.
   the light logo backing; `recolor` maps source paint colours to replacements
   in fill/stroke attributes and inline styles without changing vendor originals;
   `viewBox` crops an original with empty margins to its mark.
-- `vendor/`: 178 selected SVGs: pinned library originals, Sandhill's own
+- `vendor/`: 179 selected SVGs: pinned library originals, Sandhill's own
   drawings (`vendor/sandhill/`), the supplied Antigravity and Synthetic
   Sciences SVGs, a trace of the supplied Posit Assistant mark, and the
   official Oh My Pi and pi marks.
@@ -60,7 +61,7 @@ embedded asset set; only normalized output SVGs and the registry are embedded.
 
 - Original geometry is proportionally fitted into a 16px viewBox, including
   source files with negative viewBox origins.
-- Lucide supplies 103 of the 106 interface icons; Sandhill draws the pane
+- Lucide supplies 104 of the 107 interface icons; Sandhill draws the pane
   height controls (collapse to the title row, fill the column, restore the
   split) in the same stroke style. They use `currentColor` and follow
   the control's normal, hovered, selected and disabled text colours. The

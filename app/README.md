@@ -1406,9 +1406,21 @@ preview and R's imports weren't seen.
   constants became functions (`look::small()`, `look::row()`...); a change
   rebuilds Kit's themes and the terminal observes `look::Typography`. A
   saved font no longer installed falls back to SF Mono and General says so.
-  Maple Mono is no longer bundled. Not yet looked at on screen: the Mac's
-  screen was locked; the app started without a crash with SF Mono, Menlo
-  at 20/18, and a missing font at 10/12.
+  Maple Mono is no longer bundled. Huan checked it on screen and saw no
+  font problems.
+- **Import picks files as Open Folder does** (Huan, 2026-11-18;
+  `docs/decisions/window.md`): the Import button has its own icon
+  (`data.import`, Lucide's import) instead of the Data Explorer's table.
+  Choosing an import kind opens the system's window on this Mac
+  (`folder_dialog::choose_local_path`, files allowed) or `FolderDialog` in
+  file mode on a server (`FolderDialog::files`: files the import reads are
+  clickable, a double click or Return chooses, New Folder hidden; 10x
+  output can also be a folder). The card that follows shows the chosen
+  path with Choose Another…, the name, the code and the buttons, in the
+  chooser's card style; a file the import doesn't read (the system window
+  can't filter) says which ones it does. Seen on screen on this Mac, through
+  to a DataFrame in Variables; the server chooser's file mode was not tried
+  on a server.
 
 
 ## Running it

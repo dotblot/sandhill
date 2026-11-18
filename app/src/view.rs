@@ -168,6 +168,7 @@ impl Render for Workbench {
                     && !this.palette.shown
                     && this.setup.dialog.is_none()
                     && this.import.dialog.is_none()
+                    && this.import.chooser.is_none()
                     && this.trust.state != crate::welcome::trust::Trust::Asking
                 {
                     this.maximized_panel = None;
@@ -244,6 +245,7 @@ impl Render for Workbench {
             .children(self.render_trust_dialog(cx))
             .children(self.render_irkernel_dialog(cx))
             .children(self.render_import_dialog(cx))
+            .children(self.render_import_chooser())
             .children(self.render_delimited_dialog(cx))
             .children(self.render_main_menu(cx))
             .children(self.render_connection_menu(cx))

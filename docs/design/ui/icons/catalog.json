@@ -381,6 +381,13 @@
         "i-table"
       ]
     },
+    "data.import": {
+      "file": "system/data.import.svg",
+      "kind": "system",
+      "group": "files",
+      "label": "Import a dataset into a session",
+      "v31": []
+    },
     "outline": {
       "file": "system/outline.svg",
       "kind": "system",

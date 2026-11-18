@@ -1,5 +1,5 @@
-//! The folder chooser for servers, backed by the server's daemon. This Mac
-//! uses the system's folder window instead (`choose_local_folder`).
+//! The folder (or file) chooser for servers, backed by the server's daemon.
+//! This Mac uses the system's window instead (`choose_local_path`).
 
 use std::rc::Rc;
 
@@ -30,6 +30,9 @@ struct Entry {
     sandhill: bool,
 }
 
+/// Whether a file, by its name, can be chosen.
+type Accepts = Rc<dyn Fn(&str) -> bool>;
+
 pub(crate) struct FolderDialog {
     daemon: Rc<Daemon>,
     title: SharedString,
@@ -44,12 +47,16 @@ pub(crate) struct FolderDialog {
     entries: Option<Result<Vec<Entry>, String>>,
     problem: Option<String>,
     hidden: bool,
-    /// The picked folder's name in the folder shown.
+    /// The picked entry's name in the folder shown.
     selected: Option<String>,
     /// The folder the last single click entered: a double click opens it.
     entered: Option<String>,
     generation: u64,
     list: ScrollHandle,
+    /// Files that can be picked, when choosing a file; the rest are faded.
+    files: Option<Accepts>,
+    /// Whether a folder can be the answer (always, when choosing folders).
+    folders: bool,
     _subscription: Subscription,
 }
 
@@ -72,7 +79,7 @@ impl FolderDialog {
         let subscription = cx.subscribe(&field, |this, _, event: &InputEvent, cx| {
             if let InputEvent::Change = event {
                 // Return then enters the first match.
-                this.selected = this.shown(cx).first().map(|e| e.name.clone());
+                this.selected = this.choices(cx).first().cloned();
                 this.list.scroll_to_item(0);
                 cx.notify();
             }
@@ -114,8 +121,26 @@ impl FolderDialog {
             entered: None,
             generation: 0,
             list: ScrollHandle::new(),
+            files: None,
+            folders: true,
             _subscription: subscription,
         }
+    }
+
+    /// Chooses a file `accepts` takes instead of a folder; with `folders`, a
+    /// folder can still be the answer (10x Genomics output).
+    pub(crate) fn files(mut self, accepts: impl Fn(&str) -> bool + 'static, folders: bool) -> Self {
+        self.files = Some(Rc::new(accepts));
+        self.folders = folders;
+        self
+    }
+
+    fn pickable_file(&self, entry: &Entry) -> bool {
+        !entry.dir
+            && self
+                .files
+                .as_ref()
+                .is_some_and(|accepts| accepts(&entry.name))
     }
 
     /// The text in the field when it filters rather than names a path.
@@ -141,24 +166,39 @@ impl FolderDialog {
             .collect()
     }
 
-    fn shown_folders(&self, cx: &App) -> Vec<String> {
+    /// What ↑/↓ and a click can pick: folders, and files that can be chosen.
+    fn choices(&self, cx: &App) -> Vec<String> {
         self.shown(cx)
             .into_iter()
-            .filter(|e| e.dir)
+            .filter(|e| e.dir || self.pickable_file(e))
             .map(|e| e.name.clone())
             .collect()
     }
 
-    /// The folder Open would use: the picked one, else the one shown.
+    /// The picked entry, if it is still shown.
+    fn picked(&self, cx: &App) -> Option<&Entry> {
+        let name = self.selected.as_ref()?;
+        self.shown(cx).into_iter().find(|e| &e.name == name)
+    }
+
+    /// The row an entry is drawn in, below the folder being named.
+    fn row_of(&self, name: &str, cx: &App) -> Option<usize> {
+        let at = self.shown(cx).iter().position(|e| e.name == name)?;
+        Some(at + usize::from(self.naming.is_some()))
+    }
+
+    /// What the confirm button would hand back: the picked file, else the
+    /// picked folder or the one shown, when a folder can be the answer.
     fn target(&self, cx: &App) -> Option<String> {
         let path = self.path.as_ref()?;
         if !matches!(self.entries, Some(Ok(_))) {
             return None;
         }
-        Some(match &self.selected {
-            Some(name) if self.shown_folders(cx).contains(name) => join_path(path, name),
-            _ => path.clone(),
-        })
+        match self.picked(cx) {
+            Some(entry) if self.pickable_file(entry) => Some(join_path(path, &entry.name)),
+            Some(entry) if entry.dir && self.folders => Some(join_path(path, &entry.name)),
+            _ => self.folders.then(|| path.clone()),
+        }
     }
 
     fn go_to_folder(
@@ -231,12 +271,13 @@ impl FolderDialog {
                         })
                         .map_err(|err| format!("{err:#}")),
                 );
-                if let Some(name) = &this.selected
-                    && let Some(ix) = this.shown_folders(cx).iter().position(|n| n == name)
+                match this
+                    .selected
+                    .clone()
+                    .and_then(|name| this.row_of(&name, cx))
                 {
-                    this.list.scroll_to_item(ix);
-                } else {
-                    this.list.scroll_to_item(0);
+                    Some(row) => this.list.scroll_to_item(row),
+                    None => this.list.scroll_to_item(0),
                 }
                 cx.notify();
             })
@@ -260,23 +301,24 @@ impl FolderDialog {
     }
 
     fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
-        let folders = self.shown_folders(cx);
-        if folders.is_empty() {
+        let choices = self.choices(cx);
+        if choices.is_empty() {
             return;
         }
         let at = self
             .selected
             .as_ref()
-            .and_then(|name| folders.iter().position(|n| n == name));
+            .and_then(|name| choices.iter().position(|n| n == name));
         let next = match (at, down) {
             (None, true) => 0,
-            (None, false) => folders.len() - 1,
-            (Some(ix), true) => (ix + 1).min(folders.len() - 1),
+            (None, false) => choices.len() - 1,
+            (Some(ix), true) => (ix + 1).min(choices.len() - 1),
             (Some(ix), false) => ix.saturating_sub(1),
         };
-        self.selected = Some(folders[next].clone());
-        self.list
-            .scroll_to_item(next + usize::from(self.naming.is_some()));
+        if let Some(row) = self.row_of(&choices[next], cx) {
+            self.list.scroll_to_item(row);
+        }
+        self.selected = Some(choices[next].clone());
         cx.notify();
     }
 
@@ -377,7 +419,8 @@ impl FolderDialog {
         }
     }
 
-    /// Return enters the picked folder (or goes to a typed path); ⌘Return opens.
+    /// Return enters the picked folder, chooses the picked file, or goes to
+    /// a typed path; ⌘Return chooses.
     fn press_enter(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         if self.naming.is_some() {
@@ -388,12 +431,13 @@ impl FolderDialog {
             let text = self.field.read(cx).value().trim().to_string();
             if text.starts_with('/') || text.starts_with('~') {
                 self.go_to_folder(text, false, None, window, cx);
-            } else if let Some(name) = self
-                .selected
-                .clone()
-                .filter(|name| self.shown_folders(cx).contains(name))
-            {
-                self.enter(name, window, cx);
+            } else if let Some(entry) = self.picked(cx) {
+                if entry.dir {
+                    let name = entry.name.clone();
+                    self.enter(name, window, cx);
+                } else if self.pickable_file(entry) {
+                    self.finish(cx);
+                }
             }
         }
     }
@@ -532,6 +576,19 @@ impl Render for FolderDialog {
                                 this.entered = this.path.clone();
                             }))
                             .into_any_element()
+                    } else if self.pickable_file(entry) {
+                        let selected = self.selected.as_ref() == Some(&name);
+                        row.cursor_pointer()
+                            .when(selected, |d| d.bg(picked))
+                            .when(!selected, |d| d.hover(move |d| d.bg(hover)))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                                this.selected = Some(name.clone());
+                                if event.click_count() > 1 {
+                                    this.finish(cx);
+                                }
+                                cx.notify();
+                            }))
+                            .into_any_element()
                     } else {
                         row.opacity(0.45).into_any_element()
                     });
@@ -631,6 +688,8 @@ impl Render for FolderDialog {
             }
         }
         let target = self.target(cx);
+        let target_is_file = self.picked(cx).is_some_and(|e| self.pickable_file(e));
+        let choosing_files = self.files.is_some();
         let hidden = self.hidden;
         let card = v_flex()
             .id("folder-dialog-card")
@@ -661,14 +720,17 @@ impl Render for FolderDialog {
             .capture_action(cx.listener(|this, _: &MoveToEnd, window, cx| {
                 if this.naming.is_none() {
                     cx.stop_propagation();
-                    if let Some(name) = this.selected.clone() {
+                    if let Some(entry) = this.picked(cx).filter(|e| e.dir) {
+                        let name = entry.name.clone();
                         this.enter(name, window, cx);
                     }
                 }
             }))
             .capture_action(cx.listener(|this, _: &crate::NewFolder, window, cx| {
                 cx.stop_propagation();
-                this.start_naming(window, cx);
+                if this.files.is_none() {
+                    this.start_naming(window, cx);
+                }
             }))
             .child(
                 div()
@@ -685,13 +747,17 @@ impl Render for FolderDialog {
                             .on_click(cx.listener(|this, _, window, cx| this.go_up(window, cx))),
                     )
                     .child(trail)
-                    .child(
-                        icon_button("folder-dialog-new", "folder.new", &p, false)
-                            .tooltip(|w, cx| Tooltip::new("New Folder  ⌥⌘N").build(w, cx))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.start_naming(window, cx)),
-                            ),
-                    )
+                    .when(!choosing_files, |d| {
+                        d.child(
+                            icon_button("folder-dialog-new", "folder.new", &p, false)
+                                .tooltip(|w, cx| Tooltip::new("New Folder  ⌥⌘N").build(w, cx))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.start_naming(window, cx)
+                                    }),
+                                ),
+                        )
+                    })
                     .child(
                         icon_button(
                             "folder-dialog-hidden",
@@ -766,7 +832,12 @@ impl Render for FolderDialog {
                             .font_family(look::mono())
                             .when_some(target.clone(), |d, target| {
                                 let name = target.rsplit('/').next().unwrap_or("").to_string();
-                                d.child(picture(&look::folder_icon(&name)).size(px(look::ICON)))
+                                let mark = if target_is_file {
+                                    look::file_icon(&name)
+                                } else {
+                                    look::folder_icon(&name)
+                                };
+                                d.child(picture(&mark).size(px(look::ICON)))
                                     .child(div().min_w_0().truncate().child(tilde(&target, home)))
                             }),
                     )
@@ -805,14 +876,17 @@ impl Render for FolderDialog {
     }
 }
 
-/// Shows the system's folder window and hands back the chosen folder.
-pub(crate) fn choose_local_folder(
+/// Shows the system's window and hands back the chosen folder, or file
+/// with `files` (a folder too, with `folders`).
+pub(crate) fn choose_local_path(
     prompt: &str,
+    files: bool,
+    folders: bool,
     cx: &mut App,
 ) -> impl std::future::Future<Output = Option<String>> + use<> {
     let picked = cx.prompt_for_paths(PathPromptOptions {
-        files: false,
-        directories: true,
+        files,
+        directories: folders,
         multiple: false,
         prompt: Some(prompt.to_string().into()),
     });

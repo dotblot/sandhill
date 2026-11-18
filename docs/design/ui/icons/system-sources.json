@@ -43,6 +43,7 @@
   "filter": {"library": "lucide", "path": "icons/funnel.svg"},
   "sort": {"library": "lucide", "path": "icons/arrow-down-a-z.svg"},
   "table": {"library": "lucide", "path": "icons/table-2.svg"},
+  "data.import": {"library": "lucide", "path": "icons/import.svg", "note": "An arrow into a box, so Variables' Import differs from the Data Explorer's table (Huan, 2026-11-18)."},
   "outline": {"library": "lucide", "path": "icons/list-tree.svg"},
   "share": {"library": "lucide", "path": "icons/share-2.svg"},
   "upload": {"library": "lucide", "path": "icons/upload.svg"},

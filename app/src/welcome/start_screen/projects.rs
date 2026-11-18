@@ -113,7 +113,7 @@ impl AppWindow {
         self.start.pending_folder = None;
         if host == sandhill_link::LOCAL {
             // This Mac's folders: the system's own window.
-            let chosen = crate::welcome::folder_dialog::choose_local_folder("Open", cx);
+            let chosen = crate::welcome::folder_dialog::choose_local_path("Open", false, true, cx);
             cx.spawn_in(window, async move |this, cx| {
                 let chosen = chosen.await;
                 this.update_in(cx, |this, window, cx| {
