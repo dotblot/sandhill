@@ -98,7 +98,8 @@ fn pending_attach_blocks_stop_until_every_attach_finishes() {
 }
 
 /// How to reach servers: the builds of sandhilld (and Ark) to install on
-/// them, from `Contents/Resources/daemons` in the Mac app or
+/// them, from `Contents/Resources/daemons` in the Mac app, `daemons` beside
+/// the app in the Linux package (`/usr/lib/sandhill/daemons`), or
 /// `$SANDHILL_DAEMON_BUILDS`, as the Tauri app has it. `$SANDHILL_SSH`
 /// replaces the ssh program.
 fn link_options() -> Options {
@@ -106,7 +107,11 @@ fn link_options() -> Options {
         .map(std::path::PathBuf::from)
         .or_else(|| {
             let exe = std::env::current_exe().ok()?;
-            let dir = exe.parent()?.parent()?.join("Resources/daemons");
+            let dir = if cfg!(target_os = "macos") {
+                exe.parent()?.parent()?.join("Resources/daemons")
+            } else {
+                exe.parent()?.join("daemons")
+            };
             dir.is_dir().then_some(dir)
         });
     match &builds {
