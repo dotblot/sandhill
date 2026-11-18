@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandhill UI rules</title>
+<style>
+:root {
+  font: 15px/1.45 system-ui, -apple-system, sans-serif;
+  color-scheme: light dark;
+  --mono: "Maple Mono NF", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px; }
+header { max-width: 1120px; margin: 0 auto 16px; }
+h1 { font-size: 24px; margin: 0; }
+h2 { font-size: 16px; margin: 0; }
+p { margin: 0; }
+header p { margin-top: 4px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 1120px; margin: auto; }
+.theme {
+  color-scheme: light;
+  --bg: #fff; --card: #f6f6f6; --ink: #191919; --muted: #545454; --line: #d5d5d5;
+  --accent: #142844; --on-accent: #fff; --danger: #fa554a;
+  color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 12px; min-width: 0; padding: 8px 12px;
+}
+.theme.dark {
+  color-scheme: dark;
+  --bg: #111; --card: #242424; --ink: #efefef; --muted: #b7b7b7; --line: #515151;
+  --accent: #8dacd5; --on-accent: #142844; --danger: #fb655a;
+}
+.theme > section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.sample, .question, .card { margin-top: 8px; }
+.sample { display: grid; gap: 4px; }
+.caption, small { font-size: 13px; color: var(--muted); }
+.welcome-title { font-size: 24px; line-height: 1.15; }
+.label { font-size: 14px; }
+.badge { font-size: 11px; }
+code { font: 15px var(--mono); }
+.code-inline { font-size: 14px; }
+.geometry { display: grid; gap: 12px; }
+.control-line, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+button { font: 13px system-ui, sans-serif; }
+button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 0 8px; border: 1px solid var(--line); border-radius: 6px;
+  color: inherit; background: transparent;
+}
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:hover, .control-hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.primary, .sidebar { color: var(--on-accent); background: var(--accent); border-color: transparent; }
+.danger { color: #250404; background: var(--danger); border-color: transparent; }
+.primary:hover { background: var(--accent); }
+.danger:hover { background: var(--danger); }
+.primary:hover, .danger:hover { filter: brightness(1.1); }
+.quiet { border-color: transparent; width: 20px; }
+.h20 { height: 20px; }
+.h26 { height: 26px; }
+.h30 { height: 30px; }
+.row, .dense { display: flex; align-items: center; gap: 4px; padding: 0 8px; font-size: 13px; }
+.row { height: 28px; border-radius: 6px; }
+.dense { height: 22px; border-radius: 4px; border: 1px solid var(--line); }
+.row-hover, .picker:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.picked { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.ico { width: 14px; height: 14px; flex: none; }
+.ico.dense-icon { width: 12px; height: 12px; }
+.ico.card-icon { width: 16px; height: 16px; }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; }
+.capsule { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 2px; border-radius: 999px; background: var(--card); }
+.tab, .close { height: 20px; border-radius: 999px; background: var(--bg); }
+.close { width: 16px; height: 16px; padding: 0; }
+.close .ico { width: 12px; height: 12px; }
+.card { padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.card > p, .card-actions { margin-top: 8px; }
+.card-actions { display: grid; gap: 8px; }
+.card h2, .prompt { display: flex; align-items: center; gap: 4px; }
+.question { padding: 4px 8px; display: grid; gap: 4px; font-size: 13px; }
+.actions { justify-content: end; }
+.frame { padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; }
+.snippet { background: var(--card); padding: 2px 6px; border-radius: 4px; }
+@media (max-width: 760px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 390px) {
+  body { padding: 12px; }
+  .row, .dense { height: auto; min-height: 28px; flex-wrap: wrap; }
+  .dense { min-height: 22px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Sandhill UI rules</h1>
+  <p>Light and dark examples for the native Mac app. The values live in <a href="../../../app/src/look.rs"><code>app/src/look.rs</code></a>. See also the <a href="../../decisions/look.md">settled look decisions</a> and the <a href="../ui-consistency-plan.md">consistency plan</a>.</p>
+</header>
+<main class="cols"></main>
+<template id="specimens">
+  <section>
+    <h2>Text</h2>
+    <div class="sample">
+      <div class="welcome-title">Welcome to Sandhill <small>24 px, Welcome heading only</small></div>
+      <h2>Project settings <small>16 px title</small></h2>
+      <p>Run code in this project. <small>15 px body</small></p>
+      <p class="label">Run file <small>14 px tab and toolbar label</small></p>
+      <p><small>13 px rows, popups, menus and notes</small></p>
+      <p class="badge">11 px badge or count</p>
+      <p><code>print(total)</code> <small>15 px code</small></p>
+      <p>Check <code class="code-inline snippet">total</code> before saving. <small>Inline documentation code: 1 px below its prose.</small></p>
+    </div>
+  </section>
+  <section>
+    <h2>Buttons</h2>
+    <div class="sample">
+      <div class="control-line"><button type="button" class="primary h20">Run</button><button type="button" class="h20">Cancel</button><button type="button" class="quiet h20" aria-label="Refresh"><svg class="ico" aria-hidden="true"><use href="#refresh"/></svg></button><button type="button" class="danger h20">Remove</button><small>20 px in rows and tool rows</small></div>
+      <div class="control-line"><button type="button" class="primary h26">Save</button><button type="button" class="h26">Cancel</button><small>26 px in cards, forms and popups</small></div>
+      <div class="control-line"><button type="button" class="primary h30">Open Folder…</button><small>30 px on Welcome</small></div>
+      <p class="caption">Use Kit’s Button. Use primary for the main action, plain for an outlined action, quiet for an icon without an outline, and one red style for destructive actions.</p>
+    </div>
+  </section>
+  <section>
+    <h2>Rows, hover and icons</h2>
+    <div class="sample frame">
+      <div class="row picker"><svg class="ico" aria-hidden="true"><use href="#file"/></svg> analysis.R <small>28 px picker row, 14 px icon</small></div>
+      <div class="row row-hover"><svg class="ico" aria-hidden="true"><use href="#file"/></svg> qc.py <small>row hover, 6% text ink</small></div>
+      <div class="row picked"><svg class="ico" aria-hidden="true"><use href="#file"/></svg> report.qmd <small>picked file, accent wash</small></div>
+      <div class="row sidebar"><svg class="ico" aria-hidden="true"><use href="#file"/></svg> General <span class="badge">picked Welcome page, solid accent</span></div>
+      <div class="dense"><svg class="ico dense-icon" aria-hidden="true"><use href="#table"/></svg> counts <small>22 px dense row, 12 px icon</small></div>
+      <div class="control-line"><button type="button" class="quiet h20 control-hover" aria-label="Refresh"><svg class="ico" aria-hidden="true"><use href="#refresh"/></svg></button><small>button hover, 8% text ink</small></div>
+    </div>
+    <p class="caption">Keep each list’s existing picked state. Use 16 px icons in cards and the title bar.</p>
+  </section>
+  <section>
+    <h2>Corners and gaps</h2>
+    <div class="sample geometry">
+      <div class="examples">
+        <div class="capsule"><button type="button" class="tab label">Files</button><button type="button" class="close" aria-label="Close tab"><svg class="ico" aria-hidden="true"><use href="#close"/></svg></button></div>
+        <code class="snippet">4 px</code>
+      </div>
+      <p class="caption">Use 12 px for panes, cards and popups; 6 px for buttons, inputs, rows and chips; and 4 px inside code and tables. Tabs, capsules and close buttons stay fully round.</p>
+      <p class="caption">Leave 4 px between an icon and its label, 8 px between controls and 12 px between groups. Pad panes 12 px left and right, 8 px top and bottom. Use the named 2 px and 6 px gaps where a compact pair needs them.</p>
+    </div>
+  </section>
+  <section>
+    <h2>Confirmations</h2>
+    <div class="sample frame">
+      <div class="row"><svg class="ico" aria-hidden="true"><use href="#file"/></svg> render-qc.py</div>
+      <div class="question">
+        <div class="prompt"><svg class="ico" aria-hidden="true"><use href="#file"/></svg> Stop render-qc.py?</div>
+        <div class="actions"><button type="button" class="h20">Cancel</button><button type="button" class="danger h20">Stop</button></div>
+      </div>
+    </div>
+    <p class="caption">When a single item is affected, replace its row with “Verb name?” and put Cancel before the red verb button on the right. Use a dialog in Git when it needs a text field.</p>
+    <div class="card">
+      <h2><svg class="ico card-icon" aria-hidden="true"><use href="#file"/></svg> Close analysis.R?</h2>
+      <p>Its kernel is still running.</p>
+      <div class="card-actions"><button type="button" class="primary h26">Close</button><button type="button" class="h26">Cancel</button></div>
+    </div>
+    <p class="caption">Ask in a card before stopping work or losing data for a whole file, project or app.</p>
+  </section>
+</template>
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" style="position:absolute">
+  <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <symbol id="file" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M3.5 1.5h6l3 3v10h-9zM9.5 1.5v3h3M6 8h4m-4 3h4"/></symbol>
+    <symbol id="table" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" d="M2 2h12v12H2zM2 6h12M2 10h12M6 2v12"/></symbol>
+    <symbol id="refresh" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M13.5 6a5.5 5.5 0 1 0 0 4m0-7v3.5H10"/></symbol>
+    <symbol id="close" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="m4 4 8 8m0-8-8 8"/></symbol>
+  </g>
+</svg>
+<script>
+const cols = document.querySelector('.cols');
+const specimens = document.querySelector('#specimens');
+for (const [name, className] of [['Light', 'theme'], ['Dark', 'theme dark']]) {
+  const column = document.createElement('section');
+  column.className = className;
+  const heading = document.createElement('h2');
+  heading.textContent = name;
+  column.append(heading, specimens.content.cloneNode(true));
+  cols.append(column);
+}
+</script>
+</body>
+</html>

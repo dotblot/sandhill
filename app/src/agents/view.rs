@@ -521,6 +521,29 @@ impl Agents {
 
     fn history_row(&self, t: &TerminalInfo, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
+        let delete_id = t.id.clone();
+        let button_id = SharedString::from(format!("hist-delete-{}", t.id));
+        let on_delete = cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.delete_from_history(delete_id.clone(), window, cx)
+        });
+        if self.confirm_delete.as_deref() == Some(&t.id) {
+            return look::question_row(
+                format!("Delete {}?", self.title(t)),
+                Some(provider(&t.kind).into_any_element()),
+                (
+                    SharedString::from(format!("hist-cancel-{}", t.id)).into(),
+                    button_id.into(),
+                ),
+                ("Cancel", "Delete"),
+                cx.listener(|this, _, _, cx| {
+                    this.confirm_delete = None;
+                    cx.notify();
+                }),
+                on_delete,
+            )
+            .into_any_element();
+        }
         let id = t.id.clone();
         let selected = self.selected.as_ref() == Some(&t.id);
         let idle_stopped = !t.running && t.exit.as_ref().is_some_and(|e| e.idle);
@@ -541,41 +564,23 @@ impl Agents {
         let hover = p.ink(look::ROW_HOVER);
         let button_hover = p.ink(look::BUTTON_HOVER);
         let group: SharedString = format!("hist-group-{}", t.id).into();
-        let asking = self.confirm_delete.as_deref() == Some(&t.id);
-        let delete_id = t.id.clone();
-        let button_id = SharedString::from(format!("hist-delete-{}", t.id));
-        let on_delete = cx.listener(move |this, _, window, cx| {
-            cx.stop_propagation();
-            this.delete_from_history(delete_id.clone(), window, cx)
-        });
-        let delete = if asking {
-            look::button(button_id, "Delete?", Some("delete"), ButtonSize::Row)
-                .danger()
-                .ml_auto()
-                .tooltip("Delete this conversation")
-                .on_click(on_delete)
-                .into_any_element()
-        } else {
-            h_flex()
-                .id(button_id)
-                .flex_none()
-                .ml_auto()
-                .size(px(look::CONTROL_ROW))
-                .justify_center()
-                .rounded(px(look::CONTROL_RADIUS))
-                .cursor_pointer()
-                .invisible()
-                .group_hover(group.clone(), |d| d.visible())
-                .text_color(p.faint)
-                .hover(move |d| d.bg(button_hover).text_color(p.err))
-                .child(icon("delete").size(px(look::ICON)))
-                .tooltip(|w, cx| {
-                    gpui_kit::component::tooltip::Tooltip::new("Delete this conversation")
-                        .build(w, cx)
-                })
-                .on_click(on_delete)
-                .into_any_element()
-        };
+        let delete = h_flex()
+            .id(button_id)
+            .flex_none()
+            .ml_auto()
+            .size(px(look::CONTROL_ROW))
+            .justify_center()
+            .rounded(px(look::CONTROL_RADIUS))
+            .cursor_pointer()
+            .invisible()
+            .group_hover(group.clone(), |d| d.visible())
+            .text_color(p.faint)
+            .hover(move |d| d.bg(button_hover).text_color(p.err))
+            .child(icon("delete").size(px(look::ICON)))
+            .tooltip(|w, cx| {
+                gpui_kit::component::tooltip::Tooltip::new("Delete this conversation").build(w, cx)
+            })
+            .on_click(on_delete);
         // Stops the agent but keeps the conversation; a message resumes it.
         let stop = t.running.then(|| {
             let stop_id = t.id.clone();

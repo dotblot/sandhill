@@ -53,6 +53,14 @@ its date.
 - `docs/decisions/licences.md`: Sandhill's licence, code from elsewhere,
   notices.
 
+## UI rules
+- Use the named values in `app/src/look.rs` for text, controls, rows,
+  corners, icons, spacing and hover. See the light and dark examples in
+  [Sandhill UI rules](docs/design/ui/consistency.html).
+- Use Kit's Button for labelled actions. For a destructive action on one
+  item, ask “Verb name?” in its row, with Cancel before the red verb button.
+  Keep a card for actions that affect a whole file, project or the app.
+
 ## Conventions
 - `app/` is its own Cargo project (`[workspace]` of its own, own
   `Cargo.lock`, pinned `gpui-kit`/`gpui-webview` versions), so a root

@@ -15,10 +15,11 @@ use std::io::Read;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::highlighter::SyntaxColors;
 use gpui_kit::component::{
     Colorize, Sizable, Size, Theme, ThemeColor, ThemeConfig, ThemeMode, ThemeRegistry, h_flex,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -1379,6 +1380,39 @@ pub fn button(
             .when_some(icon_name, |d, name| d.child(icon(name).size(px(ICON))))
             .child(div().min_w_0().text_ellipsis().child(label)),
     )
+}
+
+/// Replaces a list row with its question and two right-aligned actions.
+pub(crate) fn question_row(
+    question: String,
+    leading: Option<AnyElement>,
+    ids: (ElementId, ElementId),
+    labels: (&'static str, &'static str),
+    plain: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    danger: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    v_flex()
+        .px(px(GAP_8))
+        .py(px(GAP_4))
+        .gap(px(GAP_4))
+        .text_size(px(SMALL))
+        .child(
+            h_flex()
+                .gap(px(GAP_4))
+                .child(div().w(px(ICON)).flex_none().children(leading))
+                .child(div().flex_1().min_w_0().whitespace_normal().child(question)),
+        )
+        .child(
+            h_flex()
+                .justify_end()
+                .gap(px(GAP_8))
+                .child(button(ids.0, labels.0, None, ButtonSize::Row).on_click(plain))
+                .child(
+                    button(ids.1, labels.1, None, ButtonSize::Row)
+                        .danger()
+                        .on_click(danger),
+                ),
+        )
 }
 
 /// A small icon button, as in a pane's head or the title bar.

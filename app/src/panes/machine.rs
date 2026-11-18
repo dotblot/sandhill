@@ -6,13 +6,12 @@
 use std::time::Duration;
 
 use gpui_kit::base::ElementExt as _;
-use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, KernelspecInfo, SessionInfo, SessionStatus, SystemStats};
 
-use crate::look::{self, ButtonSize::Row, Palette, icon, picture};
+use crate::look::{self, Palette, icon, picture};
 use crate::workbench::{Link, Workbench};
 
 const POLL: Duration = Duration::from_secs(5);
@@ -564,9 +563,9 @@ impl Workbench {
                                 gpui_kit::component::tooltip::Tooltip::new(why.clone()).build(w, cx)
                             }
                         })
-                        .child(ask_row(
+                        .child(look::question_row(
                             format!("{label} didn't stop"),
-                            lang,
+                            lang.map(|l| picture(l).into_any_element()),
                             (("kf-again", ix).into(), ("kf-force", ix).into()),
                             ("Try again", "Force stop"),
                             cx.listener(move |this, _, _, cx| this.stop_kernel(again.clone(), cx)),
@@ -579,9 +578,9 @@ impl Workbench {
             }
             if self.machine.asking.as_deref() == Some(s.id.as_str()) {
                 let id = s.id.clone();
-                list = list.child(ask_row(
+                list = list.child(look::question_row(
                     format!("Shut down {label}?"),
-                    lang,
+                    lang.map(|l| picture(l).into_any_element()),
                     ("k-cancel".into(), "k-stop".into()),
                     ("Cancel", "Shut down"),
                     cx.listener(|this, _, _, cx| {
@@ -664,7 +663,7 @@ impl Workbench {
                 .rounded(px(look::CONTROL_RADIUS))
                 .child(icon("delete").size(px(look::ICON)));
             if self.machine.asking.as_deref() == Some(UNUSED) {
-                list = list.child(ask_row(
+                list = list.child(look::question_row(
                     if n == 1 {
                         "Shut down 1 unused session?".to_string()
                     } else {
@@ -881,45 +880,6 @@ impl Workbench {
                 .into_any_element(),
         )
     }
-}
-
-/// A kernel row asking something: the question, then a plain and a red
-/// button under it (Cancel and Shut down; Try again and Force stop).
-fn ask_row(
-    question: String,
-    lang: Option<&'static str>,
-    ids: (ElementId, ElementId),
-    labels: (&'static str, &'static str),
-    plain: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    danger: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    v_flex()
-        .px(px(look::GAP_8))
-        .py(px(look::GAP_4))
-        .gap(px(look::GAP_4))
-        .text_size(px(look::SMALL))
-        .child(
-            h_flex()
-                .gap(px(look::GAP_4))
-                .child(
-                    div()
-                        .w(px(look::ICON))
-                        .flex_none()
-                        .children(lang.map(|l| picture(l).size(px(look::ICON)))),
-                )
-                .child(div().flex_1().min_w_0().child(question)),
-        )
-        .child(
-            h_flex()
-                .justify_end()
-                .gap(px(look::GAP_8))
-                .child(look::button(ids.0, labels.0, None, Row).on_click(plain))
-                .child(
-                    look::button(ids.1, labels.1, None, Row)
-                        .danger()
-                        .on_click(danger),
-                ),
-        )
 }
 
 #[cfg(test)]

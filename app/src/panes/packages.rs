@@ -709,8 +709,26 @@ impl Workbench {
     ) -> AnyElement {
         let p = *Palette::get(cx);
         let hover = p.ink(look::ROW_HOVER);
+        if !pkg.base && self.packages.confirm_remove.as_deref() == Some(pkg.name.as_str()) {
+            let name = pkg.name.clone();
+            return look::question_row(
+                format!("Remove {name}?"),
+                Some(icon("package").text_color(p.faint).into_any_element()),
+                (
+                    SharedString::from(format!("pkg-cancel-{name}")).into(),
+                    SharedString::from(format!("pkg-remove-{name}")).into(),
+                ),
+                ("Cancel", "Remove"),
+                cx.listener(|this, _, _, cx| {
+                    this.packages.confirm_remove = None;
+                    cx.notify();
+                }),
+                cx.listener(move |this, _, _, cx| this.remove_package(name.clone(), cx)),
+            )
+            .mx(px(look::GAP_4))
+            .into_any_element();
+        }
         let asked = package_topic(pkg, language);
-        let confirming = self.packages.confirm_remove.as_deref() == Some(pkg.name.as_str());
         let remove_name = pkg.name.clone();
         let update_name = pkg.name.clone();
         let status = package_status(pkg, language);
@@ -783,23 +801,7 @@ impl Workbench {
                 ),
             })
             .when(!pkg.base, |d| {
-                d.child(if confirming {
-                    h_flex()
-                        .id(SharedString::from(format!("pkg-remove-{}", pkg.name)))
-                        .flex_none()
-                        .h(px(look::CONTROL_ROW))
-                        .px(px(look::GAP_6))
-                        .rounded(px(look::CONTROL_RADIUS))
-                        .text_size(px(look::SMALL))
-                        .text_color(p.err)
-                        .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
-                        .child("Remove?")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.remove_package(remove_name.clone(), cx)
-                        }))
-                        .into_any_element()
-                } else {
+                d.child(
                     icon_button(
                         SharedString::from(format!("pkg-remove-{}", pkg.name)),
                         "delete",
@@ -809,9 +811,8 @@ impl Workbench {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.remove_package(remove_name.clone(), cx)
-                    }))
-                    .into_any_element()
-                })
+                    })),
+                )
             })
             .into_any_element()
     }

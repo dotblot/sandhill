@@ -20,8 +20,11 @@ Done so far:
   tiny sizes. Code is 15px, or 14px alongside documentation prose.
 - **Pane geometry and hover**: picker and dense rows, corners, icon sizes,
   hover tints and spacing use shared values across panes, Welcome and
-  Manage, cards, and popups. Tabs and capsules stay round; confirmations
-  stay where they were.
+  Manage, cards, and popups. Tabs and capsules stay round.
+- **Confirmations**: History, Jobs and Packages use the Kernels row layout.
+  The question names the item, then Cancel and the red verb appear at right.
+- **UI reference**: [light and dark examples](ui/consistency.html) show the
+  rules, and `CLAUDE.md` points to them.
 
 Huan: "It seems like a lot of inconsistent." This plan keeps the look that
 is settled (glass window, floating panes, round tabs, navy accent, fonts,

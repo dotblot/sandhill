@@ -596,8 +596,28 @@ impl Workbench {
                         .text_color(p.err)
                         .into_any_element(),
                 };
+                let name = job.name.as_ref().unwrap_or(&job.title);
+                if job.running && self.jobs.confirm_stop.as_deref() == Some(job.id.as_str()) {
+                    return look::question_row(
+                        format!("Stop {name}?"),
+                        Some(mark),
+                        (
+                            SharedString::from(format!("job-cancel-{}", job.id)).into(),
+                            SharedString::from(format!("job-stop-{}", job.id)).into(),
+                        ),
+                        ("Cancel", "Stop"),
+                        cx.listener(|this, _, _, cx| {
+                            this.jobs.confirm_stop = None;
+                            cx.notify();
+                        }),
+                        cx.listener(move |this, _, _, cx| this.stop_job(id.clone(), cx)),
+                    )
+                    .mx(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
+                    .when(on, |d| d.bg(p.ink(9.)))
+                    .into_any_element();
+                }
                 let (pick, stop, again, remove) = (id.clone(), id.clone(), id.clone(), id.clone());
-                let confirming = self.jobs.confirm_stop.as_deref() == Some(job.id.as_str());
                 h_flex()
                     .id(SharedString::from(format!("job-{}", job.id)))
                     .h(px(look::ROW))
@@ -635,7 +655,7 @@ impl Workbench {
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .text_color(p.text)
-                                    .child(job.name.clone().unwrap_or_else(|| job.title.clone())),
+                                    .child(name.clone()),
                             )
                             .child(
                                 div()
@@ -647,36 +667,20 @@ impl Workbench {
                     )
                     .map(|d| {
                         if job.running {
-                            d.child(if confirming {
-                                div()
-                                    .id(SharedString::from(format!("job-stop-{}", job.id)))
-                                    .h(px(look::CONTROL_ROW))
-                                    .flex()
-                                    .items_center()
-                                    .px(px(look::GAP_6))
-                                    .rounded(px(look::CONTROL_RADIUS))
-                                    .text_size(px(look::SMALL))
-                                    .text_color(p.err)
-                                    .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
-                                    .child("Stop?")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.stop_job(stop.clone(), cx)
-                                    }))
-                                    .into_any_element()
-                            } else {
+                            d.child(
                                 icon_button(
                                     SharedString::from(format!("job-stop-{}", job.id)),
                                     "stop",
                                     &p,
                                     false,
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.stop_job(stop.clone(), cx)
-                                }))
-                                .into_any_element()
-                            })
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.stop_job(stop.clone(), cx)
+                                    },
+                                )),
+                            )
                         } else {
                             d.child(
                                 icon_button(
