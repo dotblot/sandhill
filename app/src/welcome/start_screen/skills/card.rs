@@ -33,7 +33,7 @@ impl SkillsView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .gap(px(12.));
+            .gap(px(look::GAP_12));
         match card {
             Card::Github => body = body.child(Input::new(&self.input)),
             Card::Busy(_) => {}
@@ -60,12 +60,12 @@ impl SkillsView {
                 body = body.child(grey(&confirm.preview.source, &p));
                 let several = confirm.preview.skills.len() > 1;
                 for (ix, skill) in confirm.preview.skills.iter().enumerate() {
-                    let mut candidate = v_flex().min_w_0().gap(px(6.));
+                    let mut candidate = v_flex().min_w_0().gap(px(look::GAP_6));
                     if several {
                         candidate = candidate.child(
                             h_flex()
                                 .items_start()
-                                .gap(px(8.))
+                                .gap(px(look::GAP_4))
                                 .child(
                                     h_flex().h(rems(1.25)).flex_none().items_center().child(
                                         Checkbox::new(SharedString::from(format!(
@@ -135,8 +135,12 @@ impl SkillsView {
             .child(
                 h_flex()
                     .flex_none()
-                    .gap(px(12.))
-                    .child(div().flex_none().child(icon("skill").size(px(32.))))
+                    .gap(px(look::GAP_12))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(icon("skill").size(px(look::ICON_LARGE))),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -149,7 +153,7 @@ impl SkillsView {
             .child(
                 v_flex()
                     .flex_none()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .children(primary.map(|label| {
                         Button::new("skill-primary")
                             .primary()
@@ -219,7 +223,7 @@ fn file_list(id: SharedString, paths: &[String], p: &Palette) -> Stateful<Div> {
         .id(id)
         .max_h(px(160.))
         .overflow_y_scroll()
-        .gap(px(2.))
+        .gap(px(look::GAP_2))
         .text_size(px(look::SMALL))
         .text_color(p.muted)
         .children(paths.iter().map(|path| div().child(path.clone())))

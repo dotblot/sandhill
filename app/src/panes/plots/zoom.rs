@@ -154,7 +154,7 @@ impl Workbench {
             .unwrap_or(size(px(614.), px(461.)));
         let previous = self.plot_history.zoom.as_ref();
         let card_size = previous.and_then(|zoom| zoom.size).or(Some(size(
-            (picture.width + px(28.)).max(px(720.)),
+            (picture.width + px(2. * look::PANE_PAD_X)).max(px(720.)),
             picture.height + px(256.),
         )));
         let offset = previous.map_or(point(px(0.), px(0.)), |zoom| zoom.offset);

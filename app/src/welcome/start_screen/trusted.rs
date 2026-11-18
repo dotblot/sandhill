@@ -70,11 +70,11 @@ impl AppWindow {
         });
         let mut page = v_flex()
             .w_full()
-            .gap(px(16.))
+            .gap(px(look::GAP_12))
             .child(
                 h_flex()
                     .w_full()
-                    .gap(px(12.))
+                    .gap(px(look::GAP_8))
                     .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Agents"))
                     .children(refresh),
             )
@@ -186,9 +186,10 @@ impl AppWindow {
                                 .id(("trusted-row", row))
                                 .w_full()
                                 .min_w_0()
-                                .px(px(12.))
-                                .py(px(8.))
-                                .gap(px(10.))
+                                .min_h(px(look::ROW))
+                                .px(px(look::PANE_PAD_X))
+                                .py(px(look::GAP_2))
+                                .gap(px(look::GAP_4))
                                 .when(row > 0, |d| d.border_t_1().border_color(p.line))
                                 .child(
                                     icon(if host == sandhill_link::LOCAL {
@@ -196,7 +197,7 @@ impl AppWindow {
                                     } else {
                                         "device.server"
                                     })
-                                    .size(px(15.))
+                                    .size(px(look::ICON))
                                     .text_color(p.muted),
                                 )
                                 .child(
@@ -256,10 +257,10 @@ impl AppWindow {
         v_flex()
             .w_full()
             .flex_none()
-            .gap(px(16.))
+            .gap(px(look::GAP_12))
             .child(
                 v_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .child(
                         div()
                             .text_size(px(look::WELCOME_TITLE))

@@ -485,8 +485,8 @@ impl Workbench {
         let p = *Palette::get(cx);
         let note = |text: &'static str| {
             h_flex()
-                .h(px(28.))
-                .px(px(14.))
+                .h(px(look::ROW))
+                .px(px(look::GAP_8))
                 .text_size(px(look::SMALL))
                 .text_color(p.faint)
                 .child(text)
@@ -494,13 +494,15 @@ impl Workbench {
         };
         if !matches!(self.link, Link::Ready(_)) {
             return div()
-                .pt(px(look::STRIP))
+                .pt(px(look::STRIP + look::PANE_PAD_Y))
+                .px(px(look::GAP_4))
                 .child(note("Not connected"))
                 .into_any_element();
         }
         if self.project.is_none() {
             return div()
-                .pt(px(look::STRIP))
+                .pt(px(look::STRIP + look::PANE_PAD_Y))
+                .px(px(look::GAP_4))
                 .child(note("Open a project to see its kernels"))
                 .into_any_element();
         }
@@ -513,7 +515,7 @@ impl Workbench {
                 .map(|m| format_bytes(m.rss))
                 .unwrap_or_default()
         };
-        let mut list = v_flex().pt(px(4.));
+        let mut list = v_flex().py(px(look::PANE_PAD_Y));
         if self
             .machine
             .stats
@@ -523,8 +525,8 @@ impl Workbench {
         {
             list = list.child(
                 div()
-                    .px(px(14.))
-                    .py(px(6.))
+                    .px(px(look::GAP_8))
+                    .py(px(look::GAP_4))
                     .text_size(px(look::SMALL))
                     .text_color(p.warn)
                     .child(MEMORY_WARNING),
@@ -533,24 +535,23 @@ impl Workbench {
         if sessions.is_empty() {
             list = list.child(note("No kernels running"));
         }
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         for (ix, s) in sessions.iter().enumerate() {
             let used = self.used_by(&s.id);
             let label = session_label(s, &self.kernels);
             let lang = look::language_icon(&s.language);
             let row = h_flex()
                 .id(("krow", ix))
-                .h(px(28.))
-                .pl(px(14.))
-                .pr(px(6.))
-                .gap(px(8.))
+                .h(px(look::ROW))
+                .px(px(look::GAP_8))
+                .gap(px(look::GAP_4))
                 .text_size(px(look::SMALL))
-                .rounded(px(look::RADIUS - 4.))
+                .rounded(px(look::CONTROL_RADIUS))
                 .child(
                     div()
-                        .w(px(14.))
+                        .w(px(look::ICON))
                         .flex_none()
-                        .children(lang.map(|l| picture(l).size(px(14.)))),
+                        .children(lang.map(|l| picture(l).size(px(look::ICON)))),
                 );
             if let Some(why) = self.machine.failed.get(&s.id) {
                 let (again, force) = (s.id.clone(), s.id.clone());
@@ -607,7 +608,7 @@ impl Workbench {
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(5.))
+                            .gap(px(look::GAP_4))
                             .whitespace_nowrap()
                             .child(
                                 div()
@@ -655,14 +656,13 @@ impl Workbench {
             let n = unused.len();
             let row = h_flex()
                 .id("kunused")
-                .h(px(26.))
-                .pl(px(14.))
-                .pr(px(6.))
-                .gap(px(8.))
+                .h(px(look::ROW))
+                .px(px(look::GAP_8))
+                .gap(px(look::GAP_4))
                 .text_size(px(look::SMALL))
                 .text_color(p.muted)
-                .rounded(px(look::RADIUS - 4.))
-                .child(icon("delete").size(px(13.)));
+                .rounded(px(look::CONTROL_RADIUS))
+                .child(icon("delete").size(px(look::ICON)));
             if self.machine.asking.as_deref() == Some(UNUSED) {
                 list = list.child(ask_row(
                     if n == 1 {
@@ -699,7 +699,7 @@ impl Workbench {
             "kernels-scroll",
             look::STRIP,
             0.,
-            div().id("kernels").child(list.px(px(6.))),
+            div().id("kernels").child(list.px(px(look::GAP_4))),
         )
         .into_any_element()
     }
@@ -894,26 +894,25 @@ fn ask_row(
     danger: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     v_flex()
-        .pl(px(14.))
-        .pr(px(6.))
-        .py(px(4.))
-        .gap(px(4.))
+        .px(px(look::GAP_8))
+        .py(px(look::GAP_4))
+        .gap(px(look::GAP_4))
         .text_size(px(look::SMALL))
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(px(look::GAP_4))
                 .child(
                     div()
-                        .w(px(14.))
+                        .w(px(look::ICON))
                         .flex_none()
-                        .children(lang.map(|l| picture(l).size(px(14.)))),
+                        .children(lang.map(|l| picture(l).size(px(look::ICON)))),
                 )
                 .child(div().flex_1().min_w_0().child(question)),
         )
         .child(
             h_flex()
                 .justify_end()
-                .gap(px(look::GAP_6))
+                .gap(px(look::GAP_8))
                 .child(look::button(ids.0, labels.0, None, Row).on_click(plain))
                 .child(
                     look::button(ids.1, labels.1, None, Row)

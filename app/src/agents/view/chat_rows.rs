@@ -33,7 +33,7 @@ impl Agents {
                 .is_some_and(crate::agents::account_at_limit)
                 || (!self.working(t) && chat::latest_usage_limit(&chat));
             if limited {
-                let mut alternatives = v_flex().gap(px(6.)).text_size(px(look::SMALL));
+                let mut alternatives = v_flex().gap(px(look::GAP_8)).text_size(px(look::SMALL));
                 for account in self.accounts.iter().filter(|account| {
                     account.kind == t.kind
                         && account.id != account_id
@@ -65,8 +65,8 @@ impl Agents {
                 v_flex()
                     .self_center()
                     .items_center()
-                    .gap(px(6.))
-                    .pt(px(6.))
+                    .gap(px(look::GAP_8))
+                    .pt(px(look::GAP_6))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(if t.exit.as_ref().is_some_and(|e| e.idle) {
@@ -91,10 +91,10 @@ impl Agents {
             0.,
             div().id("chat").child(
                 v_flex()
-                    .px(px(14.))
-                    .pt(px(12.))
-                    .pb(px(10.))
-                    .gap(px(8.))
+                    .px(px(look::PANE_PAD_X))
+                    .pt(px(look::GAP_12))
+                    .pb(px(look::PANE_PAD_Y))
+                    .gap(px(look::GAP_8))
                     .children(items),
             ),
         )
@@ -116,17 +116,18 @@ impl Agents {
         let yes = t.clone();
         let no = t.clone();
         v_flex()
-            .gap(px(8.))
-            .p(px(10.))
-            .rounded(px(RADIUS))
+            .gap(px(look::GAP_8))
+            .px(px(look::GAP_12))
+            .py(px(look::GAP_8))
+            .rounded(px(look::RADIUS))
             .border_1()
             .border_color(p.accent.opacity(0.55))
             .bg(p.accent.opacity(0.06))
             .child(
                 h_flex()
                     .items_start()
-                    .gap(px(8.))
-                    .child(icon("ask").size(px(18.)).text_color(p.accent))
+                    .gap(px(look::GAP_8))
+                    .child(icon("ask").size(px(look::ICON_LARGE)).text_color(p.accent))
                     .child(
                         v_flex()
                             .flex_1()
@@ -148,7 +149,7 @@ impl Agents {
             )
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child(button("trust-yes", "Yes, I trust this folder", true).on_click(
                         cx.listener(move |this, _, _, cx| this.answer_trust(&yes, true, cx)),
                     ))
@@ -423,23 +424,23 @@ impl Agents {
             (None, StepStatus::Cancel) => Some("stopped".into()),
             _ => view.detail.clone(),
         };
-        let hover = p.ink(6.);
+        let hover = p.ink(look::ROW_HOVER);
         let key_owned = key.to_string();
         let row = h_flex()
             .id(SharedString::from(format!("step-{key}")))
-            .gap(px(7.))
-            .min_h(px(26.))
-            .px(px(6.))
-            .rounded(px(RADIUS))
+            .gap(px(look::GAP_4))
+            .min_h(px(look::ROW))
+            .px(px(look::GAP_6))
+            .rounded(px(look::CONTROL_RADIUS))
             .cursor_pointer()
             .text_size(px(look::SMALL))
             .hover(move |d| d.bg(hover))
-            .child(icon(icon_name).size(px(15.)).text_color(color))
+            .child(icon(icon_name).size(px(look::ICON)).text_color(color))
             .child(
                 h_flex()
                     .flex_1()
                     .min_w_0()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .child(
@@ -477,7 +478,7 @@ impl Agents {
                 } else {
                     "chevron.right"
                 })
-                .size(px(11.))
+                .size(px(look::ICON_SMALL))
                 .text_color(p.faint),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_step(&key_owned, cx)));
@@ -486,8 +487,8 @@ impl Agents {
             .as_ref()
             .filter(|a| a.answer.is_none() && step.status == StepStatus::Wait);
         v_flex()
-            .mx(px(-6.))
-            .rounded(px(RADIUS))
+            .mx(px(-look::GAP_6))
+            .rounded(px(look::RADIUS))
             .when(open, |d| d.bg(p.ink(6.)))
             .child(row)
             .when(open, |d| {
@@ -527,8 +528,8 @@ impl Agents {
             .when_some(waiting.cloned(), |d, ask| {
                 d.child(
                     div()
-                        .px(px(6.))
-                        .pb(px(4.))
+                        .px(px(look::GAP_6))
+                        .pb(px(look::GAP_4))
                         .child(self.render_ask(&ask, agent, cx)),
                 )
             })

@@ -400,11 +400,11 @@ impl Workbench {
                     },
                 ),
             };
-        let mut row = h_flex().gap(px(6.)).flex_wrap();
+        let mut row = h_flex().gap(px(look::GAP_8)).flex_wrap();
         for (choice, label, primary) in buttons {
             row = row.child(
                 Button::new(SharedString::from(format!("git-ask-{choice}")))
-                    .xsmall()
+                    .small()
                     .label(label)
                     .when(primary, |b| b.primary())
                     .on_click(cx.listener(move |this, _, _, cx| this.answer_ask(choice, cx))),
@@ -412,18 +412,19 @@ impl Workbench {
         }
         row = row.child(
             Button::new("git-ask-cancel")
-                .xsmall()
+                .small()
                 .label("Cancel")
                 .on_click(cx.listener(|this, _, _, cx| this.answer_ask("cancel", cx))),
         );
         Some(
             v_flex()
                 .flex_none()
-                .gap(px(4.))
-                .mx(px(8.))
-                .my(px(6.))
-                .p(px(10.))
-                .rounded(px(RADIUS))
+                .gap(px(look::GAP_4))
+                .mx(px(look::GAP_4))
+                .my(px(look::PANE_PAD_Y))
+                .px(px(look::GAP_8))
+                .py(px(look::PANE_PAD_Y))
+                .rounded(px(look::RADIUS))
                 .bg(p.accent_soft)
                 .child(div().font_weight(FontWeight::MEDIUM).child(title))
                 .when(!detail.is_empty(), |d| {
@@ -477,11 +478,12 @@ impl Workbench {
         Some(
             v_flex()
                 .flex_none()
-                .gap(px(4.))
-                .mx(px(8.))
-                .my(px(6.))
-                .p(px(10.))
-                .rounded(px(RADIUS))
+                .gap(px(look::GAP_4))
+                .mx(px(look::GAP_4))
+                .my(px(look::PANE_PAD_Y))
+                .px(px(look::GAP_8))
+                .py(px(look::PANE_PAD_Y))
+                .rounded(px(look::RADIUS))
                 .bg(p.accent_soft)
                 .child(div().font_weight(FontWeight::MEDIUM).child(title))
                 .when_some(detail, |d, text| {
@@ -494,11 +496,11 @@ impl Workbench {
                 })
                 .child(
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(look::GAP_8))
                         .child(div().flex_1().child(Input::new(input).small()))
                         .child(
                             Button::new("git-prompt-ok")
-                                .xsmall()
+                                .small()
                                 .primary()
                                 .label(ok)
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -507,7 +509,7 @@ impl Workbench {
                         )
                         .child(
                             Button::new("git-prompt-cancel")
-                                .xsmall()
+                                .small()
                                 .label("Cancel")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.answer_prompt(false, window, cx)

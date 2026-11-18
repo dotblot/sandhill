@@ -14,7 +14,7 @@ pub(super) fn card_shell(
         .max_w(relative(0.95))
         .max_h(relative(0.9))
         .p(px(20.))
-        .gap(px(14.))
+        .gap(px(look::GAP_12))
         .rounded(px(look::RADIUS))
         .bg(p.panel)
         .border_1()
@@ -37,12 +37,12 @@ pub(super) fn item(
     enabled: bool,
     p: &Palette,
 ) -> Stateful<Div> {
-    let hover = p.ink(6.);
+    let hover = p.ink(look::ROW_HOVER);
     h_flex()
         .id(id)
-        .h(px(30.))
-        .px(px(8.))
-        .rounded(px(look::RADIUS - 4.))
+        .h(px(look::ROW))
+        .px(px(look::GAP_8))
+        .rounded(px(look::CONTROL_RADIUS))
         .when(enabled, |d| {
             d.cursor_pointer()
                 .hover(move |d| d.bg(hover))

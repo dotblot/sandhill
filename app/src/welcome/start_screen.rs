@@ -406,7 +406,9 @@ impl AppWindow {
         self.prepare_folder_dialog(window, cx);
         let host = self.start.selected_host.clone();
         let page = self.start.page.clone();
-        let mut devices = v_flex().gap(px(2.)).child(sidebar_heading("Devices", &p));
+        let mut devices = v_flex()
+            .gap(px(look::GAP_2))
+            .child(sidebar_heading("Devices", &p));
         for (ix, device) in self.start.hosts().into_iter().enumerate() {
             let active = device == host && page == Page::Device;
             let local = device == sandhill_link::LOCAL;
@@ -418,7 +420,7 @@ impl AppWindow {
                 Some(MachineLink::Failed(_)) => p.err,
                 _ => {
                     if active {
-                        p.primary_text
+                        p.accent
                     } else {
                         p.muted
                     }
@@ -429,14 +431,14 @@ impl AppWindow {
             devices = devices.child(
                 h_flex()
                     .id(("start-device", ix))
-                    .h(px(34.))
+                    .h(px(look::ROW))
                     .flex_none()
-                    .px(px(10.))
-                    .gap(px(8.))
-                    .rounded(px(look::RADIUS - 4.))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .when(active, |d| d.bg(p.accent).text_color(p.primary_text))
-                    .when(!active, |d| d.hover(move |d| d.bg(p.ink(6.))))
+                    .when(!active, |d| d.hover(move |d| d.bg(p.ink(look::ROW_HOVER))))
                     .active(|d| d.opacity(0.8))
                     .child(
                         icon(if local {
@@ -444,7 +446,7 @@ impl AppWindow {
                         } else {
                             "device.server"
                         })
-                        .size(px(16.)),
+                        .size(px(look::ICON)),
                     )
                     .child(
                         div()
@@ -514,10 +516,10 @@ impl AppWindow {
                     page == Page::Projects,
                     &p,
                 )
-                .mt(px(18.))
+                .mt(px(look::GAP_12))
                 .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Projects, cx))),
             )
-            .child(sidebar_heading("Manage", &p).mt(px(18.)))
+            .child(sidebar_heading("Manage", &p).mt(px(look::GAP_12)))
             .child(
                 sidebar_row(
                     "start-general",
@@ -595,9 +597,10 @@ impl AppWindow {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p(px(12.))
+                    .px(px(look::PANE_PAD_X))
+                    .pb(px(look::PANE_PAD_Y))
                     // Clear of the traffic lights, which sit on the sidebar.
-                    .pt(px(look::TITLE_BAR + 12.))
+                    .pt(px(look::TITLE_BAR + look::PANE_PAD_X))
                     .child(devices),
             )
             .child(
@@ -768,8 +771,8 @@ impl AppWindow {
 
 fn sidebar_heading(label: &'static str, p: &Palette) -> Div {
     div()
-        .px(px(10.))
-        .py(px(6.))
+        .px(px(look::GAP_8))
+        .py(px(look::GAP_6))
         .text_size(px(look::SMALL))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.muted)
@@ -826,8 +829,7 @@ fn sidebar_action(id: &'static str, name: &str, label: &'static str, p: &Palette
     sidebar_row(id, name, label, false, p)
 }
 
-/// A sidebar row; the selected one is filled with the accent, as the
-/// selected device is. GPUI takes one hover style per element.
+/// A sidebar row; the selected page and device both use the filled accent.
 fn sidebar_row(
     id: &'static str,
     name: &str,
@@ -835,13 +837,13 @@ fn sidebar_row(
     selected: bool,
     p: &Palette,
 ) -> Stateful<Div> {
-    let hover = p.ink(6.);
+    let hover = p.ink(look::ROW_HOVER);
     h_flex()
         .id(id)
-        .min_h(px(34.))
-        .px(px(10.))
-        .gap(px(8.))
-        .rounded(px(look::RADIUS - 4.))
+        .min_h(px(look::ROW))
+        .px(px(look::GAP_8))
+        .gap(px(look::GAP_4))
+        .rounded(px(look::CONTROL_RADIUS))
         .cursor_pointer()
         .map(|d| {
             if selected {
@@ -851,7 +853,7 @@ fn sidebar_row(
             }
         })
         .active(|d| d.opacity(0.8))
-        .child(icon(name).size(px(16.)))
+        .child(icon(name).size(px(look::ICON)))
         .child(label)
 }
 
@@ -895,8 +897,8 @@ fn connected_summary(projects: Option<usize>, kernels: usize) -> String {
 /// A muted line in a device pane.
 fn note(text: &str, p: &Palette) -> Div {
     div()
-        .px(px(12.))
-        .py(px(10.))
+        .px(px(look::PANE_PAD_X))
+        .py(px(look::PANE_PAD_Y))
         .text_color(p.muted)
         .child(text.to_string())
 }

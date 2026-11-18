@@ -96,15 +96,15 @@ fn heading(text: &'static str, p: &Palette) -> Div {
 }
 
 fn rule(p: &Palette) -> Div {
-    div().h(px(1.)).my(px(12.)).bg(p.line)
+    div().h(px(1.)).my(px(look::GAP_12)).bg(p.line)
 }
 
 /// A row of the last request: a dot in its colour in the bar, the name,
 /// the number at the right.
 fn part_row(dot: Div, label: &'static str, value: u64, p: &Palette) -> Div {
     h_flex()
-        .h(px(22.))
-        .gap(px(8.))
+        .h(px(look::DENSE_ROW))
+        .gap(px(look::GAP_8))
         .child(div().w(px(8.)).flex_none().child(dot))
         .child(div().flex_1().child(label))
         .child(div().text_color(p.text).child(fine(value)))
@@ -127,8 +127,8 @@ fn tile(value: AnyElement, label: String, p: &Palette) -> Div {
     v_flex()
         .w(relative(1. / 3.))
         .min_w(px(96.))
-        .gap(px(1.))
-        .pb(px(8.))
+        .gap(px(look::GAP_2))
+        .pb(px(look::GAP_8))
         .child(
             div()
                 .text_size(px(look::TITLE))
@@ -145,7 +145,7 @@ fn tile(value: AnyElement, label: String, p: &Palette) -> Div {
 
 fn note(text: &'static str, p: &Palette) -> Div {
     div()
-        .pt(px(6.))
+        .pt(px(look::GAP_6))
         .text_size(px(look::SMALL))
         .text_color(p.muted)
         .child(text)
@@ -222,10 +222,10 @@ impl Agents {
             .id("context-menu")
             .w(px(360.))
             .gap(px(0.))
-            .p(px(14.))
+            .p(px(look::GAP_12))
             .child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Context"))
                     .child(div().flex_1())
                     .child(
@@ -240,9 +240,9 @@ impl Agents {
             .child(
                 h_flex()
                     .items_end()
-                    .gap(px(6.))
-                    .pt(px(10.))
-                    .pb(px(8.))
+                    .gap(px(look::GAP_6))
+                    .pt(px(look::GAP_12))
+                    .pb(px(look::GAP_8))
                     .child(
                         div()
                             .text_size(px(look::TITLE))
@@ -253,7 +253,7 @@ impl Agents {
                     .when_some(size, |d, s| {
                         d.child(
                             div()
-                                .pb(px(2.))
+                                .pb(px(look::GAP_2))
                                 .text_color(p.muted)
                                 .child(format!("of {}", tokens(s))),
                         )
@@ -262,7 +262,7 @@ impl Agents {
                     .when(size.is_some(), |d| {
                         d.child(
                             div()
-                                .pb(px(2.))
+                                .pb(px(look::GAP_2))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(level)
                                 .child(format!("{}%", percent.round())),
@@ -273,7 +273,7 @@ impl Agents {
             .when_some(free, |d, free| {
                 d.child(
                     div()
-                        .pt(px(6.))
+                        .pt(px(look::GAP_6))
                         .text_size(px(look::SMALL))
                         .text_color(p.muted)
                         .child(free),
@@ -298,7 +298,7 @@ impl Agents {
         if !rows.is_empty() {
             panel = panel
                 .child(rule(p))
-                .child(heading("Last request", p).pb(px(4.)))
+                .child(heading("Last request", p).pb(px(look::GAP_4)))
                 .children(rows);
         }
 
@@ -327,7 +327,7 @@ impl Agents {
         let removed = count(&status["lines_removed"]);
         if added.is_some() || removed.is_some() {
             let lines = h_flex()
-                .gap(px(6.))
+                .gap(px(look::GAP_6))
                 .child(
                     div()
                         .text_color(p.ok)
@@ -344,7 +344,7 @@ impl Agents {
         if !tiles.is_empty() {
             panel = panel
                 .child(rule(p))
-                .child(heading("This conversation", p).pb(px(8.)))
+                .child(heading("This conversation", p).pb(px(look::GAP_8)))
                 .child(h_flex().flex_wrap().items_start().children(tiles));
         }
 
@@ -370,8 +370,9 @@ impl Agents {
                 };
                 h_flex()
                     .id(("instructions", i))
-                    .h(px(22.))
-                    .gap(px(8.))
+                    .h(px(if inside { look::ROW } else { look::DENSE_ROW }))
+                    .gap(px(look::GAP_8))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .child(
                         div()
                             .flex_1()
@@ -390,6 +391,7 @@ impl Agents {
                     )
                     .when(inside, |d| {
                         d.cursor_pointer()
+                            .hover(|d| d.bg(p.ink(look::ROW_HOVER)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.menu = None;
                                 this.open_path(&path, cx);
@@ -398,7 +400,7 @@ impl Agents {
             });
             panel = panel
                 .child(rule(p))
-                .child(heading("Instructions it read", p).pb(px(4.)))
+                .child(heading("Instructions it read", p).pb(px(look::GAP_4)))
                 .children(rows);
         }
 
@@ -429,8 +431,8 @@ impl Agents {
                 .child(on(button("ctx-compact", "Compact", true), Agents::compact_from_panel))
                 .child(
                     h_flex()
-                        .gap(px(8.))
-                        .pt(px(8.))
+                        .gap(px(look::GAP_8))
+                        .pt(px(look::GAP_8))
                         .child(
                             on(button("ctx-undo", "Undo last exchange", false), Agents::undo_exchange)
                                 .flex_1(),
@@ -442,7 +444,7 @@ impl Agents {
                 )
                 .child(
                     on(button("ctx-summary", summary_label, false), Agents::new_with_summary)
-                        .mt(px(8.)),
+                        .mt(px(look::GAP_8)),
                 )
                 .child(note(
                     "Undo takes the last message and its reply out of the chat. Continue as new copies this conversation into a new one.",
@@ -452,7 +454,7 @@ impl Agents {
             panel = panel
                 .child(
                     h_flex()
-                        .gap(px(8.))
+                        .gap(px(look::GAP_8))
                         .when_some(self.compact_focus.clone(), |d, focus| {
                             d.child(div().flex_1().min_w_0().child(Input::new(&focus).small()))
                         })
@@ -470,14 +472,14 @@ impl Agents {
                         button("ctx-breakdown", "Full breakdown ↗", false),
                         Agents::full_breakdown,
                     )
-                    .mt(px(10.)),
+                    .mt(px(look::GAP_8)),
                 )
                 .child(
                     on(
                         button("ctx-summary", summary_label, false),
                         Agents::new_with_summary,
                     )
-                    .mt(px(8.)),
+                    .mt(px(look::GAP_8)),
                 )
                 .child(note(
                     "Full breakdown runs /context on Claude's own screen.",

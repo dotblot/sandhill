@@ -225,7 +225,8 @@ impl QuotaWindow {
         };
         h_flex()
             .w_full()
-            .gap(px(8.))
+            .min_h(px(look::DENSE_ROW))
+            .gap(px(look::GAP_8))
             .child(div().w(px(106.)).flex_none().child(self.label.clone()))
             .child(
                 div()
@@ -494,11 +495,11 @@ impl QuotaMonitor {
         let for_new_chats = !can_switch;
         let current = account_id == entry.id;
         let signed_out = entry.method == "login" && entry.signed_in != Some(true);
-        let mut header = h_flex().justify_between().gap(px(8.)).child(
+        let mut header = h_flex().justify_between().gap(px(look::GAP_8)).child(
             h_flex()
                 .flex_1()
                 .min_w_0()
-                .gap(px(6.))
+                .gap(px(look::GAP_4))
                 .child(
                     div()
                         .min_w_0()
@@ -521,22 +522,24 @@ impl QuotaMonitor {
         if signed_out {
             let entry = entry.clone();
             header = header.child(
-                Button::new(SharedString::from(format!("quota-sign-in-{}", entry.id)))
-                    .small()
-                    .text_size(px(look::SMALL))
-                    .label("Sign In")
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.dismiss_popup(cx);
-                        this.manager
-                            .update(cx, |manager, cx| manager.sign_in(entry.clone(), window, cx));
-                    })),
+                look::button(
+                    SharedString::from(format!("quota-sign-in-{}", entry.id)),
+                    "Sign In",
+                    None,
+                    look::ButtonSize::Card,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.dismiss_popup(cx);
+                    this.manager
+                        .update(cx, |manager, cx| manager.sign_in(entry.clone(), window, cx));
+                })),
             );
         } else if current {
             header = header.child(
                 div()
                     .flex_none()
-                    .px(px(7.))
-                    .py(px(2.))
+                    .px(px(look::GAP_8))
+                    .py(px(look::GAP_2))
                     .rounded_full()
                     .bg(p.accent_soft)
                     .text_color(p.accent)
@@ -545,45 +548,47 @@ impl QuotaMonitor {
         } else {
             let entry = entry.clone();
             header = header.child(
-                Button::new(SharedString::from(format!("quota-use-{}", entry.id)))
-                    .small()
-                    .text_size(px(look::SMALL))
-                    .label(if for_new_chats {
+                look::button(
+                    SharedString::from(format!("quota-use-{}", entry.id)),
+                    if for_new_chats {
                         "Use for new chats"
                     } else {
                         "Use"
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if for_new_chats {
-                            if this
-                                .shown_account(kind, cx)
-                                .is_some_and(|(_, can_switch)| can_switch)
-                            {
-                                return;
-                            }
-                            crate::prefs::save_agent_account(&this.host, kind, &entry.id);
-                            cx.notify();
-                            return;
-                        }
-                        if !this
+                    },
+                    None,
+                    look::ButtonSize::Card,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if for_new_chats {
+                        if this
                             .shown_account(kind, cx)
-                            .is_some_and(|(id, can_switch)| can_switch && id != entry.id)
+                            .is_some_and(|(_, can_switch)| can_switch)
                         {
                             return;
                         }
-                        if let Some(agents) = &this.agents {
-                            agents.update(cx, |agents, cx| {
-                                agents.switch_account(entry.clone(), window, cx)
-                            });
-                            this.dismiss_popup(cx);
-                        }
-                    })),
+                        crate::prefs::save_agent_account(&this.host, kind, &entry.id);
+                        cx.notify();
+                        return;
+                    }
+                    if !this
+                        .shown_account(kind, cx)
+                        .is_some_and(|(id, can_switch)| can_switch && id != entry.id)
+                    {
+                        return;
+                    }
+                    if let Some(agents) = &this.agents {
+                        agents.update(cx, |agents, cx| {
+                            agents.switch_account(entry.clone(), window, cx)
+                        });
+                        this.dismiss_popup(cx);
+                    }
+                })),
             );
         }
         let mut card = v_flex()
-            .gap(px(8.))
-            .p(px(10.))
-            .rounded(px(8.))
+            .gap(px(look::GAP_8))
+            .p(px(look::GAP_8))
+            .rounded(px(look::RADIUS))
             .border_1()
             .border_color(p.line)
             .child(header);
@@ -627,11 +632,11 @@ impl QuotaMonitor {
                 || self.reset_pending.is_some();
             card = card.child(
                 h_flex()
-                    .pt(px(8.))
+                    .pt(px(look::GAP_8))
                     .border_t_1()
                     .border_color(p.line)
                     .justify_between()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         div().flex_1().text_color(p.muted).child(
                             banked_resets(entry.usage.as_ref(), now)
@@ -639,21 +644,23 @@ impl QuotaMonitor {
                         ),
                     )
                     .child(
-                        Button::new(SharedString::from(format!("quota-reset-{}", entry.id)))
-                            .small()
-                            .text_size(px(look::SMALL))
-                            .label(if pending {
+                        look::button(
+                            SharedString::from(format!("quota-reset-{}", entry.id)),
+                            if pending {
                                 "Using reset…"
                             } else {
                                 "Use Now…"
-                            })
-                            .disabled(disabled || confirm_open)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if this.reset_pending.is_none() {
-                                    this.reset_confirm = confirmation.clone();
-                                    cx.notify();
-                                }
-                            })),
+                            },
+                            None,
+                            look::ButtonSize::Card,
+                        )
+                        .disabled(disabled || confirm_open)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this.reset_pending.is_none() {
+                                this.reset_confirm = confirmation.clone();
+                                cx.notify();
+                            }
+                        })),
                     ),
             );
             if let Some(confirm) = self
@@ -670,27 +677,40 @@ impl QuotaMonitor {
                     None => "Use the banked reset with no expiry now?".into(),
                 };
                 card = card.child(
-                    v_flex().gap(px(8.)).p(px(10.)).rounded(px(6.)).bg(p.ink(4.))
+                    v_flex()
+                        .gap(px(look::GAP_8))
+                        .p(px(look::GAP_12))
+                        .rounded(px(look::RADIUS))
+                        .bg(p.ink(4.))
                         .child(question)
                         .child(div().text_color(p.muted).child("Refills the 5-hour and weekly limits now and moves your weekly reset date. This can't be undone."))
                         .child(
-                            h_flex().justify_end().gap(px(8.))
+                            h_flex().justify_end().gap(px(look::GAP_8))
                                 .child(
-                                    Button::new(SharedString::from(format!("quota-reset-cancel-{}", entry.id)))
-                                        .small().text_size(px(look::SMALL)).label("Cancel").disabled(pending)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            if this.reset_pending.is_none() {
-                                                this.reset_confirm = None;
-                                                cx.notify();
-                                            }
-                                        })),
+                                    look::button(
+                                        SharedString::from(format!("quota-reset-cancel-{}", entry.id)),
+                                        "Cancel",
+                                        None,
+                                        look::ButtonSize::Card,
+                                    )
+                                    .disabled(pending)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if this.reset_pending.is_none() {
+                                            this.reset_confirm = None;
+                                            cx.notify();
+                                        }
+                                    })),
                                 )
                                 .child(
-                                    Button::new(SharedString::from(format!("quota-reset-confirm-{}", entry.id)))
-                                        .small().text_size(px(look::SMALL)).primary()
-                                        .label(if pending { "Using reset…" } else { "Use Reset" })
-                                        .disabled(self.reset_pending.is_some())
-                                        .on_click(cx.listener(|this, _, _, cx| this.use_reset(cx))),
+                                    look::button(
+                                        SharedString::from(format!("quota-reset-confirm-{}", entry.id)),
+                                        if pending { "Using reset…" } else { "Use Reset" },
+                                        None,
+                                        look::ButtonSize::Card,
+                                    )
+                                    .primary()
+                                    .disabled(self.reset_pending.is_some())
+                                    .on_click(cx.listener(|this, _, _, cx| this.use_reset(cx))),
                                 ),
                         ),
                 );
@@ -705,10 +725,10 @@ impl QuotaMonitor {
         } else if kind == "claude" {
             card = card.child(
                 h_flex()
-                    .pt(px(8.))
+                    .pt(px(look::GAP_8))
                     .border_t_1()
                     .border_color(p.line)
-                    .gap(px(4.))
+                    .gap(px(look::GAP_4))
                     .text_color(p.muted)
                     .child("↺ Limit resets: see")
                     .child(
@@ -743,7 +763,7 @@ impl Render for QuotaMonitor {
         // On a narrow window only the agents' marks stay.
         let numbers = window.viewport_size().width >= px(NUMBERS_WIDTH);
         let p = *Palette::get(cx);
-        let hover = p.ink(7.);
+        let hover = p.ink(look::BUTTON_HOVER);
         let now = chrono::Utc::now().timestamp_millis();
         let manager = self.manager.read(cx);
         let managed_accounts = &manager.accounts;
@@ -752,7 +772,7 @@ impl Render for QuotaMonitor {
         let mut strip = h_flex()
             .id("account-quota")
             .flex_none()
-            .gap(px(8.))
+            .gap(px(look::GAP_8))
             .text_size(px(look::SMALL))
             .text_color(p.muted);
         let mut visible = false;
@@ -767,8 +787,8 @@ impl Render for QuotaMonitor {
             .when(self.quota_open == Some(QuotaPopup::All), |panel| {
                 panel.child(
                     div()
-                        .px(px(8.))
-                        .py(px(4.))
+                        .px(px(look::GAP_8))
+                        .py(px(look::GAP_4))
                         .text_color(p.muted)
                         .child(format!("AI accounts · {}", self.host)),
                 )
@@ -835,10 +855,10 @@ impl Render for QuotaMonitor {
                 let mut item = h_flex()
                     .id(kind)
                     .flex_none()
-                    .h(px(20.))
-                    .pl(px(6.))
-                    .pr(px(if numbers { 8. } else { 6. }))
-                    .gap(px(5.))
+                    .h(px(look::CONTROL_ROW))
+                    .pl(px(look::GAP_6))
+                    .pr(px(if numbers { look::GAP_8 } else { look::GAP_6 }))
+                    .gap(px(look::GAP_4))
                     .rounded_full()
                     .bg(p.cap_bg)
                     .cursor_pointer()
@@ -856,7 +876,7 @@ impl Render for QuotaMonitor {
                         }
                         cx.notify();
                     }))
-                    .child(crate::agents::view::provider(kind).size(px(14.)));
+                    .child(crate::agents::view::provider(kind).size(px(look::ICON)));
                 // What is left in each window, coloured as the panel's bars:
                 // "5h 62%  7d 88%"; "–" until checked.
                 let shown = windows.iter().take(if kind == "antigravity" {
@@ -872,8 +892,8 @@ impl Render for QuotaMonitor {
                         .flatten();
                     item = item.child(
                         h_flex()
-                            .gap(px(3.))
-                            .when(ix > 0, |d| d.ml(px(3.)))
+                            .gap(px(look::GAP_4))
+                            .when(ix > 0, |d| d.ml(px(look::GAP_2)))
                             .child(div().text_color(p.muted).child(window.ring_label.clone()))
                             .child(
                                 div()
@@ -893,9 +913,9 @@ impl Render for QuotaMonitor {
             }
             let refreshing = manager_refreshing;
             let mut section = v_flex()
-                .gap(px(10.))
-                .px(px(8.))
-                .py(px(8.))
+                .gap(px(look::GAP_12))
+                .px(px(look::GAP_8))
+                .py(px(look::GAP_8))
                 .border_t_1()
                 .border_color(p.line)
                 .child(
@@ -903,13 +923,15 @@ impl Render for QuotaMonitor {
                         .justify_between()
                         .child(
                             h_flex()
-                                .gap(px(6.))
-                                .child(crate::agents::view::provider(kind).size(px(18.)))
+                                .gap(px(look::GAP_4))
+                                .child(
+                                    crate::agents::view::provider(kind).size(px(look::ICON_LARGE)),
+                                )
                                 .child(div().font_weight(FontWeight::BOLD).child(provider.short)),
                         )
                         .child(
                             h_flex()
-                                .gap(px(6.))
+                                .gap(px(look::GAP_6))
                                 .text_color(p.muted)
                                 .child(checked_label(
                                     managed_accounts
@@ -925,6 +947,8 @@ impl Render for QuotaMonitor {
                                         "quota-refresh-{kind}"
                                     )))
                                     .small()
+                                    .size(px(look::CONTROL_ROW))
+                                    .rounded(px(look::CONTROL_RADIUS))
                                     .icon(
                                         gpui_kit::component::Icon::default()
                                             .path("sandhill/system/refresh.svg"),
@@ -972,14 +996,14 @@ impl Render for QuotaMonitor {
             section =
                 section.child(
                     h_flex()
-                        .pt(px(8.))
+                        .pt(px(look::GAP_8))
                         .border_t_1()
                         .border_color(p.line)
                         .justify_between()
-                        .gap(px(8.))
+                        .gap(px(look::GAP_8))
                         .child(
                             h_flex()
-                                .gap(px(10.))
+                                .gap(px(look::GAP_8))
                                 .child(
                                     div()
                                         .id(SharedString::from(format!("quota-add-{kind}")))
@@ -1011,19 +1035,22 @@ impl Render for QuotaMonitor {
                                 ),
                         )
                         .child(
-                            h_flex().gap(px(6.)).child("Show in status bar").child(
-                                Switch::new(SharedString::from(format!("quota-show-{kind}")))
-                                    .small()
-                                    .color(p.accent)
-                                    .checked(enabled)
-                                    .accessibility_label(format!(
-                                        "Show {} in status bar",
-                                        provider.short
-                                    ))
-                                    .on_change(cx.listener(move |this, on: &bool, _, cx| {
-                                        this.set_provider(kind, *on, cx)
-                                    })),
-                            ),
+                            h_flex()
+                                .gap(px(look::GAP_4))
+                                .child("Show in status bar")
+                                .child(
+                                    Switch::new(SharedString::from(format!("quota-show-{kind}")))
+                                        .small()
+                                        .color(p.accent)
+                                        .checked(enabled)
+                                        .accessibility_label(format!(
+                                            "Show {} in status bar",
+                                            provider.short
+                                        ))
+                                        .on_change(cx.listener(move |this, on: &bool, _, cx| {
+                                            this.set_provider(kind, *on, cx)
+                                        })),
+                                ),
                         ),
                 );
             details = details.child(section);
@@ -1032,8 +1059,8 @@ impl Render for QuotaMonitor {
             strip = strip.child(
                 h_flex()
                     .id("quota-accounts")
-                    .h(px(20.))
-                    .px(px(8.))
+                    .h(px(look::CONTROL_ROW))
+                    .px(px(look::GAP_8))
                     .rounded_full()
                     .bg(p.cap_bg)
                     .cursor_pointer()
@@ -1058,14 +1085,15 @@ impl Render for QuotaMonitor {
             details = details.child(
                 h_flex()
                     .id("quota-all-accounts")
-                    .mx(px(8.))
-                    .mt(px(4.))
-                    .py(px(6.))
+                    .px(px(look::GAP_8))
+                    .mt(px(look::GAP_4))
+                    .h(px(look::ROW))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .border_t_1()
                     .border_color(p.line)
                     .text_color(p.muted)
                     .cursor_pointer()
-                    .hover(move |d| d.text_color(p.text))
+                    .hover(move |d| d.bg(p.ink(look::ROW_HOVER)).text_color(p.text))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.quota_open = Some(QuotaPopup::All);
                         this.reset_confirm = None;
@@ -1092,12 +1120,16 @@ impl Render for QuotaMonitor {
             .child(strip)
             .when(self.quota_open.is_some(), |view| {
                 view.child(
-                    div().absolute().right_0().bottom(px(26.)).child(deferred(
-                        anchored()
-                            .anchor(Anchor::BottomRight)
-                            .snap_to_window_with_margin(px(8.))
-                            .child(popup),
-                    )),
+                    div()
+                        .absolute()
+                        .right_0()
+                        .bottom(px(look::CONTROL_ROW + look::GAP_6))
+                        .child(deferred(
+                            anchored()
+                                .anchor(Anchor::BottomRight)
+                                .snap_to_window_with_margin(px(look::GAP_8))
+                                .child(popup),
+                        )),
                 )
             })
             .child(

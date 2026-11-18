@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -17,7 +16,7 @@ use sandhill_proto::{
     TerminalSubscribed,
 };
 
-use crate::look::{self, Palette, RADIUS, icon, icon_button};
+use crate::look::{self, Palette, icon, icon_button};
 use crate::panes::terminal::TerminalView;
 use crate::workbench::{ConsoleTab, Workbench};
 
@@ -589,11 +588,11 @@ impl Workbench {
                         .bg(p.busy)
                         .into_any_element(),
                     JobState::Done => icon("check")
-                        .size(px(13.))
+                        .size(px(look::ICON))
                         .text_color(p.ok)
                         .into_any_element(),
                     _ => icon("close")
-                        .size(px(13.))
+                        .size(px(look::ICON))
                         .text_color(p.err)
                         .into_any_element(),
                 };
@@ -601,11 +600,11 @@ impl Workbench {
                 let confirming = self.jobs.confirm_stop.as_deref() == Some(job.id.as_str());
                 h_flex()
                     .id(SharedString::from(format!("job-{}", job.id)))
-                    .mx(px(4.))
-                    .px(px(8.))
-                    .gap(px(8.))
-                    .py(px(3.))
-                    .rounded(px(RADIUS))
+                    .h(px(look::ROW))
+                    .mx(px(look::GAP_4))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .cursor_pointer()
@@ -618,7 +617,7 @@ impl Workbench {
                     }))
                     .child(
                         div()
-                            .w(px(14.))
+                            .w(px(look::ICON))
                             .flex_none()
                             .flex()
                             .justify_center()
@@ -629,6 +628,8 @@ impl Workbench {
                             .flex_1()
                             .min_w_0()
                             .overflow_hidden()
+                            .text_size(px(look::SMALL))
+                            .line_height(px(look::ROW / 2.))
                             .child(
                                 div()
                                     .overflow_hidden()
@@ -640,7 +641,6 @@ impl Workbench {
                                 div()
                                     .overflow_hidden()
                                     .text_ellipsis()
-                                    .text_size(px(look::SMALL))
                                     .text_color(p.faint)
                                     .child(detail.join(" · ")),
                             ),
@@ -650,11 +650,14 @@ impl Workbench {
                             d.child(if confirming {
                                 div()
                                     .id(SharedString::from(format!("job-stop-{}", job.id)))
-                                    .px(px(6.))
-                                    .rounded_full()
+                                    .h(px(look::CONTROL_ROW))
+                                    .flex()
+                                    .items_center()
+                                    .px(px(look::GAP_6))
+                                    .rounded(px(look::CONTROL_RADIUS))
                                     .text_size(px(look::SMALL))
                                     .text_color(p.err)
-                                    .hover(|d| d.bg(p.ink(10.)))
+                                    .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
                                     .child("Stop?")
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
@@ -708,18 +711,14 @@ impl Workbench {
                     .into_any_element()
             })
             .collect();
+        let header_height = look::CONTROL_ROW + 2. * look::GAP_6;
         let new_job = h_flex()
             .flex_none()
-            .h(px(32.))
-            .px(px(8.))
-            .py(px(6.))
-            .gap(px(6.))
+            .h(px(header_height))
+            .px(px(look::PANE_PAD_X))
             .child(
-                Button::new("new-job")
-                    .xsmall()
-                    .label("New job")
-                    .icon(gpui_kit::component::Icon::default().path("sandhill/system/add.svg"))
-                    .on_click(cx.listener(|this, _, window, cx| {
+                look::button("new-job", "New job", Some("add"), look::ButtonSize::Row).on_click(
+                    cx.listener(|this, _, window, cx| {
                         this.jobs.asking = !this.jobs.asking;
                         if this.jobs.asking {
                             this.jobs
@@ -727,15 +726,19 @@ impl Workbench {
                                 .update(cx, |input, cx| input.focus(window, cx));
                         }
                         cx.notify();
-                    })),
+                    }),
+                ),
             );
         let ask = self.jobs.asking.then(|| {
             v_flex()
                 .flex_none()
-                .px(px(8.))
-                .pb(px(6.))
-                .gap(px(4.))
-                .child(Input::new(&self.jobs.command).small())
+                .px(px(look::PANE_PAD_X))
+                .pb(px(look::PANE_PAD_Y))
+                .gap(px(look::GAP_4))
+                .child(
+                    Styled::h(Input::new(&self.jobs.command).small(), px(look::CONTROL_CARD))
+                        .rounded(px(look::CONTROL_RADIUS)),
+                )
                 .child(
                     div()
                         .text_size(px(look::SMALL))
@@ -755,7 +758,7 @@ impl Workbench {
             .child(
                 look::PaneScroll::new(
                     "jobs-scroll",
-                    look::STRIP + 32.,
+                    look::STRIP + header_height,
                     0.,
                 div()
                     .id("jobs-list")
@@ -763,8 +766,8 @@ impl Workbench {
                     .when_some(self.jobs.error.clone(), |d, err| {
                         d.child(
                             div()
-                                .px(px(12.))
-                                .py(px(4.))
+                                .px(px(look::PANE_PAD_X))
+                                .py(px(look::GAP_4))
                                 .text_size(px(look::SMALL))
                                 .text_color(p.err)
                                 .child(err),
@@ -773,8 +776,8 @@ impl Workbench {
                     .when(self.jobs.list.is_empty() && self.jobs.loaded, |d| {
                         d.child(
                             div()
-                                .px(px(12.))
-                                .py(px(6.))
+                                .px(px(look::PANE_PAD_X))
+                                .py(px(look::PANE_PAD_Y))
                                 .text_color(p.muted)
                                 .child("No jobs yet. Run a script in the background with Run as job above a script, or start a command with New job. Jobs keep running when Sandhill closes."),
                         )
@@ -802,9 +805,9 @@ impl Workbench {
                 .child(
                     h_flex()
                         .flex_none()
-                        .gap(px(8.))
-                        .px(px(10.))
-                        .py(px(5.))
+                        .h(px(look::ROW))
+                        .gap(px(look::GAP_8))
+                        .px(px(look::PANE_PAD_X))
                         .border_b(px(0.5))
                         .border_color(p.glass_edge)
                         .text_size(px(look::SMALL))

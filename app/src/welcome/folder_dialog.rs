@@ -444,7 +444,8 @@ fn tilde(path: &str, home: Option<&str>) -> String {
 impl Render for FolderDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
+        let button_hover = p.ink(look::BUTTON_HOVER);
         let picked = p.ink(12.);
         let path = self.path.clone().unwrap_or_default();
         let home = self.home.as_deref();
@@ -452,18 +453,18 @@ impl Render for FolderDialog {
         if let Some(naming) = &self.naming {
             rows.push(
                 h_flex()
-                    .h(px(28.))
-                    .px(px(8.))
-                    .gap(px(6.))
+                    .h(px(look::ROW))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_4))
                     .flex_none()
-                    .child(picture(&look::folder_icon("")))
+                    .child(picture(&look::folder_icon("")).size(px(look::ICON)))
                     .child(div().flex_1().child(Input::new(naming).small()))
                     .into_any_element(),
             );
         }
         let note = |text: String, color: Hsla| {
             div()
-                .p(px(8.))
+                .p(px(look::GAP_8))
                 .text_color(color)
                 .child(text)
                 .into_any_element()
@@ -487,25 +488,29 @@ impl Render for FolderDialog {
                     let name = entry.name.clone();
                     let row = h_flex()
                         .id(("folder-dialog-entry", ix))
-                        .h(px(28.))
-                        .px(px(8.))
-                        .gap(px(6.))
+                        .h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .gap(px(look::GAP_4))
                         .flex_none()
-                        .rounded(px(look::RADIUS))
-                        .child(picture(&if entry.sandhill {
-                            "folders/project".to_string()
-                        } else if entry.dir {
-                            look::folder_icon(&entry.name)
-                        } else {
-                            look::file_icon(&entry.name)
-                        }))
+                        .rounded(px(look::CONTROL_RADIUS))
+                        .child(
+                            picture(&if entry.sandhill {
+                                "folders/project".to_string()
+                            } else if entry.dir {
+                                look::folder_icon(&entry.name)
+                            } else {
+                                look::file_icon(&entry.name)
+                            })
+                            .size(px(look::ICON))
+                            .flex_none(),
+                        )
                         .child(div().flex_1().min_w_0().truncate().child(name.clone()))
                         .when(entry.git, |d| {
                             d.child(
                                 div()
                                     .id(("folder-dialog-git", ix))
                                     .text_color(p.muted)
-                                    .child(icon("git").size(px(13.)))
+                                    .child(icon("git").size(px(look::ICON)))
                                     .tooltip(|w, cx| Tooltip::new("Git repository").build(w, cx)),
                             )
                         });
@@ -533,7 +538,7 @@ impl Render for FolderDialog {
                 }
             }
         }
-        let mut sidebar = v_flex().w(px(150.)).flex_none().gap(px(1.));
+        let mut sidebar = v_flex().w(px(150.)).flex_none().gap(px(look::GAP_2));
         let home_place = self
             .home
             .clone()
@@ -547,10 +552,10 @@ impl Render for FolderDialog {
             let tip: SharedString = to.clone().into();
             h_flex()
                 .id(("folder-dialog-place", ix))
-                .h(px(26.))
-                .px(px(8.))
-                .gap(px(6.))
-                .rounded(px(look::RADIUS))
+                .h(px(look::ROW))
+                .px(px(look::GAP_8))
+                .gap(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
                 .when(current, |d| d.bg(picked))
                 .when(!current, |d| d.hover(move |d| d.bg(hover)))
@@ -568,12 +573,18 @@ impl Render for FolderDialog {
                 to,
                 div()
                     .text_color(p.muted)
-                    .child(icon(mark).size(px(14.)))
+                    .child(icon(mark).size(px(look::ICON)))
                     .into_any_element(),
             ));
         }
         if !self.places.is_empty() {
-            sidebar = sidebar.child(div().h(px(1.)).my(px(4.)).mx(px(8.)).bg(p.line));
+            sidebar = sidebar.child(
+                div()
+                    .h(px(1.))
+                    .my(px(look::GAP_4))
+                    .mx(px(look::GAP_8))
+                    .bg(p.line),
+            );
         }
         for (ix, place) in self.places.iter().enumerate() {
             let name = place.path.rsplit('/').next().unwrap_or(&place.path);
@@ -581,31 +592,37 @@ impl Render for FolderDialog {
                 ix + 2,
                 place.label.clone(),
                 place.path.clone(),
-                picture(&look::folder_icon(name)).into_any_element(),
+                picture(&look::folder_icon(name))
+                    .size(px(look::ICON))
+                    .into_any_element(),
             ));
         }
-        let mut trail = h_flex().flex_1().min_w_0().overflow_hidden().gap(px(2.));
+        let mut trail = h_flex()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .gap(px(look::GAP_2));
         if self.path.is_some() {
             for (ix, (label, to)) in crumbs(&path, home).into_iter().enumerate() {
                 if ix > 0 {
                     trail = trail.child(
                         div()
                             .text_color(p.faint)
-                            .child(icon("chevron.right").size(px(12.))),
+                            .child(icon("chevron.right").size(px(look::ICON_SMALL))),
                     );
                 }
                 let last = to == path;
                 trail = trail.child(
-                    div()
+                    h_flex()
                         .id(("folder-dialog-crumb", ix))
-                        .px(px(5.))
-                        .py(px(2.))
+                        .min_h(px(look::CONTROL_ROW))
+                        .px(px(look::GAP_4))
                         .flex_none()
-                        .rounded(px(look::RADIUS))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
                         .text_color(if last { p.text } else { p.muted })
                         .when(last, |d| d.font_weight(FontWeight::SEMIBOLD))
-                        .hover(move |d| d.bg(hover))
+                        .hover(move |d| d.bg(button_hover))
                         .child(label)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.go_to_folder(to.clone(), false, None, window, cx)
@@ -622,7 +639,7 @@ impl Render for FolderDialog {
             .max_w(relative(0.9))
             .max_h(relative(0.9))
             .overflow_y_scroll()
-            .gap(px(12.))
+            .gap(px(look::GAP_12))
             .p(px(20.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
@@ -661,7 +678,7 @@ impl Render for FolderDialog {
             )
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child(
                         icon_button("folder-dialog-up", "arrow.up", &p, false)
                             .tooltip(|w, cx| Tooltip::new("Enclosing folder  ⌘↑").build(w, cx))
@@ -703,49 +720,53 @@ impl Render for FolderDialog {
             )
             .child(Input::new(&self.field).small())
             .child(
-                h_flex().items_start().gap(px(8.)).child(sidebar).child(
-                    v_flex()
-                        .id("folder-dialog-list")
-                        .flex_1()
-                        .min_w_0()
-                        .h(px(300.))
-                        .p(px(4.))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.list)
-                        .bg(p.bg)
-                        .border_1()
-                        .border_color(p.line)
-                        .rounded(px(look::RADIUS))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                                if event.click_count > 1
-                                    && this.entered.is_some()
-                                    && this.entered == this.path
-                                {
-                                    this.finish(cx);
-                                }
-                            }),
-                        )
-                        .children(rows),
-                ),
+                h_flex()
+                    .items_start()
+                    .gap(px(look::GAP_8))
+                    .child(sidebar)
+                    .child(
+                        v_flex()
+                            .id("folder-dialog-list")
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(300.))
+                            .p(px(look::GAP_4))
+                            .overflow_y_scroll()
+                            .track_scroll(&self.list)
+                            .bg(p.bg)
+                            .border_1()
+                            .border_color(p.line)
+                            .rounded(px(look::RADIUS))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                                    if event.click_count > 1
+                                        && this.entered.is_some()
+                                        && this.entered == this.path
+                                    {
+                                        this.finish(cx);
+                                    }
+                                }),
+                            )
+                            .children(rows),
+                    ),
             )
             .when_some(self.problem.clone(), |d, problem| {
                 d.child(div().text_color(p.err).child(problem))
             })
             .child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(6.))
+                            .gap(px(look::GAP_4))
                             .text_color(p.muted)
                             .font_family(look::MONO)
                             .when_some(target.clone(), |d, target| {
                                 let name = target.rsplit('/').next().unwrap_or("").to_string();
-                                d.child(picture(&look::folder_icon(&name)))
+                                d.child(picture(&look::folder_icon(&name)).size(px(look::ICON)))
                                     .child(div().min_w_0().truncate().child(tilde(&target, home)))
                             }),
                     )

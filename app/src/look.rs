@@ -73,7 +73,6 @@ pub const ICON: f32 = 14.;
 
 pub use consistency_tokens::*;
 
-#[allow(dead_code, reason = "Tokens for the remaining consistency passes")]
 mod consistency_tokens {
     /// Card and page titles.
     pub const TITLE: f32 = 16.;
@@ -193,6 +192,7 @@ fn brand_colors(dark: bool) -> ThemeColor {
     c.list_hover = c
         .background
         .blend(c.primary.opacity(if dark { 0.08 } else { 0.04 }));
+    c.button_hover = c.foreground.opacity(BUTTON_HOVER / 100.);
     c.sidebar_accent = c.accent;
     c.sidebar_accent_foreground = c.foreground;
     c.sidebar_primary = c.primary;
@@ -374,7 +374,7 @@ fn theme_config(default: &ThemeConfig) -> Rc<ThemeConfig> {
     config.font_size = Some(CHROME);
     config.mono_font_family = Some(MONO.into());
     config.mono_font_size = Some(CODE);
-    config.radius = Some(RADIUS as usize);
+    config.radius = Some(CONTROL_RADIUS as usize);
     config.radius_lg = Some(RADIUS as usize);
     config.shadow = Some(true);
     for (target, value) in [
@@ -398,6 +398,7 @@ fn theme_config(default: &ThemeConfig) -> Rc<ThemeConfig> {
             &mut config.colors.button_primary_foreground,
             colors.button_primary_foreground,
         ),
+        (&mut config.colors.button_hover, colors.button_hover),
         (&mut config.colors.button_danger, colors.button_danger),
         (
             &mut config.colors.button_danger_hover,
@@ -652,7 +653,7 @@ pub fn icon(name: &str) -> Icon {
     };
     Icon {
         path: format!("{PREFIX}system/{name}.svg").into(),
-        size: px(16.),
+        size: px(ICON),
         color: None,
         turned,
     }
@@ -663,7 +664,7 @@ pub fn icon(name: &str) -> Icon {
 pub fn ink_picture(path: &str) -> Icon {
     Icon {
         path: format!("{PREFIX}{path}.svg").into(),
-        size: px(16.),
+        size: px(ICON_LARGE),
         color: None,
         turned: false,
     }
@@ -718,7 +719,7 @@ pub fn picture(path: &str) -> Img {
             format!("{path}.svg")
         };
     img(SharedString::from(format!("{PREFIX}{file}")))
-        .size(px(16.))
+        .size(px(ICON))
         .flex_none()
 }
 
@@ -1118,10 +1119,10 @@ pub fn settings_group(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -
         .flex()
         .flex_col()
         .w_full()
-        .gap(px(6.))
+        .gap(px(GAP_6))
         .child(
             div()
-                .px(px(14.))
+                .px(px(PANE_PAD_X))
                 .text_size(px(SMALL))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.muted)
@@ -1167,7 +1168,7 @@ pub fn settings_label(label: impl Into<SharedString>, detail: Option<Div>) -> Di
         .flex_col()
         .flex_1()
         .min_w_0()
-        .gap(px(2.))
+        .gap(px(GAP_2))
         .child(label.into())
         .children(detail)
 }
@@ -1178,10 +1179,10 @@ pub fn settings_row(label: impl Into<SharedString>, detail: Option<Div>) -> Div 
         .flex()
         .items_center()
         .w_full()
-        .min_h(px(44.))
-        .gap(px(16.))
-        .px(px(14.))
-        .py(px(10.))
+        .min_h(px(ROW))
+        .gap(px(GAP_12))
+        .px(px(PANE_PAD_X))
+        .py(px(PANE_PAD_Y))
         .child(settings_label(label, detail))
 }
 
@@ -1193,7 +1194,7 @@ pub fn capsule(p: &Palette, height: f32) -> Div {
         .items_center()
         .flex_none()
         .h(px(height))
-        .px(px(2.))
+        .px(px(GAP_2))
         .rounded_full()
         .bg(p.cap_bg)
 }
@@ -1289,7 +1290,7 @@ pub fn tab_close(id: impl Into<ElementId>, shown: bool, p: &Palette) -> Stateful
             .when(!shown, |d| {
                 d.invisible().group_hover(TAB_GROUP, |s| s.visible())
             })
-            .child(icon("close").size(px(12.))),
+            .child(icon("close").size(px(ICON_SMALL))),
     )
 }
 
@@ -1297,7 +1298,7 @@ pub fn tab_close(id: impl Into<ElementId>, shown: bool, p: &Palette) -> Stateful
 /// The cross is muted, not faint, so it reads on hovered tabs in both
 /// themes (Huan, 2026-11-14).
 pub fn close_circle(id: impl Into<ElementId>, p: &Palette) -> Stateful<Div> {
-    let hover = p.ink(10.);
+    let hover = p.ink(BUTTON_HOVER);
     let text = p.text;
     div()
         .id(id)
@@ -1387,7 +1388,7 @@ pub fn icon_button(
     p: &Palette,
     round: bool,
 ) -> Stateful<Div> {
-    let hover = p.ink(7.);
+    let hover = p.ink(BUTTON_HOVER);
     let text = p.text;
     div()
         .id(id)
@@ -1396,13 +1397,13 @@ pub fn icon_button(
         .justify_center()
         .flex_none()
         .w(px(if round { 28. } else { 22. }))
-        .h(px(if round { 21. } else { 22. }))
+        .h(px(CONTROL_ROW))
         .when(round, |d| d.rounded_full())
-        .when(!round, |d| d.rounded(px(RADIUS)))
+        .when(!round, |d| d.rounded(px(CONTROL_RADIUS)))
         .text_color(p.muted)
         .cursor_pointer()
         .hover(move |d| d.bg(hover).text_color(text))
-        .child(icon(name))
+        .child(icon(name).size(px(if round { ICON_LARGE } else { ICON })))
 }
 
 /// A button of words in a bar, such as Run All: muted until pointed at.
@@ -1412,23 +1413,23 @@ pub fn bar_button(
     icon_name: Option<&str>,
     p: &Palette,
 ) -> Stateful<Div> {
-    let hover = p.ink(8.);
+    let hover = p.ink(BUTTON_HOVER);
     let text = p.text;
     div()
         .id(id)
         .flex()
         .items_center()
-        .gap(px(5.))
+        .gap(px(GAP_4))
         .flex_none()
-        .h(px(22.))
-        .px(px(8.))
-        .rounded(px(RADIUS))
+        .h(px(CONTROL_ROW))
+        .px(px(GAP_8))
+        .rounded(px(CONTROL_RADIUS))
         .text_size(px(TAB_TEXT))
         .text_color(p.muted)
         .whitespace_nowrap()
         .cursor_pointer()
         .hover(move |d| d.bg(hover).text_color(text))
-        .when_some(icon_name, |d, name| d.child(icon(name).size(px(14.))))
+        .when_some(icon_name, |d, name| d.child(icon(name)))
         .child(label.into())
 }
 

@@ -1105,82 +1105,94 @@ impl Workbench {
             )
             .when(open, |d| {
                 d.child(
-                    div().absolute().right_0().top(px(24.)).child(
-                        deferred(
-                            anchored().snap_to_window_with_margin(px(8.)).child(
-                                crate::agents::composer_view::popup(&p)
-                                    .id("console-history-menu")
-                                    .occlude()
-                                    .w(px(360.))
-                                    .max_h(px(360.))
-                                    .overflow_y_scroll()
+                    div()
+                        .absolute()
+                        .right_0()
+                        .top(px(look::CONTROL_ROW + look::GAP_4))
+                        .child(
+                            deferred(
+                                anchored()
+                                    .snap_to_window_with_margin(px(look::GAP_8))
                                     .child(
-                                        div()
-                                            .px_2()
-                                            .py_1()
-                                            .text_color(p.muted)
-                                            .child("Command history · newest first"),
-                                    )
-                                    .when(entries.is_empty(), |d| {
-                                        d.child(div().px_2().py_1().text_color(p.muted).child(
-                                            if loading {
-                                                "Loading command history…"
-                                            } else {
-                                                "No commands in this session."
-                                            },
-                                        ))
-                                    })
-                                    .children(entries.into_iter().enumerate().map(
-                                        |(ix, (_, code, _))| {
-                                            let hover = p.ink(7.);
-                                            h_flex()
-                                                .id(("console-history-entry", ix))
-                                                .px_2()
-                                                .py_1()
-                                                .rounded(px(6.))
-                                                .cursor_pointer()
-                                                .hover(move |d| d.bg(hover))
-                                                .child(
-                                                    v_flex()
-                                                        .min_w_0()
-                                                        .font_family(look::MONO)
-                                                        .text_size(px(look::SMALL))
-                                                        .child(code.clone()),
+                                        crate::agents::composer_view::popup(&p)
+                                            .id("console-history-menu")
+                                            .occlude()
+                                            .w(px(360.))
+                                            .max_h(px(360.))
+                                            .overflow_y_scroll()
+                                            .child(
+                                                div()
+                                                    .px(px(look::GAP_8))
+                                                    .py(px(look::GAP_4))
+                                                    .text_color(p.muted)
+                                                    .child("Command history · newest first"),
+                                            )
+                                            .when(entries.is_empty(), |d| {
+                                                d.child(
+                                                    div()
+                                                        .px(px(look::GAP_8))
+                                                        .py(px(look::GAP_4))
+                                                        .text_color(p.muted)
+                                                        .child(if loading {
+                                                            "Loading command history…"
+                                                        } else {
+                                                            "No commands in this session."
+                                                        }),
                                                 )
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        this.console_input.update(
-                                                            cx,
-                                                            |input, cx| {
-                                                                input.set_value(
-                                                                    code.clone(),
-                                                                    window,
+                                            })
+                                            .children(entries.into_iter().enumerate().map(
+                                                |(ix, (_, code, _))| {
+                                                    let hover = p.ink(look::ROW_HOVER);
+                                                    h_flex()
+                                                        .id(("console-history-entry", ix))
+                                                        .min_h(px(look::ROW))
+                                                        .px(px(look::GAP_8))
+                                                        .py(px(look::GAP_4))
+                                                        .rounded(px(look::CONTROL_RADIUS))
+                                                        .cursor_pointer()
+                                                        .hover(move |d| d.bg(hover))
+                                                        .child(
+                                                            v_flex()
+                                                                .min_w_0()
+                                                                .font_family(look::MONO)
+                                                                .text_size(px(look::SMALL))
+                                                                .child(code.clone()),
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            move |this, _, window, cx| {
+                                                                this.console_input.update(
                                                                     cx,
+                                                                    |input, cx| {
+                                                                        input.set_value(
+                                                                            code.clone(),
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                        input.focus(window, cx);
+                                                                    },
                                                                 );
-                                                                input.focus(window, cx);
+                                                                this.console_sessions
+                                                                    .history_open = false;
+                                                                cx.notify();
                                                             },
-                                                        );
+                                                        ))
+                                                },
+                                            ))
+                                            .on_mouse_down_out(cx.listener(
+                                                |this, event: &MouseDownEvent, _, cx| {
+                                                    if !this
+                                                        .popup_triggers
+                                                        .contains("console-history", event.position)
+                                                    {
                                                         this.console_sessions.history_open = false;
                                                         cx.notify();
-                                                    },
-                                                ))
-                                        },
-                                    ))
-                                    .on_mouse_down_out(cx.listener(
-                                        |this, event: &MouseDownEvent, _, cx| {
-                                            if !this
-                                                .popup_triggers
-                                                .contains("console-history", event.position)
-                                            {
-                                                this.console_sessions.history_open = false;
-                                                cx.notify();
-                                            }
-                                        },
-                                    )),
-                            ),
-                        )
-                        .with_priority(3),
-                    ),
+                                                    }
+                                                },
+                                            )),
+                                    ),
+                            )
+                            .with_priority(3),
+                        ),
                 )
             })
             .into_any_element()

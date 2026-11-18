@@ -22,7 +22,7 @@ use crate::agents::composer::{
 };
 use crate::agents::view::provider;
 use crate::agents::{Agents, KINDS, Menu, Show, kind_of, terminal_only};
-use crate::look::{self, Palette, RADIUS, icon, picture};
+use crate::look::{self, Palette, icon, picture};
 
 const LINE: f32 = 20.;
 /// The message box grows to this many lines, then scrolls.
@@ -31,10 +31,12 @@ const MENU_WIDTH: f32 = 280.;
 const MODEL_MENU_WIDTH: f32 = 380.;
 const MODEL_MENU_HEIGHT: f32 = 360.;
 const MODEL_PROVIDER_WIDTH: f32 = 32.;
-const MODEL_COLUMN_GAP: f32 = 6.;
+const MODEL_COLUMN_GAP: f32 = look::GAP_6;
 // Popup border + inset, left provider rail + gap, effort section inset.
-const EFFORT_WIDTH: f32 =
-    MODEL_MENU_WIDTH - 2. * (1. + 6. + 8.) - MODEL_PROVIDER_WIDTH - MODEL_COLUMN_GAP;
+const EFFORT_WIDTH: f32 = MODEL_MENU_WIDTH
+    - 2. * (1. + look::GAP_6 + look::GAP_8)
+    - MODEL_PROVIDER_WIDTH
+    - MODEL_COLUMN_GAP;
 /// The model menu's agents, turned on, alphabetical.
 fn model_providers() -> Vec<&'static crate::agents::Kind> {
     let mut providers: Vec<_> = KINDS
@@ -50,12 +52,12 @@ pub(crate) fn popup(p: &Palette) -> Div {
     v_flex()
         .occlude()
         .on_scroll(|_, _, cx| cx.stop_propagation())
-        .gap(px(2.))
-        .p(px(6.))
+        .gap(px(look::GAP_2))
+        .p(px(look::GAP_6))
         .bg(p.bg)
         .border_1()
         .border_color(p.glass_edge)
-        .rounded(px(RADIUS))
+        .rounded(px(look::RADIUS))
         .text_size(px(look::SMALL))
         .text_color(p.text)
         .shadow(vec![BoxShadow {
@@ -69,9 +71,9 @@ pub(crate) fn popup(p: &Palette) -> Div {
 
 fn heading(text: impl Into<SharedString>, p: &Palette) -> Div {
     div()
-        .px(px(8.))
-        .pt(px(4.))
-        .pb(px(2.))
+        .px(px(look::GAP_8))
+        .pt(px(look::GAP_4))
+        .pb(px(look::GAP_2))
         .text_size(px(look::SMALL))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.faint)
@@ -85,16 +87,16 @@ pub(crate) fn ref_icon(item: &Value) -> AnyElement {
         "file" | "attach" => {
             let path = item["path"].as_str().unwrap_or(ref_name(item));
             picture(&look::file_icon(path))
-                .size(px(14.))
+                .size(px(look::ICON))
                 .into_any_element()
         }
-        "chunk" => icon("outline").size(px(13.)).into_any_element(),
-        "selection" => icon("edit.copy").size(px(13.)).into_any_element(),
-        "plot" => icon("zoom").size(px(13.)).into_any_element(),
-        "command" => icon("terminal").size(px(13.)).into_any_element(),
-        "skill" | "guide" => icon("skill").size(px(13.)).into_any_element(),
-        "compact" => icon("compact").size(px(13.)).into_any_element(),
-        _ => icon("table").size(px(13.)).into_any_element(),
+        "chunk" => icon("outline").size(px(look::ICON)).into_any_element(),
+        "selection" => icon("edit.copy").size(px(look::ICON)).into_any_element(),
+        "plot" => icon("zoom").size(px(look::ICON)).into_any_element(),
+        "command" => icon("terminal").size(px(look::ICON)).into_any_element(),
+        "skill" | "guide" => icon("skill").size(px(look::ICON)).into_any_element(),
+        "compact" => icon("compact").size(px(look::ICON)).into_any_element(),
+        _ => icon("table").size(px(look::ICON)).into_any_element(),
     }
 }
 
@@ -147,12 +149,12 @@ impl Agents {
             .enumerate()
             .map(|(i, item)| {
                 h_flex()
-                    .gap(px(4.))
-                    .h(px(22.))
-                    .pl(px(6.))
-                    .pr(px(2.))
+                    .gap(px(look::GAP_4))
+                    .h(px(look::CONTROL_ROW))
+                    .pl(px(look::GAP_6))
+                    .pr(px(look::GAP_2))
                     .max_w(px(220.))
-                    .rounded(px(7.))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .bg(p.ink(6.))
                     .text_size(px(look::SMALL))
                     .child(ref_icon(item))
@@ -167,14 +169,14 @@ impl Agents {
                         div()
                             .id(("ref-x", i))
                             .flex_none()
-                            .size(px(16.))
-                            .rounded(px(4.))
+                            .size(px(look::CONTROL_ROW))
+                            .rounded_full()
                             .flex()
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .hover(|d| d.bg(p.ink(10.)))
-                            .child(icon("close").size(px(10.)).text_color(p.muted))
+                            .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
+                            .child(icon("close").size(px(look::ICON_SMALL)).text_color(p.muted))
                             .on_click(cx.listener(move |this, _, _, cx| this.remove_ref(i, cx))),
                     )
             })
@@ -196,15 +198,15 @@ impl Agents {
                 effort_name(&effort)
             )
         };
-        let pill_hover = p.ink(11.);
+        let pill_hover = p.ink(look::BUTTON_HOVER);
         // The bottom row's pills, in the status bar's capsule look.
         let pill = move |id: &'static str| {
             h_flex()
                 .id(id)
                 .flex_none()
-                .gap(px(5.))
-                .h(px(24.))
-                .px(px(9.))
+                .gap(px(look::GAP_4))
+                .h(px(look::CONTROL_ROW))
+                .px(px(look::GAP_8))
                 .rounded_full()
                 .bg(p.cap_bg)
                 .cursor_pointer()
@@ -218,9 +220,8 @@ impl Agents {
         };
         div()
             .flex_none()
-            .px(px(8.))
-            .pt(px(6.))
-            .pb(px(8.))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .on_action(cx.listener(|this, _: &RunCell, window, cx| {
                 // Shift+Enter adds a line.
                 this.composer.update(cx, |c, cx| c.insert("\n", window, cx));
@@ -291,11 +292,11 @@ impl Agents {
                 v_flex()
                     .id("agent-box")
                     .relative()
-                    .gap(px(6.))
-                    .px(px(8.))
-                    .pt(px(8.))
-                    .pb(px(6.))
-                    .rounded(px(RADIUS))
+                    .gap(px(look::GAP_6))
+                    .px(px(look::GAP_8))
+                    .pt(px(look::GAP_8))
+                    .pb(px(look::GAP_6))
+                    .rounded(px(look::RADIUS))
                     .border_1()
                     .border_color(edge)
                     // Dragged by its top edge (Huan, 2026-11-16): taller
@@ -343,7 +344,7 @@ impl Agents {
                         this.attach_paths(paths.paths().to_vec(), cx)
                     }))
                     .when(!self.refs.is_empty(), |d| {
-                        d.child(h_flex().flex_wrap().gap(px(4.)).children(chips))
+                        d.child(h_flex().flex_wrap().gap(px(look::GAP_4)).children(chips))
                     })
                     .child(
                         Editor::new(&self.composer)
@@ -356,20 +357,20 @@ impl Agents {
                     )
                     .child(
                         h_flex()
-                            .gap(px(6.))
-                            .h(px(26.))
+                            .gap(px(look::GAP_6))
+                            .h(px(look::CONTROL_CARD))
                             .text_size(px(look::SMALL))
                             .text_color(p.text)
                             .child(
                                 pill("agent-add")
                                     .on_prepaint(self.popup_triggers.track("agent-mention"))
-                                    .w(px(24.))
+                                    .w(px(look::CONTROL_ROW))
                                     .px(px(0.))
                                     .justify_center()
                                     .when(matches!(self.menu, Some(Menu::Mention { .. })), |d| {
                                         d.bg(pill_hover)
                                     })
-                                    .child(icon("add").size(px(13.)).text_color(p.muted))
+                                    .child(icon("add").size(px(look::ICON)).text_color(p.muted))
                                     .tooltip(tip("Add files, cells, variables, plots, commands or skills (@ # /)"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.toggle_add(window, cx)
@@ -380,10 +381,12 @@ impl Agents {
                                     pill("agent-mode")
                                         .on_prepaint(self.popup_triggers.track("agent-mode"))
                                         .when(self.menu == Some(Menu::Mode), |d| d.bg(pill_hover))
-                                        .child(icon(mode.icon).size(px(13.)).text_color(p.muted))
+                                        .child(icon(mode.icon).size(px(look::ICON)).text_color(p.muted))
                                         .child(mode.label)
                                         .child(
-                                            icon("chevron.down").size(px(10.)).text_color(p.muted),
+                                            icon("chevron.down")
+                                                .size(px(look::ICON_SMALL))
+                                                .text_color(p.muted),
                                         )
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.toggle_menu(Menu::Mode, window, cx)
@@ -412,9 +415,9 @@ impl Agents {
                                         .id("agent-tokens")
                                         .on_prepaint(self.popup_triggers.track("agent-context"))
                                         .flex_none()
-                                        .gap(px(4.))
-                                        .h(px(24.))
-                                        .px(px(6.))
+                                        .gap(px(look::GAP_4))
+                                        .h(px(look::CONTROL_ROW))
+                                        .px(px(look::GAP_6))
                                         .rounded_full()
                                         .cursor_pointer()
                                         .text_color(p.muted)
@@ -435,12 +438,14 @@ impl Agents {
                                         .flex_shrink(1.)
                                         .min_w(px(0.))
                                         .overflow_hidden()
-                                        .pl(px(6.))
+                                        .pl(px(look::GAP_6))
                                         .when(self.menu == Some(Menu::Model), |d| d.bg(pill_hover))
                                         .child(provider(&kind))
                                         .child(shrinking(model_label))
                                         .child(
-                                            icon("chevron.down").size(px(10.)).text_color(p.muted),
+                                            icon("chevron.down")
+                                                .size(px(look::ICON_SMALL))
+                                                .text_color(p.muted),
                                         )
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.toggle_menu(Menu::Model, window, cx)
@@ -451,7 +456,7 @@ impl Agents {
                                 div()
                                     .id("agent-send")
                                     .flex_none()
-                                    .size(px(26.))
+                                    .size(px(look::CONTROL_CARD))
                                     .rounded_full()
                                     .flex()
                                     .items_center()
@@ -464,7 +469,7 @@ impl Agents {
                                         } else {
                                             d.bg(p.accent).when(!typed, |d| d.opacity(0.5)).child(
                                                 icon("arrow.up")
-                                                    .size(px(15.))
+                                                    .size(px(look::ICON))
                                                     .text_color(p.primary_text),
                                             )
                                         }
@@ -550,8 +555,8 @@ impl Agents {
                         // It takes its menu's width in the row, which puts
                         // a right one at the right end.
                         .anchor(Anchor::BottomLeft)
-                        .snap_to_window_with_margin(px(8.))
-                        .child(div().pb(px(4.)).child(menu)),
+                        .snap_to_window_with_margin(px(look::GAP_8))
+                        .child(div().pb(px(look::GAP_4)).child(menu)),
                 ))
                 .into_any_element(),
         )
@@ -582,10 +587,10 @@ impl Agents {
                     h_flex()
                         .id(("mention", i))
                         .flex_none()
-                        .gap(px(7.))
-                        .h(px(26.))
-                        .px(px(8.))
-                        .rounded(px(6.))
+                        .gap(px(look::GAP_4))
+                        .h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
                         .when(on, |d| d.bg(p.hover))
                         .hover(|d| d.bg(p.accent).text_color(p.primary_text))
@@ -648,18 +653,24 @@ impl Agents {
             );
         }
         if sign == '@' {
-            rows.push(div().h(px(1.)).my(px(4.)).bg(p.line).into_any_element());
+            rows.push(
+                div()
+                    .h(px(1.))
+                    .my(px(look::GAP_4))
+                    .bg(p.line)
+                    .into_any_element(),
+            );
             rows.push(
                 h_flex()
                     .id("mention-attach")
                     .flex_none()
-                    .gap(px(7.))
-                    .h(px(26.))
-                    .px(px(8.))
-                    .rounded(px(6.))
+                    .gap(px(look::GAP_4))
+                    .h(px(look::ROW))
+                    .px(px(look::GAP_8))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .hover(|d| d.bg(p.accent).text_color(p.primary_text))
-                    .child(icon("upload").size(px(13.)))
+                    .child(icon("upload").size(px(look::ICON)))
                     .child("Attach from this computer…")
                     .child(div().flex_1())
                     .child(div().text_color(p.faint).child("files, images, PDFs"))
@@ -674,13 +685,13 @@ impl Agents {
                     h_flex()
                         .id("mention-slash")
                         .flex_none()
-                        .gap(px(7.))
-                        .h(px(26.))
-                        .px(px(8.))
-                        .rounded(px(6.))
+                        .gap(px(look::GAP_4))
+                        .h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
                         .hover(|d| d.bg(p.accent).text_color(p.primary_text))
-                        .child(icon("skill").size(px(13.)))
+                        .child(icon("skill").size(px(look::ICON)))
                         .child("Commands and skills…")
                         .child(div().flex_1())
                         .child(div().text_color(p.faint).child("/"))
@@ -701,7 +712,6 @@ impl Agents {
             .overflow_y_scroll()
             .track_scroll(&self.mention_scroll)
             .gap(px(0.))
-            .p(px(5.))
             .children(rows)
     }
 
@@ -715,10 +725,11 @@ impl Agents {
             h_flex()
                 .id(SharedString::from(format!("mode-{}", mode.permission)))
                 .items_start()
-                .gap(px(8.))
-                .px(px(8.))
-                .py(px(5.))
-                .rounded(px(6.))
+                .min_h(px(look::ROW))
+                .gap(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .py(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .when(on, |d| d.bg(p.hover))
                 .map(|d| {
                     if blocked {
@@ -727,7 +738,11 @@ impl Agents {
                         d.cursor_pointer().hover(|d| d.bg(p.ink(7.)))
                     }
                 })
-                .child(div().pt(px(2.)).child(icon(mode.icon).size(px(14.))))
+                .child(
+                    div()
+                        .pt(px(look::GAP_2))
+                        .child(icon(mode.icon).size(px(look::ICON))),
+                )
                 .child(
                     v_flex()
                         .flex_1()
@@ -743,8 +758,8 @@ impl Agents {
                 .when(on, |d| {
                     d.child(
                         div()
-                            .pt(px(2.))
-                            .child(icon("check").size(px(13.)).text_color(p.accent)),
+                            .pt(px(look::GAP_2))
+                            .child(icon("check").size(px(look::ICON)).text_color(p.accent)),
                     )
                 })
                 .on_click(cx.listener(move |this, _, _, cx| this.choose_mode(mode, cx)))
@@ -854,9 +869,9 @@ impl Agents {
                 .id(SharedString::from(id))
                 .flex_none()
                 .w_full()
-                .h(px(30.))
+                .h(px(look::CONTROL_CARD))
                 .justify_center()
-                .rounded(px(6.))
+                .rounded(px(look::CONTROL_RADIUS))
                 .when(on, |d| d.bg(p.hover))
                 .map(|d| {
                     if usable {
@@ -878,7 +893,7 @@ impl Agents {
                 "tab-fav".into(),
                 tab == "fav",
                 true,
-                icon("star").size(px(14.)).into_any_element(),
+                icon("star").size(px(look::ICON)).into_any_element(),
                 "Favorites",
             )
             .on_click(cx.listener(|this, _, _, cx| {
@@ -927,8 +942,8 @@ impl Agents {
         let list: Vec<AnyElement> = if terminal_only(&tab) {
             vec![
                 div()
-                    .px(px(8.))
-                    .py(px(6.))
+                    .px(px(look::GAP_8))
+                    .py(px(look::GAP_6))
                     .text_color(p.muted)
                     .child("Choose models inside Posit Assistant. Use the providers on the left to switch.")
                     .into_any_element(),
@@ -936,8 +951,8 @@ impl Agents {
         } else if rows.is_empty() {
             vec![
                 div()
-                    .px(px(8.))
-                    .py(px(6.))
+                    .px(px(look::GAP_8))
+                    .py(px(look::GAP_6))
                     .text_color(p.faint)
                     .child("Star a model to keep it here.")
                     .into_any_element(),
@@ -960,10 +975,10 @@ impl Agents {
                         .flex_none()
                         .w_full()
                         .min_w_0()
-                        .gap(px(7.))
-                        .h(px(28.))
-                        .px(px(8.))
-                        .rounded(px(6.))
+                        .gap(px(look::GAP_4))
+                        .h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .when(on, |d| d.bg(p.hover))
                         .map(|d| {
                             if usable {
@@ -995,16 +1010,16 @@ impl Agents {
                             div()
                                 .id(("star", i))
                                 .flex_none()
-                                .size(px(20.))
-                                .rounded(px(5.))
+                                .size(px(look::CONTROL_ROW))
+                                .rounded(px(look::CONTROL_RADIUS))
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .cursor_pointer()
-                                .hover(|d| d.bg(p.ink(10.)))
+                                .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
                                 .child(
                                     icon(if starred { "star.filled" } else { "star" })
-                                        .size(px(13.))
+                                        .size(px(look::ICON))
                                         .text_color(if starred { p.accent } else { p.faint }),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1027,8 +1042,8 @@ impl Agents {
                 div()
                     .flex_none()
                     .min_w_0()
-                    .px(px(6.))
-                    .py(px(2.))
+                    .px(px(look::GAP_6))
+                    .py(px(look::GAP_2))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(sub),
@@ -1037,10 +1052,10 @@ impl Agents {
                 d.child(
                     div()
                         .flex_none()
-                        .mx(px(4.))
-                        .px(px(4.))
-                        .py(px(5.))
-                        .rounded(px(6.))
+                        .mx(px(look::GAP_4))
+                        .px(px(look::GAP_4))
+                        .py(px(look::GAP_4))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .bg(p.accent_soft)
                         .child(note),
                 )
@@ -1051,7 +1066,7 @@ impl Agents {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .gap(px(2.))
+                    .gap(px(look::GAP_2))
                     .overflow_y_scroll()
                     .children(list),
             )
@@ -1082,7 +1097,7 @@ impl Agents {
                             .id("model-provider-tabs")
                             .flex_none()
                             .w(px(MODEL_PROVIDER_WIDTH))
-                            .gap(px(3.))
+                            .gap(px(look::GAP_4))
                             .children(tabs),
                     )
                     .child(content),
@@ -1122,11 +1137,11 @@ fn render_context(t: &TerminalInfo, p: &Palette, cx: &mut Context<Agents>) -> St
     popup(p)
         .id("context-menu")
         .w(px(340.))
-        .gap(px(7.))
-        .p(px(10.))
+        .gap(px(look::GAP_8))
+        .p(px(look::GAP_12))
         .child(
             h_flex()
-                .gap(px(6.))
+                .gap(px(look::GAP_4))
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("Context"))
                 .child(div().text_color(p.faint).child(format!("{used} used"))),
         )

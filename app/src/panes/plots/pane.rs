@@ -83,7 +83,7 @@ impl Workbench {
         let (list, at) = self.plots_now();
         let Some(at) = at else {
             return v_flex().size_full().relative()
-                .child(div().px(px(14.)).py(px(8.)).text_color(p.muted)
+                .child(div().px(px(look::PANE_PAD_X)).py(px(look::PANE_PAD_Y)).text_color(p.muted)
                     .child("Plots that R and Python draw show here: from the Console, scripts and agents. Notebooks' plots stay under their cells."))
                 .children(self.render_plot_size_menu(cx))
                 .into_any_element();
@@ -103,14 +103,14 @@ impl Workbench {
                 .into_any_element(),
         };
         let thumbs = (list.len() > 1).then(|| {
-            let hover = p.ink(8.);
+            let hover = p.ink(look::BUTTON_HOVER);
             h_flex()
                 .id("plot-thumbs")
                 .flex_none()
                 .h(px(62.))
-                .gap(px(6.))
-                .px(px(8.))
-                .py(px(6.))
+                .gap(px(look::GAP_8))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::GAP_6))
                 .border_t(px(0.5))
                 .border_color(p.glass_edge)
                 .overflow_x_scroll()
@@ -121,8 +121,8 @@ impl Workbench {
                         .flex_none()
                         .w(px(64.))
                         .h(px(48.))
-                        .p(px(2.))
-                        .rounded(px(6.))
+                        .p(px(look::GAP_2))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .border_1()
                         .border_color(if on { p.accent } else { p.line })
                         .bg(p.bg)
@@ -144,7 +144,7 @@ impl Workbench {
                     .id("plot-stage")
                     .flex_1()
                     .min_h_0()
-                    .m(px(8.))
+                    .m(px(look::GAP_8))
                     .relative()
                     .overflow_hidden()
                     .when_some(shown, |d, image| {
@@ -161,9 +161,9 @@ impl Workbench {
             .child(
                 h_flex()
                     .flex_none()
-                    .px(px(10.))
-                    .pb(px(4.))
-                    .gap(px(8.))
+                    .px(px(look::PANE_PAD_X))
+                    .pb(px(look::GAP_4))
+                    .gap(px(look::GAP_8))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(
@@ -182,8 +182,8 @@ impl Workbench {
                 d.child(
                     div()
                         .flex_none()
-                        .px(px(10.))
-                        .pb(px(4.))
+                        .px(px(look::PANE_PAD_X))
+                        .pb(px(look::GAP_4))
                         .text_size(px(look::SMALL))
                         .text_color(p.muted)
                         .child(note.clone()),

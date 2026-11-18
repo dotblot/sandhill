@@ -165,7 +165,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
-        let mut actions = h_flex().flex_none().gap(px(2.));
+        let mut actions = h_flex().flex_none().gap(px(look::GAP_2));
         if let Some(accessor) = copy_accessor(variable) {
             let code = accessor.to_string();
             actions = actions.child(
@@ -676,24 +676,42 @@ impl Workbench {
         let mut rows = Vec::new();
         self.object_node_rows(tab, &tab.root, &tab.variable, &mut rows, cx);
         let heading = h_flex()
-            .h(px(27.))
+            .h(px(look::DENSE_ROW))
             .border_b_1()
             .border_color(p.line)
-            .child(div().w(px(220.)).flex_none().px(px(12.)).child("Name"))
-            .child(div().w(px(120.)).flex_none().px(px(8.)).child("Type"))
-            .child(div().flex_1().px(px(8.)).child("Value"));
+            .child(
+                div()
+                    .w(px(220.))
+                    .flex_none()
+                    .px(px(look::PANE_PAD_X))
+                    .child("Name"),
+            )
+            .child(
+                div()
+                    .w(px(120.))
+                    .flex_none()
+                    .px(px(look::GAP_8))
+                    .child("Type"),
+            )
+            .child(div().flex_1().px(px(look::GAP_8)).child("Value"));
         Some(pane(&p).flex_1().h_full()
             .child(self.render_tabs(cx))
-            .child(h_flex().flex_none().gap(px(6.)).p(px(8.))
-                .child(div().flex_1().min_w_0().child(Input::new(&tab.query).small()))
-                .child(icon_button("object-refresh", "refresh", &p, false)
-                    .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new("Refresh object").build(w, cx))
-                    .on_click(cx.listener(move |this, _, _, cx| this.reload_object_explorer(id, cx)))))
-            .when(tab.busy, |d| d.child(div().px(px(12.)).text_color(p.muted).child("Kernel is running. The object will refresh when it finishes.")))
-            .when(tab.searching, |d| d.child(div().px(px(12.)).text_color(p.muted).child("Searching names and values…")))
-            .when_some(tab.search_error.clone(), |d, error| d.child(div().px(px(12.)).text_color(p.err).child(error)))
-            .when(!tab.complete, |d| d.child(div().px(px(12.)).text_color(p.warn).child("Only part of this object was searched (depth, node, or time limit reached).")))
-            .when(tab.matches.as_ref().is_some_and(Vec::is_empty), |d| d.child(div().px(px(12.)).text_color(p.muted).child("No matching names or values.")))
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap(px(look::GAP_8))
+                    .px(px(look::PANE_PAD_X))
+                    .py(px(look::PANE_PAD_Y))
+                    .child(div().flex_1().min_w_0().child(Input::new(&tab.query).small()))
+                    .child(icon_button("object-refresh", "refresh", &p, false)
+                        .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new("Refresh object").build(w, cx))
+                        .on_click(cx.listener(move |this, _, _, cx| this.reload_object_explorer(id, cx)))),
+            )
+            .when(tab.busy, |d| d.child(div().px(px(look::PANE_PAD_X)).text_color(p.muted).child("Kernel is running. The object will refresh when it finishes.")))
+            .when(tab.searching, |d| d.child(div().px(px(look::PANE_PAD_X)).text_color(p.muted).child("Searching names and values…")))
+            .when_some(tab.search_error.clone(), |d, error| d.child(div().px(px(look::PANE_PAD_X)).text_color(p.err).child(error)))
+            .when(!tab.complete, |d| d.child(div().px(px(look::PANE_PAD_X)).text_color(p.warn).child("Only part of this object was searched (depth, node, or time limit reached).")))
+            .when(tab.matches.as_ref().is_some_and(Vec::is_empty), |d| d.child(div().px(px(look::PANE_PAD_X)).text_color(p.muted).child("No matching names or values.")))
             .child(div().id("object-tree").flex_1().min_h_0().overflow_scroll()
                 .track_scroll(&tab.scroll).child(v_flex().w_full().min_w(px(480.)).text_size(px(look::SMALL))
                     .child(heading).children(rows)))
@@ -714,7 +732,8 @@ impl Workbench {
         let toggle = path.to_vec();
         let table = path.to_vec();
         let depth = path.len() - tab.root.len();
-        let mut actions = h_flex().flex_none();
+        let matched = tab.matched.contains(path);
+        let mut actions = h_flex().flex_none().gap(px(look::GAP_2));
         if let Some(code) = copy_accessor(variable) {
             let code = code.to_string();
             actions = actions.child(
@@ -754,18 +773,21 @@ impl Workbench {
             h_flex()
                 .id(SharedString::from(format!("object-node-{path:?}")))
                 .w_full()
-                .h(px(27.))
+                .h(px(look::DENSE_ROW))
+                .rounded(px(look::CODE_RADIUS))
+                .whitespace_nowrap()
                 .border_b_1()
                 .border_color(p.ink(4.))
                 .hover(move |d| d.bg(p.hover))
-                .when(tab.matched.contains(path), |d| d.bg(p.accent_soft))
+                .when(matched, |d| d.bg(p.accent_soft))
                 .child(
                     h_flex()
                         .id(SharedString::from(format!("object-toggle-{path:?}")))
                         .w(px(220.))
                         .flex_none()
-                        .pl(px(8. + 14. * depth as f32))
-                        .pr(px(8.))
+                        .pl(px(look::GAP_8 + look::ICON * depth as f32))
+                        .pr(px(look::GAP_8))
+                        .gap(px(look::GAP_4))
                         .overflow_hidden()
                         .when(variable.children, |d| {
                             d.cursor_pointer()
@@ -773,16 +795,19 @@ impl Workbench {
                                     this.toggle_object_node(id, toggle.clone(), cx)
                                 }))
                         })
-                        .child(div().w(px(18.)).flex_none().when(variable.children, |d| {
-                            d.child(
-                                icon(if open {
-                                    "chevron.down"
-                                } else {
-                                    "chevron.right"
-                                })
-                                .size(px(13.)),
-                            )
-                        }))
+                        .child(div().w(px(look::ICON_SMALL)).flex_none().when(
+                            variable.children,
+                            |d| {
+                                d.child(
+                                    icon(if open {
+                                        "chevron.down"
+                                    } else {
+                                        "chevron.right"
+                                    })
+                                    .size(px(look::ICON_SMALL)),
+                                )
+                            },
+                        ))
                         .child(
                             div()
                                 .overflow_hidden()
@@ -794,7 +819,7 @@ impl Workbench {
                     div()
                         .w(px(120.))
                         .flex_none()
-                        .px(px(8.))
+                        .px(px(look::GAP_8))
                         .overflow_hidden()
                         .text_ellipsis()
                         .text_color(p.muted)
@@ -804,7 +829,7 @@ impl Workbench {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .px(px(8.))
+                        .px(px(look::GAP_8))
                         .overflow_hidden()
                         .text_ellipsis()
                         .text_color(p.muted)
@@ -816,8 +841,8 @@ impl Workbench {
         if let Some(error) = tab.errors.get(path) {
             rows.push(
                 div()
-                    .px(px(12.))
-                    .py(px(4.))
+                    .px(px(look::PANE_PAD_X))
+                    .py(px(look::GAP_4))
                     .text_color(p.err)
                     .child(error.clone())
                     .into_any_element(),
@@ -829,7 +854,7 @@ impl Workbench {
         if tab.pending.contains(path) {
             rows.push(
                 div()
-                    .px(px(12.))
+                    .px(px(look::PANE_PAD_X))
                     .text_color(p.muted)
                     .child("Loading…")
                     .into_any_element(),
@@ -847,7 +872,7 @@ impl Workbench {
             if listing.more > 0 {
                 rows.push(
                     div()
-                        .px(px(12.))
+                        .px(px(look::PANE_PAD_X))
                         .text_color(p.muted)
                         .child(format!(
                             "{} additional children are not listed. Search to find them.",

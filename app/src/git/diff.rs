@@ -311,10 +311,10 @@ impl Workbench {
         let mut bar = h_flex()
             .flex_none()
             .h_full()
-            .px(px(8.))
-            .gap(px(6.))
+            .px(px(look::GAP_8))
+            .gap(px(look::GAP_4))
             .whitespace_nowrap()
-            .child(picture(&look::file_icon(&tab.file)).size(px(14.)))
+            .child(picture(&look::file_icon(&tab.file)).size(px(look::ICON)))
             .child(
                 div()
                     .min_w(px(40.))

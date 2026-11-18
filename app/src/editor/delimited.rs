@@ -587,9 +587,9 @@ impl Workbench {
             v_flex()
                 .id(id)
                 .w_full()
-                .p(px(10.))
-                .gap(px(2.))
-                .rounded(px(8.))
+                .p(px(look::GAP_8))
+                .gap(px(look::GAP_2))
+                .rounded(px(look::CONTROL_RADIUS))
                 .border_1()
                 .border_color(if picked { p.accent } else { p.line })
                 .when(!enabled, |d| d.opacity(0.5))
@@ -600,7 +600,7 @@ impl Workbench {
                 })
                 .child(
                     h_flex()
-                        .gap(px(8.))
+                        .gap(px(look::GAP_4))
                         .child(
                             div()
                                 .size(px(12.))
@@ -612,13 +612,13 @@ impl Workbench {
                         )
                         .child(div().text_color(p.text).child(title)),
                 )
-                .child(div().pl(px(20.)).text_color(p.muted).child(detail))
+                .child(div().pl(px(16.)).text_color(p.muted).child(detail))
         };
         let sessions = v_flex()
             .id("delimited-sessions")
             .pl(px(20.))
-            .pt(px(6.))
-            .gap(px(2.))
+            .pt(px(look::GAP_6))
+            .gap(px(look::GAP_2))
             .max_h(px(180.))
             .overflow_y_scroll()
             .children(dialog.sessions.iter().enumerate().map(|(i, session)| {
@@ -634,14 +634,14 @@ impl Workbench {
                     .id(("delimited-session", i))
                     .w_full()
                     .min_w_0()
-                    .px(px(8.))
-                    .py(px(5.))
-                    .gap(px(8.))
-                    .rounded(px(6.))
+                    .h(px(look::ROW))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .when(selected, |d| d.bg(p.sel))
                     .hover(move |d| d.bg(hover))
-                    .child(look::picture(language).size(px(14.)))
+                    .child(look::picture(language))
                     .child(
                         div()
                             .flex_1()
@@ -677,8 +677,8 @@ impl Workbench {
             d.child(sessions).child(
                 h_flex()
                     .pl(px(20.))
-                    .pt(px(4.))
-                    .gap(px(14.))
+                    .pt(px(look::GAP_4))
+                    .gap(px(look::GAP_8))
                     .child(
                         link("delimited-copy", "Copy Code", import_ok).when(import_ok, |d| {
                             d.on_click(
@@ -709,7 +709,7 @@ impl Workbench {
             .w(px(520.))
             .max_h(relative(0.9))
             .p(px(20.))
-            .gap(px(10.))
+            .gap(px(look::GAP_12))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
             .border_1()
@@ -718,9 +718,9 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 h_flex()
-                    .gap(px(12.))
-                    .pb(px(4.))
-                    .child(look::picture(&look::file_icon(&dialog.path)).size(px(32.)))
+                    .gap(px(look::GAP_4))
+                    .pb(px(look::GAP_4))
+                    .child(look::picture(&look::file_icon(&dialog.path)).size(px(look::ICON_LARGE)))
                     .child(
                         v_flex()
                             .min_w_0()
@@ -758,12 +758,13 @@ impl Workbench {
             })
             .child(
                 h_flex()
-                    .pt(px(6.))
+                    .pt(px(look::GAP_6))
                     .justify_end()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         Button::new("delimited-cancel")
                             .small()
+                            .h(px(look::CONTROL_CARD))
                             .label("Cancel")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.delimited = None;
@@ -773,6 +774,7 @@ impl Workbench {
                     .child(
                         Button::new("delimited-open")
                             .small()
+                            .h(px(look::CONTROL_CARD))
                             .primary()
                             .label(primary)
                             .disabled(!primary_ok)

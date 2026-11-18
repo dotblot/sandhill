@@ -342,7 +342,7 @@ impl AppWindow {
             .max_w(relative(0.9))
             .max_h(relative(0.9))
             .overflow_y_scroll()
-            .gap(px(14.))
+            .gap(px(look::GAP_12))
             .p(px(20.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
@@ -376,7 +376,7 @@ impl AppWindow {
                 .child(
                     h_flex()
                         .justify_end()
-                        .gap(px(8.))
+                        .gap(px(look::GAP_8))
                         .child(Button::new("rename-cancel").small().label("Cancel").on_click(
                             cx.listener(|this, _, window, cx| {
                                 this.start.close_dialogs(window, cx);
@@ -395,7 +395,7 @@ impl AppWindow {
                 );
         } else if let Some((host, path)) = &self.start.choosing_icon {
             let chosen = crate::prefs::project_icon(host, path);
-            let mut grid = h_flex().flex_wrap().gap(px(6.));
+            let mut grid = h_flex().flex_wrap().gap(px(look::GAP_6));
             for (i, icon_path) in look::project_icon_choices().into_iter().enumerate() {
                 let on = chosen.as_deref() == Some(icon_path.as_str());
                 let tip = icon_path
@@ -412,12 +412,12 @@ impl AppWindow {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(8.))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .border_1()
                         .border_color(if on { p.accent } else { p.line })
                         .when(on, |d| d.bg(p.accent.opacity(0.12)))
                         .cursor_pointer()
-                        .hover(move |d| d.bg(p.ink(6.)))
+                        .hover(move |d| d.bg(p.ink(look::ROW_HOVER)))
                         .child(look::picture(&icon_path).size(px(24.)))
                         .tooltip(move |w, cx| {
                             gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
@@ -444,7 +444,7 @@ impl AppWindow {
                 .child(
                     h_flex()
                         .justify_end()
-                        .gap(px(8.))
+                        .gap(px(look::GAP_8))
                         .child(Button::new("icon-default").small().label("Use Default").on_click(
                             cx.listener(move |this, _, window, cx| {
                                 crate::prefs::save_project_icon(&reset_host, &reset_path, None);
@@ -472,7 +472,7 @@ impl AppWindow {
                     d.child(div().text_color(p.err).child(error))
                 })
                 .child(
-                    h_flex().justify_end().gap(px(8.))
+                    h_flex().justify_end().gap(px(look::GAP_8))
                         .child(Button::new("server-cancel").small().label("Cancel")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.start.close_dialogs(window, cx);

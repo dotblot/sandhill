@@ -80,8 +80,8 @@ impl AppWindow {
                     });
                 }))
         });
-        let mut page = v_flex().w_full().gap(px(16.))
-            .child(h_flex().w_full().gap(px(12.))
+        let mut page = v_flex().w_full().gap(px(look::GAP_12))
+            .child(h_flex().w_full().gap(px(look::GAP_8))
                 .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Skills"))
                 .children(add))
             .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child("Skills are instructions agents load when the work calls for them. They are kept on each device and given to every agent."))
@@ -118,7 +118,7 @@ fn detail(name: String, description: String, source: String, p: &Palette) -> Div
     v_flex()
         .flex_1()
         .min_w_0()
-        .gap(px(3.))
+        .gap(px(look::GAP_2))
         .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
         .child(
             div()
@@ -138,7 +138,10 @@ fn detail(name: String, description: String, source: String, p: &Palette) -> Div
 impl Render for SkillsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = welcome_palette(cx);
-        let mut page = v_flex().w_full().gap(px(16.)).text_size(px(look::SMALL));
+        let mut page = v_flex()
+            .w_full()
+            .gap(px(look::GAP_12))
+            .text_size(px(look::SMALL));
         if let Some(error) = &self.problem {
             return page
                 .child(div().text_color(p.err).child(error.clone()))
@@ -167,8 +170,9 @@ impl Render for SkillsView {
                 page = page.child(
                     h_flex()
                         .w_full()
-                        .gap(px(12.))
-                        .py(px(6.))
+                        .min_h(px(look::ROW))
+                        .gap(px(look::GAP_12))
+                        .py(px(look::GAP_6))
                         .child(detail(
                             name.clone(),
                             skill.description.clone(),
@@ -203,7 +207,7 @@ impl Render for SkillsView {
                                 SharedString::from(format!("skill-menu-{name}")),
                                 "more",
                                 &p,
-                                !self.busy,
+                                false,
                             )
                             .when(menu_open, |d| {
                                 d.on_prepaint(self.triggers.track("skill-row"))
@@ -237,7 +241,7 @@ impl Render for SkillsView {
         if !suggested.is_empty() {
             page = page.child(
                 div()
-                    .mt(px(8.))
+                    .mt(px(look::GAP_8))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Suggested"),
             );
@@ -246,8 +250,9 @@ impl Render for SkillsView {
                 page = page.child(
                     h_flex()
                         .w_full()
-                        .gap(px(12.))
-                        .py(px(6.))
+                        .min_h(px(look::ROW))
+                        .gap(px(look::GAP_12))
+                        .py(px(look::GAP_6))
                         .child(detail(
                             skill.name.clone(),
                             skill.description.clone(),
@@ -272,7 +277,7 @@ impl Render for SkillsView {
         }
         page = page.child(
             div()
-                .mt(px(8.))
+                .mt(px(look::GAP_8))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("Built in"),
         );

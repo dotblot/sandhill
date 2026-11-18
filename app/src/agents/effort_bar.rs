@@ -15,9 +15,7 @@ use crate::agents::Agents;
 use crate::agents::composer::{Models, effort_name};
 use crate::look::{self, Palette};
 
-const HEIGHT: f32 = 22.;
-const RADIUS: f32 = 6.;
-const LABEL_INSET: f32 = 8.;
+const LABEL_INSET: f32 = look::GAP_8;
 /// Room for the handle at the fill's end.
 const HANDLE_ROOM: f32 = 12.;
 /// Slightly under critical damping: quick, with a hint of give.
@@ -168,7 +166,7 @@ impl Agents {
             .top_0()
             .left_0()
             .h_full()
-            .rounded(px(RADIUS))
+            .rounded(px(look::CONTROL_RADIUS))
             .when(levels == 0, |d| d.invisible())
             .map(|d| {
                 if strongest {
@@ -181,7 +179,7 @@ impl Agents {
                         div()
                             .absolute()
                             .inset_0()
-                            .rounded(px(RADIUS))
+                            .rounded(px(look::CONTROL_RADIUS))
                             .bg(linear_gradient(
                                 90.,
                                 linear_color_stop(orange.opacity(0.), 0.45),
@@ -243,8 +241,8 @@ impl Agents {
             .relative()
             .flex_none()
             .w(px(width))
-            .h(px(HEIGHT))
-            .rounded(px(RADIUS))
+            .h(px(look::CONTROL_CARD))
+            .rounded(px(look::CONTROL_RADIUS))
             .bg(p.ink(8.))
             .text_size(px(look::SMALL))
             .child(
@@ -295,11 +293,11 @@ impl Agents {
             });
         v_flex()
             .flex_none()
-            .gap(px(6.))
-            .px(px(8.))
-            .pt(px(8.))
-            .pb(px(6.))
-            .mt(px(4.))
+            .gap(px(look::GAP_6))
+            .px(px(look::GAP_8))
+            .pt(px(look::GAP_8))
+            .pb(px(look::GAP_6))
+            .mt(px(look::GAP_4))
             .border_t_1()
             .border_color(p.line)
             .child(

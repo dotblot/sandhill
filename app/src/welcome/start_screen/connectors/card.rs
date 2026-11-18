@@ -29,7 +29,7 @@ impl ConnectorsView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .gap(px(12.));
+            .gap(px(look::GAP_12));
         match card {
             Card::Suggested(s) => {
                 let terms = s.terms.clone();
@@ -128,7 +128,7 @@ impl ConnectorsView {
                     body = body.child(
                         v_flex()
                             .min_w_0()
-                            .gap(px(3.))
+                            .gap(px(look::GAP_2))
                             .child(
                                 div()
                                     .font_weight(FontWeight::SEMIBOLD)
@@ -170,8 +170,12 @@ impl ConnectorsView {
             .child(
                 h_flex()
                     .flex_none()
-                    .gap(px(12.))
-                    .child(div().flex_none().child(icon("link").size(px(32.))))
+                    .gap(px(look::GAP_12))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(icon("link").size(px(look::ICON_LARGE))),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -184,7 +188,7 @@ impl ConnectorsView {
             .child(
                 v_flex()
                     .flex_none()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .children(primary.map(|label| {
                         Button::new("connector-primary")
                             .primary()
@@ -283,5 +287,8 @@ impl ConnectorsView {
 }
 
 fn field(label: &str, input: impl IntoElement, p: &Palette) -> Div {
-    v_flex().gap(px(4.)).child(grey(label, p)).child(input)
+    v_flex()
+        .gap(px(look::GAP_4))
+        .child(grey(label, p))
+        .child(input)
 }

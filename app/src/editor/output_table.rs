@@ -9,7 +9,6 @@ use crate::editor::html_table::Table;
 use crate::editor::table_selection::{Selection, Target, encode_tsv};
 use crate::look::{self, Palette};
 
-const ROW_HEIGHT: f32 = 24.;
 const COLUMN_CHARS: (usize, usize) = (3, 28);
 
 pub(crate) struct OutputTable {
@@ -214,8 +213,8 @@ impl SelectionOwner {
             .items_center()
             .flex_none()
             .w(px(self.widths[column]))
-            .h(px(ROW_HEIGHT))
-            .px(px(8.))
+            .h(px(look::DENSE_ROW))
+            .px(px(look::GAP_8))
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
@@ -252,7 +251,7 @@ impl Render for SelectionOwner {
             .max_w_full()
             .overflow_x_scroll()
             .restrict_scroll_to_axis()
-            .rounded(px(6.))
+            .rounded(px(look::CODE_RADIUS))
             .border(px(0.5))
             .border_color(p.line)
             .font_family(look::MONO)
@@ -300,7 +299,7 @@ impl Render for SelectionOwner {
                     .min_w_full()
                     .child(
                         h_flex()
-                            .h(px(ROW_HEIGHT))
+                            .h(px(look::DENSE_ROW))
                             .flex_none()
                             .font_weight(FontWeight::SEMIBOLD)
                             .bg(p.chunk)
@@ -317,7 +316,7 @@ impl Render for SelectionOwner {
                     )
                     .children(self.rows.iter().enumerate().map(|(row, values)| {
                         h_flex()
-                            .h(px(ROW_HEIGHT))
+                            .h(px(look::DENSE_ROW))
                             .flex_none()
                             .when(row % 2 == 1, |d| d.bg(p.ink(3.)))
                             .border_b(px(0.5))

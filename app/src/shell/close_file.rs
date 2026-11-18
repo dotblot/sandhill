@@ -202,7 +202,7 @@ impl Workbench {
                       cx: &mut Context<Self>| {
             h_flex()
                 .items_start()
-                .gap(px(8.))
+                .gap(px(look::GAP_4))
                 // Centred on the label's line (the card's 1.25rem), not on
                 // the label and its note together (Huan, 2026-11-16).
                 .child(h_flex().h(rems(1.25)).flex_none().items_center().child(
@@ -222,7 +222,7 @@ impl Workbench {
                         .child(note)
                 })))
         };
-        let mut choices = v_flex().gap(px(10.));
+        let mut choices = v_flex().gap(px(look::GAP_8));
         if let Some(kernel) = &ask.kernel {
             let note = match (kernel.busy, kernel.others.is_empty()) {
                 (true, true) => Some("Running code now".to_string()),
@@ -269,7 +269,7 @@ impl Workbench {
             ));
         }
         let dirty = ask.dirty;
-        let wide = |button: Button| button.w_full();
+        let wide = |button: Button| button.w_full().h(px(look::CONTROL_CARD));
         let card = v_flex()
             .id("close-card")
             .track_focus(&ask.focus)
@@ -279,7 +279,7 @@ impl Workbench {
             .max_h(relative(0.9))
             .overflow_y_scroll()
             .p(px(20.))
-            .gap(px(14.))
+            .gap(px(look::GAP_12))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
             .border_1()
@@ -296,7 +296,7 @@ impl Workbench {
             }))
             .child(
                 h_flex()
-                    .gap(px(12.))
+                    .gap(px(look::GAP_8))
                     .child(
                         img(crate::welcome::start_screen::brand_icon())
                             .size(px(40.))
@@ -314,7 +314,7 @@ impl Workbench {
             .child(choices)
             .child(
                 v_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(wide(
                         Button::new("close-file")
                             .primary()

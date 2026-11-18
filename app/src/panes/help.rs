@@ -28,6 +28,8 @@ const FEW: usize = 6;
 /// What the daemon says when the session runs other code.
 const BUSY: &str = "the session is busy running code";
 
+const SEARCH_HEIGHT: f32 = look::CONTROL_CARD + 2. * look::PANE_PAD_Y;
+
 /// A page to show: a topic, in a package (R) or module (Python).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct HelpRequest {
@@ -734,24 +736,23 @@ impl Workbench {
         let python = self.python();
         let search = h_flex()
             .flex_none()
-            .h(px(37.))
-            .gap(px(6.))
-            .px(px(8.))
-            .py(px(6.))
+            .h(px(SEARCH_HEIGHT))
+            .gap(px(look::GAP_8))
+            .px(px(look::PANE_PAD_X))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
             .child(
                 div().flex_1().child(
                     Input::new(&self.help.query)
                         .small()
-                        .prefix(icon("search").size(px(13.))),
+                        .prefix(icon("search").size(px(look::ICON))),
                 ),
             )
             .child(
                 div().w(px(130.)).child(
                     Input::new(&self.help.package)
                         .small()
-                        .prefix(icon("package").size(px(13.))),
+                        .prefix(icon("package").size(px(look::ICON))),
                 ),
             )
             .map(|row| look::floating_header(&p, look::STRIP, false, row));
@@ -761,12 +762,12 @@ impl Workbench {
                 .size_full()
                 .child(look::PaneScroll::new(
                     "help-scroll",
-                    look::STRIP + 37.,
-                    8.,
+                    look::STRIP + SEARCH_HEIGHT,
+                    look::PANE_PAD_Y,
                     div()
                         .id("help-body")
-                        .px(px(14.))
-                        .pb(px(8.))
+                        .px(px(look::PANE_PAD_X))
+                        .pb(px(look::PANE_PAD_Y))
                         .text_color(p.muted)
                         .child("Start R or Python in the Console, and its help shows here."),
                 ))
@@ -808,7 +809,7 @@ impl Workbench {
             .size_full()
             .child(look::PaneScroll::new(
                 "help-scroll",
-                look::STRIP + 37.,
+                look::STRIP + SEARCH_HEIGHT,
                 0.,
                 div().id("help-body").child(v_flex().children(body)),
             ))
@@ -845,25 +846,33 @@ impl Workbench {
             };
             h_flex()
                 .id(("help-topic", ix))
-                .gap(px(8.))
-                .px(px(10.))
-                .py(px(3.))
-                .mx(px(4.))
-                .rounded(px(6.))
+                .h(px(look::ROW))
+                .gap(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .mx(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
+                .whitespace_nowrap()
                 .cursor_pointer()
                 .when(on, |d| d.bg(p.accent_soft))
                 .hover(move |d| d.bg(hover))
                 .child(
                     div()
                         .flex_none()
-                        .px(px(4.))
-                        .rounded(px(4.))
+                        .px(px(look::GAP_4))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .text_size(px(look::TINY))
                         .bg(p.ink(8.))
                         .text_color(p.muted)
                         .child(if python { "Py" } else { "R" }),
                 )
-                .child(div().font_family(look::MONO).child(t.topic.clone()))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .font_family(look::MONO)
+                        .child(t.topic.clone()),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -881,7 +890,7 @@ impl Workbench {
                 }))
         });
         v_flex()
-            .pb(px(6.))
+            .pb(px(look::PANE_PAD_Y))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
             .child(note(
@@ -892,13 +901,16 @@ impl Workbench {
             .children(rows)
             .when(hidden > 0, |d| {
                 d.child(
-                    div()
+                    h_flex()
                         .id("help-more")
-                        .px(px(14.))
-                        .py(px(2.))
+                        .h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .mx(px(look::GAP_4))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .text_size(px(look::SMALL))
                         .text_color(p.accent)
                         .cursor_pointer()
+                        .hover(move |d| d.bg(hover))
                         .child(format!("{} more", hidden as u64 + found.more))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.help.all = true;
@@ -922,15 +934,17 @@ impl Workbench {
         let total = found.topics.len() as u64 + found.more + found.vignettes.len() as u64;
         h_flex()
             .id("help-results-folded")
-            .gap(px(6.))
-            .px(px(14.))
-            .py(px(4.))
+            .h(px(look::ROW))
+            .gap(px(look::GAP_4))
+            .px(px(look::PANE_PAD_X))
+            .rounded(px(look::CONTROL_RADIUS))
             .text_size(px(look::SMALL))
             .text_color(p.accent)
             .cursor_pointer()
+            .hover(|d| d.bg(p.ink(look::ROW_HOVER)))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
-            .child(icon("chevron.right").size(px(12.)))
+            .child(icon("chevron.right").size(px(look::ICON)))
             .child(format!(
                 "Show {total} search result{}",
                 if total == 1 { "" } else { "s" }
@@ -948,7 +962,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let p = *Palette::get(cx);
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         vignettes
             .iter()
             .enumerate()
@@ -962,11 +976,11 @@ impl Workbench {
                 };
                 h_flex()
                     .id(("help-vignette", ix))
-                    .gap(px(8.))
-                    .px(px(10.))
-                    .py(px(3.))
-                    .mx(px(4.))
-                    .rounded(px(6.))
+                    .h(px(look::ROW))
+                    .gap(px(look::GAP_4))
+                    .px(px(look::GAP_8))
+                    .mx(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .hover(move |d| d.bg(hover))
                     .tooltip({
@@ -975,7 +989,7 @@ impl Workbench {
                             gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
                         }
                     })
-                    .child(div().flex_none().child(icon("help").size(px(13.))))
+                    .child(div().flex_none().child(icon("help").size(px(look::ICON))))
                     .child(
                         div()
                             .flex_1()
@@ -997,11 +1011,11 @@ impl Workbench {
                             div()
                                 .id(("help-vignette-code", ix))
                                 .flex_none()
-                                .px(px(4.))
-                                .rounded(px(4.))
+                                .px(px(look::GAP_4))
+                                .rounded(px(look::CONTROL_RADIUS))
                                 .text_size(px(look::SMALL))
                                 .text_color(p.accent)
-                                .hover(|d| d.underline())
+                                .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)).underline())
                                 .child("R code")
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
@@ -1057,7 +1071,7 @@ impl Workbench {
         .collect::<Vec<_>>()
         .join(" · ");
         let head = h_flex()
-            .gap(px(4.))
+            .gap(px(look::GAP_8))
             .child(
                 v_flex()
                     .flex_1()
@@ -1106,7 +1120,7 @@ impl Workbench {
         let also = (!page.alternatives.is_empty()).then(|| {
             h_flex()
                 .flex_wrap()
-                .gap(px(4.))
+                .gap(px(look::GAP_4))
                 .text_size(px(look::SMALL))
                 .text_color(p.muted)
                 .child("Also in")
@@ -1173,9 +1187,9 @@ impl Workbench {
             self.render_python_doc(page, cx)
         };
         v_flex()
-            .gap(px(8.))
-            .px(px(12.))
-            .py(px(10.))
+            .gap(px(look::GAP_8))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .when(self.help.loading, |d| d.opacity(0.6))
             .child(head)
             .children(also)
@@ -1185,7 +1199,7 @@ impl Workbench {
 
     fn render_python_doc(&self, page: &HelpPage, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         let topic = page.topic.clone();
         v_flex()
             .gap(px(8.))
@@ -1222,9 +1236,11 @@ impl Workbench {
                         };
                         h_flex()
                             .id(("help-member", ix))
-                            .gap(px(8.))
-                            .px(px(6.))
-                            .rounded(px(6.))
+                            .h(px(look::ROW))
+                            .gap(px(look::GAP_8))
+                            .px(px(look::GAP_6))
+                            .rounded(px(look::CONTROL_RADIUS))
+                            .whitespace_nowrap()
                             .cursor_pointer()
                             .hover(move |d| d.bg(hover))
                             .child(
@@ -1261,8 +1277,8 @@ impl Workbench {
 
 fn note(text: String, color: Hsla, _p: &Palette) -> AnyElement {
     div()
-        .px(px(14.))
-        .py(px(6.))
+        .px(px(look::PANE_PAD_X))
+        .py(px(look::PANE_PAD_Y))
         .text_size(px(look::SMALL))
         .text_color(color)
         .child(text)

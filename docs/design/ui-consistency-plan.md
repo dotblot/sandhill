@@ -18,6 +18,10 @@ Done so far:
   or 30px, and destructive actions share one red button style.
 - **Text sizes**: the app uses the shared title, body, label, small and
   tiny sizes. Code is 15px, or 14px alongside documentation prose.
+- **Pane geometry and hover**: picker and dense rows, corners, icon sizes,
+  hover tints and spacing use shared values across panes, Welcome and
+  Manage, cards, and popups. Tabs and capsules stay round; confirmations
+  stay where they were.
 
 Huan: "It seems like a lot of inconsistent." This plan keeps the look that
 is settled (glass window, floating panes, round tabs, navy accent, fonts,

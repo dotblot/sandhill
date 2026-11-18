@@ -167,11 +167,11 @@ impl Workbench {
             return Vec::new();
         }
         let p = *Palette::get(cx);
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         let mut rows = vec![
             div()
-                .mx(px(8.))
-                .my(px(6.))
+                .mx(px(look::GAP_8))
+                .my(px(look::GAP_6))
                 .h(px(1.))
                 .bg(p.line)
                 .into_any_element(),
@@ -181,22 +181,24 @@ impl Workbench {
             rows.push(
                 h_flex()
                     .id(("install-irkernel", ix))
-                    .gap(px(6.))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded(px(6.))
+                    .h(px(look::ROW))
+                    .gap(px(look::GAP_4))
+                    .px(px(look::GAP_8))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .hover(move |d| d.bg(hover))
                     .child(
                         div()
-                            .w(px(14.))
+                            .w(px(look::ICON))
                             .flex_none()
                             .text_color(p.muted)
-                            .child(icon("add").size(px(13.))),
+                            .child(icon("add").size(px(look::ICON))),
                     )
                     .child(
                         v_flex()
                             .min_w_0()
+                            .line_height(px(look::ROW / 2.))
+                            .whitespace_nowrap()
                             .child(format!("Install IRkernel for {}…", r_name(offer)))
                             .child(
                                 div()
@@ -226,7 +228,7 @@ impl Workbench {
             .occlude()
             .w(px(520.))
             .max_w(relative(0.9))
-            .gap(px(12.))
+            .gap(px(look::GAP_12))
             .p(px(20.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
@@ -242,7 +244,7 @@ impl Workbench {
             )
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .text_size(px(look::SMALL))
                     .text_color(p.muted)
                     .child(device)
@@ -270,7 +272,7 @@ impl Workbench {
             .child(
                 h_flex()
                     .justify_end()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         Button::new("irkernel-cancel")
                             .small()

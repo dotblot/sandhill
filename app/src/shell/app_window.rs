@@ -1034,7 +1034,7 @@ impl AppWindow {
         let p = *Palette::get(cx);
         let mut row = h_flex()
             .id("project-capsules-scroll")
-            .gap(px(5.))
+            .gap(px(look::GAP_4))
             .min_w_0()
             .max_w_full()
             .overflow_x_scroll()
@@ -1063,7 +1063,7 @@ impl AppWindow {
                 } else {
                     "device.server"
                 })
-                .size(px(13.))
+                .size(px(look::ICON_LARGE))
                 .into_any_element(),
                 look::tab_close(("close-project", ix), picked, &p)
                     .tooltip(|w, cx| {
@@ -1082,23 +1082,24 @@ impl AppWindow {
                 .group(look::TAB_GROUP)
                 .flex_none()
                 .occlude()
-                .gap(px(2.))
+                .gap(px(look::GAP_2))
                 .pl(px(7.))
                 .pr(px(3.))
                 .text_size(px(look::SMALL))
                 .text_color(if picked { p.text } else { p.muted })
                 .child(device)
                 // A project's chosen icon (Welcome → right-click → Change Icon…).
-                .children(
-                    crate::prefs::project_icon(&tab.host, path)
-                        .map(|icon| look::picture(&icon).size(px(14.)).ml(px(2.))),
-                )
+                .children(crate::prefs::project_icon(&tab.host, path).map(|icon| {
+                    look::picture(&icon)
+                        .size(px(look::ICON_LARGE))
+                        .ml(px(look::GAP_2))
+                }))
                 .child(
                     div()
                         .id(("project-name", ix))
                         .flex_none()
                         .max_w(px(180.))
-                        .pl(px(4.))
+                        .pl(px(look::GAP_4))
                         .overflow_hidden()
                         .text_ellipsis()
                         .font_weight(FontWeight::SEMIBOLD)

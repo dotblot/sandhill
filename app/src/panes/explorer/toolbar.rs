@@ -34,8 +34,8 @@ impl Explorer {
             .flex_1()
             .w_full()
             .h_full()
-            .px(px(6.))
-            .gap(px(4.))
+            .px(px(look::GAP_6))
+            .gap(px(look::GAP_4))
             .whitespace_nowrap()
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && this.edit.is_some() {
@@ -59,11 +59,11 @@ impl Explorer {
                     // The name gives way first, so the actions stay in reach.
                     .flex_shrink(1.)
                     .min_w(px(40.))
-                    .gap(px(6.))
-                    .px(px(4.))
+                    .gap(px(look::GAP_4))
+                    .px(px(look::GAP_4))
                     .children(
                         look::language_icon(&self.language)
-                            .map(|path| look::picture(path).size(px(14.))),
+                            .map(|path| look::picture(path).size(px(look::ICON))),
                     )
                     .child(
                         div()
@@ -93,7 +93,7 @@ impl Explorer {
                 div().flex_none().w(px(150.)).child(
                     Input::new(&self.search_input)
                         .small()
-                        .prefix(icon("search").size(px(13.)).text_color(p.muted)),
+                        .prefix(icon("search").size(px(look::ICON)).text_color(p.muted)),
                 ),
             )
             .child(
@@ -116,7 +116,7 @@ impl Explorer {
                 bar_button("de-export", "Export", Some("doc.save"), &p)
                     .on_prepaint(self.popup_triggers.track("export"))
                     .when(self.export_menu.is_some(), |d| d.bg(p.ink(10.)))
-                    .child(icon("chevron.down").size(px(10.)))
+                    .child(icon("chevron.down").size(px(look::ICON_SMALL)))
                     .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                         let open = this.export_menu.is_none();
                         this.close_menus();
@@ -185,8 +185,8 @@ impl Explorer {
         Some(
             div()
                 .flex_none()
-                .px(px(10.))
-                .py(px(4.))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::GAP_4))
                 .border_b_1()
                 .border_color(p.line)
                 .when(failed, |d| d.text_color(p.err).bg(p.err_soft))

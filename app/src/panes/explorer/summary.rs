@@ -138,7 +138,8 @@ impl Explorer {
         };
         let shown_rows = shape.rows;
         let find = self.column_find.read(cx).value().trim().to_lowercase();
-        let hover = p.hover;
+        let row_hover = p.ink(look::ROW_HOVER);
+        let button_hover = p.ink(look::BUTTON_HOVER);
         let columns: Vec<usize> = shape
             .columns
             .iter()
@@ -177,33 +178,33 @@ impl Explorer {
                 let row = h_flex()
                     .id(("de-col", i))
                     .flex_none()
-                    .h(px(SIDE_ROW))
-                    .pl(px(2.))
-                    .pr(px(6.))
-                    .gap(px(6.))
-                    .rounded(px(6.))
+                    .h(px(look::ROW))
+                    .pl(px(look::GAP_2))
+                    .pr(px(look::GAP_6))
+                    .gap(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .when(on, |d| d.bg(p.sel))
-                    .when(!on, |d| d.hover(move |d| d.bg(hover)))
+                    .when(!on, |d| d.hover(move |d| d.bg(row_hover)))
                     .on_click(cx.listener(move |this, _, _, cx| this.reveal_column(column, cx)))
                     .child(
                         div()
                             .id(("de-fold", i))
-                            .size(px(18.))
+                            .size(px(look::CONTROL_ROW))
                             .flex_none()
                             .flex()
                             .items_center()
                             .justify_center()
-                            .rounded(px(4.))
+                            .rounded(px(look::CONTROL_RADIUS))
                             .text_color(p.muted)
-                            .hover(move |d| d.bg(hover))
+                            .hover(move |d| d.bg(button_hover))
                             .child(
                                 icon(if open {
                                     "chevron.down"
                                 } else {
                                     "chevron.right"
                                 })
-                                .size(px(12.)),
+                                .size(px(look::ICON_SMALL)),
                             )
                             .tooltip(tip(if open {
                                 "Hide statistics"
@@ -224,7 +225,7 @@ impl Explorer {
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(6.))
+                            .gap(px(look::GAP_6))
                             .when(!shown, |d| d.opacity(0.45))
                             .child(
                                 div()
@@ -235,7 +236,7 @@ impl Explorer {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded(px(4.))
+                                    .rounded(px(look::CONTROL_RADIUS))
                                     .bg(tint.map_or(p.ink(8.), |t| p.ansi[t].opacity(0.2)))
                                     .text_size(px(look::TINY))
                                     .font_weight(FontWeight::MEDIUM)
@@ -308,16 +309,16 @@ impl Explorer {
             .flex_none()
             .w(px(SIDE_WIDTH))
             .h_full()
-            .p(px(6.))
-            .gap(px(4.))
+            .p(px(look::GAP_6))
+            .gap(px(look::GAP_4))
             .border_r_1()
             .border_color(p.line)
             .child(
                 h_flex()
                     .flex_none()
-                    .h(px(24.))
-                    .pl(px(6.))
-                    .gap(px(6.))
+                    .h(px(look::ROW))
+                    .pl(px(look::GAP_6))
+                    .gap(px(look::GAP_8))
                     .child(
                         div()
                             .text_size(px(look::SMALL))
@@ -351,7 +352,7 @@ impl Explorer {
                 div().flex_none().child(
                     Input::new(&self.column_find)
                         .small()
-                        .prefix(icon("search").size(px(13.)).text_color(p.muted)),
+                        .prefix(icon("search").size(px(look::ICON)).text_color(p.muted)),
                 ),
             )
             .child(
@@ -486,14 +487,16 @@ impl Explorer {
                     body.push(
                         h_flex()
                             .id(("de-val", n))
-                            .gap(px(6.))
+                            .h(px(look::DENSE_ROW))
+                            .gap(px(look::GAP_6))
+                            .rounded(px(look::CODE_RADIUS))
                             .cursor_pointer()
-                            .hover(move |d| d.text_color(accent))
+                            .hover(move |d| d.bg(p.ink(look::ROW_HOVER)).text_color(accent))
                             .child(
                                 h_flex()
                                     .w(px(VALUE_WIDTH))
                                     .flex_none()
-                                    .gap(px(5.))
+                                    .gap(px(look::GAP_4))
                                     .when_some(color, |d, c| d.child(swatch(c)))
                                     .child(
                                         div()
@@ -571,12 +574,12 @@ impl Explorer {
         div()
             .id(("de-stats", ix as usize))
             .flex_none()
-            .ml(px(26.))
-            .mr(px(8.))
-            .mt(px(2.))
-            .mb(px(8.))
+            .ml(px(look::GAP_2 + look::CONTROL_ROW + look::GAP_4))
+            .mr(px(look::GAP_8))
+            .mt(px(look::GAP_2))
+            .mb(px(look::GAP_8))
             .text_size(px(look::SMALL))
-            .child(v_flex().gap(px(4.)).children(body))
+            .child(v_flex().gap(px(look::GAP_4)).children(body))
             .into_any_element()
     }
 
@@ -589,12 +592,12 @@ impl Explorer {
         }
         let p = *Palette::get(cx);
         let columns = self.shape.as_ref().map_or(&[][..], |s| &s.columns);
-        let soft = p.ink(8.);
+        let soft = p.ink(look::BUTTON_HOVER);
         let text = p.text;
         let remove = move |id: ElementId| {
             div()
                 .id(id)
-                .size(px(18.))
+                .size(px(look::CONTROL_ROW))
                 .flex()
                 .flex_none()
                 .items_center()
@@ -603,17 +606,17 @@ impl Explorer {
                 .text_color(p.muted)
                 .cursor_pointer()
                 .hover(move |d| d.bg(soft).text_color(text))
-                .child(icon("close").size(px(11.)))
+                .child(icon("close").size(px(look::ICON_SMALL)))
         };
         let chip = || {
             h_flex()
                 .flex_none()
                 .max_w(px(360.))
-                .h(px(24.))
-                .pl(px(10.))
-                .pr(px(3.))
-                .gap(px(4.))
-                .rounded(px(12.))
+                .h(px(look::CONTROL_CARD))
+                .pl(px(look::GAP_8))
+                .pr(px(look::GAP_4))
+                .gap(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .whitespace_nowrap()
         };
         let filters = self.filters.iter().enumerate().map(|(i, f)| {
@@ -653,11 +656,11 @@ impl Explorer {
                     h_flex()
                         .id(("de-sort", i))
                         .min_w_0()
-                        .gap(px(4.))
+                        .gap(px(look::GAP_4))
                         .cursor_pointer()
                         .child(
                             icon(if descending { "arrow.down" } else { "arrow.up" })
-                                .size(px(12.))
+                                .size(px(look::ICON_SMALL))
                                 .text_color(p.accent),
                         )
                         .child(
@@ -696,9 +699,9 @@ impl Explorer {
                 .flex_none()
                 .flex_wrap()
                 .items_center()
-                .gap(px(6.))
-                .px(px(8.))
-                .py(px(5.))
+                .gap(px(look::GAP_8))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::GAP_4))
                 .border_b_1()
                 .border_color(p.line)
                 .children(filters)
@@ -761,7 +764,8 @@ pub(super) fn missing_share(missing: u64, rows: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SIDE_ROW, SPARK_HEIGHT, SPARK_WIDTH, column_list_item, missing_share};
+    use super::{SPARK_HEIGHT, SPARK_WIDTH, column_list_item, missing_share};
+    use crate::look::DENSE_ROW;
     use gpui_kit::component::h_flex;
     use gpui_kit::{
         AppContext, Bounds, Context, IntoElement, ListAlignment, ListState, ParentElement, Pixels,
@@ -795,7 +799,7 @@ mod tests {
                         column_list_item()
                             .child(
                                 h_flex()
-                                    .h(px(SIDE_ROW))
+                                    .h(px(DENSE_ROW))
                                     .child(
                                         div()
                                             .flex_1()

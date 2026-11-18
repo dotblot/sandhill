@@ -70,7 +70,7 @@ impl Workbench {
         }
         let (width, height, dpi) = self.plot_history.size_inputs.as_ref()?;
         let p = *Palette::get(cx);
-        let mut rows = v_flex().gap(px(4.));
+        let mut rows = v_flex().gap(px(look::GAP_2));
         for (i, (label, sizing)) in [
             ("Fit to pane", PlotSizing::Fit),
             (
@@ -96,30 +96,25 @@ impl Workbench {
             if i == 1 {
                 rows = rows.child(
                     div()
-                        .px(px(8.))
-                        .py(px(3.))
+                        .px(px(look::GAP_8))
+                        .py(px(look::GAP_2))
                         .text_color(p.faint)
                         .child("Fixed size"),
                 );
             }
+            let picked = self.plot_history.sizing == sizing;
             rows = rows.child(
                 h_flex()
                     .id(("plot-size-choice", i))
-                    .h(px(27.))
-                    .px(px(8.))
-                    .gap(px(8.))
-                    .rounded(px(4.))
+                    .h(px(look::ROW))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .hover(move |d| d.bg(p.hover))
-                    .child(
-                        div()
-                            .w(px(12.))
-                            .child(if self.plot_history.sizing == sizing {
-                                "✓"
-                            } else {
-                                ""
-                            }),
-                    )
+                    .child(div().w(px(look::ICON)).flex_none().when(picked, |d| {
+                        d.child(look::icon("check").size(px(look::ICON)))
+                    }))
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| this.set_plot_sizing(sizing, cx))),
             );
@@ -132,27 +127,28 @@ impl Workbench {
             .child(rows)
             .child(
                 div()
-                    .px(px(8.))
-                    .pt(px(8.))
-                    .pb(px(4.))
+                    .px(px(look::GAP_8))
+                    .pt(px(look::GAP_8))
+                    .pb(px(look::GAP_4))
                     .text_color(p.faint)
                     .child("Custom: width × height (in), DPI"),
             )
             .child(
                 h_flex()
-                    .px(px(8.))
-                    .gap(px(6.))
-                    .child(div().w(px(64.)).child(Input::new(width).small()))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_8))
+                    .child(div().w(px(64.)).child(plot_field(width)))
                     .child("×")
-                    .child(div().w(px(64.)).child(Input::new(height).small()))
-                    .child(div().w(px(64.)).child(Input::new(dpi).small())),
+                    .child(div().w(px(64.)).child(plot_field(height)))
+                    .child(div().w(px(64.)).child(plot_field(dpi))),
             )
             .child(
                 look::bar_button("plot-size-apply", "Apply custom size", None, &p)
+                    .h(px(look::CONTROL_CARD))
                     .on_click(cx.listener(|this, _, _, cx| this.apply_custom_plot_size(cx))),
             )
             .when_some(self.plot_history.size_error.clone(), |d, error| {
-                d.child(div().px(px(8.)).text_color(p.err).child(error))
+                d.child(div().px(px(look::GAP_8)).text_color(p.err).child(error))
             })
             .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
                 if this.popup_triggers.contains("plot-size", event.position) {

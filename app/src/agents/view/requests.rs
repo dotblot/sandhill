@@ -9,16 +9,17 @@ impl Agents {
         let pending = ask.answer.is_none();
         let sent = self.sent.contains(&ask.id);
         let mut card = v_flex()
-            .gap(px(8.))
-            .p(px(10.))
-            .rounded(px(RADIUS))
+            .gap(px(look::GAP_8))
+            .px(px(look::GAP_12))
+            .py(px(look::GAP_8))
+            .rounded(px(look::RADIUS))
             .border_1()
             .border_color(p.accent.opacity(0.55))
             .bg(p.accent.opacity(0.06))
             .child(
                 h_flex()
                     .items_start()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         icon(if !view.questions.is_empty() {
                             "help"
@@ -27,7 +28,7 @@ impl Agents {
                         } else {
                             "ask"
                         })
-                        .size(px(18.))
+                        .size(px(look::ICON_LARGE))
                         .text_color(p.accent),
                     )
                     .child(
@@ -61,8 +62,8 @@ impl Agents {
             card = card.child(
                 div()
                     .max_h(px(320.))
-                    .p(px(8.))
-                    .rounded(px(RADIUS))
+                    .p(px(look::GAP_8))
+                    .rounded(px(look::RADIUS))
                     .border_1()
                     .border_color(p.line)
                     .bg(p.bg)
@@ -134,12 +135,12 @@ impl Agents {
                     let on = picked.contains(label);
                     let key = key.clone();
                     let label_owned = label.clone();
-                    let hover = p.faint;
                     v_flex()
                         .id(SharedString::from(format!("q-{}-{qi}-{oi}", ask.id)))
-                        .px(px(9.))
-                        .py(px(5.))
-                        .rounded(px(RADIUS))
+                        .min_h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .py(px(look::GAP_4))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .border_1()
                         .bg(p.bg)
                         .cursor_pointer()
@@ -147,7 +148,8 @@ impl Agents {
                             if on {
                                 d.border_color(p.accent).bg(p.accent_soft)
                             } else {
-                                d.border_color(p.line).hover(move |d| d.border_color(hover))
+                                d.border_color(p.line)
+                                    .hover(|d| d.bg(p.ink(look::ROW_HOVER)))
                             }
                         })
                         .child(div().font_weight(FontWeight::MEDIUM).child(label.clone()))
@@ -166,10 +168,10 @@ impl Agents {
             let other = self.others.get(&key).cloned();
             card = card.child(
                 v_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .child(
                         h_flex()
-                            .gap(px(6.))
+                            .gap(px(look::GAP_6))
                             .items_start()
                             .child(
                                 div()
@@ -181,8 +183,8 @@ impl Agents {
                             .when_some(question.header.clone(), |d, h| {
                                 d.child(
                                     div()
-                                        .px(px(6.))
-                                        .rounded(px(5.))
+                                        .px(px(look::GAP_6))
+                                        .rounded(px(look::CONTROL_RADIUS))
                                         .bg(p.ink(7.))
                                         .text_size(px(look::SMALL))
                                         .text_color(p.muted)
@@ -200,7 +202,7 @@ impl Agents {
                     })
                     .child(
                         v_flex()
-                            .gap(px(4.))
+                            .gap(px(look::GAP_4))
                             .children(options)
                             .when_some(other, |d, other| d.child(Input::new(&other).small())),
                     ),
@@ -211,7 +213,7 @@ impl Agents {
             let send = json!({"behavior": "allow", "answers": answers});
             card = card.child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child(
                         look::button(SharedString::from(format!("q-answer-{id}")), "Answer", None, ButtonSize::Card)
                             .primary()
@@ -234,7 +236,7 @@ impl Agents {
             let scopes = ask.scopes.clone();
             let can = |scope: &str| scopes.as_ref().is_none_or(|s| s.iter().any(|x| x == scope));
             let plan = view.plan.is_some();
-            let mut buttons = h_flex().gap(px(6.)).flex_wrap();
+            let mut buttons = h_flex().gap(px(look::GAP_8)).flex_wrap();
             let button = |id: &str, label: &str, primary: bool, deny: bool| {
                 look::button(
                     SharedString::from(format!("{id}-{}", ask.id)),

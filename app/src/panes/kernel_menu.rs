@@ -120,7 +120,7 @@ impl Workbench {
             Some(reason) => format!("{state}\n{reason}"),
             None => state,
         };
-        let hover = p.ink(8.);
+        let hover = p.ink(look::BUTTON_HOVER);
         let open = self.kernel_menu && self.console_sessions.picker_console == console;
         let button = h_flex()
             .id(if console {
@@ -141,10 +141,10 @@ impl Workbench {
             })
             // A capsule like every other in the window: fully round, a
             // faint wash, no edge (Huan, 2026-11-15).
-            .h(px(22.))
-            .gap(px(5.))
-            .pl(px(6.))
-            .pr(px(8.))
+            .h(px(look::CONTROL_ROW))
+            .gap(px(look::GAP_4))
+            .pl(px(look::GAP_6))
+            .pr(px(look::GAP_8))
             .rounded_full()
             .bg(p.cap_bg)
             .text_size(px(look::TAB_TEXT))
@@ -154,11 +154,11 @@ impl Workbench {
             .hover(move |d| d.bg(hover))
             .map(|d| {
                 if let Some(file) = bound {
-                    d.child(picture(&look::file_icon(file)).size(px(14.)))
+                    d.child(picture(&look::file_icon(file)).size(px(look::ICON)))
                 } else if let Some(lang) = chosen.and_then(|s| look::language_icon(&s.language)) {
-                    d.child(picture(lang).size(px(14.)))
+                    d.child(picture(lang).size(px(look::ICON)))
                 } else {
-                    d.pl(px(8.))
+                    d.pl(px(look::GAP_8))
                 }
             })
             .child(div().min_w_0().text_ellipsis().child(label))
@@ -172,7 +172,11 @@ impl Workbench {
                     &p,
                 ))
             })
-            .child(icon("chevron.down").size(px(12.)).text_color(p.faint))
+            .child(
+                icon("chevron.down")
+                    .size(px(look::ICON_SMALL))
+                    .text_color(p.faint),
+            )
             .tooltip(move |window, cx| {
                 gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
             })
@@ -199,14 +203,18 @@ impl Workbench {
             .child(button)
             .when(open, |d| {
                 d.child(
-                    div().absolute().left_0().top(px(24.)).child(
-                        deferred(
-                            anchored()
-                                .snap_to_window_with_margin(px(8.))
-                                .child(self.kernel_list(console, cx)),
-                        )
-                        .with_priority(3),
-                    ),
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(px(look::CONTROL_ROW + look::GAP_2))
+                        .child(
+                            deferred(
+                                anchored()
+                                    .snap_to_window_with_margin(px(look::GAP_8))
+                                    .child(self.kernel_list(console, cx)),
+                            )
+                            .with_priority(3),
+                        ),
                 )
             })
             .into_any_element()
@@ -215,6 +223,7 @@ impl Workbench {
     /// The list of kernels, by language; the chosen one is ticked.
     fn kernel_list(&self, console: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
+        let hover = p.ink(7.);
         let chosen = if console {
             self.loose_kernel.clone()
         } else {
@@ -233,8 +242,8 @@ impl Workbench {
         {
             rows.push(
                 v_flex()
-                    .px(px(8.))
-                    .py(px(4.))
+                    .px(px(look::GAP_8))
+                    .py(px(look::GAP_4))
                     .text_color(p.err)
                     .child(name.to_string())
                     .child(div().text_color(p.faint).child(reason))
@@ -265,9 +274,8 @@ impl Workbench {
             if !live.is_empty() {
                 rows.push(
                     div()
-                        .px(px(8.))
-                        .pt(px(2.))
-                        .pb(px(2.))
+                        .px(px(look::GAP_8))
+                        .py(px(look::GAP_2))
                         .text_color(p.faint)
                         .child("Live sessions")
                         .into_any_element(),
@@ -295,7 +303,6 @@ impl Workbench {
                             .to_string()
                     })
                     .unwrap_or_else(|| "creation time unavailable".into());
-                let hover = p.ink(7.);
                 let busy = self
                     .runs
                     .values()
@@ -308,28 +315,32 @@ impl Workbench {
                 rows.push(
                     h_flex()
                         .id(("live-console-session", ix))
-                        .gap(px(6.))
-                        .px(px(8.))
-                        .py(px(4.))
-                        .rounded(px(6.))
+                        .min_h(px(look::ROW))
+                        .gap(px(look::GAP_4))
+                        .px(px(look::GAP_8))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
                         .hover(move |d| d.bg(hover))
                         .child(
                             div()
-                                .w(px(14.))
+                                .w(px(look::ICON))
                                 .flex_none()
-                                .when(picked, |d| d.child(icon("check").size(px(13.)))),
+                                .when(picked, |d| d.child(icon("check").size(px(look::ICON)))),
                         )
                         .when_some(look::language_icon(&session.language), |d, language| {
-                            d.child(picture(language).size(px(14.)))
+                            d.child(picture(language).size(px(look::ICON)))
                         })
-                        .child(v_flex().min_w_0().child(title).child(
-                            div().text_color(p.faint).child(format!(
-                                "Session {} · {created}{}",
-                                ix + 1,
-                                if busy { " · busy" } else { "" },
-                            )),
-                        ))
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .line_height(px(look::ROW / 2.))
+                                .child(title)
+                                .child(div().text_color(p.faint).child(format!(
+                                    "Session {} · {created}{}",
+                                    ix + 1,
+                                    if busy { " · busy" } else { "" },
+                                ))),
+                        )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.kernel_menu = false;
                             this.select_console_session(&id, cx);
@@ -341,9 +352,13 @@ impl Workbench {
         for (title, specs) in grouped(&self.kernels, only.as_deref()) {
             rows.push(
                 div()
-                    .px(px(8.))
-                    .pt(px(if rows.is_empty() { 2. } else { 8. }))
-                    .pb(px(2.))
+                    .px(px(look::GAP_8))
+                    .pt(px(if rows.is_empty() {
+                        look::GAP_2
+                    } else {
+                        look::GAP_8
+                    }))
+                    .pb(px(look::GAP_2))
                     .text_color(p.faint)
                     .child(title)
                     .into_any_element(),
@@ -351,7 +366,7 @@ impl Workbench {
             for (ix, spec) in specs {
                 let name = spec.name.clone();
                 let picked = chosen.as_deref() == Some(&spec.name);
-                let hover = p.ink(7.);
+                let marked = picked && !console;
                 let remembered = self
                     .open
                     .as_ref()
@@ -395,28 +410,29 @@ impl Workbench {
                 rows.push(
                     h_flex()
                         .id(("kernel-row", ix))
-                        .gap(px(6.))
-                        .px(px(8.))
-                        .py(px(4.))
-                        .rounded(px(6.))
+                        .min_h(px(look::ROW))
+                        .gap(px(look::GAP_4))
+                        .px(px(look::GAP_8))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
                         .hover(move |d| d.bg(hover))
                         .child(
                             div()
-                                .w(px(14.))
+                                .w(px(look::ICON))
                                 .flex_none()
-                                .when(picked && !console, |d| d.child(icon("check").size(px(13.)))),
+                                .when(marked, |d| d.child(icon("check").size(px(look::ICON)))),
                         )
                         .map(|d| match look::language_icon(&spec.language) {
-                            Some(lang) => d.child(picture(lang).size(px(14.))),
+                            Some(lang) => d.child(picture(lang).size(px(look::ICON))),
                             None => d,
                         })
                         .child(
                             v_flex()
                                 .min_w_0()
+                                .line_height(px(look::ROW / 2.))
                                 .child(
                                     h_flex()
-                                        .gap(px(10.))
+                                        .gap(px(look::GAP_8))
                                         .child(if console {
                                             format!("New {}", spec.display_name)
                                         } else {
@@ -464,8 +480,8 @@ impl Workbench {
         if rows.is_empty() {
             rows.push(
                 div()
-                    .px(px(8.))
-                    .py(px(4.))
+                    .px(px(look::GAP_8))
+                    .py(px(look::GAP_4))
                     .text_color(p.faint)
                     .child("No kernels found")
                     .into_any_element(),

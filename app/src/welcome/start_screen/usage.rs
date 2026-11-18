@@ -78,11 +78,11 @@ impl AppWindow {
         });
         let mut page = v_flex()
             .w_full()
-            .gap(px(16.))
+            .gap(px(look::GAP_12))
             .child(
                 h_flex()
                     .w_full()
-                    .gap(px(12.))
+                    .gap(px(look::GAP_8))
                     .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Usage"))
                     .children(refresh),
             )
@@ -260,7 +260,7 @@ impl Render for UsageView {
         };
         v_flex()
             .w_full()
-            .gap(px(16.))
+            .gap(px(look::GAP_12))
             .child(h_flex().child(periods))
             .child(body)
     }
@@ -274,8 +274,8 @@ impl UsageView {
             v_flex()
                 .flex_1()
                 .min_w_0()
-                .gap(px(2.))
-                .p(px(12.))
+                .gap(px(look::GAP_2))
+                .p(px(look::GAP_12))
                 .rounded(px(look::RADIUS))
                 .border_1()
                 .border_color(p.line)
@@ -308,7 +308,7 @@ impl UsageView {
         let cards = h_flex()
             .w_full()
             .items_stretch()
-            .gap(px(10.))
+            .gap(px(look::GAP_8))
             .child(card("Requests", count(t.requests), None))
             .child(card("Tokens", count(t.tokens()), Some(tokens_note)))
             .child(card("Cache rate", percent(t.cache_rate()), None))
@@ -360,7 +360,7 @@ impl UsageView {
                 .flex()
                 .items_end()
                 .rounded_t(px(2.))
-                .hover(|d| d.bg(p.ink(6.)))
+                .hover(|d| d.bg(p.ink(look::ROW_HOVER)))
                 .child(bar)
                 .tooltip(move |w, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
@@ -374,8 +374,14 @@ impl UsageView {
         let last = stats.days.last().map(|d| d.day.clone()).unwrap_or_default();
         let chart = v_flex()
             .w_full()
-            .gap(px(6.))
-            .child(h_flex().w_full().items_end().gap(px(2.)).children(bars))
+            .gap(px(look::GAP_6))
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_end()
+                    .gap(px(look::GAP_2))
+                    .children(bars),
+            )
             .child(
                 h_flex()
                     .w_full()
@@ -384,19 +390,23 @@ impl UsageView {
                     .child(div().flex_1().child(first))
                     .child(last),
             )
-            .child(h_flex().gap(px(14.)).children(agents.iter().map(|agent| {
+            .child(
                 h_flex()
-                    .gap(px(5.))
-                    .text_size(px(look::SMALL))
-                    .text_color(p.muted)
-                    .child(div().size(px(8.)).rounded_full().bg(agent_colour(agent, p)))
-                    .child(agent_name(agent))
-            })));
+                    .gap(px(look::GAP_12))
+                    .children(agents.iter().map(|agent| {
+                        h_flex()
+                            .gap(px(look::GAP_4))
+                            .text_size(px(look::SMALL))
+                            .text_color(p.muted)
+                            .child(div().size(px(8.)).rounded_full().bg(agent_colour(agent, p)))
+                            .child(agent_name(agent))
+                    })),
+            );
 
         let table = |title: &'static str, rows: &[UsageRow], projects: bool| {
             let header = h_flex()
-                .gap(px(10.))
-                .pb(px(4.))
+                .gap(px(look::GAP_8))
+                .pb(px(look::GAP_4))
                 .border_b_1()
                 .border_color(p.line)
                 .text_size(px(look::SMALL))
@@ -422,8 +432,8 @@ impl UsageView {
                     format!("{} · {model}", agent_name(&row.agent))
                 };
                 h_flex()
-                    .gap(px(10.))
-                    .py(px(3.))
+                    .min_h(px(look::DENSE_ROW))
+                    .gap(px(look::GAP_8))
                     .when(!projects, |d| {
                         d.child(
                             div()
@@ -466,7 +476,7 @@ impl UsageView {
             .unwrap_or_default();
         v_flex()
             .w_full()
-            .gap(px(18.))
+            .gap(px(look::GAP_12))
             .child(cards)
             .child(chart)
             .child(table("By agent and model", &stats.models, false))

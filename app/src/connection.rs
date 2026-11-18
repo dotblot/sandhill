@@ -64,7 +64,7 @@ impl Workbench {
             Link::Connecting => p.busy,
             Link::Failed(_) => p.err,
         };
-        let hover = p.ink(7.);
+        let hover = p.ink(look::BUTTON_HOVER);
         h_flex()
             .id("connection-status")
             .on_prepaint(self.popup_triggers.track("connection"))
@@ -72,8 +72,8 @@ impl Workbench {
             .max_w(px(300.))
             .flex_shrink(1.)
             .h(px(16.))
-            .px(px(6.))
-            .gap(px(5.))
+            .px(px(look::GAP_6))
+            .gap(px(look::GAP_4))
             .rounded_full()
             .text_size(px(look::SMALL))
             .text_color(p.text)
@@ -86,7 +86,7 @@ impl Workbench {
                 } else {
                     "device.server"
                 })
-                .size(px(12.)),
+                .size(px(look::ICON_SMALL)),
             )
             .child(div().min_w_0().overflow_hidden().child(name))
             .child(crate::look::dot(link).size(px(5.)).flex_none())
@@ -273,20 +273,20 @@ impl Workbench {
             Link::Failed(_) => (p.err, "Disconnected"),
         };
         let header = v_flex()
-            .px(px(8.))
-            .pt(px(4.))
-            .pb(px(6.))
-            .gap(px(2.))
+            .px(px(look::GAP_8))
+            .pt(px(look::GAP_4))
+            .pb(px(look::GAP_6))
+            .gap(px(look::GAP_2))
             .child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_4))
                     .child(
                         icon(if local {
                             "device.laptop"
                         } else {
                             "device.cloud"
                         })
-                        .size(px(15.)),
+                        .size(px(look::ICON_LARGE)),
                     )
                     .child(
                         div()
@@ -300,7 +300,7 @@ impl Workbench {
                         h_flex()
                             .ml_auto()
                             .flex_none()
-                            .gap(px(5.))
+                            .gap(px(look::GAP_4))
                             .text_color(p.muted)
                             .child(crate::look::dot(dot).size(px(6.)))
                             .child(state),
@@ -309,7 +309,7 @@ impl Workbench {
             .when(!about.is_empty(), |d| {
                 d.child(
                     div()
-                        .pl(px(23.))
+                        .pl(px(look::ICON_LARGE + look::GAP_4))
                         .text_color(p.faint)
                         .child(about.join(" · ")),
                 )
@@ -343,15 +343,15 @@ impl Workbench {
                     let tiles = rows.into_iter().map(|r| {
                         let key = r.key;
                         let high = r.percent.is_some_and(|v| v >= 80);
-                        let hover = p.ink(7.);
+                        let hover = p.ink(look::ROW_HOVER);
                         let main = r.main.clone();
                         h_flex()
                             .id(SharedString::from(format!("usage-{key}")))
                             .w(relative(0.5))
-                            .gap(px(8.))
-                            .px(px(8.))
-                            .py(px(5.))
-                            .rounded(px(look::RADIUS - 4.))
+                            .gap(px(look::GAP_4))
+                            .px(px(look::GAP_8))
+                            .py(px(look::GAP_4))
+                            .rounded(px(look::CONTROL_RADIUS))
                             .hover(move |d| d.bg(hover))
                             .child(crate::shell::meter::ring_of(
                                 r.percent.map(|v| v as f32 / 100.),
@@ -414,8 +414,9 @@ impl Workbench {
             let lines = sessions.iter().take(shown).map(|s| {
                 let files = self.used_by(&s.id).join(", ");
                 h_flex()
-                    .px(px(8.))
-                    .gap(px(10.))
+                    .h(px(look::DENSE_ROW))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_8))
                     .child(
                         div()
                             .flex_none()
@@ -461,7 +462,7 @@ impl Workbench {
                     }),
             );
 
-        let hover = p.ink(8.);
+        let hover = p.ink(look::ROW_HOVER);
         let item = |id: &'static str,
                     name: &'static str,
                     label: &'static str,
@@ -470,13 +471,13 @@ impl Workbench {
                     run: fn(&mut Workbench, &mut Context<Workbench>)| {
             h_flex()
                 .id(id)
-                .h(px(26.))
-                .px(px(8.))
-                .gap(px(8.))
-                .rounded(px(look::RADIUS - 4.))
+                .h(px(look::ROW))
+                .px(px(look::GAP_8))
+                .gap(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .when(!enabled, |d| d.opacity(0.45))
                 .when(enabled, |d| d.cursor_pointer().hover(move |d| d.bg(hover)))
-                .child(icon(name).size(px(13.)).text_color(p.muted))
+                .child(icon(name).text_color(p.muted))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if enabled {
@@ -607,7 +608,7 @@ impl Workbench {
             .w(px(760.))
             .max_w(relative(0.9))
             .p(px(16.))
-            .gap(px(8.))
+            .gap(px(look::GAP_12))
             .bg(p.bg)
             .border_1()
             .border_color(p.glass_edge)
@@ -626,9 +627,9 @@ impl Workbench {
                     .h(px(420.))
                     .overflow_y_scroll()
                     .track_scroll(&log.scroll)
-                    .p(px(8.))
+                    .p(px(look::GAP_8))
                     .bg(p.chunk)
-                    .rounded(px(6.))
+                    .rounded(px(look::CODE_RADIUS))
                     .font_family(look::MONO)
                     .text_size(px(look::SMALL))
                     .child(text),
@@ -636,7 +637,7 @@ impl Workbench {
             .child(
                 h_flex()
                     .justify_end()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         Button::new("log-refresh")
                             .small()

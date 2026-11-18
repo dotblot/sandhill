@@ -566,7 +566,7 @@ impl AppWindow {
             window.focus(&manager.focus, cx);
         }
         let busy = manager.busy;
-        let mut ticks = h_flex().flex_wrap().items_center().gap(px(16.));
+        let mut ticks = h_flex().flex_wrap().items_center().gap(px(look::GAP_8));
         for (index, (host, device)) in manager.devices.iter().enumerate() {
             let host = host.clone();
             ticks = ticks.child(
@@ -586,7 +586,7 @@ impl AppWindow {
             );
         }
         let header = v_flex()
-            .gap(px(10.))
+            .gap(px(look::GAP_8))
             .child(
                 div()
                     .text_size(px(look::WELCOME_TITLE))
@@ -599,7 +599,7 @@ impl AppWindow {
             .child(
                 h_flex()
                     .w_full()
-                    .gap(px(12.))
+                    .gap(px(look::GAP_8))
                     .child(ticks.flex_1().min_w_0())
                     .child(
                         Button::new("manage-inventory")
@@ -623,7 +623,7 @@ impl AppWindow {
         v_flex()
             .w_full()
             .min_w_0()
-            .gap(px(16.))
+            .gap(px(look::GAP_12))
             .track_focus(&manager.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape"
@@ -661,7 +661,7 @@ impl AppWindow {
         let busy = manager.busy;
         let section = |title: &str, extra: String| {
             h_flex()
-                .gap(px(8.))
+                .gap(px(look::GAP_6))
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
@@ -677,22 +677,23 @@ impl AppWindow {
         let mut card = v_flex()
             .w_full()
             .min_w_0()
-            .gap(px(12.))
-            .p(px(14.))
+            .gap(px(look::GAP_12))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .rounded(px(look::RADIUS))
             .border_1()
             .border_color(p.line)
             .bg(p.panel)
             .child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_4))
                     .child(
                         icon(if host == sandhill_link::LOCAL {
                             "device.laptop"
                         } else {
                             "device.server"
                         })
-                        .size(px(16.)),
+                        .size(px(look::ICON_LARGE)),
                     )
                     .child(
                         div()
@@ -715,8 +716,8 @@ impl AppWindow {
                     .id(SharedString::from(format!("manage-result-{index}-{i}")))
                     .max_h(px(160.))
                     .overflow_y_scroll()
-                    .p(px(8.))
-                    .rounded(px(6.))
+                    .p(px(look::GAP_8))
+                    .rounded(px(look::CODE_RADIUS))
                     .bg(p.chunk)
                     .font_family(look::MONO)
                     .text_size(px(look::SMALL))
@@ -736,7 +737,7 @@ impl AppWindow {
             None => {
                 card = card.child(
                     v_flex()
-                        .gap(px(4.))
+                        .gap(px(look::GAP_4))
                         .child(section("Running", String::new()))
                         .child(
                             div()
@@ -752,7 +753,7 @@ impl AppWindow {
                     .flatten()
                     .collect();
                 let mut list = v_flex()
-                    .gap(px(2.))
+                    .gap(px(look::GAP_2))
                     .child(section("Running", resources.len().to_string()));
                 if resources.is_empty() {
                     list = list.child(div().text_color(p.muted).child("Nothing running"));
@@ -762,11 +763,11 @@ impl AppWindow {
                         h_flex()
                             .w_full()
                             .min_w_0()
-                            .gap(px(8.))
-                            .py(px(4.))
+                            .min_h(px(look::DENSE_ROW))
+                            .gap(px(look::GAP_4))
                             .child(
                                 icon(kind_icon(&text(resource, "kind")))
-                                    .size(px(14.))
+                                    .size(px(look::ICON_SMALL))
                                     .text_color(p.muted),
                             )
                             .child(
@@ -825,10 +826,13 @@ impl AppWindow {
             let protected_color = p.ink(28.);
             let share = |part: u64| (part as f32 / total.max(1) as f32).clamp(0., 1.);
             let legend = |color: Hsla, label: String| {
-                h_flex().gap(px(5.)).child(look::dot(color)).child(label)
+                h_flex()
+                    .gap(px(look::GAP_4))
+                    .child(look::dot(color))
+                    .child(label)
             };
             let mut list = v_flex()
-                .gap(px(6.))
+                .gap(px(look::GAP_6))
                 .child(section("Storage", bytes(total)))
                 .when(total > 0, |d| {
                     d.child(
@@ -851,7 +855,7 @@ impl AppWindow {
                 .child(
                     h_flex()
                         .flex_wrap()
-                        .gap(px(14.))
+                        .gap(px(look::GAP_12))
                         .text_size(px(look::SMALL))
                         .text_color(p.muted)
                         .child(legend(p.accent, format!("{} removable", bytes(removable))))
@@ -887,7 +891,7 @@ impl AppWindow {
                     v_flex()
                         .w_full()
                         .min_w_0()
-                        .pt(px(8.))
+                        .pt(px(look::GAP_8))
                         .border_t_1()
                         .border_color(p.line)
                         .child(
@@ -895,37 +899,41 @@ impl AppWindow {
                                 .w_full()
                                 .min_w_0()
                                 .items_start()
-                                .gap(px(10.))
-                                .child(div().w(px(18.)).flex_none().pt(px(2.)).when(
-                                    is_removable,
-                                    |d| {
-                                        d.child(
-                                            Checkbox::new(SharedString::from(format!(
-                                                "manage-category-{index}-{i}"
-                                            )))
-                                            .checked(checked)
-                                            .disabled(busy)
-                                            .accessibility_label(category_label(&category))
-                                            .on_click(cx.listener(
-                                                move |this, on: &bool, _, cx| {
-                                                    if let Some(manager) =
-                                                        &mut this.resource_manager
-                                                    {
-                                                        if *on {
-                                                            manager
-                                                                .categories
-                                                                .insert(toggle.clone());
-                                                        } else {
-                                                            manager.categories.remove(&toggle);
+                                .min_h(px(look::ROW))
+                                .gap(px(look::GAP_8))
+                                .child(
+                                    div()
+                                        .w(px(look::CONTROL_ROW))
+                                        .flex_none()
+                                        .pt(px(look::GAP_2))
+                                        .when(is_removable, |d| {
+                                            d.child(
+                                                Checkbox::new(SharedString::from(format!(
+                                                    "manage-category-{index}-{i}"
+                                                )))
+                                                .checked(checked)
+                                                .disabled(busy)
+                                                .accessibility_label(category_label(&category))
+                                                .on_click(cx.listener(
+                                                    move |this, on: &bool, _, cx| {
+                                                        if let Some(manager) =
+                                                            &mut this.resource_manager
+                                                        {
+                                                            if *on {
+                                                                manager
+                                                                    .categories
+                                                                    .insert(toggle.clone());
+                                                            } else {
+                                                                manager.categories.remove(&toggle);
+                                                            }
+                                                            manager.confirm = None;
                                                         }
-                                                        manager.confirm = None;
-                                                    }
-                                                    cx.notify();
-                                                },
-                                            )),
-                                        )
-                                    },
-                                ))
+                                                        cx.notify();
+                                                    },
+                                                )),
+                                            )
+                                        }),
+                                )
                                 .child(
                                     v_flex()
                                         .id(SharedString::from(format!(
@@ -933,12 +941,14 @@ impl AppWindow {
                                         )))
                                         .flex_1()
                                         .min_w_0()
+                                        .rounded(px(look::CONTROL_RADIUS))
                                         .cursor_pointer()
+                                        .hover(move |d| d.bg(p.ink(look::ROW_HOVER)))
                                         .child(category_label(&category))
                                         .child(
                                             h_flex()
                                                 .min_w_0()
-                                                .gap(px(4.))
+                                                .gap(px(look::GAP_4))
                                                 .text_size(px(look::SMALL))
                                                 .text_color(p.muted)
                                                 .child(
@@ -947,7 +957,7 @@ impl AppWindow {
                                                     } else {
                                                         "chevron.right"
                                                     })
-                                                    .size(px(11.)),
+                                                    .size(px(look::ICON_SMALL)),
                                                 )
                                                 .child(
                                                     div()
@@ -983,37 +993,39 @@ impl AppWindow {
                                 )),
                         )
                         .when(open, |d| {
-                            d.child(v_flex().pl(px(28.)).pt(px(6.)).gap(px(6.)).children(
-                                items.into_iter().map(|item| {
-                                    v_flex()
-                                        .min_w_0()
-                                        .text_size(px(look::SMALL))
-                                        .text_color(p.muted)
-                                        .child(
-                                            h_flex()
-                                                .min_w_0()
-                                                .gap(px(8.))
-                                                .child(
-                                                    div()
-                                                        .flex_1()
-                                                        .min_w_0()
-                                                        .overflow_hidden()
-                                                        .text_ellipsis()
-                                                        .whitespace_nowrap()
-                                                        .font_family(look::MONO)
-                                                        .child(text(item, "path")),
-                                                )
-                                                .child(div().flex_none().child(bytes(
-                                                    item["bytes"].as_u64().unwrap_or(0),
-                                                ))),
-                                        )
-                                        .when_some(item["reason"].as_str(), |d, reason| {
-                                            d.child(
-                                                div().whitespace_normal().child(reason.to_string()),
+                            let details = v_flex()
+                                .pl(px(look::CONTROL_ROW + look::GAP_8))
+                                .pt(px(look::GAP_6))
+                                .gap(px(look::GAP_6));
+                            d.child(details.children(items.into_iter().map(|item| {
+                                v_flex()
+                                    .min_w_0()
+                                    .text_size(px(look::SMALL))
+                                    .text_color(p.muted)
+                                    .child(
+                                        h_flex()
+                                            .min_w_0()
+                                            .gap(px(look::GAP_8))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .text_ellipsis()
+                                                    .whitespace_nowrap()
+                                                    .font_family(look::MONO)
+                                                    .child(text(item, "path")),
                                             )
-                                        })
-                                }),
-                            ))
+                                            .child(
+                                                div().flex_none().child(bytes(
+                                                    item["bytes"].as_u64().unwrap_or(0),
+                                                )),
+                                            ),
+                                    )
+                                    .when_some(item["reason"].as_str(), |d, reason| {
+                                        d.child(div().whitespace_normal().child(reason.to_string()))
+                                    })
+                            })))
                         }),
                 );
             }
@@ -1037,20 +1049,23 @@ impl AppWindow {
             let toggle = host.to_string();
             card = card.child(
                 v_flex()
-                    .gap(px(4.))
+                    .gap(px(look::GAP_4))
                     .child(
                         h_flex()
                             .id(("manage-projects", index))
-                            .gap(px(6.))
+                            .min_h(px(look::ROW))
+                            .gap(px(look::GAP_4))
+                            .rounded(px(look::CONTROL_RADIUS))
                             .cursor_pointer()
                             .text_color(p.muted)
+                            .hover(move |d| d.bg(p.ink(look::ROW_HOVER)))
                             .child(
                                 icon(if open {
                                     "chevron.down"
                                 } else {
                                     "chevron.right"
                                 })
-                                .size(px(12.)),
+                                .size(px(look::ICON)),
                             )
                             .child(format!(
                                 "{} project{}, never removed",
@@ -1069,7 +1084,7 @@ impl AppWindow {
                     .when(open, |d| {
                         d.children(device.projects.iter().map(|path| {
                             div()
-                                .pl(px(18.))
+                                .pl(px(look::ICON + look::GAP_4))
                                 .text_size(px(look::SMALL))
                                 .font_family(look::MONO)
                                 .text_color(p.muted)
@@ -1087,7 +1102,7 @@ impl AppWindow {
         let manager = self.resource_manager.as_ref().unwrap();
         let busy = manager.busy;
         let mut actions = v_flex()
-            .gap(px(10.))
+            .gap(px(look::GAP_12))
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Actions"))
             .when_some(manager.message.clone(), |d, message| {
                 d.child(div().text_color(p.muted).whitespace_normal().child(message))
@@ -1102,8 +1117,8 @@ impl AppWindow {
                 h_flex()
                     .w_full()
                     .items_start()
-                    .gap(px(14.))
-                    .p(px(12.))
+                    .gap(px(look::GAP_12))
+                    .p(px(look::GAP_12))
                     .rounded(px(look::RADIUS))
                     .border_1()
                     .border_color(p.line)
@@ -1111,7 +1126,7 @@ impl AppWindow {
                         v_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(4.))
+                            .gap(px(look::GAP_4))
                             .child(
                                 div()
                                     .font_weight(FontWeight::SEMIBOLD)
@@ -1126,7 +1141,7 @@ impl AppWindow {
                             )
                             .children(extra),
                     )
-                    .child(h_flex().flex_none().gap(px(6.)).children(buttons))
+                    .child(h_flex().flex_none().gap(px(look::GAP_8)).children(buttons))
             };
         let force_available = manager
             .devices
@@ -1203,8 +1218,8 @@ impl AppWindow {
                 ],
             ));
         let options = v_flex()
-            .gap(px(6.))
-            .pt(px(4.))
+            .gap(px(look::GAP_6))
+            .pt(px(look::GAP_4))
             .child(
                 Checkbox::new("manage-delete-data")
                     .label("Also delete backend data (history and caches)")
@@ -1288,8 +1303,8 @@ impl AppWindow {
             }
         };
         v_flex()
-            .gap(px(8.))
-            .p(px(12.))
+            .gap(px(look::GAP_8))
+            .p(px(look::GAP_12))
             .rounded(px(look::RADIUS))
             .bg(p.chunk)
             .child(
@@ -1327,7 +1342,7 @@ impl AppWindow {
             .child(
                 h_flex()
                     .justify_end()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         Button::new("manage-confirm-cancel")
                             .small()

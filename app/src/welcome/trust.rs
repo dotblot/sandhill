@@ -153,10 +153,14 @@ impl Workbench {
         let p = *Palette::get(cx);
         v_flex()
             .size_full()
-            .px(px(14.))
-            .pt(px(if floating { look::STRIP + 10. } else { 10. }))
-            .pb(px(10.))
-            .gap(px(8.))
+            .px(px(look::PANE_PAD_X))
+            .pt(px(if floating {
+                look::STRIP + look::PANE_PAD_Y
+            } else {
+                look::PANE_PAD_Y
+            }))
+            .pb(px(look::PANE_PAD_Y))
+            .gap(px(look::GAP_8))
             .text_color(p.muted)
             .child(div().whitespace_normal().child(restricted_text(what)))
             .child(
@@ -180,16 +184,16 @@ impl Workbench {
             h_flex()
                 .id("restricted-chip")
                 .flex_none()
-                .h(px(20.))
-                .px(px(8.))
-                .gap(px(5.))
+                .h(px(look::CONTROL_ROW))
+                .px(px(look::GAP_8))
+                .gap(px(look::GAP_4))
                 .rounded_full()
                 .bg(p.warn.opacity(0.16))
                 .text_size(px(look::SMALL))
                 .text_color(p.text)
                 .cursor_pointer()
                 .hover(move |d| d.bg(p.warn.opacity(0.26)))
-                .child(icon("lock").size(px(12.)).text_color(p.warn))
+                .child(icon("lock").size(px(look::ICON_SMALL)).text_color(p.warn))
                 .child("Restricted")
                 .tooltip(|w, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(
@@ -222,7 +226,7 @@ impl Workbench {
             .w(px(380.))
             .max_w(relative(0.95))
             .p(px(20.))
-            .gap(px(14.))
+            .gap(px(look::GAP_12))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
             .border_1()
@@ -231,16 +235,16 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 h_flex()
-                    .gap(px(12.))
+                    .gap(px(look::GAP_12))
                     .child(
                         look::picture(&look::project_icon(&host, &project, &name))
-                            .size(px(40.))
+                            .size(px(look::ICON_LARGE))
                             .flex_none(),
                     )
                     .child(
                         v_flex()
                             .min_w_0()
-                            .gap(px(2.))
+                            .gap(px(look::GAP_2))
                             .child(
                                 div()
                                     .text_size(px(look::TITLE))
@@ -264,7 +268,7 @@ impl Workbench {
             })
             .child(
                 v_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(wide(
                         Button::new("trust-folder")
                             .primary()

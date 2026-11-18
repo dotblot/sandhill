@@ -18,9 +18,9 @@ impl Workbench {
         let mut rows: Vec<AnyElement> = Vec::new();
         let heading = |text: String| {
             div()
-                .px(px(8.))
-                .pt(px(4.))
-                .pb(px(2.))
+                .px(px(look::GAP_8))
+                .pt(px(look::GAP_4))
+                .pb(px(look::GAP_2))
                 .text_size(px(look::SMALL))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.faint)
@@ -29,7 +29,7 @@ impl Workbench {
         };
         let sep = || {
             div()
-                .my(px(3.))
+                .my(px(look::GAP_4))
                 .h(px(0.5))
                 .bg(p.glass_edge)
                 .into_any_element()
@@ -41,17 +41,17 @@ impl Workbench {
                         cx: &mut Context<Self>,
                         run: MenuRun| {
             n += 1;
-            let hover = p.ink(8.);
+            let hover = p.ink(look::ROW_HOVER);
             h_flex()
                 .id(("git-menu-item", n))
-                .gap(px(8.))
-                .px(px(8.))
-                .h(px(26.))
-                .rounded(px(RADIUS - 4.))
+                .gap(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .h(px(look::ROW))
+                .rounded(px(look::CONTROL_RADIUS))
                 .whitespace_nowrap()
                 .when(!enabled, |d| d.opacity(0.4))
                 .when(enabled, |d| d.cursor_pointer().hover(move |d| d.bg(hover)))
-                .child(icon(icon_name).size(px(14.)).text_color(p.muted))
+                .child(icon(icon_name).size(px(look::ICON)).text_color(p.muted))
                 .child(label)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if enabled {
@@ -349,8 +349,8 @@ impl Workbench {
         Some(
             div()
                 .absolute()
-                .when(left, |d| d.left(px(8.)))
-                .when(!left, |d| d.right(px(8.)))
+                .when(left, |d| d.left(px(look::GAP_8)))
+                .when(!left, |d| d.right(px(look::GAP_8)))
                 .when(bottom, |d| d.bottom(px(44.)))
                 .when(!bottom, |d| d.top(px(34.)))
                 .child(deferred(body).with_priority(3))

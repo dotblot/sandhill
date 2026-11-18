@@ -474,7 +474,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
         }
         None => "Nothing is running in the background.".into(),
     };
-    let wide = |button: Button| button.w_full();
+    let wide = |button: Button| button.w_full().h(px(look::CONTROL_CARD));
     let card = v_flex()
         .id("quit-card")
         .occlude()
@@ -483,7 +483,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
         .max_h(relative(0.9))
         .overflow_y_scroll()
         .p(px(20.))
-        .gap(px(14.))
+        .gap(px(look::GAP_12))
         .rounded(px(look::RADIUS))
         .bg(p.panel)
         .border_1()
@@ -493,7 +493,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
         // The crane beside the question, the sentence under both.
         .child(
             h_flex()
-                .gap(px(12.))
+                .gap(px(look::GAP_8))
                 .child(
                     img(crate::welcome::start_screen::brand_icon())
                         .size(px(40.))
@@ -510,7 +510,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
         .when_some(error, |d, error| {
             d.child(
                 v_flex()
-                    .gap(px(4.))
+                    .gap(px(look::GAP_4))
                     .child(div().text_color(p.err).child(error))
                     .when(has_details, |d| {
                         d.child(
@@ -543,7 +543,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
         })
         .child(
             v_flex()
-                .gap(px(8.))
+                .gap(px(look::GAP_8))
                 .child(wide(
                     Button::new("quit-keep")
                         .primary()

@@ -58,7 +58,7 @@ enum Dialog {
 /// accounts.
 const WITH_ACCOUNTS: [&str; 3] = ["claude", "codex", "antigravity"];
 /// Account rows start under the agent's name, past its mark.
-const INDENT: f32 = 44.;
+const INDENT: f32 = look::PANE_PAD_X + look::ICON_LARGE + look::GAP_12;
 
 pub(crate) struct AccountManager {
     daemon: Rc<Daemon>,
@@ -641,7 +641,7 @@ impl AccountManager {
             .max_w(relative(0.9))
             .max_h(relative(0.9))
             .overflow_y_scroll()
-            .gap(px(14.))
+            .gap(px(look::GAP_12))
             .p(px(20.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
@@ -712,7 +712,7 @@ impl AccountManager {
         card = card.when_some(self.dialog_error.clone(), |card, error| {
             card.child(div().text_color(p.err).child(error))
         });
-        let mut buttons = h_flex().justify_end().gap(px(8.)).child(
+        let mut buttons = h_flex().justify_end().gap(px(look::GAP_8)).child(
             Button::new("account-cancel")
                 .small()
                 .label(if matches!(dialog, Dialog::Login(_)) {
@@ -897,18 +897,18 @@ impl AccountManager {
         let id = kind.kind;
         let head = h_flex()
             .w_full()
-            .min_h(px(44.))
-            .gap(px(12.))
-            .px(px(14.))
-            .py(px(10.))
+            .min_h(px(look::ROW))
+            .gap(px(look::GAP_12))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .child(
                 div()
-                    .w(px(18.))
+                    .w(px(look::ICON_LARGE))
                     .flex_none()
                     .flex()
                     .justify_center()
                     .when(!on, |d| d.opacity(0.5))
-                    .child(crate::agents::view::provider(id).size(px(18.))),
+                    .child(crate::agents::view::provider(id).size(px(look::ICON_LARGE))),
             )
             .child(
                 look::settings_label(kind.name, Some(detail)).when(!on, |d| d.text_color(p.muted)),
@@ -949,8 +949,8 @@ impl AccountManager {
                 rows.push(
                     div()
                         .pl(px(INDENT))
-                        .pr(px(14.))
-                        .py(px(10.))
+                        .pr(px(look::PANE_PAD_X))
+                        .py(px(look::PANE_PAD_Y))
                         .text_color(p.muted)
                         .child(if self.refreshing {
                             "Loading accounts…"
@@ -973,14 +973,15 @@ impl AccountManager {
             rows.push(
                 h_flex()
                     .id(SharedString::from(format!("account-add-{id}")))
+                    .min_h(px(look::ROW))
                     .pl(px(INDENT))
-                    .pr(px(14.))
-                    .py(px(10.))
-                    .gap(px(6.))
+                    .pr(px(look::PANE_PAD_X))
+                    .gap(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .text_color(p.accent)
                     .cursor_pointer()
-                    .hover(|d| d.opacity(0.8))
-                    .child(icon("add").size(px(14.)))
+                    .hover(move |d| d.bg(p.ink(look::ROW_HOVER)))
+                    .child(icon("add").size(px(look::ICON)))
                     .child("Add Account…")
                     .on_click(cx.listener(move |this, _, window, cx| this.add(id, window, cx)))
                     .into_any_element(),
@@ -1004,11 +1005,11 @@ impl AccountManager {
             let remove = account.clone();
             return h_flex()
                 .w_full()
-                .min_h(px(44.))
-                .gap(px(8.))
+                .min_h(px(look::ROW))
+                .gap(px(look::GAP_8))
                 .pl(px(INDENT))
-                .pr(px(14.))
-                .py(px(10.))
+                .pr(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
                 .child(look::settings_label(
                     format!("Remove {}?", account.name),
                     Some(match &self.remove_error {
@@ -1051,24 +1052,24 @@ impl AccountManager {
         let menu_id = account.id.clone();
         h_flex()
             .w_full()
-            .min_h(px(44.))
-            .gap(px(8.))
+            .min_h(px(look::ROW))
+            .gap(px(look::GAP_8))
             .pl(px(INDENT))
-            .pr(px(14.))
-            .py(px(10.))
+            .pr(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .gap(px(2.))
+                    .gap(px(look::GAP_2))
                     .child(
                         h_flex()
-                            .gap(px(8.))
+                            .gap(px(look::GAP_8))
                             .child(account.name.clone())
                             .when(for_new, |d| {
                                 d.child(
                                     div()
-                                        .px(px(6.))
+                                        .px(px(look::GAP_6))
                                         .rounded_full()
                                         .bg(p.accent_soft)
                                         .text_color(p.accent)
@@ -1141,13 +1142,13 @@ impl AccountManager {
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let hover = p.ink(8.);
+        let hover = p.ink(look::ROW_HOVER);
         let item = |id: &'static str, label: &'static str| {
             h_flex()
                 .id(id)
-                .h(px(26.))
-                .px(px(8.))
-                .rounded(px(look::RADIUS - 4.))
+                .h(px(look::ROW))
+                .px(px(look::GAP_8))
+                .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
                 .hover(move |d| d.bg(hover))
                 .whitespace_nowrap()
@@ -1193,12 +1194,12 @@ impl AccountManager {
         div()
             .absolute()
             .right_0()
-            .top(px(24.))
+            .top(px(look::CONTROL_ROW + look::GAP_2))
             .child(
                 deferred(
                     anchored()
                         .anchor(Anchor::TopRight)
-                        .snap_to_window_with_margin(px(8.))
+                        .snap_to_window_with_margin(px(look::PANE_PAD_Y))
                         .child(menu),
                 )
                 .with_priority(3),
@@ -1214,7 +1215,7 @@ impl Render for AccountManager {
         v_flex()
             .relative()
             .w_full()
-            .gap(px(22.))
+            .gap(px(look::GAP_12))
             .when_some(self.error.clone(), |d, error| {
                 d.child(div().text_color(p.err).child(error))
             })

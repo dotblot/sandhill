@@ -96,18 +96,18 @@ impl Render for Agents {
                     h_flex()
                         .flex_none()
                         .items_start()
-                        .gap(px(6.))
-                        .mx(px(8.))
-                        .mb(px(4.))
-                        .px(px(10.))
-                        .py(px(6.))
-                        .rounded(px(RADIUS))
+                        .gap(px(look::GAP_6))
+                        .mx(px(look::PANE_PAD_X))
+                        .mb(px(look::GAP_4))
+                        .px(px(look::GAP_8))
+                        .py(px(look::GAP_6))
+                        .rounded(px(look::RADIUS))
                         .bg(p.err_soft)
                         .text_size(px(look::SMALL))
                         .child(div().flex_1().min_w_0().child(problem))
                         .child(
                             icon_button("agent-error-close", "close", &p, false)
-                                .size(px(20.))
+                                .size(px(look::CONTROL_ROW))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.problem = None;
                                     cx.notify();
@@ -124,8 +124,8 @@ impl Render for Agents {
                         d.child(
                             div()
                                 .flex_none()
-                                .mx(px(8.))
-                                .mb(px(4.))
+                                .mx(px(look::PANE_PAD_X))
+                                .mb(px(look::GAP_4))
                                 .child(self.render_trust(t, cx)),
                         )
                     },
@@ -326,17 +326,17 @@ impl Agents {
 
     /// The conversation's menu: compact, rename, end.
     fn render_gear(&self, t: &TerminalInfo, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         let row = |id: &'static str, name: &'static str, label: String| {
             h_flex()
                 .id(id)
-                .gap(px(8.))
-                .px(px(8.))
-                .py(px(5.))
-                .rounded(px(6.))
+                .gap(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .h(px(look::ROW))
+                .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
                 .hover(move |d| d.bg(hover))
-                .child(icon(name).size(px(14.)))
+                .child(icon(name).size(px(look::ICON)))
                 .child(label)
         };
         let compact = t.running && (t.kind == "claude" || crate::agents::drives_chat(&t.kind));
@@ -348,7 +348,7 @@ impl Agents {
             "End conversation".to_string()
         };
         crate::agents::composer_view::popup(p)
-            .mt(px(4.))
+            .mt(px(look::GAP_4))
             .w(px(220.))
             .occlude()
             .when(compact, |d| {
@@ -366,17 +366,29 @@ impl Agents {
                     .on_click(cx.listener(|this, _, window, cx| this.start_rename(window, cx))),
             )
             .when(!self.entries(&t.id).is_empty(), |d| {
-                d.child(div().h(px(1.)).mx(px(4.)).my(px(3.)).bg(p.line))
-                    .children(crate::editor::export::Format::ALL.map(|format| {
-                        row(
-                            format.ext(),
-                            "share",
-                            format!("Export as {}", format.label()),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| this.export_chat(format, cx)))
-                    }))
+                d.child(
+                    div()
+                        .h(px(1.))
+                        .mx(px(look::GAP_4))
+                        .my(px(look::GAP_4))
+                        .bg(p.line),
+                )
+                .children(crate::editor::export::Format::ALL.map(|format| {
+                    row(
+                        format.ext(),
+                        "share",
+                        format!("Export as {}", format.label()),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.export_chat(format, cx)))
+                }))
             })
-            .child(div().h(px(1.)).mx(px(4.)).my(px(3.)).bg(p.line))
+            .child(
+                div()
+                    .h(px(1.))
+                    .mx(px(look::GAP_4))
+                    .my(px(look::GAP_4))
+                    .bg(p.line),
+            )
             .child(
                 row("gear-end", "delete", end)
                     .when(self.confirm_end, |d| d.text_color(p.err))
@@ -395,7 +407,7 @@ impl Agents {
 
     fn render_note(&self, text: &str, p: &Palette) -> AnyElement {
         div()
-            .p(px(16.))
+            .p(px(look::PANE_PAD_X))
             .text_color(p.muted)
             .child(text.to_string())
             .into_any_element()
@@ -406,7 +418,7 @@ impl Agents {
         let p = *Palette::get(cx);
         v_flex()
             .items_center()
-            .gap(px(8.))
+            .gap(px(look::GAP_8))
             .px(px(28.))
             .py(px(70.))
             .text_color(p.muted)
@@ -468,9 +480,9 @@ impl Agents {
             }
             rows.push(
                 div()
-                    .px(px(10.))
-                    .pt(px(10.))
-                    .pb(px(2.))
+                    .px(px(look::GAP_8))
+                    .pt(px(look::GAP_12))
+                    .pb(px(look::GAP_2))
                     .text_size(px(look::SMALL))
                     .text_color(p.faint)
                     .child(name)
@@ -491,12 +503,13 @@ impl Agents {
             .id("agent-history")
             .child(
                 v_flex()
-                    .p(px(8.))
+                    .px(px(look::PANE_PAD_X))
+                    .py(px(look::PANE_PAD_Y))
                     .children(rows)
                     .child(
                         div()
-                            .px(px(10.))
-                            .pt(px(14.))
+                            .px(px(look::GAP_8))
+                            .pt(px(look::GAP_12))
                             .text_size(px(look::SMALL))
                             .text_color(p.faint)
                             .child("Conversations are kept by sandhilld. Reopening one resumes the agent's own conversation."),
@@ -525,7 +538,8 @@ impl Agents {
             .flatten()
             .collect::<Vec<_>>()
             .join(" · ");
-        let hover = p.ink(6.);
+        let hover = p.ink(look::ROW_HOVER);
+        let button_hover = p.ink(look::BUTTON_HOVER);
         let group: SharedString = format!("hist-group-{}", t.id).into();
         let asking = self.confirm_delete.as_deref() == Some(&t.id);
         let delete_id = t.id.clone();
@@ -546,15 +560,15 @@ impl Agents {
                 .id(button_id)
                 .flex_none()
                 .ml_auto()
-                .px(px(5.))
-                .h(px(22.))
-                .rounded(px(6.))
+                .size(px(look::CONTROL_ROW))
+                .justify_center()
+                .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
                 .invisible()
                 .group_hover(group.clone(), |d| d.visible())
                 .text_color(p.faint)
-                .hover(|d| d.text_color(p.err))
-                .child(icon("delete").size(px(14.)))
+                .hover(move |d| d.bg(button_hover).text_color(p.err))
+                .child(icon("delete").size(px(look::ICON)))
                 .tooltip(|w, cx| {
                     gpui_kit::component::tooltip::Tooltip::new("Delete this conversation")
                         .build(w, cx)
@@ -569,15 +583,15 @@ impl Agents {
             h_flex()
                 .id(SharedString::from(format!("hist-stop-{}", t.id)))
                 .flex_none()
-                .px(px(5.))
-                .h(px(22.))
-                .rounded(px(6.))
+                .size(px(look::CONTROL_ROW))
+                .justify_center()
+                .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
                 .invisible()
                 .group_hover(group.clone(), |d| d.visible())
                 .text_color(p.faint)
-                .hover(|d| d.text_color(p.text))
-                .child(icon("stop").size(px(14.)))
+                .hover(move |d| d.bg(button_hover).text_color(p.text))
+                .child(icon("stop").size(px(look::ICON)))
                 .tooltip(move |w, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(if resumable {
                         "Stop the agent. The conversation stays; a message picks it up again."
@@ -598,14 +612,15 @@ impl Agents {
             .id(SharedString::from(format!("hist-{}", t.id)))
             .group(group)
             .items_start()
-            .gap(px(10.))
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(RADIUS))
+            .min_h(px(look::ROW))
+            .gap(px(look::GAP_4))
+            .px(px(look::GAP_8))
+            .py(px(look::GAP_2))
+            .rounded(px(look::CONTROL_RADIUS))
             .cursor_pointer()
             .when(selected, |d| d.bg(p.ink(8.)))
             .hover(move |d| d.bg(hover))
-            .child(div().pt(px(3.)).child(provider(&t.kind)))
+            .child(div().pt(px(look::GAP_4)).child(provider(&t.kind)))
             .child(
                 v_flex()
                     .min_w_0()

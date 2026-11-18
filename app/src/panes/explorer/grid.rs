@@ -28,21 +28,21 @@ impl Explorer {
         enabled: bool,
         p: &Palette,
     ) -> Stateful<Div> {
-        let hover = p.ink(8.);
+        let hover = p.ink(look::ROW_HOVER);
         h_flex()
             .id(id)
-            .h(px(28.))
-            .px(px(8.))
-            .gap(px(8.))
-            .rounded(px(6.))
+            .h(px(look::ROW))
+            .px(px(look::GAP_8))
+            .gap(px(look::GAP_4))
+            .rounded(px(look::CONTROL_RADIUS))
             .when(enabled, |d| d.cursor_pointer().hover(move |d| d.bg(hover)))
             .when(!enabled, |d| d.opacity(0.4))
             .child(
                 div()
-                    .w(px(16.))
+                    .w(px(look::ICON))
                     .flex_none()
                     .text_color(p.muted)
-                    .child(icon(icon_name).size(px(14.))),
+                    .child(icon(icon_name).size(px(look::ICON))),
             )
             .child(div().flex_1().child(label))
             .children(shortcut.map(|s| div().pl(px(16.)).text_color(p.faint).child(s)))
@@ -453,7 +453,7 @@ impl Explorer {
             .min(self.across.max_offset().x)
             .max(px(0.));
         let selected = self.selection.range();
-        let hover_ink = p.ink(8.);
+        let hover_ink = p.ink(look::BUTTON_HOVER);
         let mut header_cells: Vec<AnyElement> = displayed
             .iter()
             .map(|&display| {
@@ -472,8 +472,8 @@ impl Explorer {
                     .w(px(column_width))
                     .flex_none()
                     .h_full()
-                    .px(px(8.))
-                    .gap(px(2.))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_2))
                     .border_r_1()
                     .border_color(p.line)
                     .cursor_text()
@@ -504,7 +504,7 @@ impl Explorer {
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(px(4.))
+                            .gap(px(look::GAP_4))
                             .child(
                                 div()
                                     .min_w_0()
@@ -528,7 +528,7 @@ impl Explorer {
                                             } else {
                                                 "arrow.up"
                                             })
-                                            .size(px(12.)),
+                                            .size(px(look::ICON_SMALL)),
                                         )
                                         .when(self.sort.len() > 1, |d| {
                                             d.child((k + 1).to_string())
@@ -543,17 +543,17 @@ impl Explorer {
                             .absolute()
                             .top_0()
                             .bottom_0()
-                            .right(px(5.))
+                            .right(px(look::GAP_4))
                             .flex()
                             .items_center()
                             .child(
                                 div()
                                     .id(("de-column-menu", ix))
-                                    .size(px(20.))
+                                    .size(px(look::CONTROL_ROW))
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded(px(4.))
+                                    .rounded(px(look::CONTROL_RADIUS))
                                     .cursor_pointer()
                                     .bg(p.panel)
                                     .text_color(p.muted)
@@ -575,7 +575,7 @@ impl Explorer {
                                             cx.notify();
                                         },
                                     ))
-                                    .child(icon("more.vertical").size(px(14.))),
+                                    .child(icon("more.vertical").size(px(look::ICON))),
                             ),
                     )
                     // The right edge drags to change the column's width.
@@ -604,7 +604,7 @@ impl Explorer {
         let header = h_flex()
             .flex_none()
             .relative()
-            .h(px(HEADER_HEIGHT))
+            .h(px(look::DENSE_ROW))
             .border_b_1()
             .border_color(p.line)
             .bg(p.panel)
@@ -656,7 +656,7 @@ impl Explorer {
                             .is_some_and(|r| ix as u64 >= r.first_row && ix as u64 <= r.last_row);
                         let line = h_flex()
                             .relative()
-                            .h(px(ROW_HEIGHT))
+                            .h(px(look::DENSE_ROW))
                             .when(ix % 2 == 1, |d| d.bg(p.ink(3.)));
                         let label = row
                             .as_ref()
@@ -669,7 +669,7 @@ impl Explorer {
                             .items_center()
                             .justify_end()
                             .flex_none()
-                            .px(px(8.))
+                            .px(px(look::GAP_8))
                             .border_r_1()
                             .border_b_1()
                             .border_color(cell_line)
@@ -725,8 +725,8 @@ impl Explorer {
                                     .flex()
                                     .items_center()
                                     .flex_none()
-                                    .gap(px(6.))
-                                    .px(px(10.))
+                                    .gap(px(look::GAP_4))
+                                    .px(px(look::GAP_8))
                                     .border_r_1()
                                     .border_b_1()
                                     .border_color(cell_line)

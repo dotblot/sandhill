@@ -66,7 +66,11 @@ impl AppWindow {
             );
         }
 
-        let mut kinds = h_flex().w_full().flex_wrap().gap_y(px(8.)).pt(px(10.));
+        let mut kinds = h_flex()
+            .w_full()
+            .flex_wrap()
+            .gap_y(px(look::GAP_8))
+            .pt(px(look::GAP_8));
         for (ix, (kind, label)) in WRAP_KINDS.into_iter().enumerate() {
             kinds = kinds.child(
                 div().w(relative(0.25)).whitespace_nowrap().child(
@@ -80,10 +84,10 @@ impl AppWindow {
 
         v_flex()
             .w_full()
-            .gap(px(22.))
+            .gap(px(look::GAP_12))
             .child(
                 v_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .child(div().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("General"))
                     .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
                         "Choices for every project on this Mac. The buttons beside the editor, notebooks and panes change the same choices.",
@@ -152,8 +156,8 @@ impl AppWindow {
                 vec![
                     v_flex()
                         .w_full()
-                        .px(px(14.))
-                        .py(px(10.))
+                        .px(px(look::PANE_PAD_X))
+                        .py(px(look::PANE_PAD_Y))
                         .child(look::settings_label(
                             "Wrap long lines",
                             Some(look::settings_detail("For each kind of file. The Wrap button in the editor changes the same choice.", &p)),

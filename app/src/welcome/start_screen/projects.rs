@@ -253,7 +253,13 @@ impl AppWindow {
                     }))
                 }),
             )
-            .child(div().h(px(1.)).my(px(4.)).mx(px(8.)).bg(p.line))
+            .child(
+                div()
+                    .h(px(1.))
+                    .my(px(look::GAP_4))
+                    .mx(px(look::GAP_8))
+                    .bg(p.line),
+            )
             .child(
                 sidebar_action("project-menu-icon", "edit.compose", "Change Icon…", &p).on_click(
                     cx.listener(move |this, _, window, cx| {
@@ -405,18 +411,19 @@ impl AppWindow {
     ) -> Stateful<Div> {
         div()
             .id(id)
-            .w(px(24.))
-            .h(px(30.))
+            .size(px(look::CONTROL_ROW))
             .flex_none()
             .flex()
             .items_center()
             .justify_center()
+            .rounded(px(look::CONTROL_RADIUS))
             .text_color(p.muted)
             .cursor_pointer()
             .opacity(0.)
             .group_hover(group, |s| s.opacity(1.))
+            .hover(move |d| d.bg(p.ink(look::BUTTON_HOVER)))
             .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new("More").build(w, cx))
-            .child(icon("more").size(px(14.)))
+            .child(icon("more").size(px(look::ICON)))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 let open = this
@@ -564,9 +571,9 @@ impl AppWindow {
         if !pinned.is_empty() {
             summary.push(format!("{} pinned", pinned.len()));
         }
-        let mut column = v_flex().w_full().flex_none().gap(px(16.)).child(
+        let mut column = v_flex().w_full().flex_none().gap(px(look::GAP_12)).child(
             v_flex()
-                .gap(px(6.))
+                .gap(px(look::GAP_6))
                 .child(
                     div()
                         .text_size(px(look::WELCOME_TITLE))
@@ -602,7 +609,7 @@ impl AppWindow {
             }));
             column = column.child(
                 v_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .child(
                         div()
                             .text_size(px(look::SMALL))
@@ -671,7 +678,7 @@ impl AppWindow {
                 .into_any_element()
         } else {
             h_flex()
-                .gap(px(5.))
+                .gap(px(look::GAP_4))
                 .when(entry.kernels + entry.agents > 0, |d| {
                     d.child(look::dot(p.ok))
                 })
@@ -685,22 +692,25 @@ impl AppWindow {
             .group(group.clone())
             .w_full()
             .min_w_0()
-            .px(px(12.))
-            .py(px(9.))
-            .gap(px(10.))
+            .min_h(px(look::ROW))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
+            .gap(px(look::GAP_8))
+            .rounded(px(look::CONTROL_RADIUS))
             .cursor_pointer()
-            .hover(move |d| d.bg(p.ink(6.)))
+            .hover(move |d| d.bg(p.ink(look::ROW_HOVER)))
             .active(|d| d.opacity(0.8))
             .when(!last, |d| d.border_b_1().border_color(p.line))
             .child(
                 look::picture(&look::project_icon(&entry.host, &entry.path, &entry.name))
-                    .size(px(22.)),
+                    .size(px(look::ICON))
+                    .flex_none(),
             )
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .gap(px(2.))
+                    .gap(px(look::GAP_2))
                     .child(
                         div()
                             .text_size(px(look::CHROME))
@@ -713,7 +723,7 @@ impl AppWindow {
                     .child(
                         h_flex()
                             .min_w_0()
-                            .gap(px(6.))
+                            .gap(px(look::GAP_4))
                             .text_size(px(look::SMALL))
                             .text_color(p.muted)
                             .child(
@@ -722,7 +732,7 @@ impl AppWindow {
                                 } else {
                                     "device.server"
                                 })
-                                .size(px(12.)),
+                                .size(px(look::ICON_SMALL)),
                             )
                             .child(div().flex_none().child(host_label(&entry.host)))
                             .child(
@@ -754,16 +764,18 @@ impl AppWindow {
             .child(
                 div()
                     .id(("project-entry-pin", row))
-                    .w(px(24.))
-                    .h(px(30.))
+                    .size(px(look::CONTROL_ROW))
                     .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
+                    .rounded(px(look::CONTROL_RADIUS))
+                    .cursor_pointer()
                     .text_color(if pinned { p.accent } else { p.muted })
                     .when(!pinned, |d| {
                         d.opacity(0.).group_hover(group, |s| s.opacity(1.))
                     })
+                    .hover(move |d| d.bg(p.ink(look::BUTTON_HOVER)))
                     .tooltip(move |w, cx| {
                         gpui_kit::component::tooltip::Tooltip::new(if pinned {
                             "Unpin project"
@@ -772,7 +784,7 @@ impl AppWindow {
                         })
                         .build(w, cx)
                     })
-                    .child(icon(if pinned { "star.filled" } else { "star" }).size(px(14.)))
+                    .child(icon(if pinned { "star.filled" } else { "star" }).size(px(look::ICON)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.set_project_pin(&pin_host, &pin_path, !pinned, cx);
@@ -833,7 +845,7 @@ impl AppWindow {
         };
         let title = h_flex()
             .w_full()
-            .gap(px(12.))
+            .gap(px(look::GAP_12))
             .flex_wrap()
             .child(
                 div()
@@ -855,8 +867,8 @@ impl AppWindow {
                     cx,
                 ))
             });
-        let mut column = v_flex().w_full().flex_none().gap(px(16.)).child(
-            v_flex().gap(px(6.)).child(title).child(
+        let mut column = v_flex().w_full().flex_none().gap(px(look::GAP_12)).child(
+            v_flex().gap(px(look::GAP_6)).child(title).child(
                 div()
                     .text_size(px(look::TAB_TEXT))
                     .text_color(if matches!(link, Some(MachineLink::Failed(_))) {
@@ -872,7 +884,8 @@ impl AppWindow {
             column = column.child(
                 h_flex()
                     .w_full()
-                    .gap(px(12.))
+                    .min_h(px(look::ROW))
+                    .gap(px(look::GAP_12))
                     .justify_between()
                     .child("Connect automatically")
                     .child(
@@ -962,8 +975,8 @@ impl AppWindow {
             .child(
                 h_flex()
                     .w_full()
-                    .pl(px(2.))
-                    .gap(px(10.))
+                    .pl(px(look::GAP_2))
+                    .gap(px(look::GAP_8))
                     .child(
                         look::button(
                             "start-open",
@@ -1021,7 +1034,7 @@ impl AppWindow {
                 .into_any_element()
         } else if kernels + agents > 0 {
             h_flex()
-                .gap(px(5.))
+                .gap(px(look::GAP_4))
                 .child(look::dot(p.ok))
                 .child(work_status(kernels, agents).join(" · "))
                 .into_any_element()
@@ -1037,15 +1050,17 @@ impl AppWindow {
             .flex_none()
             .w_full()
             .min_w_0()
-            .px(px(12.))
-            .py(px(10.))
-            .gap(px(10.))
+            .min_h(px(look::ROW))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
+            .gap(px(look::GAP_8))
+            .rounded(px(look::CONTROL_RADIUS))
             .when(exists, |d| d.cursor_pointer())
-            .hover(move |d| d.bg(p.ink(6.)))
+            .hover(move |d| d.bg(p.ink(look::ROW_HOVER)))
             .active(|d| d.opacity(0.8))
             .child(
                 div()
-                    .size(px(22.))
+                    .size(px(look::ICON))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -1054,15 +1069,15 @@ impl AppWindow {
                         d.border_1()
                             .border_dashed()
                             .border_color(p.muted)
-                            .rounded(px(4.))
+                            .rounded(px(look::CONTROL_RADIUS))
                     })
                     .child(if exists {
                         look::picture(&look::project_icon(host, &project.path, &project.name))
-                            .size(px(22.))
+                            .size(px(look::ICON))
                             .into_any_element()
                     } else {
                         icon("folder")
-                            .size(px(14.))
+                            .size(px(look::ICON_SMALL))
                             .text_color(p.muted)
                             .into_any_element()
                     }),
@@ -1071,7 +1086,7 @@ impl AppWindow {
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .gap(px(2.))
+                    .gap(px(look::GAP_2))
                     .child(
                         div()
                             .text_size(px(look::CHROME))
@@ -1103,17 +1118,18 @@ impl AppWindow {
             .child(
                 div()
                     .id(SharedString::from(format!("recent-pin-{row}")))
-                    .w(px(24.))
-                    .h(px(30.))
+                    .size(px(look::CONTROL_ROW))
                     .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
+                    .rounded(px(look::CONTROL_RADIUS))
                     .text_color(if pinned { p.accent } else { p.muted })
                     .cursor_pointer()
                     .when(!pinned, |d| {
                         d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.))
                     })
+                    .hover(move |d| d.bg(p.ink(look::BUTTON_HOVER)))
                     .tooltip(move |w, cx| {
                         gpui_kit::component::tooltip::Tooltip::new(if pinned {
                             "Unpin project"
@@ -1122,7 +1138,7 @@ impl AppWindow {
                         })
                         .build(w, cx)
                     })
-                    .child(icon(if pinned { "star.filled" } else { "star" }).size(px(14.)))
+                    .child(icon(if pinned { "star.filled" } else { "star" }).size(px(look::ICON)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
                         this.set_project_pin(&pin_host, &pin_path, !pinned, cx);
@@ -1139,22 +1155,23 @@ impl AppWindow {
             .child(
                 div()
                     .id(SharedString::from(format!("recent-forget-{row}")))
-                    .w(px(20.))
-                    .h(px(30.))
+                    .size(px(look::CONTROL_ROW))
                     .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
+                    .rounded_full()
                     .text_color(p.muted)
                     .cursor_pointer()
                     .when(exists, |d| {
                         d.opacity(0.).group_hover(group, |s| s.opacity(1.))
                     })
+                    .hover(move |d| d.bg(p.ink(look::BUTTON_HOVER)))
                     .tooltip(|w, cx| {
                         gpui_kit::component::tooltip::Tooltip::new("Remove from this list")
                             .build(w, cx)
                     })
-                    .child(icon("close").size(px(13.)))
+                    .child(icon("close").size(px(look::ICON)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.ask_forget_project(
@@ -1170,8 +1187,8 @@ impl AppWindow {
                     div()
                         .absolute()
                         .bottom_0()
-                        .left(px(44.))
-                        .right(px(12.))
+                        .left(px(look::PANE_PAD_X + look::ICON + look::GAP_8))
+                        .right(px(look::PANE_PAD_X))
                         .h(px(1.))
                         .bg(p.line),
                 )

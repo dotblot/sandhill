@@ -130,8 +130,8 @@ impl SkillsView {
             Menu::Copy(name) => {
                 body = body.child(
                     div()
-                        .px(px(8.))
-                        .py(px(4.))
+                        .px(px(look::GAP_8))
+                        .py(px(look::GAP_4))
                         .text_color(p.muted)
                         .child("Copy to…"),
                 );

@@ -39,9 +39,9 @@ impl Render for Dragged {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = *Palette::get(cx);
         div()
-            .px(px(10.))
-            .py(px(4.))
-            .rounded(px(6.))
+            .px(px(look::GAP_8))
+            .py(px(look::GAP_4))
+            .rounded(px(look::CONTROL_RADIUS))
             .bg(p.bg)
             .border_1()
             .border_color(p.accent)
@@ -301,12 +301,11 @@ impl Workbench {
                 .find(|(g, f)| g == sha && !f.is_empty())
                 .and_then(|(g, _)| rw.messages.get(g))
                 .map(|(input, _)| input.clone());
-            let hover = p.ink(6.);
+            let hover = p.ink(look::ROW_HOVER);
             v_flex()
                 .id(SharedString::from(format!("rw-{sha}")))
-                .px(px(4.))
-                .py(px(2.))
-                .rounded(px(6.))
+                .px(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .when(folds, |d| d.pl(px(22.)).text_color(p.muted))
                 .on_drag(dragged, |d, _, _, cx| cx.new(|_| d.clone()))
                 .drag_over::<Dragged>(move |d, _, _, _| d.bg(hover))
@@ -315,8 +314,8 @@ impl Workbench {
                 }))
                 .child(
                     h_flex()
-                        .min_h(px(28.))
-                        .gap(px(6.))
+                        .h(px(look::ROW))
+                        .gap(px(look::GAP_8))
                         .child(
                             div()
                                 .flex_none()
@@ -377,24 +376,29 @@ impl Workbench {
                             h_flex()
                                 .id(SharedString::from(format!("rw-squash-{sha}")))
                                 .flex_none()
-                                .gap(px(4.))
-                                .px(px(4.))
+                                .h(px(look::CONTROL_ROW))
+                                .gap(px(look::GAP_4))
+                                .px(px(look::GAP_4))
+                                .rounded(px(look::CONTROL_RADIUS))
                                 .text_color(p.muted)
                                 .when(i + 1 == count, |d| d.opacity(0.35))
-                                .when(i + 1 < count, |d| d.cursor_pointer())
+                                .when(i + 1 < count, |d| {
+                                    d.cursor_pointer()
+                                        .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
+                                })
                                 .child(
                                     div()
-                                        .size(px(14.))
+                                        .size(px(look::ICON))
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded(px(3.))
+                                        .rounded(px(look::CONTROL_RADIUS))
                                         .border_1()
                                         .border_color(if folds { p.accent } else { p.line })
                                         .when(folds, |d| {
-                                            d.bg(p.accent)
-                                                .text_color(p.primary_text)
-                                                .child(crate::look::icon("check").size(px(11.)))
+                                            d.bg(p.accent).text_color(p.primary_text).child(
+                                                look::icon("check").size(px(look::ICON_SMALL)),
+                                            )
                                         }),
                                 )
                                 .child("Squash")
@@ -408,8 +412,8 @@ impl Workbench {
                 .when_some(message, |d, input| {
                     d.child(
                         div()
-                            .pt(px(4.))
-                            .pb(px(6.))
+                            .pt(px(look::GAP_4))
+                            .pb(px(look::GAP_6))
                             .font_family(look::MONO)
                             .child(Textarea::new(&input)),
                     )
@@ -420,7 +424,7 @@ impl Workbench {
             .w(px(580.))
             .max_w(relative(0.9))
             .p(px(16.))
-            .gap(px(8.))
+            .gap(px(look::GAP_12))
             .bg(p.bg)
             .border_1()
             .border_color(p.glass_edge)
@@ -447,17 +451,17 @@ impl Workbench {
                     .id("rewrite-list")
                     .max_h(px(380.))
                     .overflow_y_scroll()
-                    .p(px(4.))
+                    .p(px(look::GAP_4))
                     .border_1()
                     .border_color(p.line)
-                    .rounded(px(6.))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .bg(p.chunk)
                     .children(rows),
             )
             .child(
                 h_flex()
                     .justify_end()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         Button::new("rewrite-cancel")
                             .small()

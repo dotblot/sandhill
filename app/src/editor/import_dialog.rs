@@ -123,11 +123,11 @@ impl Workbench {
         }
         let p = *Palette::get(cx);
         let language = self.active_language()?;
-        let hover = p.ink(8.);
+        let hover = p.ink(look::ROW_HOVER);
         let mut rows: Vec<AnyElement> = vec![
             div()
-                .px(px(8.))
-                .py(px(4.))
+                .px(px(look::GAP_8))
+                .py(px(look::GAP_4))
                 .text_size(px(look::SMALL))
                 .text_color(p.faint)
                 .child(format!(
@@ -140,7 +140,7 @@ impl Workbench {
             if kind.group {
                 rows.push(
                     div()
-                        .my(px(4.))
+                        .my(px(look::GAP_4))
                         .h(px(0.5))
                         .bg(p.glass_edge)
                         .into_any_element(),
@@ -149,10 +149,10 @@ impl Workbench {
             rows.push(
                 h_flex()
                     .id(("import-kind", i))
-                    .h(px(26.))
-                    .px(px(8.))
-                    .gap(px(16.))
-                    .rounded(px(look::RADIUS - 4.))
+                    .h(px(look::ROW))
+                    .px(px(look::GAP_8))
+                    .gap(px(look::GAP_12))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
                     .hover(move |d| d.bg(hover))
                     .child(div().flex_1().whitespace_nowrap().child(kind.label))
@@ -437,7 +437,7 @@ impl Workbench {
         let dialog = self.import.dialog.as_ref()?;
         let p = *Palette::get(cx);
         let kind = &imports_for(&dialog.language)[dialog.kind];
-        let hover = p.ink(8.);
+        let hover = p.ink(look::ROW_HOVER);
         let list: AnyElement = match &dialog.entries {
             None => div()
                 .p(px(8.))
@@ -465,21 +465,18 @@ impl Workbench {
                     let on = dialog.file.as_deref() == Some(path.as_str());
                     h_flex()
                         .id(("import-entry", i))
-                        .h(px(26.))
-                        .px(px(8.))
-                        .gap(px(6.))
-                        .rounded(px(4.))
+                        .h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .gap(px(look::GAP_4))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
                         .when(on, |d| d.bg(p.sel))
                         .when(!on, |d| d.hover(move |d| d.bg(hover)))
-                        .child(
-                            picture(&if dir {
-                                look::folder_icon(&entry.name)
-                            } else {
-                                look::file_icon(&entry.name)
-                            })
-                            .size(px(15.)),
-                        )
+                        .child(picture(&if dir {
+                            look::folder_icon(&entry.name)
+                        } else {
+                            look::file_icon(&entry.name)
+                        }))
                         .child(
                             div()
                                 .min_w_0()
@@ -515,7 +512,7 @@ impl Workbench {
             .occlude()
             .w(px(560.))
             .max_h(relative(0.9))
-            .gap(px(12.))
+            .gap(px(look::GAP_12))
             .p(px(20.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
@@ -535,14 +532,14 @@ impl Workbench {
             )
             .when(!dialog.preselected, |d| d.child(
                 v_flex()
-                    .rounded(px(6.))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .border_1()
                     .border_color(p.line)
                     .child(
                         h_flex()
-                            .h(px(30.))
-                            .px(px(4.))
-                            .gap(px(6.))
+                            .h(px(look::ROW))
+                            .px(px(look::GAP_4))
+                            .gap(px(look::GAP_4))
                             .border_b_1()
                             .border_color(p.line)
                             .child(
@@ -569,12 +566,12 @@ impl Workbench {
                             .id("import-list")
                             .h(px(240.))
                             .overflow_y_scroll()
-                            .p(px(4.))
+                            .p(px(look::GAP_4))
                             .child(list),
                     ),
             ))
             .when(dialog.preselected, |d| d.child(
-                v_flex().gap(px(4.))
+                v_flex().gap(px(look::GAP_4))
                     .child(div().text_color(p.muted).child(format!("Session: {}", dialog.session)))
                     .child(div().font_family(look::MONO).whitespace_normal()
                         .child(dialog.file.clone().unwrap_or_default())),
@@ -582,7 +579,7 @@ impl Workbench {
             .when(named, |d| {
                 d.child(
                     h_flex()
-                        .gap(px(10.))
+                        .gap(px(look::GAP_8))
                         .child(div().w(px(50.)).text_color(p.muted).child("Name"))
                         .child(div().flex_1().child(Input::new(&self.import_name).small())),
                 )
@@ -599,8 +596,8 @@ impl Workbench {
                 .child("Loading R data can replace existing variables with the same names.")))
             .child(
                 div()
-                    .p(px(10.))
-                    .rounded(px(6.))
+                    .p(px(look::GAP_8))
+                    .rounded(px(look::CODE_RADIUS))
                     .bg(p.chunk)
                     .font_family(look::MONO)
                     .text_size(px(look::CODE))
@@ -619,17 +616,18 @@ impl Workbench {
             .child(
                 h_flex()
                     .justify_end()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .flex_wrap()
-                    .child(Button::new("import-copy").small().label("Copy Code")
+                    .child(Button::new("import-copy").small().h(px(look::CONTROL_CARD)).label("Copy Code")
                         .disabled(code.is_none() || bad || dialog.running)
                         .on_click(cx.listener(|this, _, _, cx| this.copy_import_code(cx))))
-                    .child(Button::new("import-insert").small().label("Insert into Document")
+                    .child(Button::new("import-insert").small().h(px(look::CONTROL_CARD)).label("Insert into Document")
                         .disabled(code.is_none() || bad || dialog.running || !self.can_insert_into_active_document(cx))
                         .on_click(cx.listener(|this, _, window, cx| this.insert_import_code(window, cx))))
                     .child(
                         Button::new("import-cancel")
                             .small()
+                            .h(px(look::CONTROL_CARD))
                             .label("Cancel")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.import.dialog = None;
@@ -639,6 +637,7 @@ impl Workbench {
                     .child(
                         Button::new("import-run")
                             .small()
+                            .h(px(look::CONTROL_CARD))
                             .primary()
                             .label("Import")
                             .disabled(code.is_none() || bad || dialog.running)

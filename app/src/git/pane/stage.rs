@@ -23,8 +23,8 @@ impl Workbench {
         if status.more {
             files.push(
                 div()
-                    .px(px(14.))
-                    .py(px(4.))
+                    .px(px(look::PANE_PAD_X))
+                    .py(px(look::GAP_4))
                     .text_color(p.muted)
                     .child("Only the first 2,000 changed files show.")
                     .into_any_element(),
@@ -33,8 +33,8 @@ impl Workbench {
         if staged.is_empty() && unstaged.is_empty() {
             files.push(
                 div()
-                    .px(px(14.))
-                    .py(px(6.))
+                    .px(px(look::PANE_PAD_X))
+                    .py(px(look::PANE_PAD_Y))
                     .text_color(p.muted)
                     .child("No changes since the last commit.")
                     .into_any_element(),
@@ -51,12 +51,12 @@ impl Workbench {
             let conflicts = unstaged.iter().any(|f| f.conflict);
             h_flex()
                 .flex_none()
-                .gap(px(6.))
-                .mx(px(8.))
-                .mt(px(6.))
-                .px(px(10.))
-                .py(px(6.))
-                .rounded(px(RADIUS))
+                .gap(px(look::GAP_8))
+                .mx(px(look::GAP_4))
+                .mt(px(look::PANE_PAD_Y))
+                .px(px(look::GAP_8))
+                .py(px(look::PANE_PAD_Y))
+                .rounded(px(look::RADIUS))
                 .bg(p.busy_soft)
                 .text_size(px(look::SMALL))
                 .child(div().flex_1().min_w_0().child(format!(
@@ -88,9 +88,9 @@ impl Workbench {
         let needs_user = self.needs_user().then(|| {
             v_flex()
                 .flex_none()
-                .gap(px(4.))
-                .px(px(10.))
-                .py(px(6.))
+                .gap(px(look::GAP_4))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
                 .border_t(px(0.5))
                 .border_color(p.glass_edge)
                 .text_size(px(look::SMALL))
@@ -101,7 +101,7 @@ impl Workbench {
                 )
                 .child(
                     h_flex()
-                        .gap(px(6.))
+                        .gap(px(look::GAP_8))
                         .child(
                             div()
                                 .flex_1()
@@ -114,7 +114,7 @@ impl Workbench {
                         )
                         .child(
                             Button::new("git-user-save")
-                                .xsmall()
+                                .small()
                                 .primary()
                                 .label("Save")
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -143,16 +143,16 @@ impl Workbench {
         let amend = self.git.amend;
         let commit_box = v_flex()
             .flex_none()
-            .gap(px(6.))
-            .px(px(8.))
-            .py(px(8.))
+            .gap(px(look::GAP_8))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .border_t(px(0.5))
             .border_color(p.glass_edge)
             .child(Input::new(&self.git.summary).small())
             .child(Input::new(&self.git.body).small())
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child(
                         Button::new("git-write")
                             .xsmall()
@@ -200,8 +200,11 @@ impl Workbench {
             .child(look::PaneScroll::new(
                 "git-files-scroll",
                 0.,
-                4.,
-                div().id("git-files").pb(px(4.)).children(files),
+                look::GAP_4,
+                div()
+                    .id("git-files")
+                    .pb(px(look::PANE_PAD_Y))
+                    .children(files),
             ))
             .children(needs_user)
             .child(commit_box)
@@ -221,10 +224,10 @@ impl Workbench {
         let busy = self.git.busy.is_some();
         let all_files: Vec<GitFile> = files.to_vec();
         let head = h_flex()
-            .px(px(12.))
-            .pt(px(6.))
-            .pb(px(2.))
-            .gap(px(6.))
+            .px(px(look::PANE_PAD_X))
+            .pt(px(look::GAP_6))
+            .pb(px(look::GAP_2))
+            .gap(px(look::GAP_4))
             .text_size(px(look::SMALL))
             .child(look::dot(color))
             .child(
@@ -267,7 +270,7 @@ impl Workbench {
                     }
                 })),
             );
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         let rows = files.iter().enumerate().map(|(ix, file)| {
             let (letter, kind, meaning) = file_mark(file, staged);
             let (name, dir) = split_path(&file.path);
@@ -320,11 +323,11 @@ impl Workbench {
             };
             h_flex()
                 .id(SharedString::from(format!("git-file-{tag}-{ix}")))
-                .mx(px(4.))
-                .px(px(8.))
-                .h(px(24.))
-                .gap(px(6.))
-                .rounded(px(RADIUS))
+                .mx(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .h(px(look::ROW))
+                .gap(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .whitespace_nowrap()
                 .overflow_hidden()
                 .cursor_pointer()
@@ -337,7 +340,7 @@ impl Workbench {
                 }))
                 .child(
                     div()
-                        .w(px(12.))
+                        .w(px(look::ICON_SMALL))
                         .flex_none()
                         .text_size(px(look::SMALL))
                         .font_weight(FontWeight::BOLD)
@@ -356,7 +359,7 @@ impl Workbench {
                     } else {
                         look::file_icon(&file.path)
                     })
-                    .size(px(14.)),
+                    .size(px(look::ICON)),
                 )
                 .child(div().flex_none().text_color(p.text).child(name))
                 .child(

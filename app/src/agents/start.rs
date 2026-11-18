@@ -229,29 +229,31 @@ impl Agents {
         } else {
             format!("Works on all of {project} and its live sessions.")
         };
-        let sessions = h_flex().flex_wrap().justify_center().gap(px(6.)).children(
-            self.start.sessions.iter().map(|s| {
+        let sessions = h_flex()
+            .flex_wrap()
+            .justify_center()
+            .gap(px(look::GAP_6))
+            .children(self.start.sessions.iter().map(|s| {
                 h_flex()
-                    .h(px(22.))
-                    .gap(px(6.))
-                    .px(px(9.))
+                    .h(px(look::CONTROL_ROW))
+                    .gap(px(look::GAP_4))
+                    .px(px(look::GAP_8))
                     .rounded_full()
                     .bg(p.cap_bg)
                     .text_size(px(look::SMALL))
                     .text_color(p.text)
-                    .child(dot(if s.busy { p.busy } else { p.ok }).size(px(7.)))
+                    .child(dot(if s.busy { p.busy } else { p.ok }))
                     .child(s.label.clone())
-            }),
-        );
+            }));
         let header = v_flex()
             .items_center()
             .text_center()
-            .gap(px(4.))
+            .gap(px(look::GAP_4))
             .pt(px(28.))
             .child(
                 div()
                     .size(px(44.))
-                    .mb(px(6.))
+                    .mb(px(look::GAP_6))
                     .rounded(px(RADIUS))
                     .bg(p.accent_soft)
                     .flex()
@@ -272,14 +274,14 @@ impl Agents {
                     .text_color(p.muted)
                     .child(subtitle),
             )
-            .child(div().pt(px(6.)).text_color(p.muted).child(works))
+            .child(div().pt(px(look::GAP_6)).text_color(p.muted).child(works))
             .when(!self.start.sessions.is_empty(), |d| {
-                d.child(div().pt(px(4.)).child(sessions))
+                d.child(div().pt(px(look::GAP_4)).child(sessions))
             })
             .when(terminal_only(chosen.kind), |d| {
                 d.child(
                     div()
-                        .pt(px(6.))
+                        .pt(px(look::GAP_6))
                         .text_size(px(look::SMALL))
                         .text_color(p.faint)
                         .child(format!(
@@ -290,9 +292,9 @@ impl Agents {
             });
         let install = missing.map(|install| {
             v_flex()
-                .gap(px(6.))
-                .px(px(12.))
-                .py(px(9.))
+                .gap(px(look::GAP_6))
+                .px(px(look::GAP_12))
+                .py(px(look::GAP_8))
                 .rounded(px(RADIUS))
                 .bg(p.accent_soft)
                 .child(format!(
@@ -321,19 +323,20 @@ impl Agents {
             .collect();
         let key = |text: &'static str| {
             div()
-                .px(px(5.))
-                .h(px(17.))
+                .px(px(look::GAP_4))
+                .h(px(look::CONTROL_ROW))
                 .flex()
                 .items_center()
-                .rounded(px(4.))
+                .rounded(px(look::CONTROL_RADIUS))
                 .border_1()
                 .border_color(p.ink(14.))
                 .text_size(px(look::SMALL))
                 .text_color(p.muted)
                 .child(text)
         };
-        let hint =
-            |k: &'static str, words: &'static str| h_flex().gap(px(5.)).child(key(k)).child(words);
+        let hint = |k: &'static str, words: &'static str| {
+            h_flex().gap(px(look::GAP_4)).child(key(k)).child(words)
+        };
         // The agent sits in the middle of the free space; the ways to start
         // sit just over the message box, where the hand goes next.
         div()
@@ -343,14 +346,14 @@ impl Agents {
             .child(
                 v_flex()
                     .min_h_full()
-                    .gap(px(18.))
-                    .px(px(16.))
-                    .pb(px(14.))
+                    .gap(px(look::GAP_12))
+                    .px(px(look::PANE_PAD_X))
+                    .pb(px(look::PANE_PAD_Y))
                     .line_height(rems(1.4))
-                    .child(div().flex_1().min_h(px(4.)))
+                    .child(div().flex_1().min_h(px(look::GAP_4)))
                     .child(header)
                     .children(install)
-                    .child(div().flex_1().min_h(px(8.)))
+                    .child(div().flex_1().min_h(px(look::GAP_8)))
                     .child(section("Start with", starters, &p))
                     .when(!recent.is_empty(), |d| {
                         d.child(section("Continue", recent, &p))
@@ -358,8 +361,8 @@ impl Agents {
                     .child(
                         h_flex()
                             .flex_wrap()
-                            .gap(px(14.))
-                            .px(px(4.))
+                            .gap(px(look::GAP_12))
+                            .px(px(look::GAP_4))
                             .text_size(px(look::SMALL))
                             .text_color(p.muted)
                             .child(hint("@", "attach a file"))
@@ -385,15 +388,15 @@ impl Agents {
             refs,
         } = starter;
         let chip = refs.first().cloned();
-        let (rest, hover, press) = (p.ink(4.), p.ink(8.), p.ink(11.));
+        let (rest, hover, press) = (p.ink(4.), p.ink(look::ROW_HOVER), p.ink(11.));
         h_flex()
             .id(("agent-starter", ix))
-            .min_h(px(34.))
+            .min_h(px(look::ROW))
             .flex_wrap()
-            .gap(px(6.))
-            .px(px(12.))
-            .py(px(6.))
-            .rounded(px(8.))
+            .gap(px(look::GAP_4))
+            .px(px(look::GAP_12))
+            .py(px(look::GAP_4))
+            .rounded(px(look::CONTROL_RADIUS))
             .bg(rest)
             .cursor_pointer()
             .hover(move |d| d.bg(hover))
@@ -405,10 +408,10 @@ impl Agents {
                 h_flex()
                     .flex_none()
                     .max_w(px(180.))
-                    .h(px(22.))
-                    .gap(px(4.))
-                    .px(px(6.))
-                    .rounded(px(7.))
+                    .h(px(look::CONTROL_ROW))
+                    .gap(px(look::GAP_4))
+                    .px(px(look::GAP_6))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .bg(p.ink(8.))
                     .text_size(px(look::SMALL))
                     .child(crate::agents::composer_view::ref_icon(&item))
@@ -429,13 +432,13 @@ impl Agents {
 
     fn continue_row(&self, t: &TerminalInfo, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let id = t.id.clone();
-        let (hover, press) = (p.ink(6.), p.ink(10.));
+        let (hover, press) = (p.ink(look::ROW_HOVER), p.ink(10.));
         h_flex()
             .id(SharedString::from(format!("agent-continue-{}", t.id)))
-            .gap(px(10.))
-            .px(px(12.))
-            .h(px(32.))
-            .rounded(px(8.))
+            .gap(px(look::GAP_4))
+            .px(px(look::GAP_12))
+            .h(px(look::ROW))
+            .rounded(px(look::CONTROL_RADIUS))
             .cursor_pointer()
             .hover(move |d| d.bg(hover))
             .active(move |d| d.bg(press))
@@ -465,11 +468,11 @@ impl Agents {
 /// A heading over its rows.
 fn section(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -> Div {
     v_flex()
-        .gap(px(4.))
+        .gap(px(look::GAP_4))
         .child(
             div()
-                .px(px(4.))
-                .pb(px(2.))
+                .px(px(look::GAP_4))
+                .pb(px(look::GAP_2))
                 .text_size(px(look::SMALL))
                 .text_color(p.muted)
                 .child(title),

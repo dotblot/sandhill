@@ -281,9 +281,9 @@ impl Explorer {
         let rows = self.shape.as_ref().map_or(0, |s| s.rows);
         let bar = h_flex()
             .flex_none()
-            .gap(px(8.))
-            .px(px(10.))
-            .py(px(6.))
+            .gap(px(look::GAP_8))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .bg(p.accent_soft)
             .border_b_1()
             .border_color(p.line);

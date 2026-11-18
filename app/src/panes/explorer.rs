@@ -48,12 +48,7 @@ const MIN_COLUMN_WIDTH: f32 = 40.;
 const MAX_COLUMN_WIDTH: f32 = 1200.;
 /// Initial cells; later requests contain only columns intersecting the viewport.
 const COLUMNS: u32 = 32;
-/// The Tauri app's sizes, a little taller for text 2px larger.
-const ROW_HEIGHT: f32 = 26.;
-/// The header holds the column's name and its ⋮ menu.
-const HEADER_HEIGHT: f32 = 32.;
 const SIDE_WIDTH: f32 = 320.;
-const SIDE_ROW: f32 = 32.;
 const SPARK_WIDTH: f32 = 56.;
 const SPARK_HEIGHT: f32 = 22.;
 /// The missing share after each sparkline.
@@ -432,7 +427,7 @@ impl Explorer {
             generation: 0,
             scroll: UniformListScrollHandle::new(),
             across: ScrollHandle::new(),
-            side_list: ListState::new(0, ListAlignment::Top, px(SIDE_ROW)),
+            side_list: ListState::new(0, ListAlignment::Top, px(look::ROW)),
             pinned: Vec::new(),
             expanded: std::collections::HashSet::new(),
             column_menu: None,
@@ -890,9 +885,9 @@ impl Render for Explorer {
                         .child(
                             h_flex()
                                 .flex_none()
-                                .gap(px(12.))
-                                .px(px(10.))
-                                .py(px(4.))
+                                .gap(px(look::GAP_12))
+                                .px(px(look::PANE_PAD_X))
+                                .py(px(look::GAP_4))
                                 .border_t_1()
                                 .border_color(p.line)
                                 .text_color(p.faint)

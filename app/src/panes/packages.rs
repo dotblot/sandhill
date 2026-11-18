@@ -18,7 +18,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, Package, PackageUpdate, PackageUpdates, Packages as Listed};
 
-use crate::look::{self, Palette, RADIUS, icon, icon_button};
+use crate::look::{self, Palette, icon, icon_button};
 use crate::panes::help::HelpRequest;
 use crate::workbench::{TopTab, Workbench};
 
@@ -26,6 +26,8 @@ use crate::workbench::{TopTab, Workbench};
 const REFRESH: Duration = Duration::from_millis(250);
 /// What the daemon says when the session runs other code.
 const BUSY: &str = "the session is busy running code";
+
+const FILTER_HEIGHT: f32 = look::CONTROL_CARD + 2. * look::PANE_PAD_Y;
 
 pub(crate) struct Packages {
     filter: Entity<InputState>,
@@ -590,17 +592,16 @@ impl Workbench {
         });
         let filter_bar = h_flex()
             .flex_none()
-            .h(px(37.))
-            .gap(px(8.))
-            .px(px(8.))
-            .py(px(6.))
+            .h(px(FILTER_HEIGHT))
+            .gap(px(look::GAP_8))
+            .px(px(look::PANE_PAD_X))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
             .child(
                 div().flex_1().child(
                     Input::new(&self.packages.filter)
                         .small()
-                        .prefix(icon("filter").size(px(13.))),
+                        .prefix(icon("filter").size(px(look::ICON))),
                 ),
             )
             .when_some(count, |d, c| {
@@ -621,8 +622,8 @@ impl Workbench {
         let mut body: Vec<AnyElement> = Vec::new();
         let muted_note = |text: String, color: Hsla| {
             div()
-                .px(px(14.))
-                .py(px(6.))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
                 .text_color(color)
                 .child(text)
                 .into_any_element()
@@ -663,9 +664,9 @@ impl Workbench {
                     }
                     body.push(
                         div()
-                            .px(px(14.))
-                            .pt(px(8.))
-                            .pb(px(2.))
+                            .px(px(look::PANE_PAD_X))
+                            .pt(px(look::PANE_PAD_Y))
+                            .pb(px(look::GAP_2))
                             .text_size(px(look::SMALL))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.faint)
@@ -687,9 +688,13 @@ impl Workbench {
             .size_full()
             .child(look::PaneScroll::new(
                 "packages-scroll",
-                look::STRIP + 37.,
+                look::STRIP + FILTER_HEIGHT,
                 0.,
-                div().id("packages").pb(px(4.)).children(top).children(body),
+                div()
+                    .id("packages")
+                    .pb(px(look::PANE_PAD_Y))
+                    .children(top)
+                    .children(body),
             ))
             .child(look::floating_header(&p, look::STRIP, false, filter_bar))
             .into_any_element()
@@ -703,7 +708,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         let asked = package_topic(pkg, language);
         let confirming = self.packages.confirm_remove.as_deref() == Some(pkg.name.as_str());
         let remove_name = pkg.name.clone();
@@ -711,11 +716,11 @@ impl Workbench {
         let status = package_status(pkg, language);
         h_flex()
             .id(SharedString::from(format!("pkg-{}", pkg.name)))
-            .mx(px(6.))
-            .px(px(8.))
-            .gap_2()
-            .h(px(24.))
-            .rounded(px(RADIUS))
+            .mx(px(look::GAP_4))
+            .px(px(look::GAP_8))
+            .gap(px(look::GAP_4))
+            .h(px(look::ROW))
+            .rounded(px(look::CONTROL_RADIUS))
             .whitespace_nowrap()
             .overflow_hidden()
             .cursor_pointer()
@@ -727,7 +732,7 @@ impl Workbench {
                 div()
                     .flex_none()
                     .text_color(p.faint)
-                    .child(icon("package").size(px(13.))),
+                    .child(icon("package").size(px(look::ICON))),
             )
             .child(
                 div()
@@ -754,14 +759,15 @@ impl Workbench {
             )
             .map(|d| match update {
                 Some(u) => d.child(
-                    div()
+                    h_flex()
                         .id(SharedString::from(format!("pkg-update-{}", pkg.name)))
                         .flex_none()
-                        .px(px(6.))
-                        .rounded_full()
+                        .h(px(look::CONTROL_ROW))
+                        .px(px(look::GAP_6))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .text_size(px(look::SMALL))
                         .text_color(p.accent)
-                        .hover(|d| d.bg(p.ink(10.)))
+                        .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
                         .child(format!("update {}", u.available))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -778,14 +784,15 @@ impl Workbench {
             })
             .when(!pkg.base, |d| {
                 d.child(if confirming {
-                    div()
+                    h_flex()
                         .id(SharedString::from(format!("pkg-remove-{}", pkg.name)))
                         .flex_none()
-                        .px(px(6.))
-                        .rounded_full()
+                        .h(px(look::CONTROL_ROW))
+                        .px(px(look::GAP_6))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .text_size(px(look::SMALL))
                         .text_color(p.err)
-                        .hover(|d| d.bg(p.ink(10.)))
+                        .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
                         .child("Remove?")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -836,14 +843,14 @@ impl Workbench {
             };
         v_flex()
             .flex_none()
-            .gap(px(4.))
-            .px(px(8.))
-            .py(px(6.))
+            .gap(px(look::GAP_4))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
             .child(
                 h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child(
                         div()
                             .flex_1()
@@ -859,7 +866,7 @@ impl Workbench {
                     })
                     .child(
                         Button::new("install-go")
-                            .xsmall()
+                            .small()
                             .primary()
                             .label("Install")
                             .disabled(!typed)
@@ -939,9 +946,9 @@ impl Workbench {
         Some(
             h_flex()
                 .flex_none()
-                .gap(px(6.))
-                .px(px(14.))
-                .py(px(5.))
+                .gap(px(look::GAP_8))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
                 .border_b(px(0.5))
                 .border_color(p.glass_edge)
                 .text_size(px(look::SMALL))

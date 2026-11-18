@@ -12,13 +12,13 @@ use crate::git::{
     self, MarkKind, WORKTREE, avatar, badges, coauthors_of, file_mark, layout_graph, line_counts,
     split_path, staged_files, time_ago, unstaged_files,
 };
-use crate::look::{self, Palette, RADIUS, icon, icon_button, picture};
+use crate::look::{self, Palette, icon, icon_button, picture};
 use crate::workbench::Workbench;
 
 /// Commits read at a time.
 const PAGE: u32 = 200;
-/// The graph's row height and lane spacing.
-const ROW: f32 = 24.;
+const DETAIL_HEAD_HEIGHT: f32 = look::CONTROL_ROW + 2. * look::PANE_PAD_Y;
+/// The graph's lane spacing.
 const LANE: f32 = 16.;
 const MAX_LANES: usize = 8;
 /// The Branch / Tag column.
@@ -205,15 +205,15 @@ impl Workbench {
             .enumerate()
             .flat_map(|(row, r)| r.edges.iter().map(move |e| (row, e.from, e.to, e.color)))
             .collect();
-        let canvas_height = shas.len() as f32 * ROW;
+        let canvas_height = shas.len() as f32 * look::ROW;
         let lines = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let origin = bounds.origin;
                 for (row, from, to, color) in &edges {
                     let (x1, x2) = (x(*from), x(*to));
-                    let y1 = *row as f32 * ROW + ROW / 2.;
-                    let y2 = y1 + ROW;
+                    let y1 = *row as f32 * look::ROW + look::ROW / 2.;
+                    let y2 = y1 + look::ROW;
                     let at = |x: f32, y: f32| point(origin.x + px(x), origin.y + px(y));
                     let mut path = PathBuilder::stroke(px(2.));
                     if *row == 0 {
@@ -223,7 +223,11 @@ impl Workbench {
                     if x1 == x2 {
                         path.line_to(at(x2, y2));
                     } else {
-                        path.cubic_bezier_to(at(x2, y2), at(x1, y1 + 12.), at(x2, y2 - 12.));
+                        path.cubic_bezier_to(
+                            at(x2, y2),
+                            at(x1, y1 + look::ROW / 2.),
+                            at(x2, y2 - look::ROW / 2.),
+                        );
                     }
                     if let Ok(path) = path.build() {
                         window.paint_path(path, lane_color(&p, *color));
@@ -233,10 +237,10 @@ impl Workbench {
         )
         .absolute()
         .top_0()
-        .left(px(8. + REFS_WIDTH))
+        .left(px(look::PANE_PAD_X + REFS_WIDTH))
         .w(px(graph_width))
         .h(px(canvas_height));
-        let hover = p.ink(6.);
+        let hover = p.ink(look::ROW_HOVER);
         let rows = shas.iter().enumerate().map(|(i, (sha, _))| {
             let lane = graph.get(i).map_or(0, |r| r.lane);
             let worktree = sha == WORKTREE;
@@ -251,7 +255,7 @@ impl Workbench {
                     let all = badges(c);
                     let extra = all.len().saturating_sub(1);
                     h_flex()
-                        .gap(px(2.))
+                        .gap(px(look::GAP_2))
                         .children(all.into_iter().next().map(|b| {
                             let (color, name) = match b.kind.as_str() {
                                 "head" => (p.accent, "check"),
@@ -261,14 +265,14 @@ impl Workbench {
                             };
                             h_flex()
                                 .min_w_0()
-                                .gap(px(2.))
-                                .px(px(4.))
+                                .gap(px(look::GAP_4))
+                                .px(px(look::GAP_4))
                                 .h(px(17.))
-                                .rounded_full()
+                                .rounded(px(look::CONTROL_RADIUS))
                                 .bg(color.opacity(0.14))
                                 .text_color(color)
                                 .text_size(px(look::SMALL))
-                                .child(icon(name).size(px(11.)))
+                                .child(icon(name).size(px(look::ICON_SMALL)))
                                 .child(
                                     div()
                                         .min_w_0()
@@ -276,7 +280,9 @@ impl Workbench {
                                         .text_ellipsis()
                                         .child(b.name),
                                 )
-                                .when(b.remote, |d| d.child(icon("globe").size(px(10.))))
+                                .when(b.remote, |d| {
+                                    d.child(icon("globe").size(px(look::ICON_SMALL)))
+                                })
                         }))
                         .when(extra > 0, |d| {
                             d.child(
@@ -291,7 +297,7 @@ impl Workbench {
                 None => div()
                     .absolute()
                     .left(px(x(lane) - 5.))
-                    .top(px(ROW / 2. - 5.))
+                    .top(px(look::ROW / 2. - 5.))
                     .size(px(10.))
                     .rounded_full()
                     .border_1()
@@ -306,7 +312,7 @@ impl Workbench {
                     div()
                         .absolute()
                         .left(px(x(lane) - 9.))
-                        .top(px(ROW / 2. - 9.))
+                        .top(px(look::ROW / 2. - 9.))
                         .size(px(18.))
                         .rounded_full()
                         .border(px(1.5))
@@ -337,7 +343,7 @@ impl Workbench {
             };
             let message: AnyElement = match commit {
                 None => h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .child(div().font_weight(FontWeight::MEDIUM).child("Working tree"))
                     .when(staged > 0, |d| {
                         d.child(badge(format!("{staged} staged"), p.ok))
@@ -350,7 +356,7 @@ impl Workbench {
                     })
                     .into_any_element(),
                 Some(c) => h_flex()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .min_w_0()
                     .child(
                         div()
@@ -381,8 +387,9 @@ impl Workbench {
             };
             h_flex()
                 .id(SharedString::from(format!("git-row-{sha}")))
-                .h(px(ROW))
-                .px(px(8.))
+                .h(px(look::ROW))
+                .px(px(look::PANE_PAD_X))
+                .rounded(px(look::CONTROL_RADIUS))
                 .whitespace_nowrap()
                 .cursor_pointer()
                 .when(on, |d| d.bg(p.sel))
@@ -404,13 +411,16 @@ impl Workbench {
                 .into_any_element()
         });
         let older = self.git.log.more.then(|| {
-            div()
+            h_flex()
                 .id("git-older")
-                .px(px(14.))
-                .py(px(4.))
+                .mx(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .h(px(look::ROW))
+                .rounded(px(look::CONTROL_RADIUS))
                 .text_size(px(look::SMALL))
                 .text_color(p.accent)
                 .cursor_pointer()
+                .hover(move |d| d.bg(hover))
                 .child("Older commits")
                 .on_click(cx.listener(|this, _, _, cx| {
                     let refs = this.git.log.refs.clone();
@@ -419,8 +429,8 @@ impl Workbench {
         });
         let columns = h_flex()
             .flex_none()
-            .px(px(8.))
-            .h(px(20.))
+            .px(px(look::PANE_PAD_X))
+            .h(px(look::DENSE_ROW))
             .text_size(px(look::SMALL))
             .text_color(p.faint)
             .child(div().w(px(REFS_WIDTH)).child("Branch / Tag"))
@@ -429,12 +439,14 @@ impl Workbench {
         v_flex()
             .relative()
             .flex_none()
-            .h(px(self.git.log.height + look::STRIP + 32.))
+            .h(px(self.git.log.height
+                + look::STRIP
+                + git::pane::HEAD_HEIGHT))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
             .child(look::PaneScroll::new(
                 "git-log-scroll",
-                look::STRIP + 32. + 20.,
+                look::STRIP + git::pane::HEAD_HEIGHT + look::DENSE_ROW,
                 0.,
                 div()
                     .id("git-log")
@@ -442,7 +454,12 @@ impl Workbench {
                     .child(div().relative().child(lines).children(rows))
                     .children(older),
             ))
-            .child(look::floating_header(&p, look::STRIP + 32., false, columns))
+            .child(look::floating_header(
+                &p,
+                look::STRIP + git::pane::HEAD_HEIGHT,
+                false,
+                columns,
+            ))
             .into_any_element()
     }
 
@@ -451,14 +468,14 @@ impl Workbench {
         let Some(info) = &self.git.log.info else {
             return div()
                 .flex_1()
-                .px(px(14.))
-                .py(px(6.))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
                 .text_color(p.muted)
                 .child("Reading the commit…")
                 .into_any_element();
         };
         let face = avatar(&info.author, &info.email, &coauthors_of(&info.message));
-        let hover = p.ink(7.);
+        let hover = p.ink(look::ROW_HOVER);
         let sha = info.sha.clone();
         let files = info.files.iter().enumerate().map(|(ix, change)| {
             let (name, dir) = split_path(&change.path);
@@ -480,11 +497,11 @@ impl Workbench {
             let tip = format!("{}\n{meaning}", change.path);
             h_flex()
                 .id(("git-change", ix))
-                .mx(px(4.))
-                .px(px(8.))
-                .h(px(24.))
-                .gap(px(6.))
-                .rounded(px(RADIUS))
+                .mx(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .h(px(look::ROW))
+                .gap(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .whitespace_nowrap()
                 .cursor_pointer()
                 .hover(move |d| d.bg(hover))
@@ -496,13 +513,13 @@ impl Workbench {
                 }))
                 .child(
                     div()
-                        .w(px(12.))
+                        .w(px(look::ICON_SMALL))
                         .text_size(px(look::SMALL))
                         .font_weight(FontWeight::BOLD)
                         .text_color(color)
                         .child(letter),
                 )
-                .child(picture(&look::file_icon(&change.path)).size(px(14.)))
+                .child(picture(&look::file_icon(&change.path)).size(px(look::ICON)))
                 .child(div().flex_none().child(name))
                 .child(
                     div()
@@ -527,23 +544,27 @@ impl Workbench {
             .min_h(px(140.))
             .child(look::PaneScroll::new(
                 "git-detail-scroll",
-                36.,
+                DETAIL_HEAD_HEIGHT,
                 0.,
                 div()
                     .id("git-detail")
                     .child(
-                        div().px(px(12.)).pb(px(8.)).whitespace_normal().children(
-                            info.message
-                                .lines()
-                                .map(|l| div().min_h(px(8.)).child(l.to_string()))
-                                .collect::<Vec<_>>(),
-                        ),
+                        div()
+                            .px(px(look::PANE_PAD_X))
+                            .pb(px(look::PANE_PAD_Y))
+                            .whitespace_normal()
+                            .children(
+                                info.message
+                                    .lines()
+                                    .map(|l| div().min_h(px(look::GAP_8)).child(l.to_string()))
+                                    .collect::<Vec<_>>(),
+                            ),
                     )
                     .child(
                         h_flex()
-                            .px(px(12.))
-                            .pt(px(4.))
-                            .gap(px(6.))
+                            .px(px(look::PANE_PAD_X))
+                            .pt(px(look::GAP_4))
+                            .gap(px(look::GAP_4))
                             .text_size(px(look::SMALL))
                             .child(
                                 div()
@@ -561,10 +582,9 @@ impl Workbench {
             ))
             .child(
                 h_flex()
-                    .h(px(36.))
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(6.))
+                    .h(px(DETAIL_HEAD_HEIGHT))
+                    .gap(px(look::GAP_8))
+                    .px(px(look::PANE_PAD_X))
                     .text_size(px(look::SMALL))
                     .child(
                         div()
@@ -588,8 +608,8 @@ impl Workbench {
 
 fn badge(text: String, color: Hsla) -> Div {
     div()
-        .px(px(6.))
-        .rounded_full()
+        .px(px(look::GAP_6))
+        .rounded(px(look::CONTROL_RADIUS))
         .bg(color.opacity(0.14))
         .text_color(color)
         .text_size(px(look::SMALL))

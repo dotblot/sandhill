@@ -62,7 +62,7 @@ impl Workbench {
                         TITLE_BAR_LEFT
                     }))
                     .pr(px(6.))
-                    .gap(px(6.))
+                    .gap(px(look::GAP_6))
                     .child(
                         h_flex()
                             .flex_none()
@@ -193,8 +193,8 @@ impl Workbench {
         h_flex()
             .flex_none()
             .h(px(look::STRIP))
-            .px(px(4.))
-            .gap(px(4.))
+            .px(px(look::GAP_4))
+            .gap(px(look::GAP_4))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
             .overflow_hidden()
@@ -208,14 +208,14 @@ impl Workbench {
         active: bool,
         p: &Palette,
     ) -> Stateful<Div> {
-        let hover = p.ink(6.);
+        let hover = p.ink(look::BUTTON_HOVER);
         let text = p.text;
         let tab = h_flex()
             .id(id)
             .group(look::TAB_GROUP)
             .flex_none()
             .h(px(look::TAB_H))
-            .gap(px(5.))
+            .gap(px(look::GAP_4))
             .px(px(look::TAB_PAD))
             .rounded_full()
             .text_size(px(look::TAB_TEXT))
@@ -273,7 +273,9 @@ impl Workbench {
                     .join("\n");
                 let dirty = files.iter().any(|ix| self.tab_dirty(&self.tabs[*ix]));
                 let picked = expanded && shown == Some(path.as_str());
-                let lead = picture(&file_icon).size(px(14.)).into_any_element();
+                let lead = picture(&file_icon)
+                    .size(px(look::ICON_LARGE))
+                    .into_any_element();
                 let (lead, trailing) = if expanded {
                     look::place_close(
                         lead,

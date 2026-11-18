@@ -66,7 +66,7 @@ impl Workbench {
             .min_w_0()
             .overflow_hidden()
             .justify_end()
-            .gap(px(4.))
+            .gap(px(look::GAP_4))
             .text_color(p.muted)
             .when(self.project.is_some(), |d| {
                 d.child(self.console_kernel_picker(cx))

@@ -21,7 +21,7 @@ use crate::git::{
     self, BIG_FILE, MarkKind, branch_name, commit_message, file_mark, file_size, line_counts,
     split_message, split_path, staged_files, too_big, unstaged_files,
 };
-use crate::look::{self, Palette, RADIUS, icon, icon_button, picture};
+use crate::look::{self, Palette, icon, icon_button, picture};
 use crate::workbench::{BottomTab, Workbench};
 
 mod asks;
@@ -30,6 +30,8 @@ mod stage;
 
 /// How often the status is read while the pane shows.
 const POLL: Duration = Duration::from_secs(3);
+
+pub(super) const HEAD_HEIGHT: f32 = look::ROW;
 
 /// The pane's menus.
 /// Turns git's output into the note shown after an action.
@@ -628,21 +630,21 @@ impl Workbench {
                 h_flex()
                     .id(id)
                     .on_prepaint(self.popup_triggers.track(id))
-                    .h(px(22.))
-                    .px(px(5.))
-                    .gap(px(2.))
-                    .rounded(px(RADIUS))
+                    .h(px(look::CONTROL_ROW))
+                    .px(px(look::GAP_4))
+                    .gap(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .text_size(px(look::SMALL))
                     .text_color(p.muted)
                     .when(!on, |d| d.opacity(0.35))
                     .when(on, |d| {
                         d.cursor_pointer()
-                            .hover(|d| d.bg(p.ink(7.)).text_color(p.text))
+                            .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)).text_color(p.text))
                     })
                     .child(if busy == Some(op) {
                         div().text_color(p.busy).child("…").into_any_element()
                     } else {
-                        icon(name).size(px(14.)).into_any_element()
+                        icon(name).size(px(look::ICON)).into_any_element()
                     })
                     .when(count > 0, |d| d.child(count.to_string()))
                     .tooltip(move |window, cx| {
@@ -747,8 +749,13 @@ impl Workbench {
     /// The Git tab's body.
     pub(crate) fn render_git(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let note =
-            |text: String, color: Hsla| div().px(px(14.)).py(px(6.)).text_color(color).child(text);
+        let note = |text: String, color: Hsla| {
+            div()
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
+                .text_color(color)
+                .child(text)
+        };
         let Some(status) = &self.git.status else {
             return v_flex()
                 .size_full()
@@ -765,9 +772,10 @@ impl Workbench {
         if status.repo.is_empty() {
             return v_flex()
                 .size_full()
-                .gap(px(8.))
-                .p(px(14.))
-                .pt(px(look::STRIP + 14.))
+                .gap(px(look::GAP_8))
+                .px(px(look::PANE_PAD_X))
+                .pb(px(look::PANE_PAD_Y))
+                .pt(px(look::STRIP + look::PANE_PAD_Y))
                 .child(
                     div()
                         .text_color(p.muted)
@@ -804,9 +812,9 @@ impl Workbench {
             notices.push(
                 h_flex()
                     .flex_none()
-                    .px(px(12.))
-                    .py(px(4.))
-                    .gap(px(6.))
+                    .px(px(look::PANE_PAD_X))
+                    .py(px(look::GAP_4))
+                    .gap(px(look::GAP_8))
                     .text_size(px(look::SMALL))
                     .border_b(px(0.5))
                     .border_color(p.glass_edge)
@@ -871,22 +879,22 @@ impl Workbench {
         };
         h_flex()
             .flex_none()
-            .h(px(32.))
-            .gap(px(6.))
-            .px(px(10.))
-            .py(px(5.))
+            .h(px(HEAD_HEIGHT))
+            .gap(px(look::GAP_4))
+            .px(px(look::PANE_PAD_X))
             .border_b(px(0.5))
             .border_color(p.glass_edge)
-            .child(icon("git.branch").size(px(14.)).text_color(p.muted))
+            .child(icon("git.branch").size(px(look::ICON)).text_color(p.muted))
             .child(
-                div()
+                h_flex()
                     .id("git-branch")
                     .on_prepaint(self.popup_triggers.track("git-branches"))
-                    .px(px(6.))
-                    .rounded(px(RADIUS))
+                    .h(px(look::CONTROL_ROW))
+                    .px(px(look::GAP_4))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
-                    .hover(|d| d.bg(p.ink(7.)))
+                    .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
                     .child(branch)
                     .tooltip(move |window, cx| {
                         gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)

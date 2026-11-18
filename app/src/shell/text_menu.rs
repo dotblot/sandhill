@@ -57,13 +57,13 @@ pub(crate) fn row<V: 'static>(
     cx: &mut Context<V>,
     run: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
 ) -> AnyElement {
-    let hover = p.ink(8.);
+    let hover = p.ink(look::ROW_HOVER);
     h_flex()
         .id(id)
-        .h(px(26.))
-        .px(px(8.))
-        .gap(px(8.))
-        .rounded(px(look::RADIUS - 4.))
+        .h(px(look::ROW))
+        .px(px(look::GAP_8))
+        .gap(px(look::GAP_8))
+        .rounded(px(look::CONTROL_RADIUS))
         .cursor_pointer()
         .hover(move |d| d.bg(hover))
         .child(div().flex_1().whitespace_nowrap().child(label))

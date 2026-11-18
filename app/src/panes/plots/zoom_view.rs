@@ -51,12 +51,14 @@ impl Workbench {
                 .id(SharedString::from(format!("fmt-{f}")))
                 .flex_1()
                 .flex()
+                .items_center()
                 .justify_center()
-                .px(px(10.))
-                .py(px(3.))
-                .rounded(px(6.))
+                .h(px(look::CONTROL_ROW))
+                .px(px(look::GAP_8))
+                .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
                 .when(on, |d| d.bg(p.bg).text_color(p.text))
+                .when(!on, |d| d.hover(move |d| d.bg(p.ink(look::BUTTON_HOVER))))
                 .child(f.to_uppercase())
                 .on_click(
                     cx.listener(move |this, _, window, cx| this.set_zoom_format(f, window, cx)),
@@ -73,29 +75,34 @@ impl Workbench {
                     explain.clone()
                 }
             });
-        let mut units = v_flex().gap(px(2.));
+        let hover = p.ink(look::BUTTON_HOVER);
+        let mut units = v_flex().gap(px(look::GAP_2));
         for unit in [PlotUnit::Pixels, PlotUnit::Inches, PlotUnit::Centimetres] {
             units = units.child(
-                look::bar_button(
-                    SharedString::from(format!("zoom-unit-{}", unit.label())),
-                    unit.label(),
-                    None,
-                    &p,
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(zoom) = &mut this.plot_history.zoom {
-                        zoom.unit = unit;
-                        zoom.units_open = false;
-                    }
-                    this.sync_zoom_dimensions(window, cx);
-                    this.remember_zoom_sizing(cx);
-                })),
+                h_flex()
+                    .id(SharedString::from(format!("zoom-unit-{}", unit.label())))
+                    .h(px(look::ROW))
+                    .px(px(look::GAP_8))
+                    .rounded(px(look::CONTROL_RADIUS))
+                    .cursor_pointer()
+                    .text_color(p.muted)
+                    .hover(move |d| d.bg(hover).text_color(p.text))
+                    .child(unit.label())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if let Some(zoom) = &mut this.plot_history.zoom {
+                            zoom.unit = unit;
+                            zoom.units_open = false;
+                        }
+                        this.sync_zoom_dimensions(window, cx);
+                        this.remember_zoom_sizing(cx);
+                    })),
             );
         }
         let unit_picker = div()
             .relative()
             .child(
                 look::bar_button("zoom-unit", zoom.unit.label(), Some("chevron.down"), &p)
+                    .h(px(look::CONTROL_CARD))
                     .on_prepaint(self.popup_triggers.track("zoom-unit"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(zoom) = &mut this.plot_history.zoom {
@@ -106,29 +113,35 @@ impl Workbench {
             )
             .when(zoom.units_open, |d| {
                 d.child(
-                    div().absolute().top(px(28.)).left_0().child(
-                        deferred(
-                            crate::agents::composer_view::popup(&p)
-                                .id("zoom-units")
-                                .occlude()
-                                .w(px(78.))
-                                .text_size(px(look::SMALL))
-                                .child(units)
-                                .on_mouse_down_out(cx.listener(
-                                    |this, event: &MouseDownEvent, _, cx| {
-                                        if this.popup_triggers.contains("zoom-unit", event.position)
-                                        {
-                                            return;
-                                        }
-                                        if let Some(zoom) = &mut this.plot_history.zoom {
-                                            zoom.units_open = false;
-                                        }
-                                        cx.notify();
-                                    },
-                                )),
-                        )
-                        .with_priority(3),
-                    ),
+                    div()
+                        .absolute()
+                        .top(px(look::CONTROL_CARD + look::GAP_6))
+                        .left_0()
+                        .child(
+                            deferred(
+                                crate::agents::composer_view::popup(&p)
+                                    .id("zoom-units")
+                                    .occlude()
+                                    .w(px(78.))
+                                    .text_size(px(look::SMALL))
+                                    .child(units)
+                                    .on_mouse_down_out(cx.listener(
+                                        |this, event: &MouseDownEvent, _, cx| {
+                                            if this
+                                                .popup_triggers
+                                                .contains("zoom-unit", event.position)
+                                            {
+                                                return;
+                                            }
+                                            if let Some(zoom) = &mut this.plot_history.zoom {
+                                                zoom.units_open = false;
+                                            }
+                                            cx.notify();
+                                        },
+                                    )),
+                            )
+                            .with_priority(3),
+                        ),
                 )
             });
         let back = at > 0;
@@ -149,9 +162,9 @@ impl Workbench {
         };
         let switch_row = |switch: AnyElement, label: &'static str| {
             h_flex()
-                .h(px(22.))
+                .h(px(look::CONTROL_ROW))
                 .flex_none()
-                .gap(px(8.))
+                .gap(px(look::GAP_8))
                 .child(switch)
                 .child(label)
         };
@@ -167,40 +180,40 @@ impl Workbench {
             .when(!beside, |d| d.w_full().max_h(px(260.)).border_t(px(0.5)))
             .border_color(p.glass_edge)
             .overflow_y_scroll()
-            .px(px(14.))
-            .py(px(12.))
-            .gap(px(8.))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
+            .gap(px(look::GAP_8))
             .text_size(px(look::SMALL))
             .child(heading("FORMAT"))
             .child(
                 h_flex()
-                    .gap(px(2.))
-                    .p(px(2.))
-                    .rounded(px(8.))
+                    .gap(px(look::GAP_2))
+                    .p(px(look::GAP_2))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .bg(p.ink(6.))
                     .text_color(p.muted)
                     .children(formats.iter().map(|f| segment(f, cx))),
             )
-            .child(div().h(px(4.)))
+            .child(div().h(px(look::GAP_4)))
             .child(heading("SIZE"))
             .child(
                 h_flex()
-                    .h(px(28.))
+                    .h(px(look::CONTROL_CARD))
                     .flex_none()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_4))
                     .child("W")
-                    .child(div().w(px(70.)).child(Input::new(&zoom.width).small()))
+                    .child(div().w(px(70.)).child(plot_field(&zoom.width)))
                     .child("H")
-                    .child(div().w(px(70.)).child(Input::new(&zoom.height).small()))
+                    .child(div().w(px(70.)).child(plot_field(&zoom.height)))
                     .child(unit_picker),
             )
             .child(
                 h_flex()
-                    .h(px(28.))
+                    .h(px(look::CONTROL_CARD))
                     .flex_none()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child("Resolution")
-                    .child(div().w(px(70.)).child(Input::new(&zoom.dpi_input).small()))
+                    .child(div().w(px(70.)).child(plot_field(&zoom.dpi_input)))
                     .child("dpi"),
             )
             .child(switch_row(
@@ -251,7 +264,7 @@ impl Workbench {
                         ),
                 )
             })
-            .child(div().h(px(4.)))
+            .child(div().h(px(look::GAP_4)))
             .child(heading("PREVIEW"))
             .child(switch_row(
                 div()
@@ -283,13 +296,13 @@ impl Workbench {
                     .into_any_element(),
                 "Redraw preview",
             ))
-            .child(div().h(px(4.)))
+            .child(div().h(px(look::GAP_4)))
             .child(heading("SAVE TO"))
             .child(
                 h_flex()
-                    .h(px(28.))
+                    .h(px(look::CONTROL_CARD))
                     .flex_none()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child(
                         div()
                             .flex_1()
@@ -300,20 +313,22 @@ impl Workbench {
                             .child(self.relative_path(&zoom.folder)),
                     )
                     .child(
-                        look::bar_button("zoom-folder", "Choose…", Some("folder"), &p).on_click(
-                            cx.listener(|this, _, window, cx| this.choose_plot_folder(window, cx)),
-                        ),
+                        look::bar_button("zoom-folder", "Choose…", Some("folder"), &p)
+                            .h(px(look::CONTROL_CARD))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.choose_plot_folder(window, cx)
+                            })),
                     ),
             )
             .child(
                 h_flex()
-                    .h(px(28.))
+                    .h(px(look::CONTROL_CARD))
                     .flex_none()
-                    .gap(px(6.))
+                    .gap(px(look::GAP_8))
                     .child("Name")
-                    .child(div().flex_1().min_w_0().child(Input::new(&zoom.name).small())),
+                    .child(div().flex_1().min_w_0().child(plot_field(&zoom.name))),
             )
-            .child(div().flex_1().min_h(px(8.)))
+            .child(div().flex_1().min_h(px(look::GAP_8)))
             .child(
                 look::button(
                     "zoom-save",
@@ -343,7 +358,7 @@ impl Workbench {
             .max_w(relative(0.96))
             .max_h(relative(0.96))
             .bg(p.bg)
-            .rounded(px(RADIUS))
+            .rounded(px(look::RADIUS))
             .border_1()
             .border_color(p.glass_edge)
             .shadow(vec![BoxShadow {
@@ -357,8 +372,8 @@ impl Workbench {
                 h_flex()
                     .flex_none()
                     .h(px(36.))
-                    .px(px(8.))
-                    .gap(px(4.))
+                    .px(px(look::PANE_PAD_X))
+                    .gap(px(look::GAP_4))
                     .border_b(px(0.5))
                     .border_color(p.glass_edge)
                     .child(
@@ -376,7 +391,6 @@ impl Workbench {
                             )
                             .flex_1()
                             .min_w_0()
-                            .pl(px(6.))
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
@@ -445,8 +459,9 @@ impl Workbench {
                                 div()
                                     .flex_1()
                                     .min_h_0()
-                                    .m(px(14.))
-                                    .mb(px(6.))
+                                    .mx(px(look::PANE_PAD_X))
+                                    .mt(px(look::PANE_PAD_Y))
+                                    .mb(px(look::GAP_6))
                                     .relative()
                                     .overflow_hidden()
                                     .flex()
@@ -472,9 +487,9 @@ impl Workbench {
                             .child(
                                 div()
                                     .id("plot-zoom-status")
-                                    .h(px(18.))
-                                    .mb(px(8.))
-                                    .px(px(14.))
+                                    .h(px(look::CONTROL_ROW))
+                                    .mb(px(look::PANE_PAD_Y))
+                                    .px(px(look::PANE_PAD_X))
                                     .flex_none()
                                     .min_w_0()
                                     .overflow_hidden()
@@ -497,7 +512,7 @@ impl Workbench {
                     .absolute()
                     .right_0()
                     .bottom_0()
-                    .size(px(20.))
+                    .size(px(look::CONTROL_ROW))
                     .cursor(CursorStyle::ResizeUpLeftDownRight)
                     .text_color(p.muted)
                     .child("◢")

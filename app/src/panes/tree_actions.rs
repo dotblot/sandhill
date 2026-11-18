@@ -20,6 +20,11 @@ use crate::panes::files::{
 use crate::panes::tree::join;
 use crate::workbench::Workbench;
 
+/// Keep the rename field and folder guides aligned with the file rows.
+pub(crate) fn file_row_indent(depth: usize) -> f32 {
+    look::GAP_8 + 16. * depth as f32
+}
+
 /// What the name field in the tree is for.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Naming {
@@ -747,6 +752,8 @@ impl Workbench {
             .id("tree-menu")
             .occlude()
             .min_w(px(250.))
+            .max_h(px(420.))
+            .overflow_y_scroll()
             .children(rows)
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.files_ui.menu = None;
@@ -801,7 +808,7 @@ impl Workbench {
             div()
                 .absolute()
                 .top(px(28.))
-                .right(px(8.))
+                .right(px(look::GAP_8))
                 .child(deferred(body).with_priority(3))
                 .into_any_element(),
         )
@@ -842,7 +849,7 @@ impl Workbench {
             div()
                 .absolute()
                 .top(px(28.))
-                .right(px(8.))
+                .right(px(look::GAP_8))
                 .child(deferred(body).with_priority(3))
                 .into_any_element(),
         )
@@ -864,10 +871,10 @@ impl Workbench {
         h_flex()
             .id("name-field")
             .w_full()
-            .h(px(22.))
-            .pl(px(8. + 16. * depth as f32 + 20.))
-            .pr(px(4.))
-            .gap(px(6.))
+            .h(px(look::ROW))
+            .pl(px(file_row_indent(depth) + look::ICON + look::GAP_4))
+            .pr(px(look::GAP_8))
+            .gap(px(look::GAP_4))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
                     this.files_ui.naming = None;
@@ -875,7 +882,7 @@ impl Workbench {
                     cx.notify();
                 }
             }))
-            .child(picture(&picture_for))
+            .child(picture(&picture_for).size(px(look::ICON)))
             .child(
                 div()
                     .flex_1()
@@ -891,11 +898,11 @@ impl Workbench {
         let p = *Palette::get(cx);
         Some(
             v_flex()
-                .mx(px(10.))
-                .mb(px(4.))
-                .px(px(8.))
-                .py(px(4.))
-                .rounded(px(look::RADIUS - 4.))
+                .mx(px(look::PANE_PAD_X))
+                .mb(px(look::GAP_4))
+                .px(px(look::GAP_8))
+                .py(px(look::GAP_4))
+                .rounded(px(look::CONTROL_RADIUS))
                 .bg(p.err.opacity(0.12))
                 .text_color(p.err)
                 .text_size(px(look::SMALL))
@@ -928,8 +935,8 @@ fn new_icon(kind: NewKind) -> &'static str {
 
 fn heading(text: String, p: &Palette) -> AnyElement {
     div()
-        .px(px(8.))
-        .py(px(4.))
+        .px(px(look::GAP_8))
+        .py(px(look::GAP_4))
         .text_size(px(look::SMALL))
         .text_color(p.faint)
         .child(text)
@@ -938,7 +945,7 @@ fn heading(text: String, p: &Palette) -> AnyElement {
 
 pub(crate) fn separator(p: &Palette) -> AnyElement {
     div()
-        .my(px(4.))
+        .my(px(look::GAP_4))
         .h(px(0.5))
         .bg(p.glass_edge)
         .into_any_element()
@@ -955,21 +962,21 @@ pub(crate) fn menu_item(
     cx: &mut Context<Workbench>,
     run: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
 ) -> AnyElement {
-    let hover = p.ink(8.);
+    let hover = p.ink(look::ROW_HOVER);
     h_flex()
         .id(id)
-        .h(px(26.))
-        .px(px(8.))
-        .gap(px(8.))
-        .rounded(px(look::RADIUS - 4.))
+        .h(px(look::ROW))
+        .px(px(look::GAP_8))
+        .gap(px(look::GAP_4))
+        .rounded(px(look::CONTROL_RADIUS))
         .cursor_pointer()
         .hover(move |d| d.bg(hover))
         .child(
             div()
-                .w(px(14.))
+                .w(px(look::ICON))
                 .flex_none()
                 .text_color(p.muted)
-                .children(icon_name.map(|n| icon(n).size(px(13.)))),
+                .children(icon_name.map(|n| icon(n).size(px(look::ICON)))),
         )
         .child(div().flex_1().whitespace_nowrap().child(label.to_string()))
         .child(div().flex_none().text_color(p.faint).child(keys))

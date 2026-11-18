@@ -373,9 +373,9 @@ impl Workbench {
                     cell = cell.child(
                         h_flex()
                             .w_full()
-                            .gap(px(16.))
-                            .px(px(14.))
-                            .pb(px(10.))
+                            .gap(px(look::GAP_12))
+                            .px(px(look::PANE_PAD_X))
+                            .pb(px(look::PANE_PAD_Y))
                             .child(
                                 look::settings_detail(
                                     format!(
@@ -489,7 +489,7 @@ impl Workbench {
             .max_w(relative(0.95))
             .max_h(relative(0.9))
             .overflow_y_scroll()
-            .gap(px(16.))
+            .gap(px(look::GAP_12))
             .p(px(20.))
             .rounded(px(look::RADIUS))
             .bg(p.panel)
@@ -500,16 +500,16 @@ impl Workbench {
             // The project's icon beside its title, as the quit card has the crane.
             .child(
                 h_flex()
-                    .gap(px(12.))
+                    .gap(px(look::GAP_12))
                     .child(
                         look::picture(&look::project_icon(&host, &path, &name))
-                            .size(px(32.))
+                            .size(px(look::ICON_LARGE))
                             .flex_none(),
                     )
                     .child(
                         v_flex()
                             .min_w_0()
-                            .gap(px(2.))
+                            .gap(px(look::GAP_2))
                             .child(
                                 div()
                                     .text_size(px(look::TITLE))
@@ -543,7 +543,7 @@ impl Workbench {
             .when_some(dialog.error.clone(), |d, err| d.child(div().text_color(p.err).child(err)))
             .child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(
                         div()
                             .flex_1()
@@ -610,16 +610,16 @@ impl Workbench {
             Menu::R => "settings-r",
             Menu::Python => "settings-python",
         };
-        let hover = p.ink(8.);
+        let hover = p.ink(look::BUTTON_HOVER);
         let button = h_flex()
             .id(SharedString::from(format!("select-{trigger}")))
             .on_prepaint(self.popup_triggers.track(trigger))
             .min_w_0()
             .max_w(px(240.))
-            .h(px(22.))
-            .gap(px(5.))
-            .pl(px(6.))
-            .pr(px(8.))
+            .h(px(look::CONTROL_ROW))
+            .gap(px(look::GAP_4))
+            .pl(px(look::GAP_6))
+            .pr(px(look::GAP_8))
             .rounded_full()
             .bg(p.cap_bg)
             .text_size(px(look::TAB_TEXT))
@@ -627,8 +627,8 @@ impl Workbench {
             .cursor_pointer()
             .hover(move |d| d.bg(hover))
             .map(|d| match lead {
-                Some(lead) => d.child(look::picture(lead).size(px(14.))),
-                None => d.pl(px(8.)),
+                Some(lead) => d.child(look::picture(lead).size(px(look::ICON))),
+                None => d.pl(px(look::GAP_8)),
             })
             .child(
                 div()
@@ -637,7 +637,11 @@ impl Workbench {
                     .text_ellipsis()
                     .child(shown),
             )
-            .child(icon("chevron.down").size(px(12.)).text_color(p.faint))
+            .child(
+                icon("chevron.down")
+                    .size(px(look::ICON_SMALL))
+                    .text_color(p.faint),
+            )
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(dialog) = &mut this.setup.dialog {
                     dialog.menu = if dialog.menu == Some(menu) {
@@ -662,14 +666,14 @@ impl Workbench {
                     let on = value == chosen;
                     h_flex()
                         .id(SharedString::from(format!("{trigger}-{i}")))
-                        .h(px(26.))
-                        .px(px(8.))
-                        .gap(px(8.))
-                        .rounded(px(look::RADIUS - 4.))
+                        .h(px(look::ROW))
+                        .px(px(look::GAP_8))
+                        .gap(px(look::GAP_4))
+                        .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
                         .hover(move |d| d.bg(hover))
-                        .child(div().w(px(14.)).flex_none().when(on, |d| {
-                            d.child(icon("check").size(px(13.)).text_color(p.muted))
+                        .child(div().w(px(look::ICON)).flex_none().when(on, |d| {
+                            d.child(icon("check").size(px(look::ICON)).text_color(p.muted))
                         }))
                         .child(
                             div()
@@ -698,15 +702,19 @@ impl Workbench {
             .child(button)
             .when_some(list, |d, list| {
                 d.child(
-                    div().absolute().right_0().top(px(24.)).child(
-                        deferred(
-                            anchored()
-                                .anchor(Anchor::TopRight)
-                                .snap_to_window_with_margin(px(8.))
-                                .child(list),
-                        )
-                        .with_priority(3),
-                    ),
+                    div()
+                        .absolute()
+                        .right_0()
+                        .top(px(look::CONTROL_ROW + look::GAP_2))
+                        .child(
+                            deferred(
+                                anchored()
+                                    .anchor(Anchor::TopRight)
+                                    .snap_to_window_with_margin(px(look::PANE_PAD_Y))
+                                    .child(list),
+                            )
+                            .with_priority(3),
+                        ),
                 )
             })
     }

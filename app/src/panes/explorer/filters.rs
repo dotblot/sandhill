@@ -174,20 +174,22 @@ impl Explorer {
         let current = *ops.iter().find(|o| o.op == edit.op).unwrap_or(&ops[0]);
         let label =
             |text: &'static str| div().w(px(70.)).flex_none().text_color(p.muted).child(text);
-        let row = || h_flex().gap(px(8.)).items_center();
-        let hover = p.ink(8.);
+        let row = || h_flex().gap(px(look::GAP_8)).items_center();
+        let button_hover = p.ink(look::BUTTON_HOVER);
+        let row_hover = p.ink(look::ROW_HOVER);
         let column_button = h_flex()
             .id("df-column")
             .on_prepaint(edit.popup_triggers.track("filter-column"))
             .flex_1()
             .min_w_0()
-            .h(px(26.))
-            .px(px(8.))
-            .gap(px(4.))
-            .rounded(px(6.))
+            .h(px(look::CONTROL_CARD))
+            .px(px(look::GAP_8))
+            .gap(px(look::GAP_4))
+            .rounded(px(look::CONTROL_RADIUS))
             .border_1()
             .border_color(p.line)
             .cursor_pointer()
+            .hover(move |d| d.bg(button_hover))
             .child(
                 div()
                     .flex_1()
@@ -197,7 +199,11 @@ impl Explorer {
                     .whitespace_nowrap()
                     .child(column.map_or_else(String::new, |c| c.name.clone())),
             )
-            .child(icon("chevron.down").size(px(12.)).text_color(p.muted))
+            .child(
+                icon("chevron.down")
+                    .size(px(look::ICON))
+                    .text_color(p.muted),
+            )
             .on_click(cx.listener(|this, _, _, cx| {
                 if let Some(edit) = &mut this.edit {
                     edit.columns_open = !edit.columns_open;
@@ -208,9 +214,9 @@ impl Explorer {
             div()
                 .id("df-columns")
                 .ml(px(78.))
-                .h(px((shape.columns.len() as f32 * 24.).min(200.)))
+                .h(px((shape.columns.len() as f32 * look::ROW + 2.).min(200.)))
                 .overflow_hidden()
-                .rounded(px(6.))
+                .rounded(px(look::RADIUS))
                 .border_1()
                 .border_color(p.line)
                 .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -237,12 +243,15 @@ impl Explorer {
                                         let on = Some(i as u32) == picked;
                                         h_flex()
                                             .id(("df-col", i))
-                                            .h(px(24.))
-                                            .px(px(8.))
-                                            .gap(px(6.))
+                                            .h(px(look::ROW))
+                                            .px(px(look::GAP_8))
+                                            .gap(px(look::GAP_8))
+                                            .rounded(px(look::CONTROL_RADIUS))
                                             .cursor_pointer()
                                             .when(on, |d| d.bg(p.sel))
-                                            .hover(move |d| d.bg(hover))
+                                            .hover(move |d| {
+                                                d.bg(if on { button_hover } else { row_hover })
+                                            })
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -270,34 +279,31 @@ impl Explorer {
                     .size_full(),
                 )
         });
-        let conditions =
-            h_flex()
-                .flex_1()
-                .flex_wrap()
-                .gap(px(4.))
-                .children(ops.iter().enumerate().map(|(i, o)| {
-                    let on = o.op == current.op;
-                    let name = o.op;
-                    div()
-                        .id(("df-op", i))
-                        .h(px(24.))
-                        .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .rounded(px(12.))
-                        .border_1()
-                        .border_color(if on { p.accent } else { p.line })
-                        .when(on, |d| d.bg(p.accent_soft))
-                        .cursor_pointer()
-                        .hover(move |d| d.bg(hover))
-                        .child(o.label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(edit) = &mut this.edit {
-                                edit.op = name.into();
-                            }
-                            cx.notify();
-                        }))
-                }));
+        let conditions = h_flex().flex_1().flex_wrap().gap(px(look::GAP_4)).children(
+            ops.iter().enumerate().map(|(i, o)| {
+                let on = o.op == current.op;
+                let name = o.op;
+                div()
+                    .id(("df-op", i))
+                    .h(px(look::CONTROL_CARD))
+                    .px(px(look::GAP_8))
+                    .flex()
+                    .items_center()
+                    .rounded(px(look::CONTROL_RADIUS))
+                    .border_1()
+                    .border_color(if on { p.accent } else { p.line })
+                    .when(on, |d| d.bg(p.accent_soft))
+                    .cursor_pointer()
+                    .hover(move |d| d.bg(button_hover))
+                    .child(o.label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(edit) = &mut this.edit {
+                            edit.op = name.into();
+                        }
+                        cx.notify();
+                    }))
+            }),
+        );
         let values: Option<AnyElement> = match current.takes {
             Takes::None => None,
             Takes::One | Takes::Two => Some(
@@ -330,59 +336,60 @@ impl Explorer {
                     .ml(px(78.))
                     .max_h(px(200.))
                     .overflow_y_scroll()
-                    .child(
-                        v_flex()
-                            .gap(px(2.))
-                            .children(list.into_iter().enumerate().map(|(i, v)| {
-                                let ticked = edit.ticked.contains(&v);
-                                let value = v.clone();
-                                h_flex()
-                                    .id(("df-choice", i))
-                                    .gap(px(6.))
-                                    .cursor_pointer()
-                                    .child(
-                                        div()
-                                            .size(px(14.))
-                                            .flex_none()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(px(3.))
-                                            .border_1()
-                                            .border_color(if ticked { p.accent } else { p.faint })
-                                            .when(ticked, |d| {
-                                                d.bg(p.accent).child(
-                                                    icon("check")
-                                                        .size(px(11.))
-                                                        .text_color(p.primary_text),
-                                                )
-                                            }),
-                                    )
-                                    .when_some(self.color_of(edit.column, &v, &p), |d, c| {
-                                        d.child(swatch(c))
-                                    })
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .child(v),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(edit) = &mut this.edit {
-                                            if let Some(at) =
-                                                edit.ticked.iter().position(|t| t == &value)
-                                            {
-                                                edit.ticked.remove(at);
-                                            } else {
-                                                edit.ticked.push(value.clone());
-                                            }
+                    .child(v_flex().gap(px(look::GAP_2)).children(
+                        list.into_iter().enumerate().map(|(i, v)| {
+                            let ticked = edit.ticked.contains(&v);
+                            let value = v.clone();
+                            h_flex()
+                                .id(("df-choice", i))
+                                .h(px(look::ROW))
+                                .gap(px(look::GAP_4))
+                                .rounded(px(look::CONTROL_RADIUS))
+                                .cursor_pointer()
+                                .when(!ticked, |d| d.hover(move |d| d.bg(row_hover)))
+                                .child(
+                                    div()
+                                        .size(px(look::ICON))
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(look::CONTROL_RADIUS))
+                                        .border_1()
+                                        .border_color(if ticked { p.accent } else { p.faint })
+                                        .when(ticked, |d| {
+                                            d.bg(p.accent).child(
+                                                icon("check")
+                                                    .size(px(look::ICON_SMALL))
+                                                    .text_color(p.primary_text),
+                                            )
+                                        }),
+                                )
+                                .when_some(self.color_of(edit.column, &v, &p), |d, c| {
+                                    d.child(swatch(c))
+                                })
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .child(v),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(edit) = &mut this.edit {
+                                        if let Some(at) =
+                                            edit.ticked.iter().position(|t| t == &value)
+                                        {
+                                            edit.ticked.remove(at);
+                                        } else {
+                                            edit.ticked.push(value.clone());
                                         }
-                                        cx.notify();
-                                    }))
-                            })),
-                    )
+                                    }
+                                    cx.notify();
+                                }))
+                        }),
+                    ))
                     .into_any_element(),
                 None => row()
                     .child(label("Values"))
@@ -409,12 +416,13 @@ impl Explorer {
             .id("de-filter")
             .occlude()
             .w(px(340.))
-            .p(px(10.))
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
             .text_size(px(look::SMALL))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 v_flex()
-                    .gap(px(8.))
+                    .gap(px(look::GAP_8))
                     .child(row().child(label("Column")).child(column_button))
                     .children(column_list)
                     .child(
@@ -430,8 +438,8 @@ impl Explorer {
                     .child(
                         h_flex()
                             .justify_end()
-                            .gap(px(6.))
-                            .mt(px(2.))
+                            .gap(px(look::GAP_8))
+                            .mt(px(look::GAP_2))
                             .child(button("df-cancel", "Cancel").on_click(cx.listener(
                                 |this, _, _, cx| {
                                     this.edit = None;

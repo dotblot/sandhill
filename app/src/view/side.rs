@@ -2,6 +2,8 @@
 
 use super::*;
 
+const VARIABLES_FILTER_HEIGHT: f32 = look::CONTROL_CARD + 2. * look::PANE_PAD_Y;
+
 /// The variables whose names hold what was typed in the filter box,
 /// ignoring case (all of them when nothing was typed).
 pub(crate) fn filter_variables(list: &[Variable], filter: &str) -> Vec<Variable> {
@@ -35,17 +37,17 @@ impl Workbench {
                             }
                             crate::panes::tree_actions::Line::Row(row) => row,
                         };
-                        let indent = 8. + 16. * row.depth as f32;
+                        let indent = crate::panes::tree_actions::file_row_indent(row.depth);
                         let hover = p.ink(7.);
                         let line = h_flex()
                             .id(("file", ix))
                             .relative()
                             .w_full()
-                            .h(px(22.))
+                            .h(px(look::ROW))
                             .pl(px(indent))
-                            .pr(px(8.))
-                            .gap(px(6.))
-                            .rounded(px(RADIUS))
+                            .pr(px(look::GAP_8))
+                            .gap(px(look::GAP_4))
+                            .rounded(px(look::CONTROL_RADIUS))
                             .overflow_hidden()
                             .whitespace_nowrap()
                             // A line down from each folder above, as a guide.
@@ -54,13 +56,16 @@ impl Workbench {
                                     .absolute()
                                     .top_0()
                                     .bottom_0()
-                                    .left(px(8. + 16. * level as f32 + 6.5))
+                                    .left(px(
+                                        crate::panes::tree_actions::file_row_indent(level)
+                                            + (look::ICON - 1.) / 2.,
+                                    ))
                                     .w(px(1.))
                                     .bg(p.ink(12.))
                             }));
                         if let Some(note) = &row.note {
                             return line
-                                .pl(px(indent + 20.))
+                                .pl(px(indent + look::ICON + look::GAP_4))
                                 .text_color(p.faint)
                                 .child(note.clone())
                                 .into_any_element();
@@ -104,16 +109,20 @@ impl Workbench {
                                 .cursor_pointer()
                                 .hover(move |d| d.bg(hover))
                                 .child(
-                                    div().w(px(14.)).flex_none().text_color(p.faint).child(
-                                        icon(if row.open {
-                                            "chevron.down"
-                                        } else {
-                                            "chevron.right"
-                                        })
-                                        .size(px(13.)),
-                                    ),
+                                    div()
+                                        .w(px(look::ICON))
+                                        .flex_none()
+                                        .text_color(p.faint)
+                                        .child(
+                                            icon(if row.open {
+                                                "chevron.down"
+                                            } else {
+                                                "chevron.right"
+                                            })
+                                            .size(px(look::ICON)),
+                                        ),
                                 )
-                                .child(picture(&look::folder_icon(&row.name)))
+                                .child(picture(&look::folder_icon(&row.name)).size(px(look::ICON)))
                                 .child(name)
                                 .children(meta(by_size))
                                 .when(is_selected, |d| d.bg(p.ink(9.)))
@@ -145,24 +154,27 @@ impl Workbench {
                                 .border_1()
                                 .border_color(p.faint),
                         });
-                        line.pl(px(indent + 20.))
+                        line.pl(px(indent + look::ICON + look::GAP_4))
                             .when(!openable, |d| d.text_color(p.muted))
                             .when(is_open, |d| d.bg(p.accent.opacity(0.2)))
                             .when(!is_open && is_selected, |d| d.bg(p.ink(9.)))
                             .when(!is_open, |d| d.hover(move |d| d.bg(hover)))
                             .cursor_pointer()
-                            .child(picture(&look::file_icon_beside(&row.rel, |path| {
-                                lines.iter().any(|line| {
-                                    matches!(line, crate::panes::tree_actions::Line::Row(r) if r.rel == path)
-                                })
-                            })))
+                            .child(
+                                picture(&look::file_icon_beside(&row.rel, |path| {
+                                    lines.iter().any(|line| {
+                                        matches!(line, crate::panes::tree_actions::Line::Row(r) if r.rel == path)
+                                    })
+                                }))
+                                .size(px(look::ICON)),
+                            )
                             .map(|d| {
                                 if dirty {
                                     d.child(
                                         h_flex()
                                             .flex_1()
                                             .min_w_0()
-                                            .gap(px(4.))
+                                            .gap(px(look::GAP_4))
                                             .child(name.flex_initial())
                                             .child(dot(p.muted).size(px(4.))),
                                     )
@@ -183,7 +195,7 @@ impl Workbench {
         )
         .track_scroll(&self.render_output_file_scroll())
         // UniformList positions and reveals rows relative to its padded bounds.
-        .pt(px(look::STRIP + 4.))
+        .pt(px(look::STRIP + look::PANE_PAD_Y))
         .size_full();
         v_flex()
             .id("files-pane")
@@ -192,11 +204,18 @@ impl Workbench {
             .when(self.files_ui.error.is_some(), |d| {
                 d.child(
                     div()
-                        .pt(px(look::STRIP + 4.))
+                        .pt(px(look::STRIP + look::PANE_PAD_Y))
                         .children(self.render_name_error(cx)),
                 )
             })
-            .child(div().flex_1().min_h_0().px(px(6.)).pb(px(10.)).child(list))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(look::GAP_4))
+                    .pb(px(look::PANE_PAD_Y))
+                    .child(list),
+            )
             .child(look::inset_scrollbar(
                 &self.render_output_file_scroll(),
                 look::STRIP,
@@ -254,16 +273,16 @@ impl Workbench {
         let p = *Palette::get(cx);
         let Some((item, ix, count)) = self.viewer_page() else {
             return div()
-                .px(px(14.))
-                .py(px(6.))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
                 .text_color(p.muted)
                 .child("Web pages shown from the Console (plotly, DT, leaflet, Shiny…), Quarto previews and HTML files appear here.")
                 .into_any_element();
         };
         let body = match (&item.page, &item.note) {
             (_, Some(note)) => div()
-                .px(px(14.))
-                .py(px(10.))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
                 .text_color(p.muted)
                 .whitespace_normal()
                 .child(note.clone())
@@ -280,9 +299,9 @@ impl Workbench {
             .child(
                 h_flex()
                     .flex_none()
-                    .h(px(30.))
-                    .px(px(4.))
-                    .gap(px(2.))
+                    .h(px(look::ROW))
+                    .px(px(look::PANE_PAD_X))
+                    .gap(px(look::GAP_4))
                     .border_b(px(0.5))
                     .border_color(p.glass_edge)
                     .text_color(p.muted)
@@ -311,7 +330,7 @@ impl Workbench {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .pl_2()
+                            .pl(px(look::GAP_4))
                             .text_color(p.text)
                             .overflow_hidden()
                             .text_ellipsis()
@@ -384,13 +403,18 @@ impl Workbench {
             .flex_col()
             .child(look::PaneScroll::new(
                 "variables-scroll",
-                look::STRIP + if session.is_some() { 36. } else { 0. },
-                4.,
+                look::STRIP
+                    + if session.is_some() {
+                        VARIABLES_FILTER_HEIGHT
+                    } else {
+                        0.
+                    },
+                look::GAP_4,
                 div()
                     .id("variables")
-                    .pb(px(4.))
+                    .pb(px(look::PANE_PAD_Y))
                     .when_some(status, |d, s| {
-                        d.child(div().px(px(14.)).text_color(p.muted).child(s))
+                        d.child(div().px(px(look::PANE_PAD_X)).text_color(p.muted).child(s))
                     })
                     .children(rows),
             ))
@@ -398,11 +422,9 @@ impl Workbench {
             .when(session.is_some(), |d| {
                 d.child(
                     h_flex()
-                        .h(px(36.))
-                        .gap(px(4.))
-                        .pl(px(10.))
-                        .pr(px(6.))
-                        .pt(px(6.))
+                        .h(px(VARIABLES_FILTER_HEIGHT))
+                        .gap(px(look::GAP_8))
+                        .px(px(look::PANE_PAD_X))
                         .child(
                             div()
                                 .flex_1()
@@ -440,16 +462,16 @@ impl Workbench {
             let open = self.vars.expanded.contains(&path);
             let toggle_path = path.clone();
             let table_path = path.clone();
-            let hover = p.ink(7.);
+            let hover = p.ink(look::ROW_HOVER);
             rows.push(
                 h_flex()
                     .id(SharedString::from(format!("var-{}", path.join("\u{1f}"))))
-                    .mx(px(6.))
-                    .px(px(8.))
-                    .pl(px(8. + 14. * parent.len() as f32))
-                    .gap_2()
-                    .h(px(24.))
-                    .rounded(px(RADIUS))
+                    .mx(px(look::GAP_4))
+                    .px(px(look::GAP_8))
+                    .pl(px(look::GAP_8 + look::ICON * parent.len() as f32))
+                    .gap(px(look::GAP_4))
+                    .h(px(look::DENSE_ROW))
+                    .rounded(px(look::CONTROL_RADIUS))
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .hover(move |d| d.bg(hover))
@@ -459,19 +481,22 @@ impl Workbench {
                                 this.toggle_variable(toggle_path.clone(), cx)
                             }))
                     })
-                    .child(div().w(px(14.)).flex_none().text_color(p.faint).when(
-                        variable.children,
-                        |d| {
-                            d.child(
-                                icon(if open {
-                                    "chevron.down"
-                                } else {
-                                    "chevron.right"
-                                })
-                                .size(px(13.)),
-                            )
-                        },
-                    ))
+                    .child(
+                        div()
+                            .w(px(look::ICON_SMALL))
+                            .flex_none()
+                            .text_color(p.faint)
+                            .when(variable.children, |d| {
+                                d.child(
+                                    icon(if open {
+                                        "chevron.down"
+                                    } else {
+                                        "chevron.right"
+                                    })
+                                    .size(px(look::ICON_SMALL)),
+                                )
+                            }),
+                    )
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)

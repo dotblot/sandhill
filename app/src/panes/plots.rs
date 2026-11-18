@@ -16,7 +16,7 @@ use gpui_kit::*;
 use sandhill_proto::{Call, EVENT_RUN_STARTED, FileStat, HistoryPage, PlotRedraw, SessionPlots};
 use serde_json::Value;
 
-use crate::look::{self, Palette, RADIUS, icon_button};
+use crate::look::{self, Palette, icon_button};
 use crate::prefs::{PlotSizing, PlotUnit};
 use crate::workbench::{BottomTab, Plot, Workbench, is_script, plot_key};
 
@@ -25,6 +25,10 @@ mod save;
 mod size_menu;
 mod zoom;
 mod zoom_view;
+
+fn plot_field(state: &Entity<InputState>) -> Input {
+    Styled::h(Input::new(state).small(), px(look::CONTROL_CARD)).rounded(px(look::CONTROL_RADIUS))
+}
 
 /// The image types shown, best first: an SVG can be saved at any size.
 const MIMES: [&str; 4] = ["image/svg+xml", "image/png", "image/jpeg", "image/gif"];

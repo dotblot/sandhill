@@ -284,11 +284,12 @@ impl Workbench {
                                 h_flex()
                                     .id(("outline-entry", rows.len()))
                                     .w_full()
-                                    .py(px(5.))
-                                    .pl(px(8. + entry.level as f32 * 12.))
-                                    .pr(px(10.))
+                                    .min_h(px(look::ROW))
+                                    .pl(px(look::GAP_8 + entry.level as f32 * look::GAP_12))
+                                    .pr(px(look::GAP_8))
+                                    .rounded(px(look::CONTROL_RADIUS))
                                     .cursor_pointer()
-                                    .hover(|d| d.bg(p.ink(8.)))
+                                    .hover(|d| d.bg(p.ink(look::ROW_HOVER)))
                                     .child(entry.title)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.outline.open = false;
