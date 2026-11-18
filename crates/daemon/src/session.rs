@@ -257,9 +257,14 @@ impl SessionHandle {
     pub async fn reattach(journal: Arc<Journal>, record: SessionRecord) -> Result<SessionHandle> {
         let attempt = async {
             let pid = record.pid.context("no pid recorded")?;
-            if !kernel::pid_alive(pid) {
-                bail!("kernel process {pid} is gone");
-            }
+            // The process recorded at start, by birth as well as PID: a
+            // kernel that exited may have its PID reused by any program.
+            let identity = match crate::lifecycle::recorded_kernel(&record.connection_file) {
+                Some(identity) if identity.alive() => identity,
+                Some(_) => bail!("kernel process {pid} is gone"),
+                None => crate::lifecycle::ProcessIdentity::read(pid)
+                    .context(format!("kernel process {pid} is gone"))?,
+            };
             let info = kernel::read_connection_file(&record.connection_file)?;
             if !kernel::heartbeat(&info, Duration::from_secs(5)).await {
                 bail!("kernel does not answer its heartbeat");
@@ -269,10 +274,10 @@ impl SessionHandle {
             // Give the IOPub subscription a moment to take effect so output
             // from a cell that is still running is not missed.
             tokio::time::sleep(Duration::from_millis(300)).await;
-            anyhow::Ok((conn, rx))
+            anyhow::Ok((conn, rx, identity))
         };
         match attempt.await {
-            Ok((mut conn, rx)) => {
+            Ok((mut conn, rx, identity)) => {
                 let mut runs = HashMap::new();
                 let unfinished = journal.unfinished_runs(&record.id)?;
                 for run in &unfinished {
@@ -305,6 +310,7 @@ impl SessionHandle {
                         is_ark_spec(&spec.kernelspec.language, &spec.kernelspec.argv)
                     }),
                     asking,
+                    kernel: Some(identity),
                     ..Begin::default()
                 };
                 Ok(Self::spawn(record, journal, conn, rx, begin))
@@ -338,6 +344,7 @@ impl SessionHandle {
             command_rx,
             events: events.clone(),
             child: begin.child,
+            kernel: begin.kernel,
             runs: begin.runs,
             probe_id: begin.probe_id,
             prelude: begin.prelude,
@@ -516,6 +523,9 @@ struct Begin {
     ark: bool,
     /// The question a run was waiting on when the daemon restarted.
     asking: Option<Asking>,
+    /// The kernel process, by birth as well as PID, when this daemon
+    /// adopted it after a restart rather than starting it.
+    kernel: Option<crate::lifecycle::ProcessIdentity>,
 }
 
 struct RunState {
@@ -554,6 +564,8 @@ struct Actor {
     command_rx: mpsc::Receiver<Command>,
     events: broadcast::Sender<Event>,
     child: Option<Child>,
+    /// See `Begin::kernel`.
+    kernel: Option<crate::lifecycle::ProcessIdentity>,
     /// Keyed by the `msg_id` of the execute request.
     runs: HashMap<String, RunState>,
     probe_id: Option<String>,
@@ -854,9 +866,15 @@ impl Actor {
         if self.record.interrupt_mode == "message" {
             let msg = JupyterMessage::new(InterruptRequest {}, None);
             self.conn.control.send(msg).await?;
-        } else {
-            let pid = self.record.pid.context("no pid recorded")?;
+        } else if let Some(child) = &self.child {
+            // An unreaped child's PID can't be reused.
+            let pid = child.id().context("the kernel process has exited")?;
             kernel::send_signal(pid, libc::SIGINT)?;
+        } else {
+            self.kernel
+                .as_ref()
+                .context("no kernel process recorded")?
+                .interrupt()?;
         }
         Ok(())
     }
@@ -950,10 +968,12 @@ impl Actor {
     }
 
     fn kernel_alive(&mut self) -> bool {
-        match (self.child.as_mut(), self.record.pid) {
+        match (self.child.as_mut(), &self.kernel) {
             // Our own child: try_wait also reaps it, so it never lingers as a zombie.
             (Some(child), _) => matches!(child.try_wait(), Ok(None)),
-            (None, Some(pid)) => kernel::pid_alive(pid),
+            // Adopted: the same process, not just a live PID, which another
+            // program may hold once the kernel exits.
+            (None, Some(kernel)) => kernel.alive(),
             (None, None) => false,
         }
     }

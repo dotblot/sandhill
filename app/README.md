@@ -1431,6 +1431,16 @@ preview and R's imports weren't seen.
   `refresh_with_liveness`, `unrecorded_kernel_alive`). On a copy of the
   affected state, the old daemon listed the kernel and the fixed one lists
   nothing. Test: `a_reused_root_pid_and_its_new_group_are_not_the_kernel`.
+- **Interrupt and liveness by identity** (Huan, 2026-11-18): a kernel
+  adopted after a daemon restart was interrupted, and checked for being
+  alive, by its saved PID alone, which another program may hold once the
+  kernel exits. `reattach` now keeps the kernel's identity (PID and birth,
+  from its ownership record) and `ProcessIdentity::interrupt` signals only
+  that process (a pidfd on Linux; on macOS the birth is checked just
+  before the signal). `kernel_alive` uses the same identity. A kernel this
+  daemon started is still signalled through its unreaped child. Tests:
+  `interrupt_reaches_only_the_recorded_process` and
+  `interrupt_reaches_a_kernel_adopted_after_a_restart`.
 
 
 ## Running it

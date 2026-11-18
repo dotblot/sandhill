@@ -113,6 +113,32 @@ impl ProcessIdentity {
         }
         Ok(())
     }
+
+    /// Interrupts this exact process (SIGINT), never whatever holds its PID
+    /// later. Linux pins it with a pidfd. Elsewhere the birth identity is
+    /// checked right before the signal, so the PID could only be reused in
+    /// that instant, where a bare saved PID could be reused any time after
+    /// the kernel exits. An interrupt is not a kill: Force stop still
+    /// refuses saved PIDs on macOS (see `signal`).
+    pub fn interrupt(&self) -> Result<()> {
+        anyhow::ensure!(self.alive(), "the kernel process has exited");
+        #[cfg(target_os = "linux")]
+        return self.signal(libc::SIGINT);
+        #[cfg(not(target_os = "linux"))]
+        {
+            crate::kernel::send_signal(self.pid, libc::SIGINT)?;
+            Ok(())
+        }
+    }
+}
+
+/// The kernel process this daemon recorded when it started the kernel.
+pub(crate) fn recorded_kernel(connection_file: &Path) -> Option<ProcessIdentity> {
+    read_record(&connection_file.with_extension("owner.json"))
+        .ok()??
+        .roots
+        .into_iter()
+        .next()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -784,6 +810,38 @@ pub(crate) fn record_antigravity_mcp(server: &str, executable: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An adopted kernel is interrupted by identity: a process now holding
+    /// its PID is left alone (Huan, 2026-11-18).
+    #[test]
+    fn interrupt_reaches_only_the_recorded_process() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut kernel = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let mut other = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let identity = ProcessIdentity::read(kernel.id()).unwrap();
+        // `other` holding a PID whose recorded owner was born earlier.
+        let mut reused = ProcessIdentity::read(other.id()).unwrap();
+        reused.birth.push_str("-earlier");
+        let refused = reused.interrupt();
+        let sent = identity.interrupt();
+        let kernel_exit = kernel.wait().unwrap();
+        let other_running = other.try_wait().unwrap().is_none();
+        other.kill().unwrap();
+        other.wait().unwrap();
+        assert!(refused.is_err());
+        assert!(other_running, "the process holding the PID was signalled");
+        assert!(sent.is_ok(), "{sent:?}");
+        assert_eq!(kernel_exit.signal(), Some(libc::SIGINT));
+        // Gone (and reaped): an error, no signal to whoever gets the PID.
+        assert!(identity.interrupt().is_err());
+    }
+
     #[test]
     fn maintenance_blocks_execution_and_restart() {
         assert!(allowed_during_maintenance(&Call::ResourceInventory));

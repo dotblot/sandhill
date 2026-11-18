@@ -279,6 +279,48 @@ async fn interrupt_stops_a_long_running_cell() {
     }
 }
 
+/// A kernel adopted after a daemon restart has no child handle: Interrupt
+/// reaches it by its recorded identity, not a bare saved PID that another
+/// program may hold once the kernel exits (Huan, 2026-11-18).
+#[tokio::test]
+async fn interrupt_reaches_a_kernel_adopted_after_a_restart() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = common::tempdir().unwrap();
+    let first = TestDaemon::start(dir.path()).await;
+    let session = first
+        .client()
+        .await
+        .start_session("python3", None)
+        .await
+        .unwrap()
+        .id;
+    first.stop();
+
+    let second = TestDaemon::start(dir.path()).await;
+    let mut client = second.client().await;
+    client.subscribe(&session, None).await.unwrap();
+    let run_id = client
+        .execute(&session, "import time\ntime.sleep(60)", None)
+        .await
+        .unwrap()
+        .run;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    client.interrupt(&session).await.unwrap();
+    let finished = loop {
+        let event = tokio::time::timeout(Duration::from_secs(20), client.next_event())
+            .await
+            .expect("interrupt did not stop the adopted kernel's cell")
+            .unwrap();
+        if event.run.as_deref() == Some(run_id.as_str()) && event.msg_type == EVENT_RUN_FINISHED {
+            break event;
+        }
+    };
+    assert_eq!(finished.content["status"], "error", "{finished:?}");
+    client.shutdown(&session).await.unwrap();
+}
+
 /// The app tells busy sessions from idle ones by this count, even for
 /// sessions it never subscribed to.
 /// Ark says "R version 4.6.1 (2026-06-24)"; a session gives only the number,
