@@ -158,6 +158,15 @@ async fn agents_hear_when_their_code_waits_for_input() {
         daemon.socket.clone(),
         Some(project.to_string_lossy().into()),
     );
+    // The session starts first: starting one took over 30 s on a busy CI
+    // machine (2026-11-18), and only the run that asks is timed.
+    let warm = call(
+        &tools,
+        "run_code",
+        json!({"code": "1 + 1", "language": "python"}),
+    )
+    .await;
+    assert!(warm.contains(" · ok · "), "{warm}");
     let started = std::time::Instant::now();
     let ran = call(
         &tools,
@@ -165,6 +174,7 @@ async fn agents_hear_when_their_code_waits_for_input() {
         json!({"code": "print('asking')\nname = input('name? ')\nprint('hi', name)", "language": "python", "timeout_seconds": 60}),
     )
     .await;
+    // Not left to the 60 s timeout.
     assert!(started.elapsed() < Duration::from_secs(30), "{ran}");
     assert!(ran.contains("waiting for input"), "{ran}");
     assert!(ran.contains("\"name?\""), "{ran}");
