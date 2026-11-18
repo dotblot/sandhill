@@ -506,7 +506,7 @@ impl Daemon {
                 "history",
                 self.state.db_path(),
                 stopped,
-                "Stop all resources before clearing saved runs and outputs",
+                "Stop all resources before clearing saved runs, outputs and file history",
             ),
             (
                 "journal_wal",
@@ -527,7 +527,7 @@ impl Daemon {
                 "history",
                 self.state.blobs_dir(),
                 stopped,
-                "Saved output blobs, not regenerable cache",
+                "Saved outputs and file versions, not regenerable cache",
             ),
             (
                 "kernels",

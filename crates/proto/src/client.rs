@@ -131,7 +131,11 @@ impl Client {
     /// Sends a request the daemon doesn't answer.
     async fn send(&self, call: Call) -> Result<()> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut line = serde_json::to_vec(&Request { id, call })?;
+        let mut line = serde_json::to_vec(&Request {
+            id,
+            call,
+            project: None,
+        })?;
         line.push(b'\n');
         let mut writer = self.writer.lock().await;
         writer.write_all(&line).await?;
@@ -168,10 +172,18 @@ impl Client {
 
     /// Sends a request and waits for its response.
     pub async fn call<T: DeserializeOwned>(&self, call: Call) -> Result<T> {
+        self.call_in_project(None, call).await
+    }
+
+    pub async fn call_in_project<T: DeserializeOwned>(
+        &self,
+        project: Option<String>,
+        call: Call,
+    ) -> Result<T> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
-        let mut line = serde_json::to_vec(&Request { id, call })?;
+        let mut line = serde_json::to_vec(&Request { id, call, project })?;
         line.push(b'\n');
         {
             let mut writer = self.writer.lock().await;

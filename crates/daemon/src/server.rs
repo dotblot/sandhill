@@ -36,6 +36,7 @@ use crate::{
 
 mod connections;
 mod document_calls;
+mod file_history;
 mod help_calls;
 mod request_helpers;
 mod session_calls;
@@ -61,6 +62,7 @@ const MAX_PAGES: u32 = 100;
 pub struct Daemon {
     pub(crate) state: StateDir,
     pub(crate) journal: Arc<Journal>,
+    history_limits: Mutex<sandhill_proto::FileHistoryLimits>,
     pub(crate) sessions: Mutex<HashMap<String, Arc<SessionHandle>>>,
     pub(crate) terminals: Terminals,
     windows: Windows,
@@ -142,12 +144,15 @@ impl Daemon {
             &state.db_path(),
             BlobStore::new(state.blobs_dir()),
         )?);
+        let history_limits = file_history::load_limits(state.root());
+        file_history::tidy(&journal, history_limits);
         let pages = Pages::open(state.root())?;
         let daemon = Arc::new(Daemon {
             terminals: Terminals::new(state.terminals_dir(), options.executable.clone()),
             pages,
             state,
             journal: journal.clone(),
+            history_limits: Mutex::new(history_limits),
             sessions: Mutex::new(HashMap::new()),
             windows: Windows::default(),
             language_servers: crate::lsp::LanguageServers::default(),
@@ -180,6 +185,7 @@ impl Daemon {
                 Err(err) => tracing::warn!("session {id} could not be reattached: {err:#}"),
             }
         }
+        daemon.start_history_tidy();
         Ok(daemon)
     }
 
@@ -242,7 +248,7 @@ impl Daemon {
         }
     }
 
-    async fn call(&self, call: Call) -> Result<Value> {
+    async fn call(self: &Arc<Self>, call: Call, project: Option<String>) -> Result<Value> {
         Ok(match call {
             Call::BeginAnalysis { project, spec } => self.begin_analysis(&project, spec).await?,
             Call::CheckAnalysis {
@@ -525,11 +531,33 @@ impl Daemon {
                 serde_json::to_value(blocking(move || files::read_text(&path)).await?)?
             }
             Call::ReadNotebook { path } => self.read_notebook(path).await?,
+            Call::ReadDocument { path, max_bytes } => {
+                self.read_document(path, max_bytes, project).await?
+            }
+            Call::FileVersions { path } => self.file_versions(path, project).await?,
+            Call::FileVersion { path, id } => self.file_version(path, project, id).await?,
+            Call::SetFileHistoryLimits {
+                days,
+                per_file,
+                file_mb,
+                total_mb,
+            } => {
+                self.set_file_history_limits(sandhill_proto::FileHistoryLimits {
+                    days,
+                    per_file,
+                    file_mb,
+                    total_mb,
+                })
+                .await?
+            }
             Call::WriteNotebook {
                 path,
                 text,
                 expected_mtime_ms,
-            } => self.write_notebook(path, text, expected_mtime_ms).await?,
+            } => {
+                self.write_notebook(path, text, expected_mtime_ms, project)
+                    .await?
+            }
             Call::WriteFile {
                 path,
                 text,
@@ -537,7 +565,7 @@ impl Daemon {
                 base64,
                 create,
             } => {
-                self.write_file(path, text, expected_mtime_ms, base64, create)
+                self.write_file(path, text, expected_mtime_ms, base64, create, project)
                     .await?
             }
             Call::ListDir { path, sizes, marks } => {

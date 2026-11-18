@@ -127,6 +127,7 @@ impl AppWindow {
                 &p,
             ))
             .child(self.fonts_group(&p, cx))
+            .child(self.file_history_group(&p, cx))
             .child(look::settings_group(
                 "Notebooks and Quarto",
                 vec![
@@ -217,6 +218,82 @@ impl AppWindow {
                 &p,
             ))
             .into_any_element()
+    }
+
+    fn file_history_group(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        use sandhill_proto::FileHistoryLimits as Limits;
+        let now = crate::prefs::file_history_limits();
+        type Limit = fn(&mut Limits) -> &mut u32;
+        let controls: [(_, _, _, _, Limit); 4] = [
+            (
+                "history-days",
+                "Keep versions for (days)",
+                Some("Versions are stored on the computer that holds the file."),
+                now.days,
+                |l| &mut l.days,
+            ),
+            (
+                "history-per-file",
+                "Versions per file",
+                None,
+                now.per_file,
+                |l| &mut l.per_file,
+            ),
+            (
+                "history-file-mb",
+                "Largest file (MB)",
+                None,
+                now.file_mb,
+                |l| &mut l.file_mb,
+            ),
+            (
+                "history-total-mb",
+                "Space on each computer (MB)",
+                None,
+                now.total_mb,
+                |l| &mut l.total_mb,
+            ),
+        ];
+        let owner = cx.entity().downgrade();
+        look::settings_group(
+            "File history",
+            controls
+                .into_iter()
+                .map(|(id, label, detail, value, field)| {
+                    let owner = owner.clone();
+                    row(label, detail, p)
+                        .child(stepper(
+                            id,
+                            value as f32,
+                            1. ..=1_000_000.,
+                            move |value, _, cx| {
+                                let _ = owner.update(cx, |this, cx| {
+                                    let mut limits = crate::prefs::file_history_limits();
+                                    *field(&mut limits) = value as u32;
+                                    crate::prefs::save_file_history_limits(limits);
+                                    for (_, daemon) in crate::shell::app_window::quit::connections(
+                                        this,
+                                        cx.entity_id(),
+                                        cx,
+                                    ) {
+                                        let send = daemon.call_in_order::<()>(limits.into());
+                                        cx.spawn(async move |_, _| {
+                            if let Err(err) = send.await
+                                && !crate::daemon::unknown_call(&err)
+                            {
+                                tracing::warn!(%err, "could not send file history limits");
+                            }
+                        }).detach();
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        ))
+                        .into_any_element()
+                })
+                .collect(),
+            p,
+        )
     }
 
     /// The code font and the two text sizes (Huan, 2026-11-18). The

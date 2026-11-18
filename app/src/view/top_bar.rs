@@ -240,7 +240,11 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let p = *Palette::get(cx);
-        let shown = if self.objects.is_shown() || self.explorer_shown || self.diff_shown {
+        let shown = if self.objects.is_shown()
+            || self.explorer_shown
+            || self.diff_shown
+            || self.history_shown
+        {
             None
         } else {
             self.active_document_path()
@@ -344,12 +348,14 @@ impl Workbench {
                     this.hide_object_explorer();
                     this.explorer_shown = true;
                     this.diff_shown = false;
+                    this.history_shown = false;
                     cx.notify();
                 }))
                 .into_any_element(),
             );
         }
         tabs.extend(self.diff_tab_element(expanded, cx));
+        tabs.extend(self.history_tab_element(expanded, cx));
         tabs.extend(self.object_tab_elements(expanded, cx));
         tabs
     }
@@ -361,6 +367,7 @@ impl Workbench {
         let document = self.open.as_ref().filter(|_| {
             !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
                 && !self.diff_shown
+                && !self.history_shown
                 && !self.explorer_shown
                 && !self.objects.is_shown()
                 && self.media_shown.is_none()
@@ -371,6 +378,7 @@ impl Workbench {
             .filter(|_| {
                 !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
                     && !self.diff_shown
+                    && !self.history_shown
                     && !self.explorer_shown
                     && !self.objects.is_shown()
             })

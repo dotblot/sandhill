@@ -85,6 +85,9 @@ impl Workbench {
                 .child(self.render_tabs(cx))
                 .into_any_element();
         }
+        if self.history_shown && self.history.is_some() {
+            return self.render_file_history(cx);
+        }
         if let Some(path) = &self.opening_shown
             && !self.objects.is_shown()
             && !self.explorer_shown

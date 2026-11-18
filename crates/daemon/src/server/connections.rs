@@ -43,6 +43,7 @@ impl Daemon {
                         .handle(
                             Request {
                                 id: request.id,
+                                project: request.project,
                                 call,
                             },
                             connection,
@@ -67,6 +68,7 @@ impl Daemon {
                 }
                 call => Request {
                     id: request.id,
+                    project: request.project,
                     call,
                 },
             };
@@ -213,7 +215,7 @@ impl Daemon {
                 Ok(Value::Null)
             }
             Call::GitRun { path, action } => self.git_run(path, action, &out).await,
-            call => self.call(call).await,
+            call => self.call(call, request.project).await,
         };
         let stopping = shutdown_request && result.is_ok() && self.stopping.load(Ordering::Acquire);
         if stopping {

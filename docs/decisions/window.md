@@ -99,6 +99,10 @@ differs, this wins.
   groups, the round kernel picker with a floating list, capsule tabs for
   two-way choices, and a Save button, as it writes a file collaborators
   may share.
+  The File history group (Huan, 2026-11-18) sets the days to keep, versions
+  per file, largest file size and space on each computer. These are this
+  Mac's choices. Sandhill sends them on connect and when they change; each
+  daemon keeps the last limits it received.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on

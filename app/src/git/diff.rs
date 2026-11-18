@@ -111,6 +111,7 @@ impl Workbench {
             });
         }
         self.diff_shown = true;
+        self.history_shown = false;
         self.explorer_shown = false;
         self.read_diff(cx);
         cx.notify();
@@ -661,6 +662,7 @@ impl Workbench {
                 this.reveal_middle();
                 this.hide_object_explorer();
                 this.diff_shown = true;
+                this.history_shown = false;
                 this.explorer_shown = false;
                 this.read_diff(cx);
                 cx.notify();

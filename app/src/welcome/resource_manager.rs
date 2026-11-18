@@ -1229,7 +1229,7 @@ impl AppWindow {
             .pt(px(look::GAP_4))
             .child(
                 Checkbox::new("manage-delete-data")
-                    .label("Also delete backend data (history and caches)")
+                    .label("Also delete backend data (including file history and caches)")
                     .checked(manager.delete_data)
                     .disabled(busy)
                     .on_click(cx.listener(|this, on: &bool, _, cx| {

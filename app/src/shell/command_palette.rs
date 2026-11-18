@@ -22,6 +22,7 @@ pub(crate) enum Cmd {
     Save,
     SaveAll,
     CloseTab,
+    FileHistory,
     RunAll,
     Preview,
     RenderDocument,
@@ -112,6 +113,7 @@ impl Workbench {
         if self.objects.is_shown()
             || self.explorer_shown
             || self.diff_shown
+            || self.history_shown
             || self.media_shown.is_some()
         {
             list.push(c("Close tab", "⌘W", Cmd::CloseTab));
@@ -119,6 +121,9 @@ impl Workbench {
             list.push(c("Save", "⌘S", Cmd::Save));
             list.push(c("Save all", "⌥⌘S", Cmd::SaveAll));
             list.push(c("Close tab", "⌘W", Cmd::CloseTab));
+            if !open.notebook.truncated {
+                list.push(c("File History…", "", Cmd::FileHistory));
+            }
             let run = if open.is_script() {
                 "Run file"
             } else {
@@ -210,6 +215,11 @@ impl Workbench {
         match cmd {
             Cmd::Save => self.save(cx),
             Cmd::SaveAll => self.save_all(cx),
+            Cmd::FileHistory => {
+                if let Some(path) = self.open.as_ref().map(|open| open.notebook.path.clone()) {
+                    self.open_file_history(path, cx);
+                }
+            }
             Cmd::CloseTab => {
                 if self.objects.is_shown() {
                     self.close_shown_object_explorer(cx)
@@ -217,6 +227,8 @@ impl Workbench {
                     self.close_explorer(cx)
                 } else if self.diff_shown {
                     self.close_diff(cx)
+                } else if self.history_shown {
+                    self.close_file_history(cx)
                 } else if let Some(path) = self.active_document_path().map(str::to_string) {
                     self.ask_close(path, window, cx)
                 }

@@ -433,7 +433,8 @@ impl Workbench {
         let visible = self.panel_visible(crate::shell::pane_sizes::Panel::Editor)
             && !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
             && !self.explorer_shown
-            && !self.diff_shown;
+            && !self.diff_shown
+            && !self.history_shown;
         for (path, view) in &self.media {
             let hidden = !visible || self.media_shown.as_ref() != Some(path);
             view.update(cx, |view, cx| view.hide(hidden, cx));

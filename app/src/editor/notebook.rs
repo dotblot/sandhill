@@ -10,6 +10,7 @@ use sandhill_daemon::qmd;
 use sandhill_proto::KernelspecInfo;
 use serde_json::{Map, Value};
 
+mod history;
 mod quarto_cells;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -596,7 +597,7 @@ fn parse_ipynb(path: &str, text: &str) -> Result<Notebook> {
     for (i, cell) in json["cells"].as_array().into_iter().flatten().enumerate() {
         let (id, new_id) = match cell["id"].as_str() {
             Some(id) if !id.is_empty() && !seen.contains(id) => (id.to_string(), false),
-            _ => (new_cell_id(i, &seen), true),
+            _ => (sandhill_proto::notebook_cell_id(i, &seen), true),
         };
         seen.insert(id.clone());
         let kind = if cell["cell_type"] == "code" {
@@ -625,18 +626,6 @@ fn parse_ipynb(path: &str, text: &str) -> Result<Notebook> {
         kernel,
         original: Original::Json(json),
     })
-}
-
-/// An id for a cell that has none: `cell-<n>`, unless that is taken.
-fn new_cell_id(index: usize, seen: &std::collections::HashSet<String>) -> String {
-    let mut n = index + 1;
-    loop {
-        let id = format!("cell-{n}");
-        if !seen.contains(&id) {
-            return id;
-        }
-        n += 1000;
-    }
 }
 
 /// The byte after a complete YAML header's closing line, including its newline.

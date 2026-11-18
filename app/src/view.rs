@@ -181,13 +181,17 @@ impl Render for Workbench {
             }))
             .when(!self.find.replaying, |d| {
                 d.capture_action(cx.listener(|this, _: &input::Undo, window, cx| {
-                    if this.notebook_find_history(false, window, cx) {
+                    if this.undo_file_history(false, window, cx)
+                        || this.notebook_find_history(false, window, cx)
+                    {
                         cx.stop_propagation();
                     }
                 }))
                 .capture_action(cx.listener(
                     |this, _: &input::Redo, window, cx| {
-                        if this.notebook_find_history(true, window, cx) {
+                        if this.undo_file_history(true, window, cx)
+                            || this.notebook_find_history(true, window, cx)
+                        {
                             cx.stop_propagation();
                         }
                     },

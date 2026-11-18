@@ -55,3 +55,12 @@ wins.
   and leaves nothing half made (Huan, 2026-11-15). Rendered Markdown (files, notebook and Quarto
   text cells) shows tables and images: project images through the daemon
   (none outside the project), `https://` images, notebook attachments.
+- File history (Huan, 2026-11-18): Files and the command palette open a
+  tab with saved and opened versions on the left and a diff against the
+  current file on the right. Restore is one undoable editor edit, not a
+  save. Jupyter versions contain cell code and text, not outputs;
+  restoring clears outputs for cells whose code changes. History stays
+  with the daemon, keyed by project and canonical path, and does not
+  follow renames. The defaults are 30 days, 100 versions per file, 2 MB
+  per version and 500 MB on each computer. Identical text is stored once.
+  Uninstall removes history only when asked to delete backend data.

@@ -348,6 +348,7 @@ impl Workbench {
         if self.objects.is_shown()
             || self.explorer_shown
             || self.diff_shown
+            || self.history_shown
             || self.media_shown.is_some()
         {
             return false;

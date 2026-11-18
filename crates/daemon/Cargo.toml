@@ -24,6 +24,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng = "0.10"
 sha2.workspace = true
+similar = "2.7"
 thiserror.workspace = true
 tokio.workspace = true
 toml = "1"

@@ -47,6 +47,14 @@ fn write(key: &str, value: Value) {
     let _ = std::fs::write(path, all.to_string());
 }
 
+pub(crate) fn file_history_limits() -> sandhill_proto::FileHistoryLimits {
+    serde_json::from_value(read()["fileHistoryLimits"].clone()).unwrap_or_default()
+}
+
+pub(crate) fn save_file_history_limits(limits: sandhill_proto::FileHistoryLimits) {
+    write("fileHistoryLimits", json!(limits));
+}
+
 /// The models starred in the model menu, as `kind:id`.
 pub fn favourites() -> Vec<String> {
     match read()["favouriteModels"].as_array() {

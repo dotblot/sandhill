@@ -17,6 +17,7 @@ impl Workbench {
         self.notebook_ai_menu = false;
         self.explorer_shown = false;
         self.diff_shown = false;
+        self.history_shown = false;
         if self.document_loads.contains_key(path) {
             self.put_away();
             self.opening_shown = Some(path.to_string());
@@ -61,6 +62,7 @@ impl Workbench {
         self.hide_object_explorer();
         self.notebook_ai_menu = false;
         self.media_shown = None;
+        self.history_shown = false;
         if let Some(mut open) = self.open.take() {
             open.scroll = self.notebook_scroll.offset();
             self.others.push(open);
@@ -70,6 +72,13 @@ impl Workbench {
     /// Closes a tab, saving its notebook first if it was edited.
     pub(crate) fn close_tab(&mut self, path: &str, cx: &mut Context<Self>) {
         if self.document_loads.remove(path).is_some() {
+            if self
+                .pending_history
+                .as_ref()
+                .is_some_and(|(file, _)| file == path)
+            {
+                self.pending_history = None;
+            }
             self.tabs.retain(|tab| tab != path);
             if self.opening_shown.as_deref() == Some(path) {
                 self.opening_shown = None;
@@ -164,13 +173,6 @@ impl Workbench {
         self.tabs.push(path.clone());
         self.opening_shown = Some(path.clone());
         cx.notify();
-        // ReadNotebook leaves big outputs in the daemon's store.
-        let read: std::pin::Pin<Box<dyn Future<Output = anyhow::Result<FileText>>>> = match format {
-            Some(Format::Ipynb) => {
-                Box::pin(daemon.call::<FileText>(Call::ReadNotebook { path: path.clone() }))
-            }
-            _ => Box::pin(daemon.call::<FileText>(Call::ReadFile { path: path.clone() })),
-        };
         let runnable = matches!(
             format,
             Some(Format::Ipynb | Format::Quarto | Format::Script)
@@ -181,7 +183,9 @@ impl Workbench {
         let sessions = (runnable && !self.restricted())
             .then(|| daemon.call::<Vec<SessionInfo>>(Call::ListSessions));
         cx.spawn(async move |this, cx| {
-            let read = read.await;
+            let read = daemon
+                .read_document(path.clone(), Some(project.clone()), None)
+                .await;
             // Parsing can be expensive even though the daemon strips outputs.
             // Only GPUI editor/view construction must stay on the UI thread.
             let read = cx
@@ -241,6 +245,7 @@ impl Workbench {
                         if selected {
                             this.session_changed(cx);
                             this.take_pending_location(window, cx);
+                            this.finish_history_restore(window, cx);
                         } else {
                             this.others
                                 .push(this.open.take().expect("document just constructed"));
@@ -248,6 +253,13 @@ impl Workbench {
                         }
                     }
                     Err(err) => {
+                        if this
+                            .pending_history
+                            .as_ref()
+                            .is_some_and(|(file, _)| file == &path)
+                        {
+                            this.pending_history = None;
+                        }
                         this.tabs.retain(|tab| tab != &path);
                         if selected {
                             this.opening_shown = None;
@@ -776,6 +788,7 @@ impl Workbench {
             queued: Vec::new(),
             current: None,
             _subscriptions: subscriptions,
+            history_edits: Default::default(),
         });
         if self.open.as_ref().is_some_and(|open| {
             open.notebook.format == Format::Quarto
@@ -982,13 +995,31 @@ impl Workbench {
                 create: false,
             },
         };
-        let written = daemon.call::<FileWritten>(write);
+        let clear_outputs: Vec<_> = open
+            .history_edits
+            .clear_outputs
+            .iter()
+            .filter(|id| !open.cell_runs.contains_key(*id))
+            .cloned()
+            .collect();
+        let written = daemon.call_in_project::<FileWritten>(self.project.clone(), write);
         let task = cx.spawn(async move |this, cx| {
             let written = written.await;
+            let cleared = if written.is_ok() && !clear_outputs.is_empty() {
+                Some(daemon.call::<usize>(Call::ClearCellOutputs {
+                    file: path.clone(),
+                    cell_ids: clear_outputs.clone(),
+                }).await)
+            } else {
+                None
+            };
             this.update(cx, |this, cx| {
                 match written {
                     Ok(written) => {
                         if let Some(open) = this.open_at(&path) {
+                            if matches!(&cleared, Some(Ok(_))) {
+                                open.history_edits.clear_outputs.retain(|id| !clear_outputs.contains(id));
+                            }
                             open.mtime_ms = written.mtime_ms;
                             let current = open.sources(cx);
                             open.dirty = current != sources
@@ -1023,6 +1054,9 @@ impl Workbench {
                             }
                         }
                         let saved = this.open_at(&path).is_some_and(|open| !open.dirty);
+                        if let Some(Err(error)) = cleared {
+                            this.problem = Some(format!("Saved, but could not clear earlier outputs: {error:#}"));
+                        }
                         this.sync_language(&path, saved, cx);
                     }
                     Err(err) if format!("{err:#}").contains(CONFLICT_ERROR) => {

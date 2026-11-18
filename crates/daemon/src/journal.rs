@@ -13,6 +13,8 @@ use serde_json::Value;
 
 use crate::blobs::BlobStore;
 
+pub(crate) mod file_history;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
@@ -87,6 +89,20 @@ const MIGRATIONS: &[&str] = &[
          trusted_ms INTEGER NOT NULL
      );
      INSERT INTO trusted_folders (path, trusted_ms) SELECT path, opened_ms FROM projects;",
+    "CREATE TABLE IF NOT EXISTS file_versions (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         project TEXT NOT NULL,
+         path TEXT NOT NULL,
+         time_ms INTEGER NOT NULL,
+         saved INTEGER NOT NULL,
+         size INTEGER NOT NULL,
+         sha256 TEXT NOT NULL,
+         added INTEGER NOT NULL,
+         removed INTEGER NOT NULL,
+         UNIQUE(project, path, sha256)
+     );
+     CREATE INDEX IF NOT EXISTS file_versions_by_file ON file_versions(project, path, id DESC);
+     CREATE INDEX IF NOT EXISTS file_versions_by_hash ON file_versions(sha256);",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -215,7 +231,7 @@ impl Journal {
         let mut conn = self.conn.lock().unwrap();
         self.check_history_storage()?;
         let transaction = conn.transaction()?;
-        transaction.execute_batch("DELETE FROM analysis_checks; DELETE FROM analyses; DELETE FROM events; DELETE FROM runs; DELETE FROM sessions;")?;
+        transaction.execute_batch("DELETE FROM analysis_checks; DELETE FROM analyses; DELETE FROM events; DELETE FROM runs; DELETE FROM sessions; DELETE FROM file_versions;")?;
         transaction.commit()?;
         conn.execute_batch(
             "PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);",

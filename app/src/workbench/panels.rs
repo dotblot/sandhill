@@ -279,6 +279,7 @@ impl Workbench {
         }
         self.explorer_shown = true;
         self.diff_shown = false;
+        self.history_shown = false;
         cx.notify();
     }
 

@@ -1,6 +1,9 @@
 //! Calls that read and write notebooks and files, add, edit and delete cells, and suggest cells.
 
 use super::*;
+use sandhill_proto::FileVersionReason;
+
+use super::file_history::{before_first_write, is_ipynb, remember, remember_before_write};
 
 impl Daemon {
     pub(super) async fn suggest_cell(
@@ -31,16 +34,66 @@ impl Daemon {
         Ok(serde_json::to_value(file)?)
     }
 
+    pub(super) async fn read_document(
+        &self,
+        path: String,
+        max_bytes: Option<u64>,
+        project: Option<String>,
+    ) -> Result<Value> {
+        let journal = self.journal.clone();
+        let limits = *self.history_limits.lock().unwrap();
+        let file = blocking(move || {
+            let is_notebook = is_ipynb(&path);
+            let file = if is_notebook {
+                notebook::read_notebook(&path, journal.blobs())
+            } else if let Some(limit) = max_bytes {
+                files::read_text_bounded(&path, limit)
+            } else {
+                files::read_text(&path)
+            };
+            if let Ok(file) = &file {
+                remember(
+                    &journal,
+                    limits,
+                    project.as_deref(),
+                    &path,
+                    &file.text,
+                    FileVersionReason::Opened,
+                );
+            }
+            if is_notebook {
+                memory::release_free_memory();
+            }
+            file
+        })
+        .await?;
+        Ok(serde_json::to_value(file)?)
+    }
+
     pub(super) async fn write_notebook(
         &self,
         path: String,
         text: String,
         expected_mtime_ms: Option<i64>,
+        project: Option<String>,
     ) -> Result<Value> {
         let journal = self.journal.clone();
+        let limits = *self.history_limits.lock().unwrap();
         let written = blocking(move || {
+            let prior = before_first_write(&journal, limits, project.as_deref(), &path);
             let written =
                 notebook::write_notebook(&path, &text, expected_mtime_ms, journal.blobs());
+            if written.is_ok() {
+                remember_before_write(&journal, limits, prior);
+                remember(
+                    &journal,
+                    limits,
+                    project.as_deref(),
+                    &path,
+                    &text,
+                    FileVersionReason::Saved,
+                );
+            }
             drop(text);
             memory::release_free_memory();
             written
@@ -56,19 +109,40 @@ impl Daemon {
         expected_mtime_ms: Option<i64>,
         base64: bool,
         create: bool,
+        project: Option<String>,
     ) -> Result<Value> {
         let bytes = if base64 {
             sandhill_proto::decode_base64(&text).context("the file's bytes are not valid base64")?
         } else {
             text.into_bytes()
         };
+        let journal = self.journal.clone();
+        let limits = *self.history_limits.lock().unwrap();
         Ok(serde_json::to_value(
             blocking(move || {
-                if create {
-                    fileops::create_file(&path, &bytes)
+                let text = (!base64)
+                    .then(|| std::str::from_utf8(&bytes).ok())
+                    .flatten();
+                let prior = (!create && text.is_some())
+                    .then(|| before_first_write(&journal, limits, project.as_deref(), &path))
+                    .flatten();
+                let written = if create {
+                    fileops::create_file(&path, &bytes)?
                 } else {
-                    files::write_bytes(&path, &bytes, expected_mtime_ms)
+                    files::write_bytes(&path, &bytes, expected_mtime_ms)?
+                };
+                if let Some(text) = text {
+                    remember_before_write(&journal, limits, prior);
+                    remember(
+                        &journal,
+                        limits,
+                        project.as_deref(),
+                        &path,
+                        text,
+                        FileVersionReason::Saved,
+                    );
                 }
+                Ok(written)
             })
             .await?,
         )?)

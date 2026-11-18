@@ -12,8 +12,8 @@ use gpui_kit::*;
 use sandhill_link::Target;
 use sandhill_proto::{
     BLOB_KEY, Blob, CONFLICT_ERROR, Call, CellRef, DirEntry, EVENT_RUN_FINISHED, EVENT_RUN_STARTED,
-    EVENT_SESSION_ENDED, Event, FileOutputs, FileText, FileWritten, KernelspecInfo, PingReply,
-    ProjectInfo, RunStarted, SessionInfo, SessionStatus, Subscribed, TERMINAL_SHELL, TerminalEvent,
+    EVENT_SESSION_ENDED, Event, FileOutputs, FileWritten, KernelspecInfo, PingReply, ProjectInfo,
+    RunStarted, SessionInfo, SessionStatus, Subscribed, TERMINAL_SHELL, TerminalEvent,
     TerminalInfo, TerminalSubscribed, Variable, Variables,
 };
 use serde_json::Value;
@@ -163,6 +163,7 @@ pub(crate) struct Open {
     /// The cell last edited or clicked into: where the user is.
     pub current: Option<usize>,
     pub(crate) _subscriptions: Vec<Subscription>,
+    pub(crate) history_edits: crate::editor::history::NotebookHistoryEdits,
 }
 
 pub(crate) struct QuartoView {
@@ -206,7 +207,7 @@ impl Open {
         self.notebook.single_editor()
     }
 
-    fn sources(&self, cx: &App) -> Vec<String> {
+    pub(crate) fn sources(&self, cx: &App) -> Vec<String> {
         self.editors
             .iter()
             .map(|e| e.read(cx).value().to_string())
@@ -369,6 +370,9 @@ pub struct Workbench {
     pub(crate) git: crate::git::pane::Git,
     pub(crate) diff: Option<crate::git::diff::DiffTab>,
     pub(crate) diff_shown: bool,
+    pub(crate) history: Option<crate::editor::history::HistoryTab>,
+    pub(crate) history_shown: bool,
+    pub(crate) pending_history: Option<(String, String)>,
     pub(crate) terminal: Option<Entity<TerminalView>>,
     pub(crate) terminal_problem: Option<String>,
     terminal_starting: bool,
@@ -658,6 +662,9 @@ impl Workbench {
             git,
             diff: None,
             diff_shown: false,
+            history: None,
+            history_shown: false,
+            pending_history: None,
             terminal: None,
             terminal_problem: None,
             terminal_starting: false,
@@ -830,6 +837,9 @@ impl Workbench {
         self.notebook_ai_menu = false;
         self.diff = None;
         self.diff_shown = false;
+        self.history = None;
+        self.history_shown = false;
+        self.pending_history = None;
         self.machine = Default::default();
         self.connection_menu = false;
         self.log = None;

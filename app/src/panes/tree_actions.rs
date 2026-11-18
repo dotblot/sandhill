@@ -556,6 +556,16 @@ impl Workbench {
                     cx,
                     move |this, _, cx| this.open_file(r.clone(), cx),
                 ));
+                let history_path = path.clone();
+                rows.push(menu_item(
+                    "tm-history",
+                    Some("history"),
+                    "File History…",
+                    "",
+                    &p,
+                    cx,
+                    move |this, _, cx| this.open_file_history(history_path.clone(), cx),
+                ));
             }
             let external_path = path.clone();
             rows.push(menu_item(

@@ -109,6 +109,9 @@ pub fn hex(bytes: &[u8]) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Request {
     pub id: u64,
+    /// The window's project for document history. Older daemons ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     #[serde(flatten)]
     pub call: Call,
 }
@@ -601,6 +604,29 @@ pub enum Call {
         base64: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         create: bool,
+    },
+    /// Reads a document and records its text in file history. `max_bytes`
+    /// bounds a standalone text read; notebooks are read without that bound.
+    ReadDocument {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u64>,
+    },
+    /// Returns the kept versions, newest first, as `Vec<FileVersionInfo>`.
+    FileVersions {
+        path: String,
+    },
+    /// Returns the text of one kept version as a string.
+    FileVersion {
+        path: String,
+        id: i64,
+    },
+    /// Persists the device's file history limits.
+    SetFileHistoryLimits {
+        days: u32,
+        per_file: u32,
+        file_mb: u32,
+        total_mb: u32,
     },
     /// Returns `Vec<DirEntry>`, directories first, then by name. With
     /// `sizes`, a directory's `size` is the sum of the files in it, for
@@ -1351,6 +1377,7 @@ mod tests {
     #[test]
     fn unit_call_round_trips() {
         let req = Request {
+            project: None,
             id: 7,
             call: Call::Ping,
         };

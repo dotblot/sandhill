@@ -456,12 +456,15 @@ struct Documents {
     explorer_shown: bool,
     diff: Option<(String, Option<String>, bool)>,
     diff_shown: bool,
+    history: Option<String>,
+    history_shown: bool,
 }
 
 impl Documents {
     fn update(&mut self, wb: &Workbench) -> bool {
         let active = wb.active_document_path();
         let explorer = wb.explorer.as_ref().map(Entity::entity_id);
+        let history = wb.history.as_ref().map(|tab| tab.path.as_str());
         let diff_matches = match (&self.diff, &wb.diff) {
             (None, None) => true,
             (Some((file, sha, staged)), Some(diff)) => {
@@ -479,7 +482,9 @@ impl Documents {
             && self.explorer == explorer
             && self.explorer_shown == wb.explorer_shown
             && diff_matches
-            && self.diff_shown == wb.diff_shown;
+            && self.diff_shown == wb.diff_shown
+            && self.history.as_deref() == history
+            && self.history_shown == wb.history_shown;
         if same {
             return false;
         }
@@ -496,6 +501,8 @@ impl Documents {
             .as_ref()
             .map(|d| (d.file.clone(), d.sha.clone(), d.staged));
         self.diff_shown = wb.diff_shown;
+        self.history = history.map(str::to_owned);
+        self.history_shown = wb.history_shown;
         true
     }
 }

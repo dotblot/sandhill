@@ -97,6 +97,16 @@ fn pending_attach_blocks_stop_until_every_attach_finishes() {
     assert!(!Daemon::connecting(host));
 }
 
+pub(crate) fn unknown_call(err: &anyhow::Error) -> bool {
+    match err.downcast_ref::<sandhill_proto::client::ClientError>() {
+        Some(sandhill_proto::client::ClientError::Remote(message)) => {
+            message.starts_with("unknown call")
+                || message.starts_with("bad request: unknown variant")
+        }
+        _ => false,
+    }
+}
+
 /// How to reach servers: the builds of sandhilld (and Ark) to install on
 /// them, from `Contents/Resources/daemons` in the Mac app, `daemons` beside
 /// the app in the Linux package (`/usr/lib/sandhill/daemons`), or
@@ -143,6 +153,14 @@ impl Daemon {
             let _pending = pending;
             let progress = |message: &str| tracing::info!("{message}");
             let mut conn = sandhill_link::connect(&target, &link_options(), &progress).await?;
+            // Older daemons ignore this setting. Read it after connecting so
+            // an edit made during a slow attach is not lost.
+            let limits = crate::prefs::file_history_limits();
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                conn.client.call::<()>(limits.into()),
+            )
+            .await;
             let events = conn.client.take_events().context("no event stream")?;
             let terminals = conn
                 .client
@@ -249,6 +267,51 @@ impl Daemon {
         let client = self.client.clone();
         let task = self.rt.spawn(async move { client.call::<T>(call).await });
         async move { Ok(task.await??) }
+    }
+
+    pub(crate) fn call_in_project<T>(
+        &self,
+        project: Option<String>,
+        call: Call,
+    ) -> impl Future<Output = Result<T>> + 'static
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        let client = self.client.clone();
+        let task = self
+            .rt
+            .spawn(async move { client.call_in_project::<T>(project, call).await });
+        async move { Ok(task.await??) }
+    }
+
+    pub(crate) async fn read_document(
+        &self,
+        path: String,
+        project: Option<String>,
+        max_bytes: Option<u64>,
+    ) -> Result<sandhill_proto::FileText> {
+        match self
+            .call_in_project(
+                project,
+                Call::ReadDocument {
+                    path: path.clone(),
+                    max_bytes,
+                },
+            )
+            .await
+        {
+            Err(err) if unknown_call(&err) => match max_bytes {
+                Some(max_bytes) => self.read_text_bounded(path, max_bytes).await,
+                None if std::path::Path::new(&path)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ipynb")) =>
+                {
+                    self.call(Call::ReadNotebook { path }).await
+                }
+                None => self.call(Call::ReadFile { path }).await,
+            },
+            result => result,
+        }
     }
 
     /// Whether this device runs one of the daemon builds shipped by this app.

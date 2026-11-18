@@ -283,6 +283,7 @@ impl Workbench {
         self.objects.shown = Some(id);
         self.explorer_shown = false;
         self.diff_shown = false;
+        self.history_shown = false;
         self.media_shown = None;
         if self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor) {
             self.middle_vertical = crate::shell::pane_sizes::Vertical::Split;
@@ -608,6 +609,7 @@ impl Workbench {
         self.hide_object_explorer();
         self.explorer_shown = true;
         self.diff_shown = false;
+        self.history_shown = false;
         cx.notify();
     }
 

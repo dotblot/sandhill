@@ -56,6 +56,7 @@ fn trim_preview(bytes: &mut Vec<u8>) -> Result<()> {
 pub(crate) async fn read_text_preview(
     daemon: Rc<Daemon>,
     path: String,
+    project: Option<String>,
 ) -> Result<(FileText, bool)> {
     let before: FileBytes = daemon
         .call(Call::ReadBytes {
@@ -69,7 +70,12 @@ pub(crate) async fn read_text_preview(
         "Invalid file metadata response"
     );
     if before.size <= TEXT_LIMIT {
-        return Ok((daemon.read_text_bounded(path, TEXT_LIMIT).await?, false));
+        return Ok((
+            daemon
+                .read_document(path, project, Some(TEXT_LIMIT))
+                .await?,
+            false,
+        ));
     }
     let mut bytes = Vec::with_capacity(TEXT_LIMIT as usize);
     while (bytes.len() as u64) < TEXT_LIMIT {
@@ -180,7 +186,8 @@ impl Workbench {
                         return Ok(None);
                     }
                 }
-                let (file, truncated) = read_text_preview(daemon, path.clone()).await?;
+                let (file, truncated) =
+                    read_text_preview(daemon, path.clone(), project.clone()).await?;
                 cx.background_spawn(async move {
                     let mut nb = notebook::parse(&file.path, &file.text)?;
                     nb.truncated = truncated;
@@ -209,6 +216,7 @@ impl Workbench {
                         if selected {
                             this.session_changed(cx);
                             this.take_pending_location(window, cx);
+                            this.finish_history_restore(window, cx);
                         } else {
                             this.others
                                 .push(this.open.take().expect("document just constructed"));
@@ -216,6 +224,13 @@ impl Workbench {
                         }
                     }
                     outcome => {
+                        if this
+                            .pending_history
+                            .as_ref()
+                            .is_some_and(|(file, _)| file == &path)
+                        {
+                            this.pending_history = None;
+                        }
                         this.tabs.retain(|tab| tab != &path);
                         if selected {
                             this.opening_shown = None;

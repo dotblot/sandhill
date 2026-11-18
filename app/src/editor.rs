@@ -11,6 +11,7 @@ pub(crate) mod doc_text;
 pub(crate) mod documents;
 pub(crate) mod export;
 pub(crate) mod find;
+pub(crate) mod history;
 pub(crate) mod html_table;
 pub(crate) mod import_dialog;
 pub(crate) mod imports;
