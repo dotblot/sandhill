@@ -765,7 +765,7 @@ impl Workbench {
             self.parked.push((key, view));
         }
         for view in self.media.values() {
-            view.update(cx, |view, _| view.hide(true));
+            view.update(cx, |view, cx| view.hide(true, cx));
         }
     }
 

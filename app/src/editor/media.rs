@@ -23,6 +23,12 @@ use cache::MediaFile;
 
 #[cfg(target_os = "macos")]
 mod native;
+#[cfg(target_os = "linux")]
+#[path = "media/linux.rs"]
+mod platform;
+#[cfg(target_os = "macos")]
+#[path = "media/macos.rs"]
+mod platform;
 
 const MAX_MEDIA_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SVG_BYTES: u64 = 32 * 1024 * 1024;
@@ -139,8 +145,7 @@ pub(crate) fn rasterize_svg_bytes(data: &[u8]) -> Result<Vec<u8>> {
 
 enum State {
     Loading,
-    #[cfg(target_os = "macos")]
-    Ready(Rc<native::Preview>),
+    Ready(platform::Preview),
     Failed(String),
 }
 
@@ -176,36 +181,27 @@ impl MediaView {
                     url.port
                 };
                 rt.spawn(async move {
-                    tokio::time::timeout(
+                    let file = tokio::time::timeout(
                         std::time::Duration::from_secs(120),
                         download(port, url.path, svg),
                     )
                     .await
-                    .context("preview transfer timed out")?
+                    .context("preview transfer timed out")??;
+                    platform::load(file, pdf).await
                 })
                 .await?
             }
             .await;
             let _ = handle.update(cx, |_, window, cx| {
                 this.update(cx, |this, cx| {
-                    #[cfg(target_os = "macos")]
-                    let loaded =
-                        loaded.and_then(|file| native::Preview::new(file, pdf, window, cx));
-                    #[cfg(not(target_os = "macos"))]
-                    let loaded: Result<()> = loaded.and_then(|_| {
-                        let _ = (pdf, window);
-                        anyhow::bail!("media previews require macOS")
-                    });
+                    let loaded = loaded.and_then(|file| platform::build(file, window, cx));
                     this.state = match loaded {
-                        #[cfg(target_os = "macos")]
                         Ok(preview) => {
-                            this.pages = preview.pages();
-                            preview.hide(this.hidden);
+                            this.pages = platform::pages(&preview);
+                            platform::hide(&preview, this.hidden, cx);
                             preview.set_hand(this.hand);
-                            State::Ready(Rc::new(preview))
+                            State::Ready(preview)
                         }
-                        #[cfg(not(target_os = "macos"))]
-                        Ok(()) => unreachable!(),
                         Err(err) => State::Failed(format!("{err:#}")),
                     };
                     this.changed(cx);
@@ -213,38 +209,6 @@ impl MediaView {
             });
         })
         .detach();
-        #[cfg(target_os = "macos")]
-        if pdf {
-            cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(150))
-                        .await;
-                    let keep = this.update(cx, |this, cx| {
-                        #[cfg(target_os = "macos")]
-                        if matches!(this.state, State::Failed(_)) {
-                            return false;
-                        }
-                        if !this.hidden
-                            && let State::Ready(view) = &this.state
-                        {
-                            let page = view.current_page();
-                            let zoom = view.explicit_zoom();
-                            if page != this.page || zoom != this.zoom {
-                                this.page = page;
-                                this.zoom = zoom;
-                                this.changed(cx);
-                            }
-                        }
-                        true
-                    });
-                    if !keep.unwrap_or(false) {
-                        break;
-                    }
-                }
-            })
-            .detach();
-        }
         Self {
             state: State::Loading,
             hidden: false,
@@ -264,26 +228,37 @@ impl MediaView {
         });
     }
 
-    pub(crate) fn hide(&mut self, hidden: bool) {
+    fn sync_pdf_toolbar(
+        &mut self,
+        pages: usize,
+        page: usize,
+        zoom: Option<f64>,
+        cx: &mut Context<Self>,
+    ) {
+        if (pages, page, zoom) != (self.pages, self.page, self.zoom) {
+            self.pages = pages;
+            self.page = page;
+            self.zoom = zoom;
+            self.changed(cx);
+        }
+    }
+
+    pub(crate) fn hide(&mut self, hidden: bool, cx: &mut App) {
         self.hidden = hidden;
-        #[cfg(target_os = "macos")]
         if let State::Ready(view) = &self.state {
-            view.hide(hidden);
+            platform::hide(view, hidden, cx);
         }
     }
 
     fn set_zoom(&mut self, zoom: Option<f64>, cx: &mut Context<Self>) {
         self.zoom = zoom;
-        #[cfg(target_os = "macos")]
         if let State::Ready(view) = &self.state {
             view.set_zoom(zoom);
         }
         self.changed(cx);
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     fn step_zoom(&mut self, factor: f64, cx: &mut Context<Self>) {
-        #[cfg(target_os = "macos")]
         if let State::Ready(view) = &self.state {
             self.set_zoom(Some((view.scale() * factor).clamp(0.05, 16.)), cx);
         }
@@ -291,7 +266,6 @@ impl MediaView {
 
     fn toggle_hand(&mut self, cx: &mut Context<Self>) {
         self.hand = !self.hand;
-        #[cfg(target_os = "macos")]
         if let State::Ready(view) = &self.state {
             view.set_hand(self.hand);
         }
@@ -306,7 +280,6 @@ impl MediaView {
         if page == self.page {
             return;
         }
-        #[cfg(target_os = "macos")]
         if let State::Ready(view) = &self.state {
             view.set_page(page);
         }
@@ -318,7 +291,7 @@ impl MediaView {
 impl MediaView {
     pub(crate) fn render_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
-        let ready = !matches!(self.state, State::Loading | State::Failed(_));
+        let ready = matches!(&self.state, State::Ready(view) if platform::ready(view));
         let mut bar = h_flex()
             .h_full()
             .flex_none()
@@ -420,8 +393,7 @@ impl Render for MediaView {
                 .text_color(p.err)
                 .child(format!("This file could not be previewed: {err}"))
                 .into_any_element(),
-            #[cfg(target_os = "macos")]
-            State::Ready(view) => native::element(view.clone()).into_any_element(),
+            State::Ready(view) => platform::element(view),
         };
         div().size_full().min_h_0().child(body)
     }
@@ -464,7 +436,7 @@ impl Workbench {
             && !self.diff_shown;
         for (path, view) in &self.media {
             let hidden = !visible || self.media_shown.as_ref() != Some(path);
-            view.update(cx, |view, _| view.hide(hidden));
+            view.update(cx, |view, cx| view.hide(hidden, cx));
         }
     }
 

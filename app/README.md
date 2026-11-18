@@ -1468,6 +1468,14 @@ preview and R's imports weren't seen.
   Ark, ty and Ruff for x86-64 and Arm64 Linux servers. When you connect
   over SSH, Sandhill installs missing server tools as needed.
   It uses the matching Ark, ty and Ruff builds on this computer too.
+- **Read-only previews on Linux** (2026-11-18): open a picture or PDF in
+  Files to see it in a document tab, without starting a kernel. Pictures
+  use GPUI, including TIFF and ICO; SVGs are drawn without scripts or
+  external images. PDFs use the bundled PDF.js viewer in WebKitGTK. Use
+  Fit, − and +, Actual Size, or the hand to pan; PDFs also show the page
+  count and arrows. Remote files still come through the daemon's tunnel.
+  The app serves PDF.js and the cached PDF privately inside the web view,
+  so remote daemons don't have to carry PDF.js or be upgraded.
 
 
 ## Running it
