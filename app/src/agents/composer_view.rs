@@ -6,6 +6,7 @@
 //! above the box.
 
 use gpui_kit::base::ElementExt as _;
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::input::{
     Backspace, Editor, Enter, Escape, IndentInline, MoveDown, MoveUp, Paste,
 };
@@ -1150,18 +1151,9 @@ fn render_context(t: &TerminalInfo, p: &Palette, cx: &mut Context<Agents>) -> St
         )
         .child(
             h_flex().justify_end().child(
-                div()
-                    .id("compact")
-                    .h(px(26.))
-                    .px(px(12.))
-                    .rounded(px(7.))
-                    .flex()
-                    .items_center()
-                    .cursor_pointer()
-                    .bg(p.accent)
-                    .text_color(p.primary_text)
+                look::button("compact", "Compact now", None, look::ButtonSize::Card)
+                    .primary()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Compact now")
                     .on_click(cx.listener(|this, _, _, cx| this.compact(cx))),
             ),
         )

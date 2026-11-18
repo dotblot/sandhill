@@ -13,6 +13,9 @@ Done so far:
   with a navy border); the AI pane's title is tab-sized, its icons sit as
   close as the other bars', and "New conversation" no longer shows a
   second +.
+- **UI values and buttons**: `app/src/look.rs` names the shared values
+  for later pane passes. Labelled actions use Kit's button at 20, 26,
+  or 30px, and destructive actions share one red button style.
 
 Huan: "It seems like a lot of inconsistent." This plan keeps the look that
 is settled (glass window, floating panes, round tabs, navy accent, fonts,

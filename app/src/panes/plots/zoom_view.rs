@@ -1,5 +1,7 @@
 //! The large plot view's rendering.
 
+use gpui_kit::component::button::ButtonVariants;
+
 use super::*;
 
 impl Workbench {
@@ -313,28 +315,17 @@ impl Workbench {
             )
             .child(div().flex_1().min_h(px(8.)))
             .child(
-                div()
-                    .id("zoom-save")
-                    .flex_none()
-                    .w_full()
-                    .h(px(30.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(RADIUS))
-                    .bg(p.accent)
-                    .text_color(p.primary_text)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .cursor_pointer()
-                    .child(if zoom.replace.is_some() {
-                        "Replace"
-                    } else {
-                        "Save"
-                    })
-                    .when(zoom.working || zoom.redraw.is_none(), |d| d.opacity(0.5))
-                    .when(!zoom.working && zoom.redraw.is_some(), |d| {
-                        d.on_click(cx.listener(|this, _, window, cx| this.save_plot(window, cx)))
-                    }),
+                look::button(
+                    "zoom-save",
+                    if zoom.replace.is_some() { "Replace" } else { "Save" },
+                    None,
+                    look::ButtonSize::Card,
+                )
+                .w_full()
+                .primary()
+                .font_weight(FontWeight::SEMIBOLD)
+                .disabled(zoom.working || zoom.redraw.is_none())
+                .on_click(cx.listener(|this, _, window, cx| this.save_plot(window, cx))),
             );
         let shown = zoom.settings;
         let card = v_flex()

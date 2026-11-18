@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::Disableable;
 
 impl Agents {
     /// What waits on the user: a permission, a question or a plan.
@@ -212,37 +213,15 @@ impl Agents {
                 h_flex()
                     .gap(px(6.))
                     .child(
-                        div()
-                            .id("q-answer")
-                            .h(px(28.))
-                            .px(px(12.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(RADIUS))
-                            .bg(p.accent)
-                            .text_color(p.primary_text)
+                        look::button(SharedString::from(format!("q-answer-{id}")), "Answer", None, ButtonSize::Card)
+                            .primary()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(look::SMALL + 1.))
-                            .cursor_pointer()
-                            .child("Answer")
-                            .when(!ready || sent, |d| d.opacity(0.5))
-                            .when(ready && !sent, |d| d.on_click(Self::reply(id.clone(), send, cx))),
+                            .disabled(!ready || sent)
+                            .on_click(Self::reply(id.clone(), send, cx)),
                     )
                     .child(div().flex_1())
                     .child(
-                        div()
-                            .id("q-skip")
-                            .h(px(28.))
-                            .px(px(10.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(RADIUS))
-                            .border_1()
-                            .border_color(p.line)
-                            .bg(p.bg)
-                            .text_size(px(look::SMALL + 1.))
-                            .cursor_pointer()
-                            .child("Skip")
+                        look::button(SharedString::from(format!("q-skip-{id}")), "Skip", None, ButtonSize::Card)
                             .on_click(Self::reply(
                                 id,
                                 json!({"behavior": "deny", "message": "The user skipped your questions in Sandhill. Ask them in the chat instead."}),
@@ -257,33 +236,17 @@ impl Agents {
             let plan = view.plan.is_some();
             let mut buttons = h_flex().gap(px(6.)).flex_wrap();
             let button = |id: &str, label: &str, primary: bool, deny: bool| {
-                let hover = p.hover;
-                div()
-                    .id(SharedString::from(format!("{id}-{}", ask.id)))
-                    .h(px(28.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(RADIUS))
-                    .border_1()
-                    .whitespace_nowrap()
-                    .text_size(px(look::SMALL + 1.))
-                    .cursor_pointer()
-                    .when(sent, |d| d.opacity(0.5))
-                    .map(|d| {
-                        if primary {
-                            d.bg(p.accent)
-                                .border_color(p.accent)
-                                .text_color(p.primary_text)
-                                .font_weight(FontWeight::SEMIBOLD)
-                        } else {
-                            d.bg(p.bg)
-                                .border_color(p.line)
-                                .when(deny, |d| d.text_color(p.err))
-                                .hover(move |d| d.bg(hover))
-                        }
-                    })
-                    .child(label.to_string())
+                look::button(
+                    SharedString::from(format!("{id}-{}", ask.id)),
+                    SharedString::from(label.to_owned()),
+                    None,
+                    ButtonSize::Card,
+                )
+                .when(primary, |button| {
+                    button.primary().font_weight(FontWeight::SEMIBOLD)
+                })
+                .when(deny, |button| button.danger())
+                .disabled(sent)
             };
             if let Some(options) = &ask.options {
                 for (index, option) in options.iter().enumerate() {

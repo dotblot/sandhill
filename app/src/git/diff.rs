@@ -7,13 +7,14 @@
 
 use std::collections::BTreeSet;
 
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, GitAction, GitDiff};
 
 use crate::git::{DiffKind, DiffLine, diff_lines, hunk_label, split_path};
-use crate::look::{self, Palette, bar_button, icon, pane, picture};
+use crate::look::{self, ButtonSize::Row, Palette, bar_button, icon, pane, picture};
 use crate::workbench::Workbench;
 
 /// Lines drawn before "Show all".
@@ -488,25 +489,29 @@ impl Workbench {
                 if pickable {
                     if staged {
                         let h = hunk.clone();
-                        row = row.child(hunk_button(("hunk-unstage", at), "Unstage", &p).on_click(
-                            cx.listener(move |this, _, _, cx| {
-                                this.diff_apply_lines(LinesOp::Unstage, h.clone(), cx)
-                            }),
-                        ));
+                        row = row.child(
+                            look::button(("hunk-unstage", at), "Unstage", None, Row).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.diff_apply_lines(LinesOp::Unstage, h.clone(), cx)
+                                }),
+                            ),
+                        );
                     } else {
                         let (s, d) = (hunk.clone(), hunk.clone());
                         row = row
-                            .child(hunk_button(("hunk-stage", at), "Stage", &p).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    this.diff_apply_lines(LinesOp::Stage, s.clone(), cx)
-                                }),
-                            ))
                             .child(
-                                hunk_button(("hunk-discard", at), "Throw away", &p).on_click(
+                                look::button(("hunk-stage", at), "Stage", None, Row).on_click(
                                     cx.listener(move |this, _, _, cx| {
-                                        this.diff_apply_lines(LinesOp::Discard, d.clone(), cx)
+                                        this.diff_apply_lines(LinesOp::Stage, s.clone(), cx)
                                     }),
                                 ),
+                            )
+                            .child(
+                                look::button(("hunk-discard", at), "Throw away", None, Row)
+                                    .danger()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.diff_apply_lines(LinesOp::Discard, d.clone(), cx)
+                                    })),
                             );
                     }
                 }
@@ -663,15 +668,4 @@ impl Workbench {
             .into_any_element(),
         )
     }
-}
-
-fn hunk_button(id: impl Into<ElementId>, label: &'static str, p: &Palette) -> Stateful<Div> {
-    div()
-        .id(id)
-        .px(px(6.))
-        .rounded_full()
-        .text_color(p.accent)
-        .cursor_pointer()
-        .hover(|d| d.bg(p.ink(10.)))
-        .child(label)
 }

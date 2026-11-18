@@ -6,12 +6,13 @@
 use std::time::Duration;
 
 use gpui_kit::base::ElementExt as _;
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, KernelspecInfo, SessionInfo, SessionStatus, SystemStats};
 
-use crate::look::{self, Palette, icon, picture};
+use crate::look::{self, ButtonSize::Row, Palette, icon, picture};
 use crate::workbench::{Link, Workbench};
 
 const POLL: Duration = Duration::from_secs(5);
@@ -567,7 +568,6 @@ impl Workbench {
                             lang,
                             (("kf-again", ix).into(), ("kf-force", ix).into()),
                             ("Try again", "Force stop"),
-                            &p,
                             cx.listener(move |this, _, _, cx| this.stop_kernel(again.clone(), cx)),
                             cx.listener(move |this, _, _, cx| {
                                 this.force_stop_kernel(force.clone(), cx)
@@ -583,7 +583,6 @@ impl Workbench {
                     lang,
                     ("k-cancel".into(), "k-stop".into()),
                     ("Cancel", "Shut down"),
-                    &p,
                     cx.listener(|this, _, _, cx| {
                         this.machine.asking = None;
                         cx.notify();
@@ -674,7 +673,6 @@ impl Workbench {
                     None,
                     ("ku-cancel".into(), "ku-stop".into()),
                     ("Cancel", "Shut down"),
-                    &p,
                     cx.listener(|this, _, _, cx| {
                         this.machine.asking = None;
                         cx.notify();
@@ -892,7 +890,6 @@ fn ask_row(
     lang: Option<&'static str>,
     ids: (ElementId, ElementId),
     labels: (&'static str, &'static str),
-    p: &Palette,
     plain: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     danger: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
@@ -916,33 +913,14 @@ fn ask_row(
         .child(
             h_flex()
                 .justify_end()
-                .gap(px(6.))
-                .child(small_button(ids.0, labels.0, false, p).on_click(plain))
-                .child(small_button(ids.1, labels.1, true, p).on_click(danger)),
+                .gap(px(look::GAP_6))
+                .child(look::button(ids.0, labels.0, None, Row).on_click(plain))
+                .child(
+                    look::button(ids.1, labels.1, None, Row)
+                        .danger()
+                        .on_click(danger),
+                ),
         )
-}
-
-fn small_button(id: ElementId, label: &'static str, danger: bool, p: &Palette) -> Stateful<Div> {
-    let hover = p.ink(8.);
-    div()
-        .id(id)
-        .flex_none()
-        .px(px(8.))
-        .h(px(20.))
-        .flex()
-        .items_center()
-        .rounded(px(6.))
-        .cursor_pointer()
-        .map(|d| {
-            if danger {
-                d.bg(p.err).text_color(p.danger_text)
-            } else {
-                d.border_1()
-                    .border_color(p.line)
-                    .hover(move |d| d.bg(hover))
-            }
-        })
-        .child(label)
 }
 
 #[cfg(test)]

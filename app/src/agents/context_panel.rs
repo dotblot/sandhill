@@ -8,8 +8,9 @@
 
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
-use gpui_kit::component::{Sizable, h_flex, v_flex};
+use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::TerminalInfo;
@@ -404,43 +405,18 @@ impl Agents {
         // What can be done with it.
         let summarizing = self.summarizing.as_deref() == Some(t.id.as_str());
         let ready = t.running && !busy && self.summarizing.is_none();
-        let button = |id: &'static str, label: &'static str, primary: bool| {
-            let hover = p.ink(7.);
-            div()
-                .id(id)
-                .h(px(30.))
-                .px(px(12.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(7.))
-                .whitespace_nowrap()
-                .map(|d| {
-                    if primary {
-                        d.bg(p.accent)
-                            .text_color(p.primary_text)
-                            .font_weight(FontWeight::SEMIBOLD)
-                    } else {
-                        d.border_1().border_color(p.line)
-                    }
+        let button = |id, label, primary| {
+            look::button(id, label, None, look::ButtonSize::Card)
+                .when(primary, |button| {
+                    button.primary().font_weight(FontWeight::SEMIBOLD)
                 })
-                .map(|d| {
-                    if ready {
-                        d.cursor_pointer()
-                            .when(!primary, |d| d.hover(move |d| d.bg(hover)))
-                    } else {
-                        d.opacity(0.45)
-                    }
-                })
-                .child(label)
+                .disabled(!ready)
         };
         let on =
-            |d: Stateful<Div>,
+            |button: Button,
              f: fn(&mut Agents, &TerminalInfo, &mut Window, &mut Context<Agents>)| {
                 let t = t.clone();
-                d.when(ready, |d| {
-                    d.on_click(cx.listener(move |this, _, window, cx| f(this, &t, window, cx)))
-                })
+                button.on_click(cx.listener(move |this, _, window, cx| f(this, &t, window, cx)))
             };
         let summary_label = if summarizing {
             "Writing a summary…"

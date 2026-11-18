@@ -15,8 +15,11 @@ use std::io::Read;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
+use gpui_kit::component::button::Button;
 use gpui_kit::component::highlighter::SyntaxColors;
-use gpui_kit::component::{Colorize, Theme, ThemeColor, ThemeConfig, ThemeMode, ThemeRegistry};
+use gpui_kit::component::{
+    Colorize, Sizable, Size, Theme, ThemeColor, ThemeConfig, ThemeMode, ThemeRegistry, h_flex,
+};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use rust_embed::RustEmbed;
@@ -39,7 +42,7 @@ pub const TAB_TRACK: f32 = 24.;
 /// Names the hover group of every tab, so a close button can show under the
 /// pointer. Lookups find the nearest enclosing tab.
 pub const TAB_GROUP: &str = "sandhill-tab";
-/// One corner radius for every rounded thing in the window.
+/// Corner radius for panes, cards and popups; tabs and capsules use `rounded_full`.
 pub const RADIUS: f32 = 12.;
 /// The gap between panes, and between them and the window's top.
 pub const GAP: f32 = 3.;
@@ -50,6 +53,59 @@ pub const STATUS_BAR: f32 = 26.;
 /// A pane's tab strip.
 pub const STRIP: f32 = 29.;
 pub const MONO: &str = "Maple Mono NF";
+
+/// Buttons inside rows and tool rows.
+pub const CONTROL_ROW: f32 = 20.;
+/// Buttons inside cards, forms and popups.
+pub const CONTROL_CARD: f32 = 26.;
+/// Buttons on Welcome.
+pub const CONTROL_WELCOME: f32 = 30.;
+/// Corner radius for buttons, inputs, rows and chips.
+pub const CONTROL_RADIUS: f32 = 6.;
+/// The gap between an icon and its label.
+pub const GAP_4: f32 = 4.;
+/// The gap between controls.
+pub const GAP_8: f32 = 8.;
+/// Icons in rows and buttons.
+pub const ICON: f32 = 14.;
+
+pub use consistency_tokens::*;
+
+#[allow(dead_code, reason = "Tokens for the remaining consistency passes")]
+mod consistency_tokens {
+    /// Card and page titles.
+    pub const TITLE: f32 = 16.;
+    /// Badges and counts.
+    pub const TINY: f32 = 11.;
+    /// Code examples are this much smaller than their surrounding prose.
+    pub const DOC_CODE_INSET: f32 = 1.;
+    /// Welcome's heading is larger than other page titles.
+    pub const WELCOME_TITLE: f32 = 24.;
+    /// Lists the user picks from.
+    pub const ROW: f32 = 28.;
+    /// Variables and other dense data rows.
+    pub const DENSE_ROW: f32 = 22.;
+    /// Small corners inside code and tables.
+    pub const CODE_RADIUS: f32 = 4.;
+    /// The smallest gap, for tightly paired elements.
+    pub const GAP_2: f32 = 2.;
+    /// A compact gap between controls.
+    pub const GAP_6: f32 = 6.;
+    /// The gap between groups.
+    pub const GAP_12: f32 = 12.;
+    /// Pane padding along its left and right edges.
+    pub const PANE_PAD_X: f32 = GAP_12;
+    /// Pane padding along its top and bottom edges.
+    pub const PANE_PAD_Y: f32 = super::GAP_8;
+    /// Row hover uses this percentage of the text colour.
+    pub const ROW_HOVER: f32 = 6.;
+    /// Button and icon hover uses this stronger percentage of the text colour.
+    pub const BUTTON_HOVER: f32 = 8.;
+    /// Icons in dense rows and badges.
+    pub const ICON_SMALL: f32 = 12.;
+    /// Icons in the title bar and cards.
+    pub const ICON_LARGE: f32 = 16.;
+}
 
 /// Sandhill's colours for drawing that isn't a GPUI Kit widget.
 #[derive(Clone, Copy)]
@@ -66,7 +122,6 @@ pub struct Palette {
     pub accent: Hsla,
     pub accent_soft: Hsla,
     pub primary_text: Hsla,
-    pub danger_text: Hsla,
     pub busy: Hsla,
     pub busy_soft: Hsla,
     pub ok: Hsla,
@@ -117,13 +172,12 @@ fn brand_colors(dark: bool) -> ThemeColor {
         .background
         .blend(c.primary.opacity(if dark { 0.16 } else { 0.08 }));
     c.accent_foreground = c.foreground;
-    // Kit's dark theme labels its light red (red-400) with red-600, which
-    // can't be read (Huan, 2026-11-15); a near-black red reads as the navy
-    // label does on the light blue.
-    if dark {
-        c.danger_foreground = color(0x450a0a);
-        c.button_danger_foreground = c.danger_foreground;
-    }
+    // One high-contrast ink on the existing red fill in both themes.
+    // Kit's defaults tint the fill, so keep it solid through hover and press.
+    c.button_danger = c.danger;
+    c.button_danger_hover = c.danger.lighten(0.08);
+    c.button_danger_active = c.danger.darken(0.035);
+    c.button_danger_foreground = color(0x250404);
     c.ring = c.primary;
     c.link = c.primary;
     c.link_hover = c.primary_hover;
@@ -181,7 +235,6 @@ impl Palette {
             accent: c.primary,
             accent_soft: c.accent,
             primary_text: c.primary_foreground,
-            danger_text: c.danger_foreground,
             busy: c.info,
             busy_soft: c.info_hover,
             ok: c.success,
@@ -342,6 +395,19 @@ fn theme_config(default: &ThemeConfig) -> Rc<ThemeConfig> {
         (
             &mut config.colors.button_primary_foreground,
             colors.button_primary_foreground,
+        ),
+        (&mut config.colors.button_danger, colors.button_danger),
+        (
+            &mut config.colors.button_danger_hover,
+            colors.button_danger_hover,
+        ),
+        (
+            &mut config.colors.button_danger_active,
+            colors.button_danger_active,
+        ),
+        (
+            &mut config.colors.button_danger_foreground,
+            colors.button_danger_foreground,
         ),
         (&mut config.colors.accent, colors.accent),
         (
@@ -1280,6 +1346,38 @@ pub fn place_close(
     }
 }
 
+/// The three heights of a labelled Kit button.
+pub enum ButtonSize {
+    Row,
+    Card,
+    Welcome,
+}
+
+/// An outlined Kit button by default; use Kit's primary, ghost or danger
+/// variants for the other kinds. Set exact heights over Kit's size presets.
+pub fn button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon_name: Option<&str>,
+    size: ButtonSize,
+) -> Button {
+    let button = Button::new(id).rounded(px(CONTROL_RADIUS));
+    let button = match size {
+        ButtonSize::Row => button.xsmall().h(px(CONTROL_ROW)).px(px(GAP_8)),
+        ButtonSize::Card => button.small().h(px(CONTROL_CARD)),
+        ButtonSize::Welcome => button.with_size(Size::Medium).h(px(CONTROL_WELCOME)),
+    };
+    let label = label.into();
+    button.accessibility_label(label.clone()).child(
+        h_flex()
+            .min_w_0()
+            .gap(px(GAP_4))
+            .text_size(px(SMALL))
+            .when_some(icon_name, |d, name| d.child(icon(name).size(px(ICON))))
+            .child(div().min_w_0().text_ellipsis().child(label)),
+    )
+}
+
 /// A small icon button, as in a pane's head or the title bar.
 pub fn icon_button(
     id: impl Into<ElementId>,
@@ -1365,6 +1463,15 @@ mod tests {
             for link in [colors.link, colors.link_hover, colors.link_active] {
                 let a = luminance(colors.background);
                 let b = luminance(link);
+                assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
+            }
+            for background in [
+                colors.button_danger,
+                colors.button_danger_hover,
+                colors.button_danger_active,
+            ] {
+                let a = luminance(background);
+                let b = luminance(colors.button_danger_foreground);
                 assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
             }
         }

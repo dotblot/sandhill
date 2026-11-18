@@ -11,7 +11,7 @@ use gpui_kit::*;
 use serde_json::{Value, json};
 
 use crate::editor::notebook;
-use crate::look::{self, Palette, icon};
+use crate::look::{self, ButtonSize::Row, Palette, icon};
 use crate::workbench::{Open, Workbench};
 
 /// How long a cell the agent added or changed stays lit.
@@ -116,34 +116,6 @@ fn fold_unchanged(lines: Vec<DiffLine>) -> Vec<DiffLine> {
         folded.push(DiffLine::Gap(gap));
     }
     folded
-}
-
-/// A small rounded button with an icon, as under cells.
-pub(crate) fn pill(
-    id: impl Into<ElementId>,
-    name: &str,
-    label: &'static str,
-    p: &Palette,
-) -> Stateful<Div> {
-    let p = *p;
-    div()
-        .id(id.into())
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(3.))
-        .px(px(8.))
-        .h(px(20.))
-        .rounded(px(10.))
-        .border(px(0.5))
-        .border_color(p.line)
-        .bg(p.bg)
-        .text_size(px(look::SMALL))
-        .text_color(p.muted)
-        .cursor_pointer()
-        .hover(|d| d.text_color(p.accent).border_color(p.accent))
-        .child(icon(name).size(px(12.)))
-        .child(label)
 }
 
 impl Workbench {
@@ -439,15 +411,24 @@ impl Workbench {
                                     .child(first),
                             )
                             .child(
-                                pill(("agent-deleted-undo", n), "edit.undo", "Undo", &p).on_click(
-                                    cx.listener(move |this, _, window, cx| {
+                                look::button(
+                                    ("agent-deleted-undo", n),
+                                    "Undo",
+                                    Some("edit.undo"),
+                                    Row,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
                                         this.undo_agent_delete(n, window, cx)
-                                    }),
-                                ),
+                                    },
+                                )),
                             )
-                            .child(pill(("agent-deleted-ok", n), "check", "OK", &p).on_click(
-                                cx.listener(move |this, _, _, cx| this.dismiss_agent_delete(n, cx)),
-                            )),
+                            .child(
+                                look::button(("agent-deleted-ok", n), "OK", Some("check"), Row)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.dismiss_agent_delete(n, cx)
+                                    })),
+                            ),
                     )
                     .into_any_element()
             })
@@ -514,14 +495,19 @@ impl Workbench {
                         .text_color(p.muted)
                         .child(icon("sparkle.ai").size(px(12.)))
                         .child(div().flex_1().child(format!("Changed by {}", change.by)))
-                        .child(pill(("agent-keep", ix), "check", "Keep", &p).on_click(
-                            cx.listener(move |this, _, _, cx| this.keep_agent_change(&keep_id, cx)),
-                        ))
-                        .child(pill(("agent-undo", ix), "edit.undo", "Undo", &p).on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.undo_agent_change(&undo_id, window, cx)
-                            }),
-                        )),
+                        .child(
+                            look::button(("agent-keep", ix), "Keep", Some("check"), Row).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.keep_agent_change(&keep_id, cx)
+                                }),
+                            ),
+                        )
+                        .child(
+                            look::button(("agent-undo", ix), "Undo", Some("edit.undo"), Row)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.undo_agent_change(&undo_id, window, cx)
+                                })),
+                        ),
                 )
                 .child(
                     v_flex()
@@ -544,31 +530,20 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         self.agents.as_ref()?;
-        let p = *Palette::get(cx);
         Some(
             h_flex()
                 .mt(px(4.))
                 .gap(px(6.))
                 .child(
-                    pill(("cell-fix", ix), "sparkle.ai", "Fix", &p)
-                        .tooltip(|w, cx| {
-                            gpui_kit::component::tooltip::Tooltip::new(
-                                "Ask the agent to fix this error",
-                            )
-                            .build(w, cx)
-                        })
+                    look::button(("cell-fix", ix), "Fix", Some("sparkle.ai"), Row)
+                        .tooltip("Ask the agent to fix this error")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.ask_agent_about_cell(ix, true, window, cx)
                         })),
                 )
                 .child(
-                    pill(("cell-explain", ix), "help", "Explain", &p)
-                        .tooltip(|w, cx| {
-                            gpui_kit::component::tooltip::Tooltip::new(
-                                "Ask the agent what went wrong",
-                            )
-                            .build(w, cx)
-                        })
+                    look::button(("cell-explain", ix), "Explain", Some("help"), Row)
+                        .tooltip("Ask the agent what went wrong")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.ask_agent_about_cell(ix, false, window, cx)
                         })),

@@ -766,29 +766,6 @@ impl AppWindow {
     }
 }
 
-/// The folder action retains Welcome's quiet outline style.
-fn welcome_button(id: &'static str, name: &str, label: &'static str, p: &Palette) -> Stateful<Div> {
-    let hover = p.bg;
-    h_flex()
-        .id(id)
-        .h(px(28.))
-        .flex_none()
-        .gap(px(6.))
-        .px(px(10.))
-        .rounded(px(look::RADIUS))
-        .border_1()
-        .border_color(p.glass_edge)
-        .bg(p.glass)
-        .text_color(p.text)
-        .text_size(px(look::SMALL))
-        .font_weight(FontWeight::NORMAL)
-        .cursor_pointer()
-        .hover(move |d| d.bg(hover))
-        .active(|d| d.opacity(0.8))
-        .child(icon(name).size(px(14.)))
-        .child(label)
-}
-
 fn sidebar_heading(label: &'static str, p: &Palette) -> Div {
     div()
         .px(px(10.))

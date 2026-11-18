@@ -963,11 +963,17 @@ impl AppWindow {
                     .pl(px(2.))
                     .gap(px(10.))
                     .child(
-                        welcome_button("start-open", "folder", "Open Folder…", &p).on_click(
-                            cx.listener(move |this, _, window, cx| {
+                        look::button(
+                            "start-open",
+                            "Open Folder…",
+                            Some("folder"),
+                            look::ButtonSize::Welcome,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
                                 this.show_start(StartMode::Picking(host.clone()), window, cx);
-                            }),
-                        ),
+                            },
+                        )),
                     )
                     .when(local, |d| {
                         d.child(

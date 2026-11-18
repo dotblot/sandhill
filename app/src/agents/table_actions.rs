@@ -10,16 +10,11 @@ use gpui_kit::component::h_flex;
 use gpui_kit::*;
 use sandhill_proto::Call;
 
-use crate::agents::cell_ai::pill;
-use crate::look::Palette;
+use crate::look::{self, ButtonSize::Row};
 use crate::workbench::Workbench;
 
 /// The table's buttons; `workbench` is the window's.
-pub(crate) fn table_buttons(
-    table: &TableData,
-    workbench: WeakEntity<Workbench>,
-    p: &Palette,
-) -> Div {
+pub(crate) fn table_buttons(table: &TableData, workbench: WeakEntity<Workbench>) -> Div {
     let table = Rc::new((table.headers.clone(), table.rows.clone()));
     let copied = table.clone();
     let saved = table.clone();
@@ -28,24 +23,26 @@ pub(crate) fn table_buttons(
         .gap(px(6.))
         .mt(px(4.))
         .child(
-            pill("copy", "edit.copy", "Copy", p).on_click(move |_, _, cx| {
+            look::button("copy", "Copy", Some("edit.copy"), Row).on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(delimited(
                     &copied.0, &copied.1, '\t',
                 )))
             }),
         )
         .child(
-            pill("save", "doc.download", "Save as CSV…", p).on_click(move |_, _, cx| {
-                save_csv(delimited(&saved.0, &saved.1, ','), saving.clone(), cx)
-            }),
+            look::button("save", "Save as CSV…", Some("doc.download"), Row).on_click(
+                move |_, _, cx| save_csv(delimited(&saved.0, &saved.1, ','), saving.clone(), cx),
+            ),
         )
         .child(
-            pill("explore", "table", "Open in Data Explorer", p).on_click(move |_, _, cx| {
-                let (headers, rows) = (table.0.clone(), table.1.clone());
-                workbench
-                    .update(cx, |w, cx| w.explore_table(headers, rows, cx))
-                    .ok();
-            }),
+            look::button("explore", "Open in Data Explorer", Some("table"), Row).on_click(
+                move |_, _, cx| {
+                    let (headers, rows) = (table.0.clone(), table.1.clone());
+                    workbench
+                        .update(cx, |w, cx| w.explore_table(headers, rows, cx))
+                        .ok();
+                },
+            ),
         )
 }
 

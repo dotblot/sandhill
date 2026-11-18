@@ -12,12 +12,12 @@ use std::time::Duration;
 
 use gpui_kit::component::input::{EditorState, Input, InputEvent, InputState};
 use gpui_kit::component::text::{TextView, TextViewStyle};
-use gpui_kit::component::{Sizable, h_flex, v_flex};
+use gpui_kit::component::{Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{Call, FileText, HelpPage, HelpSource, HelpTopics, HelpVignette};
 
-use crate::look::{self, Palette, RADIUS, icon, icon_button};
+use crate::look::{self, Palette, icon, icon_button};
 use crate::workbench::{TopTab, Workbench};
 
 /// How long typing pauses before the help is searched.
@@ -1090,22 +1090,18 @@ impl Workbench {
                     .on_click(cx.listener(|this, _, _, cx| this.help_step(1, cx))),
             )
             .child(
-                div()
-                    .id("help-source")
-                    .px(px(8.))
-                    .py(px(2.))
-                    .rounded(px(RADIUS))
-                    .border_1()
-                    .border_color(p.line)
-                    .text_size(px(look::SMALL))
-                    .cursor_pointer()
-                    .when(self.help.show_source, |d| d.bg(p.accent_soft))
-                    .child(if self.help.show_source {
+                look::button(
+                    "help-source",
+                    if self.help.show_source {
                         "Help"
                     } else {
                         "Source"
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_source(cx))),
+                    },
+                    None,
+                    look::ButtonSize::Row,
+                )
+                .selected(self.help.show_source)
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_source(cx))),
             );
         let also = (!page.alternatives.is_empty()).then(|| {
             h_flex()

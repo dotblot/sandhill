@@ -6,6 +6,7 @@
 
 use chrono::{Local, TimeZone};
 use gpui_kit::base::ElementExt as _;
+use gpui_kit::component::button::ButtonVariants;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
@@ -19,7 +20,7 @@ use crate::agents::{
     Agents, Show, kind_of, model_label, provider_show, question_key, supports_terminal,
     terminal_only,
 };
-use crate::look::{self, Palette, RADIUS, icon, icon_button, picture, side_pane};
+use crate::look::{self, ButtonSize, Palette, RADIUS, icon, icon_button, picture, side_pane};
 use crate::workbench::Workbench;
 
 mod chat_rows;
@@ -426,7 +427,9 @@ impl Agents {
                 ),
             )
             .child(
-                primary_button("agent-empty-new", "New conversation", &p)
+                look::button("agent-empty-new", "New conversation", Some("add"), ButtonSize::Card)
+                    .primary()
+                    .font_weight(FontWeight::SEMIBOLD)
                     .on_click(cx.listener(|this, _, window, cx| this.show(Show::New, window, cx))),
             )
             .into_any_element()
@@ -526,34 +529,39 @@ impl Agents {
         let group: SharedString = format!("hist-group-{}", t.id).into();
         let asking = self.confirm_delete.as_deref() == Some(&t.id);
         let delete_id = t.id.clone();
-        let delete = h_flex()
-            .id(SharedString::from(format!("hist-delete-{}", t.id)))
-            .flex_none()
-            .ml_auto()
-            .gap(px(4.))
-            .px(px(5.))
-            .h(px(22.))
-            .rounded(px(6.))
-            .cursor_pointer()
-            .text_size(px(look::SMALL))
-            .map(|d| {
-                if asking {
-                    d.bg(p.err).text_color(gpui_kit::white()).child("Delete?")
-                } else {
-                    d.invisible()
-                        .group_hover(group.clone(), |d| d.visible())
-                        .text_color(p.faint)
-                        .hover(|d| d.text_color(p.err))
-                }
-            })
-            .child(icon("delete").size(px(14.)))
-            .tooltip(|w, cx| {
-                gpui_kit::component::tooltip::Tooltip::new("Delete this conversation").build(w, cx)
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                this.delete_from_history(delete_id.clone(), window, cx)
-            }));
+        let button_id = SharedString::from(format!("hist-delete-{}", t.id));
+        let on_delete = cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            this.delete_from_history(delete_id.clone(), window, cx)
+        });
+        let delete = if asking {
+            look::button(button_id, "Delete?", Some("delete"), ButtonSize::Row)
+                .danger()
+                .ml_auto()
+                .tooltip("Delete this conversation")
+                .on_click(on_delete)
+                .into_any_element()
+        } else {
+            h_flex()
+                .id(button_id)
+                .flex_none()
+                .ml_auto()
+                .px(px(5.))
+                .h(px(22.))
+                .rounded(px(6.))
+                .cursor_pointer()
+                .invisible()
+                .group_hover(group.clone(), |d| d.visible())
+                .text_color(p.faint)
+                .hover(|d| d.text_color(p.err))
+                .child(icon("delete").size(px(14.)))
+                .tooltip(|w, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new("Delete this conversation")
+                        .build(w, cx)
+                })
+                .on_click(on_delete)
+                .into_any_element()
+        };
         // Stops the agent but keeps the conversation; a message resumes it.
         let stop = t.running.then(|| {
             let stop_id = t.id.clone();
@@ -829,21 +837,6 @@ pub(super) fn step_card(
         card = card.child(block(format!("step-out-box-{key}"), text, p.bg, p.text));
     }
     card.into_any_element()
-}
-
-fn primary_button(id: &'static str, label: &'static str, p: &Palette) -> Stateful<Div> {
-    h_flex()
-        .id(id)
-        .gap(px(5.))
-        .px(px(12.))
-        .py(px(4.))
-        .rounded(px(RADIUS))
-        .bg(p.accent)
-        .text_color(p.primary_text)
-        .font_weight(FontWeight::SEMIBOLD)
-        .cursor_pointer()
-        .child(icon("add").size(px(14.)))
-        .child(label)
 }
 
 /// "16:42", or "Oct 9" for another day.

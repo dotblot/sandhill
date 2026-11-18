@@ -624,29 +624,15 @@ impl Workbench {
     /// that add a code or Markdown cell there; they show when the pointer
     /// is over the row, and always after the last cell.
     fn add_row(&self, at: usize, always: bool, cx: &mut Context<Self>) -> AnyElement {
-        let p = *Palette::get(cx);
         let group: SharedString = format!("add-{at}").into();
         let button = |id: &str, label: &'static str, kind: CellKind| {
-            div()
-                .id(SharedString::from(format!("{id}-{at}")))
-                .flex()
-                .items_center()
-                .gap(px(3.))
-                .px(px(8.))
-                .h(px(20.))
-                .rounded(px(10.))
-                .border(px(0.5))
-                .border_color(p.line)
-                .bg(p.bg)
-                .text_size(px(look::SMALL))
-                .text_color(p.muted)
-                .cursor_pointer()
-                .hover(|d| d.text_color(p.accent).border_color(p.accent))
-                .child(icon("add").size(px(12.)))
-                .child(label)
-                .on_click(
-                    cx.listener(move |this, _, window, cx| this.add_cell(at, kind, window, cx)),
-                )
+            look::button(
+                SharedString::from(format!("{id}-{at}")),
+                label,
+                Some("add"),
+                look::ButtonSize::Row,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| this.add_cell(at, kind, window, cx)))
         };
         h_flex()
             .id(("add-row", at))

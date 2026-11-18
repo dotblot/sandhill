@@ -42,19 +42,18 @@ impl Agents {
                 }) {
                     let account = account.clone();
                     alternatives = alternatives.child(
-                        div()
-                            .id(SharedString::from(format!("continue-{}", account.id)))
-                            .px(px(10.))
-                            .py(px(5.))
-                            .rounded(px(RADIUS))
-                            .bg(p.accent_soft)
-                            .text_color(p.accent)
-                            .cursor_pointer()
-                            .hover(move |d| d.bg(p.ink(8.)))
-                            .child(format!("Continue with {}", account.name))
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        look::button(
+                            SharedString::from(format!("continue-{}", account.id)),
+                            SharedString::from(format!("Continue with {}", account.name)),
+                            None,
+                            ButtonSize::Card,
+                        )
+                        .primary()
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
                                 this.switch_account(account.clone(), window, cx);
-                            })),
+                            },
+                        )),
                     );
                 }
                 items.push(alternatives.into_any_element());
@@ -79,16 +78,7 @@ impl Agents {
                     })
                     .when(!resumable, |d| {
                         d.child(
-                            div()
-                                .id("chat-start-again")
-                                .px(px(10.))
-                                .py(px(3.))
-                                .rounded(px(RADIUS))
-                                .border_1()
-                                .border_color(p.line)
-                                .text_color(p.text)
-                                .cursor_pointer()
-                                .child("Start a new conversation like it")
+                            look::button("chat-start-again", "Start a new conversation like it", None, ButtonSize::Card)
                                 .on_click(cx.listener(|this, _, window, cx| this.start_again(window, cx))),
                         )
                     })
@@ -118,30 +108,10 @@ impl Agents {
     pub(super) fn render_trust(&self, t: &TerminalInfo, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let folder = t.cwd.clone();
-        let button = |id: &'static str, label: &'static str, primary: bool| {
-            let hover = p.hover;
-            div()
-                .id(id)
-                .h(px(28.))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .rounded(px(RADIUS))
-                .border_1()
-                .whitespace_nowrap()
-                .text_size(px(look::SMALL + 1.))
-                .cursor_pointer()
-                .map(|d| {
-                    if primary {
-                        d.bg(p.accent)
-                            .border_color(p.accent)
-                            .text_color(p.primary_text)
-                            .font_weight(FontWeight::SEMIBOLD)
-                    } else {
-                        d.bg(p.bg).border_color(p.line).hover(move |d| d.bg(hover))
-                    }
-                })
-                .child(label)
+        let button = |id, label, primary| {
+            look::button(id, label, None, ButtonSize::Card).when(primary, |button| {
+                button.primary().font_weight(FontWeight::SEMIBOLD)
+            })
         };
         let yes = t.clone();
         let no = t.clone();
@@ -244,11 +214,10 @@ impl Agents {
                             .code_block_actions(move |block, _, cx| {
                                 code_block_buttons(block, agents.clone(), cx)
                             })
-                            .table_actions(move |table, _, cx| {
+                            .table_actions(move |table, _, _| {
                                 crate::agents::table_actions::table_buttons(
                                     table,
                                     workbench.clone(),
-                                    Palette::get(cx),
                                 )
                             })
                             .style(

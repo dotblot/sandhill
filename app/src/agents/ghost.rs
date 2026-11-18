@@ -10,7 +10,6 @@ use gpui_kit::*;
 use sandhill_proto::{Call, CellSuggestion};
 use serde_json::Value;
 
-use crate::agents::cell_ai::pill;
 use crate::editor::notebook::CellKind;
 use crate::editor::shown::{Shown, show};
 use crate::look::{self, Palette, icon};
@@ -253,15 +252,27 @@ impl Workbench {
                     .child(
                         head(format!("{who} suggests a next cell"))
                             .child(
-                                pill("ghost-accept", "add", "Accept", &p).on_click(cx.listener(
+                                look::button(
+                                    "ghost-accept",
+                                    "Accept",
+                                    Some("add"),
+                                    look::ButtonSize::Row,
+                                )
+                                .on_click(cx.listener(
                                     |this, _, window, cx| this.accept_ghost(false, window, cx),
                                 )),
                             )
-                            .child(pill("ghost-run", "run", "Accept and Run", &p).on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.accept_ghost(true, window, cx)
-                                }),
-                            ))
+                            .child(
+                                look::button(
+                                    "ghost-run",
+                                    "Accept and Run",
+                                    Some("run"),
+                                    look::ButtonSize::Row,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| this.accept_ghost(true, window, cx),
+                                )),
+                            )
                             .child(close()),
                     )
                     .child(
