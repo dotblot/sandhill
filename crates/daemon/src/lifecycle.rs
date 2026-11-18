@@ -179,6 +179,49 @@ impl Daemon {
         Ok(json!({"restart":restart}))
     }
 
+    /// The user's explicit Force stop of one kernel after its graceful stop
+    /// failed. The session's own child handle kills it when this daemon
+    /// started it; a kernel adopted after a restart is killed through its
+    /// ownership record, which only Linux can signal without a PID reuse
+    /// race (see [`ProcessIdentity`]).
+    pub(crate) async fn force_stop_session(&self, id: &str) -> Result<()> {
+        let handle = self.sessions.lock().unwrap().get(id).cloned();
+        if let Some(handle) = &handle
+            && handle.force_stop().await.is_ok()
+        {
+            self.sessions.lock().unwrap().remove(id);
+            return Ok(());
+        }
+        let session = self
+            .journal
+            .sessions()?
+            .into_iter()
+            .find(|s| s.id == id)
+            .context("no such session")?;
+        let owner_path = session.connection_file.with_extension("owner.json");
+        let mut owner = read_record(&owner_path)?.context(
+            "this kernel has no ownership record, so Sandhill can't safely kill it; stop it from the Terminal",
+        )?;
+        let mut all = processes()?;
+        if refresh(&mut owner, &mut all)? {
+            write_record(&owner_path, &owner)?;
+        }
+        for process in owner.members.iter().rev() {
+            process.signal(libc::SIGKILL)?;
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while owner.members.iter().any(ProcessIdentity::alive) {
+            anyhow::ensure!(
+                tokio::time::Instant::now() < deadline,
+                "the kernel did not exit after Force stop"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        // The session's liveness check notices the exit and ends it.
+        self.sessions.lock().unwrap().remove(id);
+        Ok(())
+    }
+
     fn resources(&self) -> Result<Vec<Resource>> {
         let mut all = processes()?;
         let mut resources = Vec::new();

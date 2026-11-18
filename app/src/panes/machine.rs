@@ -57,6 +57,9 @@ pub(crate) struct MachineUi {
     pub sessions: Vec<SessionInfo>,
     /// The kernel row (a session id, or UNUSED) asking to shut down.
     pub asking: Option<String>,
+    /// Kernels that didn't stop when asked, with why: their rows offer Try
+    /// again and Force stop (Huan, 2026-11-18).
+    pub failed: std::collections::HashMap<String, String>,
     /// The resource whose details show above the status bar.
     pub resource: Option<&'static str>,
 }
@@ -344,6 +347,13 @@ impl Workbench {
                         this.machine.stats = Some(stats);
                     }
                     if let Ok(sessions) = sessions {
+                        // A kernel that didn't stop is no longer offered
+                        // again once it has gone.
+                        this.machine.failed.retain(|id, _| {
+                            sessions
+                                .iter()
+                                .any(|s| &s.id == id && s.status != SessionStatus::Ended)
+                        });
                         this.machine.sessions = sessions;
                     }
                     if let Some(high) = this
@@ -420,13 +430,51 @@ impl Workbench {
     /// Stops sessions for good; documents using them see their kernel stop.
     pub(crate) fn shut_down(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
         self.machine.asking = None;
+        for id in ids {
+            self.stop_kernel(id, cx);
+        }
+        cx.notify();
+    }
+
+    /// Asks the daemon to stop a kernel; it leaves the lists at once. One
+    /// that doesn't stop comes back in Kernels with Try again and Force
+    /// stop, and the problem line says so, rather than running on unseen.
+    pub(crate) fn stop_kernel(&mut self, id: String, cx: &mut Context<Self>) {
+        self.end_kernel(id, false, cx);
+    }
+
+    /// The user's Force stop of a kernel that didn't stop when asked.
+    pub(crate) fn force_stop_kernel(&mut self, id: String, cx: &mut Context<Self>) {
+        self.end_kernel(id, true, cx);
+    }
+
+    fn end_kernel(&mut self, id: String, force: bool, cx: &mut Context<Self>) {
         let Some(daemon) = self.daemon() else {
             return;
         };
-        for id in ids {
-            self.machine.sessions.retain(|s| s.id != id);
-            daemon.fire(Call::Shutdown { session: id });
-        }
+        self.machine.sessions.retain(|s| s.id != id);
+        self.machine.failed.remove(&id);
+        let session = id.clone();
+        let ended = daemon.call::<serde_json::Value>(if force {
+            Call::ForceStop { session }
+        } else {
+            Call::Shutdown { session }
+        });
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = ended.await {
+                this.update(cx, |this, cx| {
+                    this.problem = Some(if force {
+                        format!("Force stop failed: {err:#}")
+                    } else {
+                        "A kernel didn't stop when asked. It is still in Kernels: Try again, or Force stop.".into()
+                    });
+                    this.machine.failed.insert(id, format!("{err:#}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
         cx.notify();
     }
 
@@ -503,12 +551,38 @@ impl Workbench {
                         .flex_none()
                         .children(lang.map(|l| picture(l).size(px(14.)))),
                 );
+            if let Some(why) = self.machine.failed.get(&s.id) {
+                let (again, force) = (s.id.clone(), s.id.clone());
+                list = list.child(
+                    div()
+                        .id(("kfailed", ix))
+                        .tooltip({
+                            let why = why.clone();
+                            move |w, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(why.clone()).build(w, cx)
+                            }
+                        })
+                        .child(ask_row(
+                            format!("{label} didn't stop"),
+                            lang,
+                            (("kf-again", ix).into(), ("kf-force", ix).into()),
+                            ("Try again", "Force stop"),
+                            &p,
+                            cx.listener(move |this, _, _, cx| this.stop_kernel(again.clone(), cx)),
+                            cx.listener(move |this, _, _, cx| {
+                                this.force_stop_kernel(force.clone(), cx)
+                            }),
+                        )),
+                );
+                continue;
+            }
             if self.machine.asking.as_deref() == Some(s.id.as_str()) {
                 let id = s.id.clone();
                 list = list.child(ask_row(
                     format!("Shut down {label}?"),
                     lang,
-                    "k",
+                    ("k-cancel".into(), "k-stop".into()),
+                    ("Cancel", "Shut down"),
                     &p,
                     cx.listener(|this, _, _, cx| {
                         this.machine.asking = None;
@@ -598,7 +672,8 @@ impl Workbench {
                         format!("Shut down {n} unused sessions?")
                     },
                     None,
-                    "ku",
+                    ("ku-cancel".into(), "ku-stop".into()),
+                    ("Cancel", "Shut down"),
                     &p,
                     cx.listener(|this, _, _, cx| {
                         this.machine.asking = None;
@@ -810,20 +885,17 @@ impl Workbench {
     }
 }
 
-/// A kernel row asking before it shuts down: the question, then Cancel and
-/// Shut down under it.
+/// A kernel row asking something: the question, then a plain and a red
+/// button under it (Cancel and Shut down; Try again and Force stop).
 fn ask_row(
     question: String,
     lang: Option<&'static str>,
-    id: &'static str,
+    ids: (ElementId, ElementId),
+    labels: (&'static str, &'static str),
     p: &Palette,
-    cancel: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    stop: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    plain: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    danger: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let (cancel_id, stop_id) = match id {
-        "k" => ("k-cancel", "k-stop"),
-        _ => ("ku-cancel", "ku-stop"),
-    };
     v_flex()
         .pl(px(14.))
         .pr(px(6.))
@@ -845,12 +917,12 @@ fn ask_row(
             h_flex()
                 .justify_end()
                 .gap(px(6.))
-                .child(small_button(cancel_id, "Cancel", false, p).on_click(cancel))
-                .child(small_button(stop_id, "Shut down", true, p).on_click(stop)),
+                .child(small_button(ids.0, labels.0, false, p).on_click(plain))
+                .child(small_button(ids.1, labels.1, true, p).on_click(danger)),
         )
 }
 
-fn small_button(id: &'static str, label: &'static str, danger: bool, p: &Palette) -> Stateful<Div> {
+fn small_button(id: ElementId, label: &'static str, danger: bool, p: &Palette) -> Stateful<Div> {
     let hover = p.ink(8.);
     div()
         .id(id)

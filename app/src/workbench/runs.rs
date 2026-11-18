@@ -271,7 +271,6 @@ impl Workbench {
         if let Some(path) = self.open.as_ref().map(|o| o.notebook.path.clone()) {
             self.remember_document_kernel(&path, &name);
         }
-        let daemon = self.daemon();
         let Some(open) = self.open.as_mut() else {
             return;
         };
@@ -279,13 +278,12 @@ impl Workbench {
         if kernel.as_deref() == Some(&name) {
             return;
         }
-        if let (Some(daemon), Some(id)) = (daemon, session.id()) {
-            daemon.fire(Call::Shutdown {
-                session: id.to_string(),
-            });
-        }
+        let old = session.id().map(str::to_string);
         *session = Session::None;
         *kernel = Some(name);
+        if let Some(old) = old {
+            self.stop_kernel(old, cx);
+        }
         if let Some(open) = self.open.as_mut() {
             open.waiting.clear();
             open.sending.clear();
@@ -746,17 +744,15 @@ impl Workbench {
             self.stop_console_session(cx);
             return;
         }
-        let daemon = self.daemon();
         let slot = match self.open.as_mut() {
             Some(open) => &mut open.session,
             None => &mut self.loose,
         };
-        if let (Some(daemon), Some(id)) = (daemon, slot.id()) {
-            let id = id.to_string();
-            self.machine.sessions.retain(|s| s.id != id);
-            daemon.fire(Call::Shutdown { session: id });
-        }
+        let id = slot.id().map(str::to_string);
         *slot = Session::None;
+        if let Some(id) = id {
+            self.stop_kernel(id, cx);
+        }
         self.session_changed(cx);
         cx.notify();
     }

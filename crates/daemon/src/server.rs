@@ -506,6 +506,10 @@ impl Daemon {
                 self.sessions.lock().unwrap().remove(&session);
                 Value::Null
             }
+            Call::ForceStop { session } => {
+                self.force_stop_session(&session).await?;
+                Value::Null
+            }
             Call::History {
                 session,
                 since_seq,

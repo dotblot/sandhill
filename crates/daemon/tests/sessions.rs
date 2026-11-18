@@ -505,6 +505,53 @@ async fn shutdown_ends_the_session() {
     );
 }
 
+/// Force stop, the user's choice after a shutdown failed, kills a kernel
+/// this daemon started, even mid-run. One adopted after a restart is killed
+/// through its ownership record on Linux; macOS can't signal a saved PID
+/// without a reuse race, so it refuses there and kills nothing.
+#[tokio::test]
+async fn force_stop_kills_a_kernel_this_daemon_started_or_adopted() {
+    if !have_kernel("python3").await {
+        return;
+    }
+    let dir = common::tempdir().unwrap();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let client = daemon.client().await;
+    let own = client.start_session("python3", None).await.unwrap();
+    client
+        .execute(&own.id, "import time\ntime.sleep(60)", None)
+        .await
+        .unwrap();
+    let _: serde_json::Value = client
+        .call(Call::ForceStop {
+            session: own.id.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(!sandhill_daemon::kernel::pid_alive(own.pid.unwrap()));
+
+    let adopted = client.start_session("python3", None).await.unwrap();
+    drop(client);
+    daemon.stop();
+    let daemon = TestDaemon::start(dir.path()).await;
+    let client = daemon.client().await;
+    let forced = client
+        .call::<serde_json::Value>(Call::ForceStop {
+            session: adopted.id.clone(),
+        })
+        .await;
+    let pid = adopted.pid.unwrap();
+    if cfg!(target_os = "linux") {
+        forced.unwrap();
+        assert!(!sandhill_daemon::kernel::pid_alive(pid));
+    } else {
+        let err = forced.unwrap_err().to_string();
+        assert!(err.contains("cannot signal a saved PID"), "{err}");
+        assert!(sandhill_daemon::kernel::pid_alive(pid));
+        client.shutdown(&adopted.id).await.unwrap();
+    }
+}
+
 #[tokio::test]
 async fn r_kernel_runs_code() {
     let kernel = if have_kernel("ark").await {

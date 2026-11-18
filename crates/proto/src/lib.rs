@@ -528,8 +528,14 @@ pub enum Call {
         session: String,
         value: String,
     },
-    /// Stops the kernel for good.
+    /// Stops the kernel for good, asking it first and interrupting a run
+    /// that keeps it busy; fails if it is still running after that.
     Shutdown {
+        session: String,
+    },
+    /// Kills the kernel (its whole process group) after a [`Call::Shutdown`]
+    /// failed: only on the user's explicit Force stop.
+    ForceStop {
         session: String,
     },
     /// Streams events for a session. With `since_seq`, journaled events after

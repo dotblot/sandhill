@@ -733,12 +733,7 @@ impl Workbench {
                     open.session = Session::None;
                 }
             }
-            if let Some(daemon) = self.daemon() {
-                daemon.fire(Call::Shutdown {
-                    session: id.clone(),
-                });
-            }
-            self.machine.sessions.retain(|s| s.id != id);
+            self.stop_kernel(id.clone(), cx);
             self.console_sessions.live.retain(|s| s.id != id);
             self.console_sessions.drafts.release(&id);
         }
