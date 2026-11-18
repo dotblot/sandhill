@@ -830,8 +830,8 @@ impl Workbench {
         self.problem = None;
     }
 
-    /// Puts each cell's latest journaled run under it, and carries on in the
-    /// kernel that ran them if it is still running.
+    /// Puts each cell's latest run under it, including runs restored from a
+    /// sidecar, and carries on in the kernel that ran them if it still exists.
     pub(super) fn show_saved_outputs(
         &mut self,
         saved: FileOutputs,
@@ -842,7 +842,16 @@ impl Workbench {
         let Some(open) = self.open.as_mut() else {
             return;
         };
-        let latest = saved.cells.iter().max_by_key(|c| c.started_ms).cloned();
+        let running = saved
+            .cells
+            .iter()
+            .filter(|cell| !cell.session.is_empty())
+            .max_by_key(|cell| cell.started_ms)
+            .and_then(|latest| {
+                sessions
+                    .iter()
+                    .find(|s| s.id == latest.session && s.status == SessionStatus::Running)
+            });
         // A script carries on after the slot its last run used.
         if let Some(n) = saved
             .cells
@@ -855,6 +864,8 @@ impl Workbench {
         }
         let cell_ids: HashSet<&str> = open
             .notebook
+            .source_notebook()
+            .unwrap_or(&open.notebook)
             .cells
             .iter()
             .map(|cell| cell.id.as_str())
@@ -866,14 +877,11 @@ impl Workbench {
             self.runs.insert(
                 cell.run.clone(),
                 Run {
-                    code: cell.code,
-                    language: sessions
-                        .iter()
-                        .find(|session| session.id == cell.session)
-                        .map(|session| editor_language(Some(&session.language))),
+                    code: cell.code.map(SharedString::from),
+                    language: Some(editor_language(Some(&cell.language))),
                     cell: Some((saved.file.clone(), cell.cell_id.clone())),
                     outputs: cell.outputs,
-                    finished: cell.finished_ms.is_some(),
+                    finished: cell.session.is_empty() || cell.finished_ms.is_some(),
                     status: cell.status,
                     execution_count: cell.execution_count,
                     session: cell.session.clone(),
@@ -886,11 +894,6 @@ impl Workbench {
             );
             open.cell_runs.insert(cell.cell_id, cell.run);
         }
-        let running = latest.and_then(|latest| {
-            sessions
-                .iter()
-                .find(|s| s.id == latest.session && s.status == SessionStatus::Running)
-        });
         if let Some(session) = running {
             open.kernel = notebook::recover_kernel(
                 &open.notebook,
@@ -1249,7 +1252,7 @@ mod opening_tests {
                     run: cell.id.clone(),
                     session: "saved".into(),
                     language: "python".into(),
-                    code: cell.source.clone(),
+                    code: Some(cell.source.clone()),
                     started_ms: 0,
                     finished_ms: Some(1),
                     status: Some("ok".into()),

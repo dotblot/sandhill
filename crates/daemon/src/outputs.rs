@@ -4,10 +4,13 @@
 //! The app (`app/`) uses this module for live events too, so both follow
 //! the same rules; `tests/fixtures/outputs.json` holds the cases.
 
+use std::path::Path;
+
 use sandhill_proto::{CellOutputs, FileOutputs, Plot, SessionPlots, SessionRun, SessionRuns};
 use serde_json::{Map, Value, json};
 
 use crate::journal::{Journal, Result};
+use crate::sidecar;
 
 /// Outputs of one run from its journaled events up to `max_seq`.
 pub fn run_outputs(journal: &Journal, run_id: &str, max_seq: i64) -> Result<Vec<Value>> {
@@ -31,13 +34,47 @@ pub fn file_outputs(journal: &Journal, file: &str) -> Result<FileOutputs> {
             run: run.run_id,
             session: run.session_id,
             language: run.language,
-            code: run.code,
+            code: Some(run.code),
             started_ms: run.started_ms,
             finished_ms: run.finished_ms,
             status: run.status,
             execution_count: run.execution_count,
             outputs,
         });
+    }
+    let document = Path::new(file);
+    if sidecar::applies_to(document)
+        && let Some(index) =
+            sidecar::dir_for(document).and_then(|dir| sidecar::read_index(&dir.join("index.json")))
+    {
+        let mut saved = index.cells;
+        for cell in &cells {
+            saved.remove(&cell.cell_id);
+        }
+        if !saved.is_empty() {
+            // A daemon that predates sidecar replay only cleared the journal.
+            let cleared = journal.cleared_runs(file)?;
+            cells.extend(saved.into_iter().filter_map(|(cell_id, cell)| {
+                if cleared.contains(&cell.run) {
+                    return None;
+                }
+                // Two copies of a document can have identical sidecars.
+                // Give restored runs their own identity in each document.
+                let run = format!("sidecar:{}:{file}{cell_id}", file.len());
+                Some(CellOutputs {
+                    cell_id,
+                    run,
+                    session: String::new(),
+                    language: cell.language,
+                    code: Some(cell.code),
+                    started_ms: cell.started_ms,
+                    finished_ms: cell.finished_ms,
+                    status: cell.status,
+                    execution_count: cell.execution_count,
+                    outputs: cell.outputs,
+                })
+            }));
+        }
     }
     Ok(FileOutputs {
         file: file.to_string(),

@@ -868,7 +868,7 @@ impl Workbench {
                 run.session = event.session.clone();
                 run.queued_ms = Some(event.ts_ms);
                 let content = &event.content;
-                run.code = content["code"].as_str().unwrap_or_default().to_string();
+                run.code = content["code"].as_str().map(SharedString::from);
                 run.quiet = content["quiet"].as_bool().unwrap_or(false);
                 run.by = content["by"].as_str().map(str::to_string);
                 run.cell = match (
@@ -884,8 +884,10 @@ impl Workbench {
                         self.console.remove(0);
                     }
                 }
-                if !run.quiet && event.seq > run.snapshot_seq {
-                    let code = run.code.clone();
+                if !run.quiet
+                    && event.seq > run.snapshot_seq
+                    && let Some(code) = run.code.as_ref().map(ToString::to_string)
+                {
                     self.record_console_command(&session, run_id.clone(), code, event.seq);
                 }
             }

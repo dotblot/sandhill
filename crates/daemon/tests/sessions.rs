@@ -1160,7 +1160,6 @@ async fn qmd_outputs_are_saved_next_to_the_file() {
     }
     let dir = common::tempdir().unwrap();
     let doc = dir.path().join("analysis.qmd");
-    std::fs::write(&doc, "```{python}\nprint('hi')\n```\n").unwrap();
     let daemon = TestDaemon::start(&dir.path().join("state")).await;
     let mut client = daemon.client().await;
     let session = client.start_session("python3", None).await.unwrap().id;
@@ -1169,6 +1168,9 @@ async fn qmd_outputs_are_saved_next_to_the_file() {
                 print('hi')\n\
                 display({'image/png': 'iVBORw0KGgo=', 'text/plain': '<plot>'}, raw=True)\n\
                 6 * 7";
+    let path = doc.to_string_lossy();
+    let text = format!("```{{python}}\n#| label: setup\n{code}\n```\n");
+    client.write_file(&path, &text, None).await.unwrap();
     let (_, finished) = run_cell(&mut client, &session, code, cell(&doc, "setup")).await;
     assert_eq!(finished.status, "ok");
 
@@ -1202,9 +1204,28 @@ async fn qmd_outputs_are_saved_next_to_the_file() {
     let file_outputs = client.file_outputs(&doc.to_string_lossy()).await.unwrap();
     assert_eq!(file_outputs.cells.len(), 1);
     assert_eq!(file_outputs.cells[0].cell_id, "setup");
+    assert_eq!(file_outputs.cells[0].code.as_deref(), Some(code));
     assert_eq!(file_outputs.cells[0].outputs, *outputs);
 
     client.shutdown(&session).await.unwrap();
+
+    // A project can outlive the daemon journal. Reopen the edited file on
+    // a fresh daemon and make sure the original code comes with its output.
+    drop(client);
+    daemon.stop();
+    let daemon = TestDaemon::start(&dir.path().join("new-state")).await;
+    let client = daemon.client().await;
+    let edited = "```{python}\n#| label: setup\nprint('edited')\n```\n";
+    client.write_file(&path, edited, None).await.unwrap();
+    assert_eq!(client.read_file(&path).await.unwrap().text, edited);
+    let recovered = client.file_outputs(&path).await.unwrap();
+    assert_eq!(recovered.cells.len(), 1);
+    assert_eq!(recovered.cells[0].cell_id, "setup");
+    assert_eq!(recovered.cells[0].code.as_deref(), Some(code));
+    assert_eq!(recovered.cells[0].outputs, *outputs);
+
+    client.clear_cell_outputs(&path, &["setup"]).await.unwrap();
+    assert!(client.file_outputs(&path).await.unwrap().cells.is_empty());
 }
 
 #[tokio::test]

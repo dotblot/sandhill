@@ -133,7 +133,30 @@ fn record(store: &BlobStore, document: &Path, run: &CellRun, outputs: Vec<Value>
             outputs,
         },
     );
+    write_index(store, &dir, &index)
+}
 
+/// Clears Quarto and R Markdown outputs in both stores. Hold the sidecar
+/// lock until the journal is cleared so a finishing run cannot restore them.
+pub(crate) fn clear_outputs(journal: &Journal, file: &str, cell_ids: &[String]) -> Result<usize> {
+    let document = Path::new(file);
+    let lock = applies_to(document).then(|| WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner()));
+    if lock.is_some()
+        && let Some(dir) = dir_for(document)
+        && let Some(mut index) = read_index(&dir.join("index.json"))
+    {
+        let before = index.cells.len();
+        for id in cell_ids {
+            index.cells.remove(id);
+        }
+        if index.cells.len() != before {
+            write_index(journal.blobs(), &dir, &index)?;
+        }
+    }
+    Ok(journal.clear_cell_outputs(file, cell_ids)?)
+}
+
+fn write_index(store: &BlobStore, dir: &Path, index: &Index) -> Result<()> {
     let referenced: BTreeSet<String> = index
         .cells
         .values()
@@ -156,9 +179,9 @@ fn record(store: &BlobStore, document: &Path, run: &CellRun, outputs: Vec<Value>
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    let mut text = serde_json::to_string_pretty(&index)?;
+    let mut text = serde_json::to_string_pretty(index)?;
     text.push('\n');
-    crate::files::write_atomic(&index_path, text.as_bytes())
+    crate::files::write_atomic(&dir.join("index.json"), text.as_bytes())
 }
 
 pub fn read_index(path: &Path) -> Option<Index> {

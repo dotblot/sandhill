@@ -87,7 +87,8 @@ impl Session {
 /// One piece of code a kernel ran, from a cell, the Console or an agent.
 #[derive(Default)]
 pub(crate) struct Run {
-    pub code: String,
+    /// The actual code, if the journal or sidecar supplied it.
+    pub code: Option<SharedString>,
     /// Session language retained even if its kernel later stops.
     pub language: Option<&'static str>,
     code_highlights: RefCell<Option<console::HighlightedCode>>,

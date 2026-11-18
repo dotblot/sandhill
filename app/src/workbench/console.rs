@@ -224,7 +224,7 @@ impl Run {
         language: &'static str,
         cx: &App,
     ) -> crate::editor::output_text::OutputText {
-        let code = self.code.trim_end();
+        let code = self.code.as_deref().unwrap_or_default().trim_end();
         let theme = &cx.theme().highlight_theme;
         let mut cached = self.code_highlights.borrow_mut();
         let cached =
@@ -872,7 +872,7 @@ impl Workbench {
                         if run.last_seq > history.seq {
                             continue;
                         }
-                        run.code = saved.code;
+                        run.code = Some(saved.code.into());
                         run.language = language.or(run.language);
                         run.cell = saved.cell.map(|c| (c.file, c.cell_id));
                         run.by = saved.by;

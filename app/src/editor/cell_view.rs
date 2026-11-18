@@ -14,6 +14,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::editor::cells::CellStatus;
+use crate::editor::edited_run;
 use crate::editor::html_table::{Table, shown_name};
 use crate::editor::notebook::{CellKind, Format};
 use crate::editor::output_table::OutputTable;
@@ -479,12 +480,13 @@ impl Workbench {
                 p.err,
             ),
         };
-        let count = open
+        let run = open
             .cell_runs
             .get(&cell.id)
-            .and_then(|id| self.runs.get(id))
-            .and_then(|r| r.execution_count)
-            .or(cell.execution_count);
+            .and_then(|id| self.runs.get(id));
+        let count = run.and_then(|r| r.execution_count).or(cell.execution_count);
+        let editor = &open.editors[ix];
+        let before = edited_run::changed_source(run, &status, editor.read(cx).text());
         Some(
             h_flex()
                 .id(("run-line", ix))
@@ -497,6 +499,9 @@ impl Workbench {
                 .child(format!("#{}", ix + 1))
                 .when_some(count, |d, n| d.child(format!("Output [{n}]")))
                 .when_some(text, |d, t| d.child(div().text_color(color).child(t)))
+                .when_some(before, |d, before| {
+                    d.child(edited_run::trigger(editor.clone(), before.clone(), &p))
+                })
                 .into_any_element(),
         )
     }

@@ -168,7 +168,7 @@ impl Daemon {
         Ok(serde_json::to_value(
             blocking(move || {
                 let file = files::resolve(&file)?.to_string_lossy().into_owned();
-                Ok(journal.clear_cell_outputs(&file, &cell_ids)?)
+                sidecar::clear_outputs(&journal, &file, &cell_ids)
             })
             .await?,
         )?)

@@ -721,15 +721,16 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
-    /// The latest run of every cell of a notebook file, from the journal,
-    /// including runs still in progress. Returns [`FileOutputs`].
+    /// The latest run of every cell of a notebook file, including runs
+    /// still in progress and Quarto or R Markdown sidecar outputs that
+    /// are no longer in the journal. Returns [`FileOutputs`].
     FileOutputs {
         file: String,
     },
     /// Clears the outputs of cells of a notebook file: their finished runs
     /// no longer show in [`Call::FileOutputs`] until the cells run again.
-    /// The runs stay in the session's history. Returns the number of runs
-    /// cleared.
+    /// The runs stay in the session's history. Returns the number of
+    /// journaled runs cleared.
     ClearCellOutputs {
         file: String,
         cell_ids: Vec<String>,

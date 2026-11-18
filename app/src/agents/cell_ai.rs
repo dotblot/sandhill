@@ -6,12 +6,11 @@
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+use crate::editor::cell_diff;
 use crate::editor::notebook;
-use crate::editor::text_diff::{DiffLine, diff};
 use crate::look::{self, ButtonSize::Row, Palette, icon};
 use crate::workbench::{Open, Workbench};
 
@@ -367,30 +366,7 @@ impl Workbench {
         if now.trim_end() == change.before.trim_end() {
             return None;
         }
-        let rows = diff(&change.before, &now).into_iter().map(|line| {
-            let (mark, text, bg, color) = match line {
-                DiffLine::Same(t) => (" ", t, None, p.muted),
-                DiffLine::Removed(t) => ("-", t, Some(p.err.opacity(0.12)), p.text),
-                DiffLine::Added(t) => ("+", t, Some(p.ok.opacity(0.14)), p.text),
-                DiffLine::Gap(n) => (
-                    " ",
-                    if n == 1 {
-                        "⋯ 1 line".to_string()
-                    } else {
-                        format!("⋯ {n} lines")
-                    },
-                    None,
-                    p.faint,
-                ),
-            };
-            h_flex()
-                .w_full()
-                .px(px(8.))
-                .when_some(bg, |d, bg| d.bg(bg))
-                .text_color(color)
-                .child(div().w(px(14.)).flex_none().child(mark))
-                .child(div().flex_1().min_w_0().whitespace_nowrap().child(text))
-        });
+        let rows = cell_diff::rows(&change.before, &now).map(|row| row.render(&p));
         let keep_id = id.clone();
         let undo_id = id.clone();
         Some(

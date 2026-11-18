@@ -163,7 +163,12 @@ impl Workbench {
                     _ => None,
                 };
                 let failed = failed_status(run);
-                let code = run.code.trim_end().to_string();
+                let code = run
+                    .code
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim_end()
+                    .to_string();
                 v_flex()
                     .gap_1()
                     .pb_2()

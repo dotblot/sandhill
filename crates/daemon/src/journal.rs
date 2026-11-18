@@ -670,6 +670,14 @@ impl Journal {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Cleared runs that an older daemon may have left in a sidecar.
+    pub(crate) fn cleared_runs(&self, file: &str) -> Result<std::collections::HashSet<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id FROM runs WHERE cell_file = ?1 AND cleared = 1")?;
+        let rows = stmt.query_map([file], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Clears the outputs of these cells of `file`: their finished runs no
     /// longer show under them. The runs stay in the Console's history.
     /// Returns how many runs were cleared.

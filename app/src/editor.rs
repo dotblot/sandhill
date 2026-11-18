@@ -3,12 +3,14 @@
 //! of pictures and PDFs, and the dialogs that bring files in.
 
 pub(crate) mod bio_text;
+pub(crate) mod cell_diff;
 pub(crate) mod cell_view;
 pub(crate) mod cells;
 pub(crate) mod colouring;
 pub(crate) mod delimited;
 pub(crate) mod doc_text;
 pub(crate) mod documents;
+mod edited_run;
 pub(crate) mod export;
 pub(crate) mod find;
 pub(crate) mod h5ad;

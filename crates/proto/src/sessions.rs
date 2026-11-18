@@ -194,9 +194,12 @@ pub struct FileOutputs {
 pub struct CellOutputs {
     pub cell_id: String,
     pub run: String,
+    /// Empty when the outputs were recovered from a sidecar, not the journal.
     pub session: String,
     pub language: String,
-    pub code: String,
+    /// The source that produced these outputs, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
     pub started_ms: i64,
     /// `None` while the run is queued or executing.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -30,6 +30,14 @@ by sentence); where an older plan differs, this wins.
   The line between a code cell and its outputs reads `#3  Output [5]
   0.2s` (no "Cell" word; Huan, 2026-11-14); the gutter holds no number. The wheel over an
   output box scrolls the box while it can move, then the notebook.
+- When a notebook cell's current code differs from the code that made its
+  output, the run line adds "edited since run" in the warning colour.
+  Clicking it shows removed and added lines. Trailing whitespace on each
+  line and blank lines at the end do not count; undoing the edit removes the
+  label. The code comes from the run or a Quarto or R Markdown output
+  sidecar. If the code is unknown, as for Jupyter outputs made elsewhere,
+  nothing is marked. Sandhill does not rerun anything or change notebook
+  metadata (Huan, 2026-11-18).
 - Plain output/table text owns a local selection invalidation boundary
   (`output_text.rs`); keep drag highlight updates local rather than polling or
   refreshing the whole notebook. Verify while the mouse is still held down.
