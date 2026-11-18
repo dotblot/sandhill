@@ -652,7 +652,12 @@ pub fn title_of(text: &str) -> String {
             continue;
         }
         words.push(w.to_string());
-        if words.len() == 6 {
+        // "Explain what this project does: …" ends at the colon, once there
+        // are enough words for a title ("Task: …" goes on).
+        let ends_clause = raw
+            .trim_end_matches(['`', '"', '\'', '”', '’', ')'])
+            .ends_with(':');
+        if words.len() == 6 || ends_clause && words.len() >= 3 {
             break;
         }
     }

@@ -422,4 +422,14 @@ fn titles_from_the_first_message() {
         "Write from the DE notebook"
     );
     assert_eq!(title_of("data.csv"), "New conversation");
+    // A colon ends the title (2026-11-17: "… does its" came from "… does:
+    // its …"), unless too few words come before it.
+    assert_eq!(
+        title_of("Explain what this project does: its inputs, steps and outputs"),
+        "Explain what this project does"
+    );
+    assert_eq!(
+        title_of("Task: normalise the counts and plot PCA"),
+        "Task normalise the counts and plot"
+    );
 }
