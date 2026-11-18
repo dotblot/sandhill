@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build the matching Linux daemons and bundle pinned Python language servers.
 # Run before signing the app; this does not connect to or change any server.
+# Pass --linux-only after the output directory to omit the Mac language servers.
 set -eu
 
 repo=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
@@ -73,7 +74,11 @@ payload() {
 
 payload ty 0.0.102 x86_64-unknown-linux-musl f6b2200892c1271fd98839e73866a38326449263fdc201087a4266db9ebbd7a0
 payload ty 0.0.102 aarch64-unknown-linux-musl a5d2a5d8d14d132309ca17256fb9e28822c6be7650406f6a4e12af79ab3bff94
-payload ty 0.0.102 aarch64-apple-darwin da0fead6652ab9e5b1837e0ed057123e478ffc022292fce041e6b4513a63b6b7
+if [ "${2:-}" != --linux-only ]; then
+    payload ty 0.0.102 aarch64-apple-darwin da0fead6652ab9e5b1837e0ed057123e478ffc022292fce041e6b4513a63b6b7
+fi
 payload ruff 0.17.5 x86_64-unknown-linux-musl dc94b7e225b8910fb6f55298ada32d00e356dbd195a5ffb647847f388cb54f84
 payload ruff 0.17.5 aarch64-unknown-linux-musl 98f5ee4cf0cd2ad122ef61bbcce236782e5ac3cd00122dcf458ce19488863428
-payload ruff 0.17.5 aarch64-apple-darwin 4ffadabec5c5fee1ddb2eecac0787ffe6fa18c665b73da9258b84211f40c5829
+if [ "${2:-}" != --linux-only ]; then
+    payload ruff 0.17.5 aarch64-apple-darwin 4ffadabec5c5fee1ddb2eecac0787ffe6fa18c665b73da9258b84211f40c5829
+fi

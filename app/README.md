@@ -1464,10 +1464,10 @@ preview and R's imports weren't seen.
   on Ubuntu 24.04 alongside the Mac app. Version tags add an amd64
   `.deb` and its `.sha256` to the same GitHub release as the Mac DMG.
   The package installs the app, its local `sandhilld`, a desktop launcher
-  and icon, and the licences. It does not carry the Mac bundle's server
-  installers or copies of Ark, ty or Ruff. Use kernels and language tools
-  installed on this computer, and connect over SSH to servers that already
-  have a matching `sandhilld`.
+  and icon, and the licences. Like the Mac bundle, it carries sandhilld,
+  Ark, ty and Ruff for x86-64 and Arm64 Linux servers. When you connect
+  over SSH, Sandhill installs missing server tools as needed.
+  It uses the matching Ark, ty and Ruff builds on this computer too.
 
 
 ## Running it
@@ -1516,11 +1516,14 @@ choosers use `xdg-desktop-portal` and a desktop backend such as
 `xdg-desktop-portal-gtk`. On Wayland desktops, Sandhill uses `xwayland`
 because gpui-webview embeds WebKitGTK only on X11.
 
-To build the `.deb`, run this from the repository root on Ubuntu:
+To build the `.deb`, put Zig on `PATH` and run this from the repository
+root on Ubuntu:
 
 ```sh
-sudo apt-get install dpkg-dev jq librsvg2-bin
+sudo apt-get install curl dpkg-dev jq librsvg2-bin unzip
+rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 cargo install cargo-about --version 0.9.3 --locked
+cargo install cargo-zigbuild --version 0.24.1 --locked
 bash packaging/linux/build-deb.sh
 ```
 
