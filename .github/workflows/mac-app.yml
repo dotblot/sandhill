@@ -2,16 +2,23 @@ name: Mac app
 
 # Checks the app in app/ and builds Sandhill.app, with sandhilld for this
 # Mac and Linux builds of it (and Ark) to install on servers. The daemon's
-# own tests are in ci.yml.
+# own tests are in ci.yml. A version tag (`v0.1.0-preview.1`) also
+# publishes the app as a GitHub pre-release, with the notes in
+# docs/releases/<tag>.md (Huan, 2026-11-18; docs/design/public-release-plan.md).
 on:
   push:
     branches: [main]
+    # Path filters don't apply to tags: every version tag builds.
+    tags: ["v*"]
     paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/mac-app.yml"]
   pull_request:
     paths: ["app/**", "crates/**", "docs/design/ui/icons/**", "tests/fixtures/**", ".github/workflows/mac-app.yml"]
   # Can also be started by hand from the Actions tab.
   workflow_dispatch:
 
+# Creating the release needs to write to the repository.
+permissions:
+  contents: write
 env:
   CARGO_TERM_COLOR: always
 
@@ -183,3 +190,21 @@ jobs:
           path: start-window.png
           if-no-files-found: ignore
           retention-days: 7
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          notes="docs/releases/$tag.md"
+          # Release notes are written and approved before the tag is made.
+          [ -f "$notes" ] || { echo "No release notes at $notes"; exit 1; }
+          dmg="Sandhill-${tag#v}-macos-arm64.dmg"
+          stage=$(mktemp -d)
+          ditto -x -k Sandhill-macos-arm64.zip "$stage"
+          # Drag to Applications from the opened disk image.
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname Sandhill -srcfolder "$stage" -ov -format UDZO "$dmg"
+          shasum -a 256 "$dmg" > "$dmg.sha256"
+          gh release create "$tag" "$dmg" "$dmg.sha256" \
+            --prerelease --title "Sandhill ${tag#v}" --notes-file "$notes" --verify-tag
