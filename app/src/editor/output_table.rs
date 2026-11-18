@@ -73,7 +73,7 @@ impl SelectionOwner {
                     .max()
                     .unwrap_or(0)
                     .clamp(COLUMN_CHARS.0, COLUMN_CHARS.1);
-                chars as f32 * look::CODE * 0.6 + 16.
+                chars as f32 * look::code() * 0.6 + 16.
             })
             .collect();
         self.columns = table.columns.into_iter().map(SharedString::from).collect();
@@ -213,7 +213,7 @@ impl SelectionOwner {
             .items_center()
             .flex_none()
             .w(px(self.widths[column]))
-            .h(px(look::DENSE_ROW))
+            .h(px(look::dense_row()))
             .px(px(look::GAP_8))
             .overflow_hidden()
             .whitespace_nowrap()
@@ -254,8 +254,8 @@ impl Render for SelectionOwner {
             .rounded(px(look::CODE_RADIUS))
             .border(px(0.5))
             .border_color(p.line)
-            .font_family(look::MONO)
-            .text_size(px(look::SMALL))
+            .font_family(look::mono())
+            .text_size(px(look::small()))
             .text_color(p.text)
             .cursor_text()
             .on_mouse_down(
@@ -299,7 +299,7 @@ impl Render for SelectionOwner {
                     .min_w_full()
                     .child(
                         h_flex()
-                            .h(px(look::DENSE_ROW))
+                            .h(px(look::dense_row()))
                             .flex_none()
                             .font_weight(FontWeight::SEMIBOLD)
                             .bg(p.chunk)
@@ -316,7 +316,7 @@ impl Render for SelectionOwner {
                     )
                     .children(self.rows.iter().enumerate().map(|(row, values)| {
                         h_flex()
-                            .h(px(look::DENSE_ROW))
+                            .h(px(look::dense_row()))
                             .flex_none()
                             .when(row % 2 == 1, |d| d.bg(p.ink(3.)))
                             .border_b(px(0.5))

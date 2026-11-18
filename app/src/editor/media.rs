@@ -323,7 +323,7 @@ impl MediaView {
             .flex_none()
             .px(px(6.))
             .gap(px(6.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .text_color(p.muted);
         if self.pages > 0 {
             bar = bar

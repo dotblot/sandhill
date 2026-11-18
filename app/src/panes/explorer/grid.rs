@@ -31,7 +31,7 @@ impl Explorer {
         let hover = p.ink(look::ROW_HOVER);
         h_flex()
             .id(id)
-            .h(px(look::ROW))
+            .h(px(look::row()))
             .px(px(look::GAP_8))
             .gap(px(look::GAP_4))
             .rounded(px(look::CONTROL_RADIUS))
@@ -67,7 +67,7 @@ impl Explorer {
             .id("de-column-menu-popup")
             .occlude()
             .min_w(px(220.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(
                 Self::menu_item(
                     "de-cm-copy",
@@ -187,7 +187,7 @@ impl Explorer {
             .id("de-settings-popup")
             .occlude()
             .min_w(px(250.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(
                 Self::menu_item(
                     "de-settings-side",
@@ -233,7 +233,7 @@ impl Explorer {
             .id("de-export-popup")
             .occlude()
             .min_w(px(240.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(
                 Self::menu_item("de-ex-code", "edit.copy", "Copy as Code", None, true, &p)
                     .tooltip(tip(
@@ -286,7 +286,7 @@ impl Explorer {
             .id("de-columns-popup")
             .occlude()
             .min_w(px(180.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(
                 Self::menu_item("de-show-all", "check", "Show All Columns", None, true, &p)
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -520,7 +520,7 @@ impl Explorer {
                                 d.child(
                                     h_flex()
                                         .flex_none()
-                                        .text_size(px(look::TINY))
+                                        .text_size(px(look::tiny()))
                                         .text_color(p.accent)
                                         .child(
                                             icon(if descending {
@@ -549,7 +549,7 @@ impl Explorer {
                             .child(
                                 div()
                                     .id(("de-column-menu", ix))
-                                    .size(px(look::CONTROL_ROW))
+                                    .size(px(look::control_row()))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -604,7 +604,7 @@ impl Explorer {
         let header = h_flex()
             .flex_none()
             .relative()
-            .h(px(look::DENSE_ROW))
+            .h(px(look::dense_row()))
             .border_b_1()
             .border_color(p.line)
             .bg(p.panel)
@@ -656,7 +656,7 @@ impl Explorer {
                             .is_some_and(|r| ix as u64 >= r.first_row && ix as u64 <= r.last_row);
                         let line = h_flex()
                             .relative()
-                            .h(px(look::DENSE_ROW))
+                            .h(px(look::dense_row()))
                             .when(ix % 2 == 1, |d| d.bg(p.ink(3.)));
                         let label = row
                             .as_ref()

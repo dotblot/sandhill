@@ -141,13 +141,13 @@ impl Workbench {
             })
             // A capsule like every other in the window: fully round, a
             // faint wash, no edge (Huan, 2026-11-15).
-            .h(px(look::CONTROL_ROW))
+            .h(px(look::control_row()))
             .gap(px(look::GAP_4))
             .pl(px(look::GAP_6))
             .pr(px(look::GAP_8))
             .rounded_full()
             .bg(p.cap_bg)
-            .text_size(px(look::TAB_TEXT))
+            .text_size(px(look::tab_text()))
             .text_color(if chosen.is_some() { p.text } else { p.muted })
             .whitespace_nowrap()
             .cursor_pointer()
@@ -206,7 +206,7 @@ impl Workbench {
                     div()
                         .absolute()
                         .left_0()
-                        .top(px(look::CONTROL_ROW + look::GAP_2))
+                        .top(px(look::control_row() + look::GAP_2))
                         .child(
                             deferred(
                                 anchored()
@@ -315,7 +315,7 @@ impl Workbench {
                 rows.push(
                     h_flex()
                         .id(("live-console-session", ix))
-                        .min_h(px(look::ROW))
+                        .min_h(px(look::row()))
                         .gap(px(look::GAP_4))
                         .px(px(look::GAP_8))
                         .rounded(px(look::CONTROL_RADIUS))
@@ -333,7 +333,7 @@ impl Workbench {
                         .child(
                             v_flex()
                                 .min_w_0()
-                                .line_height(px(look::ROW / 2.))
+                                .line_height(px(look::row() / 2.))
                                 .child(title)
                                 .child(div().text_color(p.faint).child(format!(
                                     "Session {} · {created}{}",
@@ -410,7 +410,7 @@ impl Workbench {
                 rows.push(
                     h_flex()
                         .id(("kernel-row", ix))
-                        .min_h(px(look::ROW))
+                        .min_h(px(look::row()))
                         .gap(px(look::GAP_4))
                         .px(px(look::GAP_8))
                         .rounded(px(look::CONTROL_RADIUS))
@@ -429,7 +429,7 @@ impl Workbench {
                         .child(
                             v_flex()
                                 .min_w_0()
-                                .line_height(px(look::ROW / 2.))
+                                .line_height(px(look::row() / 2.))
                                 .child(
                                     h_flex()
                                         .gap(px(look::GAP_8))

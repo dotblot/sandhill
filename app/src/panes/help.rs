@@ -28,7 +28,9 @@ const FEW: usize = 6;
 /// What the daemon says when the session runs other code.
 const BUSY: &str = "the session is busy running code";
 
-const SEARCH_HEIGHT: f32 = look::CONTROL_CARD + 2. * look::PANE_PAD_Y;
+fn search_height() -> f32 {
+    look::control_card() + 2. * look::PANE_PAD_Y
+}
 
 /// A page to show: a topic, in a package (R) or module (Python).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -736,7 +738,7 @@ impl Workbench {
         let python = self.python();
         let search = h_flex()
             .flex_none()
-            .h(px(SEARCH_HEIGHT))
+            .h(px(search_height()))
             .gap(px(look::GAP_8))
             .px(px(look::PANE_PAD_X))
             .border_b(px(0.5))
@@ -755,14 +757,14 @@ impl Workbench {
                         .prefix(icon("package").size(px(look::ICON))),
                 ),
             )
-            .map(|row| look::floating_header(&p, look::STRIP, false, row));
+            .map(|row| look::floating_header(&p, look::strip(), false, row));
         if self.variables_session().is_none() {
             return v_flex()
                 .relative()
                 .size_full()
                 .child(look::PaneScroll::new(
                     "help-scroll",
-                    look::STRIP + SEARCH_HEIGHT,
+                    look::strip() + search_height(),
                     look::PANE_PAD_Y,
                     div()
                         .id("help-body")
@@ -809,7 +811,7 @@ impl Workbench {
             .size_full()
             .child(look::PaneScroll::new(
                 "help-scroll",
-                look::STRIP + SEARCH_HEIGHT,
+                look::strip() + search_height(),
                 0.,
                 div().id("help-body").child(v_flex().children(body)),
             ))
@@ -846,7 +848,7 @@ impl Workbench {
             };
             h_flex()
                 .id(("help-topic", ix))
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .gap(px(look::GAP_4))
                 .px(px(look::GAP_8))
                 .mx(px(look::GAP_4))
@@ -860,7 +862,7 @@ impl Workbench {
                         .flex_none()
                         .px(px(look::GAP_4))
                         .rounded(px(look::CONTROL_RADIUS))
-                        .text_size(px(look::TINY))
+                        .text_size(px(look::tiny()))
                         .bg(p.ink(8.))
                         .text_color(p.muted)
                         .child(if python { "Py" } else { "R" }),
@@ -870,7 +872,7 @@ impl Workbench {
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .font_family(look::MONO)
+                        .font_family(look::mono())
                         .child(t.topic.clone()),
                 )
                 .child(
@@ -881,7 +883,7 @@ impl Workbench {
                         .text_ellipsis()
                         .whitespace_nowrap()
                         .text_color(p.faint)
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .child(t.package.clone()),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -903,11 +905,11 @@ impl Workbench {
                 d.child(
                     h_flex()
                         .id("help-more")
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .px(px(look::GAP_8))
                         .mx(px(look::GAP_4))
                         .rounded(px(look::CONTROL_RADIUS))
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.accent)
                         .cursor_pointer()
                         .hover(move |d| d.bg(hover))
@@ -934,11 +936,11 @@ impl Workbench {
         let total = found.topics.len() as u64 + found.more + found.vignettes.len() as u64;
         h_flex()
             .id("help-results-folded")
-            .h(px(look::ROW))
+            .h(px(look::row()))
             .gap(px(look::GAP_4))
             .px(px(look::PANE_PAD_X))
             .rounded(px(look::CONTROL_RADIUS))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .text_color(p.accent)
             .cursor_pointer()
             .hover(|d| d.bg(p.ink(look::ROW_HOVER)))
@@ -976,7 +978,7 @@ impl Workbench {
                 };
                 h_flex()
                     .id(("help-vignette", ix))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .gap(px(look::GAP_4))
                     .px(px(look::GAP_8))
                     .mx(px(look::GAP_4))
@@ -1003,7 +1005,7 @@ impl Workbench {
                         div()
                             .flex_none()
                             .text_color(p.faint)
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .child(v.package.clone()),
                     )
                     .when(v.code.is_some(), |d| {
@@ -1013,7 +1015,7 @@ impl Workbench {
                                 .flex_none()
                                 .px(px(look::GAP_4))
                                 .rounded(px(look::CONTROL_RADIUS))
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.accent)
                                 .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)).underline())
                                 .child("R code")
@@ -1079,7 +1081,7 @@ impl Workbench {
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(look::TITLE))
+                            .text_size(px(look::title()))
                             .child(if page.topic.is_empty() {
                                 page.package.clone()
                             } else {
@@ -1088,7 +1090,7 @@ impl Workbench {
                     )
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.faint)
                             .child(what),
                     ),
@@ -1121,7 +1123,7 @@ impl Workbench {
             h_flex()
                 .flex_wrap()
                 .gap(px(look::GAP_4))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.muted)
                 .child("Also in")
                 .children(page.alternatives.iter().enumerate().map(|(ix, alt)| {
@@ -1193,7 +1195,7 @@ impl Workbench {
             .when(self.help.loading, |d| d.opacity(0.6))
             .child(head)
             .children(also)
-            .child(div().text_size(px(look::CHROME)).child(content))
+            .child(div().text_size(px(look::chrome())).child(content))
             .into_any_element()
     }
 
@@ -1236,7 +1238,7 @@ impl Workbench {
                         };
                         h_flex()
                             .id(("help-member", ix))
-                            .h(px(look::ROW))
+                            .h(px(look::row()))
                             .gap(px(look::GAP_8))
                             .px(px(look::GAP_6))
                             .rounded(px(look::CONTROL_RADIUS))
@@ -1245,13 +1247,13 @@ impl Workbench {
                             .hover(move |d| d.bg(hover))
                             .child(
                                 div()
-                                    .font_family(look::MONO)
+                                    .font_family(look::mono())
                                     .text_color(p.accent)
                                     .child(m.name.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.faint)
                                     .child(m.kind.clone()),
                             )
@@ -1262,7 +1264,7 @@ impl Workbench {
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .child(m.title.clone()),
                             )
@@ -1279,7 +1281,7 @@ fn note(text: String, color: Hsla, _p: &Palette) -> AnyElement {
     div()
         .px(px(look::PANE_PAD_X))
         .py(px(look::PANE_PAD_Y))
-        .text_size(px(look::SMALL))
+        .text_size(px(look::small()))
         .text_color(color)
         .child(text)
         .into_any_element()
@@ -1290,7 +1292,7 @@ fn note(text: String, color: Hsla, _p: &Palette) -> AnyElement {
 fn help_style() -> TextViewStyle {
     TextViewStyle::default()
         .paragraph_gap(rems(0.5))
-        .code_block(StyleRefinement::default().text_size(px(look::DOC_CODE)))
+        .code_block(StyleRefinement::default().text_size(px(look::doc_code())))
 }
 
 /// Code as the AI pane shows it: the code font, its language's colours.

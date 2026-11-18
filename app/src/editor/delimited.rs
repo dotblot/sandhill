@@ -424,7 +424,7 @@ impl Workbench {
         let rows = header.read(cx).text().lines_len();
         // Lay out the pinned editor without a horizontal viewport of its own.
         // Its wrapper applies the body's offset, even past a short header's end.
-        let width = header.read(cx).text().len() as f32 * look::CODE + 100.;
+        let width = header.read(cx).text().len() as f32 * look::code() + 100.;
         div()
             .size_full()
             .min_h_0()
@@ -436,7 +436,7 @@ impl Workbench {
                         .top_0()
                         .left_0()
                         .w_full()
-                        .h(px(rows as f32 * look::CODE * 1.5 + 8.))
+                        .h(px(rows as f32 * look::code() * 1.5 + 8.))
                         .bg(p.chrome),
                 )
             })
@@ -447,8 +447,8 @@ impl Workbench {
                     .appearance(false)
                     .bordered(false)
                     .p(px(8.))
-                    .font_family(look::MONO)
-                    .text_size(px(look::CODE)),
+                    .font_family(look::mono())
+                    .text_size(px(look::code())),
             )
             // At the top, the real first record is editable and visible once.
             // After vertical scrolling, its read view covers the scrolled body
@@ -460,7 +460,7 @@ impl Workbench {
                         .top_0()
                         .left_0()
                         .w_full()
-                        .h(px(rows as f32 * look::CODE * 1.5 + 16.))
+                        .h(px(rows as f32 * look::code() * 1.5 + 16.))
                         .overflow_hidden()
                         .bg(p.chrome)
                         .border_b_1()
@@ -474,8 +474,8 @@ impl Workbench {
                                     .bordered(false)
                                     .p(px(8.))
                                     .bg(p.chrome)
-                                    .font_family(look::MONO)
-                                    .text_size(px(look::CODE)),
+                                    .font_family(look::mono())
+                                    .text_size(px(look::code())),
                             ),
                         ),
                 )
@@ -634,7 +634,7 @@ impl Workbench {
                     .id(("delimited-session", i))
                     .w_full()
                     .min_w_0()
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_4))
                     .rounded(px(look::CONTROL_RADIUS))
@@ -727,7 +727,7 @@ impl Workbench {
                             .flex_1()
                             .child(
                                 div()
-                                    .text_size(px(look::TITLE))
+                                    .text_size(px(look::title()))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .overflow_hidden()
                                     .text_ellipsis()
@@ -764,7 +764,7 @@ impl Workbench {
                     .child(
                         Button::new("delimited-cancel")
                             .small()
-                            .h(px(look::CONTROL_CARD))
+                            .h(px(look::control_card()))
                             .label("Cancel")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.delimited = None;
@@ -774,7 +774,7 @@ impl Workbench {
                     .child(
                         Button::new("delimited-open")
                             .small()
-                            .h(px(look::CONTROL_CARD))
+                            .h(px(look::control_card()))
                             .primary()
                             .label(primary)
                             .disabled(!primary_ok)

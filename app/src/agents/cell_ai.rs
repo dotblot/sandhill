@@ -396,7 +396,7 @@ impl Workbench {
                             .border_1()
                             .border_dashed()
                             .border_color(p.line)
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.faint)
                             .child(icon("delete").size(px(12.)))
                             .child(div().flex_none().child(format!("Deleted by {}", d.by)))
@@ -407,7 +407,7 @@ impl Workbench {
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .font_family(look::MONO)
+                                    .font_family(look::mono())
                                     .child(first),
                             )
                             .child(
@@ -491,7 +491,7 @@ impl Workbench {
                         .px(px(8.))
                         .py(px(3.))
                         .bg(p.chunk)
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(icon("sparkle.ai").size(px(12.)))
                         .child(div().flex_1().child(format!("Changed by {}", change.by)))
@@ -513,8 +513,8 @@ impl Workbench {
                     v_flex()
                         .w_full()
                         .py(px(2.))
-                        .font_family(look::MONO)
-                        .text_size(px(look::CODE))
+                        .font_family(look::mono())
+                        .text_size(px(look::code()))
                         .overflow_x_hidden()
                         .children(rows),
                 )

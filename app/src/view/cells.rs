@@ -68,7 +68,7 @@ impl Workbench {
     /// The notebook and source jumps share the same unobscured viewport edge.
     /// Find has a 24px input, 12px padding and 1px edge; Replace adds 28px.
     pub(crate) fn notebook_header_height(&self) -> f32 {
-        look::STRIP
+        look::strip()
             + if self.find.open {
                 if self.find.replace { 65. } else { 37. }
             } else {
@@ -106,7 +106,7 @@ impl Workbench {
                         .px(px(16.))
                         .py(px(14.))
                         .gap(px(8.))
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(
                             div()
@@ -331,7 +331,7 @@ impl Workbench {
                     .readonly(open.notebook.truncated)
                     .bordered(false)
                     .appearance(false)
-                    .line_height(px(LINE_HEIGHT))
+                    .line_height(px(line_height()))
                     .h_full(),
             )
     }
@@ -347,7 +347,7 @@ impl Workbench {
             .w_full()
             .px(px(8.))
             .py(px(2.))
-            .text_size(px(look::CHROME))
+            .text_size(px(look::chrome()))
             .line_height(relative(1.4))
             .cursor_text()
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
@@ -367,12 +367,12 @@ impl Workbench {
                         .paragraph_gap(rems(0.5))
                         .heading_font_size(|level, _| {
                             px(match level {
-                                1 => look::TITLE,
-                                2 => look::CHROME,
-                                _ => look::TAB_TEXT,
+                                1 => look::title(),
+                                2 => look::chrome(),
+                                _ => look::tab_text(),
                             })
                         })
-                        .code_block(StyleRefinement::default().text_size(px(look::DOC_CODE))),
+                        .code_block(StyleRefinement::default().text_size(px(look::doc_code()))),
                 ),
             )
             .into_any_element()
@@ -431,7 +431,7 @@ impl Workbench {
             div()
                 .flex_none()
                 .px(px(6.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .whitespace_nowrap()
                 .child(label)
@@ -541,7 +541,7 @@ impl Workbench {
             .children(self.language_status(&open.notebook.path).map(|reason| {
                 div()
                     .id("language-status")
-                    .text_size(px(look::TINY))
+                    .text_size(px(look::tiny()))
                     .text_color(p.muted)
                     .child("Analysis unavailable")
                     .tooltip(move |window, cx| {
@@ -706,17 +706,23 @@ impl Workbench {
                     }
                 }
             })
-            .child(
+            .child({
+                // Markdown cells are in the interface font and size.
+                let line = if boxed {
+                    line_height()
+                } else {
+                    look::line_height(look::chrome())
+                };
                 Editor::new(editor)
                     .extend_context_menu(ask_ai_item(editor))
                     .bordered(false)
                     .appearance(false)
-                    .line_height(px(LINE_HEIGHT))
+                    .line_height(px(line))
                     .when(!boxed, |e| {
-                        e.font_family(".SystemUIFont").text_size(px(look::CHROME))
+                        e.font_family(".SystemUIFont").text_size(px(look::chrome()))
                     })
-                    .h(px(lines as f32 * LINE_HEIGHT + EDITOR_PADDING)),
-            )
+                    .h(px(lines as f32 * line + EDITOR_PADDING))
+            })
             .into_any_element()
     }
 
@@ -807,7 +813,7 @@ impl Workbench {
                                 .id(("unfold", ix))
                                 .py(px(4.))
                                 .px(px(12.))
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.faint)
                                 .cursor_pointer()
                                 .hover(|d| d.text_color(p.accent))
@@ -896,9 +902,9 @@ impl Workbench {
         let text = move |s: String| {
             div()
                 .w_full()
-                .font_family(look::MONO)
-                .text_size(px(look::CODE))
-                .line_height(px(LINE_HEIGHT))
+                .font_family(look::mono())
+                .text_size(px(look::code()))
+                .line_height(px(line_height()))
                 .when(cell.is_some(), |d| d.cursor_text())
                 .child(OutputText::new(
                     text_id.clone(),

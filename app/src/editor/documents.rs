@@ -264,7 +264,7 @@ impl Workbench {
                 .gap(px(8.))
                 .px(px(12.))
                 .py(px(6.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.muted)
                 .bg(p.chrome)
                 .child("Read-only: showing the first 5 MB of this file.")

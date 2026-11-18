@@ -126,13 +126,12 @@ jobs:
           mkdir -p "$app/Contents/Resources/licenses/gpui-component"
           cp app/vendor/gpui-component/LICENSE-APACHE "$app/Contents/Resources/licenses/gpui-component/"
           # Sandhill's own licence, the open-source Rust libraries built into
-          # the app and the daemon, the terminal engine's C/C++/Zig
-          # libraries, and the code font.
+          # the app and the daemon, and the terminal engine's C/C++/Zig
+          # libraries.
           cp LICENSE "$app/Contents/Resources/licenses/Sandhill-LICENSE"
           cp notices-out/sandhill-app.txt notices-out/sandhilld.txt "$app/Contents/Resources/licenses/"
-          mkdir -p "$app/Contents/Resources/licenses/libghostty-vt" "$app/Contents/Resources/licenses/fonts"
+          mkdir -p "$app/Contents/Resources/licenses/libghostty-vt"
           cp notices/libghostty-vt/*-LICENSE* "$app/Contents/Resources/licenses/libghostty-vt/"
-          cp app/assets/fonts/OFL.txt "$app/Contents/Resources/licenses/fonts/Maple-Mono-OFL.txt"
           cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

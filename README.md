@@ -194,9 +194,8 @@ the same license, with its source code.
 Sandhill is not affiliated with Posit; Positron and Posit Assistant are
 Posit's products.
 
-The Maple Mono NF font the app ships is under the SIL Open Font License
-([app/assets/fonts/OFL.txt](app/assets/fonts/OFL.txt)), and the libraries
-Sandhill builds on keep their own licenses (MIT, Apache-2.0 and similar).
+The libraries Sandhill builds on keep their own licenses (MIT, Apache-2.0
+and similar).
 The interface and file/integration artwork comes from Gruvbox Material Icons,
 Lucide and Developer Icons under their upstream MIT/ISC licenses; see the
 [icon attribution notices](docs/design/ui/icons/vendor/NOTICE.txt) and

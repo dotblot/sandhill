@@ -57,7 +57,7 @@ impl Vertical {
 
     pub(crate) fn heights(self, available: f32, top_share: f32) -> (f32, f32) {
         let available = available.max(0.);
-        let header = crate::look::STRIP.min(available / 2.);
+        let header = crate::look::strip().min(available / 2.);
         let top = match self {
             Self::Split => (available * top_share).clamp(header, available - header),
             Self::Top => available - header,
@@ -392,7 +392,7 @@ impl Workbench {
                                         d.child(
                                             div()
                                                 .pl_1()
-                                                .text_size(px(crate::look::SMALL))
+                                                .text_size(px(crate::look::small()))
                                                 .text_color(p.faint)
                                                 .child("updating…"),
                                         )
@@ -421,7 +421,7 @@ impl Workbench {
                     side_pane(&p)
                         .relative()
                         .flex_1()
-                        .min_h(px(crate::look::STRIP))
+                        .min_h(px(crate::look::strip()))
                         .when(floating_bottom, |d| d.children(bottom.take()))
                         .child(
                             Self::strip(&p)

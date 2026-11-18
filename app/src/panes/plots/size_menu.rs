@@ -106,7 +106,7 @@ impl Workbench {
             rows = rows.child(
                 h_flex()
                     .id(("plot-size-choice", i))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_4))
                     .rounded(px(look::CONTROL_RADIUS))
@@ -123,7 +123,7 @@ impl Workbench {
             .id("plot-size-menu")
             .occlude()
             .w(px(310.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(rows)
             .child(
                 div()
@@ -144,7 +144,7 @@ impl Workbench {
             )
             .child(
                 look::bar_button("plot-size-apply", "Apply custom size", None, &p)
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .on_click(cx.listener(|this, _, _, cx| this.apply_custom_plot_size(cx))),
             )
             .when_some(self.plot_history.size_error.clone(), |d, error| {

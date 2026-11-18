@@ -235,12 +235,12 @@ impl Agents {
             .gap(px(look::GAP_6))
             .children(self.start.sessions.iter().map(|s| {
                 h_flex()
-                    .h(px(look::CONTROL_ROW))
+                    .h(px(look::control_row()))
                     .gap(px(look::GAP_4))
                     .px(px(look::GAP_8))
                     .rounded_full()
                     .bg(p.cap_bg)
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.text)
                     .child(dot(if s.busy { p.busy } else { p.ok }))
                     .child(s.label.clone())
@@ -263,14 +263,14 @@ impl Agents {
             )
             .child(
                 div()
-                    .text_size(px(look::TITLE))
+                    .text_size(px(look::title()))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(p.text)
                     .child(chosen.name),
             )
             .child(
                 div()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .child(subtitle),
             )
@@ -282,7 +282,7 @@ impl Agents {
                 d.child(
                     div()
                         .pt(px(look::GAP_6))
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child(format!(
                             "Opens {}'s own screen here. Enter starts it without a message.",
@@ -303,8 +303,8 @@ impl Agents {
                 ))
                 .child(
                     div()
-                        .font_family(look::MONO)
-                        .text_size(px(look::CODE))
+                        .font_family(look::mono())
+                        .text_size(px(look::code()))
                         .child(install),
                 )
         });
@@ -324,13 +324,13 @@ impl Agents {
         let key = |text: &'static str| {
             div()
                 .px(px(look::GAP_4))
-                .h(px(look::CONTROL_ROW))
+                .h(px(look::control_row()))
                 .flex()
                 .items_center()
                 .rounded(px(look::CONTROL_RADIUS))
                 .border_1()
                 .border_color(p.ink(14.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.muted)
                 .child(text)
         };
@@ -363,7 +363,7 @@ impl Agents {
                             .flex_wrap()
                             .gap(px(look::GAP_12))
                             .px(px(look::GAP_4))
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(hint("@", "attach a file"))
                             .child(hint("#", "attach a cell"))
@@ -391,7 +391,7 @@ impl Agents {
         let (rest, hover, press) = (p.ink(4.), p.ink(look::ROW_HOVER), p.ink(11.));
         h_flex()
             .id(("agent-starter", ix))
-            .min_h(px(look::ROW))
+            .min_h(px(look::row()))
             .flex_wrap()
             .gap(px(look::GAP_4))
             .px(px(look::GAP_12))
@@ -408,12 +408,12 @@ impl Agents {
                 h_flex()
                     .flex_none()
                     .max_w(px(180.))
-                    .h(px(look::CONTROL_ROW))
+                    .h(px(look::control_row()))
                     .gap(px(look::GAP_4))
                     .px(px(look::GAP_6))
                     .rounded(px(look::CONTROL_RADIUS))
                     .bg(p.ink(8.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .child(crate::agents::composer_view::ref_icon(&item))
                     .child(
                         div()
@@ -437,7 +437,7 @@ impl Agents {
             .id(SharedString::from(format!("agent-continue-{}", t.id)))
             .gap(px(look::GAP_4))
             .px(px(look::GAP_12))
-            .h(px(look::ROW))
+            .h(px(look::row()))
             .rounded(px(look::CONTROL_RADIUS))
             .cursor_pointer()
             .hover(move |d| d.bg(hover))
@@ -456,7 +456,7 @@ impl Agents {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(time_label(self.last_active(t))),
             )
@@ -473,7 +473,7 @@ fn section(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -> Div {
             div()
                 .px(px(look::GAP_4))
                 .pb(px(look::GAP_2))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.muted)
                 .child(title),
         )

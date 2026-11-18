@@ -174,7 +174,7 @@ impl Workbench {
                 .pl(px(8.))
                 .pr(px(2.))
                 .gap(px(8.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .child(div().text_color(p.text).child(format!("{}…", task.label)))
                 .child(
                     div()

@@ -26,7 +26,7 @@ pub(super) fn card_shell(
 pub(super) fn grey(text: &str, p: &Palette) -> Div {
     div()
         .min_w_0()
-        .text_size(px(look::SMALL))
+        .text_size(px(look::small()))
         .text_color(p.muted)
         .child(text.to_string())
 }
@@ -40,7 +40,7 @@ pub(super) fn item(
     let hover = p.ink(look::ROW_HOVER);
     h_flex()
         .id(id)
-        .h(px(look::ROW))
+        .h(px(look::row()))
         .px(px(look::GAP_8))
         .rounded(px(look::CONTROL_RADIUS))
         .when(enabled, |d| {

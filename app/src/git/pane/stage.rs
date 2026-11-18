@@ -58,7 +58,7 @@ impl Workbench {
                 .py(px(look::PANE_PAD_Y))
                 .rounded(px(look::RADIUS))
                 .bg(p.busy_soft)
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .child(div().flex_1().min_w_0().child(format!(
                     "{word}: fix each ! file in the editor and stage it, or pick Mine or Theirs; then {}.",
                     if merging { "commit" } else { "Continue" }
@@ -93,7 +93,7 @@ impl Workbench {
                 .py(px(look::PANE_PAD_Y))
                 .border_t(px(0.5))
                 .border_color(p.glass_edge)
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .child(
                     div()
                         .text_color(p.muted)
@@ -228,7 +228,7 @@ impl Workbench {
             .pt(px(look::GAP_6))
             .pb(px(look::GAP_2))
             .gap(px(look::GAP_4))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(look::dot(color))
             .child(
                 div()
@@ -325,7 +325,7 @@ impl Workbench {
                 .id(SharedString::from(format!("git-file-{tag}-{ix}")))
                 .mx(px(look::GAP_4))
                 .px(px(look::GAP_8))
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .gap(px(look::GAP_4))
                 .rounded(px(look::CONTROL_RADIUS))
                 .whitespace_nowrap()
@@ -342,7 +342,7 @@ impl Workbench {
                     div()
                         .w(px(look::ICON_SMALL))
                         .flex_none()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .font_weight(FontWeight::BOLD)
                         .text_color(mark_color)
                         .child(letter),
@@ -368,14 +368,14 @@ impl Workbench {
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child(dir),
                 )
                 .when(big, |d| {
                     d.child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.err)
                             .child(file_size(file.size.unwrap_or(0))),
                     )
@@ -383,7 +383,7 @@ impl Workbench {
                 .child(
                     div()
                         .flex_none()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child(line_counts(lines)),
                 )

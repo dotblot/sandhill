@@ -128,7 +128,7 @@ impl Workbench {
             div()
                 .px(px(look::GAP_8))
                 .py(px(look::GAP_4))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(format!(
                     "Import a dataset into {}",
@@ -149,7 +149,7 @@ impl Workbench {
             rows.push(
                 h_flex()
                     .id(("import-kind", i))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_12))
                     .rounded(px(look::CONTROL_RADIUS))
@@ -159,8 +159,8 @@ impl Workbench {
                     .child(
                         div()
                             .flex_none()
-                            .font_family(look::MONO)
-                            .text_size(px(look::SMALL))
+                            .font_family(look::mono())
+                            .text_size(px(look::small()))
                             .text_color(p.faint)
                             .child(kind.function),
                     )
@@ -465,7 +465,7 @@ impl Workbench {
                     let on = dialog.file.as_deref() == Some(path.as_str());
                     h_flex()
                         .id(("import-entry", i))
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .px(px(look::GAP_8))
                         .gap(px(look::GAP_4))
                         .rounded(px(look::CONTROL_RADIUS))
@@ -522,7 +522,7 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .text_size(px(look::TITLE))
+                    .text_size(px(look::title()))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!(
                         "{} into {}",
@@ -537,7 +537,7 @@ impl Workbench {
                     .border_color(p.line)
                     .child(
                         h_flex()
-                            .h(px(look::ROW))
+                            .h(px(look::row()))
                             .px(px(look::GAP_4))
                             .gap(px(look::GAP_4))
                             .border_b_1()
@@ -573,7 +573,7 @@ impl Workbench {
             .when(dialog.preselected, |d| d.child(
                 v_flex().gap(px(look::GAP_4))
                     .child(div().text_color(p.muted).child(format!("Session: {}", dialog.session)))
-                    .child(div().font_family(look::MONO).whitespace_normal()
+                    .child(div().font_family(look::mono()).whitespace_normal()
                         .child(dialog.file.clone().unwrap_or_default())),
             ))
             .when(named, |d| {
@@ -590,17 +590,17 @@ impl Workbench {
                     )))
                 })
             })
-            .when(named, |d| d.child(div().text_size(px(look::SMALL)).text_color(p.muted)
+            .when(named, |d| d.child(div().text_size(px(look::small())).text_color(p.muted)
                 .child("Existing variables are protected. Choose a new name if this name is already in use.")))
-            .when(!named, |d| d.child(div().text_size(px(look::SMALL)).text_color(p.warn)
+            .when(!named, |d| d.child(div().text_size(px(look::small())).text_color(p.warn)
                 .child("Loading R data can replace existing variables with the same names.")))
             .child(
                 div()
                     .p(px(look::GAP_8))
                     .rounded(px(look::CODE_RADIUS))
                     .bg(p.chunk)
-                    .font_family(look::MONO)
-                    .text_size(px(look::CODE))
+                    .font_family(look::mono())
+                    .text_size(px(look::code()))
                     .whitespace_normal()
                     .child(match &code {
                         Some((code, _)) => code.clone(),
@@ -618,16 +618,16 @@ impl Workbench {
                     .justify_end()
                     .gap(px(look::GAP_8))
                     .flex_wrap()
-                    .child(Button::new("import-copy").small().h(px(look::CONTROL_CARD)).label("Copy Code")
+                    .child(Button::new("import-copy").small().h(px(look::control_card())).label("Copy Code")
                         .disabled(code.is_none() || bad || dialog.running)
                         .on_click(cx.listener(|this, _, _, cx| this.copy_import_code(cx))))
-                    .child(Button::new("import-insert").small().h(px(look::CONTROL_CARD)).label("Insert into Document")
+                    .child(Button::new("import-insert").small().h(px(look::control_card())).label("Insert into Document")
                         .disabled(code.is_none() || bad || dialog.running || !self.can_insert_into_active_document(cx))
                         .on_click(cx.listener(|this, _, window, cx| this.insert_import_code(window, cx))))
                     .child(
                         Button::new("import-cancel")
                             .small()
-                            .h(px(look::CONTROL_CARD))
+                            .h(px(look::control_card()))
                             .label("Cancel")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.import.dialog = None;
@@ -637,7 +637,7 @@ impl Workbench {
                     .child(
                         Button::new("import-run")
                             .small()
-                            .h(px(look::CONTROL_CARD))
+                            .h(px(look::control_card()))
                             .primary()
                             .label("Import")
                             .disabled(code.is_none() || bad || dialog.running)

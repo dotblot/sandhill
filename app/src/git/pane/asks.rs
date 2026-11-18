@@ -430,7 +430,7 @@ impl Workbench {
                 .when(!detail.is_empty(), |d| {
                     d.child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(detail),
                     )
@@ -489,7 +489,7 @@ impl Workbench {
                 .when_some(detail, |d, text| {
                     d.child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(text),
                     )

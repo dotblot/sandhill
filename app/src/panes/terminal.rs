@@ -35,9 +35,14 @@ const LINK_CACHE_TTL: Duration = Duration::from_secs(3);
 /// How often an undrawn terminal's screen is brought up to date.
 const UNDRAWN_FRAME: Duration = Duration::from_millis(100);
 
-/// The Tauri app's 13px, 2px larger; lines as tall as the font's own, so
+/// The code font at the code size; lines as tall as the font's own, so
 /// box-drawing lines join up.
-pub const FONT_SIZE: f32 = look::CODE;
+fn appearance() -> TerminalAppearance {
+    TerminalAppearance::default()
+        .with_font_family(look::mono())
+        .with_font_size(px(look::code()))
+        .with_padding(px(6.))
+}
 
 /// Sets up gpui-cn, whose terminal element reads its theme, and the
 /// terminal's keys (copy, paste, select all, scrolling, font size). Call
@@ -66,6 +71,7 @@ pub struct TerminalView {
     granting: bool,
     file_links: Option<FileLinks>,
     _theme: Subscription,
+    _typography: Subscription,
     _events: Task<()>,
 }
 
@@ -106,6 +112,11 @@ impl TerminalView {
             }
             cx.notify();
         });
+        let typography = cx.observe_global::<look::Typography>(|view, cx| {
+            if let Some(state) = &view.state {
+                state.update(cx, |state, cx| state.set_appearance(appearance(), cx));
+            }
+        });
         TerminalView {
             id,
             peer,
@@ -117,6 +128,7 @@ impl TerminalView {
             drawn: false,
             granting: false,
             _theme: theme,
+            _typography: typography,
             file_links: None,
             _events: events,
         }
@@ -129,12 +141,7 @@ impl TerminalView {
         let p = *Palette::get(cx);
         let config = TerminalConfig::default()
             .with_colors(colors(&p))
-            .with_appearance(
-                TerminalAppearance::default()
-                    .with_font_family(look::MONO)
-                    .with_font_size(px(FONT_SIZE))
-                    .with_padding(px(6.)),
-            );
+            .with_appearance(appearance());
         let state = cx.new(|cx| {
             TerminalState::new(
                 Engine::new(source, EngineOptions::default()),
@@ -445,7 +452,7 @@ impl Render for TerminalView {
                         .px(px(6.))
                         .rounded(px(6.))
                         .bg(p.term)
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(format!("[{how}]")),
                 )

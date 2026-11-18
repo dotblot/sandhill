@@ -265,7 +265,7 @@ impl AppWindow {
             .track_focus(&self.start.dialog_focus)
             .occlude()
             .min_w(px(210.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(
                 sidebar_action("device-menu-rename", "edit.rename", "Rename…", &p).on_click(
                     cx.listener(move |this, _, window, cx| {
@@ -350,7 +350,7 @@ impl AppWindow {
             .border_color(p.glass_edge)
             .shadow_lg()
             .text_color(p.text)
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
@@ -363,7 +363,7 @@ impl AppWindow {
             card = card
                 .child(
                     div()
-                        .text_size(px(look::TITLE))
+                        .text_size(px(look::title()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Rename {}", host_label(host))),
                 )
@@ -433,7 +433,7 @@ impl AppWindow {
             card = card
                 .child(
                     div()
-                        .text_size(px(look::TITLE))
+                        .text_size(px(look::title()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Icon for {}", crate::panes::files::base_name(path))),
                 )
@@ -463,7 +463,7 @@ impl AppWindow {
             let connecting = self.start.connecting_server.is_some();
             let empty = self.start.server_input.read(cx).value().trim().is_empty();
             card = card
-                .child(div().text_size(px(look::TITLE)).font_weight(FontWeight::SEMIBOLD).child("Connect to Server"))
+                .child(div().text_size(px(look::title())).font_weight(FontWeight::SEMIBOLD).child("Connect to Server"))
                 .child(Input::new(&self.start.server_input).small().disabled(connecting))
                 .child(div().text_color(p.muted).child(
                     "Sandhill connects with ssh, using your ~/.ssh/config and keys, so a name from there works. The first time, it installs sandhilld in ~/.local/bin on the server.",
@@ -495,7 +495,7 @@ impl AppWindow {
                 .track_focus(&self.start.dialog_focus)
                 .child(
                     div()
-                        .text_size(px(look::TITLE))
+                        .text_size(px(look::title()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("Open Folder on {}", host_label(host))),
                 )

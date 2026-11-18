@@ -164,7 +164,7 @@ impl Workbench {
                     .px(px(look::PANE_PAD_X))
                     .pb(px(look::GAP_4))
                     .gap(px(look::GAP_8))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(
                         div()
@@ -184,7 +184,7 @@ impl Workbench {
                         .flex_none()
                         .px(px(look::PANE_PAD_X))
                         .pb(px(look::GAP_4))
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(note.clone()),
                 )

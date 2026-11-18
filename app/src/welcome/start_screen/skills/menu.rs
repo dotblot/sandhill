@@ -36,7 +36,7 @@ impl SkillsView {
             .occlude()
             .min_w(px(220.))
             .max_w(px(360.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                 if !this.triggers.contains(trigger, event.position) {
                     this.menu = None;

@@ -55,7 +55,10 @@ its date.
 
 ## UI rules
 - Use the named values in `app/src/look.rs` for text, controls, rows,
-  corners, icons, spacing and hover. See the light and dark examples in
+  corners, icons, spacing and hover. Text sizes, the code font and the
+  heights of rows, tabs and buttons are functions (`look::small()`,
+  `look::mono()`, `look::row()`...) because General can change them; never
+  copy their numbers. See the light and dark examples in
   [Sandhill UI rules](docs/design/ui/consistency.html).
 - Use Kit's Button for labelled actions. For a destructive action on one
   item, ask “Verb name?” in its row, with Cancel before the red verb button.

@@ -235,7 +235,7 @@ impl Workbench {
         let head = |text: String| {
             h_flex()
                 .gap(px(6.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(icon("sparkle.ai").size(px(12.)))
                 .child(div().flex_1().min_w_0().child(text))
@@ -283,7 +283,7 @@ impl Workbench {
                             .border_1()
                             .border_dashed()
                             .border_color(p.line)
-                            .font_family(look::MONO)
+                            .font_family(look::mono())
                             .text_color(p.muted)
                             .opacity(0.75)
                             .whitespace_normal()

@@ -60,7 +60,7 @@ pub(crate) fn row<V: 'static>(
     let hover = p.ink(look::ROW_HOVER);
     h_flex()
         .id(id)
-        .h(px(look::ROW))
+        .h(px(look::row()))
         .px(px(look::GAP_8))
         .gap(px(look::GAP_8))
         .rounded(px(look::CONTROL_RADIUS))

@@ -181,7 +181,7 @@ impl Workbench {
             rows.push(
                 h_flex()
                     .id(("install-irkernel", ix))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .gap(px(look::GAP_4))
                     .px(px(look::GAP_8))
                     .rounded(px(look::CONTROL_RADIUS))
@@ -197,7 +197,7 @@ impl Workbench {
                     .child(
                         v_flex()
                             .min_w_0()
-                            .line_height(px(look::ROW / 2.))
+                            .line_height(px(look::row() / 2.))
                             .whitespace_nowrap()
                             .child(format!("Install IRkernel for {}…", r_name(offer)))
                             .child(
@@ -238,14 +238,14 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .text_size(px(look::TITLE))
+                    .text_size(px(look::title()))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("Install IRkernel for {}?", r_name(offer))),
             )
             .child(
                 h_flex()
                     .gap(px(look::GAP_6))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .child(device)
                     .child(
@@ -254,14 +254,14 @@ impl Workbench {
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .font_family(look::MONO)
+                            .font_family(look::mono())
                             .child(offer.r.clone()),
                     ),
             )
             .child(div().whitespace_normal().child(offer.plan.clone()))
             .child(
                 div()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .whitespace_normal()
                     .child("It runs in the Jobs tab and goes on if Sandhill disconnects. Sandhill never removes it; uninstall it yourself if you no longer want it."),

@@ -83,10 +83,10 @@ impl AppWindow {
                 h_flex()
                     .w_full()
                     .gap(px(look::GAP_8))
-                    .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Usage"))
+                    .child(div().flex_1().text_size(px(look::welcome_title())).font_weight(FontWeight::BOLD).child("Usage"))
                     .children(refresh),
             )
-            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
+            .child(div().text_size(px(look::tab_text())).text_color(p.muted).child(
                 "What the agents in Sandhill's conversations used on this device: requests, tokens and their cost estimates.",
             ))
             .child(h_flex().child(devices));
@@ -101,7 +101,7 @@ impl AppWindow {
             page = page
                 .child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(message),
                 )
@@ -282,19 +282,19 @@ impl UsageView {
                 .bg(p.bg.opacity(0.5))
                 .child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(label),
                 )
                 .child(
                     div()
-                        .text_size(px(look::TITLE))
+                        .text_size(px(look::title()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(value),
                 )
                 .children(note.map(|note| {
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child(note)
                 }))
@@ -385,7 +385,7 @@ impl UsageView {
             .child(
                 h_flex()
                     .w_full()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(div().flex_1().child(first))
                     .child(last),
@@ -396,7 +396,7 @@ impl UsageView {
                     .children(agents.iter().map(|agent| {
                         h_flex()
                             .gap(px(look::GAP_4))
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(div().size(px(8.)).rounded_full().bg(agent_colour(agent, p)))
                             .child(agent_name(agent))
@@ -409,7 +409,7 @@ impl UsageView {
                 .pb(px(look::GAP_4))
                 .border_b_1()
                 .border_color(p.line)
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(div().flex_1().child(title))
                 .child(div().w(px(70.)).text_right().child("Requests"))
@@ -432,7 +432,7 @@ impl UsageView {
                     format!("{} · {model}", agent_name(&row.agent))
                 };
                 h_flex()
-                    .min_h(px(look::DENSE_ROW))
+                    .min_h(px(look::dense_row()))
                     .gap(px(look::GAP_8))
                     .when(!projects, |d| {
                         d.child(
@@ -483,7 +483,7 @@ impl UsageView {
             .child(table("By project", &stats.projects, true))
             .child(
                 div()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(format!(
                         "Counted by Sandhill since {since}, in its own conversations only. Costs are \

@@ -1085,7 +1085,7 @@ impl AppWindow {
                 .gap(px(look::GAP_2))
                 .pl(px(7.))
                 .pr(px(3.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(if picked { p.text } else { p.muted })
                 .child(device)
                 // A project's chosen icon (Welcome → right-click → Change Icon…).

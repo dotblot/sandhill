@@ -263,7 +263,7 @@ impl Render for PageView {
         let note = |s: String| {
             div()
                 .p_2()
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .italic()
                 .text_color(theme.muted_foreground)
                 .child(s)

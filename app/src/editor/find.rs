@@ -567,7 +567,7 @@ impl Workbench {
                 .p(px(6.))
                 .border_b_1()
                 .border_color(p.line)
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .child(row)
                 .when(
                     self.find.replace

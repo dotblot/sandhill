@@ -155,7 +155,7 @@ impl Workbench {
             .size_full()
             .px(px(look::PANE_PAD_X))
             .pt(px(if floating {
-                look::STRIP + look::PANE_PAD_Y
+                look::strip() + look::PANE_PAD_Y
             } else {
                 look::PANE_PAD_Y
             }))
@@ -184,12 +184,12 @@ impl Workbench {
             h_flex()
                 .id("restricted-chip")
                 .flex_none()
-                .h(px(look::CONTROL_ROW))
+                .h(px(look::control_row()))
                 .px(px(look::GAP_8))
                 .gap(px(look::GAP_4))
                 .rounded_full()
                 .bg(p.warn.opacity(0.16))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.text)
                 .cursor_pointer()
                 .hover(move |d| d.bg(p.warn.opacity(0.26)))
@@ -247,14 +247,14 @@ impl Workbench {
                             .gap(px(look::GAP_2))
                             .child(
                                 div()
-                                    .text_size(px(look::TITLE))
+                                    .text_size(px(look::title()))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(format!("Trust {name}?")),
                             )
                             // Where it is: with the name above, the whole path.
                             .child(
                                 div()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .child(format!("{device} · in {}", place(&host, &project))),
                             ),

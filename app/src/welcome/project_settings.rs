@@ -512,7 +512,7 @@ impl Workbench {
                             .gap(px(look::GAP_2))
                             .child(
                                 div()
-                                    .text_size(px(look::TITLE))
+                                    .text_size(px(look::title()))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(if dialog.first {
                                         format!("Which R and Python should {name} use?")
@@ -522,7 +522,7 @@ impl Workbench {
                             )
                             .child(
                                 div()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .overflow_hidden()
                                     .text_ellipsis()
@@ -548,7 +548,7 @@ impl Workbench {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child("Saved in .sandhill/project.toml. Commit it to share these with collaborators."),
                     )
@@ -616,13 +616,13 @@ impl Workbench {
             .on_prepaint(self.popup_triggers.track(trigger))
             .min_w_0()
             .max_w(px(240.))
-            .h(px(look::CONTROL_ROW))
+            .h(px(look::control_row()))
             .gap(px(look::GAP_4))
             .pl(px(look::GAP_6))
             .pr(px(look::GAP_8))
             .rounded_full()
             .bg(p.cap_bg)
-            .text_size(px(look::TAB_TEXT))
+            .text_size(px(look::tab_text()))
             .whitespace_nowrap()
             .cursor_pointer()
             .hover(move |d| d.bg(hover))
@@ -666,7 +666,7 @@ impl Workbench {
                     let on = value == chosen;
                     h_flex()
                         .id(SharedString::from(format!("{trigger}-{i}")))
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .px(px(look::GAP_8))
                         .gap(px(look::GAP_4))
                         .rounded(px(look::CONTROL_RADIUS))
@@ -705,7 +705,7 @@ impl Workbench {
                     div()
                         .absolute()
                         .right_0()
-                        .top(px(look::CONTROL_ROW + look::GAP_2))
+                        .top(px(look::control_row() + look::GAP_2))
                         .child(
                             deferred(
                                 anchored()

@@ -454,7 +454,7 @@ impl Workbench {
                 h_flex()
                     .id(("pal", ix))
                     .flex_none()
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_4))
                     .rounded(px(look::CONTROL_RADIUS))
@@ -506,7 +506,7 @@ impl Workbench {
             .border_1()
             .border_color(p.glass_edge)
             .shadow_lg()
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 match event.keystroke.key.as_str() {
@@ -519,7 +519,7 @@ impl Workbench {
             }))
             .child(
                 h_flex()
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_4))
                     .rounded(px(look::CONTROL_RADIUS))
@@ -539,7 +539,7 @@ impl Workbench {
                             .rounded(px(look::CONTROL_RADIUS))
                             .border_1()
                             .border_color(p.glass_edge)
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .child("esc"),
                     ),
             )

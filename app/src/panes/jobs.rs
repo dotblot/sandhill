@@ -620,7 +620,7 @@ impl Workbench {
                 let (pick, stop, again, remove) = (id.clone(), id.clone(), id.clone(), id.clone());
                 h_flex()
                     .id(SharedString::from(format!("job-{}", job.id)))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .mx(px(look::GAP_4))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_4))
@@ -648,8 +648,8 @@ impl Workbench {
                             .flex_1()
                             .min_w_0()
                             .overflow_hidden()
-                            .text_size(px(look::SMALL))
-                            .line_height(px(look::ROW / 2.))
+                            .text_size(px(look::small()))
+                            .line_height(px(look::row() / 2.))
                             .child(
                                 div()
                                     .overflow_hidden()
@@ -715,7 +715,7 @@ impl Workbench {
                     .into_any_element()
             })
             .collect();
-        let header_height = look::CONTROL_ROW + 2. * look::GAP_6;
+        let header_height = look::control_row() + 2. * look::GAP_6;
         let new_job = h_flex()
             .flex_none()
             .h(px(header_height))
@@ -740,12 +740,12 @@ impl Workbench {
                 .pb(px(look::PANE_PAD_Y))
                 .gap(px(look::GAP_4))
                 .child(
-                    Styled::h(Input::new(&self.jobs.command).small(), px(look::CONTROL_CARD))
+                    Styled::h(Input::new(&self.jobs.command).small(), px(look::control_card()))
                         .rounded(px(look::CONTROL_RADIUS)),
                 )
                 .child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child("Runs in this project's folder with your shell's setup, and keeps running when Sandhill closes. Enter starts it."),
                 )
@@ -762,7 +762,7 @@ impl Workbench {
             .child(
                 look::PaneScroll::new(
                     "jobs-scroll",
-                    look::STRIP + header_height,
+                    look::strip() + header_height,
                     0.,
                 div()
                     .id("jobs-list")
@@ -772,7 +772,7 @@ impl Workbench {
                             div()
                                 .px(px(look::PANE_PAD_X))
                                 .py(px(look::GAP_4))
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.err)
                                 .child(err),
                         )
@@ -789,7 +789,7 @@ impl Workbench {
                     .children(rows),
                 ),
             )
-            .child(look::floating_header(&p, look::STRIP, false, new_job));
+            .child(look::floating_header(&p, look::strip(), false, new_job));
         let log = self.shown_job().map(|job| {
             let place = if job.project.as_deref() == Some(job.cwd.as_str()) {
                 job.cwd.rsplit('/').next().unwrap_or(&job.cwd).to_string()
@@ -805,22 +805,22 @@ impl Workbench {
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .pt(px(look::STRIP))
+                .pt(px(look::strip()))
                 .child(
                     h_flex()
                         .flex_none()
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .gap(px(look::GAP_8))
                         .px(px(look::PANE_PAD_X))
                         .border_b(px(0.5))
                         .border_color(p.glass_edge)
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .child(div().text_color(state_color).child(state_label(job)))
                         .child(
                             div()
-                                .font_family(look::MONO)
+                                .font_family(look::mono())
                                 .text_color(p.text)
                                 .child(what_runs(job)),
                         )

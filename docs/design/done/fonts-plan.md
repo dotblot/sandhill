@@ -1,6 +1,6 @@
 # Fonts and text sizes
 
-Status: plan, waiting for Huan's approval (2026-11-18).
+Status: approved by Huan and built (2026-11-18).
 
 ## What Huan asked for
 - Code uses the Mac's own code font by default (SF Mono).

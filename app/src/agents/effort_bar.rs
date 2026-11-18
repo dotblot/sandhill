@@ -119,7 +119,7 @@ impl Agents {
                 .text_system()
                 .shape_line(
                     name.clone().into(),
-                    px(look::SMALL),
+                    px(look::small()),
                     &[style.to_run(name.len())],
                     None,
                 )
@@ -241,10 +241,10 @@ impl Agents {
             .relative()
             .flex_none()
             .w(px(width))
-            .h(px(look::CONTROL_CARD))
+            .h(px(look::control_card()))
             .rounded(px(look::CONTROL_RADIUS))
             .bg(p.ink(8.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(
                 canvas(move |b, _, _| bounds.set(b), |_, _, _, _| {})
                     .absolute()

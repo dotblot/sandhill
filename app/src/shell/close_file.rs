@@ -217,7 +217,7 @@ impl Workbench {
                 ))
                 .child(v_flex().min_w_0().child(label).children(note.map(|note| {
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(note)
                 })))
@@ -269,7 +269,7 @@ impl Workbench {
             ));
         }
         let dirty = ask.dirty;
-        let wide = |button: Button| button.w_full().h(px(look::CONTROL_CARD));
+        let wide = |button: Button| button.w_full().h(px(look::control_card()));
         let card = v_flex()
             .id("close-card")
             .track_focus(&ask.focus)
@@ -305,7 +305,7 @@ impl Workbench {
                     .child(
                         div()
                             .min_w_0()
-                            .text_size(px(look::TITLE))
+                            .text_size(px(look::title()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("Close {name}?")),
                     ),

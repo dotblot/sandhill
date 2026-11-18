@@ -676,7 +676,7 @@ impl Workbench {
         let mut rows = Vec::new();
         self.object_node_rows(tab, &tab.root, &tab.variable, &mut rows, cx);
         let heading = h_flex()
-            .h(px(look::DENSE_ROW))
+            .h(px(look::dense_row()))
             .border_b_1()
             .border_color(p.line)
             .child(
@@ -713,7 +713,7 @@ impl Workbench {
             .when(!tab.complete, |d| d.child(div().px(px(look::PANE_PAD_X)).text_color(p.warn).child("Only part of this object was searched (depth, node, or time limit reached).")))
             .when(tab.matches.as_ref().is_some_and(Vec::is_empty), |d| d.child(div().px(px(look::PANE_PAD_X)).text_color(p.muted).child("No matching names or values.")))
             .child(div().id("object-tree").flex_1().min_h_0().overflow_scroll()
-                .track_scroll(&tab.scroll).child(v_flex().w_full().min_w(px(480.)).text_size(px(look::SMALL))
+                .track_scroll(&tab.scroll).child(v_flex().w_full().min_w(px(480.)).text_size(px(look::small()))
                     .child(heading).children(rows)))
             .into_any_element())
     }
@@ -773,7 +773,7 @@ impl Workbench {
             h_flex()
                 .id(SharedString::from(format!("object-node-{path:?}")))
                 .w_full()
-                .h(px(look::DENSE_ROW))
+                .h(px(look::dense_row()))
                 .rounded(px(look::CODE_RADIUS))
                 .whitespace_nowrap()
                 .border_b_1()

@@ -1108,7 +1108,7 @@ impl Workbench {
                     div()
                         .absolute()
                         .right_0()
-                        .top(px(look::CONTROL_ROW + look::GAP_4))
+                        .top(px(look::control_row() + look::GAP_4))
                         .child(
                             deferred(
                                 anchored()
@@ -1145,7 +1145,7 @@ impl Workbench {
                                                     let hover = p.ink(look::ROW_HOVER);
                                                     h_flex()
                                                         .id(("console-history-entry", ix))
-                                                        .min_h(px(look::ROW))
+                                                        .min_h(px(look::row()))
                                                         .px(px(look::GAP_8))
                                                         .py(px(look::GAP_4))
                                                         .rounded(px(look::CONTROL_RADIUS))
@@ -1154,8 +1154,8 @@ impl Workbench {
                                                         .child(
                                                             v_flex()
                                                                 .min_w_0()
-                                                                .font_family(look::MONO)
-                                                                .text_size(px(look::SMALL))
+                                                                .font_family(look::mono())
+                                                                .text_size(px(look::small()))
                                                                 .child(code.clone()),
                                                         )
                                                         .on_click(cx.listener(

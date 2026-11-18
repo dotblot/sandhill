@@ -91,8 +91,15 @@ Settled decisions about how Sandhill looks. Moved here unchanged from
   follows the theme on macOS 26 and later (Huan, 2026-11-14): flat, a white
   tile and navy crane in light, a navy tile and white crane in dark, tinted
   and clear looks drawn by the system with the crane light; older macOS
-  keeps the navy `icon.icns`. Fonts are unchanged
-  while Huan contacts the font author.
+  keeps the navy `icon.icns`.
+  Fonts (Huan, 2026-11-18): the interface always uses the system font, and
+  is not a choice. Code uses SF Mono, the Mac's own code font, by default;
+  Welcome → General can pick any installed monospaced font instead, and set
+  the code size (10 to 24) and the interface size (12 to 18), both 15 by
+  default. All interface text sizes, and the heights of rows, tabs and
+  buttons, move together with the interface size. Maple Mono NF is no
+  longer bundled; anyone who wants it (or another Nerd Font, for terminal
+  prompt icons) installs it and picks it.
   Agent marks have no background (Huan, 2026-11-12): OpenAI's logo for Codex
   and Synthetic Sciences' mark for OpenScience, in the text colour; Posit's
   mark for Posit Assistant; Oh My Pi's gradient π; Antigravity uses his

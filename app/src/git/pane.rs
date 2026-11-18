@@ -31,7 +31,9 @@ mod stage;
 /// How often the status is read while the pane shows.
 const POLL: Duration = Duration::from_secs(3);
 
-pub(super) const HEAD_HEIGHT: f32 = look::ROW;
+pub(super) fn head_height() -> f32 {
+    look::row()
+}
 
 /// The pane's menus.
 /// Turns git's output into the note shown after an action.
@@ -630,11 +632,11 @@ impl Workbench {
                 h_flex()
                     .id(id)
                     .on_prepaint(self.popup_triggers.track(id))
-                    .h(px(look::CONTROL_ROW))
+                    .h(px(look::control_row()))
                     .px(px(look::GAP_4))
                     .gap(px(look::GAP_4))
                     .rounded(px(look::CONTROL_RADIUS))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .when(!on, |d| d.opacity(0.35))
                     .when(on, |d| {
@@ -759,7 +761,7 @@ impl Workbench {
         let Some(status) = &self.git.status else {
             return v_flex()
                 .size_full()
-                .pt(px(look::STRIP))
+                .pt(px(look::strip()))
                 .child(match &self.git.error {
                     Some(err) => note(err.clone(), p.err),
                     None if self.project.is_none() => {
@@ -775,7 +777,7 @@ impl Workbench {
                 .gap(px(look::GAP_8))
                 .px(px(look::PANE_PAD_X))
                 .pb(px(look::PANE_PAD_Y))
-                .pt(px(look::STRIP + look::PANE_PAD_Y))
+                .pt(px(look::strip() + look::PANE_PAD_Y))
                 .child(
                     div()
                         .text_color(p.muted)
@@ -815,7 +817,7 @@ impl Workbench {
                     .px(px(look::PANE_PAD_X))
                     .py(px(look::GAP_4))
                     .gap(px(look::GAP_8))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .border_b(px(0.5))
                     .border_color(p.glass_edge)
                     .child(
@@ -849,7 +851,7 @@ impl Workbench {
             .children(self.render_git_menu(cx))
             .child(look::floating_header(
                 &p,
-                look::STRIP,
+                look::strip(),
                 false,
                 self.render_git_head(status, cx),
             ))
@@ -879,7 +881,7 @@ impl Workbench {
         };
         h_flex()
             .flex_none()
-            .h(px(HEAD_HEIGHT))
+            .h(px(head_height()))
             .gap(px(look::GAP_4))
             .px(px(look::PANE_PAD_X))
             .border_b(px(0.5))
@@ -889,7 +891,7 @@ impl Workbench {
                 h_flex()
                     .id("git-branch")
                     .on_prepaint(self.popup_triggers.track("git-branches"))
-                    .h(px(look::CONTROL_ROW))
+                    .h(px(look::control_row()))
                     .px(px(look::GAP_4))
                     .rounded(px(look::CONTROL_RADIUS))
                     .font_weight(FontWeight::MEDIUM)
@@ -906,7 +908,7 @@ impl Workbench {
             .when(!counts.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.accent)
                         .child(counts),
                 )

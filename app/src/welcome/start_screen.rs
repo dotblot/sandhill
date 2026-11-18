@@ -149,6 +149,11 @@ pub(crate) struct Start {
     connectors: Option<(String, u64, Entity<connectors::ConnectorsView>)>,
     /// The page on the right (Huan, 2026-11-12: Projects first).
     pub(crate) page: Page,
+    /// General's code font list is open.
+    font_menu: bool,
+    /// The installed monospaced fonts, found when the list first opens.
+    mono_fonts: Option<Vec<String>>,
+    font_trigger: crate::shell::popup::PopupTriggers,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -209,6 +214,9 @@ impl Start {
             skills: None,
             connectors: None,
             page: Page::Device,
+            font_menu: false,
+            mono_fonts: None,
+            font_trigger: Default::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -431,7 +439,7 @@ impl AppWindow {
             devices = devices.child(
                 h_flex()
                     .id(("start-device", ix))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .flex_none()
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_4))
@@ -618,13 +626,13 @@ impl AppWindow {
                     )
                     .children(option_env!("SANDHILL_COMMIT").map(|build| {
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(format!("build {}", build.get(..7).unwrap_or(build)))
                     }))
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .text_center()
                             .child("Elegance in discovery."),
@@ -649,7 +657,7 @@ impl AppWindow {
             .flex()
             .flex_col()
             .text_color(p.text)
-            .text_size(px(look::CHROME))
+            .text_size(px(look::chrome()))
             .line_height(rems(1.4))
             .child(
                 h_flex().items_stretch().flex_1().min_h_0().w_full()
@@ -671,7 +679,7 @@ impl AppWindow {
                                 d.child(div().mt(px(12.)).text_color(p.err).child(problem))
                             })
                             .child(div().flex_1().min_h(px(28.)))
-                            .when(footnote, |d| d.child(div().flex_none().text_size(px(look::SMALL)).text_color(p.muted)
+                            .when(footnote, |d| d.child(div().flex_none().text_size(px(look::small())).text_color(p.muted)
                                 .child("Kernels keep running after you close a project. Reopening it reattaches to them and restores your tabs."))))),
             )
             .child(self.start_title_bar(cx))
@@ -773,7 +781,7 @@ fn sidebar_heading(label: &'static str, p: &Palette) -> Div {
     div()
         .px(px(look::GAP_8))
         .py(px(look::GAP_6))
-        .text_size(px(look::SMALL))
+        .text_size(px(look::small()))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.muted)
         .child(label)
@@ -840,7 +848,7 @@ fn sidebar_row(
     let hover = p.ink(look::ROW_HOVER);
     h_flex()
         .id(id)
-        .min_h(px(look::ROW))
+        .min_h(px(look::row()))
         .px(px(look::GAP_8))
         .gap(px(look::GAP_4))
         .rounded(px(look::CONTROL_RADIUS))

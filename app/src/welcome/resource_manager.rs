@@ -589,11 +589,11 @@ impl AppWindow {
             .gap(px(look::GAP_8))
             .child(
                 div()
-                    .text_size(px(look::WELCOME_TITLE))
+                    .text_size(px(look::welcome_title()))
                     .font_weight(FontWeight::BOLD)
                     .child("Resources and Storage"),
             )
-            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
+            .child(div().text_size(px(look::tab_text())).text_color(p.muted).child(
                 "Only the devices you tick are affected. Project folders are never removed.",
             ))
             .child(
@@ -669,7 +669,7 @@ impl AppWindow {
                 )
                 .child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(extra),
                 )
@@ -697,14 +697,14 @@ impl AppWindow {
                     )
                     .child(
                         div()
-                            .text_size(px(look::CHROME))
+                            .text_size(px(look::chrome()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(crate::welcome::start_screen::host_label(host)),
                     )
                     .child(div().flex_1())
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(device.status.clone()),
                     ),
@@ -719,8 +719,8 @@ impl AppWindow {
                     .p(px(look::GAP_8))
                     .rounded(px(look::CODE_RADIUS))
                     .bg(p.chunk)
-                    .font_family(look::MONO)
-                    .text_size(px(look::SMALL))
+                    .font_family(look::mono())
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .child(error.clone())
                     .into_any_element()
@@ -763,7 +763,7 @@ impl AppWindow {
                         h_flex()
                             .w_full()
                             .min_w_0()
-                            .min_h(px(look::DENSE_ROW))
+                            .min_h(px(look::dense_row()))
                             .gap(px(look::GAP_4))
                             .child(
                                 icon(kind_icon(&text(resource, "kind")))
@@ -784,8 +784,8 @@ impl AppWindow {
                                     .when_some(resource["project"].as_str(), |d, path| {
                                         d.child(
                                             div()
-                                                .text_size(px(look::SMALL))
-                                                .font_family(look::MONO)
+                                                .text_size(px(look::small()))
+                                                .font_family(look::mono())
                                                 .text_color(p.muted)
                                                 .overflow_hidden()
                                                 .text_ellipsis()
@@ -797,7 +797,7 @@ impl AppWindow {
                             .child(
                                 div()
                                     .flex_none()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .child(text(resource, "state")),
                             ),
@@ -856,7 +856,7 @@ impl AppWindow {
                     h_flex()
                         .flex_wrap()
                         .gap(px(look::GAP_12))
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(legend(p.accent, format!("{} removable", bytes(removable))))
                         .child(legend(p.busy, format!("{} in use", bytes(active))))
@@ -899,11 +899,11 @@ impl AppWindow {
                                 .w_full()
                                 .min_w_0()
                                 .items_start()
-                                .min_h(px(look::ROW))
+                                .min_h(px(look::row()))
                                 .gap(px(look::GAP_8))
                                 .child(
                                     div()
-                                        .w(px(look::CONTROL_ROW))
+                                        .w(px(look::control_row()))
                                         .flex_none()
                                         .pt(px(look::GAP_2))
                                         .when(is_removable, |d| {
@@ -949,7 +949,7 @@ impl AppWindow {
                                             h_flex()
                                                 .min_w_0()
                                                 .gap(px(look::GAP_4))
-                                                .text_size(px(look::SMALL))
+                                                .text_size(px(look::small()))
                                                 .text_color(p.muted)
                                                 .child(
                                                     icon(if open {
@@ -966,7 +966,7 @@ impl AppWindow {
                                                         .text_ellipsis()
                                                         .whitespace_nowrap()
                                                         .when(items.len() == 1, |d| {
-                                                            d.font_family(look::MONO)
+                                                            d.font_family(look::mono())
                                                         })
                                                         .child(summary),
                                                 ),
@@ -985,7 +985,7 @@ impl AppWindow {
                                     |d| {
                                         d.child(
                                             div()
-                                                .text_size(px(look::SMALL))
+                                                .text_size(px(look::small()))
                                                 .text_color(p.muted)
                                                 .child(if in_use { "In use" } else { "Protected" }),
                                         )
@@ -994,13 +994,13 @@ impl AppWindow {
                         )
                         .when(open, |d| {
                             let details = v_flex()
-                                .pl(px(look::CONTROL_ROW + look::GAP_8))
+                                .pl(px(look::control_row() + look::GAP_8))
                                 .pt(px(look::GAP_6))
                                 .gap(px(look::GAP_6));
                             d.child(details.children(items.into_iter().map(|item| {
                                 v_flex()
                                     .min_w_0()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .child(
                                         h_flex()
@@ -1013,7 +1013,7 @@ impl AppWindow {
                                                     .overflow_hidden()
                                                     .text_ellipsis()
                                                     .whitespace_nowrap()
-                                                    .font_family(look::MONO)
+                                                    .font_family(look::mono())
                                                     .child(text(item, "path")),
                                             )
                                             .child(
@@ -1053,7 +1053,7 @@ impl AppWindow {
                     .child(
                         h_flex()
                             .id(("manage-projects", index))
-                            .min_h(px(look::ROW))
+                            .min_h(px(look::row()))
                             .gap(px(look::GAP_4))
                             .rounded(px(look::CONTROL_RADIUS))
                             .cursor_pointer()
@@ -1085,8 +1085,8 @@ impl AppWindow {
                         d.children(device.projects.iter().map(|path| {
                             div()
                                 .pl(px(look::ICON + look::GAP_4))
-                                .text_size(px(look::SMALL))
-                                .font_family(look::MONO)
+                                .text_size(px(look::small()))
+                                .font_family(look::mono())
                                 .text_color(p.muted)
                                 .child(path.clone())
                         }))
@@ -1134,7 +1134,7 @@ impl AppWindow {
                             )
                             .child(
                                 div()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .whitespace_normal()
                                     .child(detail),
@@ -1250,8 +1250,8 @@ impl AppWindow {
                 .child(
                     div()
                         .pl(px(26.))
-                        .text_size(px(look::SMALL))
-                        .font_family(look::MONO)
+                        .text_size(px(look::small()))
+                        .font_family(look::mono())
                         .text_color(p.muted)
                         .child(path),
                 )

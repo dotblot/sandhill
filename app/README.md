@@ -131,10 +131,13 @@ From here on the work follows the porting plan (step 1: look and layout).
   opacity and Xcode syntax are overridden; interface colours and terminal ANSI
   hues come from Kit. It follows the system's appearance, not its accent;
   `SANDHILL_APPEARANCE=dark` (or `light`) picks an appearance for trying it.
-- Every text size is the Tauri app's plus 2px: window text 15px, code 15px
-  in Maple Mono NF, small rows 13px. Maple Mono is bundled as gzipped TTF in
-  `assets/fonts` (GPUI reads TrueType, not the web fonts); `make.py` there
-  makes them from the WOFF2 web fonts.
+- Every text size is the Tauri app's plus 2px by default: window text 15px,
+  code 15px, small rows 13px. The interface is in the system font; code is
+  in SF Mono, which the Mac offers as `.AppleSystemUIFontMonospaced`, or
+  any installed monospaced font picked on General. General also sets the
+  code size and the interface size (`look/typography.rs`); every interface
+  text size, and the heights of rows, tabs and buttons, move with the
+  interface size (2026-11-18).
 - Icons come from `docs/design/ui/icons` (Gruvbox Material, Lucide and
   Developer Icons, normalized by `build.py`), embedded and served as
   `sandhill/…`; file and folder matching rules remain in `registry.json`.
@@ -1071,9 +1074,10 @@ preview and R's imports weren't seen.
 - **Third-party notices in the bundle** (Huan, 2026-11-14): the Mac
   workflow runs `notices/make.sh` (cargo-about, installed by
   `taiki-e/install-action`) and copies `sandhill-app.txt`, `sandhilld.txt`,
-  `notices/libghostty-vt/*`, Sandhill's `LICENSE` and the code font's
-  `OFL.txt` into `Resources/licenses`; Ark's `LICENSE` and `NOTICE` go
-  beside it as `daemons/ark-<triple>.notices`.
+  `notices/libghostty-vt/*` and Sandhill's `LICENSE` into
+  `Resources/licenses` (and the code font's `OFL.txt`, until the bundled
+  font went on 2026-11-18); Ark's `LICENSE` and `NOTICE` go beside it as
+  `daemons/ark-<triple>.notices`.
 - **New conversation screen** (Huan, 2026-11-14; plan in
   `docs/design/done/new-conversation-plan.md`): `agents_start.rs` replaces
   `render_new`. `Agents::start` (`StartContext`) holds the project's live
@@ -1393,6 +1397,18 @@ preview and R's imports weren't seen.
   Claude Code and Codex are offered. `sandhill_proto::PAUSED_AGENTS` lists
   the others; `agents::turned_off` counts them as off everywhere, and
   Welcome → Agents leaves them out (`agents/accounts.rs`).
+- **Fonts and text sizes** (Huan, 2026-11-18;
+  `docs/design/done/fonts-plan.md`): code is in SF Mono by default
+  (`.AppleSystemUIFontMonospaced`), and Welcome → General → Fonts picks
+  any installed monospaced font (`look::monospaced_families`, which
+  measures letters through CoreText) and sets the code and interface sizes
+  (`look/typography.rs`, saved as `fonts` in `gpui.json`). The size
+  constants became functions (`look::small()`, `look::row()`...); a change
+  rebuilds Kit's themes and the terminal observes `look::Typography`. A
+  saved font no longer installed falls back to SF Mono and General says so.
+  Maple Mono is no longer bundled. Not yet looked at on screen: the Mac's
+  screen was locked; the app started without a crash with SF Mono, Menlo
+  at 20/18, and a missing font at 10/12.
 
 
 ## Running it

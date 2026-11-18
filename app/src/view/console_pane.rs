@@ -182,7 +182,7 @@ impl Workbench {
                     .when_some(source, |d, s| {
                         d.child(
                             div()
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.faint)
                                 .child(s),
                         )
@@ -191,9 +191,9 @@ impl Workbench {
                         h_flex()
                             .items_start()
                             .gap_1()
-                            .font_family(look::MONO)
-                            .text_size(px(look::CODE))
-                            .line_height(px(LINE_HEIGHT))
+                            .font_family(look::mono())
+                            .text_size(px(look::code()))
+                            .line_height(px(line_height()))
                             .child(div().text_color(p.accent).child("›"))
                             .child(div().flex_1().min_w_0().text_color(p.muted).child(
                                 run.highlighted_code(
@@ -235,8 +235,8 @@ impl Workbench {
                         (Some(question), false) => d.child(
                             h_flex()
                                 .gap_2()
-                                .font_family(look::MONO)
-                                .text_size(px(look::CODE))
+                                .font_family(look::mono())
+                                .text_size(px(look::code()))
                                 .child(
                                     div()
                                         .text_color(p.accent)
@@ -266,7 +266,7 @@ impl Workbench {
             .child(
                 look::PaneScroll::new(
                     "console-scroll",
-                    look::STRIP,
+                    look::strip(),
                     6.,
                     div()
                         .id("console")
@@ -290,10 +290,10 @@ impl Workbench {
                         .px(px(14.))
                         .pt_1()
                         .gap_2()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .child(
                             div()
-                                .font_family(look::MONO)
+                                .font_family(look::mono())
                                 .text_color(p.accent)
                                 .child(question.prompt.trim_end().to_string()),
                         )
@@ -305,7 +305,7 @@ impl Workbench {
                 )
             })
             .child({
-                let own = lines as f32 * LINE_HEIGHT + EDITOR_PADDING;
+                let own = lines as f32 * line_height() + EDITOR_PADDING;
                 let height = self.console_input_height.map_or(own, |h| h.max(own));
                 div()
                     .id("console-input")
@@ -337,7 +337,7 @@ impl Workbench {
                             if event.drag(cx).0 != "console-input-grip" {
                                 return;
                             }
-                            let least = LINE_HEIGHT + EDITOR_PADDING;
+                            let least = line_height() + EDITOR_PADDING;
                             let h = look::resized_input(
                                 event.bounds.bottom(),
                                 event.event.position.y,
@@ -360,14 +360,14 @@ impl Workbench {
                         Some(question) if question.password => d.child(
                             Input::new(&self.console_password)
                                 .appearance(false)
-                                .h(px(LINE_HEIGHT + EDITOR_PADDING)),
+                                .h(px(line_height() + EDITOR_PADDING)),
                         ),
                         _ => d.child(
                             div().overflow_hidden().child(
                                 Editor::new(&self.console_input)
                                     .bordered(false)
                                     .appearance(false)
-                                    .line_height(px(LINE_HEIGHT))
+                                    .line_height(px(line_height()))
                                     .h(px(height)),
                             ),
                         ),

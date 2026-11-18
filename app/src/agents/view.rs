@@ -103,11 +103,11 @@ impl Render for Agents {
                         .py(px(look::GAP_6))
                         .rounded(px(look::RADIUS))
                         .bg(p.err_soft)
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .child(div().flex_1().min_w_0().child(problem))
                         .child(
                             icon_button("agent-error-close", "close", &p, false)
-                                .size(px(look::CONTROL_ROW))
+                                .size(px(look::control_row()))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.problem = None;
                                     cx.notify();
@@ -194,7 +194,7 @@ impl Agents {
                 .px(px(6.))
                 .flex_shrink(1.)
                 .min_w(px(0.))
-                .text_size(px(look::TAB_TEXT))
+                .text_size(px(look::tab_text()))
                 .text_color(p.text)
                 .child(div().flex_none().child(leading))
                 .child(div().min_w_0().truncate().child(label))
@@ -332,7 +332,7 @@ impl Agents {
                 .id(id)
                 .gap(px(look::GAP_4))
                 .px(px(look::GAP_8))
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
                 .hover(move |d| d.bg(hover))
@@ -483,7 +483,7 @@ impl Agents {
                     .px(px(look::GAP_8))
                     .pt(px(look::GAP_12))
                     .pb(px(look::GAP_2))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(name)
                     .into_any_element(),
@@ -497,7 +497,7 @@ impl Agents {
         }
         look::PaneScroll::new(
             "agent-history-scroll",
-            look::STRIP,
+            look::strip(),
             0.,
             div()
             .id("agent-history")
@@ -510,7 +510,7 @@ impl Agents {
                         div()
                             .px(px(look::GAP_8))
                             .pt(px(look::GAP_12))
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.faint)
                             .child("Conversations are kept by sandhilld. Reopening one resumes the agent's own conversation."),
                     ),
@@ -568,7 +568,7 @@ impl Agents {
             .id(button_id)
             .flex_none()
             .ml_auto()
-            .size(px(look::CONTROL_ROW))
+            .size(px(look::control_row()))
             .justify_center()
             .rounded(px(look::CONTROL_RADIUS))
             .cursor_pointer()
@@ -588,7 +588,7 @@ impl Agents {
             h_flex()
                 .id(SharedString::from(format!("hist-stop-{}", t.id)))
                 .flex_none()
-                .size(px(look::CONTROL_ROW))
+                .size(px(look::control_row()))
                 .justify_center()
                 .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
@@ -617,7 +617,7 @@ impl Agents {
             .id(SharedString::from(format!("hist-{}", t.id)))
             .group(group)
             .items_start()
-            .min_h(px(look::ROW))
+            .min_h(px(look::row()))
             .gap(px(look::GAP_4))
             .px(px(look::GAP_8))
             .py(px(look::GAP_2))
@@ -638,7 +638,7 @@ impl Agents {
                     )
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(if self.waiting(t) { p.accent } else { p.faint })
                             .child(sub),
                     ),
@@ -692,7 +692,7 @@ impl Agents {
                     .border_b_1()
                     .border_color(p.line)
                     .text_color(p.muted)
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .child(icon("terminal").size(px(14.)))
                     .child(
                         div()
@@ -782,8 +782,8 @@ pub(super) fn step_card(
             .border_1()
             .border_color(p.line)
             .bg(bg)
-            .font_family(look::MONO)
-            .text_size(px(look::CODE))
+            .font_family(look::mono())
+            .text_size(px(look::code()))
             .line_height(rems(1.5))
             .text_color(color)
             .whitespace_nowrap()
@@ -819,8 +819,8 @@ pub(super) fn step_card(
                 .border_1()
                 .border_color(p.line)
                 .bg(p.chunk)
-                .font_family(look::MONO)
-                .text_size(px(look::CODE))
+                .font_family(look::mono())
+                .text_size(px(look::code()))
                 .line_height(rems(1.5))
                 .children(lines),
         );

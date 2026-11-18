@@ -264,7 +264,7 @@ impl Workbench {
                 .px(px(10.))
                 .py(px(5.))
                 .gap(px(3.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.text)
                 .border_t(px(0.5))
                 .border_color(p.glass_edge)
@@ -298,7 +298,7 @@ impl Workbench {
             .flex_none()
             .max_h(px(100.))
             .overflow_y_scroll()
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .children(paths.iter().enumerate().map(|(index, path)| {
                 let path = path.clone();
                 let label = format!("{}: {path}", output_label(&path));
@@ -311,7 +311,7 @@ impl Workbench {
                 .w_full()
                 .min_w_0()
                 .overflow_hidden()
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .tooltip({
                     let path = path.clone();
                     move |window, cx| {

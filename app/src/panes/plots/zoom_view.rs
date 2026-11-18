@@ -53,7 +53,7 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .justify_center()
-                .h(px(look::CONTROL_ROW))
+                .h(px(look::control_row()))
                 .px(px(look::GAP_8))
                 .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
@@ -81,7 +81,7 @@ impl Workbench {
             units = units.child(
                 h_flex()
                     .id(SharedString::from(format!("zoom-unit-{}", unit.label())))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::GAP_8))
                     .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
@@ -102,7 +102,7 @@ impl Workbench {
             .relative()
             .child(
                 look::bar_button("zoom-unit", zoom.unit.label(), Some("chevron.down"), &p)
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .on_prepaint(self.popup_triggers.track("zoom-unit"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(zoom) = &mut this.plot_history.zoom {
@@ -115,7 +115,7 @@ impl Workbench {
                 d.child(
                     div()
                         .absolute()
-                        .top(px(look::CONTROL_CARD + look::GAP_6))
+                        .top(px(look::control_card() + look::GAP_6))
                         .left_0()
                         .child(
                             deferred(
@@ -123,7 +123,7 @@ impl Workbench {
                                     .id("zoom-units")
                                     .occlude()
                                     .w(px(78.))
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .child(units)
                                     .on_mouse_down_out(cx.listener(
                                         |this, event: &MouseDownEvent, _, cx| {
@@ -155,14 +155,14 @@ impl Workbench {
         let beside = card_width >= px(720.);
         let heading = |text: &'static str| {
             div()
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.faint)
                 .child(text)
         };
         let switch_row = |switch: AnyElement, label: &'static str| {
             h_flex()
-                .h(px(look::CONTROL_ROW))
+                .h(px(look::control_row()))
                 .flex_none()
                 .gap(px(look::GAP_8))
                 .child(switch)
@@ -183,7 +183,7 @@ impl Workbench {
             .px(px(look::PANE_PAD_X))
             .py(px(look::PANE_PAD_Y))
             .gap(px(look::GAP_8))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(heading("FORMAT"))
             .child(
                 h_flex()
@@ -198,7 +198,7 @@ impl Workbench {
             .child(heading("SIZE"))
             .child(
                 h_flex()
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .flex_none()
                     .gap(px(look::GAP_4))
                     .child("W")
@@ -209,7 +209,7 @@ impl Workbench {
             )
             .child(
                 h_flex()
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .flex_none()
                     .gap(px(look::GAP_8))
                     .child("Resolution")
@@ -300,7 +300,7 @@ impl Workbench {
             .child(heading("SAVE TO"))
             .child(
                 h_flex()
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .flex_none()
                     .gap(px(look::GAP_8))
                     .child(
@@ -314,7 +314,7 @@ impl Workbench {
                     )
                     .child(
                         look::bar_button("zoom-folder", "Choose…", Some("folder"), &p)
-                            .h(px(look::CONTROL_CARD))
+                            .h(px(look::control_card()))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.choose_plot_folder(window, cx)
                             })),
@@ -322,7 +322,7 @@ impl Workbench {
             )
             .child(
                 h_flex()
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .flex_none()
                     .gap(px(look::GAP_8))
                     .child("Name")
@@ -349,7 +349,7 @@ impl Workbench {
             .relative()
             .left(zoom.offset.x)
             .top(zoom.offset.y)
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .map(|d| match zoom.size {
                 Some(size) => d.w(size.width).h(size.height),
@@ -487,7 +487,7 @@ impl Workbench {
                             .child(
                                 div()
                                     .id("plot-zoom-status")
-                                    .h(px(look::CONTROL_ROW))
+                                    .h(px(look::control_row()))
                                     .mb(px(look::PANE_PAD_Y))
                                     .px(px(look::PANE_PAD_X))
                                     .flex_none()
@@ -495,7 +495,7 @@ impl Workbench {
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.faint)
                                     .child(zoom.note.clone().unwrap_or_else(|| explain.clone()))
                                     .tooltip(move |window, cx| {
@@ -512,7 +512,7 @@ impl Workbench {
                     .absolute()
                     .right_0()
                     .bottom_0()
-                    .size(px(look::CONTROL_ROW))
+                    .size(px(look::control_row()))
                     .cursor(CursorStyle::ResizeUpLeftDownRight)
                     .text_color(p.muted)
                     .child("◢")

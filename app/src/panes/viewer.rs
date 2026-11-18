@@ -130,10 +130,11 @@ impl Workbench {
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;");
-        let font_size = look::CODE;
+        let font_size = look::code();
+        let family = look::mono_css();
         let html = format!(
             "<!doctype html><meta charset=\"utf-8\"><style>body{{margin:0;padding:12px 16px;\
-             font:{font_size}px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}}\
+             font:{font_size}px/1.5 {family};white-space:pre-wrap}}\
              @media (prefers-color-scheme: dark){{body{{background:#1f1f24;color:#dddddf}}}}</style>{escaped}"
         );
         self.add_extra(Extra {

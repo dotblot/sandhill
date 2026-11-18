@@ -107,10 +107,10 @@ fn html(entries: &[Entry], info: &Info) -> String {
          {STYLE}</style>\n</head>\n<body>\n<main>\n{body}\n</main>\n\
          </body>\n</html>\n",
         escape_text(&info.title),
-        look::CHROME,
-        look::TITLE,
-        look::SMALL,
-        look::DOC_CODE,
+        look::chrome(),
+        look::title(),
+        look::small(),
+        look::doc_code(),
         look::DOC_CODE_INSET,
     )
 }

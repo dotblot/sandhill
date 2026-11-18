@@ -687,6 +687,41 @@ pub fn save_appearance(theme: Option<&str>) {
     );
 }
 
+/// The code font and the two text sizes picked on General (Huan,
+/// 2026-11-18). A missing or odd value keeps its default.
+pub fn typography() -> crate::look::Typography {
+    typography_in(&read())
+}
+
+fn typography_in(all: &Value) -> crate::look::Typography {
+    let fonts = &all["fonts"];
+    let size = |key: &str| {
+        fonts[key]
+            .as_f64()
+            .map_or(crate::look::DEFAULT_SIZE, |size| size as f32)
+    };
+    crate::look::Typography {
+        code_font: fonts["code"]
+            .as_str()
+            .filter(|font| !font.is_empty())
+            .map(str::to_string),
+        code_size: size("codeSize"),
+        ui_size: size("interfaceSize"),
+        missing: None,
+    }
+}
+
+pub fn save_typography(picked: &crate::look::Typography) {
+    write(
+        "fonts",
+        json!({
+            "code": picked.code_font,
+            "codeSize": picked.code_size,
+            "interfaceSize": picked.ui_size,
+        }),
+    );
+}
+
 /// How the files pane sorts: "name", "size" or "modified".
 pub fn tree_sort() -> String {
     tree_sort_in(&read())

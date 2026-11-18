@@ -48,7 +48,7 @@ impl Render for DraggedCell {
             .bg(p.bg)
             .border_1()
             .border_color(p.accent)
-            .text_size(px(look::CHROME))
+            .text_size(px(look::chrome()))
             .child(self.label.clone())
     }
 }
@@ -491,8 +491,8 @@ impl Workbench {
                 .mt(px(3.))
                 .pl(px(14.))
                 .gap(px(10.))
-                .font_family(look::MONO)
-                .text_size(px(look::SMALL))
+                .font_family(look::mono())
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(format!("#{}", ix + 1))
                 .when_some(count, |d, n| d.child(format!("Output [{n}]")))
@@ -754,7 +754,7 @@ impl Workbench {
             .child(
                 h_flex()
                     .gap(px(10.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .when_some(caption, |d, caption| {
                         d.child(div().when(cell.is_some(), |d| d.cursor_text()).child(

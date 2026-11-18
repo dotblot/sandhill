@@ -75,7 +75,7 @@ impl Workbench {
             .px(px(look::GAP_6))
             .gap(px(look::GAP_4))
             .rounded_full()
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .text_color(p.text)
             .cursor_pointer()
             .when(self.connection_menu, |d| d.bg(hover))
@@ -234,7 +234,7 @@ impl Workbench {
                 .px(px(8.))
                 .pt(px(6.))
                 .pb(px(2.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.faint)
                 .child(text)
@@ -293,7 +293,7 @@ impl Workbench {
                             .min_w_0()
                             .truncate()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(look::TAB_TEXT))
+                            .text_size(px(look::tab_text()))
                             .child(crate::welcome::start_screen::host_label(&host)),
                     )
                     .child(
@@ -414,7 +414,7 @@ impl Workbench {
             let lines = sessions.iter().take(shown).map(|s| {
                 let files = self.used_by(&s.id).join(", ");
                 h_flex()
-                    .h(px(look::DENSE_ROW))
+                    .h(px(look::dense_row()))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_8))
                     .child(
@@ -471,7 +471,7 @@ impl Workbench {
                     run: fn(&mut Workbench, &mut Context<Workbench>)| {
             h_flex()
                 .id(id)
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .px(px(look::GAP_8))
                 .gap(px(look::GAP_4))
                 .rounded(px(look::CONTROL_RADIUS))
@@ -564,7 +564,7 @@ impl Workbench {
                 div()
                     .px(px(8.))
                     .pt(px(4.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(version),
             )
@@ -630,8 +630,8 @@ impl Workbench {
                     .p(px(look::GAP_8))
                     .bg(p.chunk)
                     .rounded(px(look::CODE_RADIUS))
-                    .font_family(look::MONO)
-                    .text_size(px(look::SMALL))
+                    .font_family(look::mono())
+                    .text_size(px(look::small()))
                     .child(text),
             )
             .child(

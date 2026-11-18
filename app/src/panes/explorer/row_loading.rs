@@ -23,8 +23,9 @@ impl Explorer {
         }
         // A reload keeps its metadata until the fresh first page arrives.
         if self.blocks.is_empty() && !self.busy {
-            let top = (-f32::from(self.scroll.0.borrow().base_handle.offset().y) / look::DENSE_ROW)
-                .max(0.) as u64;
+            let top = (-f32::from(self.scroll.0.borrow().base_handle.offset().y)
+                / look::dense_row())
+            .max(0.) as u64;
             self.load(top / BLOCK, cx);
         }
     }

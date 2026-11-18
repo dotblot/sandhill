@@ -45,7 +45,7 @@ impl Render for Dragged {
             .bg(p.bg)
             .border_1()
             .border_color(p.accent)
-            .text_size(px(look::CHROME))
+            .text_size(px(look::chrome()))
             .child(self.subject.clone())
     }
 }
@@ -314,7 +314,7 @@ impl Workbench {
                 }))
                 .child(
                     h_flex()
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .gap(px(look::GAP_8))
                         .child(
                             div()
@@ -335,8 +335,8 @@ impl Workbench {
                         .child(
                             div()
                                 .flex_none()
-                                .font_family(look::MONO)
-                                .text_size(px(look::SMALL))
+                                .font_family(look::mono())
+                                .text_size(px(look::small()))
                                 .text_color(p.faint)
                                 .child(sha.chars().take(7).collect::<String>()),
                         )
@@ -376,7 +376,7 @@ impl Workbench {
                             h_flex()
                                 .id(SharedString::from(format!("rw-squash-{sha}")))
                                 .flex_none()
-                                .h(px(look::CONTROL_ROW))
+                                .h(px(look::control_row()))
                                 .gap(px(look::GAP_4))
                                 .px(px(look::GAP_4))
                                 .rounded(px(look::CONTROL_RADIUS))
@@ -414,7 +414,7 @@ impl Workbench {
                         div()
                             .pt(px(look::GAP_4))
                             .pb(px(look::GAP_6))
-                            .font_family(look::MONO)
+                            .font_family(look::mono())
                             .child(Textarea::new(&input)),
                     )
                 })

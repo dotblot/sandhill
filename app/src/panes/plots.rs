@@ -27,7 +27,7 @@ mod zoom;
 mod zoom_view;
 
 fn plot_field(state: &Entity<InputState>) -> Input {
-    Styled::h(Input::new(state).small(), px(look::CONTROL_CARD)).rounded(px(look::CONTROL_RADIUS))
+    Styled::h(Input::new(state).small(), px(look::control_card())).rounded(px(look::CONTROL_RADIUS))
 }
 
 /// The image types shown, best first: an SVG can be saved at any size.

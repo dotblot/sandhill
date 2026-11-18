@@ -453,7 +453,7 @@ impl Render for FolderDialog {
         if let Some(naming) = &self.naming {
             rows.push(
                 h_flex()
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::GAP_8))
                     .gap(px(look::GAP_4))
                     .flex_none()
@@ -488,7 +488,7 @@ impl Render for FolderDialog {
                     let name = entry.name.clone();
                     let row = h_flex()
                         .id(("folder-dialog-entry", ix))
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .px(px(look::GAP_8))
                         .gap(px(look::GAP_4))
                         .flex_none()
@@ -552,7 +552,7 @@ impl Render for FolderDialog {
             let tip: SharedString = to.clone().into();
             h_flex()
                 .id(("folder-dialog-place", ix))
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .px(px(look::GAP_8))
                 .gap(px(look::GAP_4))
                 .rounded(px(look::CONTROL_RADIUS))
@@ -615,7 +615,7 @@ impl Render for FolderDialog {
                 trail = trail.child(
                     h_flex()
                         .id(("folder-dialog-crumb", ix))
-                        .min_h(px(look::CONTROL_ROW))
+                        .min_h(px(look::control_row()))
                         .px(px(look::GAP_4))
                         .flex_none()
                         .rounded(px(look::CONTROL_RADIUS))
@@ -647,7 +647,7 @@ impl Render for FolderDialog {
             .border_color(p.glass_edge)
             .shadow_lg()
             .text_color(p.text)
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(Self::key_down))
             .capture_action(cx.listener(Self::press_enter))
@@ -672,7 +672,7 @@ impl Render for FolderDialog {
             }))
             .child(
                 div()
-                    .text_size(px(look::TITLE))
+                    .text_size(px(look::title()))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(self.title.clone()),
             )
@@ -763,7 +763,7 @@ impl Render for FolderDialog {
                             .min_w_0()
                             .gap(px(look::GAP_4))
                             .text_color(p.muted)
-                            .font_family(look::MONO)
+                            .font_family(look::mono())
                             .when_some(target.clone(), |d, target| {
                                 let name = target.rsplit('/').next().unwrap_or("").to_string();
                                 d.child(picture(&look::folder_icon(&name)).size(px(look::ICON)))

@@ -43,7 +43,7 @@ impl Agents {
                             .when_some(view.detail.clone(), |d, detail| {
                                 d.child(
                                     div()
-                                        .text_size(px(look::SMALL))
+                                        .text_size(px(look::small()))
                                         .text_color(p.muted)
                                         .child(detail),
                                 )
@@ -52,7 +52,7 @@ impl Agents {
                     .when_some(view.view.added.filter(|n| *n > 0), |d, n| {
                         d.child(
                             div()
-                                .text_size(px(look::TINY))
+                                .text_size(px(look::tiny()))
                                 .text_color(p.ok)
                                 .child(format!("+{n}")),
                         )
@@ -112,7 +112,7 @@ impl Agents {
             return card
                 .child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child(text),
                 )
@@ -137,7 +137,7 @@ impl Agents {
                     let label_owned = label.clone();
                     v_flex()
                         .id(SharedString::from(format!("q-{}-{qi}-{oi}", ask.id)))
-                        .min_h(px(look::ROW))
+                        .min_h(px(look::row()))
                         .px(px(look::GAP_8))
                         .py(px(look::GAP_4))
                         .rounded(px(look::CONTROL_RADIUS))
@@ -156,7 +156,7 @@ impl Agents {
                         .when_some(desc.clone(), |d, desc| {
                             d.child(
                                 div()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .child(desc),
                             )
@@ -186,7 +186,7 @@ impl Agents {
                                         .px(px(look::GAP_6))
                                         .rounded(px(look::CONTROL_RADIUS))
                                         .bg(p.ink(7.))
-                                        .text_size(px(look::SMALL))
+                                        .text_size(px(look::small()))
                                         .text_color(p.muted)
                                         .child(h),
                                 )
@@ -195,7 +195,7 @@ impl Agents {
                     .when(multi, |d| {
                         d.child(
                             div()
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.faint)
                                 .child("Pick any that apply"),
                         )
@@ -336,12 +336,15 @@ impl Agents {
             );
             card = card.child(buttons);
             if !ask.remember.is_empty() && !plan {
-                card = card.child(div().text_size(px(look::SMALL)).text_color(p.faint).child(
-                    format!(
-                        "Allowing it for the chat or project also allows: {}",
-                        ask.remember.join(", ")
-                    ),
-                ));
+                card = card.child(
+                    div()
+                        .text_size(px(look::small()))
+                        .text_color(p.faint)
+                        .child(format!(
+                            "Allowing it for the chat or project also allows: {}",
+                            ask.remember.join(", ")
+                        )),
+                );
             }
         }
         card.into_any_element()

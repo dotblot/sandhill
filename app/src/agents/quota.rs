@@ -225,7 +225,7 @@ impl QuotaWindow {
         };
         h_flex()
             .w_full()
-            .min_h(px(look::DENSE_ROW))
+            .min_h(px(look::dense_row()))
             .gap(px(look::GAP_8))
             .child(div().w(px(106.)).flex_none().child(self.label.clone()))
             .child(
@@ -773,12 +773,12 @@ impl Render for QuotaMonitor {
             .id("account-quota")
             .flex_none()
             .gap(px(look::GAP_8))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .text_color(p.muted);
         let mut visible = false;
         let mut details = crate::agents::composer_view::popup(&p)
             .id("account-quota-details")
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .w(px(460.))
             // The status bar keeps its chips on one line; explanations wrap.
             .whitespace_normal()
@@ -855,7 +855,7 @@ impl Render for QuotaMonitor {
                 let mut item = h_flex()
                     .id(kind)
                     .flex_none()
-                    .h(px(look::CONTROL_ROW))
+                    .h(px(look::control_row()))
                     .pl(px(look::GAP_6))
                     .pr(px(if numbers { look::GAP_8 } else { look::GAP_6 }))
                     .gap(px(look::GAP_4))
@@ -947,7 +947,7 @@ impl Render for QuotaMonitor {
                                         "quota-refresh-{kind}"
                                     )))
                                     .small()
-                                    .size(px(look::CONTROL_ROW))
+                                    .size(px(look::control_row()))
                                     .rounded(px(look::CONTROL_RADIUS))
                                     .icon(
                                         gpui_kit::component::Icon::default()
@@ -1059,7 +1059,7 @@ impl Render for QuotaMonitor {
             strip = strip.child(
                 h_flex()
                     .id("quota-accounts")
-                    .h(px(look::CONTROL_ROW))
+                    .h(px(look::control_row()))
                     .px(px(look::GAP_8))
                     .rounded_full()
                     .bg(p.cap_bg)
@@ -1087,7 +1087,7 @@ impl Render for QuotaMonitor {
                     .id("quota-all-accounts")
                     .px(px(look::GAP_8))
                     .mt(px(look::GAP_4))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .rounded(px(look::CONTROL_RADIUS))
                     .border_t_1()
                     .border_color(p.line)
@@ -1123,7 +1123,7 @@ impl Render for QuotaMonitor {
                     div()
                         .absolute()
                         .right_0()
-                        .bottom(px(look::CONTROL_ROW + look::GAP_6))
+                        .bottom(px(look::control_row() + look::GAP_6))
                         .child(deferred(
                             anchored()
                                 .anchor(Anchor::BottomRight)

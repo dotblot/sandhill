@@ -179,7 +179,7 @@ impl ConnectorsView {
                     .child(
                         div()
                             .min_w_0()
-                            .text_size(px(look::TITLE))
+                            .text_size(px(look::title()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     ),

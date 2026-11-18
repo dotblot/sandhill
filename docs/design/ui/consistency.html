@@ -8,7 +8,7 @@
 :root {
   font: 15px/1.45 system-ui, -apple-system, sans-serif;
   color-scheme: light dark;
-  --mono: "Maple Mono NF", ui-monospace, Menlo, monospace;
+  --mono: ui-monospace, Menlo, monospace;
 }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 24px; }
@@ -106,6 +106,7 @@ button:hover, .control-hover { background: color-mix(in srgb, var(--ink) 8%, tra
       <p><code>print(total)</code> <small>15 px code</small></p>
       <p>Check <code class="code-inline snippet">total</code> before saving. <small>Inline documentation code: 1 px below its prose.</small></p>
     </div>
+    <p class="caption">Sizes shown at the default 15 px interface and code sizes. General can change both: every interface size here, and the heights of rows, tabs and buttons, move together with the interface size, so use the size functions in <code>look.rs</code>, never a number. Code is in SF Mono or the monospaced font picked on General; the interface is always in the system font.</p>
   </section>
   <section>
     <h2>Buttons</h2>

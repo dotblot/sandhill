@@ -24,7 +24,10 @@ use crate::agents::view::provider;
 use crate::agents::{Agents, KINDS, Menu, Show, kind_of, terminal_only};
 use crate::look::{self, Palette, icon, picture};
 
-const LINE: f32 = 20.;
+/// Height of one line of the message box, in the interface size.
+fn line() -> f32 {
+    look::line_height(look::chrome())
+}
 /// The message box grows to this many lines, then scrolls.
 const LINES: usize = 8;
 const MENU_WIDTH: f32 = 280.;
@@ -58,7 +61,7 @@ pub(crate) fn popup(p: &Palette) -> Div {
         .border_1()
         .border_color(p.glass_edge)
         .rounded(px(look::RADIUS))
-        .text_size(px(look::SMALL))
+        .text_size(px(look::small()))
         .text_color(p.text)
         .shadow(vec![BoxShadow {
             color: p.shadow.opacity(0.35),
@@ -74,7 +77,7 @@ fn heading(text: impl Into<SharedString>, p: &Palette) -> Div {
         .px(px(look::GAP_8))
         .pt(px(look::GAP_4))
         .pb(px(look::GAP_2))
-        .text_size(px(look::SMALL))
+        .text_size(px(look::small()))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.faint)
         .child(text.into())
@@ -150,13 +153,13 @@ impl Agents {
             .map(|(i, item)| {
                 h_flex()
                     .gap(px(look::GAP_4))
-                    .h(px(look::CONTROL_ROW))
+                    .h(px(look::control_row()))
                     .pl(px(look::GAP_6))
                     .pr(px(look::GAP_2))
                     .max_w(px(220.))
                     .rounded(px(look::CONTROL_RADIUS))
                     .bg(p.ink(6.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .child(ref_icon(item))
                     .child(div().min_w_0().overflow_hidden().whitespace_nowrap().child(
                         if composer::is_slash(item) {
@@ -169,7 +172,7 @@ impl Agents {
                         div()
                             .id(("ref-x", i))
                             .flex_none()
-                            .size(px(look::CONTROL_ROW))
+                            .size(px(look::control_row()))
                             .rounded_full()
                             .flex()
                             .items_center()
@@ -205,7 +208,7 @@ impl Agents {
                 .id(id)
                 .flex_none()
                 .gap(px(look::GAP_4))
-                .h(px(look::CONTROL_ROW))
+                .h(px(look::control_row()))
                 .px(px(look::GAP_8))
                 .rounded_full()
                 .bg(p.cap_bg)
@@ -309,7 +312,7 @@ impl Agents {
                             }
                             let current = this.composer_editor_height(cx);
                             let others = f32::from(event.bounds.size.height) - current;
-                            let least = 2. * LINE + 8.;
+                            let least = 2. * line() + 8.;
                             let box_h = look::resized_input(
                                 event.bounds.bottom(),
                                 event.event.position.y,
@@ -351,20 +354,20 @@ impl Agents {
                             .bordered(false)
                             .appearance(false)
                             .font_family(".SystemUIFont")
-                            .text_size(px(look::CHROME))
-                            .line_height(px(LINE))
+                            .text_size(px(look::chrome()))
+                            .line_height(px(line()))
                             .h(px(editor_height)),
                     )
                     .child(
                         h_flex()
                             .gap(px(look::GAP_6))
-                            .h(px(look::CONTROL_CARD))
-                            .text_size(px(look::SMALL))
+                            .h(px(look::control_card()))
+                            .text_size(px(look::small()))
                             .text_color(p.text)
                             .child(
                                 pill("agent-add")
                                     .on_prepaint(self.popup_triggers.track("agent-mention"))
-                                    .w(px(look::CONTROL_ROW))
+                                    .w(px(look::control_row()))
                                     .px(px(0.))
                                     .justify_center()
                                     .when(matches!(self.menu, Some(Menu::Mention { .. })), |d| {
@@ -416,7 +419,7 @@ impl Agents {
                                         .on_prepaint(self.popup_triggers.track("agent-context"))
                                         .flex_none()
                                         .gap(px(look::GAP_4))
-                                        .h(px(look::CONTROL_ROW))
+                                        .h(px(look::control_row()))
                                         .px(px(look::GAP_6))
                                         .rounded_full()
                                         .cursor_pointer()
@@ -456,7 +459,7 @@ impl Agents {
                                 div()
                                     .id("agent-send")
                                     .flex_none()
-                                    .size(px(look::CONTROL_CARD))
+                                    .size(px(look::control_card()))
                                     .rounded_full()
                                     .flex()
                                     .items_center()
@@ -496,7 +499,7 @@ impl Agents {
             .split('\n')
             .count()
             .clamp(2, LINES);
-        let own = lines as f32 * LINE + 8.;
+        let own = lines as f32 * line() + 8.;
         self.composer_height.map_or(own, |h| h.max(own))
     }
 
@@ -588,7 +591,7 @@ impl Agents {
                         .id(("mention", i))
                         .flex_none()
                         .gap(px(look::GAP_4))
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .px(px(look::GAP_8))
                         .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
@@ -610,8 +613,8 @@ impl Agents {
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_color(p.faint)
-                                .when(sign != '/', |d| d.font_family(look::MONO))
-                                .text_size(px(look::SMALL))
+                                .when(sign != '/', |d| d.font_family(look::mono()))
+                                .text_size(px(look::small()))
                                 .child(m.detail.clone().unwrap_or_default()),
                         )
                         .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
@@ -665,7 +668,7 @@ impl Agents {
                     .id("mention-attach")
                     .flex_none()
                     .gap(px(look::GAP_4))
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::GAP_8))
                     .rounded(px(look::CONTROL_RADIUS))
                     .cursor_pointer()
@@ -686,7 +689,7 @@ impl Agents {
                         .id("mention-slash")
                         .flex_none()
                         .gap(px(look::GAP_4))
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .px(px(look::GAP_8))
                         .rounded(px(look::CONTROL_RADIUS))
                         .cursor_pointer()
@@ -725,7 +728,7 @@ impl Agents {
             h_flex()
                 .id(SharedString::from(format!("mode-{}", mode.permission)))
                 .items_start()
-                .min_h(px(look::ROW))
+                .min_h(px(look::row()))
                 .gap(px(look::GAP_4))
                 .px(px(look::GAP_8))
                 .py(px(look::GAP_4))
@@ -869,7 +872,7 @@ impl Agents {
                 .id(SharedString::from(id))
                 .flex_none()
                 .w_full()
-                .h(px(look::CONTROL_CARD))
+                .h(px(look::control_card()))
                 .justify_center()
                 .rounded(px(look::CONTROL_RADIUS))
                 .when(on, |d| d.bg(p.hover))
@@ -976,7 +979,7 @@ impl Agents {
                         .w_full()
                         .min_w_0()
                         .gap(px(look::GAP_4))
-                        .h(px(look::ROW))
+                        .h(px(look::row()))
                         .px(px(look::GAP_8))
                         .rounded(px(look::CONTROL_RADIUS))
                         .when(on, |d| d.bg(p.hover))
@@ -1001,7 +1004,7 @@ impl Agents {
                             d.child(
                                 div()
                                     .flex_none()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.faint)
                                     .child(format!("⌥{}", i + 1)),
                             )
@@ -1010,7 +1013,7 @@ impl Agents {
                             div()
                                 .id(("star", i))
                                 .flex_none()
-                                .size(px(look::CONTROL_ROW))
+                                .size(px(look::control_row()))
                                 .rounded(px(look::CONTROL_RADIUS))
                                 .flex()
                                 .items_center()
@@ -1044,7 +1047,7 @@ impl Agents {
                     .min_w_0()
                     .px(px(look::GAP_6))
                     .py(px(look::GAP_2))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(sub),
             )

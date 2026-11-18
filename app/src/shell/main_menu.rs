@@ -174,7 +174,7 @@ impl Workbench {
                 div()
                     .px(px(8.))
                     .py(px(4.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(format!("Recent on {host}"))
                     .into_any_element(),
@@ -252,7 +252,7 @@ impl Workbench {
             div()
                 .px(px(8.))
                 .py(px(4.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child("Notebooks and Quarto")
                 .into_any_element(),

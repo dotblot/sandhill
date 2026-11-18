@@ -745,6 +745,9 @@ omp.
 - Nothing is smaller than **10px**, the smallest size macOS itself uses.
 - 13px for all UI text, in the macOS system font; 13px is the standard text size in
   macOS apps.
+- Since 2026-11-18 (`docs/decisions/look.md`): code is in SF Mono, or any
+  installed monospaced font picked on General, and Maple Mono is no longer
+  shipped; the rest of this item is the mockup's history.
 - Maple Mono NF (the Nerd Font build of Maple Mono, version 7.8) at 13px for all
   monospace text: the code editor and its outputs, Variables, the console and
   terminal, the agent's terminal, and code in Help, Git and the Agents chat. The Data Explorer is the
@@ -831,9 +834,5 @@ omp.
 ## Open questions
 - Antigravity: whether its plan usage can be shown in the status bar like
   Claude's and Codex's (headless agy doesn't report it).
-- The monospace font for the public release: Maple Mono NF (needs third-party
-  notices, and its Font Logos set has no licence), plain Maple Mono (only its
-  OFL text), or the system's SF Mono (nothing to ship, but no ligatures and no
-  Nerd Font symbols).
 - Where banked plan-usage resets come from.
 - Whether more panes should be movable by dragging.

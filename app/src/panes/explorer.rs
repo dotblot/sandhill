@@ -283,7 +283,7 @@ impl Render for ExplorerWindow {
             .flex()
             .flex_col()
             .text_color(p.text)
-            .text_size(px(look::CHROME))
+            .text_size(px(look::chrome()))
             .line_height(rems(1.25))
             .child(
                 h_flex()
@@ -427,7 +427,7 @@ impl Explorer {
             generation: 0,
             scroll: UniformListScrollHandle::new(),
             across: ScrollHandle::new(),
-            side_list: ListState::new(0, ListAlignment::Top, px(look::ROW)),
+            side_list: ListState::new(0, ListAlignment::Top, px(look::row())),
             pinned: Vec::new(),
             expanded: std::collections::HashSet::new(),
             column_menu: None,

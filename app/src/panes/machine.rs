@@ -484,23 +484,23 @@ impl Workbench {
         let p = *Palette::get(cx);
         let note = |text: &'static str| {
             h_flex()
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .px(px(look::GAP_8))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(text)
                 .into_any_element()
         };
         if !matches!(self.link, Link::Ready(_)) {
             return div()
-                .pt(px(look::STRIP + look::PANE_PAD_Y))
+                .pt(px(look::strip() + look::PANE_PAD_Y))
                 .px(px(look::GAP_4))
                 .child(note("Not connected"))
                 .into_any_element();
         }
         if self.project.is_none() {
             return div()
-                .pt(px(look::STRIP + look::PANE_PAD_Y))
+                .pt(px(look::strip() + look::PANE_PAD_Y))
                 .px(px(look::GAP_4))
                 .child(note("Open a project to see its kernels"))
                 .into_any_element();
@@ -526,7 +526,7 @@ impl Workbench {
                 div()
                     .px(px(look::GAP_8))
                     .py(px(look::GAP_4))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.warn)
                     .child(MEMORY_WARNING),
             );
@@ -541,10 +541,10 @@ impl Workbench {
             let lang = look::language_icon(&s.language);
             let row = h_flex()
                 .id(("krow", ix))
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .px(px(look::GAP_8))
                 .gap(px(look::GAP_4))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .rounded(px(look::CONTROL_RADIUS))
                 .child(
                     div()
@@ -655,10 +655,10 @@ impl Workbench {
             let n = unused.len();
             let row = h_flex()
                 .id("kunused")
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .px(px(look::GAP_8))
                 .gap(px(look::GAP_4))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.muted)
                 .rounded(px(look::CONTROL_RADIUS))
                 .child(icon("delete").size(px(look::ICON)));
@@ -696,7 +696,7 @@ impl Workbench {
         }
         look::PaneScroll::new(
             "kernels-scroll",
-            look::STRIP,
+            look::strip(),
             0.,
             div().id("kernels").child(list.px(px(look::GAP_4))),
         )
@@ -829,7 +829,7 @@ impl Workbench {
                     .gap(px(8.))
                     .child(
                         div()
-                            .text_size(px(look::TITLE))
+                            .text_size(px(look::title()))
                             .font_weight(FontWeight::BOLD)
                             .child(
                                 r.percent

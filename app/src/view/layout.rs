@@ -145,7 +145,7 @@ impl Workbench {
                         .child(
                             div()
                                 .flex_1()
-                                .min_h(px(look::STRIP))
+                                .min_h(px(look::strip()))
                                 .flex()
                                 .child(self.render_notebook(window, cx)),
                         )

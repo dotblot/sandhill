@@ -31,9 +31,11 @@ mod layout;
 mod side;
 mod top_bar;
 
-/// Height of one line of code (15px Maple Mono at 1.3), and an editor's
-/// padding.
-const LINE_HEIGHT: f32 = 20.;
+/// Height of one line of code.
+fn line_height() -> f32 {
+    look::line_height(look::code())
+}
+/// An editor's padding.
 const EDITOR_PADDING: f32 = 20.;
 const PLOT_MAX_WIDTH: f32 = 720.;
 /// How tall a cell's outputs grow before they scroll.
@@ -82,7 +84,7 @@ impl Render for Workbench {
             .flex_col()
             .size_full()
             .text_color(p.text)
-            .text_size(px(look::CHROME))
+            .text_size(px(look::chrome()))
             .line_height(rems(1.25))
             // Esc closes the large plot and the log, before a field in
             // them takes it.
@@ -360,7 +362,7 @@ impl Workbench {
             .gap(px(8.))
             .whitespace_nowrap()
             .overflow_hidden()
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .text_color(p.text)
             .child(self.render_device_capsule(wide, cx))
             .children(self.render_restricted_chip(cx))

@@ -2,7 +2,9 @@
 
 use super::*;
 
-const VARIABLES_FILTER_HEIGHT: f32 = look::CONTROL_CARD + 2. * look::PANE_PAD_Y;
+fn variables_filter_height() -> f32 {
+    look::control_card() + 2. * look::PANE_PAD_Y
+}
 
 /// The variables whose names hold what was typed in the filter box,
 /// ignoring case (all of them when nothing was typed).
@@ -43,7 +45,7 @@ impl Workbench {
                             .id(("file", ix))
                             .relative()
                             .w_full()
-                            .h(px(look::ROW))
+                            .h(px(look::row()))
                             .pl(px(indent))
                             .pr(px(look::GAP_8))
                             .gap(px(look::GAP_4))
@@ -99,7 +101,7 @@ impl Workbench {
                             shown.then(|| {
                                 div()
                                     .flex_none()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.faint)
                                     .child(crate::panes::machine::format_bytes(row.size))
                             })
@@ -195,7 +197,7 @@ impl Workbench {
         )
         .track_scroll(&self.render_output_file_scroll())
         // UniformList positions and reveals rows relative to its padded bounds.
-        .pt(px(look::STRIP + look::PANE_PAD_Y))
+        .pt(px(look::strip() + look::PANE_PAD_Y))
         .size_full();
         v_flex()
             .id("files-pane")
@@ -204,7 +206,7 @@ impl Workbench {
             .when(self.files_ui.error.is_some(), |d| {
                 d.child(
                     div()
-                        .pt(px(look::STRIP + look::PANE_PAD_Y))
+                        .pt(px(look::strip() + look::PANE_PAD_Y))
                         .children(self.render_name_error(cx)),
                 )
             })
@@ -218,7 +220,7 @@ impl Workbench {
             )
             .child(look::inset_scrollbar(
                 &self.render_output_file_scroll(),
-                look::STRIP,
+                look::strip(),
                 cx,
             ))
             .children(self.render_new_menu(cx))
@@ -299,7 +301,7 @@ impl Workbench {
             .child(
                 h_flex()
                     .flex_none()
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .px(px(look::PANE_PAD_X))
                     .gap(px(look::GAP_4))
                     .border_b(px(0.5))
@@ -323,7 +325,7 @@ impl Workbench {
                     )
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .child(format!("{} of {count}", ix + 1)),
                     )
                     .child(
@@ -403,9 +405,9 @@ impl Workbench {
             .flex_col()
             .child(look::PaneScroll::new(
                 "variables-scroll",
-                look::STRIP
+                look::strip()
                     + if session.is_some() {
-                        VARIABLES_FILTER_HEIGHT
+                        variables_filter_height()
                     } else {
                         0.
                     },
@@ -422,7 +424,7 @@ impl Workbench {
             .when(session.is_some(), |d| {
                 d.child(
                     h_flex()
-                        .h(px(VARIABLES_FILTER_HEIGHT))
+                        .h(px(variables_filter_height()))
                         .gap(px(look::GAP_8))
                         .px(px(look::PANE_PAD_X))
                         .child(
@@ -442,7 +444,7 @@ impl Workbench {
                                 }),
                             ),
                         )
-                        .map(|row| look::floating_header(&p, look::STRIP, false, row)),
+                        .map(|row| look::floating_header(&p, look::strip(), false, row)),
                 )
             })
             .into_any_element()
@@ -470,7 +472,7 @@ impl Workbench {
                     .px(px(look::GAP_8))
                     .pl(px(look::GAP_8 + look::ICON * parent.len() as f32))
                     .gap(px(look::GAP_4))
-                    .h(px(look::DENSE_ROW))
+                    .h(px(look::dense_row()))
                     .rounded(px(look::CONTROL_RADIUS))
                     .whitespace_nowrap()
                     .overflow_hidden()

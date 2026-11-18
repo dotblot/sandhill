@@ -649,7 +649,7 @@ impl AccountManager {
             .border_color(p.glass_edge)
             .shadow_lg()
             .text_color(p.text)
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -897,7 +897,7 @@ impl AccountManager {
         let id = kind.kind;
         let head = h_flex()
             .w_full()
-            .min_h(px(look::ROW))
+            .min_h(px(look::row()))
             .gap(px(look::GAP_12))
             .px(px(look::PANE_PAD_X))
             .py(px(look::PANE_PAD_Y))
@@ -973,7 +973,7 @@ impl AccountManager {
             rows.push(
                 h_flex()
                     .id(SharedString::from(format!("account-add-{id}")))
-                    .min_h(px(look::ROW))
+                    .min_h(px(look::row()))
                     .pl(px(INDENT))
                     .pr(px(look::PANE_PAD_X))
                     .gap(px(look::GAP_4))
@@ -1005,7 +1005,7 @@ impl AccountManager {
             let remove = account.clone();
             return h_flex()
                 .w_full()
-                .min_h(px(look::ROW))
+                .min_h(px(look::row()))
                 .gap(px(look::GAP_8))
                 .pl(px(INDENT))
                 .pr(px(look::PANE_PAD_X))
@@ -1052,7 +1052,7 @@ impl AccountManager {
         let menu_id = account.id.clone();
         h_flex()
             .w_full()
-            .min_h(px(look::ROW))
+            .min_h(px(look::row()))
             .gap(px(look::GAP_8))
             .pl(px(INDENT))
             .pr(px(look::PANE_PAD_X))
@@ -1073,7 +1073,7 @@ impl AccountManager {
                                         .rounded_full()
                                         .bg(p.accent_soft)
                                         .text_color(p.accent)
-                                        .text_size(px(look::SMALL))
+                                        .text_size(px(look::small()))
                                         .child("Default for new chats"),
                                 )
                             }),
@@ -1146,7 +1146,7 @@ impl AccountManager {
         let item = |id: &'static str, label: &'static str| {
             h_flex()
                 .id(id)
-                .h(px(look::ROW))
+                .h(px(look::row()))
                 .px(px(look::GAP_8))
                 .rounded(px(look::CONTROL_RADIUS))
                 .cursor_pointer()
@@ -1194,7 +1194,7 @@ impl AccountManager {
         div()
             .absolute()
             .right_0()
-            .top(px(look::CONTROL_ROW + look::GAP_2))
+            .top(px(look::control_row() + look::GAP_2))
             .child(
                 deferred(
                     anchored()

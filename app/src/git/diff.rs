@@ -320,20 +320,20 @@ impl Workbench {
                     .min_w(px(40.))
                     .overflow_hidden()
                     .text_ellipsis()
-                    .font_family(look::MONO)
-                    .text_size(px(look::SMALL))
+                    .font_family(look::mono())
+                    .text_size(px(look::small()))
                     .child(tab.file.clone()),
             )
             .child(
                 div()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(where_),
             )
             .when(added > 0, |d| {
                 d.child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.ok)
                         .child(format!("+{added}")),
                 )
@@ -341,7 +341,7 @@ impl Workbench {
             .when(removed > 0, |d| {
                 d.child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.err)
                         .child(format!("−{removed}")),
                 )
@@ -352,7 +352,7 @@ impl Workbench {
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child("Click line numbers to pick lines"),
                 )
@@ -477,12 +477,12 @@ impl Workbench {
                     .px(px(10.))
                     .gap(px(8.))
                     .bg(p.chunk)
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .child(div().font_weight(FontWeight::MEDIUM).child(lines))
                     .child(
                         div()
-                            .font_family(look::MONO)
+                            .font_family(look::mono())
                             .text_color(p.faint)
                             .child(context),
                     );
@@ -552,8 +552,8 @@ impl Workbench {
             body.push(
                 h_flex()
                     .min_h(px(19.))
-                    .font_family(look::MONO)
-                    .text_size(px(look::CODE))
+                    .font_family(look::mono())
+                    .text_size(px(look::code()))
                     .when_some(bg, |d, bg| d.bg(bg))
                     .child(numbers)
                     .child(div().w(px(16.)).flex_none().text_color(p.faint).child(mark))

@@ -33,7 +33,7 @@ impl Agents {
                 .is_some_and(crate::agents::account_at_limit)
                 || (!self.working(t) && chat::latest_usage_limit(&chat));
             if limited {
-                let mut alternatives = v_flex().gap(px(look::GAP_8)).text_size(px(look::SMALL));
+                let mut alternatives = v_flex().gap(px(look::GAP_8)).text_size(px(look::small()));
                 for account in self.accounts.iter().filter(|account| {
                     account.kind == t.kind
                         && account.id != account_id
@@ -67,7 +67,7 @@ impl Agents {
                     .items_center()
                     .gap(px(look::GAP_8))
                     .pt(px(look::GAP_6))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(if t.exit.as_ref().is_some_and(|e| e.idle) {
                         format!("{agent} stopped after 30 minutes idle. Send a message to pick this conversation up again.")
@@ -87,7 +87,7 @@ impl Agents {
         }
         look::PaneScroll::new(
             "chat-scroll",
-            look::STRIP,
+            look::strip(),
             0.,
             div().id("chat").child(
                 v_flex()
@@ -139,7 +139,7 @@ impl Agents {
                             )
                             .child(
                                 div()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.muted)
                                     .child(format!(
                                         "Claude Code asks once for each folder before it reads, edits or runs files in it: {folder}"
@@ -194,7 +194,7 @@ impl Agents {
                     .when(!refs.is_empty(), |d| {
                         d.child(
                             div()
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.faint)
                                 .child(refs.join(" · ")),
                         )
@@ -224,7 +224,7 @@ impl Agents {
                             .style(
                                 TextViewStyle::default()
                                     .paragraph_gap(rems(0.4))
-                                    .heading_font_size(|_, _| px(look::CHROME)),
+                                    .heading_font_size(|_, _| px(look::chrome())),
                             ),
                     )
                     .into_any_element()
@@ -247,7 +247,7 @@ impl Agents {
                 }
                 let line = h_flex()
                     .gap(px(6.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.faint)
                     .child(icon("check").size(px(12.)))
                     .child(parts.join(" · "));
@@ -266,7 +266,7 @@ impl Agents {
                         .border(px(0.5))
                         .border_color(p.accent.opacity(0.4))
                         .bg(p.accent_soft)
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.accent)
                         .cursor_pointer()
                         .hover(move |d| d.border_color(p.accent))
@@ -287,14 +287,14 @@ impl Agents {
             }
             Item::Note { text, .. } => div()
                 .self_center()
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(text.clone())
                 .into_any_element(),
             Item::Account { name, .. } => h_flex()
                 .gap(px(8.))
                 .my(px(6.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.muted)
                 .child(div().flex_1().h(px(1.)).bg(p.line))
                 .child(format!("Switched to {name}"))
@@ -312,7 +312,7 @@ impl Agents {
                 .into_any_element(),
             Item::Thinking { .. } => h_flex()
                 .gap(px(7.))
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(icon("think").size(px(14.)))
                 .child(format!("{agent} is working…"))
@@ -429,11 +429,11 @@ impl Agents {
         let row = h_flex()
             .id(SharedString::from(format!("step-{key}")))
             .gap(px(look::GAP_4))
-            .min_h(px(look::ROW))
+            .min_h(px(look::row()))
             .px(px(look::GAP_6))
             .rounded(px(look::CONTROL_RADIUS))
             .cursor_pointer()
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .hover(move |d| d.bg(hover))
             .child(icon(icon_name).size(px(look::ICON)).text_color(color))
             .child(
@@ -446,7 +446,7 @@ impl Agents {
                     .child(
                         div()
                             .flex_none()
-                            .font_family(look::MONO)
+                            .font_family(look::mono())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(view.name.clone()),
                     )
@@ -511,7 +511,7 @@ impl Agents {
                             d.child(
                                 div()
                                     .id(SharedString::from(format!("open-{key}")))
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(p.accent)
                                     .cursor_pointer()
                                     .hover(|d| d.underline())

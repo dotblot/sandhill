@@ -70,7 +70,7 @@ impl Workbench {
                     .id("notebook-ai-menu")
                     .occlude()
                     .w(px(232.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                         if event.keystroke.key == "escape" {
                             this.notebook_ai_menu = false;

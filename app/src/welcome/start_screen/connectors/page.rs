@@ -82,9 +82,9 @@ impl AppWindow {
         });
         let mut page = v_flex().w_full().gap(px(look::GAP_12))
             .child(h_flex().w_full().gap(px(look::GAP_8))
-                .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Connectors"))
+                .child(div().flex_1().text_size(px(look::welcome_title())).font_weight(FontWeight::BOLD).child("Connectors"))
                 .children(add))
-            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child("Connectors let agents look things up in databases and services. They are kept on each device and shared by every agent."))
+            .child(div().text_size(px(look::tab_text())).text_color(p.muted).child("Connectors let agents look things up in databases and services. They are kept on each device and shared by every agent."))
             .child(h_flex().child(tabs));
         if let Some((_, _, view)) = &self.start.connectors {
             page = page.child(view.clone());
@@ -135,7 +135,7 @@ impl Render for ConnectorsView {
         let mut page = v_flex()
             .w_full()
             .gap(px(look::GAP_12))
-            .text_size(px(look::SMALL));
+            .text_size(px(look::small()));
         if let Some(error) = &self.problem {
             return page
                 .child(div().text_color(p.err).child(error.clone()))
@@ -211,7 +211,7 @@ impl Render for ConnectorsView {
             page = page.child(
                 h_flex()
                     .w_full()
-                    .min_h(px(look::ROW))
+                    .min_h(px(look::row()))
                     .gap(px(look::GAP_12))
                     .py(px(look::GAP_6))
                     .child(detail(
@@ -325,7 +325,7 @@ impl Render for ConnectorsView {
             page = page.child(
                 h_flex()
                     .w_full()
-                    .min_h(px(look::ROW))
+                    .min_h(px(look::row()))
                     .gap(px(look::GAP_12))
                     .py(px(look::GAP_6))
                     .child(detail(

@@ -75,10 +75,10 @@ impl AppWindow {
                 h_flex()
                     .w_full()
                     .gap(px(look::GAP_8))
-                    .child(div().flex_1().text_size(px(look::WELCOME_TITLE)).font_weight(FontWeight::BOLD).child("Agents"))
+                    .child(div().flex_1().text_size(px(look::welcome_title())).font_weight(FontWeight::BOLD).child("Agents"))
                     .children(refresh),
             )
-            .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
+            .child(div().text_size(px(look::tab_text())).text_color(p.muted).child(
                 "Choose which agents Sandhill offers, and the accounts they run on. Switching accounts in a conversation is always your choice.",
             ))
             .child(h_flex().child(devices));
@@ -93,7 +93,7 @@ impl AppWindow {
             page = page
                 .child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(message),
                 )
@@ -186,7 +186,7 @@ impl AppWindow {
                                 .id(("trusted-row", row))
                                 .w_full()
                                 .min_w_0()
-                                .min_h(px(look::ROW))
+                                .min_h(px(look::row()))
                                 .px(px(look::PANE_PAD_X))
                                 .py(px(look::GAP_2))
                                 .gap(px(look::GAP_4))
@@ -216,8 +216,8 @@ impl AppWindow {
                                         .overflow_hidden()
                                         .text_ellipsis()
                                         .whitespace_nowrap()
-                                        .font_family(look::MONO)
-                                        .text_size(px(look::SMALL))
+                                        .font_family(look::mono())
+                                        .text_size(px(look::small()))
                                         .when(!folder.exists, |d| d.text_color(p.muted))
                                         .child(folder.path.clone()),
                                 )
@@ -225,7 +225,7 @@ impl AppWindow {
                                     d.child(
                                         div()
                                             .flex_none()
-                                            .text_size(px(look::SMALL))
+                                            .text_size(px(look::small()))
                                             .text_color(p.warn)
                                             .child("Folder not found"),
                                     )
@@ -263,11 +263,11 @@ impl AppWindow {
                     .gap(px(look::GAP_6))
                     .child(
                         div()
-                            .text_size(px(look::WELCOME_TITLE))
+                            .text_size(px(look::welcome_title()))
                             .font_weight(FontWeight::BOLD)
                             .child("Trusted Folders"),
                     )
-                    .child(div().text_size(px(look::TAB_TEXT)).text_color(p.muted).child(
+                    .child(div().text_size(px(look::tab_text())).text_color(p.muted).child(
                         "R, Python, the Terminal, jobs, Git and AI agents start only in these folders and the folders inside them. A folder you remove is asked about the next time you open it.",
                     )),
             )
@@ -288,7 +288,7 @@ impl AppWindow {
             .children(
                 notes
                     .into_iter()
-                    .map(|text| div().text_size(px(look::SMALL)).text_color(p.muted).child(text)),
+                    .map(|text| div().text_size(px(look::small())).text_color(p.muted).child(text)),
             )
             .into_any_element()
     }

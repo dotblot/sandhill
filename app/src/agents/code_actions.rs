@@ -172,7 +172,7 @@ fn disabled_row(label: &'static str, why: &'static str, p: &Palette) -> AnyEleme
         .child(div().text_color(p.faint).child(label))
         .child(
             div()
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.faint)
                 .child(why),
         )

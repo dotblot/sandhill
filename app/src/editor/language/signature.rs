@@ -607,12 +607,12 @@ impl Element for AboveCaret {
         let menu_open = editor.completion_menu_state().open;
         let viewport = window.viewport_size();
         let mut style = window.text_style();
-        style.font_family = look::MONO.into();
+        style.font_family = look::mono();
         let text_width = window
             .text_system()
             .shape_line(
                 self.label.clone(),
-                px(look::SMALL),
+                px(look::small()),
                 &[style.to_run(self.label.len())],
                 None,
             )
@@ -627,8 +627,8 @@ impl Element for AboveCaret {
             .w(width)
             .px(px(8.))
             .py(px(4.))
-            .font_family(look::MONO)
-            .text_size(px(look::SMALL))
+            .font_family(look::mono())
+            .text_size(px(look::small()))
             .child(StyledText::new(self.label.clone()).with_highlights(self.active.clone()))
             .into_any_element();
         let size = content.layout_as_root(

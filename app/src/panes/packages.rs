@@ -27,7 +27,9 @@ const REFRESH: Duration = Duration::from_millis(250);
 /// What the daemon says when the session runs other code.
 const BUSY: &str = "the session is busy running code";
 
-const FILTER_HEIGHT: f32 = look::CONTROL_CARD + 2. * look::PANE_PAD_Y;
+fn filter_height() -> f32 {
+    look::control_card() + 2. * look::PANE_PAD_Y
+}
 
 pub(crate) struct Packages {
     filter: Entity<InputState>,
@@ -592,7 +594,7 @@ impl Workbench {
         });
         let filter_bar = h_flex()
             .flex_none()
-            .h(px(FILTER_HEIGHT))
+            .h(px(filter_height()))
             .gap(px(look::GAP_8))
             .px(px(look::PANE_PAD_X))
             .border_b(px(0.5))
@@ -607,7 +609,7 @@ impl Workbench {
             .when_some(count, |d, c| {
                 d.child(
                     div()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child(c),
                 )
@@ -667,7 +669,7 @@ impl Workbench {
                             .px(px(look::PANE_PAD_X))
                             .pt(px(look::PANE_PAD_Y))
                             .pb(px(look::GAP_2))
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.faint)
                             .child(title)
@@ -688,7 +690,7 @@ impl Workbench {
             .size_full()
             .child(look::PaneScroll::new(
                 "packages-scroll",
-                look::STRIP + FILTER_HEIGHT,
+                look::strip() + filter_height(),
                 0.,
                 div()
                     .id("packages")
@@ -696,7 +698,7 @@ impl Workbench {
                     .children(top)
                     .children(body),
             ))
-            .child(look::floating_header(&p, look::STRIP, false, filter_bar))
+            .child(look::floating_header(&p, look::strip(), false, filter_bar))
             .into_any_element()
     }
 
@@ -737,7 +739,7 @@ impl Workbench {
             .mx(px(look::GAP_4))
             .px(px(look::GAP_8))
             .gap(px(look::GAP_4))
-            .h(px(look::ROW))
+            .h(px(look::row()))
             .rounded(px(look::CONTROL_RADIUS))
             .whitespace_nowrap()
             .overflow_hidden()
@@ -780,10 +782,10 @@ impl Workbench {
                     h_flex()
                         .id(SharedString::from(format!("pkg-update-{}", pkg.name)))
                         .flex_none()
-                        .h(px(look::CONTROL_ROW))
+                        .h(px(look::control_row()))
                         .px(px(look::GAP_6))
                         .rounded(px(look::CONTROL_RADIUS))
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.accent)
                         .hover(|d| d.bg(p.ink(look::BUTTON_HOVER)))
                         .child(format!("update {}", u.available))
@@ -795,7 +797,7 @@ impl Workbench {
                 None => d.child(
                     div()
                         .flex_none()
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.faint)
                         .child(status),
                 ),
@@ -880,7 +882,7 @@ impl Workbench {
             )
             .child(
                 div()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(if self.packages.invalid {
                         p.err
                     } else {
@@ -952,7 +954,7 @@ impl Workbench {
                 .py(px(look::PANE_PAD_Y))
                 .border_b(px(0.5))
                 .border_color(p.glass_edge)
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .child(
                     div()
                         .flex_1()

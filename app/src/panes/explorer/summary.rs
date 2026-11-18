@@ -178,7 +178,7 @@ impl Explorer {
                 let row = h_flex()
                     .id(("de-col", i))
                     .flex_none()
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .pl(px(look::GAP_2))
                     .pr(px(look::GAP_6))
                     .gap(px(look::GAP_4))
@@ -190,7 +190,7 @@ impl Explorer {
                     .child(
                         div()
                             .id(("de-fold", i))
-                            .size(px(look::CONTROL_ROW))
+                            .size(px(look::control_row()))
                             .flex_none()
                             .flex()
                             .items_center()
@@ -238,7 +238,7 @@ impl Explorer {
                                     .justify_center()
                                     .rounded(px(look::CONTROL_RADIUS))
                                     .bg(tint.map_or(p.ink(8.), |t| p.ansi[t].opacity(0.2)))
-                                    .text_size(px(look::TINY))
+                                    .text_size(px(look::tiny()))
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(badge)
                                     .tooltip(move |w, cx| {
@@ -268,7 +268,7 @@ impl Explorer {
                                     .w(px(MISSING_WIDTH))
                                     .flex_none()
                                     .text_right()
-                                    .text_size(px(look::SMALL))
+                                    .text_size(px(look::small()))
                                     .text_color(if missing.unwrap_or(0) > 0 {
                                         p.muted
                                     } else {
@@ -316,12 +316,12 @@ impl Explorer {
             .child(
                 h_flex()
                     .flex_none()
-                    .h(px(look::ROW))
+                    .h(px(look::row()))
                     .pl(px(look::GAP_6))
                     .gap(px(look::GAP_8))
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.faint)
                             .child("COLUMNS"),
@@ -329,7 +329,7 @@ impl Explorer {
                     .child(div().flex_1())
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(format!("{shown} of {total}")),
                     )
@@ -487,7 +487,7 @@ impl Explorer {
                     body.push(
                         h_flex()
                             .id(("de-val", n))
-                            .h(px(look::DENSE_ROW))
+                            .h(px(look::dense_row()))
                             .gap(px(look::GAP_6))
                             .rounded(px(look::CODE_RADIUS))
                             .cursor_pointer()
@@ -574,11 +574,11 @@ impl Explorer {
         div()
             .id(("de-stats", ix as usize))
             .flex_none()
-            .ml(px(look::GAP_2 + look::CONTROL_ROW + look::GAP_4))
+            .ml(px(look::GAP_2 + look::control_row() + look::GAP_4))
             .mr(px(look::GAP_8))
             .mt(px(look::GAP_2))
             .mb(px(look::GAP_8))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(v_flex().gap(px(look::GAP_4)).children(body))
             .into_any_element()
     }
@@ -597,7 +597,7 @@ impl Explorer {
         let remove = move |id: ElementId| {
             div()
                 .id(id)
-                .size(px(look::CONTROL_ROW))
+                .size(px(look::control_row()))
                 .flex()
                 .flex_none()
                 .items_center()
@@ -612,7 +612,7 @@ impl Explorer {
             h_flex()
                 .flex_none()
                 .max_w(px(360.))
-                .h(px(look::CONTROL_CARD))
+                .h(px(look::control_card()))
                 .pl(px(look::GAP_8))
                 .pr(px(look::GAP_4))
                 .gap(px(look::GAP_4))
@@ -765,7 +765,7 @@ pub(super) fn missing_share(missing: u64, rows: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{SPARK_HEIGHT, SPARK_WIDTH, column_list_item, missing_share};
-    use crate::look::DENSE_ROW;
+    use crate::look::dense_row;
     use gpui_kit::component::h_flex;
     use gpui_kit::{
         AppContext, Bounds, Context, IntoElement, ListAlignment, ListState, ParentElement, Pixels,
@@ -799,7 +799,7 @@ mod tests {
                         column_list_item()
                             .child(
                                 h_flex()
-                                    .h(px(DENSE_ROW))
+                                    .h(px(dense_row()))
                                     .child(
                                         div()
                                             .flex_1()

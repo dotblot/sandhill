@@ -692,11 +692,11 @@ in the app icon.
 One corner radius, 12px, for every rounded thing. All text is 13px, the macOS
 standard size, except the kernel rows, resource rows, Git pane and pop-ups at
 11px, and nothing is below 10px. Chrome is in the system font. Code, outputs,
-Variables, the console and the agent terminals are in Maple Mono NF, the Nerd
-Font build of Maple Mono, bundled with the app (OFL) so every Mac shows the
-same font and shell prompts can show their icons; the Data Explorer uses the
-system font. Code ligatures are on, so `<-` shows as an arrow while the file
-keeps what was typed. Plots stay white in dark mode. The panes themselves
+Variables, the console and the agent terminals are in SF Mono, the Mac's own
+code font, or any installed monospaced font picked on Welcome → General, which
+also sets the code size and the interface size (2026-11-18; until then Maple
+Mono NF was bundled). The Data Explorer uses the system font. Plots stay white
+in dark mode. The panes themselves
 don't blur: behind them is already the window's blur, so a second one would
 change nothing you can see and cost a window-sized compositing layer per
 pane. Styles are in `app/src/look.rs`, which also draws the icons from

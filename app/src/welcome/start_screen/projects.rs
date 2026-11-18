@@ -201,7 +201,7 @@ impl AppWindow {
             .track_focus(&self.start.dialog_focus)
             .occlude()
             .min_w(px(210.))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .child(
                 item(
                     "project-menu-save",
@@ -411,7 +411,7 @@ impl AppWindow {
     ) -> Stateful<Div> {
         div()
             .id(id)
-            .size(px(look::CONTROL_ROW))
+            .size(px(look::control_row()))
             .flex_none()
             .flex()
             .items_center()
@@ -576,13 +576,13 @@ impl AppWindow {
                 .gap(px(look::GAP_6))
                 .child(
                     div()
-                        .text_size(px(look::WELCOME_TITLE))
+                        .text_size(px(look::welcome_title()))
                         .font_weight(FontWeight::BOLD)
                         .child("Projects"),
                 )
                 .child(
                     div()
-                        .text_size(px(look::TAB_TEXT))
+                        .text_size(px(look::tab_text()))
                         .text_color(p.muted)
                         .child(if summary.is_empty() {
                             "Nothing open, running or pinned".to_string()
@@ -612,7 +612,7 @@ impl AppWindow {
                     .gap(px(look::GAP_6))
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.muted)
                             .child(title),
@@ -638,15 +638,18 @@ impl AppWindow {
             ));
         }
         if unconnected > 0 {
-            column = column.child(div().text_size(px(look::SMALL)).text_color(p.muted).child(
-                if unconnected == 1 {
-                    "Projects on 1 device that isn't connected are not shown.".to_string()
-                } else {
-                    format!(
-                        "Projects on {unconnected} devices that aren't connected are not shown."
-                    )
-                },
-            ));
+            column = column.child(
+                div()
+                    .text_size(px(look::small()))
+                    .text_color(p.muted)
+                    .child(if unconnected == 1 {
+                        "Projects on 1 device that isn't connected are not shown.".to_string()
+                    } else {
+                        format!(
+                            "Projects on {unconnected} devices that aren't connected are not shown."
+                        )
+                    }),
+            );
         }
         column.into_any_element()
     }
@@ -692,7 +695,7 @@ impl AppWindow {
             .group(group.clone())
             .w_full()
             .min_w_0()
-            .min_h(px(look::ROW))
+            .min_h(px(look::row()))
             .px(px(look::PANE_PAD_X))
             .py(px(look::PANE_PAD_Y))
             .gap(px(look::GAP_8))
@@ -713,7 +716,7 @@ impl AppWindow {
                     .gap(px(look::GAP_2))
                     .child(
                         div()
-                            .text_size(px(look::CHROME))
+                            .text_size(px(look::chrome()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .overflow_hidden()
                             .text_ellipsis()
@@ -724,7 +727,7 @@ impl AppWindow {
                         h_flex()
                             .min_w_0()
                             .gap(px(look::GAP_4))
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(
                                 icon(if entry.host == sandhill_link::LOCAL {
@@ -741,7 +744,7 @@ impl AppWindow {
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
-                                    .font_family(look::MONO)
+                                    .font_family(look::mono())
                                     .child(entry.path.clone()),
                             ),
                     ),
@@ -749,7 +752,7 @@ impl AppWindow {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .child(status),
             )
@@ -764,7 +767,7 @@ impl AppWindow {
             .child(
                 div()
                     .id(("project-entry-pin", row))
-                    .size(px(look::CONTROL_ROW))
+                    .size(px(look::control_row()))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -851,7 +854,7 @@ impl AppWindow {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_size(px(look::WELCOME_TITLE))
+                    .text_size(px(look::welcome_title()))
                     .font_weight(FontWeight::BOLD)
                     .child(host_label(&host)),
             )
@@ -870,7 +873,7 @@ impl AppWindow {
         let mut column = v_flex().w_full().flex_none().gap(px(look::GAP_12)).child(
             v_flex().gap(px(look::GAP_6)).child(title).child(
                 div()
-                    .text_size(px(look::TAB_TEXT))
+                    .text_size(px(look::tab_text()))
                     .text_color(if matches!(link, Some(MachineLink::Failed(_))) {
                         p.err
                     } else {
@@ -884,7 +887,7 @@ impl AppWindow {
             column = column.child(
                 h_flex()
                     .w_full()
-                    .min_h(px(look::ROW))
+                    .min_h(px(look::row()))
                     .gap(px(look::GAP_12))
                     .justify_between()
                     .child("Connect automatically")
@@ -993,7 +996,7 @@ impl AppWindow {
                     .when(local, |d| {
                         d.child(
                             div()
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.muted)
                                 .child("or drag folders here from Finder"),
                         )
@@ -1050,7 +1053,7 @@ impl AppWindow {
             .flex_none()
             .w_full()
             .min_w_0()
-            .min_h(px(look::ROW))
+            .min_h(px(look::row()))
             .px(px(look::PANE_PAD_X))
             .py(px(look::PANE_PAD_Y))
             .gap(px(look::GAP_8))
@@ -1089,7 +1092,7 @@ impl AppWindow {
                     .gap(px(look::GAP_2))
                     .child(
                         div()
-                            .text_size(px(look::CHROME))
+                            .text_size(px(look::chrome()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .overflow_hidden()
                             .text_ellipsis()
@@ -1100,8 +1103,8 @@ impl AppWindow {
                     .child(
                         div()
                             .text_color(p.muted)
-                            .font_family(look::MONO)
-                            .text_size(px(look::SMALL))
+                            .font_family(look::mono())
+                            .text_size(px(look::small()))
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
@@ -1111,14 +1114,14 @@ impl AppWindow {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .text_color(p.muted)
                     .child(status),
             )
             .child(
                 div()
                     .id(SharedString::from(format!("recent-pin-{row}")))
-                    .size(px(look::CONTROL_ROW))
+                    .size(px(look::control_row()))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -1155,7 +1158,7 @@ impl AppWindow {
             .child(
                 div()
                     .id(SharedString::from(format!("recent-forget-{row}")))
-                    .size(px(look::CONTROL_ROW))
+                    .size(px(look::control_row()))
                     .flex_none()
                     .flex()
                     .items_center()

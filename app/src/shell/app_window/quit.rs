@@ -474,7 +474,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
         }
         None => "Nothing is running in the background.".into(),
     };
-    let wide = |button: Button| button.w_full().h(px(look::CONTROL_CARD));
+    let wide = |button: Button| button.w_full().h(px(look::control_card()));
     let card = v_flex()
         .id("quit-card")
         .occlude()
@@ -501,7 +501,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
                 )
                 .child(
                     div()
-                        .text_size(px(look::TITLE))
+                        .text_size(px(look::title()))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(status),
                 ),
@@ -517,7 +517,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
                             div()
                                 .id("quit-details")
                                 .cursor_pointer()
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.accent)
                                 .child(if details.is_some() {
                                     "Hide details"
@@ -534,7 +534,7 @@ pub(super) fn render(shell: &AppWindow, cx: &mut Context<AppWindow>) -> Option<A
                     .when_some(details, |d, details| {
                         d.child(
                             div()
-                                .text_size(px(look::SMALL))
+                                .text_size(px(look::small()))
                                 .text_color(p.muted)
                                 .child(details),
                         )

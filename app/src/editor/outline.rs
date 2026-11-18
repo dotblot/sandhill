@@ -284,7 +284,7 @@ impl Workbench {
                                 h_flex()
                                     .id(("outline-entry", rows.len()))
                                     .w_full()
-                                    .min_h(px(look::ROW))
+                                    .min_h(px(look::row()))
                                     .pl(px(look::GAP_8 + entry.level as f32 * look::GAP_12))
                                     .pr(px(look::GAP_8))
                                     .rounded(px(look::CONTROL_RADIUS))
@@ -304,7 +304,7 @@ impl Workbench {
                     .id("outline-popup")
                     .occlude()
                     .w(px(300.))
-                    .text_size(px(look::SMALL))
+                    .text_size(px(look::small()))
                     .child(Input::new(&self.outline.filter).small())
                     .child(
                         div()

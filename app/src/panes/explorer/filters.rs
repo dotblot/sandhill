@@ -182,7 +182,7 @@ impl Explorer {
             .on_prepaint(edit.popup_triggers.track("filter-column"))
             .flex_1()
             .min_w_0()
-            .h(px(look::CONTROL_CARD))
+            .h(px(look::control_card()))
             .px(px(look::GAP_8))
             .gap(px(look::GAP_4))
             .rounded(px(look::CONTROL_RADIUS))
@@ -214,7 +214,7 @@ impl Explorer {
             div()
                 .id("df-columns")
                 .ml(px(78.))
-                .h(px((shape.columns.len() as f32 * look::ROW + 2.).min(200.)))
+                .h(px((shape.columns.len() as f32 * look::row() + 2.).min(200.)))
                 .overflow_hidden()
                 .rounded(px(look::RADIUS))
                 .border_1()
@@ -243,7 +243,7 @@ impl Explorer {
                                         let on = Some(i as u32) == picked;
                                         h_flex()
                                             .id(("df-col", i))
-                                            .h(px(look::ROW))
+                                            .h(px(look::row()))
                                             .px(px(look::GAP_8))
                                             .gap(px(look::GAP_8))
                                             .rounded(px(look::CONTROL_RADIUS))
@@ -264,7 +264,7 @@ impl Explorer {
                                             .child(
                                                 div()
                                                     .flex_none()
-                                                    .text_size(px(look::SMALL))
+                                                    .text_size(px(look::small()))
                                                     .text_color(p.faint)
                                                     .child(c.kind_detail.clone()),
                                             )
@@ -285,7 +285,7 @@ impl Explorer {
                 let name = o.op;
                 div()
                     .id(("df-op", i))
-                    .h(px(look::CONTROL_CARD))
+                    .h(px(look::control_card()))
                     .px(px(look::GAP_8))
                     .flex()
                     .items_center()
@@ -342,7 +342,7 @@ impl Explorer {
                             let value = v.clone();
                             h_flex()
                                 .id(("df-choice", i))
-                                .h(px(look::ROW))
+                                .h(px(look::row()))
                                 .gap(px(look::GAP_4))
                                 .rounded(px(look::CONTROL_RADIUS))
                                 .cursor_pointer()
@@ -418,7 +418,7 @@ impl Explorer {
             .w(px(340.))
             .px(px(look::PANE_PAD_X))
             .py(px(look::PANE_PAD_Y))
-            .text_size(px(look::SMALL))
+            .text_size(px(look::small()))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 v_flex()

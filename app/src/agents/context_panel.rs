@@ -89,7 +89,7 @@ fn last_reply(items: &[Item]) -> String {
 
 fn heading(text: &'static str, p: &Palette) -> Div {
     div()
-        .text_size(px(look::SMALL))
+        .text_size(px(look::small()))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.muted)
         .child(text)
@@ -103,7 +103,7 @@ fn rule(p: &Palette) -> Div {
 /// the number at the right.
 fn part_row(dot: Div, label: &'static str, value: u64, p: &Palette) -> Div {
     h_flex()
-        .h(px(look::DENSE_ROW))
+        .h(px(look::dense_row()))
         .gap(px(look::GAP_8))
         .child(div().w(px(8.)).flex_none().child(dot))
         .child(div().flex_1().child(label))
@@ -131,13 +131,13 @@ fn tile(value: AnyElement, label: String, p: &Palette) -> Div {
         .pb(px(look::GAP_8))
         .child(
             div()
-                .text_size(px(look::TITLE))
+                .text_size(px(look::title()))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(value),
         )
         .child(
             div()
-                .text_size(px(look::SMALL))
+                .text_size(px(look::small()))
                 .text_color(p.muted)
                 .child(label),
         )
@@ -146,7 +146,7 @@ fn tile(value: AnyElement, label: String, p: &Palette) -> Div {
 fn note(text: &'static str, p: &Palette) -> Div {
     div()
         .pt(px(look::GAP_6))
-        .text_size(px(look::SMALL))
+        .text_size(px(look::small()))
         .text_color(p.muted)
         .child(text)
 }
@@ -245,7 +245,7 @@ impl Agents {
                     .pb(px(look::GAP_8))
                     .child(
                         div()
-                            .text_size(px(look::TITLE))
+                            .text_size(px(look::title()))
                             .font_weight(FontWeight::SEMIBOLD)
                             .line_height(px(28.))
                             .child(used.map_or(format!("{}%", percent.round()), tokens)),
@@ -274,7 +274,7 @@ impl Agents {
                 d.child(
                     div()
                         .pt(px(look::GAP_6))
-                        .text_size(px(look::SMALL))
+                        .text_size(px(look::small()))
                         .text_color(p.muted)
                         .child(free),
                 )
@@ -370,7 +370,11 @@ impl Agents {
                 };
                 h_flex()
                     .id(("instructions", i))
-                    .h(px(if inside { look::ROW } else { look::DENSE_ROW }))
+                    .h(px(if inside {
+                        look::row()
+                    } else {
+                        look::dense_row()
+                    }))
                     .gap(px(look::GAP_8))
                     .rounded(px(look::CONTROL_RADIUS))
                     .child(
@@ -385,7 +389,7 @@ impl Agents {
                     )
                     .child(
                         div()
-                            .text_size(px(look::SMALL))
+                            .text_size(px(look::small()))
                             .text_color(p.muted)
                             .child(place),
                     )

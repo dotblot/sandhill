@@ -2,8 +2,9 @@
 //! what is behind it, and a neutral tint goes over the blur), with panes
 //! floating on it as cards 3px apart under a 31px title bar of capsules.
 //! The editor is solid for reading code; the side panels and Console group
-//! are translucent. One 12px corner radius, Maple Mono NF for code, and
-//! every text size 2px larger than the Tauri app's.
+//! are translucent. One 12px corner radius, the system font for the
+//! interface and SF Mono (or the font picked on General) for code, and
+//! every text size 2px larger than the Tauri app's by default.
 //!
 //! Kit supplies the neutral surfaces; the crane icon's navy supplies interactive
 //! accents, with a lighter counterpart for dark mode. Code keeps Xcode's
@@ -11,7 +12,6 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Read;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -26,22 +26,47 @@ use gpui_kit::*;
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 
-/// Window chrome text: the Tauri app's 13px, 2px larger.
-pub const CHROME: f32 = 15.;
-/// Code, in Maple Mono NF: 13px there.
-pub const CODE: f32 = 15.;
+mod typography;
+
+use typography::shift;
+pub use typography::{
+    CODE_SIZES, DEFAULT_SIZE, Typography, UI_SIZES, choose_typography, code, mono, mono_css,
+    monospaced_families,
+};
+
+/// Height of one line of text at `size`: a third more than the size, so
+/// 20px for the default 15px.
+pub fn line_height(size: f32) -> f32 {
+    (size * 4. / 3.).round()
+}
+
+/// Window chrome text: the Tauri app's 13px, 2px larger, at the default
+/// interface size.
+pub fn chrome() -> f32 {
+    15. + shift()
+}
 /// Kernel and resource rows, popups and drop-downs: 11px there.
-pub const SMALL: f32 = 13.;
+pub fn small() -> f32 {
+    13. + shift()
+}
 /// Code displayed alongside body prose in documentation.
-pub const DOC_CODE: f32 = CHROME - DOC_CODE_INSET;
+pub fn doc_code() -> f32 {
+    chrome() - DOC_CODE_INSET
+}
 /// Pane tab titles and toolbar buttons: 1pt below the chrome's text.
-pub const TAB_TEXT: f32 = 14.;
+pub fn tab_text() -> f32 {
+    14. + shift()
+}
 /// The room either side of a tab's label, the same in every pane.
 pub const TAB_PAD: f32 = 8.;
 /// A tab: a pill in a 24px track, both fully round (Huan, 2026-11-14).
-pub const TAB_H: f32 = 20.;
+pub fn tab_h() -> f32 {
+    20. + shift()
+}
 /// The track pane tabs sit in: the tab's height and 2px around it.
-pub const TAB_TRACK: f32 = 24.;
+pub fn tab_track() -> f32 {
+    24. + shift()
+}
 /// Names the hover group of every tab, so a close button can show under the
 /// pointer. Lookups find the nearest enclosing tab.
 pub const TAB_GROUP: &str = "sandhill-tab";
@@ -54,15 +79,22 @@ pub const EDGE: f32 = 7.;
 pub const TITLE_BAR: f32 = 31.;
 pub const STATUS_BAR: f32 = 26.;
 /// A pane's tab strip.
-pub const STRIP: f32 = 29.;
-pub const MONO: &str = "Maple Mono NF";
+pub fn strip() -> f32 {
+    29. + shift()
+}
 
 /// Buttons inside rows and tool rows.
-pub const CONTROL_ROW: f32 = 20.;
+pub fn control_row() -> f32 {
+    20. + shift()
+}
 /// Buttons inside cards, forms and popups.
-pub const CONTROL_CARD: f32 = 26.;
+pub fn control_card() -> f32 {
+    26. + shift()
+}
 /// Buttons on Welcome.
-pub const CONTROL_WELCOME: f32 = 30.;
+pub fn control_welcome() -> f32 {
+    30. + shift()
+}
 /// Corner radius for buttons, inputs, rows and chips.
 pub const CONTROL_RADIUS: f32 = 6.;
 /// The gap between an icon and its label.
@@ -75,18 +107,30 @@ pub const ICON: f32 = 14.;
 pub use consistency_tokens::*;
 
 mod consistency_tokens {
+    use super::shift;
+
     /// Card and page titles.
-    pub const TITLE: f32 = 16.;
+    pub fn title() -> f32 {
+        16. + shift()
+    }
     /// Badges and counts.
-    pub const TINY: f32 = 11.;
+    pub fn tiny() -> f32 {
+        11. + shift()
+    }
     /// Code examples are this much smaller than their surrounding prose.
     pub const DOC_CODE_INSET: f32 = 1.;
     /// Welcome's heading is larger than other page titles.
-    pub const WELCOME_TITLE: f32 = 24.;
+    pub fn welcome_title() -> f32 {
+        24. + shift()
+    }
     /// Lists the user picks from.
-    pub const ROW: f32 = 28.;
+    pub fn row() -> f32 {
+        28. + shift()
+    }
     /// Variables and other dense data rows.
-    pub const DENSE_ROW: f32 = 22.;
+    pub fn dense_row() -> f32 {
+        22. + shift()
+    }
     /// Small corners inside code and tables.
     pub const CODE_RADIUS: f32 = 4.;
     /// The smallest gap, for tightly paired elements.
@@ -372,9 +416,9 @@ fn theme_config(default: &ThemeConfig) -> Rc<ThemeConfig> {
         "Sandhill Light"
     }
     .into();
-    config.font_size = Some(CHROME);
-    config.mono_font_family = Some(MONO.into());
-    config.mono_font_size = Some(CODE);
+    config.font_size = Some(chrome());
+    config.mono_font_family = Some(mono());
+    config.mono_font_size = Some(code());
     config.radius = Some(CONTROL_RADIUS as usize);
     config.radius_lg = Some(RADIUS as usize);
     config.shadow = Some(true);
@@ -509,10 +553,18 @@ fn theme_config(default: &ThemeConfig) -> Rc<ThemeConfig> {
     Rc::new(config)
 }
 
-/// Loads fonts and Kit's light/dark defaults once, then follows the selected
-/// appearance. Call after `gpui_kit::init`.
+/// Reads the fonts and sizes saved on this Mac, builds Kit's light and dark
+/// themes with them, then follows the selected appearance. Call after
+/// `gpui_kit::init`.
 pub fn install(cx: &mut App) {
-    add_fonts(cx);
+    typography::load(cx);
+    build_themes(cx);
+    set_appearance(cx.window_appearance(), cx);
+}
+
+/// Sandhill's light and dark themes over Kit's defaults, with the current
+/// fonts and sizes; `set_appearance` then applies one.
+fn build_themes(cx: &mut App) {
     let registry = ThemeRegistry::global(cx);
     let light = theme_config(registry.default_light_theme());
     let dark = theme_config(registry.default_dark_theme());
@@ -520,7 +572,6 @@ pub fn install(cx: &mut App) {
         theme.light_theme = light;
         theme.dark_theme = dark;
     });
-    set_appearance(cx.window_appearance(), cx);
 }
 
 /// Switches the theme and the palette to the window's appearance, or to
@@ -579,30 +630,6 @@ pub fn choose_appearance(theme: Option<&str>, window: &Window, cx: &mut App) {
 pub fn toggle_appearance(window: &Window, cx: &mut App) {
     let dark = Palette::get(cx).dark;
     choose_appearance(Some(if dark { "light" } else { "dark" }), window, cx);
-}
-
-const FONTS: [&[u8]; 4] = [
-    include_bytes!("../assets/fonts/MapleMono-NF-Regular.ttf.gz"),
-    include_bytes!("../assets/fonts/MapleMono-NF-Italic.ttf.gz"),
-    include_bytes!("../assets/fonts/MapleMono-NF-SemiBold.ttf.gz"),
-    include_bytes!("../assets/fonts/MapleMono-NF-Bold.ttf.gz"),
-];
-
-fn add_fonts(cx: &mut App) {
-    let fonts = FONTS
-        .iter()
-        .filter_map(|gz| {
-            let mut ttf = Vec::new();
-            flate2::read::GzDecoder::new(*gz)
-                .read_to_end(&mut ttf)
-                .map_err(|err| tracing::warn!("a bundled font did not unpack: {err}"))
-                .ok()?;
-            Some(Cow::Owned(ttf))
-        })
-        .collect();
-    if let Err(err) = cx.text_system().add_fonts(fonts) {
-        tracing::warn!("Maple Mono did not load: {err:#}");
-    }
 }
 
 /// The icons drawn in `docs/design/ui/icons` (by its `build.py`), served
@@ -1124,7 +1151,7 @@ pub fn settings_group(title: &'static str, rows: Vec<AnyElement>, p: &Palette) -
         .child(
             div()
                 .px(px(PANE_PAD_X))
-                .text_size(px(SMALL))
+                .text_size(px(small()))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(p.muted)
                 .child(title),
@@ -1156,7 +1183,7 @@ pub fn settings_box(rows: Vec<AnyElement>, p: &Palette) -> Div {
 /// The grey line under a settings row's name.
 pub fn settings_detail(text: impl Into<SharedString>, p: &Palette) -> Div {
     div()
-        .text_size(px(SMALL))
+        .text_size(px(small()))
         .text_color(p.muted)
         .whitespace_normal()
         .child(text.into())
@@ -1180,7 +1207,7 @@ pub fn settings_row(label: impl Into<SharedString>, detail: Option<Div>) -> Div 
         .flex()
         .items_center()
         .w_full()
-        .min_h(px(ROW))
+        .min_h(px(row()))
         .gap(px(GAP_12))
         .px(px(PANE_PAD_X))
         .py(px(PANE_PAD_Y))
@@ -1278,7 +1305,7 @@ pub fn raised(d: Stateful<Div>, p: &Palette) -> Stateful<Div> {
 
 /// The track a pane's tabs sit in.
 pub fn tab_capsule(p: &Palette) -> Div {
-    capsule(p, TAB_TRACK)
+    capsule(p, tab_track())
 }
 
 /// A tab's close button: a 16px circle. `shown` draws the cross always (the
@@ -1367,16 +1394,16 @@ pub fn button(
 ) -> Button {
     let button = Button::new(id).rounded(px(CONTROL_RADIUS));
     let button = match size {
-        ButtonSize::Row => button.xsmall().h(px(CONTROL_ROW)).px(px(GAP_8)),
-        ButtonSize::Card => button.small().h(px(CONTROL_CARD)),
-        ButtonSize::Welcome => button.with_size(Size::Medium).h(px(CONTROL_WELCOME)),
+        ButtonSize::Row => button.xsmall().h(px(control_row())).px(px(GAP_8)),
+        ButtonSize::Card => button.small().h(px(control_card())),
+        ButtonSize::Welcome => button.with_size(Size::Medium).h(px(control_welcome())),
     };
     let label = label.into();
     button.accessibility_label(label.clone()).child(
         h_flex()
             .min_w_0()
             .gap(px(GAP_4))
-            .text_size(px(SMALL))
+            .text_size(px(small()))
             .when_some(icon_name, |d, name| d.child(icon(name).size(px(ICON))))
             .child(div().min_w_0().text_ellipsis().child(label)),
     )
@@ -1395,7 +1422,7 @@ pub(crate) fn question_row(
         .px(px(GAP_8))
         .py(px(GAP_4))
         .gap(px(GAP_4))
-        .text_size(px(SMALL))
+        .text_size(px(small()))
         .child(
             h_flex()
                 .gap(px(GAP_4))
@@ -1431,7 +1458,7 @@ pub fn icon_button(
         .justify_center()
         .flex_none()
         .w(px(if round { 28. } else { 22. }))
-        .h(px(CONTROL_ROW))
+        .h(px(control_row()))
         .when(round, |d| d.rounded_full())
         .when(!round, |d| d.rounded(px(CONTROL_RADIUS)))
         .text_color(p.muted)
@@ -1455,10 +1482,10 @@ pub fn bar_button(
         .items_center()
         .gap(px(GAP_4))
         .flex_none()
-        .h(px(CONTROL_ROW))
+        .h(px(control_row()))
         .px(px(GAP_8))
         .rounded(px(CONTROL_RADIUS))
-        .text_size(px(TAB_TEXT))
+        .text_size(px(tab_text()))
         .text_color(p.muted)
         .whitespace_nowrap()
         .cursor_pointer()
