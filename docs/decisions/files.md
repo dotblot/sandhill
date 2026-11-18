@@ -33,11 +33,16 @@ wins.
   Opening previews never starts a kernel. Their toolbar reads Fit, the zoom,
   Actual Size, and a hand button that toggles dragging the page or picture
   (Huan, 2026-11-14).
+  `.h5ad` opens a read-only AnnData summary on this Mac or a server,
+  without starting a kernel or loading the expression matrix. It shows
+  matrix storage and size, layers, the first 50 rows of obs and var, and
+  what else the file contains. Load into Python opens the existing
+  AnnData import dialog with the file already chosen (Huan, 2026-11-18).
   Every file type in the icon catalog has a defined way to open (Huan,
   2026-11-13; `docs/design/done/file-opening-plan.md`): text kinds open with
   grammar, bioinformatics (FASTA/FASTQ, tab-separated VCF/BED/GFF/SAM/PAF…,
-  Newick and Nexus trees) or
-  keyword (Nextflow, WDL, BibTeX) highlighting; binary kinds ask to use the
+  Newick and Nexus trees) or keyword (Nextflow, WDL, BibTeX) highlighting.
+  Binary kinds without a preview ask to use the
   default app (servers: download a copy first), Microsoft Office files
   (Word, Excel, PowerPoint, with their own icons) among them. Unknown files under 5 MB that
   look like text open as plain text; text over 5 MB opens its first 5 MB

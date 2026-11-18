@@ -2,6 +2,13 @@
 use super::*;
 
 impl Workbench {
+    pub(crate) fn active_document_path(&self) -> Option<&str> {
+        self.opening_shown
+            .as_deref()
+            .or(self.preview_shown.as_deref())
+            .or_else(|| self.open.as_ref().map(|o| o.notebook.path.as_str()))
+    }
+
     /// The open notebook with this path, shown or in another tab.
     pub(crate) fn open_at(&mut self, path: &str) -> Option<&mut Open> {
         if self.open.as_ref().is_some_and(|o| o.notebook.path == path) {
@@ -25,14 +32,14 @@ impl Workbench {
             return;
         }
         self.opening_shown = None;
-        if self.media.contains_key(path) {
+        if self.previews.contains_key(path) {
             self.put_away();
-            self.media_shown = Some(path.to_string());
+            self.preview_shown = Some(path.to_string());
             self.session_changed(cx);
             cx.notify();
             return;
         }
-        self.media_shown = None;
+        self.preview_shown = None;
         if self.open.as_ref().is_some_and(|o| o.notebook.path == path) {
             cx.notify();
             return;
@@ -61,7 +68,7 @@ impl Workbench {
         self.opening_shown = None;
         self.hide_object_explorer();
         self.notebook_ai_menu = false;
-        self.media_shown = None;
+        self.preview_shown = None;
         self.history_shown = false;
         if let Some(mut open) = self.open.take() {
             open.scroll = self.notebook_scroll.offset();
@@ -89,7 +96,7 @@ impl Workbench {
             cx.notify();
             return;
         }
-        if self.close_media(path, cx) {
+        if self.close_preview(path, cx) {
             return;
         }
         if self.open_at(path).is_none() {
@@ -135,6 +142,26 @@ impl Workbench {
         self.objects.shown = objects;
     }
 
+    fn close_preview(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
+        if self.previews.remove(path).is_none() {
+            return false;
+        }
+        let index = self.tabs.iter().position(|p| p == path).unwrap_or(0);
+        self.tabs.retain(|p| p != path);
+        if self.preview_shown.as_deref() == Some(path) {
+            self.preview_shown = None;
+            if let Some(next) = self
+                .tabs
+                .get(index.min(self.tabs.len().saturating_sub(1)))
+                .cloned()
+            {
+                self.show_file_tab(&next, cx);
+            }
+        }
+        cx.notify();
+        true
+    }
+
     pub(crate) fn open_file(&mut self, rel: String, cx: &mut Context<Self>) {
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
@@ -143,6 +170,10 @@ impl Workbench {
         let path = format!("{project}/{rel}");
         if crate::editor::media::is_media(&path) {
             self.open_media(path, cx);
+            return;
+        }
+        if crate::editor::h5ad::is_h5ad(&path) {
+            self.open_h5ad(path, cx);
             return;
         }
         if self.open_at(&path).is_some() || self.document_loads.contains_key(&path) {
@@ -339,7 +370,7 @@ impl Workbench {
     /// notebook's current code cell.
     pub(super) fn insertion_editor(&self) -> Option<Entity<EditorState>> {
         if self.objects.is_shown()
-            || self.media_shown.is_some()
+            || self.preview_shown.is_some()
             || self.explorer_shown
             || self.diff_shown
         {
@@ -1078,7 +1109,7 @@ impl Workbench {
     /// bring up the close card (with the save question in it); otherwise
     /// only unsaved changes ask.
     pub(crate) fn ask_close(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.close_media(&path, cx) {
+        if self.close_preview(&path, cx) {
             return;
         }
         let Some(open) = self.open_at(&path) else {

@@ -40,6 +40,8 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 noodles-bgzf = "0.52"
 tar = { version = "0.4", default-features = false }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# AnnData previews, with pure Rust deflate (MIT OR Apache-2.0).
+hdf5-pure = "0.48"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Apache-2.0/MIT, compatible with GPL-3.0-or-later.

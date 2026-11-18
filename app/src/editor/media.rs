@@ -16,7 +16,7 @@ use tokio::runtime::Runtime;
 
 use crate::daemon::Daemon;
 use crate::look::{self, Palette, bar_button, icon_button};
-use crate::workbench::Workbench;
+use crate::workbench::{PreviewTab, Workbench};
 
 pub(crate) mod cache;
 use cache::MediaFile;
@@ -400,21 +400,9 @@ impl Render for MediaView {
 }
 
 impl Workbench {
-    pub(crate) fn active_document_path(&self) -> Option<&str> {
-        self.opening_shown
-            .as_deref()
-            .or(self.media_shown.as_deref())
-            .or_else(|| self.open.as_ref().map(|o| o.notebook.path.as_str()))
-    }
-
     pub(crate) fn open_media(&mut self, path: String, cx: &mut Context<Self>) {
-        let Some(daemon) = self.daemon() else { return };
-        self.reveal_middle();
-        self.put_away();
-        self.explorer_shown = false;
-        self.diff_shown = false;
-        self.media_shown = Some(path.clone());
-        if !self.media.contains_key(&path) {
+        if !self.previews.contains_key(&path) {
+            let Some(daemon) = self.daemon() else { return };
             let remote = self.target != Target::Local;
             let rt = self.rt.clone();
             let path_for_view = path.clone();
@@ -423,10 +411,9 @@ impl Workbench {
             let view =
                 cx.new(|cx| MediaView::new(path_for_view, daemon, remote, rt, handle, owner, cx));
             self.tabs.push(path.clone());
-            self.media.insert(path, view);
+            self.previews.insert(path.clone(), PreviewTab::Media(view));
         }
-        self.session_changed(cx);
-        cx.notify();
+        self.show_file_tab(&path, cx);
     }
 
     pub(crate) fn sync_media(&self, cx: &mut App) {
@@ -435,30 +422,11 @@ impl Workbench {
             && !self.explorer_shown
             && !self.diff_shown
             && !self.history_shown;
-        for (path, view) in &self.media {
-            let hidden = !visible || self.media_shown.as_ref() != Some(path);
+        for (path, view) in &self.previews {
+            let Some(view) = view.media() else { continue };
+            let hidden = !visible || self.preview_shown.as_ref() != Some(path);
             view.update(cx, |view, cx| view.hide(hidden, cx));
         }
-    }
-
-    pub(crate) fn close_media(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
-        if self.media.remove(path).is_none() {
-            return false;
-        }
-        let index = self.tabs.iter().position(|p| p == path).unwrap_or(0);
-        self.tabs.retain(|p| p != path);
-        if self.media_shown.as_deref() == Some(path) {
-            self.media_shown = None;
-            if let Some(next) = self
-                .tabs
-                .get(index.min(self.tabs.len().saturating_sub(1)))
-                .cloned()
-            {
-                self.show_file_tab(&next, cx);
-            }
-        }
-        cx.notify();
-        true
     }
 }
 

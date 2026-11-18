@@ -284,7 +284,7 @@ impl Workbench {
         self.explorer_shown = false;
         self.diff_shown = false;
         self.history_shown = false;
-        self.media_shown = None;
+        self.preview_shown = None;
         if self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor) {
             self.middle_vertical = crate::shell::pane_sizes::Vertical::Split;
         }

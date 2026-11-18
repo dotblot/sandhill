@@ -370,10 +370,10 @@ impl Workbench {
                 && !self.history_shown
                 && !self.explorer_shown
                 && !self.objects.is_shown()
-                && self.media_shown.is_none()
+                && self.preview_shown.is_none()
         });
-        let media = self
-            .media_shown
+        let preview = self
+            .preview_shown
             .as_ref()
             .filter(|_| {
                 !self.panel_collapsed(crate::shell::pane_sizes::Panel::Editor)
@@ -382,7 +382,7 @@ impl Workbench {
                     && !self.explorer_shown
                     && !self.objects.is_shown()
             })
-            .and_then(|path| self.media.get(path));
+            .and_then(|path| self.previews.get(path).map(|preview| (path, preview)));
         let explorer = self.explorer.as_ref().filter(|_| {
             self.explorer_shown
                 && !self.diff_shown
@@ -401,8 +401,14 @@ impl Workbench {
                     .when_some(document, |d, open| {
                         d.child(self.render_notebook_bar(open, cx))
                     })
-                    .when_some(media, |d, media| {
-                        d.child(media.update(cx, |media, cx| media.render_toolbar(cx)))
+                    .when_some(preview, |d, (path, preview)| {
+                        use crate::workbench::PreviewTab;
+                        match preview {
+                            PreviewTab::Media(media) => {
+                                d.child(media.update(cx, |media, cx| media.render_toolbar(cx)))
+                            }
+                            PreviewTab::H5ad(_) => d.child(self.h5ad_toolbar(path, cx)),
+                        }
                     })
                     .when_some(explorer, |d, explorer| d.child(explorer.read(cx).toolbar())),
             )

@@ -25,7 +25,7 @@ pub(crate) struct ImportDialog {
     /// Which of the language's imports.
     kind: usize,
     language: String,
-    session: String,
+    session: Option<String>,
     /// The session's folder, which paths in the code are relative to.
     cwd: Option<String>,
     /// The file (or 10x folder) chosen.
@@ -193,24 +193,34 @@ impl Workbench {
         ) else {
             return;
         };
-        let Some(daemon) = self.daemon() else { return };
-        let reads = &imports_for(&language)[kind];
-        let title = format!(
-            "{} into {}",
-            reads.label.trim_end_matches('…'),
-            language_name(&language)
-        );
         // Filled in with the chosen file.
         let asked = ImportDialog {
             kind,
             language,
-            session,
+            session: Some(session),
             cwd: self.session_folder(),
             file: String::new(),
             fits: true,
             running: false,
             error: None,
         };
+        self.choose_import_path(asked, window, cx);
+    }
+
+    fn choose_import_path(
+        &mut self,
+        mut asked: ImportDialog,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(daemon) = self.daemon() else { return };
+        asked.error = None;
+        let reads = &imports_for(&asked.language)[asked.kind];
+        let title = format!(
+            "{} into {}",
+            reads.label.trim_end_matches('…'),
+            language_name(&asked.language)
+        );
         if self.host() == sandhill_link::LOCAL {
             let chosen = choose_local_path("Choose", true, reads.folder, cx);
             cx.spawn_in(window, async move |this, cx| {
@@ -291,6 +301,7 @@ impl Workbench {
             input.set_value(name, window, cx);
             input.focus(window, cx);
         });
+        self.import.menu = false;
         self.import.dialog = Some(dialog);
         cx.notify();
     }
@@ -308,12 +319,57 @@ impl Workbench {
             cx.notify();
             return;
         }
-        self.import.menu = false;
+        self.open_import_for(path, language, Some(session), window, cx);
+    }
+
+    pub(crate) fn open_h5ad_import(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = if self.restricted() {
+            None
+        } else {
+            let mut python = self.console_sessions.live.iter().filter(|s| {
+                s.status == SessionStatus::Running && s.language.eq_ignore_ascii_case("python")
+            });
+            let current = python
+                .clone()
+                .find(|s| Some(s.id.as_str()) == self.variables_session());
+            current
+                .or_else(|| {
+                    let mut local = python
+                        .by_ref()
+                        .filter(|s| s.project.as_deref() == self.project.as_deref());
+                    let first = local.next()?;
+                    local.next().is_none().then_some(first)
+                })
+                .cloned()
+        };
+        self.open_import_for(path, "python".into(), session, window, cx);
+    }
+
+    fn open_import_for(
+        &mut self,
+        path: String,
+        language: String,
+        session: Option<SessionInfo>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(kind) = imports_for(&language)
+            .iter()
+            .position(|kind| importable(kind, &path))
+        else {
+            return;
+        };
+        let (session, cwd) = session.map_or((None, None), |s| (Some(s.id), Some(s.cwd)));
         let dialog = ImportDialog {
-            kind: 0,
+            kind,
             language,
-            session: session.id,
-            cwd: Some(session.cwd),
+            session,
+            cwd,
             file: path,
             fits: true,
             running: false,
@@ -370,6 +426,9 @@ impl Workbench {
     }
 
     pub(crate) fn run_import(&mut self, cx: &mut Context<Self>) {
+        if self.held_back("import data", cx) {
+            return;
+        }
         let Some(daemon) = self.daemon() else { return };
         let Some((code, false)) = self.import_code(cx) else {
             return;
@@ -380,9 +439,11 @@ impl Workbench {
         if dialog.running {
             return;
         }
+        let Some(session) = dialog.session.clone() else {
+            return;
+        };
         dialog.running = true;
         dialog.error = None;
-        let session = dialog.session.clone();
         cx.spawn(async move |this, cx| {
             let started = async {
                 let sessions = daemon.call::<Vec<SessionInfo>>(Call::ListSessions).await?;
@@ -448,7 +509,8 @@ impl Workbench {
         } else {
             look::file_icon(&file_name)
         };
-        let again = dialog.kind;
+        let again = dialog.clone();
+        let restricted = self.restricted();
         let button = |id: &'static str, label: &'static str| Button::new(id).small().label(label);
         let card = v_flex()
             .id("import-card")
@@ -495,7 +557,7 @@ impl Workbench {
                             .disabled(dialog.running)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.import.dialog = None;
-                                this.choose_import_file(again, window, cx);
+                                this.choose_import_path(again.clone(), window, cx);
                             })),
                     ),
             )
@@ -549,6 +611,13 @@ impl Workbench {
             .when_some(dialog.error.clone(), |d, err| {
                 d.child(div().text_color(p.err).child(err))
             })
+            .when(restricted || dialog.session.is_none(), |d| {
+                d.child(div().text_color(p.muted).child(if restricted {
+                    crate::welcome::trust::restricted_text("import data")
+                } else {
+                    "Select a live Python session in the Console, then reopen this import.".into()
+                }))
+            })
             .child(
                 h_flex()
                     .justify_end()
@@ -575,7 +644,7 @@ impl Workbench {
                     .child(
                         button("import-run", "Import")
                             .primary()
-                            .disabled(blocked)
+                            .disabled(blocked || restricted || dialog.session.is_none())
                             .on_click(cx.listener(|this, _, _, cx| this.run_import(cx))),
                     ),
             );

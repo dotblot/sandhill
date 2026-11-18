@@ -13,6 +13,7 @@ pub mod client;
 mod connectors;
 mod files;
 mod git;
+mod h5ad;
 mod packages;
 mod projects;
 mod sessions;
@@ -25,6 +26,7 @@ mod usage;
 pub use connectors::*;
 pub use files::*;
 pub use git::*;
+pub use h5ad::*;
 pub use packages::*;
 pub use projects::*;
 pub use sessions::*;
@@ -705,6 +707,11 @@ pub enum Call {
         offset: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u64>,
+    },
+    /// Read a bounded AnnData preview without loading the expression matrix.
+    /// Returns [`H5adSummary`].
+    DescribeH5ad {
+        path: String,
     },
     /// The files under a folder, relative to it, nearest first: hidden
     /// ones and package folders left out. At most `limit` (5000 unless

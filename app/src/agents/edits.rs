@@ -42,7 +42,7 @@ impl Workbench {
             return focus;
         }
         if !self.diff_shown
-            && (self.explorer_shown || (self.open.is_none() && self.media_shown.is_none()))
+            && (self.explorer_shown || (self.open.is_none() && self.preview_shown.is_none()))
         {
             focus.table = self
                 .explorer

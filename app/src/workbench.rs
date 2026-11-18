@@ -45,6 +45,27 @@ pub(crate) enum Link {
     Ready(Rc<Daemon>),
 }
 
+pub(crate) enum PreviewTab {
+    Media(Entity<crate::editor::media::MediaView>),
+    H5ad(Entity<crate::editor::h5ad::H5adView>),
+}
+
+impl PreviewTab {
+    pub(crate) fn media(&self) -> Option<&Entity<crate::editor::media::MediaView>> {
+        match self {
+            Self::Media(view) => Some(view),
+            Self::H5ad(_) => None,
+        }
+    }
+
+    pub(crate) fn element(&self) -> AnyElement {
+        match self {
+            Self::Media(view) => view.clone().into_any_element(),
+            Self::H5ad(view) => view.clone().into_any_element(),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) enum Session {
     #[default]
@@ -321,8 +342,8 @@ pub struct Workbench {
     pub(crate) tabs: Vec<String>,
     /// Quarto presentation preference, including documents closed this session.
     quarto_sources: HashSet<String>,
-    pub(crate) media: HashMap<String, Entity<crate::editor::media::MediaView>>,
-    pub(crate) media_shown: Option<String>,
+    pub(crate) previews: HashMap<String, PreviewTab>,
+    pub(crate) preview_shown: Option<String>,
     /// The Console's kernel when no notebook is open.
     pub(crate) loose: Session,
     pub(crate) loose_kernel: Option<String>,
@@ -629,8 +650,8 @@ impl Workbench {
             others: Vec::new(),
             tabs: Vec::new(),
             quarto_sources: HashSet::new(),
-            media: HashMap::new(),
-            media_shown: None,
+            previews: HashMap::new(),
+            preview_shown: None,
             loose: Session::None,
             loose_kernel: None,
             loose_start: 0,
@@ -771,7 +792,7 @@ impl Workbench {
             view.update(cx, |page, cx| page.hide(cx));
             self.parked.push((key, view));
         }
-        for view in self.media.values() {
+        for view in self.previews.values().filter_map(PreviewTab::media) {
             view.update(cx, |view, cx| view.hide(true, cx));
         }
     }
@@ -814,8 +835,8 @@ impl Workbench {
         self.open = None;
         self.others.clear();
         self.tabs.clear();
-        self.media.clear();
-        self.media_shown = None;
+        self.previews.clear();
+        self.preview_shown = None;
         self.loose = Session::None;
         self.loose_kernel = None;
         self.console_sessions = Default::default();
@@ -1217,8 +1238,8 @@ impl Workbench {
         self.delimited = None;
         self.open = None;
         self.others.clear();
-        self.media.clear();
-        self.media_shown = None;
+        self.previews.clear();
+        self.preview_shown = None;
         self.tabs.clear();
         self.document_loads.clear();
         self.opening_shown = None;

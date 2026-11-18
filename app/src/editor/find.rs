@@ -349,7 +349,7 @@ impl Workbench {
             || self.explorer_shown
             || self.diff_shown
             || self.history_shown
-            || self.media_shown.is_some()
+            || self.preview_shown.is_some()
         {
             return false;
         }

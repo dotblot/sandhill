@@ -129,16 +129,16 @@ impl Workbench {
         }
         if !self.diff_shown
             && !self.explorer_shown
-            && let Some(media) = self
-                .media_shown
+            && let Some(preview) = self
+                .preview_shown
                 .as_ref()
-                .and_then(|path| self.media.get(path))
+                .and_then(|path| self.previews.get(path))
         {
             return pane(&p)
                 .flex_1()
                 .h_full()
                 .child(self.render_tabs(cx))
-                .child(div().flex_1().min_h_0().child(media.clone()))
+                .child(div().flex_1().min_h_0().child(preview.element()))
                 .into_any_element();
         }
         if let Some(explorer) = self

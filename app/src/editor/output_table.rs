@@ -25,7 +25,7 @@ impl OutputTable {
     }
 }
 
-struct SelectionOwner {
+pub(crate) struct SelectionOwner {
     columns: Vec<SharedString>,
     rows: Vec<Vec<SharedString>>,
     widths: Vec<f32>,
@@ -35,7 +35,7 @@ struct SelectionOwner {
 }
 
 impl SelectionOwner {
-    fn new(table: Table, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(table: Table, cx: &mut Context<Self>) -> Self {
         let mut owner = Self {
             columns: Vec::new(),
             rows: Vec::new(),

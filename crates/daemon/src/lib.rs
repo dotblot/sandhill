@@ -17,6 +17,8 @@ pub mod fileops;
 pub mod files;
 pub mod ghost;
 pub mod git;
+#[doc(hidden)]
+pub mod h5ad;
 pub mod help;
 pub mod inline;
 pub mod irkernel;

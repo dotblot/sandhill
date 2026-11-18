@@ -153,6 +153,12 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Read an AnnData preview in a separate, memory-limited process.
+    #[command(hide = true)]
+    DescribeH5ad {
+        #[arg(last = true)]
+        path: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -183,6 +189,7 @@ async fn run(cli: Cli) -> Result<()> {
         .unwrap_or_else(StateDir::default_location);
     let socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
     match cli.command {
+        Command::DescribeH5ad { path } => sandhill_daemon::h5ad::worker(&path),
         Command::Serve { ref started_by } => {
             let started_by = started_by.clone().unwrap_or_else(service_manager);
             serve(state, socket, started_by).await

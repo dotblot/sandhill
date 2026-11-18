@@ -604,6 +604,9 @@ impl Daemon {
             } => serde_json::to_value(
                 blocking(move || fileops::read_bytes(&path, offset, limit)).await?,
             )?,
+            Call::DescribeH5ad { path } => {
+                crate::h5ad::describe(&self.options.executable, path).await?
+            }
             Call::FileOutputs { file } => self.file_outputs(file).await?,
             Call::ClearCellOutputs { file, cell_ids } => {
                 self.clear_cell_outputs(file, cell_ids).await?
