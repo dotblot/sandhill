@@ -5,8 +5,10 @@ AI agents that work in your live R and Python sessions. Run your analysis on
 the Mac or on a Linux server over ssh; it keeps running when you close the
 laptop.
 
-> **Status:** early development (version 0.1.0). The app is for Macs with
-> Apple silicon; servers can be any 64-bit Linux.
+> **Status:** preview (version 0.1.0): expect rough edges, and please
+> [report what goes wrong](https://github.com/dotblot/sandhill/issues/new/choose).
+> The app is for Macs with Apple silicon; servers run 64-bit Linux
+> (tested on Ubuntu 24.04).
 
 ![Sandhill in the light theme: a single-cell notebook with UMAP plots and a marker table, the AnnData object open in Variables, a dot plot of the top markers in the Console, and an agent in the AI pane explaining the project after reading the live session through Sandhill's tools.](docs/readme/screenshot-light.png)
 
@@ -73,16 +75,41 @@ extension marketplace.
 
 ## Get Sandhill
 
-Every push to `main` builds Sandhill.app, with the background program
-inside and Linux builds of it to install on servers. Open the **Mac app** run
-on GitHub's Actions tab and download **Sandhill-macos-arm64** under
-Artifacts (builds are kept for a week). The app isn't notarized yet, so after
-unzipping run `xattr -dr com.apple.quarantine Sandhill.app` once, or macOS
-will refuse to open it.
+Download `Sandhill-<version>-macos-arm64.dmg` from
+[Releases](https://github.com/dotblot/sandhill/releases), open it and drag
+Sandhill to Applications. It needs a Mac with Apple silicon (M1 or newer).
+Sandhill doesn't update itself: new versions appear on the same page.
 
-To build it yourself you need Rust, and Jupyter kernels for your languages:
-ipykernel in your Python environment, and for R,
-[Ark](https://github.com/posit-dev/ark) or IRkernel.
+**The first time you open it.** Sandhill isn't signed with an Apple
+developer certificate, so macOS says it can't check it. Either open
+**System Settings → Privacy & Security**, scroll down and click **Open
+Anyway** beside Sandhill, or run this once in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Sandhill.app
+```
+
+**What else you need**
+
+- Jupyter kernels for your languages: `ipykernel` in each Python
+  environment you use, and for R, [Ark](https://github.com/posit-dev/ark)
+  or IRkernel. Sandhill finds conda, mamba, venv and uv environments, and
+  offers to install IRkernel for an R that lacks one.
+- For the AI pane: [Claude Code](https://code.claude.com) or
+  [Codex](https://developers.openai.com/codex), installed and signed in
+  with your own Claude or ChatGPT plan.
+
+**What Sandhill connects to.** Sandhill sends no analytics, crash reports or
+update checks. It goes online only for what you ask: ssh to your servers;
+package indexes (PyPI, conda, CRAN, Bioconductor) when you check for updates
+or install IRkernel; images and Plotly charts that your documents link to;
+skills and connectors you add. Claude Code and Codex talk to Anthropic and
+OpenAI under your own accounts.
+
+Builds of every push to `main` are also on GitHub's Actions tab (**Mac
+app** run, **Sandhill-macos-arm64** under Artifacts, kept for a week).
+
+To build it yourself you need Rust:
 
 ```sh
 cargo build -p sandhill-daemon        # at the repo root, once
@@ -100,8 +127,9 @@ there, and the project window works as it does on the Mac.
   jump hosts work as they do in Terminal. `ssh yourserver` must log in
   without a password (set up a key with `ssh-copy-id yourserver`).
 - The first time, the app installs its background program, `sandhilld`, in
-  `~/.local/bin` on the server. It needs no root, opens no ports, and runs on
-  any 64-bit Linux, Intel or ARM.
+  `~/.local/bin` on the server. It needs no root and opens no ports. It is
+  tested on Ubuntu 24.04 and built for any 64-bit Linux, Intel or ARM; the
+  bundled Ark R kernel needs a glibc Linux (not Alpine).
 - Sessions start with the `PATH` your login shell sets up, so conda and your
   usual tools are found.
 - When the network drops, the app reconnects on its own and shows what was
@@ -109,9 +137,10 @@ there, and the project window works as it does on the Mac.
 
 ## Agents
 
-The chat button in the toolbar (⌘I) opens the AI pane. Each agent is the
-real program, running in the project's folder on the machine the project is
-on, with its own login and settings; Sandhill never sees your login.
+The chat button in the toolbar (⌘I) opens the AI pane, with Claude Code or
+Codex. Each agent is the real program, running in the project's folder on
+the machine the project is on, with its own login and settings; Sandhill
+never sees your login.
 
 - Agents reach your live sessions through Sandhill's tools: they list
   sessions and variables, run code and read outputs and plots, and the code

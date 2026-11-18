@@ -1,0 +1,55 @@
+name: Something went wrong
+description: Report a bug in Sandhill.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Sandhill did instead. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      description: The steps, if you know them, and whether it happens every time.
+  - type: input
+    id: version
+    attributes:
+      label: Sandhill version
+      description: From Sandhill → About Sandhill, or the release you downloaded.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: From  → About This Mac.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where the project was
+      options:
+        - On this Mac
+        - On a Linux server
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: The server's Linux, if on a server
+      description: For example Ubuntu 24.04 (`cat /etc/os-release`).
+  - type: input
+    id: kernels
+    attributes:
+      label: Kernel and agent, if they were involved
+      description: For example "Python 3.12 (ipykernel)", "R 4.6.2 · Ark", "Codex".
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: "\"Open the sandhilld log\" in Sandhill's connection menu, or the file ~/.local/state/sandhill/sandhilld.log on the Mac or server: paste the lines around the problem."
+      render: text
