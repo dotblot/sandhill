@@ -99,3 +99,8 @@ differs, this wins.
   groups, the round kernel picker with a floating list, capsule tabs for
   two-way choices, and a Save button, as it writes a file collaborators
   may share.
+- Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
+  (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
+  There Sandhill draws close, minimise and maximise in its title bar, on
+  the right as Ubuntu puts them, and all three always show, whatever the
+  desktop's own button setting says.

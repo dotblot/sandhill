@@ -1,6 +1,6 @@
 # Sandhill on Ubuntu
 
-Status: proposed, waiting for Huan's approval (2026-11-18).
+Status: approved by Huan (2026-11-18).
 
 ## What Huan asked for
 - A Linux version of Sandhill, starting with Ubuntu: one Ubuntu first,
@@ -56,10 +56,10 @@ Status: proposed, waiting for Huan's approval (2026-11-18).
      version.
    - The app's checks (`cargo fmt`, `clippy`, `cargo test`) pass there.
 2. **Run it and make it work right on Ubuntu:**
-   - **Window buttons:** Sandhill draws them in its title bar, in
-     Ubuntu's style. It follows the desktop's own setting for which
-     buttons appear and on which side, so on `ubuntu-lab` that's a close
-     button on the right. Double-clicking the title bar maximises, as
+   - **Window buttons:** Sandhill draws close, minimise and maximise in
+     its title bar, in Ubuntu's style, on the right as Ubuntu puts them.
+     All three always show, whatever the desktop's own setting says
+     (Huan, 2026-11-18). Double-clicking the title bar maximises, as
      Ubuntu does.
    - **Colours:** solid, as the Mac's look is with glass turned off;
      light and dark follow Ubuntu's own setting.
@@ -115,16 +115,13 @@ unlocked.
 - Keep automatic sleep off (it is now), so the machine answers SSH.
 - Look at Sandhill on the Ubuntu screen at the three check points above.
 
-## Open questions for Huan
-- **Window buttons:** follow the desktop's setting, as planned (on
-  `ubuntu-lab`, a close button only), or always show all three?
-- **Other Linux systems** (Fedora, Arch, other desktops): not now, as
-  planned?
+## Huan's answers (2026-11-18)
+- **Window buttons:** always close, minimise and maximise.
+- **Other Linux systems** (Fedora, Arch, other desktops): later.
 
 ## Checks
 - The workspace and `app/` checks pass on `ubuntu-lab` and on the Mac.
-- A test that the window buttons follow the desktop setting, and the
-  usual tests for any new preview code.
+- The usual tests for any new preview code.
 - Screenshots on Ubuntu, light and dark: Welcome, a notebook, the
   Console, the terminal, an image and a PDF preview, the quit question.
 - Installing the `.deb` on `ubuntu-lab`, opening a project, running
