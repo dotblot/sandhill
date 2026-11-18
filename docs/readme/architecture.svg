@@ -40,7 +40,7 @@
     <rect x="60" y="274" width="204" height="28" rx="7" fill="#eef2f7"/>
     <text class="item" x="74" y="293">Help, Viewer, Git, Jobs</text>
     <rect x="60" y="308" width="204" height="28" rx="7" fill="#eef2f7"/>
-    <text class="item" x="74" y="327">AI pane: seven agents</text>
+    <text class="item" x="74" y="327">AI pane: Claude Code, Codex</text>
   </g>
 
   <!-- The connection -->
@@ -74,9 +74,9 @@
 
   <rect x="688" y="240" width="208" height="102" rx="8" fill="#eef2f7"/>
   <text class="name" x="702" y="261">AI agents</text>
-  <text class="small" x="702" y="281">Claude Code, Codex,</text>
-  <text class="small" x="702" y="298">Antigravity, Posit Assistant,</text>
-  <text class="small" x="702" y="315">OpenScience, Oh My Pi, pi</text>
+  <text class="small" x="702" y="281">Claude Code and Codex,</text>
+  <text class="small" x="702" y="298">each with your own</text>
+  <text class="small" x="702" y="315">Claude or ChatGPT plan</text>
 
   <!-- Agents use the tool server, which reaches the live sessions -->
   <line x1="792" y1="240" x2="792" y2="224" stroke="#142844" stroke-width="2" marker-end="url(#navy)"/>
