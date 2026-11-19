@@ -1,21 +1,225 @@
 //! The Explore a Table window (`crate::quick`): a title bar naming the session
-//! and its tables, then the Data Explorer, Plots and the Guide side by side
-//! (Huan, 2026-11-19).
+//! and its tables, then the movable and resizable Explore panels.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use gpui_kit::component::Disableable as _;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use sandhill_proto::{Known, QuickColumnKind, QuickPlot, QuickTableKind, QuickValues};
 
 use super::*;
 use crate::look::side_pane;
 use crate::quick::{self, Edit, Item};
+use crate::quick_layout::{Layout, Panel as QuickPanel, Side};
 
-/// The Guide's share of the window; the Data Explorer and Plots split the
-/// rest.
-const GUIDE_SHARE: f32 = 0.25;
 /// The width of a fact's name on the card.
 const FACT_LABEL: f32 = 92.;
 /// The width of a sample's name beside its group choices.
 const SAMPLE_LABEL: f32 = 64.;
+
+/// One preference for all Explore windows, loaded on first use.
+struct ExploreLayout(Layout);
+
+impl Global for ExploreLayout {}
+
+impl Default for ExploreLayout {
+    fn default() -> Self {
+        Self(crate::prefs::explore_layout())
+    }
+}
+
+fn save_layout(layout: Layout, cx: &mut App) {
+    if layout != cx.global::<ExploreLayout>().0 {
+        crate::prefs::save_explore_layout(&layout);
+        cx.global_mut::<ExploreLayout>().0 = layout;
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuickSplit {
+    Column(usize),
+    Stack(usize),
+}
+
+struct DraggedSplit {
+    split: QuickSplit,
+    grab: Cell<Pixels>,
+}
+
+impl Render for DraggedSplit {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+struct LayoutWindow {
+    _observe: Subscription,
+    // Resize locally until the mouse goes up, then save and update the other windows.
+    resize: Option<(QuickSplit, Layout)>,
+}
+
+impl LayoutWindow {
+    fn layout<'a>(&'a self, cx: &'a App) -> &'a Layout {
+        self.resize
+            .as_ref()
+            .map_or_else(|| &cx.global::<ExploreLayout>().0, |(_, layout)| layout)
+    }
+
+    fn drag(&mut self, event: &DragMoveEvent<DraggedSplit>, cx: &mut Context<Self>) {
+        let Some((split, layout)) = &mut self.resize else {
+            return;
+        };
+        let at = event.event.position - event.bounds.origin;
+        let grab = event.drag(cx).grab.get();
+        let changed = match *split {
+            QuickSplit::Column(i) => {
+                let room =
+                    f32::from(event.bounds.size.width) - (layout.columns().len() - 1) as f32 * GAP;
+                layout.resize_columns(i, f32::from(at.x - grab) - i as f32 * GAP, room)
+            }
+            QuickSplit::Stack(i) => {
+                let room = f32::from(event.bounds.size.height) - GAP;
+                layout.resize_stack(i, f32::from(at.y - grab), room)
+            }
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn finish(&mut self, cx: &mut Context<Self>) {
+        if let Some((_, layout)) = self.resize.take() {
+            save_layout(layout, cx);
+            cx.notify();
+        }
+    }
+}
+
+impl QuickPanel {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Explorer => "Data Explorer",
+            Self::Plots => "Plots",
+            Self::Guide => "Guide",
+            Self::Ai => "AI",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DraggedPanel {
+    panel: QuickPanel,
+    from: WindowId,
+}
+
+impl DraggedPanel {
+    fn side(&self, bounds: Bounds<Pixels>, window: &Window) -> Option<Side> {
+        if self.from != window.window_handle().window_id()
+            || !bounds.contains(&window.mouse_position())
+        {
+            return None;
+        }
+        // Take the nearest edge in panel-relative coordinates, so wide or
+        // tall panes still offer all four directions.
+        let at = window.mouse_position() - bounds.origin;
+        let x = f32::from(at.x) / f32::from(bounds.size.width) - 0.5;
+        let y = f32::from(at.y) / f32::from(bounds.size.height) - 0.5;
+        Some(if x.abs() >= y.abs() {
+            if x < 0. { Side::Left } else { Side::Right }
+        } else if y < 0. {
+            Side::Top
+        } else {
+            Side::Bottom
+        })
+    }
+}
+
+impl Render for DraggedPanel {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = Palette::get(cx);
+        crate::agents::composer_view::popup(p).child(self.panel.title())
+    }
+}
+
+fn drop_outline(mut bounds: Bounds<Pixels>, side: Side, accent: Hsla, window: &mut Window) {
+    match side {
+        Side::Left | Side::Right => {
+            bounds.size.width /= 2.;
+            if side == Side::Right {
+                bounds.origin.x += bounds.size.width;
+            }
+        }
+        Side::Top | Side::Bottom => {
+            bounds.size.height /= 2.;
+            if side == Side::Bottom {
+                bounds.origin.y += bounds.size.height;
+            }
+        }
+    }
+    window.paint_quad(outline(bounds, accent, BorderStyle::Solid).corner_radii(px(RADIUS)));
+}
+
+fn panel_drop_target(panel: QuickPanel, p: &Palette) -> Div {
+    // The overlay sits above the pane's controls and scroll areas without
+    // occluding them. Share its painted bounds with the drop handler.
+    let preview = Rc::new(Cell::new((Bounds::default(), None)));
+    let paint = preview.clone();
+    let hover = preview.clone();
+    let accent = p.accent;
+    div()
+        .absolute()
+        .inset_0()
+        .drag_over::<DraggedPanel>(move |style, dragged, window, cx| {
+            let (bounds, _) = hover.get();
+            let side = dragged.side(bounds, window).and_then(|side| {
+                cx.global::<ExploreLayout>()
+                    .0
+                    .drop_side(dragged.panel, panel, side)
+            });
+            hover.set((bounds, side));
+            style
+        })
+        .on_drop(move |dragged: &DraggedPanel, window, cx| {
+            if let Some(side) = dragged.side(preview.get().0, window) {
+                let mut layout = cx.global::<ExploreLayout>().0.clone();
+                if layout.move_panel(dragged.panel, panel, side) {
+                    save_layout(layout, cx);
+                }
+            }
+        })
+        .child(
+            canvas(
+                move |bounds, _, _| {
+                    paint.set((bounds, None));
+                    paint
+                },
+                move |bounds, paint, window, _| {
+                    if let Some(side) = paint.get().1 {
+                        drop_outline(bounds, side, accent, window);
+                    }
+                },
+            )
+            .size_full(),
+        )
+}
+
+fn layout_menu(p: &Palette) -> impl IntoElement {
+    Button::new("quick-layout-menu")
+        .ghost()
+        .small()
+        .accessibility_label("Explore layout")
+        .tooltip("Explore layout")
+        .child(icon("more").size(px(look::ICON)).text_color(p.muted))
+        .dropdown_menu_with_anchor(Anchor::TopRight, |menu, _, _| {
+            menu.item(PopupMenuItem::new("Reset Layout").on_click(|_, _, cx| {
+                let mut layout = cx.global::<ExploreLayout>().0.clone();
+                if layout.reset() {
+                    save_layout(layout, cx);
+                }
+            }))
+        })
+}
 
 impl Workbench {
     pub(super) fn render_quick_top_bar(
@@ -143,21 +347,53 @@ impl Workbench {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.quick_needs_folder(quick::KeepReason::OpenProject, window, cx)
                             })),
-                    ),
+                    )
+                    .child(layout_menu(&p)),
             )
             .into_any_element()
     }
 
     pub(super) fn render_quick_workspace(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
-        h_flex()
+        let state = window.use_keyed_state("explore-layout-state", cx, |window, cx| {
+            cx.default_global::<ExploreLayout>();
+            LayoutWindow {
+                _observe: window.observe_global::<ExploreLayout>(cx, |window, _| window.refresh()),
+                resize: None,
+            }
+        });
+        let layout = state.read(cx).layout(cx);
+        let count = layout.columns().len();
+        let room = (f32::from(window.viewport_size().width) - 2. * EDGE - (count - 1) as f32 * GAP)
+            .max(0.);
+        let stack_room = (f32::from(window.viewport_size().height)
+            - look::TITLE_BAR
+            - look::STATUS_BAR
+            - 2. * GAP)
+            .max(0.);
+        let widths = layout.widths(room);
+        let id = window.window_handle().window_id();
+        let finish = state.clone();
+        let finish_out = state.clone();
+        let resize = state.clone();
+        let mut workspace = h_flex()
             .size_full()
             .items_stretch()
-            .gap(px(GAP))
+            .on_drag_move(move |event: &DragMoveEvent<DraggedSplit>, _, cx| {
+                resize.update(cx, |state, cx| state.drag(event, cx));
+            })
+            .capture_any_mouse_up(move |event, _, cx| {
+                if event.button == MouseButton::Left {
+                    finish.update(cx, LayoutWindow::finish);
+                }
+            })
+            .on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
+                finish_out.update(cx, LayoutWindow::finish);
+            })
             .drag_over::<ExternalPaths>(move |d, _, _, _| d.bg(p.accent_soft))
             .on_drop(cx.listener(|this, dropped: &ExternalPaths, _, cx| {
                 let paths = dropped
@@ -166,40 +402,120 @@ impl Workbench {
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect();
                 this.quick_add(paths, cx);
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .child(self.render_quick_explorer(cx)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .child(self.render_quick_plots(cx)),
-            )
-            .child(
-                div()
-                    .w(relative(GUIDE_SHARE))
-                    .flex_none()
-                    .h_full()
-                    .flex()
-                    .child(self.render_quick_guide(cx)),
-            )
-            .into_any_element()
+            }));
+        for (i, width) in widths.into_iter().take(count).enumerate() {
+            let column = state.read(cx).layout(cx).columns()[i];
+            let mut body = v_flex().w(px(width)).h_full().min_w_0().flex_none();
+            if let Some(bottom) = column.bottom() {
+                body = body
+                    .child(
+                        self.render_quick_panel(column.top, id, cx)
+                            .h(px(column.top_height(stack_room)))
+                            .flex_none(),
+                    )
+                    .child(Self::quick_splitter(QuickSplit::Stack(i), &state, cx))
+                    .child(self.render_quick_panel(bottom, id, cx).flex_1());
+            } else {
+                body = body.child(self.render_quick_panel(column.top, id, cx).h_full());
+            }
+            if i > 0 {
+                workspace =
+                    workspace.child(Self::quick_splitter(QuickSplit::Column(i - 1), &state, cx));
+            }
+            workspace = workspace.child(body);
+        }
+        workspace.into_any_element()
     }
 
-    fn render_quick_explorer(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn quick_splitter(split: QuickSplit, state: &Entity<LayoutWindow>, cx: &App) -> Stateful<Div> {
+        let across = matches!(split, QuickSplit::Stack(_));
+        let dragging = state
+            .read(cx)
+            .resize
+            .as_ref()
+            .is_some_and(|(which, _)| *which == split);
+        let state = state.clone();
+        Self::splitter_handle(
+            format!("quick-split-{split:?}").into(),
+            across,
+            dragging,
+            Palette::get(cx),
+        )
+        .on_drag(
+            DraggedSplit {
+                split,
+                grab: Cell::default(),
+            },
+            move |drag, grab, _, cx| {
+                let grab = if across { grab.y } else { grab.x };
+                drag.grab.set(grab.clamp(px(0.), px(GAP)));
+                let layout = cx.global::<ExploreLayout>().0.clone();
+                state.update(cx, |state, cx| {
+                    state.resize = Some((drag.split, layout));
+                    cx.notify();
+                });
+                cx.stop_propagation();
+                cx.new(|_| DraggedSplit {
+                    split,
+                    grab: Cell::default(),
+                })
+            },
+        )
+    }
+
+    fn quick_header(panel: QuickPanel, id: WindowId, p: &Palette) -> Div {
+        Self::strip(p).child(
+            h_flex()
+                .id(("quick-panel-header", panel as usize))
+                .flex_1()
+                .self_stretch()
+                .min_w_0()
+                .pl(px(look::GAP_8))
+                .cursor(CursorStyle::OpenHand)
+                .child(panel.title())
+                .on_drag(DraggedPanel { panel, from: id }, |dragged, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.new(|_| *dragged)
+                }),
+        )
+    }
+
+    fn render_quick_panel(&self, panel: QuickPanel, id: WindowId, cx: &mut Context<Self>) -> Div {
+        let p = *Palette::get(cx);
+        let content = match panel {
+            QuickPanel::Explorer => self.render_quick_explorer(id, cx),
+            QuickPanel::Plots => self.render_quick_plots(id, cx),
+            QuickPanel::Guide => self.render_quick_guide(id, cx),
+            QuickPanel::Ai => side_pane(&p)
+                .size_full()
+                .child(Self::quick_header(panel, id, &p))
+                .child(
+                    div()
+                        .px(px(look::PANE_PAD_X))
+                        .py(px(look::PANE_PAD_Y))
+                        .text_size(px(look::small()))
+                        .text_color(p.muted)
+                        .child("The AI helper comes here."),
+                )
+                .into_any_element(),
+        };
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_h_0()
+            .child(content)
+            .child(panel_drop_target(panel, &p))
+    }
+
+    fn render_quick_explorer(&self, id: WindowId, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         if let Some(explorer) = &self.explorer {
             return pane(&p)
                 .flex_1()
                 .h_full()
+                .child(Self::quick_header(QuickPanel::Explorer, id, &p))
                 .child(div().flex_1().min_h_0().child(explorer.clone()))
                 .into_any_element();
         }
@@ -213,15 +529,20 @@ impl Workbench {
         pane(&p)
             .flex_1()
             .h_full()
-            .items_center()
-            .justify_center()
-            .px(px(look::GAP_12))
-            .text_color(p.muted)
-            .child(div().max_w(px(320.)).text_center().child(waiting))
+            .child(Self::quick_header(QuickPanel::Explorer, id, &p))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .px(px(look::GAP_12))
+                    .text_color(p.muted)
+                    .child(div().max_w(px(320.)).text_center().child(waiting)),
+            )
             .into_any_element()
     }
 
-    fn render_quick_plots(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_quick_plots(&self, id: WindowId, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let empty = self.plots_now().1.is_none();
         side_pane(&p)
@@ -229,10 +550,7 @@ impl Workbench {
             .flex_1()
             .h_full()
             .child(
-                Self::strip(&p)
-                    .child(div().pl(px(look::GAP_8)).child("Plots"))
-                    .child(div().flex_1())
-                    .children(self.plot_tools(cx)),
+                Self::quick_header(QuickPanel::Plots, id, &p).children(self.plot_tools(cx)),
             )
             .child(div().flex_1().min_h_0().map(|d| {
                 if empty {
@@ -254,7 +572,7 @@ impl Workbench {
             .into_any_element()
     }
 
-    fn render_quick_guide(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_quick_guide(&self, id: WindowId, cx: &mut Context<Self>) -> AnyElement {
         let p = *Palette::get(cx);
         let Some(q) = &self.quick else {
             return div().into_any_element();
@@ -331,7 +649,7 @@ impl Workbench {
         side_pane(&p)
             .flex_1()
             .h_full()
-            .child(Self::strip(&p).child(div().pl(px(look::GAP_8)).child("Guide")))
+            .child(Self::quick_header(QuickPanel::Guide, id, &p))
             .child(
                 div()
                     .id("quick-guide")

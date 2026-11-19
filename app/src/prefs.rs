@@ -97,6 +97,14 @@ pub(crate) fn forget_quick_session(path: &str) {
     write("quickSessions", json!(sessions));
 }
 
+pub(crate) fn explore_layout() -> crate::quick_layout::Layout {
+    serde_json::from_value(read()["exploreLayout"].clone()).unwrap_or_default()
+}
+
+pub(crate) fn save_explore_layout(layout: &crate::quick_layout::Layout) {
+    write("exploreLayout", json!(layout));
+}
+
 /// Pins belong to this Mac, scoped by daemon host and absolute project path.
 pub(crate) type ProjectPins =
     std::collections::BTreeMap<String, std::collections::BTreeSet<String>>;

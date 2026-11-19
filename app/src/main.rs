@@ -14,6 +14,7 @@ mod look;
 mod panes;
 mod prefs;
 mod quick;
+mod quick_layout;
 mod shell;
 mod view;
 mod welcome;

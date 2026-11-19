@@ -207,10 +207,16 @@ fn window_options(bounds: WindowBounds, kind: Kind) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(bounds),
         // Welcome keeps its device sidebar fixed while the content can scroll.
-        window_min_size: Some(if kind == Kind::Welcome {
-            size(px(800.), px(600.))
-        } else {
-            size(px(720.), px(480.))
+        window_min_size: Some(match kind {
+            Kind::Welcome => size(px(800.), px(600.)),
+            Kind::Quick => {
+                let min = crate::quick_layout::MIN_PANEL;
+                size(
+                    px(3. * min + 2. * (look::EDGE + look::GAP)),
+                    px(2. * min + look::TITLE_BAR + 2. * look::GAP + look::STATUS_BAR),
+                )
+            }
+            Kind::Main => size(px(720.), px(480.)),
         }),
         // On a Mac the title bar is Sandhill's own row of capsules, with
         // the window buttons at its left, as in the Tauri app.

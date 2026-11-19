@@ -198,10 +198,28 @@ impl Workbench {
     /// A gap between panes that can be dragged; an accent line shows under
     /// the pointer.
     pub(crate) fn splitter(&self, split: Split, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = *Palette::get(cx);
-        let across = matches!(split, Split::Variables | Split::Console);
-        let dragging = self.dragging == Some(split);
-        let id: SharedString = format!("split-{split:?}").into();
+        Self::splitter_handle(
+            format!("split-{split:?}").into(),
+            matches!(split, Split::Variables | Split::Console),
+            self.dragging == Some(split),
+            Palette::get(cx),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                this.dragging = Some(split);
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        )
+    }
+
+    pub(super) fn splitter_handle(
+        id: SharedString,
+        across: bool,
+        dragging: bool,
+        p: &Palette,
+    ) -> Stateful<Div> {
         let line = div()
             .absolute()
             .rounded(px(1.))
@@ -234,14 +252,6 @@ impl Workbench {
                 }
             })
             .child(line.group_hover(group, |d| d.opacity(0.8)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    this.dragging = Some(split);
-                    cx.stop_propagation();
-                    cx.notify();
-                }),
-            )
     }
 
     /// Resizes the panes beside a gap being dragged to the pointer.
