@@ -117,6 +117,8 @@ pub(crate) struct Quick {
     pub keeping: Option<Keeping>,
     /// The window is closing after the question was answered.
     pub closing: bool,
+    /// The next table loaded was imported as a sample sheet.
+    pub sheet_wanted: bool,
 }
 
 pub(crate) fn is_table(name: &str) -> bool {
@@ -730,6 +732,7 @@ impl Workbench {
         };
         quick.busy = None;
         quick.error = (!problems.is_empty()).then(|| problems.join("\n"));
+        let new_names: Vec<String> = loaded.iter().map(|t| t.name.clone()).collect();
         for table in loaded {
             merge(&mut quick.card, &table);
             quick.tables.retain(|t| t.name != table.name);
@@ -744,15 +747,44 @@ impl Workbench {
         if let Some(name) = shown {
             self.quick_show(session, name, window, cx);
         }
-        // A sample sheet with a condition column gives the groups.
-        if self.quick.as_ref().is_some_and(|q| q.card.groups.is_none())
-            && let Some((table, key, value)) = self.quick.as_ref().and_then(|q| {
-                sheet_columns(q)
-                    .into_iter()
-                    .find_map(|(t, k, cols)| guess_group_column(&cols).map(|v| (t, k, v)))
+        // A sample sheet gives the groups: on its own when there are none
+        // yet and a column is named like groups, or because the user
+        // imported it as one.
+        let wanted = self
+            .quick
+            .as_mut()
+            .is_some_and(|q| std::mem::take(&mut q.sheet_wanted));
+        let from_import = wanted
+            .then(|| {
+                self.quick
+                    .as_mut()
+                    .and_then(|q| take_imported_sheet(q, &new_names))
             })
-        {
-            self.quick_groups_from(table, key, value, QuickFrom::Found, cx);
+            .flatten();
+        let found = from_import.clone().or_else(|| {
+            self.quick
+                .as_ref()
+                .filter(|q| q.card.groups.is_none())
+                .and_then(|q| {
+                    sheet_columns(q)
+                        .into_iter()
+                        .find_map(|(t, k, cols)| guess_group_column(&cols).map(|v| (t, k, v)))
+                })
+        });
+        if let Some((table, key, value)) = found {
+            let from = if from_import.is_some() {
+                QuickFrom::Told
+            } else {
+                QuickFrom::Found
+            };
+            if from == QuickFrom::Told {
+                self.quick_save_card(cx);
+            }
+            self.quick_groups_from(table, key, value, from, cx);
+        } else if wanted && let Some(quick) = self.quick_mut() {
+            quick.error = Some(
+                "That table has no column of sample names and groups. A sample sheet has one row per sample: its name, then its group.".into(),
+            );
         }
         cx.notify();
     }
@@ -1128,6 +1160,34 @@ impl Workbench {
         .detach();
     }
 
+    /// Import a Sample Sheet…: a table of samples and their groups, added
+    /// to the session and used for the groups.
+    pub(crate) fn quick_import_sheet(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Import".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let paths: Vec<String> = paths
+                .into_iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            this.update(cx, |this, cx| {
+                if let Some(quick) = this.quick_mut() {
+                    quick.sheet_wanted = true;
+                }
+                this.quick_add(paths, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// The session's name: the kept folder's, else the first table's.
     pub(crate) fn quick_name(&self) -> String {
         let Some(quick) = &self.quick else {
@@ -1419,6 +1479,48 @@ pub(crate) fn guess_group_column(columns: &[String]) -> Option<String> {
             .find(|c| c.to_ascii_lowercase().contains(wanted))
             .cloned()
     })
+}
+
+/// An imported sample sheet among `new_names`: marked as a sample sheet on
+/// the card (the user said so), with its sample column (recognised, else
+/// its first text column) and group column (one named like groups, else
+/// the first other text column with repeats).
+fn take_imported_sheet(
+    quick: &mut Quick,
+    new_names: &[String],
+) -> Option<(String, String, String)> {
+    for name in new_names {
+        let Some(loaded) = quick.tables.iter().find(|t| &t.name == name) else {
+            continue;
+        };
+        let texts: Vec<&sandhill_proto::QuickColumn> = loaded
+            .columns
+            .iter()
+            .filter(|c| c.kind != sandhill_proto::QuickColumnKind::Number)
+            .collect();
+        let Some(key) = loaded
+            .recognition
+            .sample_column
+            .clone()
+            .or_else(|| texts.first().map(|c| c.name.clone()))
+        else {
+            continue;
+        };
+        let others: Vec<String> = texts
+            .iter()
+            .filter(|c| c.name != key && c.distinct >= 2 && c.distinct < loaded.rows.max(2))
+            .map(|c| c.name.clone())
+            .collect();
+        let Some(value) = guess_group_column(&others).or_else(|| others.first().cloned()) else {
+            continue;
+        };
+        if let Some(entry) = quick.card.tables.iter_mut().find(|t| &t.name == name) {
+            entry.kind = Known::told(QuickTableKind::SampleSheet);
+            entry.question = None;
+        }
+        return Some((name.clone(), key, value));
+    }
+    None
 }
 
 /// The R kernel a session starts: IRkernel before Ark, the newest R first.

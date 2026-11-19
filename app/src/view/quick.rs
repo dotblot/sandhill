@@ -590,13 +590,15 @@ impl Workbench {
             return div().into_any_element();
         };
         let loaded = q.tables.iter().find(|t| t.name == table.name);
-        let pills = |choices: Vec<(String, bool, Edit)>, cx: &mut Context<Self>| {
+        // Each row of choices needs ids of its own: shared ids made only
+        // the first sample's group choices clickable.
+        let pills = |key: &str, choices: Vec<(String, bool, Edit)>, cx: &mut Context<Self>| {
             let mut row = h_flex().flex_wrap().gap(px(look::GAP_4));
             for (ix, (label, picked, edit)) in choices.into_iter().enumerate() {
                 let edit = std::cell::RefCell::new(Some(edit));
                 row = row.child(
                     Self::tab(
-                        SharedString::from(format!("quick-choice-{item:?}-{ix}")),
+                        SharedString::from(format!("quick-choice-{item:?}-{key}-{ix}")),
                         None,
                         label,
                         picked,
@@ -613,6 +615,7 @@ impl Workbench {
         };
         let body: AnyElement = match item {
             Item::Kind => pills(
+                "kind",
                 [
                     QuickTableKind::Results,
                     QuickTableKind::Counts,
@@ -667,9 +670,10 @@ impl Workbench {
                             .collect()
                     })
                     .unwrap_or_default();
-                pills(columns, cx).into_any_element()
+                pills("column", columns, cx).into_any_element()
             }
             Item::Values => pills(
+                "values",
                 [
                     QuickValues::Counts,
                     QuickValues::Normalized,
@@ -690,6 +694,7 @@ impl Workbench {
             Item::Organism => {
                 let now = q.card.organism.as_ref().map(|o| o.value.as_str());
                 pills(
+                    "organism",
                     vec![
                         (
                             "human".into(),
@@ -764,7 +769,7 @@ impl Workbench {
                         .child(from)
                         .child(div().text_color(p.muted).child("Or place each sample:"));
                 }
-                for sample in samples {
+                for (row, sample) in samples.into_iter().enumerate() {
                     let now = groups
                         .iter()
                         .find(|(s, _)| *s == sample)
@@ -794,7 +799,7 @@ impl Workbench {
                                     .truncate()
                                     .child(sample),
                             )
-                            .child(pills(choices, cx)),
+                            .child(pills(&format!("sample-{row}"), choices, cx)),
                     );
                 }
                 let input = q.inputs.as_ref().map(|i| i.group.clone());
@@ -820,6 +825,24 @@ impl Workbench {
                                     }
                                     this.quick_edit(Edit::AddGroup(name), cx);
                                 })),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap(px(look::GAP_8))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_color(p.muted)
+                                .child("Or a table with each sample's group:"),
+                        )
+                        .child(
+                            Button::new("quick-import-sheet")
+                                .small()
+                                .label("Import a Sample Sheet…")
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.quick_import_sheet(cx)),
+                                ),
                         ),
                 )
                 .into_any_element()
@@ -849,7 +872,7 @@ impl Workbench {
                     .child(div().text_color(p.muted).child(
                         "Which group is a positive fold change higher in? The table itself doesn't say.",
                     ))
-                    .when(!ways.is_empty(), |d| d.child(pills(ways, cx)))
+                    .when(!ways.is_empty(), |d| d.child(pills("comparison", ways, cx)))
                     .children(inputs.map(|(higher, lower)| {
                         h_flex()
                             .gap(px(look::GAP_4))
