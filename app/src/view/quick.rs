@@ -573,11 +573,13 @@ impl Workbench {
             QuickPanel::Explorer => self.render_quick_explorer(id, cx),
             QuickPanel::Plots => self.render_quick_plots(id, cx),
             QuickPanel::Guide => self.render_quick_guide(id, cx),
-            QuickPanel::Ai => v_flex()
+            // The conversation's own header is the panel's top (Huan,
+            // 2026-11-19): no "AI" strip above it.
+            QuickPanel::Ai => div()
                 .flex_1()
                 .h_full()
-                .child(Self::quick_header(panel, id, &p))
-                .child(div().flex_1().min_h_0().child(self.render_agents_pane(cx)))
+                .min_h_0()
+                .child(self.render_agents_pane(cx))
                 .into_any_element(),
         };
         div()

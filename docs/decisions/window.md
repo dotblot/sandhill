@@ -137,6 +137,12 @@ differs, this wins.
   or Codex. The other panels use the room when it is hidden. The Guide
   points to Getting Ready when neither helper is ready. Continue Without
   AI hides the pane only in the session in front.
+  Explore's default layout (Huan, 2026-11-19): three columns, the Data
+  Explorer on the left, Plots above the Guide in the middle, the AI on the
+  right, widths 2:1:1 (2:1 while the AI is hidden). The AI pane has no
+  "AI" label above it: the conversation's own header is its top, so it is
+  the one panel not dragged by a header (others can still be dropped
+  beside it).
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on

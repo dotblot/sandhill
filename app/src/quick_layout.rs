@@ -99,13 +99,17 @@ impl TryFrom<SavedLayout> for Layout {
     }
 }
 
+/// Huan, 2026-11-19: the Data Explorer on the left, Plots above the Guide
+/// in the middle, the AI on the right, in widths of 2:1:1.
 impl Default for Layout {
     fn default() -> Self {
+        let mut middle = Column::single(Panel::Plots, 1. / 4.);
+        Self::stack(&mut middle, Panel::Guide, false);
         Self {
             columns: vec![
-                Column::single(Panel::Explorer, 3. / 8.),
-                Column::single(Panel::Plots, 3. / 8.),
-                Column::single(Panel::Guide, 2. / 8.),
+                Column::single(Panel::Explorer, 2. / 4.),
+                middle,
+                Column::single(Panel::Ai, 1. / 4.),
             ],
             ai_visible: None,
         }
@@ -241,16 +245,20 @@ impl Layout {
     }
 
     /// Hiding a panel gives its room back to the others. Showing it adds a
-    /// column next to the Guide when possible, or stacks it with the Guide.
+    /// column next to the Guide when possible, as wide as the Guide's (the
+    /// others narrowing in proportion, so hiding then showing the AI keeps
+    /// 2:1:1), or stacks it with the Guide.
     pub(crate) fn set_visible(&mut self, panel: Panel, visible: bool) -> bool {
         match (self.locate(panel), visible) {
             (None, true) => {
                 let guide = self.locate(Panel::Guide).unwrap_or(self.columns.len() - 1);
                 if self.columns.len() < MAX_COLUMNS {
-                    let column = &mut self.columns[guide];
-                    column.width /= 2.;
-                    let width = column.width;
+                    let width = self.columns[guide].width;
                     self.columns.insert(guide + 1, Column::single(panel, width));
+                    let total: f32 = self.columns.iter().map(|c| c.width).sum();
+                    for column in &mut self.columns {
+                        column.width /= total;
+                    }
                 } else {
                     // At most four panels exist, so with one hidden and
                     // three columns each column has just one panel.
@@ -358,7 +366,7 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
-    use super::{Layout, MIN_PANEL, Panel::*, Side::*};
+    use super::{Column, Layout, MIN_PANEL, Panel::*, Side::*};
     use serde_json::{Value, json};
 
     fn panels(layout: &Layout) -> Vec<(super::Panel, Option<super::Panel>)> {
@@ -369,43 +377,67 @@ mod tests {
             .collect()
     }
 
+    /// Three single columns and no AI, to move panels around in.
+    fn three() -> Layout {
+        Layout {
+            columns: vec![
+                Column::single(Explorer, 3. / 8.),
+                Column::single(Plots, 3. / 8.),
+                Column::single(Guide, 2. / 8.),
+            ],
+            ai_visible: None,
+        }
+    }
+
+    fn rounded(widths: [f32; 3]) -> [f32; 3] {
+        widths.map(f32::round)
+    }
+
     #[test]
-    fn default_layout_hides_ai_and_shares_width_three_three_two() {
-        let layout = Layout::default();
+    fn default_layout_is_explorer_then_plots_over_guide_then_ai_two_one_one() {
+        let mut layout = Layout::default();
         assert_eq!(
             panels(&layout),
-            [(Explorer, None), (Plots, None), (Guide, None)]
+            [(Explorer, None), (Plots, Some(Guide)), (Ai, None)]
         );
-        assert_eq!(layout.widths(1200.), [450., 450., 300.]);
+        assert_eq!(layout.widths(1200.), [600., 300., 300.]);
         assert_eq!(layout.widths(720.), [240.; 3]);
+        // Without the AI the other two keep 2:1, and showing it again
+        // brings back 2:1:1.
+        assert!(layout.set_visible(Ai, false));
+        assert_eq!(panels(&layout), [(Explorer, None), (Plots, Some(Guide))]);
+        assert_eq!(rounded(layout.widths(1200.)), [800., 400., 0.]);
+        assert!(layout.set_visible(Ai, true));
+        assert_eq!(panels(&layout), panels(&Layout::default()));
+        assert_eq!(rounded(layout.widths(1200.)), [600., 300., 300.]);
     }
 
     #[test]
     fn moves_left_or_right_into_a_column() {
-        let mut layout = Layout::default();
+        let mut layout = three();
         assert!(layout.move_panel(Guide, Explorer, Left));
         assert_eq!(
             panels(&layout),
             [(Guide, None), (Explorer, None), (Plots, None)]
         );
         assert!(layout.move_panel(Guide, Plots, Right));
-        assert_eq!(panels(&layout), panels(&Layout::default()));
+        assert_eq!(panels(&layout), panels(&three()));
     }
 
     #[test]
     fn moves_above_or_below_into_a_stack_and_can_unstack() {
-        let mut layout = Layout::default();
+        let mut layout = three();
         assert!(layout.move_panel(Plots, Explorer, Top));
         assert_eq!(panels(&layout), [(Plots, Some(Explorer)), (Guide, None)]);
         assert!(layout.move_panel(Plots, Explorer, Bottom));
         assert_eq!(panels(&layout), [(Explorer, Some(Plots)), (Guide, None)]);
         assert!(layout.move_panel(Plots, Guide, Left));
-        assert_eq!(panels(&layout), panels(&Layout::default()));
+        assert_eq!(panels(&layout), panels(&three()));
     }
 
     #[test]
     fn refuses_a_third_panel_in_a_column() {
-        let mut layout = Layout::default();
+        let mut layout = three();
         assert!(layout.set_visible(Ai, true));
         assert!(!layout.move_panel(Plots, Guide, Top));
         assert!(!layout.move_panel(Explorer, Ai, Bottom));
@@ -417,7 +449,7 @@ mod tests {
 
     #[test]
     fn side_drops_stack_when_a_fourth_column_would_be_needed() {
-        let mut layout = Layout::default();
+        let mut layout = three();
         assert!(layout.set_visible(Ai, true));
         assert_eq!(layout.drop_side(Ai, Explorer, Left), Some(Top));
         assert!(layout.move_panel(Ai, Explorer, Left));
@@ -435,7 +467,7 @@ mod tests {
 
     #[test]
     fn resizing_keeps_each_panel_at_least_240_pixels_when_they_fit() {
-        let mut layout = Layout::default();
+        let mut layout = three();
         assert!(layout.resize_columns(0, -300., 1200.));
         assert_eq!(layout.widths(1200.), [MIN_PANEL, 660., 300.]);
         assert!(layout.resize_columns(0, 900., 1200.));
@@ -453,12 +485,12 @@ mod tests {
 
     #[test]
     fn shows_ai_next_to_guide_and_removes_it_wherever_it_moved() {
-        let mut layout = Layout::default();
+        let mut layout = three();
         assert!(layout.set_visible(Ai, true));
         assert_eq!(layout.columns()[2].bottom(), Some(Ai));
         assert!(layout.move_panel(Ai, Explorer, Bottom));
         assert!(layout.set_visible(Ai, false));
-        assert_eq!(layout, Layout::default());
+        assert_eq!(layout, three());
         assert!(!layout.set_visible(Ai, false));
         assert!(layout.move_panel(Explorer, Plots, Top));
         assert!(layout.set_visible(Ai, true));
@@ -472,7 +504,7 @@ mod tests {
 
     #[test]
     fn hiding_a_panel_never_leaves_one_column() {
-        let mut layout = Layout::default();
+        let mut layout = three();
         assert!(layout.move_panel(Plots, Explorer, Bottom));
         assert!(layout.set_visible(Guide, false));
         assert_eq!(panels(&layout), [(Explorer, None), (Plots, None)]);
@@ -483,18 +515,22 @@ mod tests {
     #[test]
     fn reset_restores_the_default() {
         let mut layout = Layout::default();
-        assert!(layout.set_visible(Ai, true));
-        assert!(layout.move_panel(Explorer, Plots, Bottom));
+        layout.choose_ai_visibility(true);
+        assert!(layout.move_panel(Ai, Explorer, Bottom));
         assert!(layout.resize_stack(0, 350., 600.));
         assert!(layout.reset());
-        assert_eq!(layout, Layout::default());
+        assert_eq!(layout.columns(), Layout::default().columns());
         assert!(!layout.reset());
+        // Never chosen, the AI starts hidden until an agent is ready.
+        let mut layout = Layout::default();
+        assert!(layout.reset());
+        assert!(!layout.is_visible(Ai));
     }
 
     #[test]
     fn round_trips_a_custom_layout_and_falls_back_for_invalid_or_older_json() {
         let default = Layout::default();
-        let mut custom = default.clone();
+        let mut custom = three();
         assert!(custom.set_visible(Ai, true));
         assert!(custom.resize_stack(2, 350., 600.));
         let saved = serde_json::to_value(&custom).unwrap();
