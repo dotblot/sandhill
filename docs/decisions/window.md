@@ -131,6 +131,16 @@ differs, this wins.
   time (Getting Ready and the kernel picker's Install IRkernel). It never
   creates a library (no more `R_LIBS_USER` folder made for the user);
   with no library it can write to, it says how to make one and stops.
+  Python for notebooks (Huan, 2026-11-19; `docs/design/python-ready-plan.md`):
+  a Getting Ready box between R and the AI helpers shows the Python
+  kernels Sandhill finds and the mamba (else conda) it uses. It offers
+  Create a Python Environment… (name, default `sandhill-python`; Python
+  3.12, 3.11 or 3.13; Data analysis and Single-cell package sets, both
+  ticked by default), Add ipykernel… for environments with Python but no
+  kernel, and Install Miniforge… only when there is no mamba or conda.
+  Each shows its exact command before it runs; packages come from
+  conda-forge only, and Miniforge's installer leaves the shell's settings
+  alone.
   The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
   a title-bar switch shared by every Explore window on this Mac. Until
   that switch is used, the pane shows only with a signed-in Claude Code

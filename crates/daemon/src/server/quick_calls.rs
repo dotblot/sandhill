@@ -8,7 +8,7 @@ use sandhill_proto::{EVENT_RUN_FINISHED, QuickAgentTool, QuickCard, QuickRequest
 use tokio::sync::broadcast::error::RecvError;
 
 use super::*;
-use crate::quick::{folder, record, run, setup};
+use crate::quick::{folder, python, record, run, setup};
 use crate::terminal::Launch;
 
 /// How long one template may run: loading a large table, a big heatmap.
@@ -80,6 +80,41 @@ impl Daemon {
         let record = self.install_record();
         self.quick_job(move |log| record::uninstall(&record, log))
             .await
+    }
+
+    pub(super) async fn quick_create_python(
+        &self,
+        name: String,
+        version: String,
+        sets: Vec<String>,
+    ) -> Result<Value> {
+        let record = self.install_record();
+        self.quick_job(move |log| {
+            let search = crate::kernelspecs::Search::from_env();
+            python::create(&search, &name, &version, &sets, log, &record)
+        })
+        .await
+    }
+
+    pub(super) async fn quick_add_ipykernel(&self, prefix: String) -> Result<Value> {
+        let record = self.install_record();
+        self.quick_job(move |log| {
+            python::add_ipykernel(
+                &crate::kernelspecs::Search::from_env(),
+                &prefix,
+                log,
+                &record,
+            )
+        })
+        .await
+    }
+
+    pub(super) async fn quick_install_miniforge(&self) -> Result<Value> {
+        let record = self.install_record();
+        self.quick_job(move |log| {
+            python::install_miniforge(&crate::kernelspecs::Search::from_env(), log, &record)
+        })
+        .await
     }
 
     /// Sandhill's storage for sessions not kept yet.

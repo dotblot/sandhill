@@ -281,7 +281,7 @@ fn kernel_dir(candidate: &Candidate, search: &Search) -> (String, PathBuf) {
 
 /// conda's own program for an environment: mamba, then conda, from its
 /// installation, else whichever is on `PATH`.
-fn conda_tool(prefix: &Path) -> String {
+pub(crate) fn conda_tool(prefix: &Path) -> String {
     let root = kernelspecs::conda_root(prefix);
     ["bin/mamba", "bin/conda", "condabin/conda"]
         .iter()

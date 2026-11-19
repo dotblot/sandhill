@@ -69,7 +69,10 @@ by sentence); where an older plan differs, this wins.
   environment line when the name already shows it.
 - Full status/errors remain in tooltips. List only runnable kernels, including
   conda/mamba kernels; do not add a separate environment inventory or disabled
-  rows for environments without a kernel (Huan, 2026-11-08). Kernels whose
+  rows for environments without a kernel (Huan, 2026-11-08). This is the
+  pickers' rule: Welcome → Getting Ready lists conda environments with
+  Python but no ipykernel, only to offer Add ipykernel (Huan, 2026-11-19;
+  `docs/design/python-ready-plan.md`). Kernels whose
   program is gone (left behind by an upgraded or removed R or Python) are
   not listed; a document that chose one still gets the "wasn't found" error
   rather than another kernel (Huan, 2026-11-15). An R without

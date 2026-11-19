@@ -1,14 +1,20 @@
 //! Welcome's Start group (Huan, 2026-11-19; `docs/design/quick-tools-plan.md`,
-//! `docs/design/explore-next-plan.md`): Explore a Table (a place to drop
-//! tables and what can be made from them), Getting Ready (R, where it came
-//! from and where packages go, the packages, Claude Code and Codex,
+//! `docs/design/explore-next-plan.md`, `docs/design/python-ready-plan.md`):
+//! Explore a Table (a place to drop tables and what can be made from them),
+//! Getting Ready (R, where it came from and where packages go, the
+//! packages, Python environments for notebooks, Claude Code and Codex,
 //! installing what is missing and removing what Sandhill installed), and
 //! the tables explored, which Recent lists.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
-use sandhill_proto::{AgentAccount, FileText, QuickInstalling, QuickReadiness, QuickTool, RSource};
+use gpui_kit::component::checkbox::Checkbox;
+use sandhill_proto::{
+    AgentAccount, FileText, MINIFORGE_COMMAND, PYTHON_ENV_NAME, PYTHON_SETS, PYTHON_VERSIONS,
+    QuickInstalling, QuickPython, QuickReadiness, QuickTool, RSource, ipykernel_args,
+    python_create_args, python_env_name_ok,
+};
 
 use super::*;
 
@@ -26,6 +32,15 @@ enum Installing {
     /// Claude Code (`claude`) or Codex (`codex`).
     Agent(String),
     Remove,
+    /// A new Python environment.
+    CreatePython {
+        name: String,
+        python: String,
+        sets: Vec<String>,
+    },
+    /// ipykernel into the environment at this prefix.
+    Ipykernel(String),
+    Miniforge,
 }
 
 impl Installing {
@@ -35,8 +50,40 @@ impl Installing {
             Installing::Kernel(_) => "Installing IRkernel".into(),
             Installing::Agent(kind) => format!("Installing {}", agent_name(kind)),
             Installing::Remove => "Removing what Sandhill installed".into(),
+            Installing::CreatePython { name, .. } => {
+                format!("Creating the Python environment {name}")
+            }
+            Installing::Ipykernel(_) => "Adding ipykernel".into(),
+            Installing::Miniforge => "Installing Miniforge".into(),
         }
     }
+
+    /// Which box its progress shows in.
+    fn section(&self) -> Section {
+        match self {
+            Installing::Packages(_) | Installing::Kernel(_) => Section::R,
+            Installing::CreatePython { .. } | Installing::Ipykernel(_) | Installing::Miniforge => {
+                Section::Python
+            }
+            Installing::Agent(_) | Installing::Remove => Section::Ai,
+        }
+    }
+}
+
+/// Getting Ready's boxes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    R,
+    Python,
+    Ai,
+}
+
+/// The new Python environment's choices, while its form is open.
+struct PythonForm {
+    name: Entity<InputState>,
+    _changed: Subscription,
+    version: &'static str,
+    sets: Vec<&'static str>,
 }
 
 fn agent_name(kind: &str) -> &'static str {
@@ -68,7 +115,12 @@ enum Confirm {
     /// Which of R's libraries the packages (or, with `kernel`, IRkernel)
     /// go in: asked every time, and none is ever created (Huan,
     /// 2026-11-19).
-    Library { kernel: bool },
+    Library {
+        kernel: bool,
+    },
+    /// Add ipykernel to the environment at this prefix.
+    Ipykernel(String),
+    Miniforge,
 }
 
 #[derive(Default)]
@@ -81,6 +133,7 @@ pub(crate) struct QuickPage {
     /// Whether each agent's own login is signed in, as the Agents page
     /// last saw it; never asked of the agent here.
     signed_in: HashMap<String, Option<bool>>,
+    python_form: Option<PythonForm>,
     /// Tables being opened.
     opening: bool,
     /// A recent session whose actions are shown, and one asked about
@@ -219,8 +272,22 @@ impl AppWindow {
                 let call = daemon.call::<QuickInstalling>(Call::QuickUninstall);
                 cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
             }
+            Installing::CreatePython { name, python, sets } => {
+                let call =
+                    daemon.call::<QuickInstalling>(Call::QuickCreatePython { name, python, sets });
+                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
+            }
+            Installing::Ipykernel(prefix) => {
+                let call = daemon.call::<QuickInstalling>(Call::QuickAddIpykernel { prefix });
+                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
+            }
+            Installing::Miniforge => {
+                let call = daemon.call::<QuickInstalling>(Call::QuickInstallMiniforge);
+                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
+            }
         };
         self.start.quick.confirm = None;
+        self.start.quick.python_form = None;
         cx.spawn(async move |this, cx| {
             let started = started.await;
             this.update(cx, |this, cx| {
@@ -509,8 +576,8 @@ impl AppWindow {
             .child(page_title(
                 "Getting Ready",
                 look::mac_or(
-                    "What this Mac needs to explore tables: R, its kernel and a few R packages. Sandhill checks and installs them for you.",
-                    "What this computer needs to explore tables: R, its kernel and a few R packages. Sandhill checks and installs them for you.",
+                    "What this Mac needs: R and its packages for exploring tables, Python for notebooks, and the AI helpers. Sandhill checks them and installs what is missing.",
+                    "What this computer needs: R and its packages for exploring tables, Python for notebooks, and the AI helpers. Sandhill checks them and installs what is missing.",
                 ),
                 &p,
             ))
@@ -697,9 +764,9 @@ impl AppWindow {
                 rows.push(self.quick_library_choice(r, false, busy, p, cx));
             }
         }
-        if let Some(install) = &q.install {
-            rows.push(self.quick_install_row(install, p, cx));
-        }
+        rows.extend(self.quick_install_in(Section::R, p, cx));
+        let mut python = self.quick_python_rows(&readiness.python, busy, p, cx);
+        python.extend(self.quick_install_in(Section::Python, p, cx));
         let mut agents: Vec<AnyElement> = readiness
             .agents
             .iter()
@@ -708,6 +775,13 @@ impl AppWindow {
         if readiness.installed.iter().any(|i| i.ours) {
             agents.push(self.quick_remove_row(readiness, busy, p, cx));
         }
+        agents.extend(self.quick_install_in(Section::Ai, p, cx));
+        let heading = |title| {
+            div()
+                .pt(px(look::GAP_12))
+                .px(px(look::PANE_PAD_X))
+                .child(section_title(title, p))
+        };
         v_flex()
             .gap(px(look::GAP_6))
             .child(
@@ -717,13 +791,315 @@ impl AppWindow {
                     .child(check_again(cx)),
             )
             .child(look::settings_box(rows, p))
+            .child(heading("Python for notebooks"))
+            .child(look::settings_box(python, p))
+            .child(heading("AI helpers"))
+            .child(look::settings_box(agents, p))
+            .into_any_element()
+    }
+
+    /// Python for notebooks (Huan, 2026-11-19; `python-ready-plan.md`): the
+    /// kernels found, the mamba used (or Install Miniforge), environments
+    /// that could get a kernel, and Create a Python Environment. Each
+    /// action shows its command in the row before it runs.
+    fn quick_python_rows(
+        &self,
+        python: &QuickPython,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let q = &self.start.quick;
+        let mut rows = Vec::new();
+        rows.push(
+            look::settings_row(
+                "Python kernels",
+                Some(look::settings_detail(
+                    if python.kernels.is_empty() {
+                        "None yet. Create an environment below, or add ipykernel to one you have."
+                            .to_string()
+                    } else {
+                        python.kernels.join(", ")
+                    },
+                    p,
+                )),
+            )
+            .into_any_element(),
+        );
+        match &python.tool {
+            Some(tool) => {
+                let program = std::path::Path::new(&tool.path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                rows.push(
+                    look::settings_row(
+                        format!("{program} {}", tool.version).trim().to_string(),
+                        Some(look::settings_detail(
+                            format!("{}. New environments go in {}/envs.", tool.path, tool.root),
+                            p,
+                        )),
+                    )
+                    .into_any_element(),
+                );
+            }
+            None => {
+                let asking = q.confirm == Some(Confirm::Miniforge);
+                let row = look::settings_row(
+                    "mamba",
+                    Some(look::settings_detail(
+                        if asking {
+                            "Install Miniforge? Sandhill runs conda-forge's own installer into ~/miniforge3. Your shell's settings stay as they are; to use mamba in Terminal, run ~/miniforge3/bin/mamba shell init yourself."
+                        } else {
+                            "No mamba or conda found. Miniforge, from conda-forge, brings both."
+                        },
+                        p,
+                    )),
+                );
+                rows.push(self.quick_confirm_row(
+                    row,
+                    asking,
+                    "miniforge",
+                    "Install Miniforge…",
+                    "Install",
+                    MINIFORGE_COMMAND.to_string(),
+                    busy,
+                    Confirm::Miniforge,
+                    Installing::Miniforge,
+                    p,
+                    cx,
+                ));
+            }
+        }
+        for env in &python.bare {
+            let asking = q.confirm == Some(Confirm::Ipykernel(env.prefix.clone()));
+            let label = if env.python.is_empty() {
+                env.name.clone()
+            } else {
+                format!("{} (Python {})", env.name, env.python)
+            };
+            let row = look::settings_row(
+                label,
+                Some(look::settings_detail(
+                    "Has Python but no kernel. Adding ipykernel makes it one; nothing else in it changes.",
+                    p,
+                )),
+            );
+            rows.push(self.quick_confirm_row(
+                row,
+                asking,
+                &format!("ipykernel-{}", env.prefix),
+                "Add ipykernel…",
+                "Add",
+                ipykernel_args(&env.tool, &env.prefix).join(" "),
+                busy,
+                Confirm::Ipykernel(env.prefix.clone()),
+                Installing::Ipykernel(env.prefix.clone()),
+                p,
+                cx,
+            ));
+        }
+        let Some(tool) = &python.tool else {
+            return rows;
+        };
+        let new_row = look::settings_row(
+            "New environment",
+            Some(look::settings_detail(
+                "A conda environment with Python and ipykernel, from conda-forge. Its kernel then shows in every notebook's kernel picker.",
+                p,
+            )),
+        );
+        let Some(form) = &q.python_form else {
+            rows.push(
+                new_row
+                    .child(
+                        Button::new("python-create")
+                            .small()
+                            .label("Create a Python Environment…")
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.quick_python_form(window, cx)
+                            })),
+                    )
+                    .into_any_element(),
+            );
+            return rows;
+        };
+        let name = form.name.read(cx).value().trim().to_string();
+        let name_ok = python_env_name_ok(&name);
+        let version = form.version;
+        let sets: Vec<String> = form.sets.iter().map(|s| s.to_string()).collect();
+        let prefix = format!("{}/envs/{name}", tool.root);
+        let command = python_create_args(&tool.path, &prefix, version, &sets).join(" ");
+        let versions = PYTHON_VERSIONS.iter().map(|&choice| {
+            let chosen = version == choice;
+            Button::new(SharedString::from(format!("python-version-{choice}")))
+                .small()
+                .label(choice)
+                .when(chosen, |b| b.primary())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(form) = &mut this.start.quick.python_form {
+                        form.version = choice;
+                    }
+                    cx.notify();
+                }))
+        });
+        let checks = PYTHON_SETS.iter().map(|&(id, label, packages)| {
+            Checkbox::new(SharedString::from(format!("python-set-{id}")))
+                .label(format!("{label}: {}", packages.join(", ")))
+                .checked(form.sets.contains(&id))
+                .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                    if let Some(form) = &mut this.start.quick.python_form {
+                        form.sets.retain(|s| *s != id);
+                        if *on {
+                            form.sets.push(id);
+                        }
+                    }
+                    cx.notify();
+                }))
+        });
+        rows.push(
+            v_flex()
+                .child(new_row)
+                .child(
+                    v_flex()
+                        .px(px(look::PANE_PAD_X))
+                        .pb(px(look::PANE_PAD_Y))
+                        .gap(px(look::GAP_8))
+                        .child(
+                            h_flex()
+                                .gap(px(look::GAP_8))
+                                .child(div().flex_none().child("Name"))
+                                .child(div().flex_1().child(Input::new(&form.name).small())),
+                        )
+                        .when(!name_ok, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(look::small()))
+                                    .text_color(p.err)
+                                    .child("Use letters, digits, - and _ only."),
+                            )
+                        })
+                        .child(
+                            h_flex()
+                                .gap(px(look::GAP_6))
+                                .child(div().flex_none().child("Python"))
+                                .children(versions),
+                        )
+                        .children(checks)
+                        .child(command_block(command, p))
+                        .child(
+                            h_flex()
+                                .justify_end()
+                                .gap(px(look::GAP_8))
+                                .child(
+                                    Button::new("python-create-cancel")
+                                        .small()
+                                        .label("Cancel")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.start.quick.python_form = None;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    Button::new("python-create-go")
+                                        .small()
+                                        .primary()
+                                        .label("Create")
+                                        .disabled(busy || !name_ok)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.quick_install(
+                                                Installing::CreatePython {
+                                                    name: name.clone(),
+                                                    python: version.to_string(),
+                                                    sets: sets.clone(),
+                                                },
+                                                cx,
+                                            )
+                                        })),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        );
+        rows
+    }
+
+    /// Opens Create a Python Environment's choices, with the default name,
+    /// version and both package sets.
+    fn quick_python_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = cx.new(|cx| InputState::new(window, cx).default_value(PYTHON_ENV_NAME));
+        let changed = cx.subscribe(&name, |_, _, _: &InputEvent, cx| cx.notify());
+        self.start.quick.confirm = None;
+        self.start.quick.python_form = Some(PythonForm {
+            name,
+            _changed: changed,
+            version: PYTHON_VERSIONS[0],
+            sets: PYTHON_SETS.iter().map(|(id, ..)| *id).collect(),
+        });
+        cx.notify();
+    }
+
+    /// A row whose action asks first: its button opens the question, which
+    /// shows the exact command, then Cancel and the action.
+    #[allow(clippy::too_many_arguments)]
+    fn quick_confirm_row(
+        &self,
+        row: Div,
+        asking: bool,
+        id: &str,
+        ask_label: &'static str,
+        go_label: &'static str,
+        command: String,
+        busy: bool,
+        confirm: Confirm,
+        install: Installing,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if !asking {
+            return row
+                .child(
+                    Button::new(SharedString::from(format!("{id}-ask")))
+                        .small()
+                        .label(ask_label)
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start.quick.python_form = None;
+                            this.start.quick.confirm = Some(confirm.clone());
+                            cx.notify();
+                        })),
+                )
+                .into_any_element();
+        }
+        v_flex()
+            .child(
+                row.child(
+                    Button::new(SharedString::from(format!("{id}-cancel")))
+                        .small()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.start.quick.confirm = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("{id}-go")))
+                        .small()
+                        .primary()
+                        .label(go_label)
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.quick_install(install.clone(), cx)
+                        })),
+                ),
+            )
             .child(
                 div()
-                    .pt(px(look::GAP_12))
                     .px(px(look::PANE_PAD_X))
-                    .child(section_title("AI helpers", p)),
+                    .pb(px(look::PANE_PAD_Y))
+                    .child(command_block(command, p)),
             )
-            .child(look::settings_box(agents, p))
             .into_any_element()
     }
 
@@ -885,6 +1261,17 @@ impl AppWindow {
             .into_any_element()
     }
 
+    /// The running install's progress when it belongs in `section`'s box.
+    fn quick_install_in(
+        &self,
+        section: Section,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let install = self.start.quick.install.as_ref()?;
+        (install.what.section() == section).then(|| self.quick_install_row(install, p, cx))
+    }
+
     /// A running or failed install's progress, with its output on request.
     fn quick_install_row(
         &self,
@@ -1037,15 +1424,9 @@ impl AppWindow {
             .child(row)
             .child(
                 div()
-                    .mx(px(look::PANE_PAD_X))
-                    .mb(px(look::PANE_PAD_Y))
-                    .p(px(look::GAP_8))
-                    .rounded(px(look::CONTROL_RADIUS))
-                    .bg(p.ink(look::ROW_HOVER))
-                    .font_family(look::mono())
-                    .text_size(px(look::small()))
-                    .whitespace_normal()
-                    .child(agent.install.clone()),
+                    .px(px(look::PANE_PAD_X))
+                    .pb(px(look::PANE_PAD_Y))
+                    .child(command_block(agent.install.clone(), p)),
             )
             .into_any_element()
     }
@@ -1066,6 +1447,15 @@ impl AppWindow {
             .map(|i| match i.kind.as_str() {
                 "r-package" => format!("{} {}", i.name, i.version),
                 "agent" => agent_name(&i.name).to_string(),
+                "python-env" => format!("the Python environment {}", i.name),
+                "ipykernel" => format!(
+                    "ipykernel in {}",
+                    std::path::Path::new(&i.place)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                ),
+                "miniforge" => "Miniforge".into(),
                 _ => i.name.clone(),
             })
             .collect();
@@ -1363,4 +1753,16 @@ fn section_title(title: &'static str, p: &Palette) -> Div {
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.muted)
         .child(title)
+}
+
+/// A command shown before it runs, in the code font.
+fn command_block(command: String, p: &Palette) -> Div {
+    div()
+        .p(px(look::GAP_8))
+        .rounded(px(look::CONTROL_RADIUS))
+        .bg(p.ink(look::ROW_HOVER))
+        .font_family(look::mono())
+        .text_size(px(look::small()))
+        .whitespace_normal()
+        .child(command)
 }

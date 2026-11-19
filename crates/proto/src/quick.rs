@@ -102,16 +102,129 @@ pub struct QuickAgent {
 /// One thing Sandhill installed, from its record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuickInstalled {
-    /// `r-package`, `kernel` or `agent`.
+    /// `r-package`, `kernel`, `agent`, `python-env`, `ipykernel` or
+    /// `miniforge`.
     pub kind: String,
     pub name: String,
     #[serde(default)]
     pub version: String,
-    /// The library, kernel folder or install method.
+    /// The library, kernel folder, install method, environment or
+    /// Miniforge folder.
     pub place: String,
     /// Still as Sandhill left it, so removing it is Sandhill's to do. A
     /// package updated or reinstalled since is the user's now.
     pub ours: bool,
+}
+
+/// The conda or mamba Getting Ready uses for Python environments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickCondaTool {
+    /// `~/miniforge3/bin/mamba`; mamba is preferred to conda.
+    pub path: String,
+    #[serde(default)]
+    pub version: String,
+    /// The installation it belongs to, whose `envs/` new environments go in.
+    pub root: String,
+}
+
+/// A conda environment with Python but no ipykernel, so no kernel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickCondaEnv {
+    pub name: String,
+    pub prefix: String,
+    /// Its Python's version, like `3.12.4`; empty when unknown.
+    #[serde(default)]
+    pub python: String,
+    /// Its installation's mamba (else conda), which adds ipykernel to it.
+    #[serde(default)]
+    pub tool: String,
+}
+
+/// Python for notebooks (Huan, 2026-11-19; `docs/design/python-ready-plan.md`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickPython {
+    /// The Python kernels Sandhill finds, by their names ("Python 3.12
+    /// (omicverse)").
+    #[serde(default)]
+    pub kernels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<QuickCondaTool>,
+    /// Environments that could get a kernel with ipykernel.
+    #[serde(default)]
+    pub bare: Vec<QuickCondaEnv>,
+}
+
+/// The package sets a new Python environment can have besides `python` and
+/// `ipykernel`: `(id, label, conda-forge packages)`.
+pub const PYTHON_SETS: &[(&str, &str, &[&str])] = &[
+    (
+        "analysis",
+        "Data analysis",
+        &["numpy", "pandas", "matplotlib", "seaborn", "scikit-learn"],
+    ),
+    (
+        "singlecell",
+        "Single-cell",
+        &["scanpy", "anndata", "python-igraph", "leidenalg"],
+    ),
+];
+
+/// The Python versions offered, the default first.
+pub const PYTHON_VERSIONS: &[&str] = &["3.12", "3.11", "3.13"];
+
+/// The name a new environment starts with.
+pub const PYTHON_ENV_NAME: &str = "sandhill-python";
+
+/// conda-forge's own installer for Miniforge, run in batch mode, which
+/// leaves the shell's startup files alone.
+pub const MINIFORGE_COMMAND: &str = "curl -fsSL -o /tmp/Miniforge3.sh \"https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh\" && bash /tmp/Miniforge3.sh -b -p \"$HOME/miniforge3\" && rm -f /tmp/Miniforge3.sh";
+
+/// A name for a new environment: letters, digits, `-` and `_`.
+pub fn python_env_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The command that creates a Python environment at `prefix` with `tool`,
+/// from conda-forge only: Python, ipykernel and the chosen [`PYTHON_SETS`].
+/// Shown before it runs and run as shown.
+pub fn python_create_args(tool: &str, prefix: &str, python: &str, sets: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = [tool, "create", "-y", "-p", prefix]
+        .into_iter()
+        .chain(["-c", "conda-forge", "--override-channels"])
+        .map(str::to_string)
+        .collect();
+    args.push(format!("python={python}"));
+    args.push("ipykernel".into());
+    for (id, _, packages) in PYTHON_SETS {
+        if sets.iter().any(|s| s == id) {
+            args.extend(packages.iter().map(|p| p.to_string()));
+        }
+    }
+    args
+}
+
+/// The command that adds ipykernel to the environment at `prefix`, from
+/// conda-forge, changing nothing already there.
+pub fn ipykernel_args(tool: &str, prefix: &str) -> Vec<String> {
+    [
+        tool,
+        "install",
+        "-y",
+        "-p",
+        prefix,
+        "-c",
+        "conda-forge",
+        "--override-channels",
+        "--freeze-installed",
+        "ipykernel",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 /// The oldest R Quick Tools uses.
@@ -133,6 +246,8 @@ pub struct QuickReadiness {
     /// What Sandhill's record says it installed.
     #[serde(default)]
     pub installed: Vec<QuickInstalled>,
+    #[serde(default)]
+    pub python: QuickPython,
 }
 
 /// A package install started: its job, and the file its output also goes

@@ -941,9 +941,31 @@ pub enum Call {
         kind: String,
     },
     /// Removes what Sandhill's record says it installed and is still as it
-    /// left it (R packages, kernel files, agents' programs), in a job, then
-    /// clears the record. Returns [`QuickInstalling`].
+    /// left it (R packages, kernel files, agents' programs, Python
+    /// environments, ipykernel, Miniforge), in a job, then clears the
+    /// record. Returns [`QuickInstalling`].
     QuickUninstall,
+    /// Creates the Python environment `name` (a [`python_env_name_ok`]
+    /// name) in the conda installation Getting Ready found, with Python
+    /// `python` (one of [`PYTHON_VERSIONS`]), ipykernel and the package
+    /// `sets` (ids from [`PYTHON_SETS`]), from conda-forge, in a job,
+    /// recording it. Returns [`QuickInstalling`].
+    QuickCreatePython {
+        name: String,
+        python: String,
+        #[serde(default)]
+        sets: Vec<String>,
+    },
+    /// Adds ipykernel to the environment at `prefix`, one Getting Ready
+    /// listed as having no kernel, in a job, recording it. Returns
+    /// [`QuickInstalling`].
+    QuickAddIpykernel {
+        prefix: String,
+    },
+    /// Installs Miniforge into `~/miniforge3` with [`MINIFORGE_COMMAND`]
+    /// when no conda or mamba is found, in a job, recording it. Returns
+    /// [`QuickInstalling`].
+    QuickInstallMiniforge,
     /// Starts an Explore a Table session in Sandhill's own storage, with
     /// links to `tables` (absolute paths), which stay where they are.
     /// Nothing is made beside the tables (Huan, 2026-11-19). Returns the

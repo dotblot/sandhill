@@ -3,6 +3,7 @@
 //! See `docs/design/quick-tools-plan.md`.
 
 pub mod folder;
+pub mod python;
 pub mod recognise;
 pub mod record;
 pub mod run;

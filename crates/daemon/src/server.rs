@@ -296,6 +296,11 @@ impl Daemon {
             } => self.quick_install(r, packages, library).await?,
             Call::QuickInstallAgent { kind } => self.quick_install_agent(kind).await?,
             Call::QuickUninstall => self.quick_uninstall().await?,
+            Call::QuickCreatePython { name, python, sets } => {
+                self.quick_create_python(name, python, sets).await?
+            }
+            Call::QuickAddIpykernel { prefix } => self.quick_add_ipykernel(prefix).await?,
+            Call::QuickInstallMiniforge => self.quick_install_miniforge().await?,
             Call::QuickStart { tables } => self.quick_start(tables).await?,
             Call::QuickKeep {
                 project,

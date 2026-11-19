@@ -1,9 +1,10 @@
 //! Sandhill's record of what it installed (Huan, 2026-11-19): R packages it
 //! added to the user's own library (with the dependencies they pulled in),
-//! kernel files it wrote, and agents it installed. One tab-separated line
-//! each, `kind, name, version, place, date`, in the daemon's state folder.
-//! Getting Ready marks these, and Remove What Sandhill Installed… removes
-//! exactly the ones still as Sandhill left them.
+//! kernel files it wrote, agents it installed, and for Python the conda
+//! environments it created, ipykernel it added and Miniforge. One
+//! tab-separated line each, `kind, name, version, place, date`, in the
+//! daemon's state folder. Getting Ready marks these, and Remove What
+//! Sandhill Installed… removes exactly the ones still as Sandhill left them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,6 +19,13 @@ pub const FILE: &str = "installed-by-sandhill.tsv";
 pub const R_PACKAGE: &str = "r-package";
 pub const KERNEL: &str = "kernel";
 pub const AGENT: &str = "agent";
+/// A conda environment Sandhill created: its name, Python version, prefix.
+pub const PYTHON_ENV: &str = "python-env";
+/// ipykernel added to an environment: its version and the prefix.
+pub const IPYKERNEL: &str = "ipykernel";
+/// Miniforge: how many packages its base had when installed, its folder.
+pub const MINIFORGE: &str = "miniforge";
+const KINDS: &[&str] = &[R_PACKAGE, KERNEL, AGENT, PYTHON_ENV, IPYKERNEL, MINIFORGE];
 
 /// The record's lines, oldest first; unreadable lines are skipped.
 pub fn read(record: &Path) -> Vec<QuickInstalled> {
@@ -30,7 +38,7 @@ pub fn read(record: &Path) -> Vec<QuickInstalled> {
         let [kind, name, version, place, ..] = fields[..] else {
             continue;
         };
-        if ![R_PACKAGE, KERNEL, AGENT].contains(&kind) || name.is_empty() {
+        if !KINDS.contains(&kind) || name.is_empty() {
             continue;
         }
         let item = QuickInstalled {
@@ -46,6 +54,29 @@ pub fn read(record: &Path) -> Vec<QuickInstalled> {
     }
     for item in &mut items {
         item.ours = ours(item);
+    }
+    // Miniforge is Sandhill's to remove only while it holds nothing else:
+    // its base as installed, and only environments Sandhill created.
+    let ours_envs: Vec<PathBuf> = items
+        .iter()
+        .filter(|i| i.kind == PYTHON_ENV && i.ours)
+        .map(|i| PathBuf::from(&i.place))
+        .collect();
+    for item in items.iter_mut().filter(|i| i.kind == MINIFORGE) {
+        let root = Path::new(&item.place);
+        let base_count = fs::read_dir(root.join("conda-meta")).map(|d| {
+            d.flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
+                .count()
+                .to_string()
+        });
+        let envs_ours = fs::read_dir(root.join("envs")).map_or(true, |dirs| {
+            dirs.flatten()
+                .filter(|d| d.path().join("conda-meta").is_dir())
+                .all(|d| ours_envs.contains(&d.path()))
+        });
+        item.ours =
+            root.is_absolute() && base_count.is_ok_and(|count| count == item.version) && envs_ours;
     }
     items
 }
@@ -92,6 +123,16 @@ fn ours(item: &QuickInstalled) -> bool {
             ("codex", "npm") => crate::agents::find("codex").is_some(),
             _ => false,
         },
+        PYTHON_ENV => {
+            let prefix = Path::new(&item.place);
+            prefix.is_absolute() && prefix.join("conda-meta").is_dir()
+        }
+        IPYKERNEL => {
+            let prefix = Path::new(&item.place);
+            prefix.is_absolute()
+                && super::python::conda_package_version(prefix, "ipykernel").as_deref()
+                    == Some(item.version.as_str())
+        }
         _ => false,
     }
 }
@@ -122,10 +163,22 @@ pub fn r_append_kernel(record: &Path, dir: &str) -> String {
 
 /// Shell code appending an agent Sandhill installed.
 pub fn sh_append_agent(record: &Path, kind: &str, how: &str) -> String {
+    sh_append(record, AGENT, kind, "", how)
+}
+
+/// Shell code appending a line to `record`, dated today.
+pub fn sh_append(record: &Path, kind: &str, name: &str, version: &str, place: &str) -> String {
+    sh_append_raw(record, kind, name, &shell_quote(version), place)
+}
+
+/// [`sh_append`] with the version given as a shell word, such as
+/// `"$(…)"`, worked out when the job runs.
+pub fn sh_append_raw(record: &Path, kind: &str, name: &str, version: &str, place: &str) -> String {
     format!(
-        "printf '{AGENT}\\t%s\\t\\t%s\\t%s\\n' {} {} \"$(date +%F)\" >> {}",
+        "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' {} {} {version} {} \"$(date +%F)\" >> {}",
         shell_quote(kind),
-        shell_quote(how),
+        shell_quote(name),
+        shell_quote(place),
         shell_quote(&record.to_string_lossy())
     )
 }
@@ -136,8 +189,25 @@ fn r_string(text: &str) -> String {
 }
 
 /// The shell lines that remove what is still Sandhill's, then the record.
+/// Miniforge goes last, and what is inside a Miniforge being removed goes
+/// with it.
 fn uninstall_lines(items: &[QuickInstalled], record: &Path) -> Vec<String> {
     let mut lines = Vec::new();
+    let removed_roots: Vec<&Path> = items
+        .iter()
+        .filter(|i| i.kind == MINIFORGE && i.ours)
+        .map(|i| Path::new(&i.place))
+        .collect();
+    let inside_removed = |place: &str| {
+        removed_roots
+            .iter()
+            .any(|r| Path::new(place).starts_with(r))
+    };
+    let removed_envs: Vec<&str> = items
+        .iter()
+        .filter(|i| i.kind == PYTHON_ENV && i.ours)
+        .map(|i| i.place.as_str())
+        .collect();
     for item in items.iter().filter(|i| i.ours) {
         match item.kind.as_str() {
             R_PACKAGE => {
@@ -162,8 +232,31 @@ fn uninstall_lines(items: &[QuickInstalled], record: &Path) -> Vec<String> {
                 ),
                 _ => {}
             },
+            PYTHON_ENV if !inside_removed(&item.place) => lines.push(format!(
+                "echo {} && {} env remove -y -p {}",
+                shell_quote(&format!("Removing the Python environment {}", item.name)),
+                shell_quote(&crate::irkernel::conda_tool(Path::new(&item.place))),
+                shell_quote(&item.place)
+            )),
+            IPYKERNEL
+                if !inside_removed(&item.place) && !removed_envs.contains(&item.place.as_str()) =>
+            {
+                lines.push(format!(
+                    "echo {} && {} remove -y -p {} ipykernel",
+                    shell_quote(&format!("Removing ipykernel {} from {}", item.version, item.place)),
+                    shell_quote(&crate::irkernel::conda_tool(Path::new(&item.place))),
+                    shell_quote(&item.place)
+                ))
+            }
             _ => {}
         }
+    }
+    for root in &removed_roots {
+        lines.push(format!(
+            "echo {} && rm -rf {}",
+            shell_quote(&format!("Removing Miniforge in {}", root.display())),
+            shell_quote(&root.to_string_lossy())
+        ));
     }
     let skipped = items.iter().filter(|i| !i.ours).count();
     if skipped > 0 {
@@ -252,5 +345,65 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = uninstall(&dir.path().join(FILE), &dir.path().join("log")).unwrap_err();
         assert!(err.to_string().contains("hasn't installed anything"));
+    }
+
+    fn conda_env(prefix: &Path, packages: &[&str]) {
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        for package in packages {
+            fs::write(
+                prefix.join("conda-meta").join(format!("{package}.json")),
+                "{}",
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn python_environments_ipykernel_and_miniforge_are_removed_only_while_sandhills() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("miniforge3");
+        conda_env(&root, &["python-3.12.4-h_0", "conda-25.1.1-py_0"]);
+        let made = root.join("envs/sandhill-python");
+        conda_env(&made, &["python-3.12.4-h_0", "ipykernel-7.2.0-pyh_0"]);
+        let theirs = dir.path().join("other/envs/old");
+        conda_env(&theirs, &["python-3.11.9-h_0", "ipykernel-6.29.5-pyh_0"]);
+        let record = dir.path().join(FILE);
+        let line = |kind: &str, name: &str, version: &str, place: &Path| {
+            format!(
+                "{kind}\t{name}\t{version}\t{}\t2026-11-19\n",
+                place.display()
+            )
+        };
+        let text = [
+            line(MINIFORGE, "miniforge", "2", &root),
+            line(PYTHON_ENV, "sandhill-python", "3.12", &made),
+            line(IPYKERNEL, "ipykernel", "6.29.5", &theirs),
+        ]
+        .concat();
+        fs::write(&record, &text).unwrap();
+        let items = read(&record);
+        assert!(items.iter().all(|i| i.ours), "{items:?}");
+        let script = uninstall_lines(&items, &record);
+        let joined = script.join("\n");
+        // The environment goes with Miniforge, which goes last.
+        assert!(!joined.contains("env remove"), "{joined}");
+        assert!(joined.contains(&format!("remove -y -p '{}' ipykernel", theirs.display())));
+        let last_removal = script.iter().rposition(|l| l.contains("rm -rf")).unwrap();
+        assert!(script[last_removal].contains("Removing Miniforge"));
+
+        // Another environment in Miniforge, or a package added to its base,
+        // makes Miniforge the user's; Sandhill's environment then goes alone.
+        conda_env(&root.join("envs/mine"), &["python-3.13.0-h_0"]);
+        let items = read(&record);
+        let miniforge = items.iter().find(|i| i.kind == MINIFORGE).unwrap();
+        assert!(!miniforge.ours);
+        let joined = uninstall_lines(&items, &record).join("\n");
+        assert!(joined.contains(&format!("env remove -y -p '{}'", made.display())));
+        assert!(!joined.contains("Removing Miniforge"));
+
+        // ipykernel updated since is the user's.
+        fs::remove_file(theirs.join("conda-meta/ipykernel-6.29.5-pyh_0.json")).unwrap();
+        conda_env(&theirs, &["ipykernel-7.2.0-pyh_0"]);
+        assert!(read(&record).iter().any(|i| i.kind == IPYKERNEL && !i.ours));
     }
 }

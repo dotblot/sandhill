@@ -124,6 +124,7 @@ pub fn readiness(
         packages,
         agents,
         installed: installed_by_sandhill,
+        python: super::python::readiness(search),
     }
 }
 

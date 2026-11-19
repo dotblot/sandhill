@@ -51,6 +51,11 @@ where an older plan differs, this wins.
   standalone agent CLIs": Claude Code and Codex are removed only when the
   record says Sandhill installed them, and their settings and sign-ins
   (`~/.claude`, `~/.codex`) always stay.
+  Python (Huan, 2026-11-19; `docs/design/python-ready-plan.md`): the same
+  exception covers conda environments Sandhill created, ipykernel it added
+  (while still the recorded version) and Miniforge it installed (only
+  while Miniforge holds nothing but Sandhill's environments and its base
+  is as installed). Other conda environments and Pythons are never touched.
 
 ## Folder trust
 - Folder trust (Huan, 2026-11-12): the first open of a folder asks once;
