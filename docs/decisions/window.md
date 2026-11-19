@@ -103,6 +103,17 @@ differs, this wins.
   per file, largest file size and space on each computer. These are this
   Mac's choices. Sandhill sends them on connect and when they change; each
   daemon keeps the last limits it received.
+- Quick Tools (Huan, 2026-11-19; `docs/design/quick-tools-plan.md`):
+  the first row of Welcome's sidebar, above Devices; Welcome opens on it
+  when Sandhill knows no projects, else on This Mac's page. Opening a
+  table there opens a third kind of window, one per session, beside the
+  main window and Welcome: the Data Explorer and Plots side by side and
+  the Guide (what is known, what can be made, the AI) on the right, with
+  no Files, editor, Console, Terminal, Jobs, Git or Variables. Its plots
+  and analyses are Sandhill's own R templates (R only); everything works
+  without an AI account. Sandhill carries no R or packages: Quick Tools
+  checks for them and guides installing what is missing. An AI
+  suggestion takes a click before a plot uses it.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on

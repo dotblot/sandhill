@@ -1,6 +1,8 @@
 # Quick Tools
 
-Huan, 2026-11-19. Status: plan, waiting for Huan's approval.
+Huan, 2026-11-19. Status: approved by Huan (2026-11-19): R only, the
+three columns, AI suggestions accepted by a click, and each session's
+folder chosen in a dialog, next to the table by default (section 8).
 
 Huan often sends a table (DESeq2 results, raw counts, Gene Ontology
 results) to colleagues who aren't bioinformaticians. They want a quick
@@ -173,17 +175,27 @@ lower"). This comes from the template, not from AI.
   makes. Such plots are labelled "Made by AI code" in Plots and in exports.
 - Its options for the user are the suggestion chips agents already end
   replies with.
-- Agents work in the Quick Tools folder (section 8), so Claude's folder
-  question is asked once, not per session.
+- Agents work in the session's folder. Claude's own folder question is
+  asked once per session, pinned above the message box as in projects.
 
 ## 8. Where things are kept
-- `~/Documents/Sandhill Quick Tools/<date> <first table's name>/`: copies
-  of the dropped files (the originals stay as they are), `results/` for
-  exports, `steps.R`, and `.sandhill/quick.json` with the card and the
-  tables.
-- The daemon trusts `~/Documents/Sandhill Quick Tools/` when it makes it:
-  Sandhill made the folder and only copies tables into it. Every other
-  folder keeps the trust question.
+- Opening a table first asks, in a card in the trust card's style, where
+  to keep the session's files: "Keep results in", the folder (the
+  table's own folder by default; Change… opens the system's folder
+  window), the name of the folder Sandhill will make there, then OK
+  (default, Enter) and Cancel. With tables from several folders, the
+  first table's folder is the default. A folder Sandhill can't write to
+  says so, and OK waits for another choice.
+- On OK, Sandhill makes `<first table's name> (Sandhill)/` there (a
+  taken name is numbered, "de_results (Sandhill) 2") with copies of the
+  tables (the originals stay as they are), `results/` for exports,
+  `steps.R`, and `.sandhill/quick.json` with the card and the tables.
+- The daemon trusts that session folder when it makes it, and never asks
+  about it again. Only the folder Sandhill made is trusted, not the
+  folder around it (Huan, 2026-11-19: Downloads may later hold projects
+  that should still be asked about).
+- This Mac remembers the session folders for the Recent sessions list. A
+  folder that was moved or deleted shows "Not found" with Remove.
 - A session is a project the daemon knows, marked as quick, so kernels,
   the journal and file history work as in any project. It is listed on the
   Quick Tools page, and under Projects only after Open as Project.
@@ -227,8 +239,8 @@ Written into the decision files, with the date, once approved.
 - `docs/decisions/window.md`: Quick Tools first in Welcome's sidebar,
   which opens on it when Sandhill knows no projects; a third kind of
   window, one per Quick Tools session, beside the main window and Welcome.
-- `docs/decisions/devices.md`: the Quick Tools folder Sandhill makes is
-  trusted without asking.
+- `docs/decisions/devices.md`: a Quick Tools session folder is trusted
+  when Sandhill makes it, without asking; the folder around it is not.
 - `docs/decisions/agents.md`: Quick Tools conversations start with their
   tables attached as visible @ chips. Elsewhere messages still carry only
   what the user adds.
@@ -250,7 +262,8 @@ Written into the decision files, with the date, once approved.
   lists to a web server.
 - The window's three columns and their widths (section 3).
 - AI suggestions need a click before a plot uses them (section 4).
-- The folder `~/Documents/Sandhill Quick Tools/` (section 8).
+- Each session's folder, chosen in a dialog: next to the table by
+  default, trusted alone (section 8).
 
 ## 14. Checks
 - Daemon tests without a kernel: recognition cases in
