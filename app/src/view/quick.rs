@@ -1,6 +1,7 @@
 //! The Explore a Table window (`crate::quick`): a title bar naming the session
 //! and its tables, then the movable and resizable Explore panels.
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -36,6 +37,17 @@ fn save_layout(layout: Layout, cx: &mut App) {
     }
 }
 
+fn visible_layout(ai_shown: bool, cx: &App) -> Cow<'_, Layout> {
+    let layout = &cx.global::<ExploreLayout>().0;
+    if layout.is_visible(QuickPanel::Ai) == ai_shown {
+        Cow::Borrowed(layout)
+    } else {
+        let mut layout = layout.clone();
+        layout.set_visible(QuickPanel::Ai, ai_shown);
+        Cow::Owned(layout)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QuickSplit {
     Column(usize),
@@ -60,10 +72,11 @@ struct LayoutWindow {
 }
 
 impl LayoutWindow {
-    fn layout<'a>(&'a self, cx: &'a App) -> &'a Layout {
-        self.resize
-            .as_ref()
-            .map_or_else(|| &cx.global::<ExploreLayout>().0, |(_, layout)| layout)
+    fn layout<'a>(&'a self, ai_shown: bool, cx: &'a App) -> Cow<'a, Layout> {
+        self.resize.as_ref().map_or_else(
+            || visible_layout(ai_shown, cx),
+            |(_, layout)| Cow::Borrowed(layout),
+        )
     }
 
     fn drag(&mut self, event: &DragMoveEvent<DraggedSplit>, cx: &mut Context<Self>) {
@@ -160,7 +173,7 @@ fn drop_outline(mut bounds: Bounds<Pixels>, side: Side, accent: Hsla, window: &m
     window.paint_quad(outline(bounds, accent, BorderStyle::Solid).corner_radii(px(RADIUS)));
 }
 
-fn panel_drop_target(panel: QuickPanel, p: &Palette) -> Div {
+fn panel_drop_target(panel: QuickPanel, ai_shown: bool, p: &Palette) -> Div {
     // The overlay sits above the pane's controls and scroll areas without
     // occluding them. Share its painted bounds with the drop handler.
     let preview = Rc::new(Cell::new((Bounds::default(), None)));
@@ -173,16 +186,14 @@ fn panel_drop_target(panel: QuickPanel, p: &Palette) -> Div {
         .drag_over::<DraggedPanel>(move |style, dragged, window, cx| {
             let (bounds, _) = hover.get();
             let side = dragged.side(bounds, window).and_then(|side| {
-                cx.global::<ExploreLayout>()
-                    .0
-                    .drop_side(dragged.panel, panel, side)
+                visible_layout(ai_shown, cx).drop_side(dragged.panel, panel, side)
             });
             hover.set((bounds, side));
             style
         })
         .on_drop(move |dragged: &DraggedPanel, window, cx| {
             if let Some(side) = dragged.side(preview.get().0, window) {
-                let mut layout = cx.global::<ExploreLayout>().0.clone();
+                let mut layout = visible_layout(ai_shown, cx).into_owned();
                 if layout.move_panel(dragged.panel, panel, side) {
                     save_layout(layout, cx);
                 }
@@ -222,6 +233,12 @@ fn layout_menu(p: &Palette) -> impl IntoElement {
 }
 
 impl Workbench {
+    fn quick_ai_shown(&self, cx: &App) -> bool {
+        self.quick
+            .as_ref()
+            .is_some_and(|q| !q.ai_hidden && cx.global::<ExploreLayout>().0.ai_visible(q.ai_ready))
+    }
+
     pub(super) fn render_quick_top_bar(
         &self,
         window: &mut Window,
@@ -231,6 +248,8 @@ impl Workbench {
         let Some(q) = &self.quick else {
             return div().into_any_element();
         };
+        cx.default_global::<ExploreLayout>();
+        let ai_shown = self.quick_ai_shown(cx);
         let name = self.quick_name();
         let unkept = self.quick_unkept();
         let folder = self.quick_folder();
@@ -348,6 +367,26 @@ impl Workbench {
                                 this.quick_needs_folder(quick::KeepReason::OpenProject, window, cx)
                             })),
                     )
+                    .child(
+                        icon_button("quick-toggle-ai", "chat", &p, true)
+                            .when(ai_shown, |d| d.text_color(p.text))
+                            .tooltip(|window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(
+                                    "Show or hide the AI pane",
+                                )
+                                .build(window, cx)
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let visible = !this.quick_ai_shown(cx);
+                                if let Some(quick) = &mut this.quick {
+                                    quick.ai_hidden = false;
+                                }
+                                let mut layout = cx.global::<ExploreLayout>().0.clone();
+                                layout.choose_ai_visibility(visible);
+                                save_layout(layout, cx);
+                                cx.notify();
+                            })),
+                    )
                     .child(layout_menu(&p)),
             )
             .into_any_element()
@@ -359,14 +398,12 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *Palette::get(cx);
-        let state = window.use_keyed_state("explore-layout-state", cx, |window, cx| {
-            cx.default_global::<ExploreLayout>();
-            LayoutWindow {
-                _observe: window.observe_global::<ExploreLayout>(cx, |window, _| window.refresh()),
-                resize: None,
-            }
+        let ai_shown = self.quick_ai_shown(cx);
+        let state = window.use_keyed_state("explore-layout-state", cx, |window, cx| LayoutWindow {
+            _observe: window.observe_global::<ExploreLayout>(cx, |window, _| window.refresh()),
+            resize: None,
         });
-        let layout = state.read(cx).layout(cx);
+        let layout = state.read(cx).layout(ai_shown, cx);
         let count = layout.columns().len();
         let room = (f32::from(window.viewport_size().width) - 2. * EDGE - (count - 1) as f32 * GAP)
             .max(0.);
@@ -376,6 +413,7 @@ impl Workbench {
             - 2. * GAP)
             .max(0.);
         let widths = layout.widths(room);
+        let columns = std::array::from_fn::<_, 3, _>(|i| layout.columns().get(i).copied());
         let id = window.window_handle().window_id();
         let finish = state.clone();
         let finish_out = state.clone();
@@ -403,31 +441,48 @@ impl Workbench {
                     .collect();
                 this.quick_add(paths, cx);
             }));
-        for (i, width) in widths.into_iter().take(count).enumerate() {
-            let column = state.read(cx).layout(cx).columns()[i];
+        for (i, (width, column)) in widths.into_iter().zip(columns).enumerate() {
+            let Some(column) = column else { break };
             let mut body = v_flex().w(px(width)).h_full().min_w_0().flex_none();
             if let Some(bottom) = column.bottom() {
                 body = body
                     .child(
-                        self.render_quick_panel(column.top, id, cx)
+                        self.render_quick_panel(column.top, ai_shown, id, cx)
                             .h(px(column.top_height(stack_room)))
                             .flex_none(),
                     )
-                    .child(Self::quick_splitter(QuickSplit::Stack(i), &state, cx))
-                    .child(self.render_quick_panel(bottom, id, cx).flex_1());
+                    .child(Self::quick_splitter(
+                        QuickSplit::Stack(i),
+                        ai_shown,
+                        &state,
+                        cx,
+                    ))
+                    .child(self.render_quick_panel(bottom, ai_shown, id, cx).flex_1());
             } else {
-                body = body.child(self.render_quick_panel(column.top, id, cx).h_full());
+                body = body.child(
+                    self.render_quick_panel(column.top, ai_shown, id, cx)
+                        .h_full(),
+                );
             }
             if i > 0 {
-                workspace =
-                    workspace.child(Self::quick_splitter(QuickSplit::Column(i - 1), &state, cx));
+                workspace = workspace.child(Self::quick_splitter(
+                    QuickSplit::Column(i - 1),
+                    ai_shown,
+                    &state,
+                    cx,
+                ));
             }
             workspace = workspace.child(body);
         }
         workspace.into_any_element()
     }
 
-    fn quick_splitter(split: QuickSplit, state: &Entity<LayoutWindow>, cx: &App) -> Stateful<Div> {
+    fn quick_splitter(
+        split: QuickSplit,
+        ai_shown: bool,
+        state: &Entity<LayoutWindow>,
+        cx: &App,
+    ) -> Stateful<Div> {
         let across = matches!(split, QuickSplit::Stack(_));
         let dragging = state
             .read(cx)
@@ -449,7 +504,7 @@ impl Workbench {
             move |drag, grab, _, cx| {
                 let grab = if across { grab.y } else { grab.x };
                 drag.grab.set(grab.clamp(px(0.), px(GAP)));
-                let layout = cx.global::<ExploreLayout>().0.clone();
+                let layout = visible_layout(ai_shown, cx).into_owned();
                 state.update(cx, |state, cx| {
                     state.resize = Some((drag.split, layout));
                     cx.notify();
@@ -480,23 +535,23 @@ impl Workbench {
         )
     }
 
-    fn render_quick_panel(&self, panel: QuickPanel, id: WindowId, cx: &mut Context<Self>) -> Div {
+    fn render_quick_panel(
+        &self,
+        panel: QuickPanel,
+        ai_shown: bool,
+        id: WindowId,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = *Palette::get(cx);
         let content = match panel {
             QuickPanel::Explorer => self.render_quick_explorer(id, cx),
             QuickPanel::Plots => self.render_quick_plots(id, cx),
             QuickPanel::Guide => self.render_quick_guide(id, cx),
-            QuickPanel::Ai => side_pane(&p)
-                .size_full()
+            QuickPanel::Ai => v_flex()
+                .flex_1()
+                .h_full()
                 .child(Self::quick_header(panel, id, &p))
-                .child(
-                    div()
-                        .px(px(look::PANE_PAD_X))
-                        .py(px(look::PANE_PAD_Y))
-                        .text_size(px(look::small()))
-                        .text_color(p.muted)
-                        .child("The AI helper comes here."),
-                )
+                .child(div().flex_1().min_h_0().child(self.render_agents_pane(cx)))
                 .into_any_element(),
         };
         div()
@@ -506,7 +561,7 @@ impl Workbench {
             .w_full()
             .min_h_0()
             .child(content)
-            .child(panel_drop_target(panel, &p))
+            .child(panel_drop_target(panel, ai_shown, &p))
     }
 
     fn render_quick_explorer(&self, id: WindowId, cx: &mut Context<Self>) -> AnyElement {
@@ -604,6 +659,30 @@ impl Workbench {
                     ),
             );
         }
+        if !q.ai_ready {
+            body = body.child(
+                v_flex()
+                    .gap(px(look::GAP_4))
+                    .child(
+                        div()
+                            .text_color(p.muted)
+                            .child("The AI helper isn't set up. Everything here works without it."),
+                    )
+                    .child(
+                        Button::new("setup-explore-ai")
+                            .small()
+                            .label("Set Up an AI Helper…")
+                            .on_click(|_, _, cx| {
+                                cx.defer(|cx| {
+                                    crate::shell::app_window::show_welcome(
+                                        Some(crate::welcome::start_screen::StartMode::Ready),
+                                        cx,
+                                    )
+                                });
+                            }),
+                    ),
+            );
+        }
         if let Some(busy) = &q.busy {
             body = body.child(div().text_color(p.muted).child(busy.clone()));
         }
@@ -630,9 +709,13 @@ impl Workbench {
                     ),
             );
         }
-        if let Some(table) = self.quick_table().cloned() {
+        if self.quick_table().is_some() || q.card_read {
             body = body
                 .child(heading("What we know", &p))
+                .children(self.render_quick_suggestions(q, &p, cx));
+        }
+        if let Some(table) = self.quick_table().cloned() {
+            body = body
                 .child(self.render_quick_card(&table, cx))
                 .child(heading("Make Plots", &p))
                 .child(self.render_quick_make(&table, cx));
@@ -662,6 +745,73 @@ impl Workbench {
             .into_any_element()
     }
 
+    fn render_quick_suggestions(
+        &self,
+        q: &quick::Quick,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let suggestions = crate::agents::quick::suggestions(&q.card);
+        if suggestions.is_empty() {
+            return None;
+        }
+        let mut list = v_flex().gap(px(look::GAP_4));
+        for (i, suggestion) in suggestions.into_iter().enumerate() {
+            let table_name = suggestion.table.map(str::to_string);
+            let field = suggestion.field;
+            let table = suggestion
+                .table
+                .and_then(|name| q.card.tables.iter().find(|t| t.name == name));
+            let label = table.map_or_else(
+                || suggestion.label.to_string(),
+                |table| match &table.sheet {
+                    Some(sheet) => format!("{} · {sheet}: {}", table.file, suggestion.label),
+                    None => format!("{}: {}", table.file, suggestion.label),
+                },
+            );
+            list = list.child(
+                h_flex()
+                    .items_start()
+                    .gap(px(look::GAP_4))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().text_color(p.muted).child(label))
+                            .child(div().child(suggestion.value)),
+                    )
+                    .child(
+                        Button::new(("accept-quick-suggestion", i))
+                            .small()
+                            .label("Accept")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.quick_accept(Some((table_name.as_deref(), field)), cx);
+                            })),
+                    ),
+            );
+        }
+        Some(
+            v_flex()
+                .gap(px(look::GAP_4))
+                .p(px(look::GAP_8))
+                .rounded(px(look::CONTROL_RADIUS))
+                .bg(p.ink(look::ROW_HOVER))
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("Suggested by AI"),
+                )
+                .child(list)
+                .child(
+                    Button::new("accept-all-quick-suggestions")
+                        .small()
+                        .label("Accept All")
+                        .on_click(cx.listener(|this, _, _, cx| this.quick_accept(None, cx))),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// The facts about the table picked, and the session's own.
     fn render_quick_card(
         &self,
@@ -672,7 +822,11 @@ impl Workbench {
         let Some(q) = &self.quick else {
             return div().into_any_element();
         };
-        let kind = table.kind.value;
+        let kind = table
+            .kind
+            .usable()
+            .copied()
+            .unwrap_or(QuickTableKind::Unknown);
         let mut card = v_flex().gap(px(look::GAP_2));
         if table.dates > 0 {
             card = card.child(div().text_color(p.warn).child(format!(
@@ -687,22 +841,35 @@ impl Workbench {
                     .child(format!("{question} Choose below what the table is.")),
             );
         }
-        card = card.child(self.fact(
-            Item::Kind,
-            "Table",
-            Some((quick::kind_label(kind).to_string(), table.kind.from)),
-            cx,
-        ));
-        let column =
-            |known: &Option<Known<String>>| known.as_ref().map(|k| (k.value.clone(), k.from));
-        let gene = table.gene.as_ref().map(|g| {
-            let ids = table
-                .gene_ids
+        card = card.child(
+            self.fact(
+                Item::Kind,
+                "Table",
+                table
+                    .kind
+                    .usable()
+                    .map(|_| (quick::kind_label(kind).to_string(), table.kind.from)),
+                cx,
+            ),
+        );
+        let column = |known: &Option<Known<String>>| {
+            known
                 .as_ref()
-                .map(|i| format!(" ({})", quick::ids_label(i.value)))
-                .unwrap_or_default();
-            (format!("{}{ids}", g.value), g.from)
-        });
+                .and_then(|k| Some((k.usable()?.clone(), k.from)))
+        };
+        let gene = table
+            .gene
+            .as_ref()
+            .filter(|g| g.usable().is_some())
+            .map(|g| {
+                let ids = table
+                    .gene_ids
+                    .as_ref()
+                    .and_then(Known::usable)
+                    .map(|&i| format!(" ({})", quick::ids_label(i)))
+                    .unwrap_or_default();
+                (format!("{}{ids}", g.value), g.from)
+            });
         match kind {
             QuickTableKind::Results => {
                 card = card
@@ -710,32 +877,29 @@ impl Workbench {
                     .child(self.fact(Item::Fc, "Fold change", column(&table.fc), cx))
                     .child(self.fact(Item::Padj, "Adjusted p", column(&table.padj), cx))
                     .child(self.fact(Item::Mean, "Average", column(&table.mean), cx));
-                if let Some(samples) = &table.samples {
+                if let Some(samples) = table.samples.as_ref().and_then(Known::usable) {
                     card = card
-                        .child(
-                            self.fact(
-                                Item::Values,
-                                "Sample values",
-                                table
-                                    .values
-                                    .as_ref()
-                                    .map(|v| (quick::values_label(v.value).to_string(), v.from)),
-                                cx,
-                            ),
-                        )
                         .child(self.fact(
-                            Item::Groups,
-                            "Groups",
-                            self.groups_summary(&samples.value),
+                            Item::Values,
+                            "Sample values",
+                            table.values.as_ref().and_then(|v| {
+                                Some((quick::values_label(*v.usable()?).to_string(), v.from))
+                            }),
                             cx,
-                        ));
+                        ))
+                        .child(self.fact(Item::Groups, "Groups", self.groups_summary(samples), cx));
                 }
-                let comparison = q.card.comparison.as_ref().map(|c| {
-                    (
-                        format!("higher in {} than in {}", c.value.higher, c.value.lower),
-                        c.from,
-                    )
-                });
+                let comparison = q
+                    .card
+                    .comparison
+                    .as_ref()
+                    .filter(|c| c.usable().is_some())
+                    .map(|c| {
+                        (
+                            format!("higher in {} than in {}", c.value.higher, c.value.lower),
+                            c.from,
+                        )
+                    });
                 card = card.child(self.fact(Item::Comparison, "Positive means", comparison, cx));
                 card = card.child(self.fact(
                     Item::Cutoffs,
@@ -751,31 +915,28 @@ impl Workbench {
                 ));
             }
             QuickTableKind::Counts | QuickTableKind::Normalized => {
-                let samples = table.samples.as_ref();
+                let samples = table.samples.as_ref().and_then(Known::usable);
                 card = card
                     .child(self.fact(Item::Gene, "Genes", gene, cx))
                     .child(
                         div()
                             .pl(px(FACT_LABEL))
                             .text_color(p.muted)
-                            .child(format!("{} samples", samples.map_or(0, |s| s.value.len()))),
+                            .child(format!("{} samples", samples.map_or(0, Vec::len))),
                     )
-                    .child(
-                        self.fact(
-                            Item::Values,
-                            "Values",
-                            table
-                                .values
-                                .as_ref()
-                                .map(|v| (quick::values_label(v.value).to_string(), v.from)),
-                            cx,
-                        ),
-                    );
+                    .child(self.fact(
+                        Item::Values,
+                        "Values",
+                        table.values.as_ref().and_then(|v| {
+                            Some((quick::values_label(*v.usable()?).to_string(), v.from))
+                        }),
+                        cx,
+                    ));
                 if let Some(samples) = samples {
                     card = card.child(self.fact(
                         Item::Groups,
                         "Groups",
-                        self.groups_summary(&samples.value),
+                        self.groups_summary(samples),
                         cx,
                     ));
                 }
@@ -790,11 +951,11 @@ impl Workbench {
             QuickTableKind::SampleSheet | QuickTableKind::Unknown => {}
         }
         // No Quick Plot needs the organism: it shows once known.
-        if q.card.organism.is_some() {
+        if let Some(organism) = q.card.organism.as_ref().filter(|o| o.usable().is_some()) {
             card = card.child(self.fact(
                 Item::Organism,
                 "Organism",
-                q.card.organism.as_ref().map(|o| (o.value.clone(), o.from)),
+                Some((organism.value.clone(), organism.from)),
                 cx,
             ));
         }
@@ -804,8 +965,9 @@ impl Workbench {
     fn groups_summary(&self, samples: &[String]) -> Option<(String, sandhill_proto::QuickFrom)> {
         let q = self.quick.as_ref()?;
         let groups = q.card.groups.as_ref()?;
+        let samples_groups = groups.usable()?;
         let mut counts: Vec<(String, usize)> = Vec::new();
-        for (sample, group) in &groups.value {
+        for (sample, group) in samples_groups {
             if !samples.contains(sample) {
                 continue;
             }
@@ -1271,11 +1433,16 @@ impl Workbench {
         let Some(q) = &self.quick else {
             return div().into_any_element();
         };
-        let plots = quick::plots_for(table.kind.value);
+        let kind = table
+            .kind
+            .usable()
+            .copied()
+            .unwrap_or(QuickTableKind::Unknown);
+        let plots = quick::plots_for(kind);
         if plots.is_empty() {
             return div()
                 .text_color(p.muted)
-                .child(match table.kind.value {
+                .child(match kind {
                     QuickTableKind::SampleSheet => {
                         "A sample sheet has nothing to plot on its own. Its groups can be set on a counts table's card."
                     }

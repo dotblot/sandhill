@@ -911,6 +911,7 @@ impl Daemon {
             | Call::Unsubscribe { .. }
             | Call::SubscribeTerminal { .. }
             | Call::UnsubscribeTerminal { .. }
+            | Call::QuickAgent { .. }
             | Call::SetFocus { .. } => unreachable!("handled earlier"),
         })
     }

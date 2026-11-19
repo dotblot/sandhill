@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use sandhill_proto::{EVENT_RUN_FINISHED, QuickCard, QuickRequest};
+use sandhill_proto::{EVENT_RUN_FINISHED, QuickAgentTool, QuickCard, QuickRequest};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::*;
@@ -96,12 +96,14 @@ impl Daemon {
     }
 
     pub(super) async fn quick_keep(
-        &self,
+        self: &Arc<Self>,
         project: String,
         parent: String,
         name: String,
     ) -> Result<Value> {
-        let root = PathBuf::from(projects::normalize(&project)?);
+        let project = projects::normalize(&project)?;
+        let root = PathBuf::from(&project);
+        self.save_explore_chats(project, root.clone()).await?;
         let journal = self.journal.clone();
         let kept = blocking(move || {
             let kept = folder::keep(&root, &parent, &name)?;
@@ -114,10 +116,61 @@ impl Daemon {
         Ok(Value::String(kept.to_string_lossy().into_owned()))
     }
 
-    pub(super) async fn quick_discard(&self, project: String) -> Result<Value> {
+    pub(super) async fn quick_discard(self: &Arc<Self>, project: String) -> Result<Value> {
         let explore = self.explore_dir();
-        blocking(move || folder::discard(&explore, Path::new(&project))).await?;
+        let project = projects::normalize(&project)?;
+        let path = PathBuf::from(&project);
+        let (explore, root, kept) = blocking(move || {
+            let explore = std::fs::canonicalize(explore).context("no explore folder")?;
+            let root = std::fs::canonicalize(path).context("no such session")?;
+            if root.parent() != Some(explore.as_path()) {
+                bail!("only sessions in Sandhill's own storage can be discarded");
+            }
+            let kept = folder::card(&root)?.kept;
+            Ok((explore, root, kept))
+        })
+        .await?;
+        let agents = self.terminals.list().into_iter().filter(|info| {
+            info.project.as_deref() == Some(&project) && crate::agents::is_agent(&info.kind)
+        });
+        if let Some(kept) = kept.map(PathBuf::from).filter(|kept| kept.is_dir()) {
+            for agent in agents {
+                self.terminals.stop(&agent.id).await?;
+                let ended = async {
+                    while self
+                        .terminals
+                        .info(&agent.id)
+                        .is_ok_and(|info| info.running)
+                    {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                };
+                tokio::time::timeout(Duration::from_secs(10), ended)
+                    .await
+                    .context("The Explore AI helper did not stop.")?;
+            }
+            self.save_explore_chats(project, kept).await?;
+        } else {
+            for agent in agents {
+                self.terminals.close(&agent.id).await?;
+            }
+        }
+        blocking(move || folder::discard(&explore, &root)).await?;
         Ok(Value::Null)
+    }
+
+    async fn save_explore_chats(self: &Arc<Self>, project: String, kept: PathBuf) -> Result<()> {
+        let daemon = self.clone();
+        blocking(move || {
+            chats::save_explore(
+                &daemon.terminals,
+                &daemon.homes,
+                &daemon.machine,
+                &project,
+                &kept,
+            )
+        })
+        .await
     }
 
     pub(super) async fn quick_add_tables(
@@ -135,6 +188,25 @@ impl Daemon {
         Ok(serde_json::to_value(
             blocking(move || folder::card(&root)).await?,
         )?)
+    }
+
+    pub(super) async fn quick_agent(
+        &self,
+        project: String,
+        tool: QuickAgentTool,
+        params: Value,
+    ) -> Result<Value> {
+        let project = projects::normalize(&project)?;
+        if !crate::mcp::quick::is_explore(Some(&project)) {
+            bail!("Open this session in Explore a Table first.");
+        }
+        let wait = match tool {
+            QuickAgentTool::State | QuickAgentTool::Suggest => Duration::from_secs(20),
+            QuickAgentTool::Make => crate::mcp::quick::RUN_WAIT,
+        };
+        self.windows
+            .ask_explore(project, tool.method(), params, wait)
+            .await
     }
 
     /// Saves what the user changed on the card; where the session lives and

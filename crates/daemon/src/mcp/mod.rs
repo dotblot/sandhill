@@ -16,6 +16,7 @@ pub(crate) mod connectors;
 mod documents;
 pub mod http;
 mod jobs;
+pub(crate) mod quick;
 mod session;
 pub(crate) mod skills;
 mod viewer;
@@ -64,6 +65,7 @@ pub struct Tools {
     /// The project folder the agent works on; sessions of other projects
     /// are left alone unless named.
     project: Option<String>,
+    explore: bool,
     /// The Sandhill terminal the agent runs in, whose session names the
     /// documents it is about.
     terminal: Option<String>,
@@ -122,9 +124,11 @@ fn error_reply(id: Value, code: i64, message: &str) -> Value {
 
 impl Tools {
     pub fn new(socket: PathBuf, project: Option<String>) -> Self {
+        let explore = quick::is_explore(project.as_deref());
         Tools {
             socket,
             project,
+            explore,
             terminal: None,
             terminal_dir: None,
         }
@@ -154,15 +158,30 @@ impl Tools {
                     .iter()
                     .find(|v| **v == asked)
                     .unwrap_or(&PROTOCOL_VERSIONS[0]);
+                let instructions = if self.explore {
+                    format!(
+                        "{} {} {}",
+                        quick::GUIDANCE,
+                        skills::GUIDANCE,
+                        connectors::GUIDANCE
+                    )
+                } else {
+                    format!(
+                        "{INSTRUCTIONS} {} {} {}",
+                        bio::GUIDANCE,
+                        skills::GUIDANCE,
+                        connectors::GUIDANCE
+                    )
+                };
                 json!({
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "sandhill", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{INSTRUCTIONS} {} {} {}", bio::GUIDANCE, skills::GUIDANCE, connectors::GUIDANCE),
+                    "instructions": instructions,
                 })
             }
             "ping" => json!({}),
-            "tools/list" => json!({"tools": tool_list()}),
+            "tools/list" => json!({"tools": tool_list(self.explore)}),
             "tools/call" => {
                 let name = params["name"].as_str().unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -190,6 +209,9 @@ impl Tools {
 
     /// Runs one tool. Returns MCP content items.
     pub async fn call(&self, name: &str, args: &Value) -> Result<Vec<Value>> {
+        if let Some(tool) = sandhill_proto::QuickAgentTool::from_method(name) {
+            return self.quick_tool(tool, args).await;
+        }
         let text = |s: &str| args[s].as_str().map(str::trim).filter(|s| !s.is_empty());
         match name {
             "get_bio_guide" | "begin_analysis" | "check_analysis" | "get_analysis" => {
@@ -410,7 +432,11 @@ impl Tools {
             &session,
             code,
             None,
-            self.agent_name(),
+            if self.explore {
+                Some(sandhill_proto::QUICK_AI_CODE)
+            } else {
+                self.agent_name()
+            },
             timeout,
         )
         .await?;
@@ -740,7 +766,7 @@ async fn images(client: &Client, rendered: &Rendered) -> Vec<Value> {
 /// The tools that only look (`readOnlyHint`), which agents may use without asking.
 /// The names of Sandhill's tools.
 pub fn tool_names() -> Vec<String> {
-    tool_list()
+    tool_list(false)
         .as_array()
         .into_iter()
         .flatten()
@@ -749,7 +775,11 @@ pub fn tool_names() -> Vec<String> {
 }
 
 pub fn read_only_tools() -> Vec<String> {
-    let tools = tool_list();
+    read_only_tools_for(false)
+}
+
+pub(crate) fn read_only_tools_for(explore: bool) -> Vec<String> {
+    let tools = tool_list(explore);
     tools
         .as_array()
         .into_iter()
@@ -759,7 +789,7 @@ pub fn read_only_tools() -> Vec<String> {
         .collect()
 }
 
-fn tool_list() -> Value {
+fn tool_list(explore: bool) -> Value {
     let mut tools = json!([
         {
             "name": "list_sessions",
@@ -935,6 +965,9 @@ fn tool_list() -> Value {
         .as_array_mut()
         .unwrap()
         .extend(connectors::tool_list());
+    if explore {
+        tools.as_array_mut().unwrap().extend(quick::tool_list());
+    }
     tools
 }
 

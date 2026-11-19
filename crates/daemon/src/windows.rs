@@ -48,7 +48,12 @@ pub struct Windows {
 
 struct Connection {
     out: mpsc::UnboundedSender<ServerMessage>,
-    open: HashMap<String, Vec<PathBuf>>,
+    projects: HashMap<String, WindowFocus>,
+}
+
+struct WindowFocus {
+    open: Vec<PathBuf>,
+    explore: bool,
 }
 
 impl Windows {
@@ -61,16 +66,17 @@ impl Windows {
     ) {
         focus.ts_ms = now_ms();
         let open = focus.open.iter().map(|p| normalize(Path::new(p))).collect();
+        let explore = focus.explore;
         self.connections
             .lock()
             .unwrap()
             .entry(connection)
             .or_insert_with(|| Connection {
                 out: out.clone(),
-                open: HashMap::new(),
+                projects: HashMap::new(),
             })
-            .open
-            .insert(project.clone(), open);
+            .projects
+            .insert(project.clone(), WindowFocus { open, explore });
         self.focus.lock().unwrap().insert(project, focus);
     }
 
@@ -118,6 +124,33 @@ impl Windows {
             ),
             Unanswered::Said(message) => anyhow!("{message}"),
         }))
+    }
+
+    /// Only the Explore window for this session can read or change its card.
+    pub async fn ask_explore(
+        &self,
+        project: String,
+        method: &str,
+        params: Value,
+        wait: Duration,
+    ) -> Result<Value> {
+        let out = self.connections.lock().unwrap().values().find_map(|c| {
+            c.projects
+                .get(&project)
+                .filter(|focus| focus.explore)
+                .map(|_| c.out.clone())
+        });
+        let Some(out) = out else {
+            return Err(anyhow!("Open this session in Explore a Table first."));
+        };
+        match self.ask_on(&out, project, method, params, wait).await {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(Unanswered::Said(message))) => Err(anyhow!("{message}")),
+            Some(Err(Unanswered::Late)) => Err(anyhow!("The Explore window didn't answer.")),
+            Some(Err(Unanswered::Closed)) | None => {
+                Err(anyhow!("Open this session in Explore a Table first."))
+            }
+        }
     }
 
     /// Asks the `project` window of the connection that `out` sends to;
@@ -168,8 +201,8 @@ impl Windows {
         let connections = self.connections.lock().unwrap();
         let mut found = None;
         for connection in connections.values() {
-            for (window, open) in &connection.open {
-                if !open.contains(&file) {
+            for (window, focus) in &connection.projects {
+                if !focus.open.contains(&file) {
                     continue;
                 }
                 if project == Some(window.as_str()) {

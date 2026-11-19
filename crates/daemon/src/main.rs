@@ -238,7 +238,8 @@ async fn run(cli: Cli) -> Result<()> {
         } => {
             let options: sandhill_proto::AgentOptions =
                 serde_json::from_str(&options).context("--options is not valid")?;
-            let instructions = sandhill_daemon::agents::instructions(&options);
+            let instructions =
+                sandhill_daemon::agents::instructions_for(&options, project.as_deref());
             let code =
                 sandhill_daemon::terminal::codex::run(sandhill_daemon::terminal::codex::Options {
                     codex,

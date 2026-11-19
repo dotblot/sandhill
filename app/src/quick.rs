@@ -10,7 +10,7 @@ use sandhill_proto::{
     QuickCutoffs, QuickFrom, QuickPlot, QuickRequest, QuickResult, QuickSettings, QuickTable,
     QuickTableKind, QuickValues,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::workbench::{Session, Workbench};
 
@@ -119,6 +119,9 @@ pub(crate) struct Quick {
     pub closing: bool,
     /// The next table loaded was imported as a sample sheet.
     pub sheet_wanted: bool,
+    /// The user continued without AI in this window, not a Mac-wide choice.
+    pub ai_hidden: bool,
+    pub ai_ready: bool,
 }
 
 pub(crate) fn is_table(name: &str) -> bool {
@@ -369,7 +372,7 @@ pub(crate) fn settings(card: &QuickCard, table: &QuickCardTable, show_gene: &str
         fc: usable(&table.fc),
         padj: usable(&table.padj),
         mean: usable(&table.mean),
-        mean_log: table.mean_log,
+        mean_log: table.mean.as_ref().and_then(Known::usable).is_some() && table.mean_log,
         samples: usable(&table.samples).unwrap_or_default(),
         values: usable(&table.values),
         groups: groups_of(card, table),
@@ -405,6 +408,13 @@ pub(crate) fn apply(card: &mut QuickCard, table: Option<&str>, edit: Edit) {
                     Item::Ratio => &mut t.ratio,
                     _ => return,
                 };
+                if item == Item::Mean
+                    && slot
+                        .as_ref()
+                        .is_some_and(|k| k.from == QuickFrom::Suggested)
+                {
+                    t.mean_log = false;
+                }
                 *slot = Some(Known::told(column));
             }
         }
@@ -416,7 +426,12 @@ pub(crate) fn apply(card: &mut QuickCard, table: Option<&str>, edit: Edit) {
         }
         Edit::Organism(organism) => card.organism = organism.map(Known::told),
         Edit::Group(sample, group) => {
-            let mut groups = card.groups.take().map(|g| g.value).unwrap_or_default();
+            let mut groups = card
+                .groups
+                .take()
+                .filter(|g| g.usable().is_some())
+                .map(|g| g.value)
+                .unwrap_or_default();
             groups.retain(|(s, _)| *s != sample);
             if let Some(group) = group {
                 groups.push((sample, group));
@@ -892,20 +907,38 @@ impl Workbench {
     }
 
     fn quick_save_card(&mut self, cx: &mut Context<Self>) {
+        self.quick_save_card_answer(None, cx);
+    }
+
+    pub(crate) fn quick_save_card_answer(
+        &mut self,
+        answer: Option<(u64, Value)>,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(daemon), Some(project), Some(quick)) =
             (self.daemon(), self.project.clone(), &self.quick)
         else {
             return;
         };
-        let saved = daemon.call::<Value>(Call::SaveQuickCard {
+        let saved = daemon.call_in_order::<Value>(Call::SaveQuickCard {
             project,
             card: quick.card.clone(),
         });
         cx.spawn(async move |this, cx| {
-            if let Err(err) = saved.await {
-                this.update(cx, |this, cx| {
+            let saved = saved
+                .await
+                .map_err(|err| format!("The card couldn't be saved: {err:#}"));
+            if let Some((id, result)) = answer {
+                daemon.fire(Call::Answer {
+                    id,
+                    result: saved.as_ref().ok().map(|_| result),
+                    error: saved.as_ref().err().cloned(),
+                });
+            }
+            if let Err(err) = saved {
+                this.update(cx, move |this, cx| {
                     if let Some(quick) = this.quick_mut() {
-                        quick.error = Some(format!("The card couldn't be saved: {err:#}"));
+                        quick.error = Some(err);
                     }
                     cx.notify();
                 })
@@ -968,20 +1001,62 @@ impl Workbench {
     /// Makes a plot (or the top genes table) from the table shown.
     pub(crate) fn quick_make(&mut self, plot: QuickPlot, cx: &mut Context<Self>) {
         let show_gene = self.quick_input(|i| &i.gene, cx);
-        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
-            return;
-        };
-        let Some(quick) = &self.quick else {
-            return;
-        };
-        let (Some(session), Some(table)) = (quick.loaded_in.clone(), self.quick_table().cloned())
-        else {
-            return;
-        };
-        if quick.busy.is_some() || !missing(&table, plot, &show_gene).is_empty() {
-            return;
+        let _ = self.quick_run_plot(plot, None, &show_gene, None, cx);
+    }
+
+    pub(crate) fn quick_run_plot(
+        &mut self,
+        plot: QuickPlot,
+        table: Option<&str>,
+        show_gene: &str,
+        answer: Option<u64>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        use anyhow::{Context as _, bail};
+
+        let daemon = self
+            .daemon()
+            .context("The Explore window is disconnected.")?;
+        let project = self
+            .project
+            .clone()
+            .context("There is no Explore session here.")?;
+        let quick = self
+            .quick
+            .as_ref()
+            .context("There is no Explore session here.")?;
+        if let Some(busy) = &quick.busy {
+            bail!("{busy} Wait for it to finish, then try again.");
         }
-        let settings = settings(&quick.card, &table, &show_gene);
+        let session = quick
+            .loaded_in
+            .clone()
+            .context("R isn't ready to make plots yet.")?;
+        let name = table
+            .or(quick.shown.as_deref())
+            .context("Choose a table first.")?;
+        let table = quick
+            .card
+            .tables
+            .iter()
+            .find(|table| table.name == name && quick.tables.iter().any(|t| t.name == name))
+            .with_context(|| format!("There is no loaded table named {name}."))?;
+        let kind = table
+            .kind
+            .usable()
+            .copied()
+            .unwrap_or(QuickTableKind::Unknown);
+        if !plots_for(kind).contains(&plot) {
+            bail!(
+                "{} is not available for this table. Check what the card says the table is.",
+                plot_label(plot)
+            );
+        }
+        let needs = missing(table, plot, show_gene);
+        if !needs.is_empty() {
+            bail!("{} needs {}.", plot_label(plot), needs.join(", "));
+        }
+        let settings = settings(&quick.card, table, show_gene);
         let output = (plot == QuickPlot::TopGenes).then(|| {
             let taken: Vec<String> = quick
                 .tables
@@ -991,12 +1066,13 @@ impl Workbench {
                 .collect();
             variable_name(&format!("{}_top_genes", table.name), None, &taken)
         });
+        let from = table.name.clone();
         let made = daemon.call::<QuickResult>(Call::QuickRun {
             session: session.clone(),
             project,
             request: QuickRequest::Plot {
                 plot,
-                table: table.name.clone(),
+                table: from.clone(),
                 settings: Box::new(settings),
                 output,
             },
@@ -1008,10 +1084,22 @@ impl Workbench {
         }
         let handle = self.window_handle;
         let generation = self.generation;
-        let from = table.name.clone();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let made = made.await;
+            if let Some(id) = answer {
+                let (result, error) = match &made {
+                    Ok(result) => (
+                        Some(json!({
+                            "plot": plot, "table": from, "summary": result.sentence,
+                            "numbers": result.facts, "output": result.output,
+                        })),
+                        None,
+                    ),
+                    Err(err) => (None, Some(format!("{err:#}"))),
+                };
+                daemon.fire(Call::Answer { id, result, error });
+            }
             cx.update_window(handle, |_, window, cx| {
                 this.update(cx, |this, cx| {
                     if this.generation != generation {
@@ -1043,6 +1131,7 @@ impl Workbench {
             .ok();
         })
         .detach();
+        Ok(())
     }
 
     /// Writes every table, with a Read_me sheet, to `results/<session>.xlsx`
@@ -1141,7 +1230,10 @@ impl Workbench {
             let added = added.await;
             this.update(cx, |this, cx| {
                 match added {
-                    Ok(_) => {
+                    Ok(files) => {
+                        if let Some(agents) = &this.agents {
+                            agents.update(cx, |agents, cx| agents.add_explore_files(files, cx));
+                        }
                         if let Some(session) = this.quick.as_ref().and_then(|q| q.loaded_in.clone())
                         {
                             this.quick_load(session, true, cx);

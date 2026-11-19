@@ -36,6 +36,7 @@ impl Workbench {
                     }
                     all
                 }),
+            explore: self.quick.is_some(),
             ..Focus::default()
         };
         if self.objects.is_shown() {
@@ -86,6 +87,17 @@ impl Workbench {
         if self.focus_sent.as_ref() == Some(&focus) {
             return;
         }
+        if self.quick.is_some()
+            && self.focus_sent.is_none()
+            && let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone())
+        {
+            daemon.fire(Call::SetFocus {
+                project,
+                focus: focus.clone(),
+            });
+            self.focus_sent = Some(focus);
+            return;
+        }
         self.focus_sent = Some(focus);
         self.focus_generation += 1;
         let generation = self.focus_generation;
@@ -116,6 +128,11 @@ impl Workbench {
     ) {
         if self.project.as_deref() == Some(&request.project) && request.method == "git_credential" {
             return self.on_git_credential(request.id, &request.params, window, cx);
+        }
+        if self.project.as_deref() == Some(&request.project)
+            && let Some(tool) = sandhill_proto::QuickAgentTool::from_method(&request.method)
+        {
+            return self.on_quick_request(tool, request, cx);
         }
         if self.project.as_deref() != Some(&request.project)
             || !matches!(

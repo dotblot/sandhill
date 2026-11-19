@@ -164,6 +164,15 @@ impl Daemon {
                 self.windows.set_focus(connection, &out, project, focus);
                 Value::Null
             }),
+            Call::QuickAgent {
+                project,
+                tool,
+                params,
+            } => {
+                // The window can make its own daemon calls before answering.
+                drop(_read);
+                self.quick_agent(project, tool, params).await
+            }
             Call::Subscribe { session, since_seq } => {
                 // Answers and starts streaming itself, so the response always
                 // precedes the replayed events.

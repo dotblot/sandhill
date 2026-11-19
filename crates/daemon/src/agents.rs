@@ -376,6 +376,12 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         CLAUDE => {
             launch.args = claude_args(options, context, &help);
             launch.program = program.clone();
+            if crate::mcp::quick::is_explore(context.project) {
+                let wait = crate::mcp::quick::RUN_WAIT + Duration::from_secs(5);
+                launch
+                    .env
+                    .push(("MCP_TOOL_TIMEOUT".into(), wait.as_millis().to_string()));
+            }
         }
         ANTIGRAVITY => {
             // The Antigravity app installs an `agy` that only opens it.
@@ -477,6 +483,7 @@ fn posit_defaults(context: &Context<'_>, existing: Option<&str>) -> String {
 
 fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec<String> {
     let exe = context.executable.to_string_lossy();
+    let explore = crate::mcp::quick::is_explore(context.project);
     let mcp = json!({"mcpServers": {"sandhill": {"type": "stdio", "command": exe, "args": mcp_args(context)}}});
     // One command for every hook: it reports the agent's state, keeps its
     // conversation for the chat, adds what the user added with @ and # to
@@ -508,7 +515,7 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
         },
         // Sandhill's tools that only look, like Claude Code's own Read and
         // Grep, don't ask first.
-        "permissions": {"allow": crate::mcp::read_only_tools().iter().map(|t| format!("mcp__sandhill__{t}")).collect::<Vec<_>>()},
+        "permissions": {"allow": crate::mcp::read_only_tools_for(explore).iter().map(|t| format!("mcp__sandhill__{t}")).collect::<Vec<_>>()},
         "statusLine": {"type": "command", "command": format!("{} terminal-event status", shell_quote(&exe)), "padding": 0},
     });
     let mut args = vec!["--mcp-config".to_string(), mcp.to_string()];
@@ -516,7 +523,10 @@ fn claude_args(options: &AgentOptions, context: &Context<'_>, help: &str) -> Vec
         args.extend(["--settings".into(), settings.to_string()]);
     }
     if help.contains("--append-system-prompt") {
-        args.extend(["--append-system-prompt".into(), instructions(options)]);
+        args.extend([
+            "--append-system-prompt".into(),
+            instructions_for(options, context.project),
+        ]);
     }
     if let Some(model) = &options.model {
         args.extend(["--model".into(), model.clone()]);
@@ -576,6 +586,15 @@ fn codex_args(options: &AgentOptions, context: &Context<'_>, codex: &Path) -> Ve
         "-c".into(),
         format!("mcp_servers.sandhill.args={}", toml_array(&mcp_args)),
     ]);
+    if crate::mcp::quick::is_explore(context.project) {
+        args.extend([
+            "-c".into(),
+            format!(
+                "mcp_servers.sandhill.tool_timeout_sec={}",
+                crate::mcp::quick::RUN_WAIT.as_secs() + 5
+            ),
+        ]);
+    }
     args
 }
 
@@ -647,6 +666,15 @@ fn push_prompt(args: &mut Vec<String>, context: &Context<'_>) {
 /// How long, in seconds, Claude Code waits for the user to answer a
 /// permission request in the app before asking in its terminal.
 const ASK_TIMEOUT_S: u64 = 24 * 60 * 60;
+
+/// Explore has its own tools and no editor to put code in.
+pub fn instructions_for(options: &AgentOptions, project: Option<&str>) -> String {
+    if crate::mcp::quick::is_explore(project) {
+        crate::mcp::quick::GUIDANCE.into()
+    } else {
+        instructions(options)
+    }
+}
 
 /// What an agent is told about Sandhill when it starts.
 pub fn instructions(options: &AgentOptions) -> String {
@@ -943,6 +971,27 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(second, third);
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn explore_uses_its_guide_without_changing_normal_project_instructions() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().to_str().unwrap();
+        let options = AgentOptions {
+            pin: Some("analysis.qmd".into()),
+            ..AgentOptions::default()
+        };
+        assert_eq!(instructions_for(&options, None), instructions(&options));
+        assert_eq!(
+            instructions_for(&options, Some(project)),
+            instructions(&options)
+        );
+        std::fs::create_dir(dir.path().join(".sandhill")).unwrap();
+        std::fs::write(dir.path().join(".sandhill/quick.json"), "{}").unwrap();
+        let explore = instructions_for(&options, Some(project));
+        assert!(explore.contains("Call quick_state first"));
+        assert!(explore.contains("quick_suggest") && explore.contains("quick_make"));
+        assert!(!explore.contains("add_cell"));
     }
 
     fn context() -> Context<'static> {

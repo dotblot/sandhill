@@ -61,12 +61,16 @@ impl Column {
 #[serde(try_from = "SavedLayout")]
 pub(crate) struct Layout {
     columns: Vec<Column>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai_visible: Option<bool>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SavedLayout {
     columns: Vec<Column>,
+    #[serde(default)]
+    ai_visible: Option<bool>,
 }
 
 impl TryFrom<SavedLayout> for Layout {
@@ -90,6 +94,7 @@ impl TryFrom<SavedLayout> for Layout {
         }
         Ok(Self {
             columns: saved.columns,
+            ai_visible: saved.ai_visible,
         })
     }
 }
@@ -102,6 +107,7 @@ impl Default for Layout {
                 Column::single(Panel::Plots, 3. / 8.),
                 Column::single(Panel::Guide, 2. / 8.),
             ],
+            ai_visible: None,
         }
     }
 }
@@ -117,8 +123,25 @@ impl Layout {
             .position(|c| c.top == panel || c.bottom() == Some(panel))
     }
 
+    pub(crate) fn is_visible(&self, panel: Panel) -> bool {
+        self.locate(panel).is_some()
+    }
+
+    pub(crate) fn ai_visible(&self, ready: bool) -> bool {
+        self.ai_visible.unwrap_or(ready)
+    }
+
+    pub(crate) fn choose_ai_visibility(&mut self, visible: bool) {
+        self.ai_visible = Some(visible);
+        self.set_visible(Panel::Ai, visible);
+    }
+
     pub(crate) fn reset(&mut self) -> bool {
-        let default = Self::default();
+        let mut default = Self {
+            ai_visible: self.ai_visible,
+            ..Self::default()
+        };
+        default.set_visible(Panel::Ai, default.ai_visible(false));
         if *self == default {
             return false;
         }
@@ -219,7 +242,6 @@ impl Layout {
 
     /// Hiding a panel gives its room back to the others. Showing it adds a
     /// column next to the Guide when possible, or stacks it with the Guide.
-    #[allow(dead_code, reason = "Called by the separate Explore AI toggle change")]
     pub(crate) fn set_visible(&mut self, panel: Panel, visible: bool) -> bool {
         match (self.locate(panel), visible) {
             (None, true) => {
@@ -499,6 +521,25 @@ mod tests {
                 serde_json::from_value::<Layout>(invalid).unwrap_or_default(),
                 default
             );
+        }
+    }
+
+    #[test]
+    fn an_explicit_ai_choice_survives_reset_and_old_prefs_follow_readiness() {
+        let older = serde_json::to_value(Layout::default()).unwrap();
+        assert!(older.get("ai_visible").is_none());
+        let mut layout = serde_json::from_value::<Layout>(older).unwrap();
+        assert!(layout.ai_visible(true));
+        assert!(!layout.ai_visible(false));
+        for visible in [true, false] {
+            layout.choose_ai_visibility(visible);
+            assert_eq!(layout.is_visible(Ai), visible);
+            assert!(layout.move_panel(Guide, Explorer, Left));
+            assert!(layout.reset());
+            let reloaded: Layout =
+                serde_json::from_value(serde_json::to_value(&layout).unwrap()).unwrap();
+            assert_eq!(reloaded.ai_visible(!visible), visible);
+            assert_eq!(reloaded.is_visible(Ai), visible);
         }
     }
 }

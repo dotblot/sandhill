@@ -385,7 +385,8 @@ impl Agents {
                                         .on_prepaint(self.popup_triggers.track("agent-mode"))
                                         .when(self.menu == Some(Menu::Mode), |d| d.bg(pill_hover))
                                         .child(icon(mode.icon).size(px(look::ICON)).text_color(p.muted))
-                                        .child(mode.label)
+                                        .when(!self.explore, |d| d.child(mode.label))
+                                        .when(self.explore, |d| d.tooltip(tip(mode.label)))
                                         .child(
                                             icon("chevron.down")
                                                 .size(px(look::ICON_SMALL))
@@ -396,7 +397,7 @@ impl Agents {
                                         })),
                                 )
                             })
-                            .when(chat_agent, |d| {
+                            .when(chat_agent && !self.explore, |d| {
                                 d.child(
                                     pill("agent-code")
                                         .child(div().text_color(p.muted).child("Code"))

@@ -18,6 +18,7 @@ pub(crate) mod effort_bar;
 pub(crate) mod ghost;
 pub(crate) mod input_box;
 pub(crate) mod notebook_ai;
+pub(crate) mod quick;
 pub(crate) mod quota;
 pub(crate) mod start;
 pub(crate) mod table_actions;
@@ -301,6 +302,12 @@ pub struct Agents {
     /// The window it is in, where its terminals start.
     window: AnyWindowHandle,
     pub(crate) project: String,
+    explore: bool,
+    /// Table files in an Explore session (none until the folder has been read).
+    explore_files: Option<Vec<String>>,
+    explore_seeded: bool,
+    explore_sent: bool,
+    explore_ready: [bool; 2],
     /// The agents' CLIs and whether they are installed.
     pub(crate) installed: Vec<AgentInfo>,
     /// This project's agent terminals, oldest first.
@@ -405,6 +412,7 @@ impl Agents {
         host: String,
         project: String,
         workbench: WeakEntity<Workbench>,
+        explore: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -433,6 +441,11 @@ impl Agents {
             accounts: Vec::new(),
             account_switching: None,
             project,
+            explore,
+            explore_files: None,
+            explore_seeded: false,
+            explore_sent: false,
+            explore_ready: [false; 2],
             installed: Vec::new(),
             terminals: Vec::new(),
             chats: HashMap::new(),
@@ -487,6 +500,9 @@ impl Agents {
         };
         agents.refresh(cx);
         agents.refresh_accounts(cx);
+        if explore {
+            agents.read_explore_files(cx);
+        }
         agents
     }
 
@@ -506,6 +522,7 @@ impl Agents {
                     }
                 }
                 this.installed = installed;
+                this.pick_ready_explore_agent(cx);
                 match listed {
                     Ok(all) => {
                         this.problem = None;
@@ -520,6 +537,9 @@ impl Agents {
                             }
                         }
                         this.terminals = mine;
+                        if this.explore && !this.terminals.is_empty() {
+                            this.explore_sent = true;
+                        }
                         if this.selected.is_none() {
                             // The latest one still running, as the Tauri app opens.
                             this.selected = this
@@ -592,6 +612,7 @@ impl Agents {
             if let Ok(accounts) = request.await {
                 let _ = this.update(cx, |this, cx| {
                     this.accounts = accounts;
+                    this.pick_ready_explore_agent(cx);
                     cx.notify();
                 });
             }

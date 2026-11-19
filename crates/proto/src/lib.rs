@@ -978,6 +978,12 @@ pub enum Call {
         project: String,
         request: QuickRequest,
     },
+    /// Passes an Explore AI tool to the Explore window for this session.
+    QuickAgent {
+        project: String,
+        tool: QuickAgentTool,
+        params: Value,
+    },
     /// What the machine is doing: CPU, memory, GPUs, the disk `path` is on
     /// (the home folder without it), and the memory each running kernel
     /// holds. Returns [`SystemStats`].

@@ -38,6 +38,7 @@ impl Render for Agents {
                 .update(cx, |c, cx| c.set_placeholder(hint, window, cx));
         }
         self.question_fields(window, cx);
+        self.seed_explore_draft();
         if self.show == Show::New {
             self.refresh_start(cx);
         }
@@ -116,6 +117,7 @@ impl Render for Agents {
                 )
             })
             .when(composer, |d| {
+                let notice = self.explore_notice(&p, cx);
                 d.when_some(
                     current.as_ref().filter(|t| {
                         self.show == Show::Chat && t.running && self.trust_asked.contains(&t.id)
@@ -130,6 +132,7 @@ impl Render for Agents {
                         )
                     },
                 )
+                .children(notice)
                 .child(self.render_composer(current.as_ref(), window, cx))
             })
             .children(head)

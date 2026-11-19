@@ -1141,19 +1141,40 @@ impl Workbench {
         let (Some(daemon), Some(path)) = (self.daemon(), self.project.clone()) else {
             return;
         };
-        // An Explore a Table session asks no setup questions and has no AI pane
-        // yet: it starts its R session and reads its tables.
-        if self.quick.is_some() {
-            self.quick_start(window, cx);
-            return;
-        }
         let workbench = cx.entity().downgrade();
         let host = self.host();
-        let agents = cx.new(|cx| Agents::new(daemon, host, path, workbench, window, cx));
+        let explore = self.quick.is_some();
+        let agents = cx.new(|cx| Agents::new(daemon, host, path, workbench, explore, window, cx));
         if let Some(quota) = &self.quota {
             quota.update(cx, |quota, cx| quota.set_agents(agents.clone(), cx));
         }
         self.agents = Some(agents);
+        if explore {
+            let agents = self
+                .agents
+                .as_ref()
+                .expect("the Explore agents were set up");
+            cx.observe(agents, |this, agents, cx| {
+                if let Some(quick) = &mut this.quick {
+                    let ready = agents.read(cx).explore_ready();
+                    if quick.ai_ready != ready {
+                        quick.ai_ready = ready;
+                        cx.notify();
+                    }
+                }
+            })
+            .detach();
+            cx.observe_window_activation(window, |this, _, cx| {
+                if let Some(agents) = &this.agents {
+                    agents.update(cx, |agents, cx| agents.refresh_explore_status(cx));
+                }
+            })
+            .detach();
+            self.focus_sent = None;
+            self.report_focus(window, cx);
+            self.quick_start(window, cx);
+            return;
+        }
         self.recover_console_sessions(cx);
         self.read_setup(true, window, cx);
         if self.console_tab == ConsoleTab::Terminal {

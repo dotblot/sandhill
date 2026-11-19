@@ -24,6 +24,10 @@ differs, this wins.
   Explore a Table conversations (Huan, 2026-11-19) start with the session's
   tables as visible, removable @ chips; elsewhere messages still carry
   only what the user adds.
+  Before the first message, the composer names Anthropic (Claude Code)
+  or OpenAI (Codex) and says that the provider receives messages and any
+  parts of the tables the agent reads. Continue Without AI hides only
+  that session's pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`).
 - New conversation has no separate agent buttons. Agent/model selection stays
   in the composer picker, including Posit Assistant; PA manages models itself.
 
@@ -158,6 +162,16 @@ differs, this wins.
   shown in the row before they run, as a job. Signing in stays on Welcome →
   Agents; Getting Ready shows signed in as Agents last saw, never asking
   the agent.
+- Exploring tables (Huan, 2026-11-19; `docs/design/explore-next-plan.md`):
+  Claude Code and Codex work in the session folder. Sandhill tells them
+  to use plain words, say what the data cannot show, and read the open
+  session's card with `quick_state` first. The agent can suggest unknown
+  facts with `quick_suggest` but cannot replace what Sandhill found or the
+  user told it. A suggestion takes a click before `quick_make` can use it.
+  The agent describes a result using the template's numbers and never
+  names a comparison direction the card does not know.
+  A plot made with the agent's own code is marked as such in Plots and
+  in the default export name.
 
 ## Accounts and quota
 - Agent accounts (Huan, 2026-11-13; `docs/design/done/agent-accounts-plan.md`):

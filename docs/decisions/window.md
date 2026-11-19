@@ -126,6 +126,12 @@ differs, this wins.
   each package with its version and whether Sandhill installed it, and
   Claude Code and Codex: installed or not, and signed in as Agents last
   saw (never asked here). Signing in stays on Welcome → Agents.
+  The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
+  a title-bar switch shared by every Explore window on this Mac. Until
+  that switch is used, the pane shows only with a signed-in Claude Code
+  or Codex. The other panels use the room when it is hidden. The Guide
+  points to Getting Ready when neither helper is ready. Continue Without
+  AI hides the pane only in the session in front.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on

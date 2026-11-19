@@ -102,6 +102,9 @@ impl Agents {
     /// or sends it to the one shown. Posit Assistant also starts without
     /// one, as its own screen takes messages.
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.explore && self.starting.is_some() {
+            return;
+        }
         let text = self.composer.read(cx).value().trim().to_string();
         let picked = self.refs.iter().any(composer::is_slash);
         if text.is_empty() && !picked && !(self.show == Show::New && terminal_only(self.new_kind)) {
@@ -316,6 +319,10 @@ impl Agents {
                         }
                         this.follow(&info, cx);
                         this.terminals.push(info);
+                        if this.explore {
+                            this.explore_seeded = false;
+                            this.explore_sent = true;
+                        }
                         this.new_choice = Choice::default();
                         this.browsed_effort = None;
                         this.select(id, window, cx);

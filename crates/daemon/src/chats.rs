@@ -142,6 +142,28 @@ pub fn sync(terminals: &Terminals, homes: &Homes, machine: &str) {
     }
 }
 
+/// Saves only this Explore session's conversations into the folder the
+/// user chose. The live agent keeps working in the scratch folder until close.
+pub(crate) fn save_explore(
+    terminals: &Terminals,
+    homes: &Homes,
+    machine: &str,
+    project: &str,
+    kept: &Path,
+) -> Result<()> {
+    let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if kept_with(kept) {
+        for info in terminals
+            .list()
+            .into_iter()
+            .filter(|info| info.project.as_deref() == Some(project) && agents::is_agent(&info.kind))
+        {
+            sync_one(terminals, &info, kept, homes, machine)?;
+        }
+    }
+    Ok(())
+}
+
 fn sync_one(
     terminals: &Terminals,
     info: &TerminalInfo,

@@ -4,6 +4,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Run provenance for Explore plots that don't use a fixed template.
+pub const QUICK_AI_CODE: &str = "Made by AI code";
+
 /// What a Quick Tools R package is needed for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -452,6 +455,61 @@ pub struct QuickCard {
     /// Where the user kept it, which what it writes is copied to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept: Option<String>,
+}
+
+/// The tools that reach the Explore window rather than the filesystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuickAgentTool {
+    State,
+    Suggest,
+    Make,
+}
+
+impl QuickAgentTool {
+    pub const fn method(self) -> &'static str {
+        match self {
+            Self::State => "quick_state",
+            Self::Suggest => "quick_suggest",
+            Self::Make => "quick_make",
+        }
+    }
+
+    pub fn from_method(method: &str) -> Option<Self> {
+        [Self::State, Self::Suggest, Self::Make]
+            .into_iter()
+            .find(|tool| tool.method() == method)
+    }
+}
+
+/// Pending facts suggested for the session and, when named, one table.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct QuickSuggestion {
+    pub table: Option<String>,
+    pub organism: Option<String>,
+    pub comparison: Option<QuickComparison>,
+    pub groups: Option<Vec<(String, String)>>,
+    pub kind: Option<QuickTableKind>,
+    pub gene: Option<String>,
+    pub gene_ids: Option<GeneIds>,
+    pub fc: Option<String>,
+    pub padj: Option<String>,
+    pub mean: Option<String>,
+    pub mean_log: Option<bool>,
+    pub samples: Option<Vec<String>>,
+    pub values: Option<QuickValues>,
+    pub term: Option<String>,
+    pub count: Option<String>,
+    pub ratio: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuickMake {
+    pub plot: QuickPlot,
+    pub table: Option<String>,
+    pub gene: Option<String>,
 }
 
 /// A plot (or table) a template makes.

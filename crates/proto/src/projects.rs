@@ -24,6 +24,9 @@ pub struct Focus {
     /// The table currently in front; absent when focus is elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<TableFocus>,
+    /// This window is Explore a Table, not an editor for the same folder.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub explore: bool,
     /// When the window said so; set by the daemon.
     #[serde(default)]
     pub ts_ms: i64,

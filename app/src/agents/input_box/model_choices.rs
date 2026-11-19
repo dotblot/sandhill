@@ -196,6 +196,9 @@ impl Agents {
     pub(crate) fn model_note(&self) -> Option<String> {
         if self.box_terminal().is_none() {
             let name = crate::agents::kind_of(self.new_kind).map_or(self.new_kind, |k| k.name);
+            if let Some(note) = self.explore_new_note(name) {
+                return Some(note);
+            }
             if self.installed.is_empty() {
                 return Some(format!("Checking {name} availability…"));
             }

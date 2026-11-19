@@ -378,12 +378,14 @@ fn plot_name(item: &PlotItem, all: &[&PlotItem]) -> String {
             }
         })
         .collect();
-    let clean = clean.trim_matches(|c| c == '-' || c == '.').to_string();
+    let mut clean = clean.trim_matches(|c| c == '-' || c == '.').to_string();
     if clean.is_empty() {
-        "plot".into()
-    } else {
-        clean
+        clean.push_str("plot");
     }
+    if item.by.as_deref() == Some(sandhill_proto::QUICK_AI_CODE) {
+        clean.push_str("-made-by-AI-code");
+    }
+    clean
 }
 
 /// What a plot is to its session, to draw it again: the blob of its image,
