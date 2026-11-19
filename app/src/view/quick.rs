@@ -1,4 +1,4 @@
-//! The Quick Tools window (`crate::quick`): a title bar naming the session
+//! The Explore a Table window (`crate::quick`): a title bar naming the session
 //! and its tables, then the Data Explorer, Plots and the Guide side by side
 //! (Huan, 2026-11-19).
 
@@ -254,17 +254,17 @@ impl Workbench {
                 v_flex()
                     .gap(px(look::GAP_8))
                     .child(div().text_color(p.warn).child(look::mac_or(
-                        "R isn't ready for Quick Tools on this Mac yet. Welcome's Quick Tools page shows what is missing and installs it.",
-                        "R isn't ready for Quick Tools on this computer yet. Welcome's Quick Tools page shows what is missing and installs it.",
+                        "R isn't ready to explore tables on this Mac yet. Getting Ready in Welcome shows what is missing and installs it.",
+                        "R isn't ready to explore tables on this computer yet. Getting Ready in Welcome shows what is missing and installs it.",
                     )))
                     .child(
                         Button::new("quick-setup")
                             .small()
-                            .label("Open Quick Tools Setup")
+                            .label("Open Getting Ready")
                             .on_click(cx.listener(|_, _, _, cx| {
                                 cx.defer(|cx| {
                                     crate::shell::app_window::show_welcome(
-                                        Some(crate::welcome::start_screen::StartMode::QuickTools),
+                                        Some(crate::welcome::start_screen::StartMode::Ready),
                                         cx,
                                     )
                                 });
@@ -302,7 +302,7 @@ impl Workbench {
             body = body
                 .child(heading("What we know", &p))
                 .child(self.render_quick_card(&table, cx))
-                .child(heading("Make", &p))
+                .child(heading("Make Plots", &p))
                 .child(self.render_quick_make(&table, cx));
             if let Some(sentence) = &q.sentence {
                 body = body.child(

@@ -567,7 +567,7 @@ impl Workbench {
         if from_notebook(&item.cell) {
             self.notebook_plots
         } else {
-            // A Quick Tools window's plots are what its Guide made.
+            // An Explore a Table window's plots are what its Guide made.
             self.quick.is_some()
                 || self.plot_history.console_auto
                 || self.plot_history.sent.iter().any(|entry| {

@@ -62,13 +62,16 @@ differs, this wins.
   there, closing Welcome; closing the main window (or its last project)
   brings Welcome back; closing Welcome alone quits (with the background-work
   question). Welcome's sidebar and content reach the window top; the sidebar
-  is Devices, Projects, then Manage (General, Resources and Storage,
-  Trusted Folders, Agents), one row selected with its page on the right;
-  it opens on This Mac's page. A device has one name everywhere (Huan,
+  is Start (Recent, Explore a Table, Getting Ready), Devices, then Manage
+  (General, Resources and Storage, Trusted Folders, Agents), one row
+  selected with its page on the right; it opens on Recent, or on Explore a
+  Table when nothing is recent (Huan, 2026-11-19: Start replaced the
+  Projects row under Devices). A device has one name everywhere (Huan,
   2026-11-15): the one given it, else "This Mac" ("This computer" off a
   Mac) or the server's ssh name, in Welcome, the status bar, title-bar
-  capsules, cards and menus. Projects lists Pinned (the star on any device's projects),
-  Open, then Running (live kernels or agents, not open), each project once.
+  capsules, cards and menus. Recent lists the tables explored, then Pinned
+  (the star on any device's projects), Open, Running (live kernels or
+  agents, not open) and Opened before (the newest few), each project once.
   Rows show live kernels and agent conversations. Devices can be renamed and
   projects given a built-in folder/file icon; both are this Mac's app
   settings, never written to the device or folder. Resources and Storage is
@@ -103,17 +106,19 @@ differs, this wins.
   per file, largest file size and space on each computer. These are this
   Mac's choices. Sandhill sends them on connect and when they change; each
   daemon keeps the last limits it received.
-- Quick Tools (Huan, 2026-11-19; `docs/design/quick-tools-plan.md`):
-  the first row of Welcome's sidebar, above Devices; Welcome opens on it
-  when Sandhill knows no projects, else on This Mac's page. Opening a
-  table there opens a third kind of window, one per session, beside the
-  main window and Welcome: the Data Explorer and Plots side by side and
-  the Guide (what is known, what can be made, the AI) on the right, with
-  no Files, editor, Console, Terminal, Jobs, Git or Variables. Its plots
-  and analyses are Sandhill's own R templates (R only); everything works
-  without an AI account. Sandhill carries no R or packages: Quick Tools
-  checks for them and guides installing what is missing. An AI
-  suggestion takes a click before a plot uses it.
+- Explore a Table (Huan, 2026-11-19, renamed from Quick Tools the same
+  day; `docs/design/quick-tools-plan.md`): Start → Explore a Table takes
+  tables, Getting Ready checks for R, its kernel and the packages and
+  installs what is missing, and Recent lists the tables explored. Opening
+  a table opens a third kind of window, one per session, beside the main
+  window and Welcome, titled "<name> · Explore": the Data Explorer and
+  Plots side by side and the Guide (what is known, what can be made, the
+  AI) on the right, with no Files, editor, Console, Terminal, Jobs, Git or
+  Variables. Make Plots is phase 1; Find Changed Genes (DESeq2) and Find
+  Enriched Pathways (GO) come next, each named for its question. They run
+  Sandhill's own R templates (R only); everything works without an AI
+  account. Sandhill carries no R or packages. An AI suggestion takes a
+  click before a plot uses it.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on

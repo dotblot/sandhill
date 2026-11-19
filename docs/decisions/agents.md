@@ -21,7 +21,7 @@ differs, this wins.
   fill the box (an open file or a live table as @ chips, never sent by
   themselves), "Continue" with the three latest conversations, and the @ / #
   / Enter hints.
-  Quick Tools conversations (Huan, 2026-11-19) start with the session's
+  Explore a Table conversations (Huan, 2026-11-19) start with the session's
   tables as visible, removable @ chips; elsewhere messages still carry
   only what the user adds.
 - New conversation has no separate agent buttons. Agent/model selection stays

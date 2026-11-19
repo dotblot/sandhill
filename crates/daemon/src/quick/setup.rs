@@ -206,7 +206,7 @@ fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
   wanted <- c(cran, bioc)
   missing <- wanted[!vapply(wanted, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing)) stop("These packages couldn't be installed: ", paste(missing, collapse = ", "), ". A ready-built copy may not exist for this R yet.", call. = FALSE)
-  message("Done: Quick Tools has every package it needs.")
+  message("Done: every package for exploring tables is installed.")
 }})"#,
         mirror = r_string(CRAN),
         cran = r_vector(cran),
@@ -225,7 +225,7 @@ pub fn install(r: &str, packages: &[String], log: &Path) -> Result<Launch> {
     let mut bioconductor = Vec::new();
     for name in packages {
         let Some(&(known, bioc, _)) = PACKAGES.iter().find(|(n, ..)| n == name) else {
-            bail!("{name} isn't a package Quick Tools uses");
+            bail!("{name} isn't one of the packages for exploring tables");
         };
         if bioc {
             bioconductor.push(known);
@@ -252,7 +252,7 @@ pub fn install(r: &str, packages: &[String], log: &Path) -> Result<Launch> {
         )),
     };
     let mut launch = crate::jobs::launch(&job, Some(&home), None)?;
-    launch.title = "Install packages for Quick Tools".into();
+    launch.title = "Install packages for exploring tables".into();
     Ok(launch)
 }
 
@@ -284,7 +284,10 @@ mod tests {
     #[test]
     fn only_quick_tools_packages_can_be_installed() {
         let err = install("/bin/sh", &["Seurat".to_string()], Path::new("/tmp/x.log")).unwrap_err();
-        assert!(err.to_string().contains("isn't a package Quick Tools uses"));
+        assert!(
+            err.to_string()
+                .contains("isn't one of the packages for exploring tables")
+        );
     }
 
     #[test]

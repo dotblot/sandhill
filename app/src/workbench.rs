@@ -430,7 +430,7 @@ pub struct Workbench {
     pub(crate) popped_explorers: Vec<(AnyWindowHandle, WeakEntity<Explorer>)>,
     /// The Data Explorer's tab is the one shown.
     pub(crate) explorer_shown: bool,
-    /// A Quick Tools session's window shows only the Data Explorer, Plots
+    /// An Explore a Table session's window shows only the Data Explorer, Plots
     /// and the Guide (`crate::quick`).
     pub(crate) quick: Option<crate::quick::Quick>,
     pub(crate) objects: crate::panes::object_explorer::ObjectExplorers,
@@ -1141,7 +1141,7 @@ impl Workbench {
         let (Some(daemon), Some(path)) = (self.daemon(), self.project.clone()) else {
             return;
         };
-        // A Quick Tools session asks no setup questions and has no AI pane
+        // An Explore a Table session asks no setup questions and has no AI pane
         // yet: it starts its R session and reads its tables.
         if self.quick.is_some() {
             self.quick_start(window, cx);

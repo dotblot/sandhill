@@ -29,7 +29,7 @@ fn table_path(path: &str) -> Result<PathBuf> {
         .unwrap_or_default();
     if !TABLE_EXTENSIONS.contains(&extension.as_str()) {
         bail!(
-            "{} isn't a table Quick Tools reads (CSV, TSV, text or Excel)",
+            "{} isn't a table Sandhill can explore (CSV, TSV, text or Excel)",
             path.display()
         );
     }

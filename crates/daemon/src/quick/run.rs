@@ -232,7 +232,7 @@ pub fn record_step(folder: &Path, request: &QuickRequest) -> Result<()> {
     if new {
         writeln!(
             file,
-            "# What Quick Tools ran in this folder, in order. Run it in R from this folder\n# to repeat the session; it needs the packages Quick Tools uses.\nsource(\".sandhill/quick.R\")\n"
+            "# What Sandhill ran in this folder, in order. Run it in R from this folder\n# to repeat the session; it needs the packages for exploring tables.\nsource(\".sandhill/quick.R\")\n"
         )?;
     }
     writeln!(

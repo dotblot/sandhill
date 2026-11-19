@@ -70,7 +70,7 @@ pub fn save_favourites(keys: &[String]) {
     write("favouriteModels", json!(keys));
 }
 
-/// The Quick Tools session folders on this Mac, newest first.
+/// The explored tables' session folders on this Mac, newest first.
 pub(crate) fn quick_sessions() -> Vec<String> {
     read()["quickSessions"]
         .as_array()

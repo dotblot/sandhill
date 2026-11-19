@@ -1,7 +1,8 @@
-//! Welcome → Quick Tools (Huan, 2026-11-19; `docs/design/quick-tools-plan.md`):
-//! what this Mac still needs for Quick Tools and installing it, a place to
-//! drop tables, what Quick Plot and Quick Analysis make, and the recent
-//! sessions. Opening tables first asks where to keep the session's files.
+//! Welcome's Start group (Huan, 2026-11-19; `docs/design/quick-tools-plan.md`):
+//! Explore a Table (a place to drop tables and what can be made from them),
+//! Getting Ready (what this Mac still needs, and installing it), and the
+//! tables explored, which Recent lists. Opening tables first asks where to
+//! keep the session's files.
 
 use std::time::Duration;
 
@@ -76,7 +77,7 @@ fn r_line(readiness: &QuickReadiness) -> (bool, String) {
         Some(r) => (
             false,
             format!(
-                "R {} is too old: Quick Tools needs R 4.4 or newer.",
+                "R {} is too old: exploring tables needs R 4.4 or newer.",
                 if r.version.is_empty() {
                     "?"
                 } else {
@@ -108,7 +109,7 @@ impl AppWindow {
         }
     }
 
-    /// Reads what this Mac has for Quick Tools.
+    /// Reads what this Mac has for exploring tables.
     pub(super) fn quick_check(&mut self, cx: &mut Context<Self>) {
         let Some(daemon) = self.local_daemon() else {
             return;
@@ -266,11 +267,11 @@ impl AppWindow {
             .filter(|t| crate::quick::is_table(t))
             .collect();
         let Some(first) = tables.first() else {
-            self.start.problem = Some("Quick Tools reads CSV, TSV, text and Excel tables.".into());
+            self.start.problem = Some("Sandhill explores CSV, TSV, text and Excel tables.".into());
             cx.notify();
             return;
         };
-        self.start.page = Page::QuickTools;
+        self.start.page = Page::Explore;
         self.start.quick.pending = Some(Pending {
             parent: parent_of(first),
             tables,
@@ -389,44 +390,73 @@ impl AppWindow {
         .detach();
     }
 
-    pub(super) fn quick_tools_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    /// Whether this Mac has everything the plots need; `None` until
+    /// checked.
+    fn quick_ready(&self) -> Option<bool> {
+        let Some(Ok(readiness)) = &self.start.quick.readiness else {
+            return None;
+        };
+        Some(
+            r_line(readiness).0
+                && readiness.kernel.is_some()
+                && readiness
+                    .packages
+                    .iter()
+                    .all(|p| p.version.is_some() || p.tool != QuickTool::Plot),
+        )
+    }
+
+    /// Start → Explore a Table: a place to drop tables, and what can be
+    /// made from them.
+    pub(super) fn explore_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = welcome_palette(cx);
         if self.start.quick.readiness.is_none() && !self.start.quick.checking {
             self.quick_check(cx);
         }
+        let not_ready = self.quick_ready() == Some(false);
         v_flex()
             .w_full()
             .gap(px(look::GAP_12))
-            .child(
-                v_flex()
-                    .gap(px(look::GAP_6))
-                    .child(
-                        div()
-                            .text_size(px(look::welcome_title()))
-                            .font_weight(FontWeight::BOLD)
-                            .child("Quick Tools"),
-                    )
-                    .child(div().text_size(px(look::tab_text())).text_color(p.muted).child(
-                        "Look at a table of results, counts or enrichment terms and make the usual plots, without setting up a project.",
-                    )),
-            )
-            .child(self.quick_ready_card(&p, cx))
+            .child(page_title(
+                "Explore a Table",
+                "Look at a table of results, counts or enrichment terms and make the usual plots, without setting up a project.",
+                &p,
+            ))
+            .when(not_ready, |d| {
+                d.child(
+                    h_flex()
+                        .px(px(look::PANE_PAD_X))
+                        .gap(px(look::GAP_8))
+                        .child(div().flex_1().text_color(p.warn).child(look::mac_or(
+                            "This Mac needs a few things before tables can be explored.",
+                            "This computer needs a few things before tables can be explored.",
+                        )))
+                        .child(
+                            Button::new("explore-get-ready")
+                                .small()
+                                .label("Getting Ready")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_page(Page::Ready, cx)
+                                })),
+                        ),
+                )
+            })
             .child(self.quick_drop_area(&p, cx))
             .child(look::settings_group(
-                "Quick Plot",
+                "Make Plots",
                 vec![
                     offer_row(
-                        "Differential expression results",
+                        "From differential expression results",
                         "Volcano and MA plots, genes up and down, a top genes table and a heatmap.",
                         &p,
                     ),
                     offer_row(
-                        "Counts or normalized expression",
+                        "From counts or normalized expression",
                         "Library sizes, PCA, sample correlation, a heatmap of variable genes and one gene by group.",
                         &p,
                     ),
                     offer_row(
-                        "Enrichment results",
+                        "From enrichment results",
                         "Dot and bar plots of the most significant terms.",
                         &p,
                     ),
@@ -434,15 +464,43 @@ impl AppWindow {
                 &p,
             ))
             .child(look::settings_group(
-                "Quick Analysis",
-                vec![offer_row(
-                    "Differential expression and gene enrichment",
-                    "Coming next: DESeq2 from raw counts, then GO enrichment from its results.",
-                    &p,
-                )],
+                "Coming next",
+                vec![
+                    offer_row(
+                        "Find Changed Genes",
+                        "DESeq2 from raw counts and a sample sheet.",
+                        &p,
+                    ),
+                    offer_row(
+                        "Find Enriched Pathways",
+                        "GO enrichment from the changed genes.",
+                        &p,
+                    ),
+                ],
                 &p,
             ))
-            .child(self.quick_recent(&p, cx))
+            .into_any_element()
+    }
+
+    /// Start → Getting Ready: R, its kernel and the packages, and
+    /// installing what is missing.
+    pub(super) fn ready_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = welcome_palette(cx);
+        if self.start.quick.readiness.is_none() && !self.start.quick.checking {
+            self.quick_check(cx);
+        }
+        v_flex()
+            .w_full()
+            .gap(px(look::GAP_12))
+            .child(page_title(
+                "Getting Ready",
+                look::mac_or(
+                    "What this Mac needs to explore tables: R, its kernel and a few R packages. Sandhill checks and installs them for you.",
+                    "What this computer needs to explore tables: R, its kernel and a few R packages. Sandhill checks and installs them for you.",
+                ),
+                &p,
+            ))
+            .child(self.quick_ready_card(&p, cx))
             .into_any_element()
     }
 
@@ -470,8 +528,8 @@ impl AppWindow {
                     vec![
                         look::settings_row(
                             look::mac_or(
-                                "Quick Tools couldn't check this Mac",
-                                "Quick Tools couldn't check this computer",
+                                "Sandhill couldn't check this Mac",
+                                "Sandhill couldn't check this computer",
                             ),
                             Some(look::settings_detail(err.clone(), p)),
                         )
@@ -497,7 +555,7 @@ impl AppWindow {
                 .px(px(look::PANE_PAD_X))
                 .text_color(p.ok)
                 .child(format!(
-                    "Ready: {r_text}, with every package Quick Plot uses."
+                    "Ready: {r_text} and every package for exploring tables."
                 ))
                 .into_any_element();
         }
@@ -568,7 +626,7 @@ impl AppWindow {
                 "R packages",
                 Some(look::settings_detail(
                     if missing.is_empty() {
-                        "Every package Quick Plot uses is installed.".to_string()
+                        "Every package for exploring tables is installed.".to_string()
                     } else {
                         format!(
                             "Missing: {}. They go into your own R library, ready-built, and nothing you already have changes.",
@@ -717,10 +775,11 @@ impl AppWindow {
             .into_any_element()
     }
 
-    fn quick_recent(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+    /// Recent → Tables you explored: each session folder, or "Not found".
+    pub(super) fn quick_recent(&self, p: &Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sessions = crate::prefs::quick_sessions();
         if sessions.is_empty() {
-            return div().into_any_element();
+            return None;
         }
         let q = &self.start.quick;
         let hover = p.ink(look::ROW_HOVER);
@@ -728,8 +787,8 @@ impl AppWindow {
             .into_iter()
             .enumerate()
             .map(|(ix, path)| {
-                // Quick Tools sessions are on this Mac, which the app shares
-                // with its daemon.
+                // Explored tables are on this Mac, which the app shares with
+                // its daemon.
                 let found = std::path::Path::new(&path).is_dir();
                 let name = crate::quick::session_name(&path);
                 let folder = parent_of(&path);
@@ -870,7 +929,7 @@ impl AppWindow {
                 row.into_any_element()
             })
             .collect();
-        look::settings_group("Recent sessions", rows, p).into_any_element()
+        Some(look::settings_group("Tables you explored", rows, p).into_any_element())
     }
 
     /// "Keep results in": where the session's folder is made (Huan,
@@ -1001,6 +1060,23 @@ impl AppWindow {
 
 fn offer_row(title: &'static str, detail: &'static str, p: &Palette) -> AnyElement {
     look::settings_row(title, Some(look::settings_detail(detail, p))).into_any_element()
+}
+
+fn page_title(title: &'static str, detail: &'static str, p: &Palette) -> Div {
+    v_flex()
+        .gap(px(look::GAP_6))
+        .child(
+            div()
+                .text_size(px(look::welcome_title()))
+                .font_weight(FontWeight::BOLD)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(px(look::tab_text()))
+                .text_color(p.muted)
+                .child(detail),
+        )
 }
 
 fn check_again(cx: &mut Context<AppWindow>) -> Button {

@@ -71,7 +71,7 @@ impl<'de> Deserialize<'de> for Places {
 
 /// The open windows: the one main window, whose projects are saved as they
 /// change, Welcome (Huan, 2026-11-12: Welcome is its own window), and one
-/// window per Quick Tools session (Huan, 2026-11-19).
+/// window per Explore a Table session (Huan, 2026-11-19).
 struct Windows {
     rt: Arc<Runtime>,
     open: Vec<(WindowId, Places)>,
@@ -86,7 +86,7 @@ struct Windows {
 enum Kind {
     Main,
     Welcome,
-    /// One Quick Tools session: its folder as the only project, shown as
+    /// One Explore a Table session: its folder as the only project, shown as
     /// the Data Explorer, Plots and the Guide.
     Quick,
 }
@@ -293,7 +293,7 @@ fn open_main(places: Places, cx: &mut App) {
     }
 }
 
-/// Opens the Quick Tools session in `folder` on this Mac in its own window,
+/// Opens the Explore a Table session in `folder` on this Mac in its own window,
 /// or brings its window forward, and puts it first in Recent sessions.
 pub(crate) fn open_quick(folder: String, cx: &mut App) {
     crate::prefs::remember_quick_session(&folder);
@@ -582,7 +582,7 @@ pub struct AppWindow {
     id: WindowId,
     /// Welcome's window: no projects, only the Start screen.
     pub(crate) welcome: bool,
-    /// A Quick Tools session's window: one project, no project capsules.
+    /// An Explore a Table session's window: one project, no project capsules.
     pub(crate) quick: bool,
     pub(crate) tabs: Vec<Tab>,
     /// The project shown.
@@ -783,7 +783,7 @@ impl AppWindow {
         }
         let places = self.places();
         if self.quick {
-            window.set_window_title(&format!("{} · Quick Tools", title(&places)));
+            window.set_window_title(&format!("{} · Explore", title(&places)));
             cx.notify();
             return;
         }

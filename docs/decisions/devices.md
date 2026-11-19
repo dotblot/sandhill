@@ -56,7 +56,7 @@ where an older plan differs, this wins.
   device and the folder it is in, one sentence, then full-width buttons
   stacked: Trust Folder (default, Enter) and Open in Restricted Mode
   (Escape, or a click outside the card).
-  A Quick Tools session (Huan, 2026-11-19) first asks where to keep its
+  An Explore a Table session (Huan, 2026-11-19) first asks where to keep its
   files, the table's own folder by default; Sandhill makes
   "<table> (Sandhill)" there and trusts that folder without asking, but
   not the folder around it.

@@ -1,4 +1,4 @@
-//! Quick Tools in a session's window (`docs/design/quick-tools-plan.md`):
+//! Explore a Table in a session's window (`docs/design/quick-tools-plan.md`):
 //! the session's R kernel, its tables loaded into R and recognised, the
 //! What we know card, and the plots Sandhill's R templates make. The window
 //! is drawn by `view::quick`.
@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::workbench::{Session, Workbench};
 
-/// The table files Quick Tools reads, as the daemon's `quick::folder`.
+/// The table files Sandhill explores, as the daemon's `quick::folder`.
 const TABLE_EXTENSIONS: &[&str] = &["csv", "tsv", "tab", "txt", "xlsx", "xls"];
 
 /// A fact on the card that can be opened to change it.
@@ -79,7 +79,7 @@ pub(crate) struct Quick {
     /// What is happening, in a few words.
     pub busy: Option<String>,
     pub error: Option<String>,
-    /// R or its kernel is missing: Welcome → Quick Tools sets it up.
+    /// R or its kernel is missing: Welcome → Getting Ready sets it up.
     pub not_ready: bool,
     /// What the last plot shows.
     pub sentence: Option<String>,
@@ -423,7 +423,7 @@ pub(crate) fn readme(card: &QuickCard, session: &str) -> Vec<(String, String)> {
     let mut rows = vec![(
         "Made with".to_string(),
         format!(
-            "Sandhill Quick Tools, session “{session}”. steps.R in the session folder repeats it."
+            "Sandhill, Explore a Table session “{session}”. steps.R in the session folder repeats it."
         ),
     )];
     match usable(&card.comparison) {
@@ -463,7 +463,7 @@ pub(crate) fn readme(card: &QuickCard, session: &str) -> Vec<(String, String)> {
 /// The methods paragraph written beside the workbook.
 pub(crate) fn methods(card: &QuickCard) -> String {
     let mut text = String::from(
-        "Methods\n\nTables were read and plotted in R with Sandhill Quick Tools' fixed templates (ggplot2, ggrepel, pheatmap, readxl, writexl).",
+        "Methods\n\nTables were read and plotted in R with Sandhill's fixed templates (ggplot2, ggrepel, pheatmap, readxl, writexl).",
     );
     text.push_str(&format!(
         " Genes were counted as changed when their adjusted p-value was below {} and their absolute log2 fold change was at least {}.",
@@ -1060,7 +1060,7 @@ impl Workbench {
         let tables: Vec<String> = paths.into_iter().filter(|p| is_table(p)).collect();
         if tables.is_empty() {
             if let Some(quick) = self.quick_mut() {
-                quick.error = Some("Quick Tools reads CSV, TSV, text and Excel tables.".into());
+                quick.error = Some("Sandhill explores CSV, TSV, text and Excel tables.".into());
             }
             cx.notify();
             return;

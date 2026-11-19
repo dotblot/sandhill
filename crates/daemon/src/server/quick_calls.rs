@@ -79,18 +79,18 @@ impl Daemon {
         request: QuickRequest,
     ) -> Result<Value> {
         let root = PathBuf::from(projects::normalize(&project)?);
-        self.trusted(vec![root.clone()], "run Quick Tools").await?;
+        self.trusted(vec![root.clone()], "explore tables").await?;
         let info = self.session_info(&session)?;
         if !info.language.eq_ignore_ascii_case("r") {
             bail!(
-                "Quick Tools runs in R, and this session is {}",
+                "Exploring tables runs in R, and this session is {}",
                 info.language
             );
         }
         let resolved = run::resolve(&root, &request)?;
         self.quietly_for(
             &session,
-            "set up Quick Tools",
+            "set up exploring tables",
             Duration::from_secs(60),
             |_| Some(run::define_code()),
         )
@@ -117,7 +117,7 @@ impl Daemon {
         };
         match tokio::time::timeout(RUN_TIMEOUT, finished).await {
             Ok(result) => result?,
-            Err(_) => bail!("Quick Tools took too long; the R session may still be busy"),
+            Err(_) => bail!("This took too long; the R session may still be busy"),
         }
         let mut stdout = String::new();
         for (msg_type, content) in self.journal.run_events(&started.run, i64::MAX)? {

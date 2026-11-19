@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// How many projects Recent lists under Opened before.
+const RECENTLY: usize = 8;
+
 impl AppWindow {
     pub(super) fn forget_project(&mut self, host: String, path: String, cx: &mut Context<Self>) {
         let Some(daemon) = self.machine_daemon(&host) else {
@@ -469,6 +472,12 @@ impl AppWindow {
         let open = self.projects_in_main(cx);
         let mut pinned: Vec<ProjectEntry> = Vec::new();
         let mut running: Vec<ProjectEntry> = Vec::new();
+        let mut recently: Vec<ProjectEntry> = Vec::new();
+        // Explored tables' folders are listed as tables, not projects.
+        let explored = crate::prefs::quick_sessions();
+        let explored_here = |host: &str, path: &str| {
+            host == sandhill_link::LOCAL && explored.iter().any(|e| e == path)
+        };
         let mut kernels_total = 0;
         let mut unconnected = 0;
         for host in self.start.hosts() {
@@ -527,7 +536,15 @@ impl AppWindow {
                     .map(|path| entry(path))
                     .filter(|e| !e.pinned && e.open.is_none()),
             );
+            recently.extend(
+                recent
+                    .iter()
+                    .filter(|r| !pins.is_some_and(|pins| pins.contains(&r.path)))
+                    .map(|r| entry(&r.path)),
+            );
         }
+        pinned.retain(|e| !explored_here(&e.host, &e.path));
+        running.retain(|e| !explored_here(&e.host, &e.path));
         pinned.sort_by_key(|entry| std::cmp::Reverse(entry.opened_ms));
         let open_rows: Vec<ProjectEntry> = open
             .iter()
@@ -560,7 +577,19 @@ impl AppWindow {
                     pinned: false,
                 }
             })
+            .filter(|e| !explored_here(&e.host, &e.path))
             .collect();
+        // Opened before, and not listed above: the newest few.
+        recently.retain(|e| {
+            e.open.is_none()
+                && !explored_here(&e.host, &e.path)
+                && !running.iter().any(|r| r.host == e.host && r.path == e.path)
+                && !open_rows
+                    .iter()
+                    .any(|o| o.host == e.host && o.path == e.path)
+        });
+        recently.sort_by_key(|entry| std::cmp::Reverse(entry.opened_ms));
+        recently.truncate(RECENTLY);
         let mut summary = Vec::new();
         if !open.is_empty() {
             summary.push(format!("{} open", open.len()));
@@ -571,6 +600,11 @@ impl AppWindow {
         if !pinned.is_empty() {
             summary.push(format!("{} pinned", pinned.len()));
         }
+        match explored.len() {
+            0 => {}
+            1 => summary.push("1 table explored".into()),
+            n => summary.push(format!("{n} tables explored")),
+        }
         let mut column = v_flex().w_full().flex_none().gap(px(look::GAP_12)).child(
             v_flex()
                 .gap(px(look::GAP_6))
@@ -578,25 +612,28 @@ impl AppWindow {
                     div()
                         .text_size(px(look::welcome_title()))
                         .font_weight(FontWeight::BOLD)
-                        .child("Projects"),
+                        .child("Recent"),
                 )
                 .child(
                     div()
                         .text_size(px(look::tab_text()))
                         .text_color(p.muted)
                         .child(if summary.is_empty() {
-                            "Nothing open, running or pinned".to_string()
+                            "Nothing open, running, pinned or explored yet".to_string()
                         } else {
                             summary.join(" · ")
                         }),
                 ),
         );
+        let tables = self.quick_recent(&p, cx);
         let groups = [
             ("Pinned", pinned),
             ("Open", open_rows),
             ("Running", running),
+            ("Opened before", recently),
         ];
-        let empty = groups.iter().all(|(_, rows)| rows.is_empty());
+        let empty = tables.is_none() && groups.iter().all(|(_, rows)| rows.is_empty());
+        column = column.children(tables);
         let mut row = 0;
         for (title, rows) in groups {
             if rows.is_empty() {
@@ -633,7 +670,7 @@ impl AppWindow {
         }
         if empty {
             column = column.child(note(
-                "Pin a project with its star on a device's page, or open one, to see it here.",
+                "Tables you explore, and projects you open, pin or run, show here.",
                 &p,
             ));
         }

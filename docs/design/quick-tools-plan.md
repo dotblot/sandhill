@@ -1,9 +1,15 @@
-# Quick Tools
+# Explore a Table (first called Quick Tools)
 
 Huan, 2026-11-19. Status: approved by Huan (2026-11-19): R only, the
 three columns, AI suggestions accepted by a click, and each session's
 folder chosen in a dialog, next to the table by default (section 8).
 Phase 1 (Quick Plot without AI) built on 2026-11-19; phases 2 to 4 wait.
+
+Names (Huan, 2026-11-19, after phase 1 was built): what people see is
+Explore a Table (was Quick Tools), Make Plots (was Quick Plot), and Find
+Changed Genes and Find Enriched Pathways (were Quick Analysis), each named
+for its question. The window's title ends "· Explore". The code keeps
+the name `quick`. The rest of this plan keeps the first names.
 
 Huan often sends a table (DESeq2 results, raw counts, Gene Ontology
 results) to colleagues who aren't bioinformaticians. They want a quick
@@ -23,23 +29,26 @@ Decided by Huan (2026-11-19):
   computer has and guides the user to install what is missing.
 - Delimited files and Excel first.
 
-## 1. Welcome → Quick Tools
-- Quick Tools is the first row of Welcome's sidebar, above Devices.
-  Welcome opens on it when Sandhill knows no projects (a first launch);
-  otherwise it opens on This Mac's page as now.
-- The page, top to bottom:
-  1. Getting ready (section 2). When everything is there it shrinks to
-     one green line: "Ready: R 4.6.2, with every package Quick Plot uses."
-  2. A drop area: "Drop a table here" and Choose a File… (`.csv`,
-     `.tsv`, `.txt`, `.xlsx`, `.xls`). Tables dropped anywhere on
-     Welcome come here too; folders still open as projects.
-  3. Quick Plot and Quick Analysis, each a short list of what it makes
-     (section 5), to read: the drop area is the one way in, and the window
-     offers what fits the table (built 2026-11-19).
-  4. Recent sessions: name and the folder it is in ("Not found" with
-     Remove from List when moved or deleted), with a ⋯ for Show in Finder,
-     Open as Project, Remove from List and Delete… (asked in the row,
-     moving the folder to the Trash).
+## 1. Welcome: the Start group
+Rebuilt by Huan's request (2026-11-19): Welcome's sidebar starts with a
+Start group, then Devices, then Manage. The Projects row under Devices
+became Recent.
+- Recent: the tables explored (name and the folder they are in, "Not
+  found" with Remove from List when moved or deleted, and a ⋯ for Show in
+  Finder, Open as Project, Remove from List and Delete…, asked in the row
+  and moving the folder to the Trash), then Pinned, Open, Running and
+  Opened before (the newest eight projects not listed above). Explored
+  tables' folders are not listed again as projects.
+- Explore a Table: a drop area, "Drop a table here" and Choose a File…
+  (`.csv`, `.tsv`, `.txt`, `.xlsx`, `.xls`), then Make Plots and Coming
+  next, short lists of what can be made, to read. The drop area is the one
+  way in; the window offers what fits the table. Tables dropped anywhere
+  on Welcome come here too; folders still open as projects. When this Mac
+  isn't ready, a line says so with a Getting Ready button.
+- Getting Ready: section 2's check. When everything is there it is one
+  green line: "Ready: R 4.6.2 and every package for exploring tables."
+- Welcome opens on Recent, or on Explore a Table when nothing is recent
+  (a first launch).
 
 ## 2. Getting ready
 Sandhill is dragged into Applications from its disk image, so there is

@@ -64,16 +64,19 @@ pub(crate) enum StartMode {
     Accounts(String),
     /// This Mac's choices for every project (⌘,).
     General,
-    /// Quick Tools: what this Mac needs, and opening tables.
-    QuickTools,
+    /// Getting Ready: what this Mac needs to explore tables.
+    Ready,
 }
 
 /// What Welcome's right side shows; the sidebar selects it.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Page {
-    /// Quick Tools (Huan, 2026-11-19): first in the sidebar.
-    QuickTools,
-    /// Pinned, open and running projects on every connected device.
+    /// Explore a Table (Huan, 2026-11-19): dropping or choosing tables.
+    Explore,
+    /// Getting Ready: R, its kernel and the packages for exploring tables.
+    Ready,
+    /// Recent (Huan, 2026-11-19): tables explored, then pinned, open,
+    /// running and recently opened projects on every connected device.
     Projects,
     /// The selected device's projects.
     Device,
@@ -154,7 +157,7 @@ pub(crate) struct Start {
     connectors: Option<(String, u64, Entity<connectors::ConnectorsView>)>,
     /// The page on the right (Huan, 2026-11-12: Projects first).
     pub(crate) page: Page,
-    /// The user picked a page, so Welcome no longer moves to Quick Tools
+    /// The user picked a page, so Welcome no longer moves to Explore a Table
     /// by itself.
     page_chosen: bool,
     pub(crate) quick: quick_tools::QuickPage,
@@ -222,7 +225,7 @@ impl Start {
             usage: None,
             skills: None,
             connectors: None,
-            page: Page::Device,
+            page: Page::Projects,
             page_chosen: false,
             quick: Default::default(),
             font_menu: false,
@@ -318,8 +321,8 @@ impl Start {
                 self.page = Page::Accounts;
             }
             StartMode::General => self.page = Page::General,
-            StartMode::QuickTools => {
-                self.page = Page::QuickTools;
+            StartMode::Ready => {
+                self.page = Page::Ready;
                 self.page_chosen = true;
                 self.quick.forget_check();
             }
@@ -377,18 +380,16 @@ fn fetch(machines: &mut HashMap<String, Machine>, host: String, cx: &mut Context
                 if let Ok(ping) = ping {
                     machine.home = Some(ping.home);
                 }
-                // With no projects on this Mac, Welcome opens on Quick Tools
-                // (Huan, 2026-11-19); Quick Tools' own sessions don't count.
-                let no_projects = host == sandhill_link::LOCAL
-                    && recent.as_ref().is_ok_and(|list| {
-                        let quick = crate::prefs::quick_sessions();
-                        list.iter().all(|p| quick.contains(&p.path))
-                    });
+                // With nothing recent on this Mac, Welcome opens on Explore a
+                // Table (Huan, 2026-11-19); explored tables count as recent.
+                let nothing_recent = host == sandhill_link::LOCAL
+                    && crate::prefs::quick_sessions().is_empty()
+                    && recent.as_ref().is_ok_and(|list| list.is_empty());
                 machine.recent = Some(recent.map_err(|err| format!("{err:#}")));
                 machine.sessions = sessions.unwrap_or_default();
                 machine.terminals = terminals.unwrap_or_default();
-                if no_projects && !this.start.page_chosen && this.start.page == Page::Device {
-                    this.start.page = Page::QuickTools;
+                if nothing_recent && !this.start.page_chosen && this.start.page == Page::Projects {
+                    this.start.page = Page::Explore;
                 }
                 cx.notify();
             }
@@ -440,18 +441,41 @@ impl AppWindow {
         let page = self.start.page.clone();
         let mut devices = v_flex()
             .gap(px(look::GAP_2))
+            .child(sidebar_heading("Start", &p))
             .child(
                 sidebar_row(
-                    "start-quick",
-                    "table",
-                    "Quick Tools",
-                    page == Page::QuickTools,
+                    "start-recent",
+                    "history",
+                    "Recent",
+                    page == Page::Projects,
                     &p,
                 )
-                .mb(px(look::GAP_12))
-                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::QuickTools, cx))),
+                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Projects, cx))),
             )
-            .child(sidebar_heading("Devices", &p));
+            .child(
+                sidebar_row(
+                    "start-explore",
+                    "table",
+                    "Explore a Table",
+                    page == Page::Explore,
+                    &p,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Explore, cx))),
+            )
+            .child(
+                sidebar_row(
+                    "start-ready",
+                    "step.done",
+                    "Getting Ready",
+                    page == Page::Ready,
+                    &p,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.start.quick.forget_check();
+                    this.show_page(Page::Ready, cx)
+                })),
+            )
+            .child(sidebar_heading("Devices", &p).mt(px(look::GAP_12)));
         for (ix, device) in self.start.hosts().into_iter().enumerate() {
             let active = device == host && page == Page::Device;
             let local = device == sandhill_link::LOCAL;
@@ -550,17 +574,6 @@ impl AppWindow {
                         this.show_start(StartMode::Adding, window, cx);
                     }),
                 ),
-            )
-            .child(
-                sidebar_row(
-                    "start-projects",
-                    "folder",
-                    "Projects",
-                    page == Page::Projects,
-                    &p,
-                )
-                .mt(px(look::GAP_12))
-                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Projects, cx))),
             )
             .child(sidebar_heading("Manage", &p).mt(px(look::GAP_12)))
             .child(
@@ -675,7 +688,8 @@ impl AppWindow {
             );
         let list_height = (window.viewport_size().height - px(340.)).max(px(140.));
         let content = match page {
-            Page::QuickTools => self.quick_tools_page(cx),
+            Page::Explore => self.explore_page(cx),
+            Page::Ready => self.ready_page(cx),
             Page::Projects => self.projects_page(list_height, cx),
             Page::Device => self.host_projects(host, list_height, cx),
             Page::Resources => self.resource_page(window, cx),
@@ -700,7 +714,7 @@ impl AppWindow {
                     .child(sidebar)
                     .child(div().id("start-content").flex_1().min_w_0().h_full().overflow_y_scroll().bg(p.bg).p(px(CONTENT_PAD)).pt(px(look::TITLE_BAR + CONTENT_PAD))
                         // Folders dragged from Finder open as projects on this
-                        // Mac; tables go to Quick Tools (Huan, 2026-11-19).
+                        // Mac; tables go to Explore a Table (Huan, 2026-11-19).
                         .drag_over::<ExternalPaths>(move |d, _, _, _| d.bg(p.accent_soft))
                         .on_drop(cx.listener(|this, dropped: &ExternalPaths, window, cx| {
                             let (tables, folders): (Vec<String>, Vec<String>) = dropped
