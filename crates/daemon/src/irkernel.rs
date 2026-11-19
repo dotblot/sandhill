@@ -135,23 +135,36 @@ fn irkernel_rs(search: &Search) -> HashSet<PathBuf> {
         .into_iter()
         .map(|found| found.dir.kernelspec)
         .filter(|spec| spec.argv.iter().any(|arg| arg.contains("IRkernel::main")))
-        .filter_map(|spec| {
-            let program = PathBuf::from(spec.argv.first()?);
-            if program.is_absolute() {
-                return Some(canonical(&program));
-            }
-            let path = spec
-                .env
-                .as_ref()
-                .and_then(|env| env.get("PATH"))
-                .map(std::ffi::OsString::from)
-                .or_else(|| search.path.clone())?;
-            std::env::split_paths(&path)
-                .map(|dir| dir.join(&program))
-                .find(|p| p.is_file())
-                .map(|p| canonical(&p))
-        })
+        .filter_map(|spec| spec_r(&spec, search).map(|p| canonical(&p)))
         .collect()
+}
+
+/// The R an R kernel runs: IRkernel's program, else (Ark) the `R` on the
+/// kernel's `PATH` or the machine's.
+pub fn spec_r(spec: &jupyter_protocol::JupyterKernelspec, search: &Search) -> Option<PathBuf> {
+    let irkernel = spec.argv.iter().any(|arg| arg.contains("IRkernel::main"));
+    let program = if irkernel {
+        PathBuf::from(spec.argv.first()?)
+    } else {
+        PathBuf::from("R")
+    };
+    if program.is_absolute() {
+        return program.is_file().then_some(program);
+    }
+    let path = spec
+        .env
+        .as_ref()
+        .and_then(|env| env.get("PATH"))
+        .map(std::ffi::OsString::from)
+        .or_else(|| search.path.clone())?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(&program))
+        .find(|p| p.is_file())
+}
+
+/// R's version, like `4.6.2`, as `R --version` says it.
+pub fn r_version(r: &Path) -> Option<String> {
+    version(r)
 }
 
 /// R's version, from `R --version`: "R version 4.6.2 (2026-10-29) …".

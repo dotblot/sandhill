@@ -70,13 +70,25 @@ impl<'de> Deserialize<'de> for Places {
 }
 
 /// The open windows: the one main window, whose projects are saved as they
-/// change, and Welcome (Huan, 2026-11-12: Welcome is its own window).
+/// change, Welcome (Huan, 2026-11-12: Welcome is its own window), and one
+/// window per Quick Tools session (Huan, 2026-11-19).
 struct Windows {
     rt: Arc<Runtime>,
     open: Vec<(WindowId, Places)>,
     main: Option<Shell>,
     welcome: Option<Shell>,
+    quick: Vec<(String, Shell)>,
     quitting: bool,
+}
+
+/// What a Sandhill window holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Main,
+    Welcome,
+    /// One Quick Tools session: its folder as the only project, shown as
+    /// the Data Explorer, Plots and the Guide.
+    Quick,
 }
 
 impl Global for Windows {}
@@ -113,6 +125,7 @@ pub fn start(rt: Arc<Runtime>, places: Vec<Places>, cx: &mut App) {
         open: Vec::new(),
         main: None,
         welcome: None,
+        quick: Vec::new(),
         quitting: false,
     });
     quit::install(cx);
@@ -124,6 +137,18 @@ pub fn start(rt: Arc<Runtime>, places: Vec<Places>, cx: &mut App) {
             .is_some_and(|w| w.window.window_id() == id)
         {
             windows.welcome = None;
+            return;
+        }
+        if let Some(ix) = windows
+            .quick
+            .iter()
+            .position(|(_, w)| w.window.window_id() == id)
+        {
+            windows.quick.remove(ix);
+            // With no other Sandhill window open, Welcome comes back.
+            if !windows.quitting && windows.main.is_none() && windows.quick.is_empty() {
+                show_welcome(None, cx);
+            }
             return;
         }
         if windows
@@ -168,18 +193,21 @@ pub fn quit(cx: &mut App) {
 /// app with no window, so there, with Welcome not open either, closing it
 /// quits, asking about background work as Quit does.
 fn quit_if_last(cx: &mut App) {
-    if cfg!(target_os = "linux") && cx.global::<Windows>().welcome.is_none() {
+    let windows = cx.global::<Windows>();
+    // The closing window is still counted.
+    let open = usize::from(windows.main.is_some()) + windows.quick.len();
+    if cfg!(target_os = "linux") && windows.welcome.is_none() && open <= 1 {
         cx.defer(quit);
     }
 }
 
 /// The window options shared by Sandhill's windows; Welcome's can't be
 /// made smaller than 800×600 (Huan, 2026-11-13).
-fn window_options(bounds: WindowBounds, welcome: bool) -> WindowOptions {
+fn window_options(bounds: WindowBounds, kind: Kind) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(bounds),
         // Welcome keeps its device sidebar fixed while the content can scroll.
-        window_min_size: Some(if welcome {
+        window_min_size: Some(if kind == Kind::Welcome {
             size(px(800.), px(600.))
         } else {
             size(px(720.), px(480.))
@@ -227,12 +255,12 @@ impl Shell {
 
 fn open_app_window(
     places: Places,
-    welcome: bool,
+    kind: Kind,
     bounds: WindowBounds,
     cx: &mut App,
 ) -> Option<Shell> {
     let rt = cx.global::<Windows>().rt.clone();
-    let opened = gpui_kit::open_window(window_options(bounds, welcome), cx, |window, cx| {
+    let opened = gpui_kit::open_window(window_options(bounds, kind), cx, |window, cx| {
         look::set_appearance(window.appearance(), cx);
         // After the window's root is built, so this runs after gpui-cn's
         // own appearance observer and Sandhill's theme is the one left.
@@ -243,7 +271,7 @@ fn open_app_window(
                 })
                 .detach();
         });
-        cx.new(|cx| AppWindow::new(rt, places, welcome, window, cx))
+        cx.new(|cx| AppWindow::new(rt, places, kind, window, cx))
     });
     match opened {
         Ok((window, view)) => Some(Shell {
@@ -260,8 +288,36 @@ fn open_app_window(
 /// Opens the main window with `places`, filling the screen.
 fn open_main(places: Places, cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-    if let Some(shell) = open_app_window(places, false, WindowBounds::Maximized(bounds), cx) {
+    if let Some(shell) = open_app_window(places, Kind::Main, WindowBounds::Maximized(bounds), cx) {
         cx.global_mut::<Windows>().main = Some(shell);
+    }
+}
+
+/// Opens the Quick Tools session in `folder` on this Mac in its own window,
+/// or brings its window forward, and puts it first in Recent sessions.
+pub(crate) fn open_quick(folder: String, cx: &mut App) {
+    crate::prefs::remember_quick_session(&folder);
+    let open = cx
+        .global::<Windows>()
+        .quick
+        .iter()
+        .find(|(path, _)| *path == folder)
+        .map(|(_, shell)| shell.clone());
+    if let Some(shell) = open {
+        shell.update(cx, |_, window, _| window.activate_window());
+        return;
+    }
+    let place = Place {
+        host: sandhill_link::LOCAL.to_string(),
+        path: folder.clone(),
+    };
+    let places = Places {
+        tabs: vec![place.clone()],
+        current: Some(place),
+    };
+    let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
+    if let Some(shell) = open_app_window(places, Kind::Quick, WindowBounds::Windowed(bounds), cx) {
+        cx.global_mut::<Windows>().quick.push((folder, shell));
     }
 }
 
@@ -291,9 +347,12 @@ pub(crate) fn show_welcome(mode: Option<StartMode>, cx: &mut App) {
                 .min(screen.width.max(px(800.)));
             let height = (screen.height / 2.).max(px(600.));
             let bounds = Bounds::centered(main_display, size(width, height), cx);
-            let Some(shell) =
-                open_app_window(Places::default(), true, WindowBounds::Windowed(bounds), cx)
-            else {
+            let Some(shell) = open_app_window(
+                Places::default(),
+                Kind::Welcome,
+                WindowBounds::Windowed(bounds),
+                cx,
+            ) else {
                 return;
             };
             cx.global_mut::<Windows>().welcome = Some(shell.clone());
@@ -420,7 +479,7 @@ pub(crate) fn open_explorer_window(
 ) -> Option<AnyWindowHandle> {
     let title = format!("{} — Data Explorer", explorer.read(cx).name());
     let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
-    let mut options = window_options(WindowBounds::Windowed(bounds), false);
+    let mut options = window_options(WindowBounds::Windowed(bounds), Kind::Main);
     if let Some(titlebar) = options.titlebar.as_mut() {
         titlebar.title = Some(title.into());
     }
@@ -523,6 +582,8 @@ pub struct AppWindow {
     id: WindowId,
     /// Welcome's window: no projects, only the Start screen.
     pub(crate) welcome: bool,
+    /// A Quick Tools session's window: one project, no project capsules.
+    pub(crate) quick: bool,
     pub(crate) tabs: Vec<Tab>,
     /// The project shown.
     pub(crate) current: Option<EntityId>,
@@ -536,12 +597,14 @@ impl AppWindow {
     fn new(
         rt: Arc<Runtime>,
         places: Places,
-        welcome: bool,
+        kind: Kind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let id = window.window_handle().window_id();
-        if !welcome {
+        let welcome = kind == Kind::Welcome;
+        let quick = kind == Kind::Quick;
+        if kind == Kind::Main {
             let windows = cx.global_mut::<Windows>();
             windows.open.push((id, places.clone()));
             // It may open with its projects already (from Welcome): saved
@@ -563,7 +626,8 @@ impl AppWindow {
             }
             // Welcome alone: closing it quits, asking about background work.
             if this.read(cx).welcome {
-                if cx.global::<Windows>().main.is_none() {
+                let windows = cx.global::<Windows>();
+                if windows.main.is_none() && windows.quick.is_empty() {
                     cx.defer(quit);
                     return false;
                 }
@@ -588,13 +652,20 @@ impl AppWindow {
             rt,
             id,
             welcome,
+            quick,
             tabs: Vec::new(),
             current: None,
             focus: cx.focus_handle(),
             project_scroll: ScrollHandle::new(),
         };
         for place in &places.tabs {
-            this.add_tab(place.host.clone(), place.path.clone(), window, cx);
+            if let Some(id) = this.add_tab(place.host.clone(), place.path.clone(), window, cx)
+                && quick
+                && let Some(tab) = this.tabs.iter().find(|t| t.workbench.entity_id() == id)
+            {
+                tab.workbench
+                    .update(cx, |wb, _| wb.quick = Some(crate::quick::Quick::default()));
+            }
         }
         this.current = places
             .current
@@ -711,6 +782,11 @@ impl AppWindow {
             return;
         }
         let places = self.places();
+        if self.quick {
+            window.set_window_title(&format!("{} · Quick Tools", title(&places)));
+            cx.notify();
+            return;
+        }
         window.set_window_title(&title(&places));
         let windows = cx.global_mut::<Windows>();
         if let Some((_, saved)) = windows.open.iter_mut().find(|(w, _)| *w == self.id)
@@ -1023,7 +1099,8 @@ impl AppWindow {
             return;
         }
         if self.welcome {
-            if cx.global::<Windows>().main.is_none() {
+            let windows = cx.global::<Windows>();
+            if windows.main.is_none() && windows.quick.is_empty() {
                 cx.defer(quit);
             } else {
                 window.remove_window();
@@ -1196,12 +1273,16 @@ impl Render for AppWindow {
             .relative()
             .size_full()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if quit::active(cx) {
                     cx.stop_propagation();
                     if let Some(answer) = quit::key_answer(&event.keystroke.key) {
                         cx.defer(move |cx| quit::answer(answer, cx));
                     }
+                    return;
+                }
+                if this.welcome && this.quick_folder_keys(&event.keystroke.key, cx) {
+                    cx.stop_propagation();
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenProject, window, cx| {
@@ -1232,7 +1313,9 @@ impl Render for AppWindow {
                 drop(w.prompt(PromptLevel::Info, "Sandhill", Some(&detail), &["OK"], cx));
             }))
             .child(content)
-            .when(!self.welcome, |d| d.child(self.render_project_tabs(cx)))
+            .when(!self.welcome && !self.quick, |d| {
+                d.child(self.render_project_tabs(cx))
+            })
             .children(quit::render(self, cx))
     }
 }

@@ -16,6 +16,7 @@ mod git;
 mod h5ad;
 mod packages;
 mod projects;
+mod quick;
 mod sessions;
 mod skills;
 mod system;
@@ -29,6 +30,7 @@ pub use git::*;
 pub use h5ad::*;
 pub use packages::*;
 pub use projects::*;
+pub use quick::*;
 pub use sessions::*;
 pub use skills::*;
 pub use system::*;
@@ -912,6 +914,45 @@ pub enum Call {
         r: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
+    },
+    /// What Quick Tools needs here (R, an R kernel, its packages) and what
+    /// is installed. Returns [`QuickReadiness`].
+    QuickReadiness,
+    /// Installs the Quick Tools `packages` that are missing into the user's
+    /// own library of the R at `r`, from binaries only, in a job. Returns
+    /// [`QuickInstalling`].
+    QuickInstall {
+        r: String,
+        packages: Vec<String>,
+    },
+    /// Makes a Quick Tools session folder, `<first table's name> (Sandhill)`,
+    /// in `parent`, copies `tables` (absolute paths) into it, and trusts it.
+    /// Returns the folder's path.
+    QuickCreate {
+        tables: Vec<String>,
+        parent: String,
+    },
+    /// Copies more `tables` into the session folder `project`. Returns their
+    /// names there, in order.
+    QuickAddTables {
+        project: String,
+        tables: Vec<String>,
+    },
+    /// The session's What we know card. Returns [`QuickCard`].
+    QuickCard {
+        project: String,
+    },
+    /// Saves the session's card.
+    SaveQuickCard {
+        project: String,
+        card: QuickCard,
+    },
+    /// Runs a Quick Tools template in `session`, shown as run by Sandhill,
+    /// and records it in the session's `steps.R`. Returns [`QuickResult`].
+    QuickRun {
+        session: String,
+        project: String,
+        request: QuickRequest,
     },
     /// What the machine is doing: CPU, memory, GPUs, the disk `path` is on
     /// (the home folder without it), and the memory each running kernel

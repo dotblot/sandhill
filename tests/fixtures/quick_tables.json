@@ -1,0 +1,232 @@
+[
+  {
+    "name": "DESeq2 with row names exported as id",
+    "columns": [
+      {"name":"id","kind":"text","missing":0,"distinct":4,"examples":["ENSG00000141510","ENSG00000075624.12"],"patterns":{"ensembl_human":4,"symbol":4}},
+      {"name":"baseMean","kind":"number","missing":0,"distinct":4,"min":1.1,"max":318.6},
+      {"name":"log2FoldChange","kind":"number","missing":0,"distinct":4,"min":-1.5,"max":2.2},
+      {"name":"lfcSE","kind":"number","missing":0,"distinct":4,"min":0.1,"max":0.8},
+      {"name":"stat","kind":"number","missing":0,"distinct":4,"min":-4.1,"max":7.1},
+      {"name":"pvalue","kind":"number","missing":0,"distinct":4,"min":0.0001,"max":0.35},
+      {"name":"padj","kind":"number","missing":1,"distinct":3,"min":0.0003,"max":0.7}
+    ],
+    "expect": {"kind":"results","tool":"DESeq2","gene":"id","gene_ids":"ensembl","organism":"human","fc":"log2FoldChange","padj":"padj","pvalue":"pvalue","mean":"baseMean","mean_log":false,"samples":[],"question":null}
+  },
+  {
+    "name": "DESeq2 with symbols and per-sample TPM",
+    "columns": [
+      {"name":"gene_symbol","kind":"text","missing":0,"distinct":3,"patterns":{"symbol":3}},
+      {"name":"Base Mean","kind":"number","missing":0,"distinct":3,"min":4.8,"max":409.2},
+      {"name":"LOG2_FOLD_CHANGE","kind":"number","missing":0,"distinct":3,"min":-3.2,"max":2.9},
+      {"name":"P.Adj","kind":"number","missing":0,"distinct":3,"min":0.001,"max":0.16},
+      {"name":"stat","kind":"number","missing":0,"distinct":3,"min":-3.2,"max":7.2},
+      {"name":"ctrl_TPM_1","kind":"number","missing":0,"distinct":3,"min":0.2,"max":80.6},
+      {"name":"ctrl_TPM_2","kind":"number","missing":0,"distinct":3,"min":0.4,"max":120.1},
+      {"name":"trt_TPM_1","kind":"number","missing":0,"distinct":3,"min":2.4,"max":167.9},
+      {"name":"trt_TPM_2","kind":"number","missing":0,"distinct":3,"min":1.2,"max":158.4}
+    ],
+    "expect": {"kind":"results","tool":"DESeq2","gene":"gene_symbol","gene_ids":"symbol","organism":null,"fc":"LOG2_FOLD_CHANGE","padj":"P.Adj","mean":"Base Mean","samples":["ctrl_TPM_1","ctrl_TPM_2","trt_TPM_1","trt_TPM_2"],"values":"normalized","groups":[["ctrl_TPM_1","ctrl_TPM"],["ctrl_TPM_2","ctrl_TPM"],["trt_TPM_1","trt_TPM"],["trt_TPM_2","trt_TPM"]],"question":null}
+  },
+  {
+    "name": "edgeR topTags",
+    "columns": [
+      {"name":"gene","kind":"text","missing":0,"distinct":3,"patterns":{"entrez":3}},
+      {"name":"logFC","kind":"number","missing":0,"distinct":3,"min":-2.3,"max":4.8},
+      {"name":"logCPM","kind":"number","missing":0,"distinct":3,"min":-0.3,"max":4.8},
+      {"name":"LR","kind":"number","missing":0,"distinct":3,"min":2.8,"max":45.2},
+      {"name":"PValue","kind":"number","missing":0,"distinct":3,"min":0.001,"max":0.11},
+      {"name":"FDR","kind":"number","missing":0,"distinct":3,"min":0.005,"max":0.3}
+    ],
+    "expect": {"kind":"results","tool":"edgeR","gene":"gene","gene_ids":"entrez","fc":"logFC","padj":"FDR","pvalue":"PValue","mean":"logCPM","mean_log":true,"samples":[]}
+  },
+  {
+    "name": "limma topTable",
+    "columns": [
+      {"name":"","kind":"text","missing":0,"distinct":3,"patterns":{"symbol":3}},
+      {"name":"logFC","kind":"number","missing":0,"distinct":3,"min":-2.1,"max":1.9},
+      {"name":"AveExpr","kind":"number","missing":0,"distinct":3,"min":-0.4,"max":7.8},
+      {"name":"t","kind":"number","missing":0,"distinct":3,"min":-8.1,"max":9.9},
+      {"name":"P.Value","kind":"number","missing":0,"distinct":3,"min":0.0001,"max":0.01},
+      {"name":"adj.P.Val","kind":"number","missing":0,"distinct":3,"min":0.001,"max":0.02},
+      {"name":"B","kind":"number","missing":0,"distinct":3,"min":2.8,"max":7.7}
+    ],
+    "expect": {"kind":"results","tool":"limma","gene":"","fc":"logFC","padj":"adj.P.Val","pvalue":"P.Value","mean":"AveExpr","mean_log":true,"samples":[]}
+  },
+  {
+    "name": "generic signed fold change with a q-value",
+    "columns": [
+      {"name":"symbol","kind":"text","missing":0,"distinct":2,"patterns":{"symbol":2}},
+      {"name":"fold_change","kind":"number","missing":0,"distinct":2,"min":-2.1,"max":3.5},
+      {"name":"mean_expr","kind":"number","missing":0,"distinct":2,"min":4.2,"max":91.7},
+      {"name":"qvalue","kind":"number","missing":0,"distinct":2,"min":0.02,"max":0.06}
+    ],
+    "expect": {"kind":"results","tool":null,"fc":"fold_change","padj":"qvalue","pvalue":null,"mean":"mean_expr","mean_log":false,"samples":[]}
+  },
+  {
+    "name": "unsigned fold change is not log fold change",
+    "columns": [
+      {"name":"gene","kind":"text","missing":0,"distinct":2,"patterns":{"symbol":2}},
+      {"name":"fold_change","kind":"number","missing":0,"distinct":2,"min":0.4,"max":3.5},
+      {"name":"adj_pval","kind":"number","missing":0,"distinct":2,"min":0.02,"max":0.06}
+    ],
+    "expect": {"kind":"unknown","gene":"gene","fc":null,"samples":[],"question":"What are these numbers?"}
+  },
+  {
+    "name": "featureCounts with coordinate annotations",
+    "columns": [
+      {"name":"Geneid","kind":"text","missing":0,"distinct":2,"patterns":{"ensembl_human":2,"symbol":2}},
+      {"name":"Chr","kind":"number","missing":0,"distinct":1,"whole":true,"min":1,"max":1},
+      {"name":"Start","kind":"number","missing":0,"distinct":2,"whole":true,"min":100,"max":500},
+      {"name":"End","kind":"number","missing":0,"distinct":2,"whole":true,"min":300,"max":900},
+      {"name":"Strand","kind":"text","missing":0,"distinct":2,"examples":["+","-"]},
+      {"name":"Length","kind":"number","missing":0,"distinct":2,"whole":true,"min":201,"max":401},
+      {"name":"sample1.bam","kind":"number","missing":0,"distinct":2,"whole":true,"min":1,"max":1200}
+    ],
+    "expect": {"kind":"counts","tool":"featureCounts","gene":"Geneid","samples":["sample1.bam"],"values":"counts","groups":[],"question":null}
+  },
+  {
+    "name": "plain counts with replicates and a singleton",
+    "columns": [
+      {"name":"gene_id","kind":"text","missing":0,"distinct":3,"patterns":{"symbol":3}},
+      {"name":"ctrl_1","kind":"number","missing":0,"distinct":3,"whole":true,"min":0,"max":612},
+      {"name":"ctrl_2","kind":"number","missing":0,"distinct":3,"whole":true,"min":0,"max":592},
+      {"name":"ctrl_3","kind":"number","missing":0,"distinct":3,"whole":true,"min":0,"max":581},
+      {"name":"trt_1","kind":"number","missing":0,"distinct":3,"whole":true,"min":1,"max":888},
+      {"name":"trt_2","kind":"number","missing":0,"distinct":3,"whole":true,"min":0,"max":982},
+      {"name":"trt_3","kind":"number","missing":0,"distinct":3,"whole":true,"min":2,"max":831},
+      {"name":"other_1","kind":"number","missing":0,"distinct":3,"whole":true,"min":0,"max":431}
+    ],
+    "expect": {"kind":"counts","tool":null,"values":"counts","samples":["ctrl_1","ctrl_2","ctrl_3","trt_1","trt_2","trt_3","other_1"],"groups":[["ctrl_1","ctrl"],["ctrl_2","ctrl"],["ctrl_3","ctrl"],["trt_1","trt"],["trt_2","trt"],["trt_3","trt"]],"question":null}
+  },
+  {
+    "name": "mixed replicate suffixes",
+    "columns": [
+      {"name":"gene","kind":"text","missing":0,"distinct":2,"patterns":{"symbol":2}},
+      {"name":"ctrlrep1","kind":"number","missing":0,"distinct":2,"whole":true,"min":0,"max":40},
+      {"name":"ctrl_R2","kind":"number","missing":0,"distinct":2,"whole":true,"min":0,"max":40},
+      {"name":"ctrl-3","kind":"number","missing":0,"distinct":2,"whole":true,"min":0,"max":40},
+      {"name":"trt01","kind":"number","missing":0,"distinct":2,"whole":true,"min":0,"max":40},
+      {"name":"trt.2","kind":"number","missing":0,"distinct":2,"whole":true,"min":0,"max":40}
+    ],
+    "expect": {"kind":"counts","groups":[["ctrlrep1","ctrl"],["ctrl_R2","ctrl"],["ctrl-3","ctrl"],["trt01","trt"],["trt.2","trt"]]}
+  },
+  {
+    "name": "TPM with a unit in the sample headers",
+    "columns": [
+      {"name":"gene","kind":"text","missing":0,"distinct":3,"patterns":{"symbol":3}},
+      {"name":"TPM.ctrl1","kind":"number","missing":0,"distinct":3,"min":0.43,"max":708.23},
+      {"name":"TPM.ctrl2","kind":"number","missing":0,"distinct":3,"min":0.7,"max":719.14}
+    ],
+    "expect": {"kind":"normalized","samples":["TPM.ctrl1","TPM.ctrl2"],"values":"normalized","groups":[],"question":null}
+  },
+  {
+    "name": "log2 CPM with small signed values",
+    "columns": [
+      {"name":"gene","kind":"text","missing":0,"distinct":3,"patterns":{"symbol":3}},
+      {"name":"A","kind":"number","missing":0,"distinct":3,"min":-2.4,"max":8.1},
+      {"name":"B","kind":"number","missing":0,"distinct":3,"min":-1.9,"max":9.7}
+    ],
+    "expect": {"kind":"normalized","samples":["A","B"],"values":"logged","question":null}
+  },
+  {
+    "name": "ambiguous fractional estimated counts",
+    "columns": [
+      {"name":"gene_id","kind":"text","missing":0,"distinct":3,"patterns":{"symbol":3}},
+      {"name":"ctrl_1","kind":"number","missing":0,"distinct":3,"min":0,"max":708.23},
+      {"name":"ctrl_2","kind":"number","missing":0,"distinct":3,"min":0,"max":719.14}
+    ],
+    "expect": {"kind":"normalized","values":"normalized","groups":[],"question":"What are these numbers?"}
+  },
+  {
+    "name": "small positive values could be logged or linear",
+    "columns": [
+      {"name":"gene","kind":"text","missing":0,"distinct":2,"patterns":{"symbol":2}},
+      {"name":"ctrl_1","kind":"number","missing":0,"distinct":2,"min":0.3,"max":8.1},
+      {"name":"trt_1","kind":"number","missing":0,"distinct":2,"min":1.9,"max":6.7}
+    ],
+    "expect": {"kind":"normalized","values":"logged","question":"What are these numbers?"}
+  },
+  {
+    "name": "sample IDs, conditions and a numeric batch",
+    "columns": [
+      {"name":"ID","kind":"text","missing":0,"distinct":4,"examples":["ctrl_1","ctrl_2","trt_1","trt_2"],"patterns":{"symbol":4}},
+      {"name":"condition","kind":"text","missing":0,"distinct":2,"examples":["ctrl","trt"],"patterns":{"symbol":4}},
+      {"name":"batch","kind":"number","missing":0,"distinct":2,"whole":true,"min":1,"max":2},
+      {"name":"sex","kind":"text","missing":0,"distinct":2,"examples":["F","M"],"patterns":{"symbol":4}}
+    ],
+    "expect": {"kind":"sample_sheet","sample_column":"ID","gene":null,"samples":[],"question":null}
+  },
+  {
+    "name": "clusterProfiler GO enrichment",
+    "columns": [
+      {"name":"ID","kind":"text","missing":0,"distinct":2,"patterns":{"go":2}},
+      {"name":"Description","kind":"text","missing":0,"distinct":2,"examples":["immune response","cell cycle"]},
+      {"name":"qvalue","kind":"number","missing":0,"distinct":2,"min":0.008,"max":0.016},
+      {"name":"p.adjust","kind":"number","missing":0,"distinct":2,"min":0.01,"max":0.02},
+      {"name":"GeneRatio","kind":"text","missing":0,"distinct":2,"patterns":{"ratio":2}},
+      {"name":"BgRatio","kind":"text","missing":0,"distinct":2,"patterns":{"ratio":2}},
+      {"name":"geneID","kind":"text","missing":0,"distinct":2,"patterns":{"gene_lists":2}},
+      {"name":"Count","kind":"number","missing":0,"distinct":2,"whole":true,"min":5,"max":10}
+    ],
+    "expect": {"kind":"enrichment","tool":"clusterProfiler","term":"Description","padj":"p.adjust","count":"Count","ratio":"GeneRatio","gene":null}
+  },
+  {
+    "name": "g:Profiler uses an adjusted p-value in p_value",
+    "columns": [
+      {"name":"term_id","kind":"text","missing":0,"distinct":2,"patterns":{"go":1,"pathway":1}},
+      {"name":"term_name","kind":"text","missing":0,"distinct":2},
+      {"name":"p_value","kind":"number","missing":0,"distinct":2,"min":0.01,"max":0.03},
+      {"name":"intersection_size","kind":"number","missing":0,"distinct":2,"whole":true,"min":7,"max":15},
+      {"name":"source","kind":"text","missing":0,"distinct":2,"examples":["GO:BP","REAC"]}
+    ],
+    "expect": {"kind":"enrichment","tool":"g:Profiler","term":"term_name","padj":"p_value","count":"intersection_size","ratio":null}
+  },
+  {
+    "name": "DAVID uses Benjamini rather than PValue",
+    "columns": [
+      {"name":"Category","kind":"text","missing":0,"distinct":1,"examples":["GOTERM_BP_DIRECT"],"patterns":{"symbol":2}},
+      {"name":"Term","kind":"text","missing":0,"distinct":2},
+      {"name":"Count","kind":"number","missing":0,"distinct":2,"whole":true,"min":6,"max":14},
+      {"name":"PValue","kind":"number","missing":0,"distinct":2,"min":0.0004,"max":0.002},
+      {"name":"Benjamini","kind":"number","missing":0,"distinct":2,"min":0.01,"max":0.03},
+      {"name":"FDR","kind":"number","missing":0,"distinct":2,"min":0.6,"max":2.1},
+      {"name":"Genes","kind":"text","missing":0,"distinct":2,"patterns":{"gene_lists":2}}
+    ],
+    "expect": {"kind":"enrichment","tool":"DAVID","term":"Term","padj":"Benjamini","count":"Count","ratio":null}
+  },
+  {
+    "name": "pathway IDs without a term name",
+    "columns": [
+      {"name":"ID","kind":"text","missing":0,"distinct":2,"examples":["hsa04110","hsa04010"],"patterns":{"pathway":2,"symbol":2}},
+      {"name":"Adjusted.P.value","kind":"number","missing":0,"distinct":2,"min":0.002,"max":0.01}
+    ],
+    "expect": {"kind":"enrichment","tool":null,"term":"ID","padj":"Adjusted.P.value","gene":null}
+  },
+  {
+    "name": "gene symbols with dates from Excel",
+    "columns": [
+      {"name":"Gene","kind":"text","missing":0,"distinct":5,"examples":["TP53","ACTB","PTEN","1-Mar","Sep-02"],"patterns":{"symbol":4,"datelike":2}},
+      {"name":"log2FC","kind":"number","missing":0,"distinct":5,"min":-2.1,"max":1.7},
+      {"name":"adj_pval","kind":"number","missing":0,"distinct":5,"min":0.01,"max":0.07}
+    ],
+    "expect": {"kind":"results","gene":"Gene","gene_ids":"symbol","organism":null,"dates":2,"fc":"log2FC","padj":"adj_pval"}
+  },
+  {
+    "name": "mouse IDs outnumber other Ensembl prefixes",
+    "columns": [
+      {"name":"target","kind":"text","missing":0,"distinct":4,"patterns":{"ensembl_mouse":3,"ensembl_human":1,"symbol":4}},
+      {"name":"sample1","kind":"number","missing":0,"distinct":4,"whole":true,"min":0,"max":114},
+      {"name":"sample2","kind":"number","missing":0,"distinct":4,"whole":true,"min":0,"max":124}
+    ],
+    "expect": {"kind":"counts","gene":"target","gene_ids":"ensembl","organism":"mouse","groups":[]}
+  },
+  {
+    "name": "an unrelated numeric table is not expression",
+    "columns": [
+      {"name":"City","kind":"text","missing":0,"distinct":3,"examples":["Paris","Lyon","Nice"],"patterns":{"symbol":3}},
+      {"name":"temperature","kind":"number","missing":0,"distinct":3,"min":8.2,"max":15.4},
+      {"name":"humidity","kind":"number","missing":0,"distinct":3,"min":44.1,"max":72.2}
+    ],
+    "expect": {"kind":"unknown","gene":null,"samples":[],"values":null,"question":"What are these numbers?"}
+  }
+]

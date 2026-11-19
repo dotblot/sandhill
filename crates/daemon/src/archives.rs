@@ -325,7 +325,7 @@ fn make_staging(dir: &Path, name: &str) -> Result<PathBuf> {
 }
 
 /// The first of `name`, "name 2" and so on that nothing is at.
-fn free_path(dir: &Path, name: &str, is_dir: bool) -> Result<PathBuf> {
+pub(crate) fn free_path(dir: &Path, name: &str, is_dir: bool) -> Result<PathBuf> {
     (1..NAMES)
         .map(|n| dir.join(numbered(name, n, is_dir)))
         .find(|p| fs::symlink_metadata(p).is_err())

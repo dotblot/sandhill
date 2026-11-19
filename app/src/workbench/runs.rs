@@ -148,6 +148,7 @@ impl Workbench {
                 self.save_console_choice();
             }
         }
+        self.quick_session_changed(cx);
         let active = self.console_target().map(str::to_string);
         let language = self.console_language();
         if self.console_input.read(cx).language_name() != language {

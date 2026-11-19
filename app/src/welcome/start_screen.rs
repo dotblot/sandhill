@@ -27,6 +27,7 @@ mod devices;
 mod general;
 mod manage;
 mod projects;
+mod quick_tools;
 mod skills;
 mod trusted;
 mod usage;
@@ -63,11 +64,15 @@ pub(crate) enum StartMode {
     Accounts(String),
     /// This Mac's choices for every project (⌘,).
     General,
+    /// Quick Tools: what this Mac needs, and opening tables.
+    QuickTools,
 }
 
 /// What Welcome's right side shows; the sidebar selects it.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Page {
+    /// Quick Tools (Huan, 2026-11-19): first in the sidebar.
+    QuickTools,
     /// Pinned, open and running projects on every connected device.
     Projects,
     /// The selected device's projects.
@@ -149,6 +154,10 @@ pub(crate) struct Start {
     connectors: Option<(String, u64, Entity<connectors::ConnectorsView>)>,
     /// The page on the right (Huan, 2026-11-12: Projects first).
     pub(crate) page: Page,
+    /// The user picked a page, so Welcome no longer moves to Quick Tools
+    /// by itself.
+    page_chosen: bool,
+    pub(crate) quick: quick_tools::QuickPage,
     /// General's code font list is open.
     font_menu: bool,
     /// The installed monospaced fonts, found when the list first opens.
@@ -214,6 +223,8 @@ impl Start {
             skills: None,
             connectors: None,
             page: Page::Device,
+            page_chosen: false,
+            quick: Default::default(),
             font_menu: false,
             mono_fonts: None,
             font_trigger: Default::default(),
@@ -307,6 +318,11 @@ impl Start {
                 self.page = Page::Accounts;
             }
             StartMode::General => self.page = Page::General,
+            StartMode::QuickTools => {
+                self.page = Page::QuickTools;
+                self.page_chosen = true;
+                self.quick.forget_check();
+            }
             StartMode::Picking(host) => {
                 self.selected_host = host.clone();
                 self.page = Page::Device;
@@ -361,9 +377,19 @@ fn fetch(machines: &mut HashMap<String, Machine>, host: String, cx: &mut Context
                 if let Ok(ping) = ping {
                     machine.home = Some(ping.home);
                 }
+                // With no projects on this Mac, Welcome opens on Quick Tools
+                // (Huan, 2026-11-19); Quick Tools' own sessions don't count.
+                let no_projects = host == sandhill_link::LOCAL
+                    && recent.as_ref().is_ok_and(|list| {
+                        let quick = crate::prefs::quick_sessions();
+                        list.iter().all(|p| quick.contains(&p.path))
+                    });
                 machine.recent = Some(recent.map_err(|err| format!("{err:#}")));
                 machine.sessions = sessions.unwrap_or_default();
                 machine.terminals = terminals.unwrap_or_default();
+                if no_projects && !this.start.page_chosen && this.start.page == Page::Device {
+                    this.start.page = Page::QuickTools;
+                }
                 cx.notify();
             }
         })
@@ -414,6 +440,17 @@ impl AppWindow {
         let page = self.start.page.clone();
         let mut devices = v_flex()
             .gap(px(look::GAP_2))
+            .child(
+                sidebar_row(
+                    "start-quick",
+                    "table",
+                    "Quick Tools",
+                    page == Page::QuickTools,
+                    &p,
+                )
+                .mb(px(look::GAP_12))
+                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::QuickTools, cx))),
+            )
             .child(sidebar_heading("Devices", &p));
         for (ix, device) in self.start.hosts().into_iter().enumerate() {
             let active = device == host && page == Page::Device;
@@ -638,6 +675,7 @@ impl AppWindow {
             );
         let list_height = (window.viewport_size().height - px(340.)).max(px(140.));
         let content = match page {
+            Page::QuickTools => self.quick_tools_page(cx),
             Page::Projects => self.projects_page(list_height, cx),
             Page::Device => self.host_projects(host, list_height, cx),
             Page::Resources => self.resource_page(window, cx),
@@ -661,15 +699,21 @@ impl AppWindow {
                 h_flex().items_stretch().flex_1().min_h_0().w_full()
                     .child(sidebar)
                     .child(div().id("start-content").flex_1().min_w_0().h_full().overflow_y_scroll().bg(p.bg).p(px(CONTENT_PAD)).pt(px(look::TITLE_BAR + CONTENT_PAD))
-                        // Folders dragged from Finder open as projects on this Mac.
+                        // Folders dragged from Finder open as projects on this
+                        // Mac; tables go to Quick Tools (Huan, 2026-11-19).
                         .drag_over::<ExternalPaths>(move |d, _, _, _| d.bg(p.accent_soft))
                         .on_drop(cx.listener(|this, dropped: &ExternalPaths, window, cx| {
-                            let paths = dropped
+                            let (tables, folders): (Vec<String>, Vec<String>) = dropped
                                 .paths()
                                 .iter()
                                 .map(|path| path.to_string_lossy().into_owned())
-                                .collect();
-                            this.open_from_start(sandhill_link::LOCAL.to_string(), paths, window, cx);
+                                .partition(|path| crate::quick::is_table(path));
+                            if !tables.is_empty() {
+                                this.quick_ask_folder(tables, cx);
+                            }
+                            if !folders.is_empty() {
+                                this.open_from_start(sandhill_link::LOCAL.to_string(), folders, window, cx);
+                            }
                         }))
                         .child(v_flex().w_full().max_w(px(CONTENT_WIDTH)).min_h_full()
                             .child(content)
@@ -687,6 +731,7 @@ impl AppWindow {
             .children(self.connectors_overlay(cx))
             .children(self.render_start_dialog(cx))
             .children(self.start.folder_dialog.clone())
+            .children(self.render_quick_folder_card(cx))
             .into_any_element()
     }
 
@@ -772,6 +817,7 @@ impl AppWindow {
             self.start.refresh(cx);
         }
         self.start.page = page;
+        self.start.page_chosen = true;
         self.start.problem = None;
         cx.notify();
     }

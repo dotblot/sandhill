@@ -567,7 +567,9 @@ impl Workbench {
         if from_notebook(&item.cell) {
             self.notebook_plots
         } else {
-            self.plot_history.console_auto
+            // A Quick Tools window's plots are what its Guide made.
+            self.quick.is_some()
+                || self.plot_history.console_auto
                 || self.plot_history.sent.iter().any(|entry| {
                     entry[0] == self.host() && entry[1] == item.session && entry[2] == item.key
                 })
@@ -770,7 +772,7 @@ impl Workbench {
     }
 
     /// The plots shown, and the one in front.
-    fn plots_now(&self) -> (Vec<&PlotItem>, Option<usize>) {
+    pub(crate) fn plots_now(&self) -> (Vec<&PlotItem>, Option<usize>) {
         let list = self.plot_history.shown();
         let at = self
             .plot_history

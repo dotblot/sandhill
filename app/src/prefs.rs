@@ -70,6 +70,33 @@ pub fn save_favourites(keys: &[String]) {
     write("favouriteModels", json!(keys));
 }
 
+/// The Quick Tools session folders on this Mac, newest first.
+pub(crate) fn quick_sessions() -> Vec<String> {
+    read()["quickSessions"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Puts a session folder first in the list.
+pub(crate) fn remember_quick_session(path: &str) {
+    let mut sessions = quick_sessions();
+    sessions.retain(|p| p != path);
+    sessions.insert(0, path.to_string());
+    sessions.truncate(50);
+    write("quickSessions", json!(sessions));
+}
+
+pub(crate) fn forget_quick_session(path: &str) {
+    let mut sessions = quick_sessions();
+    sessions.retain(|p| p != path);
+    write("quickSessions", json!(sessions));
+}
+
 /// Pins belong to this Mac, scoped by daemon host and absolute project path.
 pub(crate) type ProjectPins =
     std::collections::BTreeMap<String, std::collections::BTreeSet<String>>;

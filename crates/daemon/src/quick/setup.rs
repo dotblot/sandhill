@@ -1,0 +1,297 @@
+//! What Quick Tools needs on this computer: R, an R kernel and the R
+//! packages its templates use, and the job that installs missing packages
+//! into the user's own R library, from binaries only.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, bail};
+use sandhill_proto::{
+    JobSpec, KernelspecInfo, QUICK_R_MIN, QuickPackage, QuickR, QuickReadiness, QuickTool,
+};
+
+use crate::agents::shell_quote;
+use crate::kernelspecs::{self, Search};
+use crate::terminal::Launch;
+
+/// How long reading the installed packages may take.
+const LIST_TIMEOUT: Duration = Duration::from_secs(20);
+const CRAN: &str = "https://cloud.r-project.org";
+
+/// The packages Quick Tools uses: `(name, from Bioconductor, what for)`.
+/// Phase 1 is Quick Plot; Quick Analysis adds its packages when it comes.
+pub const PACKAGES: &[(&str, bool, QuickTool)] = &[
+    ("jsonlite", false, QuickTool::Plot),
+    ("ggplot2", false, QuickTool::Plot),
+    ("ggrepel", false, QuickTool::Plot),
+    ("pheatmap", false, QuickTool::Plot),
+    ("readxl", false, QuickTool::Plot),
+    ("writexl", false, QuickTool::Plot),
+    ("svglite", false, QuickTool::Plot),
+];
+
+/// What is there: the R an R kernel runs (IRkernel before Ark, the newest
+/// first), else the newest R found, and which packages it has.
+pub fn readiness(search: &Search) -> QuickReadiness {
+    let kernel = r_kernels(search).into_iter().next();
+    let r = match &kernel {
+        Some((_, program)) => Some(program.clone()),
+        None => newest_r(search),
+    };
+    let r = r.map(|path| {
+        let version = crate::irkernel::r_version(&path).unwrap_or_default();
+        QuickR {
+            new_enough: new_enough(&version),
+            path: path.to_string_lossy().into_owned(),
+            version,
+        }
+    });
+    let installed = r
+        .as_ref()
+        .map(|r| installed(Path::new(&r.path)))
+        .unwrap_or_default();
+    let packages = PACKAGES
+        .iter()
+        .map(|&(name, bioconductor, tool)| QuickPackage {
+            name: name.to_string(),
+            bioconductor,
+            tool,
+            version: installed
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.clone()),
+        })
+        .collect();
+    QuickReadiness {
+        r,
+        kernel: kernel.map(|(name, _)| name),
+        packages,
+    }
+}
+
+/// `4.4.0` and later.
+fn new_enough(version: &str) -> bool {
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    let major = parts.next().unwrap_or(0);
+    let minor = parts.next().unwrap_or(0);
+    (major, minor) >= QUICK_R_MIN
+}
+
+/// The R kernels on the machine with the R each runs: IRkernel before Ark,
+/// newer R first.
+fn r_kernels(search: &Search) -> Vec<(String, PathBuf)> {
+    let mut found: Vec<(KernelspecInfo, PathBuf)> = kernelspecs::list(search)
+        .into_iter()
+        .filter(|info| info.language.eq_ignore_ascii_case("r"))
+        .filter_map(|info| {
+            let dir = kernelspecs::find(search, &info.name)?;
+            let program = crate::irkernel::spec_r(&dir.kernelspec, search)?;
+            Some((info, program))
+        })
+        .collect();
+    found.sort_by(|(a, _), (b, _)| {
+        let irkernel = |i: &KernelspecInfo| i.engine.as_deref() == Some("IRkernel");
+        irkernel(b)
+            .cmp(&irkernel(a))
+            .then_with(|| version_key(&b.version).cmp(&version_key(&a.version)))
+    });
+    found
+        .into_iter()
+        .map(|(info, program)| (info.name, program))
+        .collect()
+}
+
+fn version_key(version: &Option<String>) -> Vec<u32> {
+    version
+        .as_deref()
+        .unwrap_or("")
+        .split('.')
+        .map(|p| p.parse().unwrap_or(0))
+        .collect()
+}
+
+/// The newest R installed, with or without IRkernel.
+fn newest_r(search: &Search) -> Option<PathBuf> {
+    crate::irkernel::find(search)
+        .into_iter()
+        .filter(|c| c.how == crate::irkernel::How::Plain)
+        .max_by_key(|c| version_key(&Some(c.version.clone())))
+        .map(|c| c.r)
+}
+
+/// The packages of [`PACKAGES`] the R at `r` has, with their versions.
+/// Read from their descriptions, without loading them.
+fn installed(r: &Path) -> Vec<(String, String)> {
+    let names = PACKAGES
+        .iter()
+        .map(|(n, ..)| format!("\"{n}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let code = format!(
+        "for (p in c({names})) {{ v <- tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA); if (!is.na(v)) cat('SANDHILL_PKG', p, v, '\\n') }}"
+    );
+    let Ok(mut child) = Command::new(r)
+        .args(["--no-save", "--no-restore", "--no-init-file", "-s", "-e"])
+        .arg(&code)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < LIST_TIMEOUT => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Vec::new();
+            }
+        }
+    }
+    let mut out = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
+    }
+    parse_installed(&out)
+}
+
+fn parse_installed(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|line| {
+            let mut words = line.strip_prefix("SANDHILL_PKG ")?.split_whitespace();
+            Some((words.next()?.to_string(), words.next()?.to_string()))
+        })
+        .collect()
+}
+
+/// A string as R writes one.
+fn r_string(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn r_vector(names: &[&str]) -> String {
+    let quoted: Vec<String> = names.iter().map(|n| r_string(n)).collect();
+    format!("c({})", quoted.join(", "))
+}
+
+/// The R code that installs `cran` and `bioconductor` packages into the
+/// user's own library, never compiling and never updating what is there.
+fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
+    format!(
+        r#"local({{
+  options(install.packages.compile.from.source = "never")
+  repos <- c(CRAN = {mirror})
+  type <- if (Sys.info()[["sysname"]] %in% c("Darwin", "Windows")) "binary" else getOption("pkgType")
+  lib <- Sys.getenv("R_LIBS_USER")
+  dir.create(lib, recursive = TRUE, showWarnings = FALSE)
+  .libPaths(c(lib, .libPaths()))
+  cran <- {cran}
+  bioc <- {bioc}
+  if (length(cran)) {{
+    message("Installing ", paste(cran, collapse = ", "), " into ", lib)
+    utils::install.packages(cran, lib = lib, repos = repos, type = type)
+  }}
+  if (length(bioc)) {{
+    if (!requireNamespace("BiocManager", quietly = TRUE)) utils::install.packages("BiocManager", lib = lib, repos = repos, type = type)
+    message("Installing ", paste(bioc, collapse = ", "), " from Bioconductor into ", lib)
+    BiocManager::install(bioc, lib = lib, ask = FALSE, update = FALSE, type = type)
+  }}
+  wanted <- c(cran, bioc)
+  missing <- wanted[!vapply(wanted, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(missing)) stop("These packages couldn't be installed: ", paste(missing, collapse = ", "), ". A ready-built copy may not exist for this R yet.", call. = FALSE)
+  message("Done: Quick Tools has every package it needs.")
+}})"#,
+        mirror = r_string(CRAN),
+        cran = r_vector(cran),
+        bioc = r_vector(bioconductor),
+    )
+}
+
+/// The job that installs `packages` (names from [`PACKAGES`]) into the R at
+/// `r`, with its output also written to `log`.
+pub fn install(r: &str, packages: &[String], log: &Path) -> Result<Launch> {
+    let r = PathBuf::from(r);
+    if !r.is_file() {
+        bail!("{} isn't an R program", r.display());
+    }
+    let mut cran = Vec::new();
+    let mut bioconductor = Vec::new();
+    for name in packages {
+        let Some(&(known, bioc, _)) = PACKAGES.iter().find(|(n, ..)| n == name) else {
+            bail!("{name} isn't a package Quick Tools uses");
+        };
+        if bioc {
+            bioconductor.push(known);
+        } else {
+            cran.push(known);
+        }
+    }
+    if cran.is_empty() && bioconductor.is_empty() {
+        bail!("no packages to install");
+    }
+    let rscript = r
+        .parent()
+        .map(|bin| bin.join("Rscript"))
+        .filter(|p| p.is_file())
+        .with_context(|| format!("there is no Rscript beside {}", r.display()))?;
+    let home = PathBuf::from(std::env::var_os("HOME").context("HOME isn't set")?);
+    let job = JobSpec {
+        path: None,
+        command: Some(format!(
+            "set -o pipefail; {} -e {} 2>&1 | tee {}",
+            shell_quote(&rscript.to_string_lossy()),
+            shell_quote(&install_code(&cran, &bioconductor)),
+            shell_quote(&log.to_string_lossy())
+        )),
+    };
+    let mut launch = crate::jobs::launch(&job, Some(&home), None)?;
+    launch.title = "Install packages for Quick Tools".into();
+    Ok(launch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn r_versions_from_4_4_are_new_enough() {
+        assert!(new_enough("4.4.0"));
+        assert!(new_enough("4.6.2"));
+        assert!(new_enough("5.0.1"));
+        assert!(!new_enough("4.3.3"));
+        assert!(!new_enough(""));
+    }
+
+    #[test]
+    fn installed_packages_are_read_from_the_marked_lines() {
+        let out = "Loading profile\nSANDHILL_PKG ggplot2 4.0.3 \nSANDHILL_PKG readxl 1.4.5 \n";
+        assert_eq!(
+            parse_installed(out),
+            vec![
+                ("ggplot2".to_string(), "4.0.3".to_string()),
+                ("readxl".to_string(), "1.4.5".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn only_quick_tools_packages_can_be_installed() {
+        let err = install("/bin/sh", &["Seurat".to_string()], Path::new("/tmp/x.log")).unwrap_err();
+        assert!(err.to_string().contains("isn't a package Quick Tools uses"));
+    }
+
+    #[test]
+    fn install_code_never_compiles_or_updates() {
+        let code = install_code(&["ggplot2"], &["DESeq2"]);
+        assert!(code.contains("compile.from.source = \"never\""));
+        assert!(code.contains("update = FALSE"));
+        assert!(code.contains("R_LIBS_USER"));
+    }
+}

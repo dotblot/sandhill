@@ -696,7 +696,7 @@ mod tests {
     use gpui_kit::{AppContext, TestAppContext, WindowOptions};
     use std::sync::Arc;
 
-    use crate::shell::app_window::{AppWindow, Place, Places, Windows};
+    use crate::shell::app_window::{AppWindow, Kind, Place, Places, Windows};
 
     #[gpui_kit::test]
     fn statusbar_resources_release_workbench_before_reading_connections(cx: &mut TestAppContext) {
@@ -720,6 +720,7 @@ mod tests {
                 open: Vec::new(),
                 main: None,
                 welcome: None,
+                quick: Vec::new(),
                 quitting: true,
             });
             // Construction must not connect a daemon or open the requested project.
@@ -732,7 +733,7 @@ mod tests {
                             tabs: vec![place.clone()],
                             current: Some(place),
                         },
-                        false,
+                        Kind::Main,
                         window,
                         cx,
                     )

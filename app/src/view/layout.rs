@@ -109,6 +109,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if self.quick.is_some() {
+            return self.render_quick_workspace(window, cx);
+        }
         if let Some(panel) = self.maximized_panel {
             return match panel {
                 Panel::LeftTop | Panel::LeftBottom => self.render_left(cx).into_any_element(),

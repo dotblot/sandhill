@@ -3,6 +3,7 @@
 Huan, 2026-11-19. Status: approved by Huan (2026-11-19): R only, the
 three columns, AI suggestions accepted by a click, and each session's
 folder chosen in a dialog, next to the table by default (section 8).
+Phase 1 (Quick Plot without AI) built on 2026-11-19; phases 2 to 4 wait.
 
 Huan often sends a table (DESeq2 results, raw counts, Gene Ontology
 results) to colleagues who aren't bioinformaticians. They want a quick
@@ -28,15 +29,17 @@ Decided by Huan (2026-11-19):
   otherwise it opens on This Mac's page as now.
 - The page, top to bottom:
   1. Getting ready (section 2). When everything is there it shrinks to
-     one green line: "Ready: R 4.6.2, Quick Plot and Quick Analysis".
+     one green line: "Ready: R 4.6.2, with every package Quick Plot uses."
   2. A drop area: "Drop a table here" and Choose a File… (`.csv`,
-     `.tsv`, `.txt`, `.xlsx`, `.xls`).
+     `.tsv`, `.txt`, `.xlsx`, `.xls`). Tables dropped anywhere on
+     Welcome come here too; folders still open as projects.
   3. Quick Plot and Quick Analysis, each a short list of what it makes
-     (section 5). Clicking one asks for the file and opens the window
-     with that goal chosen; dropping a file lets Sandhill suggest goals
-     from the table.
-  4. Recent sessions: name, date and tables, with a ⋯ menu: Open, Show
-     in Finder, Open as Project, Delete… (asked in the row).
+     (section 5), to read: the drop area is the one way in, and the window
+     offers what fits the table (built 2026-11-19).
+  4. Recent sessions: name and the folder it is in ("Not found" with
+     Remove from List when moved or deleted), with a ⋯ for Show in Finder,
+     Open as Project, Remove from List and Delete… (asked in the row,
+     moving the folder to the Trash).
 
 ## 2. Getting ready
 Sandhill is dragged into Applications from its disk image, so there is
@@ -149,11 +152,16 @@ lower"). This comes from the template, not from AI.
 ## 6. Export
 - Plots: the existing save window (PNG, PDF, SVG) with Save recipe
   beside it.
-- Tables: Excel with a Read_me sheet (what each column means, the
-  comparison, cutoffs, and the template and package versions) or CSV.
-- Export…: a chosen folder gets the figures, the workbook, `methods.txt`
-  (a methods paragraph and figure captions made from the card and versions)
-  and `steps.R` (the code that ran).
+- Tables: the Data Explorer's own Export menu saves the table shown as
+  CSV.
+- Export… in the title bar writes into the session's `results/` folder,
+  with Show in Finder after: `<session>.xlsx` (a Read_me sheet with the
+  comparison, the cutoffs and what each table is, then every table and
+  each top genes table made) and `methods.txt` (a methods paragraph from
+  the card). `steps.R` is already in the session folder. Figures are saved
+  one at a time from Plots, where the user chooses the folder (built
+  2026-11-19; saving every figure at once and package versions in the
+  Read_me come later).
 - Open as Project opens the session folder as an ordinary project in the
   main window, for a bioinformatician to check or continue.
 

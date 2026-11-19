@@ -13,6 +13,7 @@ mod git;
 mod look;
 mod panes;
 mod prefs;
+mod quick;
 mod shell;
 mod view;
 mod welcome;

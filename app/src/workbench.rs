@@ -430,6 +430,9 @@ pub struct Workbench {
     pub(crate) popped_explorers: Vec<(AnyWindowHandle, WeakEntity<Explorer>)>,
     /// The Data Explorer's tab is the one shown.
     pub(crate) explorer_shown: bool,
+    /// A Quick Tools session's window shows only the Data Explorer, Plots
+    /// and the Guide (`crate::quick`).
+    pub(crate) quick: Option<crate::quick::Quick>,
     pub(crate) objects: crate::panes::object_explorer::ObjectExplorers,
     pub(crate) focus_mode: crate::shell::focus_mode::FocusMode,
     pub(crate) notebook_ai_menu: bool,
@@ -705,6 +708,7 @@ impl Workbench {
             explorer: None,
             popped_explorers: Vec::new(),
             explorer_shown: false,
+            quick: None,
             objects: Default::default(),
             focus_mode: Default::default(),
             notebook_ai_menu: false,
@@ -1137,6 +1141,12 @@ impl Workbench {
         let (Some(daemon), Some(path)) = (self.daemon(), self.project.clone()) else {
             return;
         };
+        // A Quick Tools session asks no setup questions and has no AI pane
+        // yet: it starts its R session and reads its tables.
+        if self.quick.is_some() {
+            self.quick_start(window, cx);
+            return;
+        }
         let workbench = cx.entity().downgrade();
         let host = self.host();
         let agents = cx.new(|cx| Agents::new(daemon, host, path, workbench, window, cx));

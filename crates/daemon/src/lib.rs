@@ -41,6 +41,7 @@ pub mod paths;
 pub mod preview;
 pub mod projects;
 pub mod qmd;
+pub mod quick;
 pub mod quirks;
 pub mod redraw;
 pub mod server;

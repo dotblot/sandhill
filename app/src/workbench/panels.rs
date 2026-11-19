@@ -241,7 +241,7 @@ impl Workbench {
 
     /// Code requests carry their own session, which need not be the one
     /// currently shown in Variables or the active editor.
-    pub(super) fn open_session_explorer(
+    pub(crate) fn open_session_explorer(
         &mut self,
         session: String,
         language: String,

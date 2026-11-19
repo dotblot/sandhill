@@ -28,6 +28,7 @@ use crate::{Interrupt, RunAll, RunCell, RunLine, Save, ToggleConsole};
 mod cells;
 mod console_pane;
 mod layout;
+mod quick;
 mod side;
 mod top_bar;
 
@@ -231,7 +232,11 @@ impl Render for Workbench {
                 Some(_) => d.cursor(CursorStyle::ResizeLeftRight),
                 None => d,
             })
-            .child(self.render_top_bar(window, cx))
+            .child(if self.quick.is_some() {
+                self.render_quick_top_bar(window, cx)
+            } else {
+                self.render_top_bar(window, cx).into_any_element()
+            })
             .child(
                 h_flex()
                     .flex_1()

@@ -38,6 +38,7 @@ mod connections;
 mod document_calls;
 mod file_history;
 mod help_calls;
+mod quick_calls;
 mod request_helpers;
 mod session_calls;
 mod session_helpers;
@@ -280,6 +281,19 @@ impl Daemon {
             }
             Call::ListRWithoutIrkernel { project } => self.list_r_without_irkernel(project).await?,
             Call::InstallIrkernel { r, project } => self.install_irkernel(r, project).await?,
+            Call::QuickReadiness => self.quick_readiness().await?,
+            Call::QuickInstall { r, packages } => self.quick_install(r, packages).await?,
+            Call::QuickCreate { tables, parent } => self.quick_create(tables, parent).await?,
+            Call::QuickAddTables { project, tables } => {
+                self.quick_add_tables(project, tables).await?
+            }
+            Call::QuickCard { project } => self.quick_card(project).await?,
+            Call::SaveQuickCard { project, card } => self.save_quick_card(project, card).await?,
+            Call::QuickRun {
+                session,
+                project,
+                request,
+            } => self.quick_run(session, project, request).await?,
             Call::StartSession {
                 kernel,
                 cwd,
