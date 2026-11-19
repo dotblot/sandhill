@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use sandhill_proto::{
-    QuickColumn, QuickPlot, QuickRequest, QuickResult, QuickSettings, QuickTable, hex,
+    GeneIds, QuickColumn, QuickPlot, QuickRequest, QuickResult, QuickSettings, QuickTable, hex,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -128,6 +128,36 @@ pub fn resolve(folder: &Path, request: &QuickRequest) -> Result<QuickRequest> {
                 sheets: sheets.clone(),
             }
         }
+        QuickRequest::Symbols {
+            table,
+            column,
+            ids,
+            organism,
+            output,
+        } => {
+            if !r_name(table) {
+                bail!("{table} can't be an R variable's name");
+            }
+            if !matches!(ids, GeneIds::Ensembl | GeneIds::Entrez) {
+                bail!("gene symbols come from Ensembl or Entrez IDs");
+            }
+            if sandhill_proto::symbols_package(organism).is_none() {
+                bail!("gene symbols are available for human and mouse");
+            }
+            if output
+                .as_deref()
+                .is_some_and(|o| o.is_empty() || o.len() > 64)
+            {
+                bail!("not a column name");
+            }
+            QuickRequest::Symbols {
+                table: table.clone(),
+                column: column.clone(),
+                ids: *ids,
+                organism: organism.clone(),
+                output: output.clone(),
+            }
+        }
     })
 }
 
@@ -204,8 +234,45 @@ pub fn result(request: &QuickRequest, reply: Value) -> Result<QuickResult> {
                 .context("the template's pairs can't be read")?;
         }
         QuickRequest::Workbook { .. } => {}
+        QuickRequest::Symbols { ids, .. } => {
+            result.sentence = symbols_sentence(*ids, &result.facts);
+        }
     }
     Ok(result)
+}
+
+/// "15,890 of 16,525 genes got a symbol; 635 have none and keep their
+/// Ensembl ID."
+fn symbols_sentence(ids: GeneIds, facts: &Value) -> Option<String> {
+    let total = facts["total"].as_u64()?;
+    let mapped = facts["mapped"].as_u64()?;
+    let id = if ids == GeneIds::Entrez {
+        "Entrez"
+    } else {
+        "Ensembl"
+    };
+    let mut sentence = format!(
+        "{} of {} genes got a symbol",
+        thousands(mapped),
+        thousands(total)
+    );
+    match total - mapped.min(total) {
+        0 => sentence.push('.'),
+        1 => sentence.push_str(&format!("; 1 has none and keeps its {id} ID.")),
+        none => sentence.push_str(&format!(
+            "; {} have none and keep their {id} ID.",
+            thousands(none)
+        )),
+    }
+    match facts["several"].as_u64().unwrap_or(0) {
+        0 => {}
+        1 => sentence.push_str(" 1 ID matches more than one symbol; the first is used."),
+        several => sentence.push_str(&format!(
+            " {} IDs match more than one symbol; the first is used.",
+            thousands(several)
+        )),
+    }
+    Some(sentence)
 }
 
 /// Adds a run to the session's `steps.R`, which with `.sandhill/quick.R`

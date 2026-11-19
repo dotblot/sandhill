@@ -46,6 +46,8 @@ pub(crate) enum Edit {
     AddGroup(String),
     Comparison(String, String),
     Cutoffs(f64, f64),
+    /// The column genes are labelled by (gene symbols), or none: by ID.
+    Labels(Option<String>),
 }
 
 /// The fields the card's forms type into.
@@ -184,6 +186,7 @@ pub(crate) fn card_table(table: &QuickTable) -> QuickCardTable {
         term: found(&r.term),
         count: found(&r.count),
         ratio: found(&r.ratio),
+        labels: None,
         dates: r.dates,
         question: r.question.clone(),
     }
@@ -382,6 +385,7 @@ pub(crate) fn settings(card: &QuickCard, table: &QuickCardTable, show_gene: &str
         count: usable(&table.count),
         ratio: usable(&table.ratio),
         show_gene: (!show_gene.trim().is_empty()).then(|| show_gene.trim().to_string()),
+        label: usable(&table.labels),
     }
 }
 
@@ -445,7 +449,33 @@ pub(crate) fn apply(card: &mut QuickCard, table: Option<&str>, edit: Edit) {
                 .then(|| Known::told(QuickComparison { higher, lower }));
         }
         Edit::Cutoffs(padj, lfc) => card.cutoffs = QuickCutoffs { padj, lfc },
+        Edit::Labels(column) => {
+            if let Some(ix) = at {
+                card.tables[ix].labels = column.map(Known::told);
+            }
+        }
     }
+}
+
+/// The run that adds gene symbols for `table`'s gene IDs (Huan, 2026-11-19;
+/// `docs/design/gene-symbols-plan.md`): only for an Ensembl or Entrez gene
+/// column and an organism with symbols. `output` is the column to write,
+/// for a session reopened later.
+pub(crate) fn symbols_request(
+    table: &QuickCardTable,
+    organism: Option<&str>,
+    output: Option<String>,
+) -> Option<QuickRequest> {
+    let ids =
+        usable(&table.gene_ids).filter(|ids| matches!(ids, GeneIds::Ensembl | GeneIds::Entrez))?;
+    let organism = organism.filter(|o| sandhill_proto::symbols_package(o).is_some())?;
+    Some(QuickRequest::Symbols {
+        table: table.name.clone(),
+        column: usable(&table.gene)?,
+        ids,
+        organism: organism.to_string(),
+        output,
+    })
 }
 
 /// The group names on the card, in first-seen order, and any added.
@@ -524,6 +554,15 @@ pub(crate) fn methods(card: &QuickCard) -> String {
         None => text.push_str(
             " The results table did not record which group a positive fold change is higher in.",
         ),
+    }
+    if card.tables.iter().any(|t| usable(&t.labels).is_some())
+        && let Some(package) = usable(&card.organism)
+            .as_deref()
+            .and_then(sandhill_proto::symbols_package)
+    {
+        text.push_str(&format!(
+            " Gene symbols were added for Ensembl or Entrez IDs with AnnotationDbi::mapIds and {package} (the first symbol when an ID has several); genes without one keep their ID."
+        ));
     }
     text.push_str(
         " Sample-level plots use log2(counts per million + 1) for raw counts and log2(value + 1) for normalized values; heatmaps scale each gene to its own mean.\n\nThe exact steps are in steps.R in the session folder.\n",
@@ -641,6 +680,7 @@ impl Workbench {
         quick.busy = Some("Reading your tables…".into());
         quick.error = None;
         let known: Vec<QuickCardTable> = quick.card.tables.clone();
+        let organism = usable(&quick.card.organism);
         let listed = daemon.call::<Vec<DirEntry>>(Call::ListDir {
             path: project.clone(),
             sizes: false,
@@ -716,7 +756,18 @@ impl Workbench {
                 {
                     Ok(QuickResult {
                         table: Some(table), ..
-                    }) => loaded.push(table),
+                    }) => {
+                        // Gene symbols added before are added again.
+                        let again = known.iter().find(|t| t.name == table.name).and_then(|t| {
+                            symbols_request(t, organism.as_deref(), Some(usable(&t.labels)?))
+                        });
+                        if let Some(request) = again
+                            && let Err(err) = run(request).await
+                        {
+                            problems.push(format!("{file}: the gene symbols: {err:#}"));
+                        }
+                        loaded.push(table);
+                    }
                     Ok(_) => problems.push(format!("{file}: the table didn't come back")),
                     Err(err) => problems.push(format!("{file}: {err:#}")),
                 }
@@ -996,6 +1047,68 @@ impl Workbench {
             .and_then(|q| q.inputs.as_ref())
             .map(|i| pick(i).read(cx).value().to_string())
             .unwrap_or_default()
+    }
+
+    /// Adds gene symbols beside the shown table's gene IDs; plots then
+    /// label genes by them.
+    pub(crate) fn quick_add_symbols(&mut self, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
+            return;
+        };
+        let Some(quick) = &self.quick else {
+            return;
+        };
+        let (Some(session), None) = (quick.loaded_in.clone(), &quick.busy) else {
+            return;
+        };
+        let organism = usable(&quick.card.organism);
+        let Some(request) = self
+            .quick_table()
+            .and_then(|t| symbols_request(t, organism.as_deref(), None))
+        else {
+            return;
+        };
+        let QuickRequest::Symbols { table, .. } = &request else {
+            return;
+        };
+        let table = table.clone();
+        let added = daemon.call::<QuickResult>(Call::QuickRun {
+            session,
+            project,
+            request,
+        });
+        if let Some(quick) = self.quick_mut() {
+            quick.busy = Some("Adding gene symbols…".into());
+            quick.error = None;
+            quick.sentence = None;
+        }
+        let generation = self.generation;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let added = added.await;
+            this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                let Some(quick) = this.quick_mut() else {
+                    return;
+                };
+                quick.busy = None;
+                match added {
+                    Ok(result) => {
+                        let column = result.facts["column"].as_str().map(str::to_string);
+                        quick.sentence = result.sentence;
+                        quick.made = true;
+                        apply(&mut quick.card, Some(&table), Edit::Labels(column));
+                        this.quick_save_card(cx);
+                    }
+                    Err(err) => quick.error = Some(format!("{err:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Makes a plot (or the top genes table) from the table shown.
@@ -1667,9 +1780,9 @@ mod tests {
     use super::{
         Edit, GeneIds, Item, Known, QuickCard, QuickComparison, QuickFrom, QuickPlot, QuickTable,
         QuickTableKind, apply, group_names, is_table, merge, missing, session_name, settings,
-        variable_name,
+        symbols_request, variable_name,
     };
-    use sandhill_proto::{QuickColumn, QuickColumnKind, QuickRecognition};
+    use sandhill_proto::{QuickColumn, QuickColumnKind, QuickRecognition, QuickRequest};
 
     fn recognition(kind: QuickTableKind) -> QuickRecognition {
         QuickRecognition {
@@ -1741,6 +1854,43 @@ mod tests {
         );
         // Without a comparison, the plot is made with neutral wording.
         assert!(settings(&card, &t, "").comparison.is_none());
+    }
+
+    #[test]
+    fn gene_symbols_need_ids_and_human_or_mouse_then_label_plots() {
+        let mut card = QuickCard::default();
+        merge(&mut card, &table("de", QuickTableKind::Results));
+        let t = card.tables[0].clone();
+        let Some(QuickRequest::Symbols {
+            column,
+            ids,
+            organism,
+            output,
+            ..
+        }) = symbols_request(&t, Some("human"), None)
+        else {
+            panic!("Ensembl IDs of a human table get symbols");
+        };
+        assert_eq!(
+            (column.as_str(), ids, organism.as_str(), output),
+            ("id", GeneIds::Ensembl, "human", None)
+        );
+        assert!(symbols_request(&t, Some("zebrafish"), None).is_none());
+        assert!(symbols_request(&t, None, None).is_none());
+        let mut named = t.clone();
+        named.gene_ids = Some(Known::found(GeneIds::Symbol));
+        assert!(symbols_request(&named, Some("human"), None).is_none());
+
+        // Once added, plots label by the symbols and still match by ID;
+        // Use IDs Instead goes back.
+        apply(&mut card, Some("de"), Edit::Labels(Some("symbol".into())));
+        let s = settings(&card, &card.tables[0], "");
+        assert_eq!(
+            (s.label.as_deref(), s.gene.as_deref()),
+            (Some("symbol"), Some("id"))
+        );
+        apply(&mut card, Some("de"), Edit::Labels(None));
+        assert!(settings(&card, &card.tables[0], "").label.is_none());
     }
 
     #[test]

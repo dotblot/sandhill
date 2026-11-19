@@ -162,6 +162,16 @@ differs, this wins.
   volcano plot is its own `vizVolcano()`; recipes still run without it.
   Its enrichment functions need `runEnrichment()` output, so enrichment
   tables use the copied look only.
+  Gene symbols (Huan, 2026-11-19; `docs/design/gene-symbols-plan.md`):
+  for a gene column of Ensembl or Entrez IDs in a human or mouse table,
+  the card offers Add Gene Symbols. It adds a `symbol` column beside the
+  IDs in the session's copy (the file is never changed), from
+  org.Hs.eg.db or org.Mm.eg.db via `AnnotationDbi::mapIds` (version
+  endings dropped, the first symbol when there are several), says how
+  many genes got one, and plots then label genes by symbol, falling back
+  to the ID. Use IDs Instead goes back. The organism packages (about
+  90 MB each) install on their own from Getting Ready, into the library
+  the user picks.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on

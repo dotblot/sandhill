@@ -16,8 +16,8 @@ use std::time::Duration;
 use sandhill_daemon::{Daemon, StateDir};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    Call, Focus, QuickPlot, QuickRequest, QuickResult, QuickSettings, QuickTableKind, SessionInfo,
-    TrustedFolder,
+    Call, Focus, GeneIds, QuickPlot, QuickRequest, QuickResult, QuickSettings, QuickTableKind,
+    SessionInfo, TrustedFolder,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -193,6 +193,70 @@ async fn a_dropped_results_table_becomes_a_volcano_plot() {
     .unwrap();
     assert_eq!(top.output.as_deref(), Some("de_results_top_genes"));
     assert_eq!(top.facts["rows"], Value::from(30));
+
+    // Gene symbols beside the Ensembl IDs, from org.Hs.eg.db when it is
+    // installed; labels then use them and fall back to the IDs.
+    let symbols = |output: Option<&str>| QuickRequest::Symbols {
+        table: "de_results".into(),
+        column: "id".into(),
+        ids: GeneIds::Ensembl,
+        organism: "human".into(),
+        output: output.map(str::to_string),
+    };
+    match run(symbols(None)).await {
+        Err(err) if format!("{err:#}").contains("Missing R packages") => {
+            eprintln!("skipping the gene symbols: {err:#}");
+        }
+        added => {
+            let added = added.unwrap();
+            assert_eq!(added.facts["column"], "symbol");
+            assert_eq!(added.facts["total"], Value::from(200));
+            let mapped = added.facts["mapped"].as_u64().unwrap();
+            // ENSG00000000003 is TSPAN6 and ENSG00000000005 TNMD; most of
+            // the made-up IDs are no gene.
+            assert!((2..200).contains(&mapped), "{}", added.facts);
+            let sentence = added.sentence.unwrap();
+            assert!(
+                sentence.starts_with(&format!("{mapped} of 200 genes got a symbol;")),
+                "{sentence}"
+            );
+            // A reopened session writes the same column again.
+            let again = run(symbols(Some("symbol"))).await.unwrap();
+            assert_eq!(again.facts["column"], "symbol");
+            let named = run(QuickRequest::Pairs {
+                table: "de_results".into(),
+                key: "id".into(),
+                value: "symbol".into(),
+            })
+            .await
+            .unwrap();
+            assert!(
+                named
+                    .pairs
+                    .contains(&("ENSG00000000003".into(), "TSPAN6".into())),
+                "{:?}",
+                named.pairs
+            );
+            assert_eq!(named.pairs.len() as u64, mapped);
+            let labelled = run(QuickRequest::Plot {
+                plot: QuickPlot::TopGenes,
+                table: "de_results".into(),
+                settings: Box::new(QuickSettings {
+                    gene: Some("id".into()),
+                    label: Some("symbol".into()),
+                    fc: Some("log2FoldChange".into()),
+                    padj: Some("padj".into()),
+                    ..QuickSettings::default()
+                }),
+                output: Some("de_results_named".into()),
+            })
+            .await
+            .unwrap();
+            assert_eq!(labelled.facts["rows"], Value::from(30));
+            let steps = std::fs::read_to_string(Path::new(&folder).join("steps.R")).unwrap();
+            assert!(steps.contains(r#""action":"symbols""#), "{steps}");
+        }
+    }
 
     // A template's refusal comes back as its plain message.
     let refused = run(QuickRequest::Plot {

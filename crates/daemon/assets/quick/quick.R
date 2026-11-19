@@ -109,13 +109,59 @@ sandhill_quick <- local({
     x
   }
 
-  gene_labels <- function(tab, name, rows) {
-    x <- column(tab, name, "gene names", optional = TRUE)
-    if (is.null(x)) return(as.character(rows))
-    labels <- as.character(x[rows])
+  # A gene's label: its symbol when the card has a label column
+  # (s$label) and the gene has one, else its ID, else its row number.
+  gene_labels <- function(tab, s, rows) {
+    ids <- column(tab, s$gene, "gene names", optional = TRUE)
+    labels <- if (is.null(ids)) as.character(rows) else as.character(ids[rows])
+    symbols <- column(tab, s$label, "gene symbols", optional = TRUE)
+    if (!is.null(symbols)) {
+      named <- as.character(symbols[rows])
+      use <- !is.na(named) & nzchar(named)
+      labels[use] <- named[use]
+    }
     absent <- is.na(labels) | !nzchar(labels)
     labels[absent] <- as.character(rows[absent])
     labels
+  }
+
+  # Adds the gene symbols for an Ensembl or Entrez ID column, from the
+  # organism's Bioconductor package, as a column beside it.
+  add_symbols <- function(request) {
+    org <- switch(request$organism, human = "org.Hs.eg.db", mouse = "org.Mm.eg.db",
+                  fail("Gene symbols are available for human and mouse."))
+    need_packages(c("AnnotationDbi", org))
+    keytype <- switch(request$ids, ensembl = "ENSEMBL", entrez = "ENTREZID",
+                      fail("Gene symbols come from Ensembl or Entrez IDs."))
+    tab <- get_table(request$table)
+    ids <- trimws(as.character(column(tab, request$column, "gene IDs")))
+    if (keytype == "ENSEMBL") ids <- sub("\\.[0-9]+$", "", ids)
+    db <- getExportedValue(org, org)
+    wanted <- unique(ids[!is.na(ids) & nzchar(ids)])
+    known <- intersect(wanted, AnnotationDbi::keys(db, keytype = keytype))
+    found <- if (length(known)) {
+      suppressMessages(AnnotationDbi::mapIds(db, keys = known, column = "SYMBOL", keytype = keytype,
+                                             multiVals = "list"))
+    } else list()
+    found <- Filter(function(x) length(x) && !all(is.na(x)), found)
+    first <- vapply(found, function(x) as.character(x[!is.na(x)][1L]), character(1))
+    symbol <- unname(first[ids])
+    out <- request$output
+    if (is.null(out)) {
+      out <- "symbol"
+      n <- 1L
+      while (out %in% names(tab)) {
+        n <- n + 1L
+        out <- paste0("symbol_", n)
+      }
+    }
+    tab[[out]] <- symbol
+    others <- setdiff(names(tab), out)
+    at <- match(request$column, others)
+    tab <- tab[, append(others, out, after = if (is.na(at)) length(others) else at), drop = FALSE]
+    assign(request$table, tab, envir = .GlobalEnv)
+    list(facts = list(column = out, total = length(ids), mapped = sum(!is.na(symbol)),
+                      several = sum(lengths(found[names(found) %in% ids]) > 1L)))
   }
 
   # The look of PubOmixR (Huan's package, Huan 2026-11-19): theme_classic at
@@ -171,14 +217,15 @@ sandhill_quick <- local({
       if (plot == "top_genes") {
         if (is.null(output)) fail("Choose a name for the top genes table.")
         column(tab, s$gene, "gene names", optional = TRUE)
+        column(tab, s$label, "gene symbols", optional = TRUE)
         average <- s[["mean"]]
         column(tab, average, "average expression", optional = TRUE)
-        assign(output, tab[changed, unique(c(s$gene, s$fc, s$padj, average, names(tab))), drop = FALSE], envir = .GlobalEnv)
+        assign(output, tab[changed, unique(c(s$gene, s$label, s$fc, s$padj, average, names(tab))), drop = FALSE], envir = .GlobalEnv)
         return(list(facts = list(rows = length(changed)), output = output))
       }
       expr <- sample_values(tab, s)
       draw_heatmap(z_scores(expr$x[changed, , drop = FALSE]), expr$group,
-                   labels_row = gene_labels(tab, s$gene, changed), title = "Most significant changed genes")
+                   labels_row = gene_labels(tab, s, changed), title = "Most significant changed genes")
       return(list(facts = list(genes = length(changed), samples = ncol(expr$x))))
     }
 
@@ -195,8 +242,8 @@ sandhill_quick <- local({
     top_up <- best(up, 10L)
     top_down <- best(down, 10L)
     facts <- list(tested = sum(tested), up = length(up), down = length(down), missing = sum(!tested),
-                  top_up = I(gene_labels(tab, s$gene, utils::head(top_up, 5L))),
-                  top_down = I(gene_labels(tab, s$gene, utils::head(top_down, 5L))))
+                  top_up = I(gene_labels(tab, s, utils::head(top_up, 5L))),
+                  top_down = I(gene_labels(tab, s, utils::head(top_down, 5L))))
     if (plot == "up_down") {
       d <- data.frame(change = factor(keys[1:2], levels = rev(keys[1:2])), n = c(length(up), length(down)))
       p <- ggplot2::ggplot(d, ggplot2::aes(x = n, y = change, fill = change)) + ggplot2::geom_col(width = 0.65) +
@@ -214,7 +261,7 @@ sandhill_quick <- local({
       # drawn here otherwise, so a recipe runs on any computer.
       if (requireNamespace("PubOmixR", quietly = TRUE)) {
         v <- data.frame(log2FoldChange = fc[rows], padj = padj[rows])
-        if (!is.null(s$gene)) v$symbol <- gene_labels(tab, s$gene, rows)
+        if (!is.null(s$gene)) v$symbol <- gene_labels(tab, s, rows)
         if (!is.null(s[["mean"]]) && !isTRUE(s$mean_log)) {
           v$baseMean <- column(tab, s[["mean"]], "average expression", numeric = TRUE)[rows]
         }
@@ -238,7 +285,7 @@ sandhill_quick <- local({
       if (!is.null(s$gene) && length(c(top_up, top_down))) {
         selected <- c(top_up, top_down)
         labels <- d[match(selected, rows), , drop = FALSE]
-        labels$gene <- gene_labels(tab, s$gene, selected)
+        labels$gene <- gene_labels(tab, s, selected)
         p <- p + ggrepel::geom_text_repel(data = labels, ggplot2::aes(label = gene),
                                          colour = darken(colours[as.character(labels$change)]),
                                          max.overlaps = Inf, seed = 42L, size = 3.5, show.legend = FALSE)
@@ -339,7 +386,11 @@ sandhill_quick <- local({
     if (plot == "gene_by_group") {
       genes <- as.character(column(tab, s$gene, "gene names"))
       if (is.null(s$show_gene) || !nzchar(s$show_gene)) fail("Choose a gene to show.")
-      row <- match(s$show_gene, genes)
+      # Found by its symbol or its ID, as written, then ignoring case.
+      labels <- gene_labels(tab, s, seq_along(genes))
+      row <- match(s$show_gene, labels)
+      if (is.na(row)) row <- match(s$show_gene, genes)
+      if (is.na(row)) row <- match(tolower(s$show_gene), tolower(labels))
       if (is.na(row)) row <- match(tolower(s$show_gene), tolower(genes))
       if (is.na(row)) fail(paste0("Could not find the gene '", s$show_gene, "'."))
       label <- if (is.null(group)) "Sample" else "Group"
@@ -354,8 +405,8 @@ sandhill_quick <- local({
         ggplot2::geom_col(data = means, ggplot2::aes(y = mean, fill = group), width = 0.65, alpha = 0.55) +
         ggplot2::geom_point(position = ggplot2::position_jitter(width = 0.12, height = 0, seed = 42L), size = 2) +
         ggplot2::scale_fill_manual(values = group_palette(group), guide = "none") +
-        ggplot2::labs(x = label, y = axis_label, title = genes[row])
-      facts <- list(gene = genes[row], means = lapply(seq_len(nrow(means)), function(i) {
+        ggplot2::labs(x = label, y = axis_label, title = labels[row])
+      facts <- list(gene = labels[row], means = lapply(seq_len(nrow(means)), function(i) {
         list(group = as.character(means$group[i]), mean = means$mean[i], n = means$n[i])
       }))
       return(finish_plot(p, facts, angled_x = TRUE))
@@ -379,7 +430,7 @@ sandhill_quick <- local({
     selected <- utils::head(order(variance, decreasing = TRUE), if (plot == "pca") 500L else 50L)
     if (plot == "variable_heatmap") {
       draw_heatmap(z_scores(x[selected, , drop = FALSE]), group,
-                   labels_row = gene_labels(tab, s$gene, selected), title = "Most variable genes")
+                   labels_row = gene_labels(tab, s, selected), title = "Most variable genes")
       return(list(facts = list(genes = length(selected), samples = ncol(x))))
     }
 
@@ -483,6 +534,7 @@ sandhill_quick <- local({
       return(list(sheets = I(sheets)))
     }
     if (request$action == "load") return(load_table(request))
+    if (request$action == "symbols") return(add_symbols(request))
     if (request$action == "pairs") {
       tab <- get_table(request$table)
       key <- as.character(column(tab, request$key, "the samples"))

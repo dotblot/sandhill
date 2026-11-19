@@ -26,9 +26,15 @@ const NODE: &str = "https://nodejs.org/";
 /// What is being installed or removed.
 #[derive(Clone, PartialEq, Eq)]
 enum Installing {
-    /// Into this library.
+    /// The missing packages for exploring tables, into this library.
     Packages(String),
     Kernel(String),
+    /// An organism package for gene symbols (with AnnotationDbi when
+    /// missing), into `library`.
+    Symbols {
+        library: String,
+        package: String,
+    },
     /// Claude Code (`claude`) or Codex (`codex`).
     Agent(String),
     Remove,
@@ -48,6 +54,7 @@ impl Installing {
         match self {
             Installing::Packages(_) => "Installing packages".into(),
             Installing::Kernel(_) => "Installing IRkernel".into(),
+            Installing::Symbols { package, .. } => format!("Installing {package}"),
             Installing::Agent(kind) => format!("Installing {}", agent_name(kind)),
             Installing::Remove => "Removing what Sandhill installed".into(),
             Installing::CreatePython { name, .. } => {
@@ -61,7 +68,9 @@ impl Installing {
     /// Which box its progress shows in.
     fn section(&self) -> Section {
         match self {
-            Installing::Packages(_) | Installing::Kernel(_) => Section::R,
+            Installing::Packages(_) | Installing::Kernel(_) | Installing::Symbols { .. } => {
+                Section::R
+            }
             Installing::CreatePython { .. } | Installing::Ipykernel(_) | Installing::Miniforge => {
                 Section::Python
             }
@@ -105,6 +114,16 @@ struct Install {
     failed: bool,
 }
 
+/// What the library being chosen is for.
+#[derive(Clone, PartialEq, Eq)]
+enum LibraryFor {
+    Kernel,
+    /// The missing packages for exploring tables.
+    Packages,
+    /// An organism package for gene symbols.
+    Symbols(String),
+}
+
 /// A question asked in its row before something runs.
 #[derive(Clone, PartialEq, Eq)]
 enum Confirm {
@@ -112,12 +131,9 @@ enum Confirm {
     Agent(String),
     /// Remove what Sandhill installed.
     Remove,
-    /// Which of R's libraries the packages (or, with `kernel`, IRkernel)
-    /// go in: asked every time, and none is ever created (Huan,
-    /// 2026-11-19).
-    Library {
-        kernel: bool,
-    },
+    /// Which of R's libraries packages or IRkernel go in: asked every
+    /// time, and none is ever created (Huan, 2026-11-19).
+    Library(LibraryFor),
     /// Add ipykernel to the environment at this prefix.
     Ipykernel(String),
     Miniforge,
@@ -245,12 +261,29 @@ impl AppWindow {
                 let missing: Vec<String> = readiness
                     .packages
                     .iter()
-                    .filter(|p| p.version.is_none())
+                    .filter(|p| p.version.is_none() && p.tool == QuickTool::Plot)
                     .map(|p| p.name.clone())
                     .collect();
                 let call = daemon.call::<QuickInstalling>(Call::QuickInstall {
                     r,
                     packages: missing,
+                    library,
+                });
+                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
+            }
+            Installing::Symbols { library, package } => {
+                let Some(r) = r else { return };
+                let packages: Vec<String> = readiness
+                    .packages
+                    .iter()
+                    .filter(|p| {
+                        p.version.is_none() && (p.name == package || p.name == "AnnotationDbi")
+                    })
+                    .map(|p| p.name.clone())
+                    .collect();
+                let call = daemon.call::<QuickInstalling>(Call::QuickInstall {
+                    r,
+                    packages,
                     library,
                 });
                 cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
@@ -749,19 +782,23 @@ impl AppWindow {
                             .label("Install…")
                             .disabled(busy || !writable)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.start.quick.confirm = Some(Confirm::Library { kernel: true });
+                                this.start.quick.confirm =
+                                    Some(Confirm::Library(LibraryFor::Kernel));
                                 cx.notify();
                             })),
                     )
                 }
                 .into_any_element(),
             );
-            if q.confirm == Some(Confirm::Library { kernel: true }) {
-                rows.push(self.quick_library_choice(r, true, busy, p, cx));
+            if q.confirm == Some(Confirm::Library(LibraryFor::Kernel)) {
+                rows.push(self.quick_library_choice(r, LibraryFor::Kernel, busy, p, cx));
             }
             rows.push(self.quick_packages_row(readiness, r, &missing, busy || !writable, p, cx));
-            if q.confirm == Some(Confirm::Library { kernel: false }) {
-                rows.push(self.quick_library_choice(r, false, busy, p, cx));
+            if let Some(Confirm::Library(
+                target @ (LibraryFor::Packages | LibraryFor::Symbols(_)),
+            )) = q.confirm.clone()
+            {
+                rows.push(self.quick_library_choice(r, target, busy, p, cx));
             }
         }
         rows.extend(self.quick_install_in(Section::R, p, cx));
@@ -1108,13 +1145,14 @@ impl AppWindow {
     fn quick_library_choice(
         &self,
         r: &sandhill_proto::QuickR,
-        kernel: bool,
+        target: LibraryFor,
         busy: bool,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let choices = r.libraries.iter().filter(|l| l.writable).map(|lib| {
             let path = lib.path.clone();
+            let target = target.clone();
             h_flex()
                 .gap(px(look::GAP_8))
                 .child(
@@ -1135,10 +1173,14 @@ impl AppWindow {
                     .label("Install Here")
                     .disabled(busy)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        let what = if kernel {
-                            Installing::Kernel(path.clone())
-                        } else {
-                            Installing::Packages(path.clone())
+                        let library = path.clone();
+                        let what = match &target {
+                            LibraryFor::Kernel => Installing::Kernel(library),
+                            LibraryFor::Packages => Installing::Packages(library),
+                            LibraryFor::Symbols(package) => Installing::Symbols {
+                                library,
+                                package: package.clone(),
+                            },
                         };
                         this.quick_install(what, cx)
                     })),
@@ -1151,10 +1193,14 @@ impl AppWindow {
             .child(
                 h_flex()
                     .gap(px(look::GAP_8))
-                    .child(div().flex_1().child(if kernel {
-                        "Install IRkernel into which library?"
-                    } else {
-                        "Install the missing packages into which library?"
+                    .child(div().flex_1().child(match &target {
+                        LibraryFor::Kernel => "Install IRkernel into which library?".to_string(),
+                        LibraryFor::Packages => {
+                            "Install the missing packages into which library?".to_string()
+                        }
+                        LibraryFor::Symbols(package) => {
+                            format!("Install {package} into which library?")
+                        }
                     }))
                     .child(
                         Button::new("quick-library-cancel")
@@ -1221,7 +1267,7 @@ impl AppWindow {
                     .label("Install Missing Packages…")
                     .disabled(busy || blocked)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.start.quick.confirm = Some(Confirm::Library { kernel: false });
+                        this.start.quick.confirm = Some(Confirm::Library(LibraryFor::Packages));
                         cx.notify();
                     })),
             );
@@ -1229,6 +1275,10 @@ impl AppWindow {
         let list = readiness.packages.iter().map(|pkg| {
             let (state, color) = match &pkg.version {
                 None if pkg.tool == QuickTool::Plot => ("missing".to_string(), p.err),
+                None if pkg.tool == QuickTool::Symbols => (
+                    "not installed: for gene symbols, when you need them".to_string(),
+                    p.muted,
+                ),
                 None => ("not installed, needed later".to_string(), p.muted),
                 Some(_) if pkg.by_sandhill => ("installed by Sandhill".into(), p.muted),
                 Some(_) => ("yours".into(), p.muted),
@@ -1249,6 +1299,25 @@ impl AppWindow {
                     },
                 ))
         });
+        // The organism packages are large: each installs on its own.
+        let symbols = readiness
+            .packages
+            .iter()
+            .filter(|pkg| pkg.tool == QuickTool::Symbols && pkg.version.is_none())
+            .filter(|pkg| pkg.name.starts_with("org."))
+            .map(|pkg| {
+                let package = pkg.name.clone();
+                Button::new(SharedString::from(format!("quick-symbols-{package}")))
+                    .small()
+                    .label(format!("Install {package}…"))
+                    .disabled(busy)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.start.quick.confirm =
+                            Some(Confirm::Library(LibraryFor::Symbols(package.clone())));
+                        cx.notify();
+                    }))
+            })
+            .collect::<Vec<_>>();
         v_flex()
             .child(head)
             .child(
@@ -1258,6 +1327,18 @@ impl AppWindow {
                     .gap(px(look::GAP_2))
                     .children(list),
             )
+            .when(!symbols.is_empty(), |d| {
+                d.child(
+                    look::settings_row(
+                        "Gene symbols",
+                        Some(look::settings_detail(
+                            "Explore a Table names genes by symbol with org.Hs.eg.db (human) or org.Mm.eg.db (mouse), about 90 MB each. Install one when you need it.",
+                            p,
+                        )),
+                    )
+                    .children(symbols),
+                )
+            })
             .into_any_element()
     }
 

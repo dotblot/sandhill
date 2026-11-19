@@ -24,6 +24,8 @@ const CRAN: &str = "https://cloud.r-project.org";
 
 /// The packages Quick Tools uses: `(name, from Bioconductor, what for)`.
 /// Phase 1 is Quick Plot; Quick Analysis adds its packages when it comes.
+/// The organism packages for gene symbols are large and installed only
+/// when wanted (Huan, 2026-11-19; `docs/design/gene-symbols-plan.md`).
 pub const PACKAGES: &[(&str, bool, QuickTool)] = &[
     ("jsonlite", false, QuickTool::Plot),
     ("ggplot2", false, QuickTool::Plot),
@@ -32,6 +34,9 @@ pub const PACKAGES: &[(&str, bool, QuickTool)] = &[
     ("readxl", false, QuickTool::Plot),
     ("writexl", false, QuickTool::Plot),
     ("svglite", false, QuickTool::Plot),
+    ("AnnotationDbi", true, QuickTool::Symbols),
+    ("org.Hs.eg.db", true, QuickTool::Symbols),
+    ("org.Mm.eg.db", true, QuickTool::Symbols),
 ];
 
 /// The agents Getting Ready offers: `(kind, how Sandhill installs it, the

@@ -17,6 +17,9 @@ pub enum QuickTool {
     Differential,
     /// Quick Analysis: enrichment.
     Enrichment,
+    /// Gene symbols for Ensembl and Entrez IDs: the organism packages,
+    /// installed only when needed (Huan, 2026-11-19).
+    Symbols,
 }
 
 /// One R package Quick Tools uses.
@@ -516,6 +519,11 @@ pub struct QuickCardTable {
     pub count: Option<Known<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ratio: Option<Known<String>>,
+    /// The column plots label genes by: gene symbols added for the gene
+    /// column's IDs (`docs/design/gene-symbols-plan.md`). The gene column
+    /// itself stays the IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Known<String>>,
     /// Gene names that look like Excel dates (a warning on the table).
     #[serde(default)]
     pub dates: u64,
@@ -683,9 +691,13 @@ pub struct QuickSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ratio: Option<String>,
     /// [`QuickPlot::GeneByGroup`]: the gene to show, as written in the gene
-    /// column.
+    /// column or the label column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_gene: Option<String>,
+    /// The column genes are labelled by (symbols), else the gene column;
+    /// a gene with no label keeps its ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// What a Quick Tools run is asked to do. Sent to R as JSON, never as code.
@@ -724,6 +736,27 @@ pub enum QuickRequest {
         readme: Vec<(String, String)>,
         sheets: Vec<(String, String)>,
     },
+    /// Adds the gene symbols of `column`'s Ensembl or Entrez `ids` for
+    /// `organism` (`human` or `mouse`) to `table` as the column `output`,
+    /// else the first free of `symbol`, `symbol_2`…, beside `column`.
+    /// Version endings (`.17`) are dropped before matching.
+    Symbols {
+        table: String,
+        column: String,
+        ids: GeneIds,
+        organism: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
+}
+
+/// The organism package that has gene symbols for `organism`.
+pub fn symbols_package(organism: &str) -> Option<&'static str> {
+    match organism {
+        "human" => Some("org.Hs.eg.db"),
+        "mouse" => Some("org.Mm.eg.db"),
+        _ => None,
+    }
 }
 
 /// What a Quick Tools run returned.

@@ -19,6 +19,16 @@ const FACT_LABEL: f32 = 92.;
 /// The width of a sample's name beside its group choices.
 const SAMPLE_LABEL: f32 = 64.;
 
+/// The table names genes by Ensembl or Entrez IDs, which symbols can
+/// replace on plots.
+fn ids_to_name(table: &sandhill_proto::QuickCardTable) -> bool {
+    table.gene.as_ref().and_then(Known::usable).is_some()
+        && matches!(
+            table.gene_ids.as_ref().and_then(Known::usable),
+            Some(sandhill_proto::GeneIds::Ensembl | sandhill_proto::GeneIds::Entrez)
+        )
+}
+
 /// One preference for all Explore windows, loaded on first use.
 struct ExploreLayout(Layout);
 
@@ -716,6 +726,22 @@ impl Workbench {
         }
         if let Some(error) = &q.error {
             body = body.child(div().text_color(p.err).child(error.clone()));
+            // A template's packages are installed from Getting Ready.
+            if error.contains("Missing R packages") {
+                body = body.child(
+                    Button::new("quick-open-ready")
+                        .small()
+                        .label("Open Getting Ready…")
+                        .on_click(|_, _, cx| {
+                            cx.defer(|cx| {
+                                crate::shell::app_window::show_welcome(
+                                    Some(crate::welcome::start_screen::StartMode::Ready),
+                                    cx,
+                                )
+                            });
+                        }),
+                );
+            }
         }
         if let Some(path) = &q.exported {
             let at = path.clone();
@@ -902,6 +928,7 @@ impl Workbench {
             QuickTableKind::Results => {
                 card = card
                     .child(self.fact(Item::Gene, "Genes", gene, cx))
+                    .children(self.symbols_line(table, &p, cx))
                     .child(self.fact(Item::Fc, "Fold change", column(&table.fc), cx))
                     .child(self.fact(Item::Padj, "Adjusted p", column(&table.padj), cx))
                     .child(self.fact(Item::Mean, "Average", column(&table.mean), cx));
@@ -946,6 +973,7 @@ impl Workbench {
                 let samples = table.samples.as_ref().and_then(Known::usable);
                 card = card
                     .child(self.fact(Item::Gene, "Genes", gene, cx))
+                    .children(self.symbols_line(table, &p, cx))
                     .child(
                         div()
                             .pl(px(FACT_LABEL))
@@ -978,16 +1006,82 @@ impl Workbench {
             }
             QuickTableKind::SampleSheet | QuickTableKind::Unknown => {}
         }
-        // No Quick Plot needs the organism: it shows once known.
-        if let Some(organism) = q.card.organism.as_ref().filter(|o| o.usable().is_some()) {
+        // No Quick Plot needs the organism: it shows once known, or when
+        // gene symbols need it.
+        let organism = q.card.organism.as_ref().filter(|o| o.usable().is_some());
+        if organism.is_some() || ids_to_name(table) {
             card = card.child(self.fact(
                 Item::Organism,
                 "Organism",
-                Some((organism.value.clone(), organism.from)),
+                organism.map(|o| (o.value.clone(), o.from)),
                 cx,
             ));
         }
         card.into_any_element()
+    }
+
+    /// Under the genes: gene symbols for Ensembl or Entrez IDs (Huan,
+    /// 2026-11-19; `docs/design/gene-symbols-plan.md`): Add Gene Symbols,
+    /// or, once added, Use IDs Instead.
+    fn symbols_line(
+        &self,
+        table: &sandhill_proto::QuickCardTable,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !ids_to_name(table) {
+            return None;
+        }
+        let q = self.quick.as_ref()?;
+        let busy = q.busy.is_some();
+        let line = h_flex()
+            .pl(px(FACT_LABEL))
+            .gap(px(look::GAP_8))
+            .text_color(p.muted);
+        if let Some(column) = table.labels.as_ref().and_then(Known::usable) {
+            return Some(
+                line.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(format!("Plots name genes by the symbols in {column}.")),
+                )
+                .child(
+                    Button::new("quick-use-ids")
+                        .small()
+                        .label("Use IDs Instead")
+                        .disabled(busy)
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.quick_edit(Edit::Labels(None), cx)),
+                        ),
+                )
+                .into_any_element(),
+            );
+        }
+        let organism = q.card.organism.as_ref().and_then(Known::usable);
+        let Some(package) = organism.and_then(|o| sandhill_proto::symbols_package(o)) else {
+            return Some(
+                line.child("Gene symbols need the organism: human or mouse.")
+                    .into_any_element(),
+            );
+        };
+        Some(
+            line.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(format!("Add a symbol for each gene, from {package}.")),
+            )
+            .child(
+                Button::new("quick-add-symbols")
+                    .small()
+                    .primary()
+                    .label("Add Gene Symbols")
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.quick_add_symbols(cx))),
+            )
+            .into_any_element(),
+        )
     }
 
     fn groups_summary(&self, samples: &[String]) -> Option<(String, sandhill_proto::QuickFrom)> {
