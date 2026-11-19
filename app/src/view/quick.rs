@@ -519,20 +519,46 @@ impl Workbench {
     }
 
     fn quick_header(panel: QuickPanel, id: WindowId, p: &Palette) -> Div {
-        Self::strip(p).child(
-            h_flex()
-                .id(("quick-panel-header", panel as usize))
-                .flex_1()
-                .self_stretch()
-                .min_w_0()
-                .pl(px(look::GAP_8))
-                .cursor(CursorStyle::OpenHand)
-                .child(panel.title())
-                .on_drag(DraggedPanel { panel, from: id }, |dragged, _, _, cx| {
-                    cx.stop_propagation();
-                    cx.new(|_| *dragged)
-                }),
-        )
+        Self::strip(p).child(Self::quick_title(panel, id).flex_1())
+    }
+
+    /// A panel's name, which drags the panel.
+    fn quick_title(panel: QuickPanel, id: WindowId) -> Stateful<Div> {
+        h_flex()
+            .id(("quick-panel-header", panel as usize))
+            .self_stretch()
+            .min_w_0()
+            .pl(px(look::GAP_8))
+            .cursor(CursorStyle::OpenHand)
+            .child(panel.title())
+            .on_drag(DraggedPanel { panel, from: id }, |dragged, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| *dragged)
+            })
+    }
+
+    /// The table panel's header: its name, then the Data Explorer's own
+    /// tools (search, filter, export, read again, a window of its own,
+    /// settings), as the project window shows them above a table; they
+    /// scroll sideways when the panel is narrow.
+    fn quick_explorer_header(
+        explorer: &Entity<crate::panes::explorer::Explorer>,
+        id: WindowId,
+        p: &Palette,
+        cx: &App,
+    ) -> Div {
+        Self::strip(p)
+            .child(Self::quick_title(QuickPanel::Explorer, id).flex_none())
+            .child(
+                h_flex()
+                    .id("quick-explorer-tools")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_x_scroll()
+                    .restrict_scroll_to_axis()
+                    .child(explorer.read(cx).toolbar()),
+            )
     }
 
     fn render_quick_panel(
@@ -570,7 +596,7 @@ impl Workbench {
             return pane(&p)
                 .flex_1()
                 .h_full()
-                .child(Self::quick_header(QuickPanel::Explorer, id, &p))
+                .child(Self::quick_explorer_header(explorer, id, &p, cx))
                 .child(div().flex_1().min_h_0().child(explorer.clone()))
                 .into_any_element();
         }
