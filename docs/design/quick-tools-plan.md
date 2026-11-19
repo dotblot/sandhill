@@ -200,26 +200,33 @@ lower"). This comes from the template, not from AI.
   asked once per session, pinned above the message box as in projects.
 
 ## 8. Where things are kept
-- Opening a table first asks, in a card in the trust card's style, where
-  to keep the session's files: "Keep results in", the folder (the
-  table's own folder by default; Change… opens the system's folder
-  window), the name of the folder Sandhill will make there, then OK
-  (default, Enter) and Cancel. With tables from several folders, the
-  first table's folder is the default. A folder Sandhill can't write to
-  says so, and OK waits for another choice.
-- On OK, Sandhill makes `<first table's name> (Sandhill)/` there (a
-  taken name is numbered, "de_results (Sandhill) 2") with copies of the
-  tables (the originals stay as they are), `results/` for exports,
-  `steps.R`, and `.sandhill/quick.json` with the card and the tables.
-- The daemon trusts that session folder when it makes it, and never asks
-  about it again. Only the folder Sandhill made is trusted, not the
-  folder around it (Huan, 2026-11-19: Downloads may later hold projects
-  that should still be asked about).
-- This Mac remembers the session folders for the Recent sessions list. A
-  folder that was moved or deleted shows "Not found" with Remove.
-- A session is a project the daemon knows, marked as quick, so kernels,
-  the journal and file history work as in any project. It is listed on the
-  Quick Tools page, and under Projects only after Open as Project.
+Changed by Huan (2026-11-19, after phase 1 was built): opening a table
+makes nothing beside it, and the folder is made only when the user agrees,
+with the name and place they choose.
+- Opening tables starts the session in Sandhill's own storage, the
+  daemon's `explore/<id>` folder: links to the tables (which stay where
+  they are), `results/`, and `.sandhill/quick.json` with the card and the
+  tables' own paths. The daemon trusts `explore/`, its own folder. These
+  sessions aren't listed as recent projects.
+- "Keep the plots and steps from de_results?" asks, in a card in the
+  trust card's style, on Save Session…, Export…, Open as Project, and on
+  closing the window after making a plot, a table or an export. It shows
+  the folder name ("de_results (Sandhill)" at first, editable) and where it
+  goes (the first table's folder at first; Change… opens the system's
+  folder window), then Keep, Don't Keep (only when closing) and Cancel. A
+  name already taken, or a folder Sandhill can't write to, says so and Keep
+  waits.
+- On Keep, Sandhill makes the folder with copies of the tables, the
+  results, `steps.R` and the card, trusts that folder alone (not the folder
+  around it: Downloads may later hold projects that should still be asked
+  about), and lists it in Recent. What the session makes afterwards is
+  copied there too.
+- Closing the window ends the session's R. A session not kept is deleted
+  from Sandhill's storage, so a table looked at and closed leaves nothing.
+  Sessions left there when Sandhill quits are deleted after seven days
+  untouched.
+- A kept folder reopens from Recent as its own session; Show in Finder
+  replaces Save Session… in its title bar.
 - This Mac only.
 
 ## 9. How it is built
@@ -283,8 +290,9 @@ Written into the decision files, with the date, once approved.
   lists to a web server.
 - The window's three columns and their widths (section 3).
 - AI suggestions need a click before a plot uses them (section 4).
-- Each session's folder, chosen in a dialog: next to the table by
-  default, trusted alone (section 8).
+- Each session's folder is made only when the user keeps it: the name
+  and place are theirs to change, next to the table by default, trusted
+  alone (section 8).
 
 ## 14. Checks
 - Daemon tests without a kernel: recognition cases in

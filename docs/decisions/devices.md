@@ -56,7 +56,13 @@ where an older plan differs, this wins.
   device and the folder it is in, one sentence, then full-width buttons
   stacked: Trust Folder (default, Enter) and Open in Restricted Mode
   (Escape, or a click outside the card).
-  An Explore a Table session (Huan, 2026-11-19) first asks where to keep its
-  files, the table's own folder by default; Sandhill makes
-  "<table> (Sandhill)" there and trusts that folder without asking, but
+  An Explore a Table session (Huan, 2026-11-19) makes nothing beside the
+  tables when they open: it starts in Sandhill's own storage (the daemon's
+  `explore/` folder, trusted, holding links to the tables), which a
+  session not kept leaves when its window closes. Sandhill asks "Keep the
+  plots and steps from <table>?" on Save Session…, Export…, Open as
+  Project, and closing after making a plot or export (Keep, Don't Keep,
+  Cancel); the user may change the folder name ("<table> (Sandhill)" at
+  first) and where it goes (the table's folder at first). Kept, it gets
+  copies of the tables, `results/` and `steps.R`, and is trusted alone,
   not the folder around it.

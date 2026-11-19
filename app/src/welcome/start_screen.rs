@@ -723,7 +723,7 @@ impl AppWindow {
                                 .map(|path| path.to_string_lossy().into_owned())
                                 .partition(|path| crate::quick::is_table(path));
                             if !tables.is_empty() {
-                                this.quick_ask_folder(tables, cx);
+                                this.quick_open(tables, cx);
                             }
                             if !folders.is_empty() {
                                 this.open_from_start(sandhill_link::LOCAL.to_string(), folders, window, cx);
@@ -745,7 +745,6 @@ impl AppWindow {
             .children(self.connectors_overlay(cx))
             .children(self.render_start_dialog(cx))
             .children(self.start.folder_dialog.clone())
-            .children(self.render_quick_folder_card(cx))
             .into_any_element()
     }
 

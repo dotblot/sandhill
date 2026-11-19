@@ -34,17 +34,47 @@ impl Daemon {
         })?)
     }
 
-    pub(super) async fn quick_create(&self, tables: Vec<String>, parent: String) -> Result<Value> {
+    /// Sandhill's storage for sessions not kept yet.
+    fn explore_dir(&self) -> PathBuf {
+        self.state.root().join("explore")
+    }
+
+    pub(super) async fn quick_start(&self, tables: Vec<String>) -> Result<Value> {
         let journal = self.journal.clone();
+        let explore = self.explore_dir();
         let made = blocking(move || {
-            let made = folder::create(&tables, &parent)?;
-            // Sandhill made it and only copies tables into it; the folder
-            // around it keeps its own trust (Huan, 2026-11-19).
-            projects::trust::trust(&journal, &made.to_string_lossy())?;
+            let made = folder::start(&explore, &tables)?;
+            // Sandhill's own storage, holding only links to tables.
+            projects::trust::trust(&journal, &explore.to_string_lossy())?;
             Ok(made)
         })
         .await?;
         Ok(Value::String(made.to_string_lossy().into_owned()))
+    }
+
+    pub(super) async fn quick_keep(
+        &self,
+        project: String,
+        parent: String,
+        name: String,
+    ) -> Result<Value> {
+        let root = PathBuf::from(projects::normalize(&project)?);
+        let journal = self.journal.clone();
+        let kept = blocking(move || {
+            let kept = folder::keep(&root, &parent, &name)?;
+            // The user asked for it and Sandhill made it; the folder around
+            // it keeps its own trust (Huan, 2026-11-19).
+            projects::trust::trust(&journal, &kept.to_string_lossy())?;
+            Ok(kept)
+        })
+        .await?;
+        Ok(Value::String(kept.to_string_lossy().into_owned()))
+    }
+
+    pub(super) async fn quick_discard(&self, project: String) -> Result<Value> {
+        let explore = self.explore_dir();
+        blocking(move || folder::discard(&explore, Path::new(&project))).await?;
+        Ok(Value::Null)
     }
 
     pub(super) async fn quick_add_tables(
@@ -64,9 +94,24 @@ impl Daemon {
         )?)
     }
 
+    /// Saves what the user changed on the card; where the session lives and
+    /// its tables' sources stay the daemon's.
     pub(super) async fn save_quick_card(&self, project: String, card: QuickCard) -> Result<Value> {
         let root = PathBuf::from(projects::normalize(&project)?);
-        blocking(move || folder::save_card(&root, &card)).await?;
+        blocking(move || {
+            let stored = folder::card(&root)?;
+            folder::save_card(
+                &root,
+                &QuickCard {
+                    sources: stored.sources,
+                    scratch: stored.scratch,
+                    kept: stored.kept,
+                    ..card
+                },
+            )?;
+            folder::mirror(&root)
+        })
+        .await?;
         Ok(Value::Null)
     }
 
@@ -137,7 +182,11 @@ impl Daemon {
         // Recorded as asked, with names relative to the folder, so steps.R
         // still runs after the folder moves.
         let step = request.clone();
-        blocking(move || run::record_step(&root, &step)).await?;
+        blocking(move || {
+            run::record_step(&root, &step)?;
+            folder::mirror(&root)
+        })
+        .await?;
         Ok(serde_json::to_value(result)?)
     }
 }

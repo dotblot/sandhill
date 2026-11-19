@@ -265,6 +265,7 @@ impl Render for Workbench {
             .children(self.render_palette(cx))
             .children(self.render_signature(cx))
             .children(self.render_close_card(cx))
+            .children(self.render_quick_keep(cx))
     }
 }
 

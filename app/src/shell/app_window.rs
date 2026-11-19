@@ -294,9 +294,9 @@ fn open_main(places: Places, cx: &mut App) {
 }
 
 /// Opens the Explore a Table session in `folder` on this Mac in its own window,
-/// or brings its window forward, and puts it first in Recent sessions.
+/// or brings its window forward. Only kept sessions go in Recent; the
+/// caller remembers them.
 pub(crate) fn open_quick(folder: String, cx: &mut App) {
-    crate::prefs::remember_quick_session(&folder);
     let open = cx
         .global::<Windows>()
         .quick
@@ -591,6 +591,8 @@ pub struct AppWindow {
     pub(crate) resource_manager: Option<crate::welcome::resource_manager::Manager>,
     focus: FocusHandle,
     project_scroll: ScrollHandle,
+    /// An Explore a Table window's name as last shown in its title.
+    quick_title: String,
 }
 
 impl AppWindow {
@@ -633,6 +635,14 @@ impl AppWindow {
                 }
                 return true;
             }
+            // An Explore a Table window with something made and not kept
+            // asks first (Huan, 2026-11-19).
+            if this.read(cx).quick
+                && let Some(workbench) = this.read(cx).tabs.first().map(|t| t.workbench.clone())
+                && workbench.update(cx, |wb, cx| wb.quick_close_requested(window, cx))
+            {
+                return false;
+            }
             if !this.read(cx).any_dirty(cx) {
                 this.update(cx, |this, cx| quit::retain(this, cx));
                 quit_if_last(cx);
@@ -657,6 +667,7 @@ impl AppWindow {
             current: None,
             focus: cx.focus_handle(),
             project_scroll: ScrollHandle::new(),
+            quick_title: String::new(),
         };
         for place in &places.tabs {
             if let Some(id) = this.add_tab(place.host.clone(), place.path.clone(), window, cx)
@@ -726,6 +737,7 @@ impl AppWindow {
         cx: &mut Context<Self>,
     ) {
         let wb = workbench.read(cx);
+        let quick_name = self.quick.then(|| wb.quick_name());
         let info = TabInfo {
             project: wb.project.clone(),
             home: wb.about.as_ref().map(|a| a.home.clone()),
@@ -743,6 +755,12 @@ impl AppWindow {
             cx.notify();
         }
         if tab.info == info {
+            // The session's name comes once its card is read, or kept.
+            if let Some(name) = quick_name
+                && name != self.quick_title
+            {
+                self.changed(window, cx);
+            }
             return;
         }
         if let Some(project) = &info.project {
@@ -783,7 +801,18 @@ impl AppWindow {
         }
         let places = self.places();
         if self.quick {
-            window.set_window_title(&format!("{} · Explore", title(&places)));
+            let raw = self
+                .tabs
+                .first()
+                .map(|t| t.workbench.read(cx).quick_name())
+                .unwrap_or_default();
+            let name = if raw.is_empty() {
+                title(&places)
+            } else {
+                raw.clone()
+            };
+            window.set_window_title(&format!("{name} · Explore"));
+            self.quick_title = raw;
             cx.notify();
             return;
         }
@@ -1273,16 +1302,12 @@ impl Render for AppWindow {
             .relative()
             .size_full()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
                 if quit::active(cx) {
                     cx.stop_propagation();
                     if let Some(answer) = quit::key_answer(&event.keystroke.key) {
                         cx.defer(move |cx| quit::answer(answer, cx));
                     }
-                    return;
-                }
-                if this.welcome && this.quick_folder_keys(&event.keystroke.key, cx) {
-                    cx.stop_propagation();
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenProject, window, cx| {

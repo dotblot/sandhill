@@ -32,21 +32,14 @@ struct Install {
     failed: bool,
 }
 
-/// Tables waiting for the "Keep results in" answer.
-struct Pending {
-    tables: Vec<String>,
-    parent: String,
-    problem: Option<String>,
-    saving: bool,
-}
-
 #[derive(Default)]
 pub(crate) struct QuickPage {
     readiness: Option<Result<QuickReadiness, String>>,
     checking: bool,
     install: Option<Install>,
     details: bool,
-    pending: Option<Pending>,
+    /// Tables being opened.
+    opening: bool,
     /// A recent session whose actions are shown, and one asked about
     /// deleting.
     actions: Option<String>,
@@ -260,25 +253,44 @@ impl AppWindow {
         .detach();
     }
 
-    /// Tables chosen or dropped: ask where their session's files go.
-    pub(super) fn quick_ask_folder(&mut self, tables: Vec<String>, cx: &mut Context<Self>) {
+    /// Tables chosen or dropped open at once, in Sandhill's own storage:
+    /// nothing is made beside them until the user keeps the session
+    /// (Huan, 2026-11-19).
+    pub(super) fn quick_open(&mut self, tables: Vec<String>, cx: &mut Context<Self>) {
         let tables: Vec<String> = tables
             .into_iter()
             .filter(|t| crate::quick::is_table(t))
             .collect();
-        let Some(first) = tables.first() else {
+        if tables.is_empty() {
             self.start.problem = Some("Sandhill explores CSV, TSV, text and Excel tables.".into());
             cx.notify();
             return;
+        }
+        let Some(daemon) = self.local_daemon() else {
+            return;
         };
+        if self.start.quick.opening {
+            return;
+        }
+        self.start.quick.opening = true;
         self.start.page = Page::Explore;
-        self.start.quick.pending = Some(Pending {
-            parent: parent_of(first),
-            tables,
-            problem: None,
-            saving: false,
-        });
+        let started = daemon.call::<String>(Call::QuickStart { tables });
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let started = started.await;
+            this.update(cx, |this, cx| {
+                this.start.quick.opening = false;
+                match started {
+                    Ok(folder) => {
+                        cx.defer(move |cx| crate::shell::app_window::open_quick(folder, cx))
+                    }
+                    Err(err) => this.start.problem = Some(format!("{err:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn quick_choose_tables(&mut self, cx: &mut Context<Self>) {
@@ -296,73 +308,7 @@ impl AppWindow {
                 .into_iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect();
-            this.update(cx, |this, cx| this.quick_ask_folder(tables, cx))
-                .ok();
-        })
-        .detach();
-    }
-
-    fn quick_change_folder(&mut self, cx: &mut Context<Self>) {
-        let picked = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Keep Results Here".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = picked.await else {
-                return;
-            };
-            let Some(folder) = paths.into_iter().next() else {
-                return;
-            };
-            this.update(cx, |this, cx| {
-                if let Some(pending) = &mut this.start.quick.pending {
-                    pending.parent = folder.to_string_lossy().into_owned();
-                    pending.problem = None;
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// OK: makes the session folder, trusted, and opens its window.
-    fn quick_create(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
-            return;
-        };
-        let Some(pending) = &mut self.start.quick.pending else {
-            return;
-        };
-        if pending.saving {
-            return;
-        }
-        pending.saving = true;
-        let made = daemon.call::<String>(Call::QuickCreate {
-            tables: pending.tables.clone(),
-            parent: pending.parent.clone(),
-        });
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let made = made.await;
-            this.update(cx, |this, cx| {
-                match made {
-                    Ok(folder) => {
-                        this.start.quick.pending = None;
-                        cx.defer(move |cx| crate::shell::app_window::open_quick(folder, cx));
-                    }
-                    Err(err) => {
-                        if let Some(pending) = &mut this.start.quick.pending {
-                            pending.saving = false;
-                            pending.problem = Some(format!("{err:#}"));
-                        }
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
+            this.update(cx, |this, cx| this.quick_open(tables, cx)).ok();
         })
         .detach();
     }
@@ -773,7 +719,7 @@ impl AppWindow {
                     .iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect();
-                this.quick_ask_folder(tables, cx);
+                this.quick_open(tables, cx);
             }))
             .child(icon("table").size(px(look::ICON_LARGE)).text_color(p.muted))
             .child(div().child("Drop a table here"))
@@ -805,9 +751,10 @@ impl AppWindow {
             .enumerate()
             .map(|(ix, path)| {
                 // Explored tables are on this Mac, which the app shares with
-                // its daemon.
+                // its daemon. Only kept sessions are listed: their folder's
+                // own name is the one the user gave.
                 let found = std::path::Path::new(&path).is_dir();
-                let name = crate::quick::session_name(&path);
+                let name = crate::panes::files::base_name(&path).to_string();
                 let folder = parent_of(&path);
                 let open_path = path.clone();
                 let mut row = v_flex().child(
@@ -947,131 +894,6 @@ impl AppWindow {
             })
             .collect();
         Some(look::settings_group("Tables you explored", rows, p).into_any_element())
-    }
-
-    /// "Keep results in": where the session's folder is made (Huan,
-    /// 2026-11-19), in the trust card's style.
-    pub(super) fn render_quick_folder_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let pending = self.start.quick.pending.as_ref()?;
-        let p = *Palette::get(cx);
-        let first = pending.tables.first()?;
-        let stem = std::path::Path::new(first)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let count = pending.tables.len();
-        let title = if count == 1 {
-            format!("Open {}?", crate::panes::files::base_name(first))
-        } else {
-            format!("Open {count} tables?")
-        };
-        let wide = |button: Button| button.w_full();
-        let card = v_flex()
-            .id("quick-folder-card")
-            .occlude()
-            .w(px(420.))
-            .max_w(relative(0.95))
-            .p(px(20.))
-            .gap(px(look::GAP_12))
-            .rounded(px(look::RADIUS))
-            .bg(p.panel)
-            .border_1()
-            .border_color(p.glass_edge)
-            .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                h_flex()
-                    .gap(px(look::GAP_12))
-                    .child(icon("table").size(px(look::ICON_LARGE)))
-                    .child(
-                        div()
-                            .text_size(px(look::title()))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .gap(px(look::GAP_2))
-                    .child(div().text_color(p.muted).child("Keep results in"))
-                    .child(
-                        h_flex()
-                            .gap(px(look::GAP_8))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(pending.parent.clone()),
-                            )
-                            .child(
-                                Button::new("quick-change-folder")
-                                    .small()
-                                    .label("Change…")
-                                    .disabled(pending.saving)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.quick_change_folder(cx)
-                                    })),
-                            ),
-                    )
-                    .child(div().text_size(px(look::small())).text_color(p.muted).child(format!(
-                        "Sandhill makes the folder “{stem} (Sandhill)” there, with copies of the tables and your plots and results. Your files stay as they are."
-                    ))),
-            )
-            .when_some(pending.problem.clone(), |d, problem| {
-                d.child(div().text_color(p.err).child(problem))
-            })
-            .child(
-                v_flex()
-                    .gap(px(look::GAP_8))
-                    .child(wide(
-                        Button::new("quick-folder-ok")
-                            .primary()
-                            .label(if pending.saving { "Opening…" } else { "OK" })
-                            .disabled(pending.saving || pending.problem.is_some())
-                            .on_click(cx.listener(|this, _, _, cx| this.quick_create(cx))),
-                    ))
-                    .child(wide(
-                        Button::new("quick-folder-cancel")
-                            .label("Cancel")
-                            .disabled(pending.saving)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.start.quick.pending = None;
-                                cx.notify();
-                            })),
-                    )),
-            );
-        Some(
-            deferred(
-                div()
-                    .id("quick-folder-backdrop")
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(p.shadow.opacity(0.35))
-                    .child(card),
-            )
-            .with_priority(3)
-            .into_any_element(),
-        )
-    }
-
-    /// Enter opens, Escape cancels, while the card shows.
-    pub(crate) fn quick_folder_keys(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        if self.start.quick.pending.is_none() {
-            return false;
-        }
-        match key {
-            "enter" => self.quick_create(cx),
-            "escape" => {
-                self.start.quick.pending = None;
-                cx.notify();
-            }
-            _ => return false,
-        }
-        true
     }
 }
 

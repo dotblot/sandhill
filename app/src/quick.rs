@@ -56,6 +56,30 @@ pub(crate) struct Inputs {
     pub gene: Entity<InputState>,
     pub padj: Entity<InputState>,
     pub lfc: Entity<InputState>,
+    /// The kept folder's name.
+    pub keep_name: Entity<InputState>,
+}
+
+/// Why the user is asked to keep the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeepReason {
+    /// Closing the window after making something.
+    Close,
+    /// Save Session….
+    Save,
+    /// Export… writes files, so they need a folder.
+    Export,
+    /// Open as Project needs a folder to open.
+    OpenProject,
+}
+
+/// The question "Keep the plots and steps?", showing.
+pub(crate) struct Keeping {
+    pub reason: KeepReason,
+    /// The folder the kept one goes in: the first table's at first.
+    pub parent: String,
+    pub busy: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Default)]
@@ -87,6 +111,12 @@ pub(crate) struct Quick {
     pub inputs: Option<Inputs>,
     /// Where the last export went.
     pub exported: Option<String>,
+    /// A plot or table was made, or something exported: closing asks
+    /// whether to keep the session (Huan, 2026-11-19).
+    pub made: bool,
+    pub keeping: Option<Keeping>,
+    /// The window is closing after the question was answered.
+    pub closing: bool,
 }
 
 pub(crate) fn is_table(name: &str) -> bool {
@@ -507,6 +537,7 @@ impl Workbench {
                 gene: field("Gene, like STAT1", window, cx),
                 padj: field("0.05", window, cx),
                 lfc: field("1", window, cx),
+                keep_name: field("Folder name", window, cx),
             };
             let gene = inputs.gene.clone();
             cx.subscribe_in(&gene, window, |this, _, event: &InputEvent, _, cx| {
@@ -959,6 +990,7 @@ impl Workbench {
                         quick.busy = None;
                         match made {
                             Ok(result) => {
+                                quick.made = true;
                                 quick.sentence = result.sentence;
                                 if let Some(output) = result.output {
                                     quick.outputs.retain(|(n, _)| *n != output);
@@ -996,7 +1028,7 @@ impl Workbench {
         if quick.busy.is_some() {
             return;
         }
-        let name = session_name(&project);
+        let name = self.quick_name();
         let workbook = format!("results/{}.xlsx", file_safe(&name));
         let mut sheets: Vec<(String, String)> = quick
             .card
@@ -1008,15 +1040,13 @@ impl Workbench {
         sheets.extend(quick.outputs.iter().map(|(n, _)| (n.clone(), n.clone())));
         let readme = readme(&quick.card, &name);
         let methods_text = methods(&quick.card);
-        let written = daemon.call::<QuickResult>(Call::QuickRun {
-            session,
-            project: project.clone(),
-            request: QuickRequest::Workbook {
-                path: workbook.clone(),
-                readme,
-                sheets,
-            },
-        });
+        let workbook_call = QuickRequest::Workbook {
+            path: workbook.clone(),
+            readme,
+            sheets,
+        };
+        // methods.txt first, so the workbook's run copies both to a kept
+        // folder.
         let methods_path = format!("{project}/results/methods.txt");
         let methods_written = daemon.call::<Value>(Call::WriteFile {
             path: methods_path,
@@ -1025,24 +1055,33 @@ impl Workbench {
             base64: false,
             create: false,
         });
+        let shown_in = quick.card.kept.clone().unwrap_or_else(|| project.clone());
         if let Some(quick) = self.quick_mut() {
             quick.busy = Some("Saving the workbook…".into());
             quick.error = None;
         }
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let written = written.await;
-            let methods_written = methods_written.await;
+            let written = match methods_written.await {
+                Ok(_) => daemon
+                    .call::<QuickResult>(Call::QuickRun {
+                        session,
+                        project: project.clone(),
+                        request: workbook_call,
+                    })
+                    .await
+                    .map(|_| ()),
+                Err(err) => Err(err),
+            };
             this.update(cx, |this, cx| {
                 if let Some(quick) = this.quick_mut() {
                     quick.busy = None;
-                    match (written, methods_written) {
-                        (Ok(_), Ok(_)) => {
-                            quick.exported = Some(format!("{project}/{workbook}"));
+                    match written {
+                        Ok(()) => {
+                            quick.made = true;
+                            quick.exported = Some(format!("{shown_in}/{workbook}"));
                         }
-                        (Err(err), _) | (_, Err(err)) => {
-                            quick.error = Some(format!("Saving didn't work: {err:#}"))
-                        }
+                        Err(err) => quick.error = Some(format!("Saving didn't work: {err:#}")),
                     }
                 }
                 cx.notify();
@@ -1087,6 +1126,257 @@ impl Workbench {
             .ok();
         })
         .detach();
+    }
+
+    /// The session's name: the kept folder's, else the first table's.
+    pub(crate) fn quick_name(&self) -> String {
+        let Some(quick) = &self.quick else {
+            return String::new();
+        };
+        if let Some(kept) = &quick.card.kept {
+            return crate::panes::files::base_name(kept).to_string();
+        }
+        if quick.card.scratch
+            && let Some(first) = quick.card.sources.first()
+        {
+            let base = crate::panes::files::base_name(first);
+            return base
+                .rsplit_once('.')
+                .map_or(base, |(stem, _)| stem)
+                .to_string();
+        }
+        self.project
+            .as_deref()
+            .map(session_name)
+            .unwrap_or_default()
+    }
+
+    /// Still only in Sandhill's storage: keeping asks where first.
+    pub(crate) fn quick_unkept(&self) -> bool {
+        self.quick
+            .as_ref()
+            .is_some_and(|q| q.card.scratch && q.card.kept.is_none())
+    }
+
+    /// The folder the session's files are in for the user: where it was
+    /// kept, else its own.
+    pub(crate) fn quick_folder(&self) -> Option<String> {
+        let quick = self.quick.as_ref()?;
+        if quick.card.scratch {
+            quick.card.kept.clone()
+        } else {
+            self.project.clone()
+        }
+    }
+
+    /// Asks where to keep the session, and under which name.
+    pub(crate) fn quick_ask_keep(
+        &mut self,
+        reason: KeepReason,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = format!("{} (Sandhill)", self.quick_name());
+        let Some(quick) = &mut self.quick else {
+            return;
+        };
+        let parent = quick
+            .card
+            .sources
+            .first()
+            .and_then(|s| std::path::Path::new(s).parent())
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(|| std::env::var("HOME").ok())
+            .unwrap_or_default();
+        if let Some(inputs) = &quick.inputs {
+            inputs
+                .keep_name
+                .update(cx, |input, cx| input.set_value(name, window, cx));
+        }
+        quick.keeping = Some(Keeping {
+            reason,
+            parent,
+            busy: false,
+            error: None,
+        });
+        cx.notify();
+    }
+
+    /// Export…, Save Session… and Open as Project need a folder: they ask
+    /// to keep the session first when it isn't kept.
+    pub(crate) fn quick_needs_folder(
+        &mut self,
+        reason: KeepReason,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.quick_unkept() {
+            self.quick_ask_keep(reason, window, cx);
+        } else {
+            self.quick_after_keep(reason, window, cx);
+        }
+    }
+
+    pub(crate) fn quick_keep_change_folder(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Keep It Here".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if let Some(keeping) = this.quick.as_mut().and_then(|q| q.keeping.as_mut()) {
+                    keeping.parent = folder.to_string_lossy().into_owned();
+                    keeping.error = None;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Keep: makes the folder the user named, then does what asked for it.
+    pub(crate) fn quick_keep(&mut self, cx: &mut Context<Self>) {
+        let name = self.quick_input(|i| &i.keep_name, cx);
+        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
+            return;
+        };
+        let Some(keeping) = self.quick.as_mut().and_then(|q| q.keeping.as_mut()) else {
+            return;
+        };
+        if keeping.busy {
+            return;
+        }
+        keeping.busy = true;
+        keeping.error = None;
+        let reason = keeping.reason;
+        let kept = daemon.call::<String>(Call::QuickKeep {
+            project,
+            parent: keeping.parent.clone(),
+            name,
+        });
+        let handle = self.window_handle;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let kept = kept.await;
+            cx.update_window(handle, |_, window, cx| {
+                this.update(cx, |this, cx| {
+                    let Some(quick) = &mut this.quick else {
+                        return;
+                    };
+                    match kept {
+                        Ok(folder) => {
+                            crate::prefs::remember_quick_session(&folder);
+                            quick.card.kept = Some(folder);
+                            quick.keeping = None;
+                            this.quick_after_keep(reason, window, cx);
+                        }
+                        Err(err) => {
+                            if let Some(keeping) = &mut quick.keeping {
+                                keeping.busy = false;
+                                keeping.error = Some(format!("{err:#}"));
+                            }
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// What the folder was wanted for, once there is one.
+    fn quick_after_keep(
+        &mut self,
+        reason: KeepReason,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match reason {
+            KeepReason::Save => {}
+            KeepReason::Export => self.quick_export(cx),
+            KeepReason::Close => self.quick_finish_close(window, cx),
+            KeepReason::OpenProject => {
+                let Some(folder) = self.quick_folder() else {
+                    return;
+                };
+                let host = self.host();
+                self.quick_finish_close(window, cx);
+                cx.defer(move |cx| crate::shell::app_window::open_in_main(host, folder, cx));
+            }
+        }
+    }
+
+    /// Don't Keep: the session leaves nothing behind.
+    pub(crate) fn quick_dont_keep(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(quick) = &mut self.quick {
+            quick.keeping = None;
+        }
+        self.quick_finish_close(window, cx);
+    }
+
+    pub(crate) fn quick_cancel_keep(&mut self, cx: &mut Context<Self>) {
+        if let Some(quick) = &mut self.quick
+            && quick.keeping.as_ref().is_some_and(|k| !k.busy)
+        {
+            quick.keeping = None;
+            cx.notify();
+        }
+    }
+
+    /// The window is asked to close. With something made and not kept, it
+    /// asks whether to keep it, and stays open (`true`). Otherwise the
+    /// session is ended and the window may close (`false`).
+    pub(crate) fn quick_close_requested(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(quick) = &self.quick else {
+            return false;
+        };
+        if quick.closing {
+            return false;
+        }
+        if quick.keeping.is_some() {
+            return true;
+        }
+        if quick.made && self.quick_unkept() {
+            self.quick_ask_keep(KeepReason::Close, window, cx);
+            return true;
+        }
+        self.quick_end_session(cx);
+        false
+    }
+
+    /// Ends the session's R and removes its copy in Sandhill's storage; a
+    /// kept folder has everything made so far.
+    fn quick_end_session(&mut self, cx: &mut Context<Self>) {
+        let Some(quick) = &mut self.quick else {
+            return;
+        };
+        quick.closing = true;
+        let scratch = quick.card.scratch;
+        self.shut_down_project_kernels(cx);
+        if scratch && let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) {
+            // Sent at once; the reply isn't needed.
+            drop(daemon.call::<Value>(Call::QuickDiscard { project }));
+        }
+    }
+
+    fn quick_finish_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.quick_end_session(cx);
+        window.defer(cx, |window, _| window.remove_window());
     }
 }
 

@@ -76,27 +76,29 @@ async fn a_dropped_results_table_becomes_a_volcano_plot() {
     let (_daemon, socket) = start(&state).await;
     let client = Client::connect_unix(&socket).await.unwrap();
 
-    // The folder is made beside the table and trusted; Downloads isn't.
+    // Opening the table makes nothing beside it: the session starts in
+    // Sandhill's own storage.
     let folder: String = client
-        .call(Call::QuickCreate {
+        .call(Call::QuickStart {
             tables: vec![table.to_string_lossy().into_owned()],
-            parent: downloads.to_string_lossy().into_owned(),
         })
         .await
         .unwrap();
-    assert!(folder.ends_with("de results (Sandhill)"), "{folder}");
-    let trusted: Vec<TrustedFolder> = client.call(Call::ListTrustedFolders).await.unwrap();
-    let canonical = |p: &str| std::fs::canonicalize(p).unwrap();
     assert!(
-        trusted
-            .iter()
-            .any(|t| canonical(&t.path) == canonical(&folder))
+        folder.starts_with(&state.to_string_lossy().into_owned()),
+        "{folder}"
     );
-    assert!(
-        !trusted
-            .iter()
-            .any(|t| canonical(&t.path) == canonical(&downloads.to_string_lossy()))
-    );
+    assert_eq!(std::fs::read_dir(&downloads).unwrap().count(), 1);
+    // Opened like a project, it still isn't one of the user's recent ones.
+    client
+        .call::<Value>(Call::OpenProject {
+            path: folder.clone(),
+        })
+        .await
+        .unwrap();
+    let recent: Vec<sandhill_proto::ProjectInfo> =
+        client.call(Call::ListRecentProjects).await.unwrap();
+    assert!(recent.is_empty(), "{recent:?}");
 
     let session: SessionInfo = client
         .call(Call::StartSession {
@@ -241,4 +243,55 @@ async fn a_dropped_results_table_becomes_a_volcano_plot() {
     assert!(steps.contains("\"action\":\"load\""));
     assert!(steps.contains("\"plot\":\"volcano\""));
     assert!(Path::new(&folder).join(".sandhill/quick.R").is_file());
+
+    // Kept where and as the user says, trusted alone, with a copy of the
+    // table; later results follow it there.
+    let kept: String = client
+        .call(Call::QuickKeep {
+            project: folder.clone(),
+            parent: downloads.to_string_lossy().into_owned(),
+            name: "DE for Anna".into(),
+        })
+        .await
+        .unwrap();
+    let kept = Path::new(&kept);
+    assert_eq!(kept, downloads.join("DE for Anna"));
+    assert!(kept.join("de results.csv").is_file());
+    assert!(kept.join("steps.R").is_file());
+    let trusted: Vec<TrustedFolder> = client.call(Call::ListTrustedFolders).await.unwrap();
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap();
+    assert!(
+        trusted
+            .iter()
+            .any(|t| canonical(Path::new(&t.path)) == canonical(kept))
+    );
+    assert!(
+        !trusted
+            .iter()
+            .any(|t| canonical(Path::new(&t.path)) == canonical(&downloads))
+    );
+    run(QuickRequest::Plot {
+        plot: QuickPlot::UpDown,
+        table: "de_results".into(),
+        settings: Box::new(QuickSettings {
+            fc: Some("log2FoldChange".into()),
+            padj: Some("padj".into()),
+            ..QuickSettings::default()
+        }),
+        output: None,
+    })
+    .await
+    .unwrap();
+    let steps = std::fs::read_to_string(kept.join("steps.R")).unwrap();
+    assert!(steps.contains("\"plot\":\"up_down\""), "{steps}");
+
+    // Done with: the copy in Sandhill's storage goes; the kept folder stays.
+    client
+        .call::<Value>(Call::QuickDiscard {
+            project: folder.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(!Path::new(&folder).exists());
+    assert!(kept.join("de results.csv").is_file());
 }

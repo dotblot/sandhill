@@ -925,15 +925,30 @@ pub enum Call {
         r: String,
         packages: Vec<String>,
     },
-    /// Makes a Quick Tools session folder, `<first table's name> (Sandhill)`,
-    /// in `parent`, copies `tables` (absolute paths) into it, and trusts it.
-    /// Returns the folder's path.
-    QuickCreate {
+    /// Starts an Explore a Table session in Sandhill's own storage, with
+    /// links to `tables` (absolute paths), which stay where they are.
+    /// Nothing is made beside the tables (Huan, 2026-11-19). Returns the
+    /// session folder's path.
+    QuickStart {
         tables: Vec<String>,
-        parent: String,
     },
-    /// Copies more `tables` into the session folder `project`. Returns their
-    /// names there, in order.
+    /// Keeps a session the user agreed to keep: makes `parent/name` with
+    /// copies of the tables, the results, `steps.R` and the card, trusts it,
+    /// and from then on copies what the session writes there too. Returns
+    /// the new folder's path.
+    QuickKeep {
+        project: String,
+        parent: String,
+        name: String,
+    },
+    /// Deletes a session folder in Sandhill's own storage that the user
+    /// didn't keep.
+    QuickDiscard {
+        project: String,
+    },
+    /// Adds more `tables` to the session `project`: linked in a session in
+    /// Sandhill's storage, copied into a kept one. Returns their names
+    /// there, in order.
     QuickAddTables {
         project: String,
         tables: Vec<String>,

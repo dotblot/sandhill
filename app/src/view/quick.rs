@@ -27,11 +27,9 @@ impl Workbench {
         let Some(q) = &self.quick else {
             return div().into_any_element();
         };
-        let name = self
-            .project
-            .as_deref()
-            .map(quick::session_name)
-            .unwrap_or_default();
+        let name = self.quick_name();
+        let unkept = self.quick_unkept();
+        let folder = self.quick_folder();
         let mut tables = look::tab_capsule(&p).gap(px(1.));
         let mut any = false;
         for (ix, table) in q.card.tables.iter().enumerate() {
@@ -108,26 +106,42 @@ impl Workbench {
                     )
                     .when(any, |d| d.child(tables.min_w_0().overflow_x_hidden()))
                     .child(div().flex_1())
+                    .map(|d| match (unkept, folder) {
+                        (true, _) => d.child(
+                            Button::new("quick-save")
+                                .small()
+                                .label("Save Session…")
+                                .disabled(q.keeping.is_some())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.quick_needs_folder(quick::KeepReason::Save, window, cx)
+                                })),
+                        ),
+                        (false, Some(folder)) => d.child(
+                            Button::new("quick-reveal-folder")
+                                .small()
+                                .label("Show in Finder")
+                                .on_click(move |_, _, cx| {
+                                    cx.reveal_path(std::path::Path::new(&folder))
+                                }),
+                        ),
+                        (false, None) => d,
+                    })
                     .child(
                         Button::new("quick-export")
                             .small()
                             .label("Export…")
-                            .disabled(!ready)
-                            .on_click(cx.listener(|this, _, _, cx| this.quick_export(cx))),
+                            .disabled(!ready || q.keeping.is_some())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.quick_needs_folder(quick::KeepReason::Export, window, cx)
+                            })),
                     )
                     .child(
                         Button::new("quick-open-project")
                             .small()
                             .label("Open as Project")
+                            .disabled(q.keeping.is_some())
                             .on_click(cx.listener(|this, _, window, cx| {
-                                let Some(path) = this.project.clone() else {
-                                    return;
-                                };
-                                let host = this.host();
-                                window.remove_window();
-                                cx.defer(move |cx| {
-                                    crate::shell::app_window::open_in_main(host, path, cx)
-                                });
+                                this.quick_needs_folder(quick::KeepReason::OpenProject, window, cx)
                             })),
                     ),
             )
@@ -958,6 +972,127 @@ impl Workbench {
             );
         }
         list.into_any_element()
+    }
+
+    /// "Keep the plots and steps from de_results?" (Huan, 2026-11-19):
+    /// where and under which name, in the trust card's style. Asked on
+    /// Save Session…, Export…, Open as Project, and closing after making
+    /// something; nothing is made beside the tables before this.
+    pub(crate) fn render_quick_keep(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let q = self.quick.as_ref()?;
+        let keeping = q.keeping.as_ref()?;
+        let p = *Palette::get(cx);
+        let reason = keeping.reason;
+        let closing = reason == quick::KeepReason::Close;
+        let title = format!("Keep the plots and steps from {}?", self.quick_name());
+        let detail = match reason {
+            quick::KeepReason::Close => {
+                "Sandhill makes a folder with copies of the tables, the results and steps.R. If you don't keep them, nothing is left behind."
+            }
+            quick::KeepReason::Export => {
+                "Exported files go in a folder of their own, with copies of the tables, the results and steps.R."
+            }
+            quick::KeepReason::OpenProject => {
+                "A project needs a folder: Sandhill makes one with copies of the tables, the results and steps.R."
+            }
+            quick::KeepReason::Save => {
+                "Sandhill makes a folder with copies of the tables, the results and steps.R. What you make next goes there too."
+            }
+        };
+        let input = q.inputs.as_ref().map(|i| i.keep_name.clone());
+        let busy = keeping.busy;
+        let wide = |button: Button| button.w_full();
+        let mut buttons = v_flex().gap(px(look::GAP_8)).child(wide(
+            Button::new("quick-keep")
+                .primary()
+                .label(if busy { "Keeping…" } else { "Keep" })
+                .disabled(busy)
+                .on_click(cx.listener(|this, _, _, cx| this.quick_keep(cx))),
+        ));
+        if closing {
+            buttons = buttons.child(wide(
+                Button::new("quick-dont-keep")
+                    .label("Don't Keep")
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, window, cx| this.quick_dont_keep(window, cx))),
+            ));
+        }
+        buttons = buttons.child(wide(
+            Button::new("quick-keep-cancel")
+                .label("Cancel")
+                .disabled(busy)
+                .on_click(cx.listener(|this, _, _, cx| this.quick_cancel_keep(cx))),
+        ));
+        let card = v_flex()
+            .id("quick-keep-card")
+            .occlude()
+            .w(px(440.))
+            .max_w(relative(0.95))
+            .p(px(20.))
+            .gap(px(look::GAP_12))
+            .rounded(px(look::RADIUS))
+            .bg(p.panel)
+            .border_1()
+            .border_color(p.glass_edge)
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .text_size(px(look::title()))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
+            .child(div().text_color(p.muted).child(detail))
+            .child(
+                v_flex()
+                    .gap(px(look::GAP_4))
+                    .child(div().text_color(p.muted).child("Folder name"))
+                    .children(input.map(|i| Input::new(&i).small())),
+            )
+            .child(
+                v_flex()
+                    .gap(px(look::GAP_4))
+                    .child(div().text_color(p.muted).child("In"))
+                    .child(
+                        h_flex()
+                            .gap(px(look::GAP_8))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(keeping.parent.clone()),
+                            )
+                            .child(
+                                Button::new("quick-keep-change")
+                                    .small()
+                                    .label("Change…")
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.quick_keep_change_folder(cx)
+                                    })),
+                            ),
+                    ),
+            )
+            .when_some(keeping.error.clone(), |d, error| {
+                d.child(div().text_color(p.err).child(error))
+            })
+            .child(buttons);
+        Some(
+            deferred(
+                div()
+                    .id("quick-keep-backdrop")
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(p.shadow.opacity(0.35))
+                    .child(card),
+            )
+            .with_priority(3)
+            .into_any_element(),
+        )
     }
 }
 

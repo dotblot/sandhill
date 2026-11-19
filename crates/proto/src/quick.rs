@@ -375,6 +375,15 @@ pub struct QuickCard {
     pub groups: Option<Known<Vec<(String, String)>>>,
     #[serde(default)]
     pub cutoffs: QuickCutoffs,
+    /// The tables' own paths, as opened, in order.
+    #[serde(default)]
+    pub sources: Vec<String>,
+    /// The session lives in Sandhill's own storage, not yet kept.
+    #[serde(default)]
+    pub scratch: bool,
+    /// Where the user kept it, which what it writes is copied to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<String>,
 }
 
 /// A plot (or table) a template makes.

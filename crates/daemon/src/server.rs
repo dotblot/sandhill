@@ -283,7 +283,13 @@ impl Daemon {
             Call::InstallIrkernel { r, project } => self.install_irkernel(r, project).await?,
             Call::QuickReadiness => self.quick_readiness().await?,
             Call::QuickInstall { r, packages } => self.quick_install(r, packages).await?,
-            Call::QuickCreate { tables, parent } => self.quick_create(tables, parent).await?,
+            Call::QuickStart { tables } => self.quick_start(tables).await?,
+            Call::QuickKeep {
+                project,
+                parent,
+                name,
+            } => self.quick_keep(project, parent, name).await?,
+            Call::QuickDiscard { project } => self.quick_discard(project).await?,
             Call::QuickAddTables { project, tables } => {
                 self.quick_add_tables(project, tables).await?
             }
@@ -634,7 +640,16 @@ impl Daemon {
             }
             Call::ListRecentProjects => {
                 let journal = self.journal.clone();
-                serde_json::to_value(blocking(move || projects::recent(&journal)).await?)?
+                // Sessions not kept live in Sandhill's own storage; they
+                // aren't the user's projects.
+                let explore = self.state.root().join("explore");
+                let real = std::fs::canonicalize(&explore).unwrap_or_else(|_| explore.clone());
+                let mut recent = blocking(move || projects::recent(&journal)).await?;
+                recent.retain(|p| {
+                    let path = Path::new(&p.path);
+                    !path.starts_with(&explore) && !path.starts_with(&real)
+                });
+                serde_json::to_value(recent)?
             }
             Call::SaveProjectState { path, state } => {
                 let journal = self.journal.clone();
