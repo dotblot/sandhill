@@ -118,9 +118,36 @@ sandhill_quick <- local({
     labels
   }
 
-  finish_plot <- function(plot, facts) {
-    print(plot + ggplot2::theme_minimal(base_size = 12) +
-            ggplot2::theme(legend.position = "bottom", panel.grid.minor = ggplot2::element_blank()))
+  # The look of PubOmixR (Huan's package, Huan 2026-11-19): theme_classic at
+  # 13 pt, a thin black frame, black axis text, no grid, the title centred
+  # and the legend below. Up is red, down blue, as in its volcano plots.
+  col_up <- "#E41A1C"
+  col_up_light <- "#FB9A99"
+  col_down <- "#1F78B4"
+  col_down_light <- "#A6CEE3"
+  col_ns <- "grey70"
+  border_width <- 0.2
+  darken <- function(col, factor = 0.7) {
+    rgb <- grDevices::col2rgb(col) * factor
+    grDevices::rgb(rgb[1, ], rgb[2, ], rgb[3, ], maxColorValue = 255)
+  }
+  plot_theme <- function(angled_x = FALSE, legend = "bottom") {
+    theme <- ggplot2::theme_classic(base_size = 13) +
+      ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5),
+                     axis.line = ggplot2::element_blank(),
+                     panel.border = ggplot2::element_rect(colour = "black", fill = NA, linewidth = border_width),
+                     axis.text = ggplot2::element_text(size = 13, colour = "black"),
+                     axis.ticks = ggplot2::element_line(colour = "black", linewidth = border_width),
+                     axis.ticks.length = ggplot2::unit(4, "pt"),
+                     panel.grid.major = ggplot2::element_blank(),
+                     panel.grid.minor = ggplot2::element_blank(),
+                     legend.position = legend)
+    if (angled_x) theme <- theme + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+    theme
+  }
+
+  finish_plot <- function(plot, facts, angled_x = FALSE, legend = "bottom") {
+    print(plot + plot_theme(angled_x, legend))
     list(facts = facts)
   }
 
@@ -164,7 +191,7 @@ sandhill_quick <- local({
       change_labels <- c(paste("Higher in", comparison$higher), paste("Higher in", comparison$lower), "Not changed")
     }
     keys <- c("up", "down", "unchanged")
-    colours <- stats::setNames(c("#D55E00", "#0072B2", "#929292"), keys)
+    colours <- stats::setNames(c(col_up, col_down, col_ns), keys)
     top_up <- best(up, 10L)
     top_down <- best(down, 10L)
     facts <- list(tested = sum(tested), up = length(up), down = length(down), missing = sum(!tested),
@@ -183,26 +210,46 @@ sandhill_quick <- local({
     status[down] <- "down"
     rows <- which(tested)
     if (plot == "volcano") {
+      # PubOmixR's own volcano plot when it is installed; the same look
+      # drawn here otherwise, so a recipe runs on any computer.
+      if (requireNamespace("PubOmixR", quietly = TRUE)) {
+        v <- data.frame(log2FoldChange = fc[rows], padj = padj[rows])
+        if (!is.null(s$gene)) v$symbol <- gene_labels(tab, s$gene, rows)
+        if (!is.null(s[["mean"]]) && !isTRUE(s$mean_log)) {
+          v$baseMean <- column(tab, s[["mean"]], "average expression", numeric = TRUE)[rows]
+        }
+        suppressMessages(PubOmixR::vizVolcano(v, lfc_threshold = lfc, padj_cutoff = p_cutoff,
+                                              top_n_labels = if (is.null(s$gene)) 0L else 10L,
+                                              xlab = fc_label, title = NULL))
+        return(list(facts = facts))
+      }
       d <- data.frame(fc = fc[rows], p = -log10(pmax(padj[rows], 1e-300)), change = factor(status[rows], keys))
       p <- ggplot2::ggplot(d, ggplot2::aes(x = fc, y = p, colour = change)) +
-        ggplot2::geom_vline(xintercept = c(-lfc, lfc), linetype = "dashed", colour = "grey50") +
-        ggplot2::geom_hline(yintercept = -log10(max(p_cutoff, 1e-300)), linetype = "dashed", colour = "grey50") +
-        ggplot2::geom_point(size = 1.5, alpha = 0.75) +
+        ggplot2::geom_vline(xintercept = c(-lfc, lfc), linetype = "dashed", colour = "grey40", linewidth = 0.5) +
+        ggplot2::geom_hline(yintercept = -log10(max(p_cutoff, 1e-300)), linetype = "dashed", colour = "grey40", linewidth = 0.5) +
+        ggplot2::geom_point(size = 1.2, alpha = 0.7) +
+        # The counts above the outer zones, as PubOmixR places them.
+        ggplot2::annotate("text", x = c((min(d$fc) - lfc) / 2, (lfc + max(d$fc)) / 2),
+                          y = -0.02 * max(d$p) + 1.12 * max(d$p) * 0.95,
+                          label = c(length(down), length(up)), colour = darken(c(col_down, col_up)),
+                          size = 4.5, fontface = "bold") +
+        ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.10))) +
         ggplot2::labs(x = fc_label, y = "-log10 adjusted p-value")
       if (!is.null(s$gene) && length(c(top_up, top_down))) {
         selected <- c(top_up, top_down)
         labels <- d[match(selected, rows), , drop = FALSE]
         labels$gene <- gene_labels(tab, s$gene, selected)
         p <- p + ggrepel::geom_text_repel(data = labels, ggplot2::aes(label = gene),
-                                         max.overlaps = Inf, seed = 42L, size = 3, show.legend = FALSE)
+                                         colour = darken(colours[as.character(labels$change)]),
+                                         max.overlaps = Inf, seed = 42L, size = 3.5, show.legend = FALSE)
       }
     } else {
       average <- column(tab, s[["mean"]], "average expression", numeric = TRUE)
       rows <- rows[is.finite(average[rows]) & (isTRUE(s$mean_log) | average[rows] > 0)]
       d <- data.frame(average = average[rows], fc = fc[rows], change = factor(status[rows], keys))
       p <- ggplot2::ggplot(d, ggplot2::aes(x = average, y = fc, colour = change)) +
-        ggplot2::geom_hline(yintercept = c(-lfc, lfc), linetype = "dashed", colour = "grey50") +
-        ggplot2::geom_point(size = 1.5, alpha = 0.75) + ggplot2::labs(x = "Average expression", y = fc_label)
+        ggplot2::geom_hline(yintercept = c(-lfc, lfc), linetype = "dashed", colour = "grey40", linewidth = 0.5) +
+        ggplot2::geom_point(size = 1.2, alpha = 0.7) + ggplot2::labs(x = "Average expression", y = fc_label)
       if (!isTRUE(s$mean_log)) p <- p + ggplot2::scale_x_log10()
     }
     finish_plot(p + ggplot2::scale_colour_manual(name = NULL, values = colours, limits = keys,
@@ -211,9 +258,9 @@ sandhill_quick <- local({
 
   group_palette <- function(groups) {
     levels <- levels(groups)
-    okabe_ito <- c("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442", "#000000")
-    colours <- if (length(levels) <= length(okabe_ito)) okabe_ito[seq_along(levels)] else
-      c(okabe_ito, grDevices::hcl.colors(length(levels) - length(okabe_ito), "Dark 3"))
+    paired <- c(col_up, col_down, "#FF7F00", "#6A3D9A", col_up_light, col_down_light, "#33A02C", "#B2DF8A")
+    colours <- if (length(levels) <= length(paired)) paired[seq_along(levels)] else
+      c(paired, grDevices::hcl.colors(length(levels) - length(paired), "Dark 3"))
     stats::setNames(colours, levels)
   }
 
@@ -264,7 +311,7 @@ sandhill_quick <- local({
   draw_heatmap <- function(x, group, labels_row = rownames(x), title, bound = max(1, abs(x))) {
     annotation <- if (!is.null(group)) data.frame(Group = group, row.names = colnames(x))
     colours <- if (!is.null(group)) list(Group = group_palette(group))
-    gradient <- grDevices::colorRampPalette(c("#2166AC", "#F7F7F7", "#B2182B"))(100L)
+    gradient <- grDevices::colorRampPalette(c(col_down, col_down_light, "white", col_up_light, col_up))(100L)
     invisible(pheatmap::pheatmap(x, color = gradient, breaks = seq(-bound, bound, length.out = 101L),
                                 cluster_rows = nrow(x) > 1L, annotation_col = annotation,
                                 annotation_colors = colours, labels_row = labels_row, main = title,
@@ -278,15 +325,14 @@ sandhill_quick <- local({
     if (plot == "library_sizes") {
       millions <- expr$totals / 1e6
       d <- data.frame(sample = factor(names(millions), levels = names(millions)), millions = unname(millions))
-      p <- ggplot2::ggplot(d, ggplot2::aes(x = sample, y = millions)) + ggplot2::labs(x = NULL, y = "Total counts (millions)") +
-        ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
-      if (is.null(group)) p <- p + ggplot2::geom_col(fill = "#0072B2") else {
+      p <- ggplot2::ggplot(d, ggplot2::aes(x = sample, y = millions)) + ggplot2::labs(x = NULL, y = "Total counts (millions)")
+      if (is.null(group)) p <- p + ggplot2::geom_col(fill = col_down) else {
         d$group <- group
         p <- p + ggplot2::geom_col(data = d, ggplot2::aes(fill = group)) +
           ggplot2::scale_fill_manual(name = "Group", values = group_palette(group))
       }
       size <- function(i) list(sample = names(millions)[i], millions = unname(millions[i]))
-      return(finish_plot(p, list(smallest = size(which.min(millions)), largest = size(which.max(millions)))))
+      return(finish_plot(p, list(smallest = size(which.min(millions)), largest = size(which.max(millions))), angled_x = TRUE))
     }
 
     x <- expr$x
@@ -308,12 +354,11 @@ sandhill_quick <- local({
         ggplot2::geom_col(data = means, ggplot2::aes(y = mean, fill = group), width = 0.65, alpha = 0.55) +
         ggplot2::geom_point(position = ggplot2::position_jitter(width = 0.12, height = 0, seed = 42L), size = 2) +
         ggplot2::scale_fill_manual(values = group_palette(group), guide = "none") +
-        ggplot2::labs(x = label, y = axis_label, title = genes[row]) +
-        ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+        ggplot2::labs(x = label, y = axis_label, title = genes[row])
       facts <- list(gene = genes[row], means = lapply(seq_len(nrow(means)), function(i) {
         list(group = as.character(means$group[i]), mean = means$mean[i], n = means$n[i])
       }))
-      return(finish_plot(p, facts))
+      return(finish_plot(p, facts, angled_x = TRUE))
     }
 
     variance <- row_variances(x)
@@ -344,7 +389,7 @@ sandhill_quick <- local({
     d <- data.frame(sample = colnames(x), pc1 = pc$x[, 1L], pc2 = pc$x[, 2L])
     p <- ggplot2::ggplot(d, ggplot2::aes(x = pc1, y = pc2)) +
       ggplot2::labs(x = sprintf("PC1 (%.1f%%)", percent[1L]), y = sprintf("PC2 (%.1f%%)", percent[2L]))
-    if (is.null(group)) p <- p + ggplot2::geom_point(colour = "#0072B2", size = 2.6) else {
+    if (is.null(group)) p <- p + ggplot2::geom_point(colour = col_down, size = 2.6) else {
       d$group <- group
       p <- p + ggplot2::geom_point(data = d, ggplot2::aes(colour = group), size = 2.6) +
         ggplot2::scale_colour_manual(name = "Group", values = group_palette(group))
@@ -364,10 +409,15 @@ sandhill_quick <- local({
     d <- data.frame(term = rev(seq_len(shown)), padj = padj[rows])
     labels <- vapply(terms[rows], function(term) paste(strwrap(term, width = 32L), collapse = "\n"), character(1))
     p <- ggplot2::ggplot(d, ggplot2::aes(y = term)) +
-      ggplot2::scale_y_continuous(breaks = d$term, labels = labels) + ggplot2::labs(y = NULL)
+      ggplot2::scale_y_continuous(breaks = d$term, labels = labels) + ggplot2::labs(y = NULL) +
+      # PubOmixR's light bands behind every other term.
+      lapply(seq(1L, shown, by = 2L), function(i) {
+        ggplot2::annotate("rect", xmin = -Inf, xmax = Inf, ymin = i - 0.5, ymax = i + 0.5,
+                          fill = "grey93", colour = NA, alpha = 0.5)
+      })
     if (plot == "enrich_bar") {
       d$significance <- -log10(pmax(d$padj, 1e-300))
-      p <- p + ggplot2::geom_col(data = d, ggplot2::aes(x = significance), fill = "#0072B2", orientation = "y") +
+      p <- p + ggplot2::geom_col(data = d, ggplot2::aes(x = significance), fill = col_up, width = 0.7, orientation = "y") +
         ggplot2::labs(x = "-log10 adjusted p-value")
     } else {
       count <- column(tab, s$count, "gene counts", optional = TRUE, numeric = TRUE)[rows]
@@ -384,17 +434,26 @@ sandhill_quick <- local({
         d$value <- count
         axis_label <- "Gene count"
       } else if (!is.null(ratio)) fail("The top terms need valid gene ratios.") else fail("Choose a column for gene counts or gene ratios.")
+      # PubOmixR's dot plot: circles outlined in black, filled from red
+      # (most significant) to white.
       if (is.null(count)) {
-        p <- p + ggplot2::geom_point(data = d, ggplot2::aes(x = value, colour = padj), size = 3)
+        p <- p + ggplot2::geom_point(data = d, ggplot2::aes(x = value, fill = pmax(padj, 1e-300)), size = 4,
+                                     shape = 21, colour = "black", stroke = 0.5)
       } else {
         d$count <- count
-        p <- p + ggplot2::geom_point(data = d, ggplot2::aes(x = value, colour = padj, size = count)) +
-          ggplot2::scale_size_continuous(name = "Gene count", range = c(2, 6))
+        p <- p + ggplot2::geom_point(data = d, ggplot2::aes(x = value, fill = pmax(padj, 1e-300), size = count),
+                                     shape = 21, colour = "black", stroke = 0.5) +
+          ggplot2::scale_size_continuous(name = "Gene count", range = c(3, 8))
       }
-      p <- p + ggplot2::scale_colour_gradient(name = "Adjusted p-value", low = "#D55E00", high = "#0072B2") +
+      p <- p + ggplot2::scale_fill_gradientn(name = "Adjusted p-value", colours = c(col_up, "#FFFFFF"),
+                                             trans = "log10", guide = ggplot2::guide_colourbar(reverse = TRUE),
+                                             labels = function(x) parse(text = ifelse(is.na(x) | x <= 0, "NA",
+                                                                                      paste0("10^{", floor(log10(x)), "}")))) +
+        ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0.12, 0.15))) +
         ggplot2::labs(x = axis_label)
     }
-    finish_plot(p, list(terms = length(terms), shown = shown, top = I(utils::head(terms[rows], 3L))))
+    finish_plot(p, list(terms = length(terms), shown = shown, top = I(utils::head(terms[rows], 3L))),
+                legend = "right")
   }
 
   workbook_names <- function(nms) {

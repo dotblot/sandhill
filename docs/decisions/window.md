@@ -143,6 +143,15 @@ differs, this wins.
   "AI" label above it: the conversation's own header is its top, so it is
   the one panel not dragged by a header (others can still be dropped
   beside it).
+  Explore's plot style (Huan, 2026-11-19): Sandhill's own plots take the
+  look of PubOmixR, Huan's package (private on GitHub): `theme_classic`
+  at 13 pt, a thin black frame, black axis text, no grid; up red
+  `#E41A1C`, down blue `#1F78B4`, their light shades, grey for the rest;
+  dashed grey cutoff lines with bold counts; enrichment dots outlined in
+  black, red to white, on banded rows. When PubOmixR is installed, the
+  volcano plot is its own `vizVolcano()`; recipes still run without it.
+  Its enrichment functions need `runEnrichment()` output, so enrichment
+  tables use the copied look only.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on
