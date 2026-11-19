@@ -18,7 +18,8 @@ read gene symbols (`TP53`).
   copy of the table. The file on disk is never changed. The Data Explorer
   shows the new column, and the card says what happened in plain words:
   "15,890 of 16,525 genes got a symbol; 635 have none and keep their
-  Ensembl ID".
+  Ensembl ID". A gene with no symbol has its ID, as the table writes it,
+  in the `symbol` column, never NA (Huan, 2026-11-19).
 - From then on, plots label genes by symbol (volcano labels, heatmap rows,
   Gene by Group's search, the top genes table), falling back to the ID for
   genes without one. The ID column stays, so nothing is lost.

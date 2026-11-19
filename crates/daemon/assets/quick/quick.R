@@ -134,7 +134,8 @@ sandhill_quick <- local({
     keytype <- switch(request$ids, ensembl = "ENSEMBL", entrez = "ENTREZID",
                       fail("Gene symbols come from Ensembl or Entrez IDs."))
     tab <- get_table(request$table)
-    ids <- trimws(as.character(column(tab, request$column, "gene IDs")))
+    written <- as.character(column(tab, request$column, "gene IDs"))
+    ids <- trimws(written)
     if (keytype == "ENSEMBL") ids <- sub("\\.[0-9]+$", "", ids)
     db <- getExportedValue(org, org)
     wanted <- unique(ids[!is.na(ids) & nzchar(ids)])
@@ -146,6 +147,10 @@ sandhill_quick <- local({
     found <- Filter(function(x) length(x) && !all(is.na(x)), found)
     first <- vapply(found, function(x) as.character(x[!is.na(x)][1L]), character(1))
     symbol <- unname(first[ids])
+    mapped <- sum(!is.na(symbol))
+    # A gene with no symbol keeps its ID, as the table writes it, rather
+    # than NA (Huan, 2026-11-19).
+    symbol[is.na(symbol)] <- written[is.na(symbol)]
     out <- request$output
     if (is.null(out)) {
       out <- "symbol"
@@ -160,7 +165,7 @@ sandhill_quick <- local({
     at <- match(request$column, others)
     tab <- tab[, append(others, out, after = if (is.na(at)) length(others) else at), drop = FALSE]
     assign(request$table, tab, envir = .GlobalEnv)
-    list(facts = list(column = out, total = length(ids), mapped = sum(!is.na(symbol)),
+    list(facts = list(column = out, total = length(ids), mapped = mapped,
                       several = sum(lengths(found[names(found) %in% ids]) > 1L)))
   }
 

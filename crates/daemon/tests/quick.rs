@@ -230,6 +230,8 @@ async fn a_dropped_results_table_becomes_a_volcano_plot() {
             })
             .await
             .unwrap();
+            // Every gene has a value: a symbol, or its own ID when it has none.
+            assert_eq!(named.pairs.len(), 200, "{:?}", named.pairs);
             assert!(
                 named
                     .pairs
@@ -237,7 +239,19 @@ async fn a_dropped_results_table_becomes_a_volcano_plot() {
                 "{:?}",
                 named.pairs
             );
-            assert_eq!(named.pairs.len() as u64, mapped);
+            assert!(
+                named
+                    .pairs
+                    .contains(&("ENSG00000000001".into(), "ENSG00000000001".into())),
+                "{:?}",
+                named.pairs
+            );
+            let symbols_found = named
+                .pairs
+                .iter()
+                .filter(|(id, symbol)| id != symbol)
+                .count();
+            assert_eq!(symbols_found as u64, mapped);
             let labelled = run(QuickRequest::Plot {
                 plot: QuickPlot::TopGenes,
                 table: "de_results".into(),

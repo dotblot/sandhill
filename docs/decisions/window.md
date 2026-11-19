@@ -168,8 +168,9 @@ differs, this wins.
   IDs in the session's copy (the file is never changed), from
   org.Hs.eg.db or org.Mm.eg.db via `AnnotationDbi::mapIds` (version
   endings dropped, the first symbol when there are several), says how
-  many genes got one, and plots then label genes by symbol, falling back
-  to the ID. Use IDs Instead goes back. The organism packages (about
+  many genes got one, and plots then label genes by symbol. A gene with
+  no symbol has its ID in the symbol column, never NA (Huan,
+  2026-11-19). Use IDs Instead goes back. The organism packages (about
   90 MB each) install on their own from Getting Ready, into the library
   the user picks.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
