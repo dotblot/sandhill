@@ -20,8 +20,9 @@ const NODE: &str = "https://nodejs.org/";
 /// What is being installed or removed.
 #[derive(Clone, PartialEq, Eq)]
 enum Installing {
-    Packages,
-    Kernel,
+    /// Into this library.
+    Packages(String),
+    Kernel(String),
     /// Claude Code (`claude`) or Codex (`codex`).
     Agent(String),
     Remove,
@@ -30,8 +31,8 @@ enum Installing {
 impl Installing {
     fn what(&self) -> String {
         match self {
-            Installing::Packages => "Installing packages".into(),
-            Installing::Kernel => "Installing IRkernel".into(),
+            Installing::Packages(_) => "Installing packages".into(),
+            Installing::Kernel(_) => "Installing IRkernel".into(),
             Installing::Agent(kind) => format!("Installing {}", agent_name(kind)),
             Installing::Remove => "Removing what Sandhill installed".into(),
         }
@@ -64,6 +65,10 @@ enum Confirm {
     Agent(String),
     /// Remove what Sandhill installed.
     Remove,
+    /// Which of R's libraries the packages (or, with `kernel`, IRkernel)
+    /// go in: asked every time, and none is ever created (Huan,
+    /// 2026-11-19).
+    Library { kernel: bool },
 }
 
 #[derive(Default)]
@@ -182,7 +187,7 @@ impl AppWindow {
         };
         let r = readiness.r.as_ref().map(|r| r.path.clone());
         let started = match what.clone() {
-            Installing::Packages => {
+            Installing::Packages(library) => {
                 let Some(r) = r else { return };
                 let missing: Vec<String> = readiness
                     .packages
@@ -193,12 +198,17 @@ impl AppWindow {
                 let call = daemon.call::<QuickInstalling>(Call::QuickInstall {
                     r,
                     packages: missing,
+                    library,
                 });
                 cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
             }
-            Installing::Kernel => {
+            Installing::Kernel(library) => {
                 let Some(r) = r else { return };
-                let call = daemon.call::<TerminalInfo>(Call::InstallIrkernel { r, project: None });
+                let call = daemon.call::<TerminalInfo>(Call::InstallIrkernel {
+                    r,
+                    project: None,
+                    library: Some(library),
+                });
                 cx.background_spawn(async move { call.await.map(|job| (job.id, None)) })
             }
             Installing::Agent(kind) => {
@@ -605,25 +615,51 @@ impl AppWindow {
             .into_any_element(),
         );
         if let Some(r) = readiness.r.as_ref().filter(|_| r_ok) {
-            let library = r.library.clone();
+            let writable = r.libraries.iter().any(|l| l.writable);
+            let listed = r.libraries.iter().map(|lib| {
+                let path = lib.path.clone();
+                h_flex()
+                    .gap(px(look::GAP_8))
+                    .text_size(px(look::small()))
+                    .child(div().flex_1().min_w_0().truncate().child(lib.path.clone()))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(p.muted)
+                            .child(if lib.writable {
+                                format!("{} packages", lib.packages)
+                            } else {
+                                format!("{} packages, can't be written to", lib.packages)
+                            }),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("quick-show-lib-{}", lib.path)))
+                            .small()
+                            .label(look::mac_or("Show in Finder", "Show in Folder"))
+                            .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&path))),
+                    )
+            });
             rows.push(
-                look::settings_row(
-                    "Packages go in",
-                    Some(look::settings_detail(
-                        format!(
-                            "{}: your own R library, which your own R work uses too.",
-                            r.library
-                        ),
-                        p,
-                    )),
-                )
-                .child(
-                    Button::new("quick-show-library")
-                        .small()
-                        .label(look::mac_or("Show in Finder", "Show in Folder"))
-                        .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&library))),
-                )
-                .into_any_element(),
+                v_flex()
+                    .child(look::settings_row(
+                        "R's libraries",
+                        Some(look::settings_detail(
+                            if writable {
+                                "Where this R keeps packages, in the order it looks. Sandhill asks which one before it installs anything."
+                            } else {
+                                "None of these can be written to, and Sandhill doesn't create libraries. Make one yourself (for example, set R_LIBS_USER in ~/.Renviron and create that folder), then Check Again."
+                            },
+                            p,
+                        )),
+                    ))
+                    .child(
+                        v_flex()
+                            .px(px(look::PANE_PAD_X))
+                            .pb(px(look::PANE_PAD_Y))
+                            .gap(px(look::GAP_2))
+                            .children(listed),
+                    )
+                    .into_any_element(),
             );
             let kernel_row = look::settings_row(
                 "R kernel",
@@ -643,16 +679,23 @@ impl AppWindow {
                         Button::new("quick-install-kernel")
                             .small()
                             .primary()
-                            .label("Install")
-                            .disabled(busy)
+                            .label("Install…")
+                            .disabled(busy || !writable)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.quick_install(Installing::Kernel, cx)
+                                this.start.quick.confirm = Some(Confirm::Library { kernel: true });
+                                cx.notify();
                             })),
                     )
                 }
                 .into_any_element(),
             );
-            rows.push(self.quick_packages_row(readiness, r, &missing, busy, p, cx));
+            if q.confirm == Some(Confirm::Library { kernel: true }) {
+                rows.push(self.quick_library_choice(r, true, busy, p, cx));
+            }
+            rows.push(self.quick_packages_row(readiness, r, &missing, busy || !writable, p, cx));
+            if q.confirm == Some(Confirm::Library { kernel: false }) {
+                rows.push(self.quick_library_choice(r, false, busy, p, cx));
+            }
         }
         if let Some(install) = &q.install {
             rows.push(self.quick_install_row(install, p, cx));
@@ -684,9 +727,81 @@ impl AppWindow {
             .into_any_element()
     }
 
+    /// "Install into which library?": each of R's libraries the user can
+    /// write to, with Install Here, and Cancel.
+    fn quick_library_choice(
+        &self,
+        r: &sandhill_proto::QuickR,
+        kernel: bool,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let choices = r.libraries.iter().filter(|l| l.writable).map(|lib| {
+            let path = lib.path.clone();
+            h_flex()
+                .gap(px(look::GAP_8))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(look::small()))
+                        .child(lib.path.clone()),
+                )
+                .child(
+                    Button::new(SharedString::from(format!(
+                        "quick-install-here-{}",
+                        lib.path
+                    )))
+                    .small()
+                    .primary()
+                    .label("Install Here")
+                    .disabled(busy)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let what = if kernel {
+                            Installing::Kernel(path.clone())
+                        } else {
+                            Installing::Packages(path.clone())
+                        };
+                        this.quick_install(what, cx)
+                    })),
+                )
+        });
+        v_flex()
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
+            .gap(px(look::GAP_6))
+            .child(
+                h_flex()
+                    .gap(px(look::GAP_8))
+                    .child(div().flex_1().child(if kernel {
+                        "Install IRkernel into which library?"
+                    } else {
+                        "Install the missing packages into which library?"
+                    }))
+                    .child(
+                        Button::new("quick-library-cancel")
+                            .small()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.start.quick.confirm = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(look::small()))
+                    .text_color(p.muted)
+                    .child("Your own R work uses these libraries too. Nothing already in them changes."),
+            )
+            .children(choices)
+            .into_any_element()
+    }
+
     /// The packages: what is missing, with Install, then each package with
-    /// its version, its library when it isn't the one packages go in, and
-    /// whether Sandhill installed it.
+    /// its version, its library, and whether Sandhill installed it.
     fn quick_packages_row(
         &self,
         readiness: &QuickReadiness,
@@ -703,12 +818,12 @@ impl AppWindow {
             "Every package for exploring tables is installed.".to_string()
         } else if r.binaries {
             format!(
-                "Missing: {}. They go into your own R library, ready-built, and nothing you already have changes.",
+                "Missing: {}. They go into the library you choose, ready-built, and nothing you already have changes.",
                 missing.join(", ")
             )
         } else if r.can_build {
             format!(
-                "Missing: {}. This R builds packages on this computer, which can take a few minutes. They go into your own R library, and nothing you already have changes.",
+                "Missing: {}. This R builds packages on this computer, which can take a few minutes. They go into the library you choose, and nothing you already have changes.",
                 missing.join(", ")
             )
         } else {
@@ -727,11 +842,12 @@ impl AppWindow {
                 Button::new("quick-install-packages")
                     .small()
                     .primary()
-                    .label("Install Missing Packages")
+                    .label("Install Missing Packages…")
                     .disabled(busy || blocked)
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.quick_install(Installing::Packages, cx)),
-                    ),
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.start.quick.confirm = Some(Confirm::Library { kernel: false });
+                        cx.notify();
+                    })),
             );
         }
         let list = readiness.packages.iter().map(|pkg| {
@@ -741,10 +857,9 @@ impl AppWindow {
                 Some(_) if pkg.by_sandhill => ("installed by Sandhill".into(), p.muted),
                 Some(_) => ("yours".into(), p.muted),
             };
-            let elsewhere = pkg
+            let place = pkg
                 .library
                 .as_ref()
-                .filter(|lib| **lib != r.library)
                 .map(|lib| format!(", in {lib}"))
                 .unwrap_or_default();
             h_flex()
@@ -753,7 +868,7 @@ impl AppWindow {
                 .child(div().flex_none().child(pkg.name.clone()))
                 .child(div().flex_1().min_w_0().truncate().text_color(color).child(
                     match &pkg.version {
-                        Some(version) => format!("{version}: {state}{elsewhere}"),
+                        Some(version) => format!("{version}: {state}{place}"),
                         None => state,
                     },
                 ))

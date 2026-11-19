@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use sandhill_proto::{
     JobSpec, KernelspecInfo, QUICK_R_MIN, QuickAgent, QuickPackage, QuickR, QuickReadiness,
-    QuickTool, RSource,
+    QuickTool, RLibrary, RSource,
 };
 
 use super::record;
@@ -71,7 +71,7 @@ pub fn readiness(
                 version,
                 binaries: listed.binaries,
                 can_build: can_build(),
-                library: listed.library,
+                libraries: listed.libraries,
             },
             listed.packages,
         )
@@ -203,18 +203,15 @@ struct Listed {
     /// It installs ready-built packages (`.Platform$pkgType` isn't
     /// `source`).
     binaries: bool,
-    /// The user's own library, where Sandhill installs.
-    library: String,
+    /// R's libraries, in R's order.
+    libraries: Vec<RLibrary>,
 }
-
-/// The R expression for the user's own library: the first of
-/// `R_LIBS_USER`, with `~` expanded.
-const USER_LIBRARY: &str =
-    "path.expand(strsplit(Sys.getenv(\"R_LIBS_USER\"), .Platform$path.sep, fixed = TRUE)[[1]][1])";
 
 /// The packages of [`PACKAGES`] the R at `r` has and where, read from their
 /// descriptions without loading them, whether it takes ready-built
-/// packages, and the user's own library.
+/// packages, and its libraries. R reads the user's `.Renviron` and
+/// `.Rprofile`, as the install job and the kernel do, so libraries set
+/// there count.
 fn installed(r: &Path) -> Listed {
     let names = PACKAGES
         .iter()
@@ -222,10 +219,11 @@ fn installed(r: &Path) -> Listed {
         .collect::<Vec<_>>()
         .join(", ");
     let code = format!(
-        "cat('SANDHILL_PKGTYPE\\t', .Platform$pkgType, '\\n', sep = ''); cat('SANDHILL_LIB\\t', {USER_LIBRARY}, '\\n', sep = ''); for (p in c({names})) {{ d <- tryCatch(find.package(p), error = function(e) NA); if (!is.na(d)) cat('SANDHILL_PKG', p, as.character(utils::packageVersion(p, lib.loc = dirname(d))), dirname(d), sep = '\\t'); if (!is.na(d)) cat('\\n') }}"
+        "cat('SANDHILL_PKGTYPE\\t', .Platform$pkgType, '\\n', sep = ''); {libraries}; for (p in c({names})) {{ d <- tryCatch(find.package(p), error = function(e) NA); if (!is.na(d)) cat('SANDHILL_PKG', p, as.character(utils::packageVersion(p, lib.loc = dirname(d))), dirname(d), sep = '\\t'); if (!is.na(d)) cat('\\n') }}",
+        libraries = crate::irkernel::LIBRARIES_CODE,
     );
     let Ok(mut child) = Command::new(r)
-        .args(["--no-save", "--no-restore", "--no-init-file", "-s", "-e"])
+        .args(["--no-save", "--no-restore", "-s", "-e"])
         .arg(&code)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -256,14 +254,16 @@ fn installed(r: &Path) -> Listed {
 }
 
 fn parse_installed(out: &str) -> Listed {
-    let mut listed = Listed::default();
+    let mut listed = Listed {
+        libraries: crate::irkernel::parse_libraries(out),
+        ..Listed::default()
+    };
     for line in out.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
         match fields[..] {
             ["SANDHILL_PKGTYPE", kind, ..] => {
                 listed.binaries = !matches!(kind.trim(), "" | "source")
             }
-            ["SANDHILL_LIB", library, ..] => listed.library = library.trim().to_string(),
             ["SANDHILL_PKG", name, version, library, ..] => listed.packages.push((
                 name.to_string(),
                 version.to_string(),
@@ -304,11 +304,12 @@ fn r_vector(names: &[&str]) -> String {
     format!("c({})", quoted.join(", "))
 }
 
-/// The R code that installs `cran` and `bioconductor` packages into the
-/// user's own library, never updating what is there: ready-built packages
-/// when this R takes them (never compiling then), else built from source,
-/// as Homebrew's and conda's R need. What it adds goes in `record`.
-fn install_code(cran: &[&str], bioconductor: &[&str], record_path: &Path) -> String {
+/// The R code that installs `cran` and `bioconductor` packages into
+/// `library`, the one of R's libraries the user chose (never created
+/// here), never updating what is there: ready-built packages when this R
+/// takes them (never compiling then), else built from source, as
+/// Homebrew's and conda's R need. What it adds goes in `record`.
+fn install_code(cran: &[&str], bioconductor: &[&str], library: &str, record_path: &Path) -> String {
     format!(
         r#"local({{
   {append}
@@ -318,8 +319,7 @@ fn install_code(cran: &[&str], bioconductor: &[&str], record_path: &Path) -> Str
   else message("This R builds packages from their source code on this computer. It can take a few minutes.")
   repos <- c(CRAN = {mirror})
   lib <- {library}
-  dir.create(lib, recursive = TRUE, showWarnings = FALSE)
-  .libPaths(c(lib, .libPaths()))
+  {check_library}
   before <- rownames(utils::installed.packages(lib.loc = lib))
   on.exit(sandhill_record(lib, before), add = TRUE)
   cran <- {cran}
@@ -340,18 +340,28 @@ fn install_code(cran: &[&str], bioconductor: &[&str], record_path: &Path) -> Str
 }})"#,
         append = record::r_append(record_path),
         mirror = r_string(CRAN),
-        library = USER_LIBRARY,
+        library = r_string(library),
+        check_library = crate::irkernel::check_library_code(),
         cran = r_vector(cran),
         bioc = r_vector(bioconductor),
     )
 }
 
-/// The job that installs `packages` (names from [`PACKAGES`]) into the R at
-/// `r`, with its output also written to `log`.
-pub fn install(r: &str, packages: &[String], log: &Path, record_path: &Path) -> Result<Launch> {
+/// The job that installs `packages` (names from [`PACKAGES`]) into
+/// `library` of the R at `r`, with its output also written to `log`.
+pub fn install(
+    r: &str,
+    packages: &[String],
+    library: &str,
+    log: &Path,
+    record_path: &Path,
+) -> Result<Launch> {
     let r = PathBuf::from(r);
     if !r.is_file() {
         bail!("{} isn't an R program", r.display());
+    }
+    if !Path::new(library).is_dir() {
+        bail!("the library {library} doesn't exist; Sandhill doesn't create libraries");
     }
     let mut cran = Vec::new();
     let mut bioconductor = Vec::new();
@@ -379,7 +389,7 @@ pub fn install(r: &str, packages: &[String], log: &Path, record_path: &Path) -> 
         command: Some(format!(
             "set -o pipefail; {} -e {} 2>&1 | tee {}",
             shell_quote(&rscript.to_string_lossy()),
-            shell_quote(&install_code(&cran, &bioconductor, record_path)),
+            shell_quote(&install_code(&cran, &bioconductor, library, record_path)),
             shell_quote(&log.to_string_lossy())
         )),
     };
@@ -436,7 +446,7 @@ mod tests {
 
     #[test]
     fn packages_libraries_and_package_type_come_from_the_marked_lines() {
-        let out = "Loading profile\nSANDHILL_PKGTYPE\tmac.binary.big-sur-arm64\nSANDHILL_LIB\t/Users/a/Library/R/arm64/4.6/library\nSANDHILL_PKG\tggplot2\t4.0.3\t/opt/homebrew/lib/R/4.6/site-library\nSANDHILL_PKG\treadxl\t1.4.5\t/Users/a/Library/R/arm64/4.6/library\n";
+        let out = "Loading profile\nSANDHILL_PKGTYPE\tmac.binary.big-sur-arm64\nSANDHILL_LIBPATH\t/opt/homebrew/lib/R/4.6/site-library\tyes\t741\nSANDHILL_LIBPATH\t/opt/homebrew/Cellar/r/4.6.2/lib/R/library\tno\t30\nSANDHILL_PKG\tggplot2\t4.0.3\t/opt/homebrew/lib/R/4.6/site-library\nSANDHILL_PKG\treadxl\t1.4.5\t/Users/a/Library/R/arm64/4.6/library\n";
         assert_eq!(
             parse_installed(out),
             Listed {
@@ -453,7 +463,18 @@ mod tests {
                     )
                 ],
                 binaries: true,
-                library: "/Users/a/Library/R/arm64/4.6/library".to_string(),
+                libraries: vec![
+                    RLibrary {
+                        path: "/opt/homebrew/lib/R/4.6/site-library".into(),
+                        writable: true,
+                        packages: 741,
+                    },
+                    RLibrary {
+                        path: "/opt/homebrew/Cellar/r/4.6.2/lib/R/library".into(),
+                        writable: false,
+                        packages: 30,
+                    },
+                ],
             }
         );
         // Homebrew's R builds every package from source.
@@ -466,6 +487,7 @@ mod tests {
         let err = install(
             "/bin/sh",
             &["Seurat".to_string()],
+            "/tmp",
             Path::new("/tmp/x.log"),
             record,
         )
@@ -474,19 +496,37 @@ mod tests {
             err.to_string()
                 .contains("isn't one of the packages for exploring tables")
         );
+        let err = install(
+            "/bin/sh",
+            &["ggplot2".to_string()],
+            "/nonexistent/sandhill-library",
+            Path::new("/tmp/x.log"),
+            record,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Sandhill doesn't create libraries")
+        );
         let err = install_agent("pi", Path::new("/tmp/x.log"), record).unwrap_err();
         assert!(err.to_string().contains("isn't an agent Sandhill installs"));
     }
 
     #[test]
     fn install_code_records_never_compiles_ready_built_packages_or_updates() {
-        let code = install_code(&["ggplot2"], &["DESeq2"], Path::new("/tmp/record.tsv"));
+        let code = install_code(
+            &["ggplot2"],
+            &["DESeq2"],
+            "/opt/homebrew/lib/R/4.6/site-library",
+            Path::new("/tmp/record.tsv"),
+        );
         assert!(
             code.contains("if (binary) options(install.packages.compile.from.source = \"never\")")
         );
         assert!(code.contains("type <- if (binary) \"binary\" else \"source\""));
         assert!(code.contains("update = FALSE"));
-        assert!(code.contains("R_LIBS_USER"));
+        assert!(code.contains("lib <- \"/opt/homebrew/lib/R/4.6/site-library\""));
+        assert!(!code.contains("dir.create(lib"));
         assert!(code.contains("on.exit(sandhill_record(lib, before)"));
         assert!(code.contains("/tmp/record.tsv"));
     }

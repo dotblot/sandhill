@@ -59,9 +59,14 @@ impl Daemon {
         })?)
     }
 
-    pub(super) async fn quick_install(&self, r: String, packages: Vec<String>) -> Result<Value> {
+    pub(super) async fn quick_install(
+        &self,
+        r: String,
+        packages: Vec<String>,
+        library: String,
+    ) -> Result<Value> {
         let record = self.install_record();
-        self.quick_job(move |log| setup::install(&r, &packages, log, &record))
+        self.quick_job(move |log| setup::install(&r, &packages, &library, log, &record))
             .await
     }
 

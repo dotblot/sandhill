@@ -9,7 +9,7 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use sandhill_proto::{Call, KernelspecInfo, RWithoutIrkernel, TerminalInfo};
+use sandhill_proto::{Call, KernelspecInfo, RLibrary, RWithoutIrkernel, TerminalInfo};
 
 use crate::look::{self, Palette, icon};
 use crate::workbench::{ConsoleTab, Workbench};
@@ -20,6 +20,9 @@ pub(crate) struct IrkernelOffers {
     pub list: Vec<RWithoutIrkernel>,
     /// The one whose install is being confirmed.
     confirming: Option<RWithoutIrkernel>,
+    /// The confirmed R's libraries, for choosing where IRkernel goes when
+    /// R installs it itself; Sandhill never creates one (Huan, 2026-11-19).
+    libraries: Option<Result<Vec<RLibrary>, String>>,
     starting: bool,
     error: Option<String>,
     /// Install jobs running; the kernels are read again when one ends.
@@ -99,8 +102,26 @@ impl Workbench {
 
     pub(crate) fn ask_install_irkernel(&mut self, offer: RWithoutIrkernel, cx: &mut Context<Self>) {
         self.kernel_menu = false;
-        self.irkernel.confirming = Some(offer);
         self.irkernel.error = None;
+        self.irkernel.libraries = None;
+        if offer.needs_library
+            && let Some(daemon) = self.daemon()
+        {
+            let listed = daemon.call::<Vec<RLibrary>>(Call::ListRLibraries { r: offer.r.clone() });
+            let r = offer.r.clone();
+            cx.spawn(async move |this, cx| {
+                let listed = listed.await.map_err(|err| format!("{err:#}"));
+                this.update(cx, |this, cx| {
+                    if this.irkernel.confirming.as_ref().is_some_and(|o| o.r == r) {
+                        this.irkernel.libraries = Some(listed);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
+        self.irkernel.confirming = Some(offer);
         cx.notify();
     }
 
@@ -112,7 +133,7 @@ impl Workbench {
         }
     }
 
-    fn install_irkernel(&mut self, cx: &mut Context<Self>) {
+    fn install_irkernel(&mut self, library: Option<String>, cx: &mut Context<Self>) {
         let (Some(daemon), Some(offer)) = (self.daemon(), self.irkernel.confirming.clone()) else {
             return;
         };
@@ -126,6 +147,7 @@ impl Workbench {
         let started = daemon.call::<TerminalInfo>(Call::InstallIrkernel {
             r: offer.r.clone(),
             project: project.clone(),
+            library,
         });
         cx.spawn(async move |this, cx| {
             let started = started.await;
@@ -259,12 +281,19 @@ impl Workbench {
                     ),
             )
             .child(div().whitespace_normal().child(offer.plan.clone()))
+            .when(offer.needs_library, |d| {
+                d.child(self.irkernel_library_choice(starting, &p, cx))
+            })
             .child(
                 div()
                     .text_size(px(look::small()))
                     .text_color(p.muted)
                     .whitespace_normal()
-                    .child("It runs in the Jobs tab and goes on if Sandhill disconnects. Sandhill never removes it; uninstall it yourself if you no longer want it."),
+                    .child(if offer.needs_library {
+                        "It runs in the Jobs tab and goes on if Sandhill disconnects. Sandhill notes what it installs, so Remove What Sandhill Installed (Welcome, Getting Ready) can take it out later."
+                    } else {
+                        "It runs in the Jobs tab and goes on if Sandhill disconnects. Sandhill never removes it; uninstall it yourself if you no longer want it."
+                    }),
             )
             .when_some(self.irkernel.error.clone(), |d, error| {
                 d.child(div().text_color(p.err).whitespace_normal().child(error))
@@ -282,14 +311,18 @@ impl Workbench {
                                 this.cancel_install_irkernel(cx)
                             })),
                     )
-                    .child(
-                        Button::new("irkernel-install")
-                            .small()
-                            .primary()
-                            .label(if starting { "Starting…" } else { "Install" })
-                            .disabled(starting)
-                            .on_click(cx.listener(|this, _, _, cx| this.install_irkernel(cx))),
-                    ),
+                    .when(!offer.needs_library, |d| {
+                        d.child(
+                            Button::new("irkernel-install")
+                                .small()
+                                .primary()
+                                .label(if starting { "Starting…" } else { "Install" })
+                                .disabled(starting)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.install_irkernel(None, cx)),
+                                ),
+                        )
+                    }),
             );
         Some(
             deferred(
@@ -316,6 +349,76 @@ impl Workbench {
             .with_priority(4)
             .into_any_element(),
         )
+    }
+
+    /// Which of R's libraries IRkernel goes in: each one the user can write
+    /// to, with Install Here.
+    fn irkernel_library_choice(
+        &self,
+        starting: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let note = |text: String, color| {
+            div()
+                .text_size(px(look::small()))
+                .text_color(color)
+                .whitespace_normal()
+                .child(text)
+                .into_any_element()
+        };
+        let libraries = match &self.irkernel.libraries {
+            None => return note("Reading R's libraries…".into(), p.muted),
+            Some(Err(err)) => {
+                return note(
+                    format!("Sandhill couldn't read R's libraries: {err}"),
+                    p.err,
+                );
+            }
+            Some(Ok(libraries)) => libraries,
+        };
+        let writable: Vec<&RLibrary> = libraries.iter().filter(|l| l.writable).collect();
+        if writable.is_empty() {
+            return note(
+                "None of this R's libraries can be written to, and Sandhill doesn't create libraries. Make one yourself (for example, set R_LIBS_USER in ~/.Renviron and create that folder), then try again.".into(),
+                p.err,
+            );
+        }
+        v_flex()
+            .gap(px(look::GAP_6))
+            .child(div().child("Which library should it go in?"))
+            .children(writable.into_iter().map(|lib| {
+                let path = lib.path.clone();
+                h_flex()
+                    .gap(px(look::GAP_8))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(look::small()))
+                            .font_family(look::mono())
+                            .child(lib.path.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(look::small()))
+                            .text_color(p.muted)
+                            .child(format!("{} packages", lib.packages)),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("irkernel-here-{}", lib.path)))
+                            .small()
+                            .primary()
+                            .label("Install Here")
+                            .disabled(starting)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.install_irkernel(Some(path.clone()), cx)
+                            })),
+                    )
+            }))
+            .into_any_element()
     }
 
     /// Shows a job the daemon started in the Jobs tab, following its log.

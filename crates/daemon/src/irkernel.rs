@@ -14,7 +14,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use sandhill_proto::{JobSpec, RWithoutIrkernel};
+use sandhill_proto::{JobSpec, RLibrary, RWithoutIrkernel};
 
 use crate::agents::shell_quote;
 use crate::kernelspecs::{self, Search, canonical};
@@ -217,7 +217,7 @@ impl Candidate {
             How::Plain => {
                 let (name, dir) = kernel_dir(self, search);
                 format!(
-                    "Installs the R package IRkernel into this R's library, from its package mirror (else {CRAN}), and registers the kernel \"{}\" as {name} in {}.",
+                    "Installs the R package IRkernel into the library you choose, from its package mirror (else {CRAN}), and registers the kernel \"{}\" as {name} in {}.",
                     display_name(self),
                     dir.parent()
                         .map(Path::display)
@@ -244,6 +244,7 @@ impl Candidate {
                 How::Pixi { .. } => Some("pixi default".into()),
             },
             plan,
+            needs_library: matches!(self.how, How::Plain),
         }
     }
 }
@@ -312,23 +313,19 @@ fn r_string(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// The R code that installs IRkernel, if need be, into the first library
-/// R can write to (else the user's own) and registers the kernel in `dir`
-/// with `r` as its program. What it adds, and the kernel folder, go in
-/// Sandhill's `record` (Huan, 2026-11-19), so it can be removed later.
-fn install_code(r: &Path, name: &str, dir: &Path, record: &Path) -> String {
+/// The R code that installs IRkernel, if need be, into `library` (one of
+/// R's libraries the user chose; Sandhill never creates one, Huan,
+/// 2026-11-19) and registers the kernel in `dir` with `r` as its program.
+/// What it adds, and the kernel folder, go in Sandhill's `record`, so it
+/// can be removed later.
+fn install_code(r: &Path, name: &str, dir: &Path, library: &Path, record: &Path) -> String {
     format!(
         r#"local({{
   {append}
   repos <- getOption("repos")
   if (!length(repos) || any(is.na(repos) | !nzchar(repos) | repos == "@CRAN@")) repos <- c(CRAN = {cran})
-  libs <- .libPaths()
-  lib <- libs[file.access(libs, 2) == 0][1]
-  if (is.na(lib)) {{
-    lib <- Sys.getenv("R_LIBS_USER")
-    dir.create(lib, recursive = TRUE, showWarnings = FALSE)
-    .libPaths(c(lib, libs))
-  }}
+  lib <- {library}
+  {check_library}
   if (!requireNamespace("IRkernel", quietly = TRUE)) {{
     before <- rownames(utils::installed.packages(lib.loc = lib))
     message("Installing IRkernel into ", lib, " from ", paste(repos, collapse = ", "))
@@ -349,6 +346,8 @@ fn install_code(r: &Path, name: &str, dir: &Path, record: &Path) -> String {
 }})"#,
         append = crate::quick::record::r_append(record),
         append_kernel = crate::quick::record::r_append_kernel(record, "dir"),
+        library = r_string(&library.to_string_lossy()),
+        check_library = check_library_code(),
         cran = r_string(CRAN),
         r = r_string(&r.to_string_lossy()),
         name = r_string(name),
@@ -356,9 +355,53 @@ fn install_code(r: &Path, name: &str, dir: &Path, record: &Path) -> String {
     )
 }
 
-/// The job that adds IRkernel to the R at `r`, and the folder it acts on
-/// that must be trusted (a pixi project's), if any.
-pub fn launch(r: &str, search: &Search, record: &Path) -> Result<(Launch, Option<PathBuf>)> {
+/// R code that stops unless `lib` is an existing library the user can
+/// write to, and puts it first so what is installed there is found.
+pub(crate) fn check_library_code() -> &'static str {
+    r#"if (!dir.exists(lib)) stop("The library ", lib, " doesn't exist. Sandhill doesn't create libraries: choose another one, or make it yourself.", call. = FALSE)
+  if (file.access(lib, 2) != 0) stop("You can't write to the library ", lib, ". Choose another one.", call. = FALSE)
+  .libPaths(unique(c(lib, .libPaths())))"#
+}
+
+/// R code printing each of R's libraries as `SANDHILL_LIBPATH`, its path,
+/// whether the user can write to it and how many packages it holds.
+pub(crate) const LIBRARIES_CODE: &str = "for (l in .libPaths()) { cat('SANDHILL_LIBPATH', l, if (file.access(l, 2) == 0) 'yes' else 'no', length(list.files(l)), sep = '\\t'); cat('\\n') }";
+
+/// R's libraries, from what [`LIBRARIES_CODE`] printed.
+pub(crate) fn parse_libraries(out: &str) -> Vec<RLibrary> {
+    out.lines()
+        .filter_map(|line| match line.split('\t').collect::<Vec<_>>()[..] {
+            ["SANDHILL_LIBPATH", path, writable, packages, ..] => Some(RLibrary {
+                path: path.to_string(),
+                writable: writable == "yes",
+                packages: packages.trim().parse().unwrap_or(0),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The package libraries of the R at `r`, as R reads them with the user's
+/// own `.Renviron` and `.Rprofile`, as the install job and the kernel do.
+pub fn libraries(r: &Path) -> Result<Vec<RLibrary>> {
+    let out = Command::new(r)
+        .args(["--no-save", "--no-restore", "-s", "-e", LIBRARIES_CODE])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .with_context(|| format!("couldn't run {}", r.display()))?;
+    Ok(parse_libraries(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The job that adds IRkernel to the R at `r`, into `library` when R
+/// itself installs it (the offer `needs_library`), and the folder it acts
+/// on that must be trusted (a pixi project's), if any.
+pub fn launch(
+    r: &str,
+    library: Option<&str>,
+    search: &Search,
+    record: &Path,
+) -> Result<(Launch, Option<PathBuf>)> {
     let wanted = canonical(Path::new(r));
     let Some(candidate) = find(search)
         .into_iter()
@@ -376,7 +419,14 @@ pub fn launch(r: &str, search: &Search, record: &Path) -> Result<(Launch, Option
                 .filter(|p| p.is_file())
                 .with_context(|| format!("there is no Rscript beside {r}"))?;
             let (_, dir) = kernel_dir(&candidate, search);
-            let code = install_code(&candidate.r, &display_name(&candidate), &dir, record);
+            let library = library.context("choose which of R's libraries IRkernel goes in")?;
+            let code = install_code(
+                &candidate.r,
+                &display_name(&candidate),
+                &dir,
+                Path::new(library),
+                record,
+            );
             (
                 format!(
                     "{} -e {}",

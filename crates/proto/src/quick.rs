@@ -68,10 +68,11 @@ pub struct QuickR {
     pub can_build: bool,
     #[serde(default = "other_source")]
     pub source: RSource,
-    /// Where Sandhill installs packages for it: the user's own library
-    /// (`R_LIBS_USER`).
+    /// Its package libraries (`.libPaths()`, as R reads them with the
+    /// user's own `.Renviron` and `.Rprofile`), in R's order. Sandhill
+    /// asks which one before installing and never creates one.
     #[serde(default)]
-    pub library: String,
+    pub libraries: Vec<crate::RLibrary>,
 }
 
 fn other_source() -> RSource {

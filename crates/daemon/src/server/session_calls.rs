@@ -21,6 +21,7 @@ impl Daemon {
         &self,
         r: String,
         project: Option<String>,
+        library: Option<String>,
     ) -> Result<Value> {
         let project = project.map(|p| projects::normalize(&p)).transpose()?;
         let root = project.clone();
@@ -28,7 +29,7 @@ impl Daemon {
         let (mut launch, trust) = blocking(move || {
             let search =
                 crate::kernelspecs::Search::from_env().in_project(root.as_deref().map(Path::new));
-            crate::irkernel::launch(&r, &search, &record)
+            crate::irkernel::launch(&r, library.as_deref(), &search, &record)
         })
         .await?;
         // pixi reads the project's manifest; plain R and conda don't

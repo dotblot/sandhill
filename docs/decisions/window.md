@@ -122,10 +122,15 @@ differs, this wins.
   Getting Ready (Huan, 2026-11-19; `docs/design/explore-next-plan.md`)
   always shows the whole card, not a single "Ready" line: R's version,
   where it came from (CRAN, Homebrew, conda or other) and its path, how it
-  installs packages, the library they go in (the user's own), the kernel,
+  installs packages, R's libraries (`.libPaths()`), the kernel,
   each package with its version and whether Sandhill installed it, and
   Claude Code and Codex: installed or not, and signed in as Agents last
   saw (never asked here). Signing in stays on Welcome → Agents.
+  R libraries (Huan, 2026-11-19): before installing R packages or
+  IRkernel, Sandhill lists R's own libraries and asks which one, every
+  time (Getting Ready and the kernel picker's Install IRkernel). It never
+  creates a library (no more `R_LIBS_USER` folder made for the user);
+  with no library it can write to, it says how to make one and stops.
   The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
   a title-bar switch shared by every Explore window on this Mac. Until
   that switch is used, the pane shows only with a signed-in Claude Code

@@ -117,6 +117,23 @@ pub struct RWithoutIrkernel {
     pub env: Option<String>,
     /// What installing does, in a sentence, for the user to confirm.
     pub plan: String,
+    /// Installing puts the IRkernel package into one of this R's
+    /// libraries, which the user chooses (see [`Call::ListRLibraries`]);
+    /// conda and pixi install it into their environment instead.
+    #[serde(default)]
+    pub needs_library: bool,
+}
+
+/// One of an R's package libraries (its `.libPaths()`), in R's order.
+/// Sandhill installs only into one the user chose and never creates one
+/// (Huan, 2026-11-19).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RLibrary {
+    pub path: String,
+    /// The user can write to it.
+    pub writable: bool,
+    /// How many packages it holds.
+    pub packages: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

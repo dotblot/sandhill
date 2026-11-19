@@ -909,21 +909,31 @@ pub enum Call {
     },
     /// Adds IRkernel to the R at `r` (one `list_r_without_irkernel` named)
     /// in a job, as [`RWithoutIrkernel::plan`] says, so it runs on when
-    /// clients disconnect. Returns the job's [`TerminalInfo`].
+    /// clients disconnect. When the offer `needs_library`, `library` is
+    /// the one of R's libraries the user chose; Sandhill never creates
+    /// one. Returns the job's [`TerminalInfo`].
     InstallIrkernel {
         r: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        library: Option<String>,
+    },
+    /// The package libraries of the R at `r`, in R's order. Returns
+    /// `Vec<RLibrary>`.
+    ListRLibraries {
+        r: String,
     },
     /// What Quick Tools needs here (R, an R kernel, its packages) and what
     /// is installed. Returns [`QuickReadiness`].
     QuickReadiness,
-    /// Installs the Quick Tools `packages` that are missing into the user's
-    /// own library of the R at `r` in a job, recording what it adds.
-    /// Returns [`QuickInstalling`].
+    /// Installs the Quick Tools `packages` that are missing into
+    /// `library`, one of the R at `r`'s libraries that the user chose, in
+    /// a job, recording what it adds. Returns [`QuickInstalling`].
     QuickInstall {
         r: String,
         packages: Vec<String>,
+        library: String,
     },
     /// Installs Claude Code (`claude`) or Codex (`codex`) with its own
     /// install command in a job, recording it. Returns [`QuickInstalling`].

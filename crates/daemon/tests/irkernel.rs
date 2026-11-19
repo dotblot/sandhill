@@ -122,6 +122,32 @@ async fn r_without_irkernel_is_offered_until_one_runs_it() {
         "{offer:?}"
     );
     assert_eq!(offer.env, None);
+    assert!(offer.needs_library, "{offer:?}");
+
+    // Its libraries, as R lists them; installing asks for one and never
+    // creates one.
+    let libraries = client
+        .call::<Vec<sandhill_proto::RLibrary>>(Call::ListRLibraries { r: shown.clone() })
+        .await
+        .unwrap();
+    assert!(!libraries.is_empty(), "no libraries listed");
+    assert!(
+        libraries.iter().all(|l| Path::new(&l.path).is_dir()),
+        "{libraries:?}"
+    );
+    let refused = client
+        .call::<TerminalInfo>(Call::InstallIrkernel {
+            r: shown.clone(),
+            project: None,
+            library: None,
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("choose which of R's libraries"),
+        "{refused}"
+    );
     assert!(offer.plan.contains("as ir in"), "{}", offer.plan);
     assert!(
         offer
@@ -136,6 +162,7 @@ async fn r_without_irkernel_is_offered_until_one_runs_it() {
         .call::<TerminalInfo>(Call::InstallIrkernel {
             r: "/nowhere/bin/R".into(),
             project: None,
+            library: None,
         })
         .await
         .unwrap_err()

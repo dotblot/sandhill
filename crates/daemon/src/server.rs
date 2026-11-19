@@ -280,9 +280,20 @@ impl Daemon {
                 serde_json::to_value(crate::kernel::list_kernelspecs(Some(root)).await)?
             }
             Call::ListRWithoutIrkernel { project } => self.list_r_without_irkernel(project).await?,
-            Call::InstallIrkernel { r, project } => self.install_irkernel(r, project).await?,
+            Call::InstallIrkernel {
+                r,
+                project,
+                library,
+            } => self.install_irkernel(r, project, library).await?,
+            Call::ListRLibraries { r } => serde_json::to_value(
+                blocking(move || crate::irkernel::libraries(Path::new(&r))).await?,
+            )?,
             Call::QuickReadiness => self.quick_readiness().await?,
-            Call::QuickInstall { r, packages } => self.quick_install(r, packages).await?,
+            Call::QuickInstall {
+                r,
+                packages,
+                library,
+            } => self.quick_install(r, packages, library).await?,
             Call::QuickInstallAgent { kind } => self.quick_install_agent(kind).await?,
             Call::QuickUninstall => self.quick_uninstall().await?,
             Call::QuickStart { tables } => self.quick_start(tables).await?,
