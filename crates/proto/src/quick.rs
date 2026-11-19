@@ -37,6 +37,14 @@ pub struct QuickR {
     pub version: String,
     /// At least [`QUICK_R_MIN`].
     pub new_enough: bool,
+    /// It installs CRAN's ready-built packages, as CRAN's own R does.
+    /// Homebrew's and conda's R build every package from its source.
+    #[serde(default)]
+    pub binaries: bool,
+    /// This computer can build packages from source: Apple's developer
+    /// tools on a Mac, a C compiler elsewhere.
+    #[serde(default)]
+    pub can_build: bool,
 }
 
 /// The oldest R Quick Tools uses.

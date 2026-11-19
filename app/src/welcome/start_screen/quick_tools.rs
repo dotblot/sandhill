@@ -622,20 +622,37 @@ impl AppWindow {
                 }
                 .into_any_element(),
             );
-            let packages_row = look::settings_row(
-                "R packages",
-                Some(look::settings_detail(
-                    if missing.is_empty() {
-                        "Every package for exploring tables is installed.".to_string()
-                    } else {
-                        format!(
-                            "Missing: {}. They go into your own R library, ready-built, and nothing you already have changes.",
-                            missing.join(", ")
-                        )
-                    },
-                    p,
-                )),
-            );
+            // Homebrew's and conda's R build packages from source, which
+            // needs a compiler: Apple's developer tools on a Mac.
+            let (binaries, can_build) = readiness
+                .r
+                .as_ref()
+                .map_or((true, true), |r| (r.binaries, r.can_build));
+            let blocked = !missing.is_empty() && !binaries && !can_build;
+            let detail = if missing.is_empty() {
+                "Every package for exploring tables is installed.".to_string()
+            } else if binaries {
+                format!(
+                    "Missing: {}. They go into your own R library, ready-built, and nothing you already have changes.",
+                    missing.join(", ")
+                )
+            } else if can_build {
+                format!(
+                    "Missing: {}. This R (from Homebrew or conda) builds packages on this computer, which can take a few minutes. They go into your own R library, and nothing you already have changes.",
+                    missing.join(", ")
+                )
+            } else {
+                format!(
+                    "Missing: {}. This R (from Homebrew or conda) builds packages on this computer, which needs {}",
+                    missing.join(", "),
+                    look::mac_or(
+                        "Apple's developer tools. Open Terminal, run xcode-select --install, follow its window, then Check Again.",
+                        "a C compiler. Install your system's build tools, then Check Again.",
+                    )
+                )
+            };
+            let packages_row =
+                look::settings_row("R packages", Some(look::settings_detail(detail, p)));
             rows.push(
                 if missing.is_empty() {
                     packages_row
@@ -645,7 +662,7 @@ impl AppWindow {
                             .small()
                             .primary()
                             .label("Install Missing Packages")
-                            .disabled(installing.is_some())
+                            .disabled(installing.is_some() || blocked)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.quick_install(Installing::Packages, cx)
                             })),

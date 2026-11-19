@@ -69,14 +69,18 @@ Welcome on Quick Tools, so in practice it runs right after installing.
   (`/Library/Frameworks/R.framework/Resources/bin/R`).
 - What is installed is read by one fixed R script, without starting a
   kernel.
-- Installing is one job. The card shows each package as it goes and Show
-  details has the full log.
+- Installing is one job. The card shows its latest line as it goes and
+  Show Details has the log.
   - Packages go into the user's own R library (`R_LIBS_USER`, made if
     missing), so no administrator password is asked.
-  - Binary packages only, never compiled, so Apple's developer tools
-    aren't needed. When a binary isn't available (an R newer than
-    Bioconductor's builds), the card says so and offers the command to
-    copy instead.
+  - With CRAN's R, ready-built packages only, never compiled, so Apple's
+    developer tools aren't needed; when one isn't available (an R newer
+    than CRAN's builds), the job names it. Homebrew's and conda's R can't
+    take CRAN's ready-built packages (Huan, 2026-11-19: his R is
+    Homebrew's), so with them packages are built from source, after the
+    card says it takes a few minutes; without Apple's developer tools the
+    card says how to get them (`xcode-select --install`) and the button
+    waits.
   - CRAN through its cloud mirror, Bioconductor through BiocManager.
     Packages the user already has are never updated or removed.
 

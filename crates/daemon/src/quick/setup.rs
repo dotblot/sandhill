@@ -41,16 +41,20 @@ pub fn readiness(search: &Search) -> QuickReadiness {
     };
     let r = r.map(|path| {
         let version = crate::irkernel::r_version(&path).unwrap_or_default();
-        QuickR {
-            new_enough: new_enough(&version),
-            path: path.to_string_lossy().into_owned(),
-            version,
-        }
+        let listed = installed(&path);
+        (
+            QuickR {
+                new_enough: new_enough(&version),
+                path: path.to_string_lossy().into_owned(),
+                version,
+                binaries: listed.binaries,
+                can_build: can_build(),
+            },
+            listed.packages,
+        )
     });
-    let installed = r
-        .as_ref()
-        .map(|r| installed(Path::new(&r.path)))
-        .unwrap_or_default();
+    let installed = r.as_ref().map(|(_, p)| p.clone()).unwrap_or_default();
+    let r = r.map(|(r, _)| r);
     let packages = PACKAGES
         .iter()
         .map(|&(name, bioconductor, tool)| QuickPackage {
@@ -120,16 +124,27 @@ fn newest_r(search: &Search) -> Option<PathBuf> {
         .map(|c| c.r)
 }
 
-/// The packages of [`PACKAGES`] the R at `r` has, with their versions.
-/// Read from their descriptions, without loading them.
-fn installed(r: &Path) -> Vec<(String, String)> {
+/// What R said about its packages.
+#[derive(Debug, Default, PartialEq)]
+struct Listed {
+    /// The packages of [`PACKAGES`] it has, with their versions.
+    packages: Vec<(String, String)>,
+    /// It installs ready-built packages (`.Platform$pkgType` isn't
+    /// `source`).
+    binaries: bool,
+}
+
+/// The packages of [`PACKAGES`] the R at `r` has, read from their
+/// descriptions without loading them, and whether it takes ready-built
+/// packages.
+fn installed(r: &Path) -> Listed {
     let names = PACKAGES
         .iter()
         .map(|(n, ..)| format!("\"{n}\""))
         .collect::<Vec<_>>()
         .join(", ");
     let code = format!(
-        "for (p in c({names})) {{ v <- tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA); if (!is.na(v)) cat('SANDHILL_PKG', p, v, '\\n') }}"
+        "cat('SANDHILL_PKGTYPE', .Platform$pkgType, '\\n'); for (p in c({names})) {{ v <- tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA); if (!is.na(v)) cat('SANDHILL_PKG', p, v, '\\n') }}"
     );
     let Ok(mut child) = Command::new(r)
         .args(["--no-save", "--no-restore", "--no-init-file", "-s", "-e"])
@@ -139,7 +154,7 @@ fn installed(r: &Path) -> Vec<(String, String)> {
         .stderr(Stdio::null())
         .spawn()
     else {
-        return Vec::new();
+        return Listed::default();
     };
     let started = Instant::now();
     loop {
@@ -151,7 +166,7 @@ fn installed(r: &Path) -> Vec<(String, String)> {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Vec::new();
+                return Listed::default();
             }
         }
     }
@@ -162,13 +177,40 @@ fn installed(r: &Path) -> Vec<(String, String)> {
     parse_installed(&out)
 }
 
-fn parse_installed(out: &str) -> Vec<(String, String)> {
-    out.lines()
-        .filter_map(|line| {
-            let mut words = line.strip_prefix("SANDHILL_PKG ")?.split_whitespace();
-            Some((words.next()?.to_string(), words.next()?.to_string()))
+fn parse_installed(out: &str) -> Listed {
+    let mut listed = Listed::default();
+    for line in out.lines() {
+        if let Some(kind) = line.strip_prefix("SANDHILL_PKGTYPE ") {
+            listed.binaries = !matches!(kind.trim(), "" | "source");
+        } else if let Some(rest) = line.strip_prefix("SANDHILL_PKG ") {
+            let mut words = rest.split_whitespace();
+            if let (Some(name), Some(version)) = (words.next(), words.next()) {
+                listed
+                    .packages
+                    .push((name.to_string(), version.to_string()));
+            }
+        }
+    }
+    listed
+}
+
+/// Whether packages can be built from source here: Apple's developer tools
+/// on a Mac (`xcode-select -p` names them), a C compiler elsewhere.
+fn can_build() -> bool {
+    if cfg!(target_os = "macos") {
+        Command::new("xcode-select")
+            .arg("-p")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    } else {
+        std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path)
+                .any(|dir| dir.join("cc").is_file() || dir.join("gcc").is_file())
         })
-        .collect()
+    }
 }
 
 /// A string as R writes one.
@@ -182,13 +224,17 @@ fn r_vector(names: &[&str]) -> String {
 }
 
 /// The R code that installs `cran` and `bioconductor` packages into the
-/// user's own library, never compiling and never updating what is there.
+/// user's own library, never updating what is there: ready-built packages
+/// when this R takes them (never compiling then), else built from source,
+/// as Homebrew's and conda's R need.
 fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
     format!(
         r#"local({{
-  options(install.packages.compile.from.source = "never")
+  binary <- .Platform$pkgType != "source"
+  type <- if (binary) "binary" else "source"
+  if (binary) options(install.packages.compile.from.source = "never")
+  else message("This R builds packages from their source code on this computer. It can take a few minutes.")
   repos <- c(CRAN = {mirror})
-  type <- if (Sys.info()[["sysname"]] %in% c("Darwin", "Windows")) "binary" else getOption("pkgType")
   lib <- Sys.getenv("R_LIBS_USER")
   dir.create(lib, recursive = TRUE, showWarnings = FALSE)
   .libPaths(c(lib, .libPaths()))
@@ -196,7 +242,7 @@ fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
   bioc <- {bioc}
   if (length(cran)) {{
     message("Installing ", paste(cran, collapse = ", "), " into ", lib)
-    utils::install.packages(cran, lib = lib, repos = repos, type = type)
+    utils::install.packages(cran, lib = lib, repos = repos, type = type, Ncpus = max(1L, parallel::detectCores() - 1L))
   }}
   if (length(bioc)) {{
     if (!requireNamespace("BiocManager", quietly = TRUE)) utils::install.packages("BiocManager", lib = lib, repos = repos, type = type)
@@ -205,7 +251,7 @@ fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
   }}
   wanted <- c(cran, bioc)
   missing <- wanted[!vapply(wanted, requireNamespace, logical(1), quietly = TRUE)]
-  if (length(missing)) stop("These packages couldn't be installed: ", paste(missing, collapse = ", "), ". A ready-built copy may not exist for this R yet.", call. = FALSE)
+  if (length(missing)) stop("These packages couldn't be installed: ", paste(missing, collapse = ", "), if (binary) ". A ready-built copy may not exist for this R yet." else ". Building them failed; the messages above say why.", call. = FALSE)
   message("Done: every package for exploring tables is installed.")
 }})"#,
         mirror = r_string(CRAN),
@@ -270,15 +316,20 @@ mod tests {
     }
 
     #[test]
-    fn installed_packages_are_read_from_the_marked_lines() {
-        let out = "Loading profile\nSANDHILL_PKG ggplot2 4.0.3 \nSANDHILL_PKG readxl 1.4.5 \n";
+    fn installed_packages_and_package_type_come_from_the_marked_lines() {
+        let out = "Loading profile\nSANDHILL_PKGTYPE mac.binary.big-sur-arm64 \nSANDHILL_PKG ggplot2 4.0.3 \nSANDHILL_PKG readxl 1.4.5 \n";
         assert_eq!(
             parse_installed(out),
-            vec![
-                ("ggplot2".to_string(), "4.0.3".to_string()),
-                ("readxl".to_string(), "1.4.5".to_string())
-            ]
+            Listed {
+                packages: vec![
+                    ("ggplot2".to_string(), "4.0.3".to_string()),
+                    ("readxl".to_string(), "1.4.5".to_string())
+                ],
+                binaries: true,
+            }
         );
+        // Homebrew's R builds every package from source.
+        assert!(!parse_installed("SANDHILL_PKGTYPE source \n").binaries);
     }
 
     #[test]
@@ -291,9 +342,12 @@ mod tests {
     }
 
     #[test]
-    fn install_code_never_compiles_or_updates() {
+    fn install_code_never_compiles_ready_built_packages_or_updates() {
         let code = install_code(&["ggplot2"], &["DESeq2"]);
-        assert!(code.contains("compile.from.source = \"never\""));
+        assert!(
+            code.contains("if (binary) options(install.packages.compile.from.source = \"never\")")
+        );
+        assert!(code.contains("type <- if (binary) \"binary\" else \"source\""));
         assert!(code.contains("update = FALSE"));
         assert!(code.contains("R_LIBS_USER"));
     }
