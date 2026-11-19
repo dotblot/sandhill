@@ -1,24 +1,49 @@
-//! Welcome's Start group (Huan, 2026-11-19; `docs/design/quick-tools-plan.md`):
-//! Explore a Table (a place to drop tables and what can be made from them),
-//! Getting Ready (what this Mac still needs, and installing it), and the
-//! tables explored, which Recent lists. Opening tables first asks where to
-//! keep the session's files.
+//! Welcome's Start group (Huan, 2026-11-19; `docs/design/quick-tools-plan.md`,
+//! `docs/design/explore-next-plan.md`): Explore a Table (a place to drop
+//! tables and what can be made from them), Getting Ready (R, where it came
+//! from and where packages go, the packages, Claude Code and Codex,
+//! installing what is missing and removing what Sandhill installed), and
+//! the tables explored, which Recent lists.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
-use sandhill_proto::{FileText, QuickInstalling, QuickReadiness, QuickTool};
+use sandhill_proto::{AgentAccount, FileText, QuickInstalling, QuickReadiness, QuickTool, RSource};
 
 use super::*;
 
 /// How often a running install is looked at.
 const INSTALL_POLL: Duration = Duration::from_secs(2);
 const CRAN_MAC: &str = "https://cloud.r-project.org/bin/macosx/";
+const NODE: &str = "https://nodejs.org/";
 
-/// What is being installed.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// What is being installed or removed.
+#[derive(Clone, PartialEq, Eq)]
 enum Installing {
     Packages,
     Kernel,
+    /// Claude Code (`claude`) or Codex (`codex`).
+    Agent(String),
+    Remove,
+}
+
+impl Installing {
+    fn what(&self) -> String {
+        match self {
+            Installing::Packages => "Installing packages".into(),
+            Installing::Kernel => "Installing IRkernel".into(),
+            Installing::Agent(kind) => format!("Installing {}", agent_name(kind)),
+            Installing::Remove => "Removing what Sandhill installed".into(),
+        }
+    }
+}
+
+fn agent_name(kind: &str) -> &'static str {
+    if kind == "claude" {
+        "Claude Code"
+    } else {
+        "Codex"
+    }
 }
 
 struct Install {
@@ -32,12 +57,25 @@ struct Install {
     failed: bool,
 }
 
+/// A question asked in its row before something runs.
+#[derive(Clone, PartialEq, Eq)]
+enum Confirm {
+    /// Install this agent with its own command.
+    Agent(String),
+    /// Remove what Sandhill installed.
+    Remove,
+}
+
 #[derive(Default)]
 pub(crate) struct QuickPage {
     readiness: Option<Result<QuickReadiness, String>>,
     checking: bool,
     install: Option<Install>,
     details: bool,
+    confirm: Option<Confirm>,
+    /// Whether each agent's own login is signed in, as the Agents page
+    /// last saw it; never asked of the agent here.
+    signed_in: HashMap<String, Option<bool>>,
     /// Tables being opened.
     opening: bool,
     /// A recent session whose actions are shown, and one asked about
@@ -112,11 +150,22 @@ impl AppWindow {
         }
         self.start.quick.checking = true;
         let read = daemon.call::<QuickReadiness>(Call::QuickReadiness);
+        // What the Agents page last saw: not asking the agents (2026-11-14).
+        let accounts = daemon.call::<Vec<AgentAccount>>(Call::ListAgentAccounts {
+            refresh: false,
+            ids: None,
+        });
         cx.spawn(async move |this, cx| {
             let read = read.await;
+            let accounts = accounts.await.unwrap_or_default();
             this.update(cx, |this, cx| {
                 this.start.quick.checking = false;
                 this.start.quick.readiness = Some(read.map_err(|err| format!("{err:#}")));
+                this.start.quick.signed_in = accounts
+                    .into_iter()
+                    .filter(|a| a.default)
+                    .map(|a| (a.kind, a.signed_in))
+                    .collect();
                 cx.notify();
             })
             .ok();
@@ -131,11 +180,10 @@ impl AppWindow {
         let Some(Ok(readiness)) = &self.start.quick.readiness else {
             return;
         };
-        let Some(r) = readiness.r.as_ref().map(|r| r.path.clone()) else {
-            return;
-        };
-        let started = match what {
+        let r = readiness.r.as_ref().map(|r| r.path.clone());
+        let started = match what.clone() {
             Installing::Packages => {
+                let Some(r) = r else { return };
                 let missing: Vec<String> = readiness
                     .packages
                     .iter()
@@ -149,10 +197,20 @@ impl AppWindow {
                 cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
             }
             Installing::Kernel => {
+                let Some(r) = r else { return };
                 let call = daemon.call::<TerminalInfo>(Call::InstallIrkernel { r, project: None });
                 cx.background_spawn(async move { call.await.map(|job| (job.id, None)) })
             }
+            Installing::Agent(kind) => {
+                let call = daemon.call::<QuickInstalling>(Call::QuickInstallAgent { kind });
+                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
+            }
+            Installing::Remove => {
+                let call = daemon.call::<QuickInstalling>(Call::QuickUninstall);
+                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
+            }
         };
+        self.start.quick.confirm = None;
         cx.spawn(async move |this, cx| {
             let started = started.await;
             this.update(cx, |this, cx| {
@@ -495,32 +553,39 @@ impl AppWindow {
             .filter(|p| p.version.is_none() && p.tool == QuickTool::Plot)
             .map(|p| p.name.as_str())
             .collect();
-        let kernel_ok = readiness.kernel.is_some();
-        if r_ok && kernel_ok && missing.is_empty() && q.install.is_none() {
-            return div()
-                .px(px(look::PANE_PAD_X))
-                .text_color(p.ok)
-                .child(format!(
-                    "Ready: {r_text} and every package for exploring tables."
-                ))
-                .into_any_element();
-        }
-        let installing = q.install.as_ref().filter(|i| !i.failed);
+        let busy = q.install.as_ref().is_some_and(|i| !i.failed);
         let mut rows: Vec<AnyElement> = Vec::new();
         let r_row = look::settings_row(
             if r_ok { r_text.clone() } else { "R".into() },
             Some(look::settings_detail(
-                if r_ok {
-                    look::mac_or("Found on this Mac.", "Found on this computer.").to_string()
-                } else {
-                    let chip = if cfg!(target_arch = "aarch64") {
-                        "the file ending in arm64.pkg (Apple chip)"
-                    } else {
-                        "the file ending in x86_64.pkg (Intel chip)"
-                    };
-                    format!(
-                        "{r_text} Get R opens R's download page: choose {chip}, open it and follow the installer, then come back here."
-                    )
+                match &readiness.r {
+                    Some(r) if r_ok => {
+                        let from = match r.source {
+                            RSource::Cran => "From CRAN's installer",
+                            RSource::Homebrew => "From Homebrew",
+                            RSource::Conda => "From conda",
+                            RSource::Other => "Installed another way",
+                        };
+                        let builds = if r.binaries {
+                            "It installs ready-built packages."
+                        } else {
+                            look::mac_or(
+                                "It builds packages on this Mac from their source.",
+                                "It builds packages on this computer from their source.",
+                            )
+                        };
+                        format!("{from}: {}. {builds}", r.path)
+                    }
+                    _ => {
+                        let chip = if cfg!(target_arch = "aarch64") {
+                            "the file ending in arm64.pkg (Apple chip)"
+                        } else {
+                            "the file ending in x86_64.pkg (Intel chip)"
+                        };
+                        format!(
+                            "{r_text} Get R opens R's download page: choose {chip}, open it and follow the installer, then come back here."
+                        )
+                    }
                 },
                 p,
             )),
@@ -539,20 +604,39 @@ impl AppWindow {
             }
             .into_any_element(),
         );
-        if r_ok {
+        if let Some(r) = readiness.r.as_ref().filter(|_| r_ok) {
+            let library = r.library.clone();
+            rows.push(
+                look::settings_row(
+                    "Packages go in",
+                    Some(look::settings_detail(
+                        format!(
+                            "{}: your own R library, which your own R work uses too.",
+                            r.library
+                        ),
+                        p,
+                    )),
+                )
+                .child(
+                    Button::new("quick-show-library")
+                        .small()
+                        .label(look::mac_or("Show in Finder", "Show in Folder"))
+                        .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&library))),
+                )
+                .into_any_element(),
+            );
             let kernel_row = look::settings_row(
                 "R kernel",
                 Some(look::settings_detail(
-                    if kernel_ok {
-                        "Installed: Sandhill runs R through it."
-                    } else {
-                        "Lets Sandhill run R. Installing it takes a minute."
+                    match &readiness.kernel {
+                        Some(name) => format!("{name}: Sandhill runs R through it."),
+                        None => "Lets Sandhill run R. Installing it takes a minute.".into(),
                     },
                     p,
                 )),
             );
             rows.push(
-                if kernel_ok {
+                if readiness.kernel.is_some() {
                     kernel_row
                 } else {
                     kernel_row.child(
@@ -560,7 +644,7 @@ impl AppWindow {
                             .small()
                             .primary()
                             .label("Install")
-                            .disabled(installing.is_some())
+                            .disabled(busy)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.quick_install(Installing::Kernel, cx)
                             })),
@@ -568,135 +652,363 @@ impl AppWindow {
                 }
                 .into_any_element(),
             );
-            // Homebrew's and conda's R build packages from source, which
-            // needs a compiler: Apple's developer tools on a Mac.
-            let (binaries, can_build) = readiness
-                .r
-                .as_ref()
-                .map_or((true, true), |r| (r.binaries, r.can_build));
-            let blocked = !missing.is_empty() && !binaries && !can_build;
-            let detail = if missing.is_empty() {
-                "Every package for exploring tables is installed.".to_string()
-            } else if binaries {
-                format!(
-                    "Missing: {}. They go into your own R library, ready-built, and nothing you already have changes.",
-                    missing.join(", ")
-                )
-            } else if can_build {
-                format!(
-                    "Missing: {}. This R (from Homebrew or conda) builds packages on this computer, which can take a few minutes. They go into your own R library, and nothing you already have changes.",
-                    missing.join(", ")
-                )
-            } else {
-                format!(
-                    "Missing: {}. This R (from Homebrew or conda) builds packages on this computer, which needs {}",
-                    missing.join(", "),
-                    look::mac_or(
-                        "Apple's developer tools. Open Terminal, run xcode-select --install, follow its window, then Check Again.",
-                        "a C compiler. Install your system's build tools, then Check Again.",
-                    )
-                )
-            };
-            let packages_row =
-                look::settings_row("R packages", Some(look::settings_detail(detail, p)));
-            rows.push(
-                if missing.is_empty() {
-                    packages_row
-                } else {
-                    packages_row.child(
-                        Button::new("quick-install-packages")
-                            .small()
-                            .primary()
-                            .label("Install Missing Packages")
-                            .disabled(installing.is_some() || blocked)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.quick_install(Installing::Packages, cx)
-                            })),
-                    )
-                }
-                .into_any_element(),
-            );
+            rows.push(self.quick_packages_row(readiness, r, &missing, busy, p, cx));
         }
         if let Some(install) = &q.install {
-            let what = match install.what {
-                Installing::Packages => "packages",
-                Installing::Kernel => "IRkernel",
-            };
-            let status = if install.failed {
-                format!("Installing {what} didn't finish. Show details has R's messages.")
-            } else {
-                match &install.last {
-                    Some(line) => format!("Installing {what}: {line}"),
-                    None => format!("Installing {what}…"),
-                }
-            };
-            let mut row = v_flex()
-                .px(px(look::PANE_PAD_X))
-                .py(px(look::PANE_PAD_Y))
-                .gap(px(look::GAP_6))
-                .child(
-                    h_flex()
-                        .gap(px(look::GAP_8))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(if install.failed { p.err } else { p.muted })
-                                .child(status),
-                        )
-                        .when(install.log.is_some(), |d| {
-                            d.child(
-                                Button::new("quick-install-details")
-                                    .small()
-                                    .label(if q.details {
-                                        "Hide Details"
-                                    } else {
-                                        "Show Details"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.start.quick.details = !this.start.quick.details;
-                                        cx.notify();
-                                    })),
-                            )
-                        }),
-                );
-            if q.details {
-                let tail: Vec<&str> = install.output.lines().rev().take(40).collect();
-                let text = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-                row = row.child(
-                    div()
-                        .id("quick-install-log")
-                        .max_h(px(220.))
-                        .overflow_y_scroll()
-                        .p(px(look::GAP_8))
-                        .rounded(px(look::CONTROL_RADIUS))
-                        .bg(p.ink(look::ROW_HOVER))
-                        .font_family(look::mono())
-                        .text_size(px(look::small()))
-                        .whitespace_normal()
-                        .child(text),
-                );
-            }
-            rows.push(row.into_any_element());
+            rows.push(self.quick_install_row(install, p, cx));
+        }
+        let mut agents: Vec<AnyElement> = readiness
+            .agents
+            .iter()
+            .map(|agent| self.quick_agent_row(agent, busy, p, cx))
+            .collect();
+        if readiness.installed.iter().any(|i| i.ours) {
+            agents.push(self.quick_remove_row(readiness, busy, p, cx));
         }
         v_flex()
             .gap(px(look::GAP_6))
             .child(
                 h_flex()
                     .px(px(look::PANE_PAD_X))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(look::small()))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(p.muted)
-                            .child("Getting ready"),
-                    )
+                    .child(section_title("R and its packages", p))
                     .child(check_again(cx)),
             )
             .child(look::settings_box(rows, p))
+            .child(
+                div()
+                    .pt(px(look::GAP_12))
+                    .px(px(look::PANE_PAD_X))
+                    .child(section_title("AI helpers", p)),
+            )
+            .child(look::settings_box(agents, p))
             .into_any_element()
+    }
+
+    /// The packages: what is missing, with Install, then each package with
+    /// its version, its library when it isn't the one packages go in, and
+    /// whether Sandhill installed it.
+    fn quick_packages_row(
+        &self,
+        readiness: &QuickReadiness,
+        r: &sandhill_proto::QuickR,
+        missing: &[&str],
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // Homebrew's and conda's R build packages from source, which needs
+        // a compiler: Apple's developer tools on a Mac.
+        let blocked = !missing.is_empty() && !r.binaries && !r.can_build;
+        let detail = if missing.is_empty() {
+            "Every package for exploring tables is installed.".to_string()
+        } else if r.binaries {
+            format!(
+                "Missing: {}. They go into your own R library, ready-built, and nothing you already have changes.",
+                missing.join(", ")
+            )
+        } else if r.can_build {
+            format!(
+                "Missing: {}. This R builds packages on this computer, which can take a few minutes. They go into your own R library, and nothing you already have changes.",
+                missing.join(", ")
+            )
+        } else {
+            format!(
+                "Missing: {}. This R builds packages on this computer, which needs {}",
+                missing.join(", "),
+                look::mac_or(
+                    "Apple's developer tools. Open Terminal, run xcode-select --install, follow its window, then Check Again.",
+                    "a C compiler. Install your system's build tools, then Check Again.",
+                )
+            )
+        };
+        let mut head = look::settings_row("R packages", Some(look::settings_detail(detail, p)));
+        if !missing.is_empty() {
+            head = head.child(
+                Button::new("quick-install-packages")
+                    .small()
+                    .primary()
+                    .label("Install Missing Packages")
+                    .disabled(busy || blocked)
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.quick_install(Installing::Packages, cx)),
+                    ),
+            );
+        }
+        let list = readiness.packages.iter().map(|pkg| {
+            let (state, color) = match &pkg.version {
+                None if pkg.tool == QuickTool::Plot => ("missing".to_string(), p.err),
+                None => ("not installed, needed later".to_string(), p.muted),
+                Some(_) if pkg.by_sandhill => ("installed by Sandhill".into(), p.muted),
+                Some(_) => ("yours".into(), p.muted),
+            };
+            let elsewhere = pkg
+                .library
+                .as_ref()
+                .filter(|lib| **lib != r.library)
+                .map(|lib| format!(", in {lib}"))
+                .unwrap_or_default();
+            h_flex()
+                .gap(px(look::GAP_8))
+                .text_size(px(look::small()))
+                .child(div().flex_none().child(pkg.name.clone()))
+                .child(div().flex_1().min_w_0().truncate().text_color(color).child(
+                    match &pkg.version {
+                        Some(version) => format!("{version}: {state}{elsewhere}"),
+                        None => state,
+                    },
+                ))
+        });
+        v_flex()
+            .child(head)
+            .child(
+                v_flex()
+                    .px(px(look::PANE_PAD_X))
+                    .pb(px(look::PANE_PAD_Y))
+                    .gap(px(look::GAP_2))
+                    .children(list),
+            )
+            .into_any_element()
+    }
+
+    /// A running or failed install's progress, with its output on request.
+    fn quick_install_row(
+        &self,
+        install: &Install,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let q = &self.start.quick;
+        let what = install.what.what();
+        let status = if install.failed {
+            format!("{what} didn't finish. Show Details has the messages.")
+        } else {
+            match &install.last {
+                Some(line) => format!("{what}: {line}"),
+                None => format!("{what}…"),
+            }
+        };
+        let mut row = v_flex()
+            .px(px(look::PANE_PAD_X))
+            .py(px(look::PANE_PAD_Y))
+            .gap(px(look::GAP_6))
+            .child(
+                h_flex()
+                    .gap(px(look::GAP_8))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if install.failed { p.err } else { p.muted })
+                            .child(status),
+                    )
+                    .when(install.log.is_some(), |d| {
+                        d.child(
+                            Button::new("quick-install-details")
+                                .small()
+                                .label(if q.details {
+                                    "Hide Details"
+                                } else {
+                                    "Show Details"
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.start.quick.details = !this.start.quick.details;
+                                    cx.notify();
+                                })),
+                        )
+                    }),
+            );
+        if q.details {
+            let tail: Vec<&str> = install.output.lines().rev().take(40).collect();
+            let text = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+            row = row.child(
+                div()
+                    .id("quick-install-log")
+                    .max_h(px(220.))
+                    .overflow_y_scroll()
+                    .p(px(look::GAP_8))
+                    .rounded(px(look::CONTROL_RADIUS))
+                    .bg(p.ink(look::ROW_HOVER))
+                    .font_family(look::mono())
+                    .text_size(px(look::small()))
+                    .whitespace_normal()
+                    .child(text),
+            );
+        }
+        row.into_any_element()
+    }
+
+    /// Claude Code or Codex: installed or not, signed in as the Agents
+    /// page last saw, and Install, which first shows the agent's own
+    /// command.
+    fn quick_agent_row(
+        &self,
+        agent: &sandhill_proto::QuickAgent,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let q = &self.start.quick;
+        let kind = agent.kind.clone();
+        let asking = q.confirm == Some(Confirm::Agent(kind.clone()));
+        let label = match &agent.version {
+            Some(version) => format!("{} {version}", agent.name),
+            None => agent.name.clone(),
+        };
+        let detail = match (&agent.path, q.signed_in.get(&kind).copied().flatten()) {
+            (Some(path), Some(true)) => format!("{path}. Signed in."),
+            (Some(path), Some(false)) => {
+                format!("{path}. Not signed in: sign in from Agents in the sidebar.")
+            }
+            (Some(path), None) => {
+                format!("{path}. Agents in the sidebar shows whether it is signed in.")
+            }
+            (None, _) if asking => format!(
+                "Install {}? Sandhill runs its official command:",
+                agent.name
+            ),
+            (None, _) if agent.installable => "Not installed.".into(),
+            (None, _) => format!(
+                "Not installed. {} installs with npm, which comes with Node.js: get Node.js, then Check Again.",
+                agent.name
+            ),
+        };
+        let mut row = look::settings_row(label, Some(look::settings_detail(detail, p)));
+        if agent.path.is_none() {
+            row = if asking {
+                row.child(
+                    Button::new(SharedString::from(format!("quick-agent-cancel-{kind}")))
+                        .small()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.start.quick.confirm = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("quick-agent-go-{kind}")))
+                        .small()
+                        .primary()
+                        .label("Install")
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.quick_install(Installing::Agent(kind.clone()), cx)
+                        })),
+                )
+            } else if agent.installable {
+                row.child(
+                    Button::new(SharedString::from(format!("quick-agent-install-{kind}")))
+                        .small()
+                        .label("Install…")
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start.quick.confirm = Some(Confirm::Agent(kind.clone()));
+                            cx.notify();
+                        })),
+                )
+            } else {
+                row.child(
+                    Button::new(SharedString::from(format!("quick-agent-node-{kind}")))
+                        .small()
+                        .label("Get Node.js…")
+                        .on_click(|_, _, cx| cx.open_url(NODE)),
+                )
+            };
+        }
+        if !asking {
+            return row.into_any_element();
+        }
+        v_flex()
+            .child(row)
+            .child(
+                div()
+                    .mx(px(look::PANE_PAD_X))
+                    .mb(px(look::PANE_PAD_Y))
+                    .p(px(look::GAP_8))
+                    .rounded(px(look::CONTROL_RADIUS))
+                    .bg(p.ink(look::ROW_HOVER))
+                    .font_family(look::mono())
+                    .text_size(px(look::small()))
+                    .whitespace_normal()
+                    .child(agent.install.clone()),
+            )
+            .into_any_element()
+    }
+
+    /// Removes what Sandhill installed and is still as it left it, after
+    /// asking in the row (Cancel, then a red Remove).
+    fn quick_remove_row(
+        &self,
+        readiness: &QuickReadiness,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let ours: Vec<String> = readiness
+            .installed
+            .iter()
+            .filter(|i| i.ours)
+            .map(|i| match i.kind.as_str() {
+                "r-package" => format!("{} {}", i.name, i.version),
+                "agent" => agent_name(&i.name).to_string(),
+                _ => i.name.clone(),
+            })
+            .collect();
+        let asking = self.start.quick.confirm == Some(Confirm::Remove);
+        let row = look::settings_row(
+            if asking {
+                "Remove what Sandhill installed?"
+            } else {
+                "Installed by Sandhill"
+            },
+            Some(look::settings_detail(
+                if asking {
+                    format!(
+                        "{}. Your own R work may use these packages too. Settings and sign-ins of Claude Code and Codex stay.",
+                        ours.join(", ")
+                    )
+                } else {
+                    format!(
+                        "{}. Anything updated since is yours and stays.",
+                        ours.join(", ")
+                    )
+                },
+                p,
+            )),
+        );
+        if asking {
+            row.child(
+                Button::new("quick-remove-cancel")
+                    .small()
+                    .label("Cancel")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.start.quick.confirm = None;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("quick-remove-go")
+                    .small()
+                    .danger()
+                    .label("Remove")
+                    .disabled(busy)
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.quick_install(Installing::Remove, cx)),
+                    ),
+            )
+        } else {
+            row.child(
+                Button::new("quick-remove")
+                    .small()
+                    .label("Remove What Sandhill Installed…")
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.start.quick.confirm = Some(Confirm::Remove);
+                        cx.notify();
+                    })),
+            )
+        }
+        .into_any_element()
     }
 
     fn quick_drop_area(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -926,4 +1238,14 @@ fn check_again(cx: &mut Context<AppWindow>) -> Button {
             this.start.quick.readiness = None;
             this.quick_check(cx);
         }))
+}
+
+/// The small heading above one of the page's boxes.
+fn section_title(title: &'static str, p: &Palette) -> Div {
+    div()
+        .flex_1()
+        .text_size(px(look::small()))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(p.muted)
+        .child(title)
 }

@@ -151,6 +151,13 @@ differs, this wins.
   and BioRender join the list; the browser on the Mac signs in to the
   user's own account, the device keeps and renews the tokens, and nothing
   is copied between devices.
+- Installing the agents (Huan, 2026-11-19; `docs/design/explore-next-plan.md`):
+  Getting Ready can install Claude Code (`curl -fsSL
+  https://claude.ai/install.sh | bash`) and Codex (`npm install -g
+  @openai/codex`, which needs Node.js) with their own official commands,
+  shown in the row before they run, as a job. Signing in stays on Welcome →
+  Agents; Getting Ready shows signed in as Agents last saw, never asking
+  the agent.
 
 ## Accounts and quota
 - Agent accounts (Huan, 2026-11-13; `docs/design/done/agent-accounts-plan.md`):

@@ -4,5 +4,6 @@
 
 pub mod folder;
 pub mod recognise;
+pub mod record;
 pub mod run;
 pub mod setup;

@@ -1,6 +1,7 @@
-//! What Quick Tools needs on this computer: R, an R kernel and the R
-//! packages its templates use, and the job that installs missing packages
-//! into the user's own R library, from binaries only.
+//! What Explore a Table needs on this computer: R, an R kernel and the R
+//! packages its templates use, Claude Code and Codex for its AI helper, and
+//! the jobs that install what is missing, each recorded (`record`) so
+//! Sandhill can later remove exactly what it installed.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -8,9 +9,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use sandhill_proto::{
-    JobSpec, KernelspecInfo, QUICK_R_MIN, QuickPackage, QuickR, QuickReadiness, QuickTool,
+    JobSpec, KernelspecInfo, QUICK_R_MIN, QuickAgent, QuickPackage, QuickR, QuickReadiness,
+    QuickTool, RSource,
 };
 
+use super::record;
 use crate::agents::shell_quote;
 use crate::kernelspecs::{self, Search};
 use crate::terminal::Launch;
@@ -31,9 +34,27 @@ pub const PACKAGES: &[(&str, bool, QuickTool)] = &[
     ("svglite", false, QuickTool::Plot),
 ];
 
+/// The agents Getting Ready offers: `(kind, how Sandhill installs it, the
+/// command)`.
+const AGENTS: &[(&str, &str, &str)] = &[
+    (
+        "claude",
+        "native",
+        "curl -fsSL https://claude.ai/install.sh | bash",
+    ),
+    ("codex", "npm", "npm install -g @openai/codex"),
+];
+
 /// What is there: the R an R kernel runs (IRkernel before Ark, the newest
-/// first), else the newest R found, and which packages it has.
-pub fn readiness(search: &Search) -> QuickReadiness {
+/// first), else the newest R found, its packages, the agents (from
+/// `ListAgents`' descriptions) and what Sandhill's `record` says it
+/// installed.
+pub fn readiness(
+    search: &Search,
+    record_path: &Path,
+    agents: Vec<sandhill_proto::AgentInfo>,
+) -> QuickReadiness {
+    let installed_by_sandhill = record::read(record_path);
     let kernel = r_kernels(search).into_iter().next();
     let r = match &kernel {
         Some((_, program)) => Some(program.clone()),
@@ -45,10 +66,12 @@ pub fn readiness(search: &Search) -> QuickReadiness {
         (
             QuickR {
                 new_enough: new_enough(&version),
+                source: source(&path),
                 path: path.to_string_lossy().into_owned(),
                 version,
                 binaries: listed.binaries,
                 can_build: can_build(),
+                library: listed.library,
             },
             listed.packages,
         )
@@ -57,20 +80,68 @@ pub fn readiness(search: &Search) -> QuickReadiness {
     let r = r.map(|(r, _)| r);
     let packages = PACKAGES
         .iter()
-        .map(|&(name, bioconductor, tool)| QuickPackage {
-            name: name.to_string(),
-            bioconductor,
-            tool,
-            version: installed
-                .iter()
-                .find(|(n, _)| n == name)
-                .map(|(_, v)| v.clone()),
+        .map(|&(name, bioconductor, tool)| {
+            let found = installed.iter().find(|(n, ..)| n == name);
+            let version = found.map(|(_, v, _)| v.clone());
+            let library = found.map(|(.., l)| l.clone());
+            QuickPackage {
+                name: name.to_string(),
+                bioconductor,
+                tool,
+                by_sandhill: installed_by_sandhill.iter().any(|i| {
+                    i.kind == record::R_PACKAGE
+                        && i.ours
+                        && i.name == name
+                        && Some(&i.version) == version.as_ref()
+                        && Some(&i.place) == library.as_ref()
+                }),
+                version,
+                library,
+            }
+        })
+        .collect();
+    let npm = crate::agents::find("npm").is_some();
+    let agents = AGENTS
+        .iter()
+        .filter_map(|&(kind, how, install)| {
+            let info = agents.iter().find(|a| a.kind == kind)?;
+            Some(QuickAgent {
+                kind: kind.into(),
+                name: info.name.clone(),
+                path: info.path.clone(),
+                version: info.version.clone(),
+                install: install.into(),
+                installable: how != "npm" || npm,
+                by_sandhill: installed_by_sandhill
+                    .iter()
+                    .any(|i| i.kind == record::AGENT && i.name == kind && i.ours),
+            })
         })
         .collect();
     QuickReadiness {
         r,
         kernel: kernel.map(|(name, _)| name),
         packages,
+        agents,
+        installed: installed_by_sandhill,
+    }
+}
+
+/// Where an R came from, by where it is installed.
+fn source(r: &Path) -> RSource {
+    let real = std::fs::canonicalize(r).unwrap_or_else(|_| r.to_path_buf());
+    let text = real.to_string_lossy();
+    if text.starts_with("/Library/Frameworks/R.framework") {
+        RSource::Cran
+    } else if text.starts_with("/opt/homebrew/")
+        || text.starts_with("/usr/local/Cellar/")
+        || text.starts_with("/home/linuxbrew/")
+    {
+        RSource::Homebrew
+    } else if real.ancestors().any(|dir| dir.join("conda-meta").is_dir()) {
+        RSource::Conda
+    } else {
+        RSource::Other
     }
 }
 
@@ -127,16 +198,23 @@ fn newest_r(search: &Search) -> Option<PathBuf> {
 /// What R said about its packages.
 #[derive(Debug, Default, PartialEq)]
 struct Listed {
-    /// The packages of [`PACKAGES`] it has, with their versions.
-    packages: Vec<(String, String)>,
+    /// The packages of [`PACKAGES`] it has: name, version, library.
+    packages: Vec<(String, String, String)>,
     /// It installs ready-built packages (`.Platform$pkgType` isn't
     /// `source`).
     binaries: bool,
+    /// The user's own library, where Sandhill installs.
+    library: String,
 }
 
-/// The packages of [`PACKAGES`] the R at `r` has, read from their
-/// descriptions without loading them, and whether it takes ready-built
-/// packages.
+/// The R expression for the user's own library: the first of
+/// `R_LIBS_USER`, with `~` expanded.
+const USER_LIBRARY: &str =
+    "path.expand(strsplit(Sys.getenv(\"R_LIBS_USER\"), .Platform$path.sep, fixed = TRUE)[[1]][1])";
+
+/// The packages of [`PACKAGES`] the R at `r` has and where, read from their
+/// descriptions without loading them, whether it takes ready-built
+/// packages, and the user's own library.
 fn installed(r: &Path) -> Listed {
     let names = PACKAGES
         .iter()
@@ -144,7 +222,7 @@ fn installed(r: &Path) -> Listed {
         .collect::<Vec<_>>()
         .join(", ");
     let code = format!(
-        "cat('SANDHILL_PKGTYPE', .Platform$pkgType, '\\n'); for (p in c({names})) {{ v <- tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA); if (!is.na(v)) cat('SANDHILL_PKG', p, v, '\\n') }}"
+        "cat('SANDHILL_PKGTYPE\\t', .Platform$pkgType, '\\n', sep = ''); cat('SANDHILL_LIB\\t', {USER_LIBRARY}, '\\n', sep = ''); for (p in c({names})) {{ d <- tryCatch(find.package(p), error = function(e) NA); if (!is.na(d)) cat('SANDHILL_PKG', p, as.character(utils::packageVersion(p, lib.loc = dirname(d))), dirname(d), sep = '\\t'); if (!is.na(d)) cat('\\n') }}"
     );
     let Ok(mut child) = Command::new(r)
         .args(["--no-save", "--no-restore", "--no-init-file", "-s", "-e"])
@@ -180,15 +258,18 @@ fn installed(r: &Path) -> Listed {
 fn parse_installed(out: &str) -> Listed {
     let mut listed = Listed::default();
     for line in out.lines() {
-        if let Some(kind) = line.strip_prefix("SANDHILL_PKGTYPE ") {
-            listed.binaries = !matches!(kind.trim(), "" | "source");
-        } else if let Some(rest) = line.strip_prefix("SANDHILL_PKG ") {
-            let mut words = rest.split_whitespace();
-            if let (Some(name), Some(version)) = (words.next(), words.next()) {
-                listed
-                    .packages
-                    .push((name.to_string(), version.to_string()));
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields[..] {
+            ["SANDHILL_PKGTYPE", kind, ..] => {
+                listed.binaries = !matches!(kind.trim(), "" | "source")
             }
+            ["SANDHILL_LIB", library, ..] => listed.library = library.trim().to_string(),
+            ["SANDHILL_PKG", name, version, library, ..] => listed.packages.push((
+                name.to_string(),
+                version.to_string(),
+                library.trim().to_string(),
+            )),
+            _ => {}
         }
     }
     listed
@@ -226,18 +307,21 @@ fn r_vector(names: &[&str]) -> String {
 /// The R code that installs `cran` and `bioconductor` packages into the
 /// user's own library, never updating what is there: ready-built packages
 /// when this R takes them (never compiling then), else built from source,
-/// as Homebrew's and conda's R need.
-fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
+/// as Homebrew's and conda's R need. What it adds goes in `record`.
+fn install_code(cran: &[&str], bioconductor: &[&str], record_path: &Path) -> String {
     format!(
         r#"local({{
+  {append}
   binary <- .Platform$pkgType != "source"
   type <- if (binary) "binary" else "source"
   if (binary) options(install.packages.compile.from.source = "never")
   else message("This R builds packages from their source code on this computer. It can take a few minutes.")
   repos <- c(CRAN = {mirror})
-  lib <- Sys.getenv("R_LIBS_USER")
+  lib <- {library}
   dir.create(lib, recursive = TRUE, showWarnings = FALSE)
   .libPaths(c(lib, .libPaths()))
+  before <- rownames(utils::installed.packages(lib.loc = lib))
+  on.exit(sandhill_record(lib, before), add = TRUE)
   cran <- {cran}
   bioc <- {bioc}
   if (length(cran)) {{
@@ -254,7 +338,9 @@ fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
   if (length(missing)) stop("These packages couldn't be installed: ", paste(missing, collapse = ", "), if (binary) ". A ready-built copy may not exist for this R yet." else ". Building them failed; the messages above say why.", call. = FALSE)
   message("Done: every package for exploring tables is installed.")
 }})"#,
+        append = record::r_append(record_path),
         mirror = r_string(CRAN),
+        library = USER_LIBRARY,
         cran = r_vector(cran),
         bioc = r_vector(bioconductor),
     )
@@ -262,7 +348,7 @@ fn install_code(cran: &[&str], bioconductor: &[&str]) -> String {
 
 /// The job that installs `packages` (names from [`PACKAGES`]) into the R at
 /// `r`, with its output also written to `log`.
-pub fn install(r: &str, packages: &[String], log: &Path) -> Result<Launch> {
+pub fn install(r: &str, packages: &[String], log: &Path, record_path: &Path) -> Result<Launch> {
     let r = PathBuf::from(r);
     if !r.is_file() {
         bail!("{} isn't an R program", r.display());
@@ -293,12 +379,45 @@ pub fn install(r: &str, packages: &[String], log: &Path) -> Result<Launch> {
         command: Some(format!(
             "set -o pipefail; {} -e {} 2>&1 | tee {}",
             shell_quote(&rscript.to_string_lossy()),
-            shell_quote(&install_code(&cran, &bioconductor)),
+            shell_quote(&install_code(&cran, &bioconductor, record_path)),
             shell_quote(&log.to_string_lossy())
         )),
     };
     let mut launch = crate::jobs::launch(&job, Some(&home), None)?;
     launch.title = "Install packages for exploring tables".into();
+    Ok(launch)
+}
+
+/// The job that installs Claude Code or Codex with its own command, its
+/// output also in `log`, and records it.
+pub fn install_agent(kind: &str, log: &Path, record_path: &Path) -> Result<Launch> {
+    let Some(&(kind, how, command)) = AGENTS.iter().find(|(k, ..)| *k == kind) else {
+        bail!("{kind} isn't an agent Sandhill installs");
+    };
+    if crate::agents::find(if kind == "claude" { "claude" } else { "codex" }).is_some() {
+        bail!("it is already installed");
+    }
+    if how == "npm" && crate::agents::find("npm").is_none() {
+        bail!("Codex needs Node.js, which isn't installed");
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").context("HOME isn't set")?);
+    let job = JobSpec {
+        path: None,
+        command: Some(format!(
+            "set -o pipefail; ( {command} && {} ) 2>&1 | tee {}",
+            record::sh_append_agent(record_path, kind, how),
+            shell_quote(&log.to_string_lossy())
+        )),
+    };
+    let mut launch = crate::jobs::launch(&job, Some(&home), None)?;
+    launch.title = format!(
+        "Install {}",
+        if kind == "claude" {
+            "Claude Code"
+        } else {
+            "Codex"
+        }
+    );
     Ok(launch)
 }
 
@@ -316,39 +435,73 @@ mod tests {
     }
 
     #[test]
-    fn installed_packages_and_package_type_come_from_the_marked_lines() {
-        let out = "Loading profile\nSANDHILL_PKGTYPE mac.binary.big-sur-arm64 \nSANDHILL_PKG ggplot2 4.0.3 \nSANDHILL_PKG readxl 1.4.5 \n";
+    fn packages_libraries_and_package_type_come_from_the_marked_lines() {
+        let out = "Loading profile\nSANDHILL_PKGTYPE\tmac.binary.big-sur-arm64\nSANDHILL_LIB\t/Users/a/Library/R/arm64/4.6/library\nSANDHILL_PKG\tggplot2\t4.0.3\t/opt/homebrew/lib/R/4.6/site-library\nSANDHILL_PKG\treadxl\t1.4.5\t/Users/a/Library/R/arm64/4.6/library\n";
         assert_eq!(
             parse_installed(out),
             Listed {
                 packages: vec![
-                    ("ggplot2".to_string(), "4.0.3".to_string()),
-                    ("readxl".to_string(), "1.4.5".to_string())
+                    (
+                        "ggplot2".to_string(),
+                        "4.0.3".to_string(),
+                        "/opt/homebrew/lib/R/4.6/site-library".to_string()
+                    ),
+                    (
+                        "readxl".to_string(),
+                        "1.4.5".to_string(),
+                        "/Users/a/Library/R/arm64/4.6/library".to_string()
+                    )
                 ],
                 binaries: true,
+                library: "/Users/a/Library/R/arm64/4.6/library".to_string(),
             }
         );
         // Homebrew's R builds every package from source.
-        assert!(!parse_installed("SANDHILL_PKGTYPE source \n").binaries);
+        assert!(!parse_installed("SANDHILL_PKGTYPE\tsource\n").binaries);
     }
 
     #[test]
-    fn only_quick_tools_packages_can_be_installed() {
-        let err = install("/bin/sh", &["Seurat".to_string()], Path::new("/tmp/x.log")).unwrap_err();
+    fn only_quick_tools_packages_and_agents_can_be_installed() {
+        let record = Path::new("/tmp/record.tsv");
+        let err = install(
+            "/bin/sh",
+            &["Seurat".to_string()],
+            Path::new("/tmp/x.log"),
+            record,
+        )
+        .unwrap_err();
         assert!(
             err.to_string()
                 .contains("isn't one of the packages for exploring tables")
         );
+        let err = install_agent("pi", Path::new("/tmp/x.log"), record).unwrap_err();
+        assert!(err.to_string().contains("isn't an agent Sandhill installs"));
     }
 
     #[test]
-    fn install_code_never_compiles_ready_built_packages_or_updates() {
-        let code = install_code(&["ggplot2"], &["DESeq2"]);
+    fn install_code_records_never_compiles_ready_built_packages_or_updates() {
+        let code = install_code(&["ggplot2"], &["DESeq2"], Path::new("/tmp/record.tsv"));
         assert!(
             code.contains("if (binary) options(install.packages.compile.from.source = \"never\")")
         );
         assert!(code.contains("type <- if (binary) \"binary\" else \"source\""));
         assert!(code.contains("update = FALSE"));
         assert!(code.contains("R_LIBS_USER"));
+        assert!(code.contains("on.exit(sandhill_record(lib, before)"));
+        assert!(code.contains("/tmp/record.tsv"));
+    }
+
+    #[test]
+    fn r_sources_are_read_from_where_r_is() {
+        assert_eq!(
+            source(Path::new("/Library/Frameworks/R.framework/Resources/bin/R")),
+            RSource::Cran
+        );
+        assert_eq!(source(Path::new("/opt/homebrew/bin/R")), RSource::Homebrew);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("conda-meta")).unwrap();
+        std::fs::create_dir_all(dir.path().join("bin")).unwrap();
+        assert_eq!(source(&dir.path().join("bin/R")), RSource::Conda);
+        assert_eq!(source(Path::new("/usr/bin/R")), RSource::Other);
     }
 }

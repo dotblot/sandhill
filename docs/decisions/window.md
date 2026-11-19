@@ -119,6 +119,13 @@ differs, this wins.
   Sandhill's own R templates (R only); everything works without an AI
   account. Sandhill carries no R or packages. An AI suggestion takes a
   click before a plot uses it.
+  Getting Ready (Huan, 2026-11-19; `docs/design/explore-next-plan.md`)
+  always shows the whole card, not a single "Ready" line: R's version,
+  where it came from (CRAN, Homebrew, conda or other) and its path, how it
+  installs packages, the library they go in (the user's own), the kernel,
+  each package with its version and whether Sandhill installed it, and
+  Claude Code and Codex: installed or not, and signed in as Agents last
+  saw (never asked here). Signing in stays on Welcome → Agents.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on

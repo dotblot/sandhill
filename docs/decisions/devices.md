@@ -42,6 +42,15 @@ where an older plan differs, this wins.
   Only checksum/provenance-owned components may be removed; never user Python/R,
   conda environments or standalone agent CLIs. Trash the current app last, only
   after selected devices succeeded. Unverifiable leftovers must be reported.
+- What Sandhill installed (Huan, 2026-11-19; `docs/design/explore-next-plan.md`):
+  Getting Ready writes each R package, IRkernel file and agent it installs
+  into a record in the daemon's state folder (`installed-by-sandhill.tsv`).
+  Remove What Sandhill Installed… (asked in its row) removes only those
+  still at the recorded version and place; anything updated or reinstalled
+  since is the user's and stays. This is the one exception to "never
+  standalone agent CLIs": Claude Code and Codex are removed only when the
+  record says Sandhill installed them, and their settings and sign-ins
+  (`~/.claude`, `~/.codex`) always stay.
 
 ## Folder trust
 - Folder trust (Huan, 2026-11-12): the first open of a folder asks once;

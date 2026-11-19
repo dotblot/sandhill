@@ -1,5 +1,6 @@
-//! Quick Tools calls: what is installed, installing packages, session
-//! folders and their card, and running templates.
+//! Explore a Table calls: what is installed, installing and removing what
+//! Sandhill installs, session folders and their card, and running
+//! templates.
 
 use std::time::Duration;
 
@@ -7,31 +8,73 @@ use sandhill_proto::{EVENT_RUN_FINISHED, QuickCard, QuickRequest};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::*;
-use crate::quick::{folder, run, setup};
+use crate::quick::{folder, record, run, setup};
+use crate::terminal::Launch;
 
 /// How long one template may run: loading a large table, a big heatmap.
 const RUN_TIMEOUT: Duration = Duration::from_secs(600);
 
 impl Daemon {
+    /// Sandhill's record of what it installed on this device.
+    pub(super) fn install_record(&self) -> PathBuf {
+        self.state.root().join(record::FILE)
+    }
+
     pub(super) async fn quick_readiness(&self) -> Result<Value> {
-        let ready =
-            blocking(|| Ok(setup::readiness(&crate::kernelspecs::Search::from_env()))).await?;
+        let mut agents = Vec::new();
+        for kind in [crate::agents::CLAUDE, crate::agents::CODEX] {
+            if let Some(info) = crate::agents::describe(kind).await {
+                agents.push(info);
+            }
+        }
+        let record = self.install_record();
+        let ready = blocking(move || {
+            Ok(setup::readiness(
+                &crate::kernelspecs::Search::from_env(),
+                &record,
+                agents,
+            ))
+        })
+        .await?;
         Ok(serde_json::to_value(ready)?)
     }
 
-    pub(super) async fn quick_install(&self, r: String, packages: Vec<String>) -> Result<Value> {
+    /// Starts an install or removal job whose output is also in a log the
+    /// app reads for its progress line.
+    async fn quick_job(
+        &self,
+        make: impl FnOnce(&Path) -> Result<Launch> + Send + 'static,
+    ) -> Result<Value> {
         let log = std::env::temp_dir().join(format!(
             "sandhill-quick-install-{}.log",
             uuid::Uuid::new_v4().simple()
         ));
         let at = log.clone();
-        let launch = blocking(move || setup::install(&r, &packages, &at)).await?;
+        let launch = blocking(move || make(&at)).await?;
         let started = self.terminals.start(launch).await?;
         self.keep_awake(&started.id);
         Ok(serde_json::to_value(sandhill_proto::QuickInstalling {
             job: started,
             log: log.to_string_lossy().into_owned(),
         })?)
+    }
+
+    pub(super) async fn quick_install(&self, r: String, packages: Vec<String>) -> Result<Value> {
+        let record = self.install_record();
+        self.quick_job(move |log| setup::install(&r, &packages, log, &record))
+            .await
+    }
+
+    pub(super) async fn quick_install_agent(&self, kind: String) -> Result<Value> {
+        let record = self.install_record();
+        self.quick_job(move |log| setup::install_agent(&kind, log, &record))
+            .await
+    }
+
+    pub(super) async fn quick_uninstall(&self) -> Result<Value> {
+        let record = self.install_record();
+        self.quick_job(move |log| record::uninstall(&record, log))
+            .await
     }
 
     /// Sandhill's storage for sessions not kept yet.

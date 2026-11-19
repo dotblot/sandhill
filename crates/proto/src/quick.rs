@@ -26,6 +26,24 @@ pub struct QuickPackage {
     /// The installed version, if it is installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// The library it is installed in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<String>,
+    /// Sandhill installed this version there (its record says so).
+    #[serde(default)]
+    pub by_sandhill: bool,
+}
+
+/// Where an R came from, read from where it is installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RSource {
+    /// CRAN's installer: `/Library/Frameworks/R.framework`.
+    Cran,
+    Homebrew,
+    Conda,
+    /// rig, a system package or a build of its own.
+    Other,
 }
 
 /// The R that Quick Tools would use.
@@ -45,6 +63,51 @@ pub struct QuickR {
     /// tools on a Mac, a C compiler elsewhere.
     #[serde(default)]
     pub can_build: bool,
+    #[serde(default = "other_source")]
+    pub source: RSource,
+    /// Where Sandhill installs packages for it: the user's own library
+    /// (`R_LIBS_USER`).
+    #[serde(default)]
+    pub library: String,
+}
+
+fn other_source() -> RSource {
+    RSource::Other
+}
+
+/// Claude Code or Codex, for Getting Ready.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickAgent {
+    /// `claude` or `codex`.
+    pub kind: String,
+    pub name: String,
+    /// The program, when installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// The agent's own install command, shown before it runs.
+    pub install: String,
+    /// It can be installed here: Codex needs Node's `npm`.
+    pub installable: bool,
+    /// Sandhill installed it.
+    #[serde(default)]
+    pub by_sandhill: bool,
+}
+
+/// One thing Sandhill installed, from its record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickInstalled {
+    /// `r-package`, `kernel` or `agent`.
+    pub kind: String,
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    /// The library, kernel folder or install method.
+    pub place: String,
+    /// Still as Sandhill left it, so removing it is Sandhill's to do. A
+    /// package updated or reinstalled since is the user's now.
+    pub ours: bool,
 }
 
 /// The oldest R Quick Tools uses.
@@ -61,6 +124,11 @@ pub struct QuickReadiness {
     pub kernel: Option<String>,
     /// Every package Quick Tools uses, installed or not.
     pub packages: Vec<QuickPackage>,
+    #[serde(default)]
+    pub agents: Vec<QuickAgent>,
+    /// What Sandhill's record says it installed.
+    #[serde(default)]
+    pub installed: Vec<QuickInstalled>,
 }
 
 /// A package install started: its job, and the file its output also goes

@@ -283,6 +283,8 @@ impl Daemon {
             Call::InstallIrkernel { r, project } => self.install_irkernel(r, project).await?,
             Call::QuickReadiness => self.quick_readiness().await?,
             Call::QuickInstall { r, packages } => self.quick_install(r, packages).await?,
+            Call::QuickInstallAgent { kind } => self.quick_install_agent(kind).await?,
+            Call::QuickUninstall => self.quick_uninstall().await?,
             Call::QuickStart { tables } => self.quick_start(tables).await?,
             Call::QuickKeep {
                 project,

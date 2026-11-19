@@ -314,10 +314,12 @@ fn r_string(text: &str) -> String {
 
 /// The R code that installs IRkernel, if need be, into the first library
 /// R can write to (else the user's own) and registers the kernel in `dir`
-/// with `r` as its program.
-fn install_code(r: &Path, name: &str, dir: &Path) -> String {
+/// with `r` as its program. What it adds, and the kernel folder, go in
+/// Sandhill's `record` (Huan, 2026-11-19), so it can be removed later.
+fn install_code(r: &Path, name: &str, dir: &Path, record: &Path) -> String {
     format!(
         r#"local({{
+  {append}
   repos <- getOption("repos")
   if (!length(repos) || any(is.na(repos) | !nzchar(repos) | repos == "@CRAN@")) repos <- c(CRAN = {cran})
   libs <- .libPaths()
@@ -328,8 +330,10 @@ fn install_code(r: &Path, name: &str, dir: &Path) -> String {
     .libPaths(c(lib, libs))
   }}
   if (!requireNamespace("IRkernel", quietly = TRUE)) {{
+    before <- rownames(utils::installed.packages(lib.loc = lib))
     message("Installing IRkernel into ", lib, " from ", paste(repos, collapse = ", "))
     install.packages("IRkernel", lib = lib, repos = repos)
+    sandhill_record(lib, before)
   }}
   if (!requireNamespace("IRkernel", quietly = TRUE)) stop("IRkernel could not be installed; see the messages above.")
   src <- system.file("kernelspec", package = "IRkernel")
@@ -340,8 +344,11 @@ fn install_code(r: &Path, name: &str, dir: &Path) -> String {
   dir.create(dir, recursive = TRUE, showWarnings = FALSE)
   for (logo in list.files(src, pattern = "^logo")) file.copy(file.path(src, logo), file.path(dir, logo), overwrite = TRUE)
   jsonlite::write_json(spec, file.path(dir, "kernel.json"), auto_unbox = TRUE, pretty = TRUE)
+  {append_kernel}
   message("Registered the kernel ", basename(dir), " (", spec$display_name, ") in ", dirname(dir))
 }})"#,
+        append = crate::quick::record::r_append(record),
+        append_kernel = crate::quick::record::r_append_kernel(record, "dir"),
         cran = r_string(CRAN),
         r = r_string(&r.to_string_lossy()),
         name = r_string(name),
@@ -351,7 +358,7 @@ fn install_code(r: &Path, name: &str, dir: &Path) -> String {
 
 /// The job that adds IRkernel to the R at `r`, and the folder it acts on
 /// that must be trusted (a pixi project's), if any.
-pub fn launch(r: &str, search: &Search) -> Result<(Launch, Option<PathBuf>)> {
+pub fn launch(r: &str, search: &Search, record: &Path) -> Result<(Launch, Option<PathBuf>)> {
     let wanted = canonical(Path::new(r));
     let Some(candidate) = find(search)
         .into_iter()
@@ -369,7 +376,7 @@ pub fn launch(r: &str, search: &Search) -> Result<(Launch, Option<PathBuf>)> {
                 .filter(|p| p.is_file())
                 .with_context(|| format!("there is no Rscript beside {r}"))?;
             let (_, dir) = kernel_dir(&candidate, search);
-            let code = install_code(&candidate.r, &display_name(&candidate), &dir);
+            let code = install_code(&candidate.r, &display_name(&candidate), &dir, record);
             (
                 format!(
                     "{} -e {}",

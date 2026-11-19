@@ -919,12 +919,21 @@ pub enum Call {
     /// is installed. Returns [`QuickReadiness`].
     QuickReadiness,
     /// Installs the Quick Tools `packages` that are missing into the user's
-    /// own library of the R at `r`, from binaries only, in a job. Returns
-    /// [`QuickInstalling`].
+    /// own library of the R at `r` in a job, recording what it adds.
+    /// Returns [`QuickInstalling`].
     QuickInstall {
         r: String,
         packages: Vec<String>,
     },
+    /// Installs Claude Code (`claude`) or Codex (`codex`) with its own
+    /// install command in a job, recording it. Returns [`QuickInstalling`].
+    QuickInstallAgent {
+        kind: String,
+    },
+    /// Removes what Sandhill's record says it installed and is still as it
+    /// left it (R packages, kernel files, agents' programs), in a job, then
+    /// clears the record. Returns [`QuickInstalling`].
+    QuickUninstall,
     /// Starts an Explore a Table session in Sandhill's own storage, with
     /// links to `tables` (absolute paths), which stay where they are.
     /// Nothing is made beside the tables (Huan, 2026-11-19). Returns the
