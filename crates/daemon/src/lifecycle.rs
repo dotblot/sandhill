@@ -73,6 +73,36 @@ impl ProcessIdentity {
         process(self.pid).is_some_and(|p| p.identity == *self && !p.zombie)
     }
 
+    /// The executable of this recorded process, not of a reused PID.
+    pub(crate) fn program(&self) -> Option<PathBuf> {
+        if !self.alive() {
+            return None;
+        }
+        #[cfg(target_os = "linux")]
+        let program = std::fs::read_link(format!("/proc/{}/exe", self.pid)).ok()?;
+        #[cfg(target_os = "macos")]
+        let program = {
+            use std::os::unix::ffi::OsStrExt;
+            let mut buffer = [0_u8; 4096];
+            // SAFETY: the buffer is writable for the length passed to proc_pidpath.
+            let len = unsafe {
+                libc::proc_pidpath(
+                    self.pid as i32,
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len() as u32,
+                )
+            };
+            if len <= 0 {
+                return None;
+            }
+            let path = std::ffi::CStr::from_bytes_until_nul(&buffer).ok()?;
+            PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes()))
+        };
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let program = return None;
+        self.alive().then_some(program)
+    }
+
     #[cfg(target_os = "linux")]
     fn signal(&self, signal: i32) -> Result<()> {
         // Open first, then validate birth identity: pidfd pins exactly the

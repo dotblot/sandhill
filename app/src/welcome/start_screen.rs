@@ -227,7 +227,7 @@ impl Start {
             connectors: None,
             page: Page::Projects,
             page_chosen: false,
-            quick: Default::default(),
+            quick: quick_tools::QuickPage::new(),
             font_menu: false,
             mono_fonts: None,
             font_trigger: Default::default(),
@@ -436,6 +436,7 @@ impl AppWindow {
         for host in self.start.hosts() {
             self.ensure_machine(&host, cx);
         }
+        self.quick_offer_first_setup(cx);
         self.prepare_folder_dialog(window, cx);
         let host = self.start.selected_host.clone();
         let page = self.start.page.clone();

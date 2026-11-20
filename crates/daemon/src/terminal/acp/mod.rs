@@ -385,7 +385,7 @@ pub async fn run(options: Options) -> Result<i32> {
         }
         env.push(("OPENSCIENCE_CONFIG_CONTENT".to_string(), config.to_string()));
     }
-    let mut child = spawn(&options.program, &cwd, &env)?;
+    let mut child = spawn(&options.program, &cwd, &env, &dir)?;
     let socket = UnixStream::connect(Paths::new(&dir).socket()).await?;
     let (reader, host) = socket.into_split();
     let mut commands = BufReader::new(reader).lines();
@@ -497,14 +497,17 @@ pub async fn run(options: Options) -> Result<i32> {
 }
 
 /// The agent's ACP server, `<program> acp`.
-fn spawn(program: &Path, cwd: &Path, env: &[(String, String)]) -> Result<Child> {
-    tokio::process::Command::new(program)
+fn spawn(program: &Path, cwd: &Path, env: &[(String, String)], dir: &Path) -> Result<Child> {
+    let mut command = tokio::process::Command::new(program);
+    command
         .arg("acp")
         .current_dir(cwd)
         .envs(env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    super::Terminals::scope_child(&mut command, dir);
+    command
         .spawn()
         .with_context(|| format!("cannot start {}", program.display()))
 }
@@ -1207,7 +1210,7 @@ impl Bridge {
             self.chat(json!({"kind": "error", "text": format!("Oh My Pi's command line failed: {error:#}")})).await?;
         }
 
-        *child = spawn(&self.options.program, &self.cwd, &self.env)?;
+        *child = spawn(&self.options.program, &self.cwd, &self.env, &self.dir)?;
         self.stdin = child.stdin.take().context("no ACP stdin")?;
         *messages = BufReader::new(child.stdout.take().context("no ACP stdout")?).lines();
         // Load the session again, importing the turns taken on the command
@@ -1254,6 +1257,7 @@ impl Bridge {
         if let Some(effort) = &self.effort {
             command.arg("--thinking").arg(effort);
         }
+        super::Terminals::scope_child(&mut command, &self.dir);
         command
     }
 }

@@ -44,6 +44,11 @@ pub fn previewable(path: &Path) -> bool {
 /// package read it), then the `PATH` and the usual places, then a conda
 /// environment's, then the copy RStudio or Positron bundle.
 pub fn find_quarto(search: &Search) -> Option<PathBuf> {
+    if let Some(folder) = &search.own {
+        let quarto = crate::own_env::prefix(folder, "r").join("bin/quarto");
+        return (crate::own_env::executable(&quarto) && crate::own_env::inside(folder, &quarto))
+            .then_some(quarto);
+    }
     if let Some(path) = std::env::var_os("QUARTO_PATH").map(PathBuf::from)
         && path.is_file()
     {

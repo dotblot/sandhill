@@ -55,6 +55,17 @@ pub(crate) fn save_file_history_limits(limits: sandhill_proto::FileHistoryLimits
     write("fileHistoryLimits", json!(limits));
 }
 
+/// Whether this computer has skipped the first-run R and Python setup.
+pub(crate) fn environment_setup_deferred() -> bool {
+    read()["environmentSetupDeferred"]
+        .as_bool()
+        .unwrap_or(false)
+}
+
+pub(crate) fn defer_environment_setup() {
+    write("environmentSetupDeferred", json!(true));
+}
+
 /// The models starred in the model menu, as `kind:id`.
 pub fn favourites() -> Vec<String> {
     match read()["favouriteModels"].as_array() {

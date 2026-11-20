@@ -117,16 +117,19 @@ impl Daemon {
             None
         };
         if language == "python" {
+            let own = self.own_folder();
             let kernel = match record {
                 Some(record) => Some(record.kernel.clone()),
                 None => {
                     let root = PathBuf::from(&project);
-                    blocking(move || Ok(projects::setup(&root).python)).await?
+                    let own = own.clone();
+                    blocking(move || Ok(projects::setup_scoped(&root, own).python)).await?
                 }
             };
             if let Some(kernel) = kernel {
                 let spec =
-                    crate::kernel::find_kernelspec(&kernel, Some(Path::new(&project))).await?;
+                    crate::kernel::find_scoped(&kernel, Some(Path::new(&project)), own.clone())
+                        .await?;
                 interpreter = spec
                     .kernelspec
                     .argv
@@ -134,7 +137,7 @@ impl Daemon {
                     .map(PathBuf::from)
                     .filter(|path| path.is_absolute());
             }
-            if interpreter.is_none() {
+            if interpreter.is_none() && own.is_none() {
                 interpreter = [".venv/bin/python", ".venv/bin/python3", "venv/bin/python"]
                     .into_iter()
                     .map(|relative| Path::new(&project).join(relative))

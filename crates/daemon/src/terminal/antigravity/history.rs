@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use super::{Bridge, COMMAND_TIMEOUT};
 
 pub(super) async fn load(bridge: &Bridge, conversation: &str) -> Result<Vec<Value>> {
-    let mut command = super::account_command(&bridge.agy);
+    let mut command = bridge.conversation_command();
     command
         .arg("acp")
         .current_dir(&bridge.cwd)

@@ -65,13 +65,13 @@ fn build(search: &Search, plan: &mut RuntimePlan) -> Result<String> {
         }
         NewRuntime::RFromHomebrew => {
             let brew = install::brew(search).context("Homebrew isn't on this computer.")?;
-            if probe(&brew, &["list", "--formula", "--versions", "r"])
+            if install::probe_brew(&brew, &["list", "--formula", "--versions", "r"])
                 .is_some_and(|out| !out.trim().is_empty())
             {
                 bail!("Homebrew's R is installed already.");
             }
             plan.tool = brew.to_string_lossy().into_owned();
-            plan.folder = probe(&brew, &["--prefix"])
+            plan.folder = install::probe_brew(&brew, &["--prefix"])
                 .map(|out| out.trim().to_string())
                 .filter(|folder| !folder.is_empty())
                 .context("Homebrew couldn't say where it installs programs.")?;

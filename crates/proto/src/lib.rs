@@ -956,6 +956,31 @@ pub enum Call {
     /// This computer's install settings, read without checking anything
     /// else. Returns [`InstallPrefs`].
     InstallPrefs,
+    /// What setting up (or adding kits to) Sandhill's own R and Python
+    /// will do. Returns [`OwnSetupPlan`].
+    PlanOwnSetup {
+        setup: OwnSetup,
+    },
+    /// Sets it up as [`Call::PlanOwnSetup`] showed, in a job; when it
+    /// succeeds, "Everything in one folder" becomes the choice. Returns
+    /// [`QuickInstalling`].
+    RunOwnSetup {
+        setup: OwnSetup,
+    },
+    /// Where Sandhill's R and Python come from; `None` goes back to not
+    /// chosen. [`EnvMode::Own`] needs a set-up folder. Removes nothing.
+    /// Returns [`InstallPrefs`].
+    SetEnvMode {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<EnvMode>,
+    },
+    /// Stops the kernels running from Sandhill's own folder, deletes the
+    /// folder (only one Sandhill made) and sets the choice back to not
+    /// chosen, in a job. Returns [`QuickInstalling`].
+    RemoveOwnEnvironment,
+    /// Opens Apple's own installer for its developer tools
+    /// (`xcode-select --install`). macOS only. Returns nothing.
+    InstallDeveloperTools,
     /// Turns Install Without Asking on or off for this computer. Returns
     /// [`InstallPrefs`].
     SetInstallPrefs {

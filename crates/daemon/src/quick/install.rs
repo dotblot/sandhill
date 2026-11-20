@@ -66,8 +66,10 @@ pub(super) fn conda(search: &Search, prefix: &Path) -> Option<PathBuf> {
     let tool = PathBuf::from(crate::irkernel::conda_tool(prefix));
     if executable(&tool) {
         Some(tool)
-    } else {
+    } else if !tool.is_absolute() {
         python::find_tool(search).map(|(tool, _)| tool)
+    } else {
+        None
     }
 }
 
@@ -97,13 +99,18 @@ pub(super) fn readiness_tools(
             version: conda.version.clone(),
         });
     }
+    if search.own.is_some() {
+        return (tools, None, String::new());
+    }
     if let Some(uv) = uv(search) {
         tools.push(info(InstallTool::Uv, &uv));
     }
     let brew = brew(search);
     let version = brew
         .as_deref()
-        .map(python::tool_version)
+        .and_then(|brew| {
+            sandhill_proto::version_in(probe_brew(brew, &["--version"])?.lines().next()?)
+        })
         .unwrap_or_default();
     (
         tools,
@@ -112,9 +119,54 @@ pub(super) fn readiness_tools(
     )
 }
 
+pub(super) fn probe_brew(program: &Path, args: &[&str]) -> Option<String> {
+    // Even `brew --version` writes a tool-selection cache on some versions.
+    let scratch = tempfile::Builder::new()
+        .prefix("sandhill-brew-")
+        .tempdir()
+        .ok()?;
+    let mut command = Command::new(program);
+    command
+        .env("HOMEBREW_CACHE", scratch.path().join("cache"))
+        .env("HOMEBREW_LOGS", scratch.path().join("logs"))
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .env("HOMEBREW_NO_ANALYTICS", "1");
+    probe_command(command, args)
+}
+
+pub(super) fn probe_conda_search(program: &Path, args: &[&str]) -> Option<String> {
+    if crate::own_env::containing(program).is_some() {
+        // Sandhill's shim already sends every file to its own folder.
+        return probe(program, args);
+    }
+    let scratch = tempfile::Builder::new()
+        .prefix("sandhill-conda-")
+        .tempdir()
+        .ok()?;
+    let mut command = Command::new(program);
+    command
+        .env("HOME", scratch.path())
+        .env("XDG_CACHE_HOME", scratch.path().join("cache"))
+        .env("CONDA_PKGS_DIRS", scratch.path().join("pkgs"));
+    probe_command(command, args)
+}
+
 /// Run a bounded probe. Read stdout as it arrives: a conda search can fill the pipe.
 pub(super) fn probe(program: &Path, args: &[&str]) -> Option<String> {
-    let mut process = Command::new(program)
+    probe_in(program, args, None)
+}
+
+pub(super) fn probe_in(program: &Path, args: &[&str], own: Option<&Path>) -> Option<String> {
+    let mut command = Command::new(program);
+    if let Some(folder) = own {
+        crate::own_env::apply(&mut command, folder);
+        command.current_dir(folder);
+    }
+    probe_command(command, args)
+}
+
+fn probe_command(mut command: Command, args: &[&str]) -> Option<String> {
+    let mut process = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -206,6 +258,8 @@ pub(crate) fn remember(record: &Path, plan: &PackagePlan) -> Result<()> {
 pub(crate) enum Job {
     Packages(PackagePlan),
     Runtime(RuntimePlan),
+    OwnSetup(sandhill_proto::OwnSetupPlan),
+    RemoveOwn(Vec<PathBuf>, Vec<InstalledKey>),
     Remove(Vec<InstalledKey>),
     Agent {
         command: String,
@@ -235,6 +289,7 @@ pub(crate) fn launch(
     log: &Path,
     title: &str,
 ) -> Result<Launch> {
+    let own_install = matches!(&job, Job::OwnSetup(_) | Job::RemoveOwn(..));
     let worker = worker_command(exe, record, &job)?;
     let spec = JobSpec {
         path: None,
@@ -244,6 +299,19 @@ pub(crate) fn launch(
         )),
     };
     let mut launch = crate::jobs::launch(&spec, Some(&home().context("HOME isn't set")?), None)?;
+    if own_install {
+        // Setup/removal don't depend on any personal shell settings.
+        launch.program = "/bin/bash".into();
+        launch.args = vec![
+            "--noprofile".into(),
+            "--norc".into(),
+            "-c".into(),
+            spec.command.unwrap(),
+        ];
+        launch.env.push(("BASH_ENV".into(), "/dev/null".into()));
+        // A removal must go through the daemon again to stop live kernels.
+        launch.job = None;
+    }
     launch.title = title.into();
     Ok(launch)
 }
@@ -288,6 +356,17 @@ pub fn worker(record_path: &Path, payload: &str) -> Result<()> {
     match job {
         Job::Packages(plan) => super::package_plan::run(record_path, &plan),
         Job::Runtime(plan) => runtime_plan::run(record_path, &plan),
+        Job::OwnSetup(plan) => super::own::run(record_path, &plan),
+        Job::RemoveOwn(folders, keys) => {
+            for folder in folders {
+                super::own::remove(record_path, &folder)?;
+            }
+            if keys.is_empty() {
+                Ok(())
+            } else {
+                record::remove(record_path, &keys)
+            }
+        }
         Job::Remove(keys) => record::remove(record_path, &keys),
         Job::Agent {
             command,
@@ -360,6 +439,18 @@ pub(crate) fn runtime_title(runtime: &NewRuntime) -> &'static str {
 mod tests {
     use super::*;
     use sandhill_proto::InstallTarget;
+
+    #[test]
+    fn own_readiness_brew_probe_uses_and_removes_a_temporary_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let brew = temp.path().join("brew");
+        fs::write(&brew, "#!/bin/sh\n[ \"$HOMEBREW_NO_AUTO_UPDATE:$HOMEBREW_NO_ANALYTICS\" = 1:1 ] || exit 1\nmkdir -p \"$HOMEBREW_CACHE\" && touch \"$HOMEBREW_CACHE/file\" && printf '%s\\n' \"$HOMEBREW_CACHE\"\n").unwrap();
+        fs::set_permissions(&brew, fs::Permissions::from_mode(0o700)).unwrap();
+        let out = probe_brew(&brew, &["--version"]).unwrap();
+        let cache = Path::new(out.trim());
+        assert_eq!(cache.file_name().unwrap(), "cache");
+        assert!(!cache.parent().unwrap().exists());
+    }
 
     #[test]
     fn prefs_keep_the_last_choice_per_language_and_the_switch() {

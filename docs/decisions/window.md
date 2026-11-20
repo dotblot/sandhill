@@ -159,6 +159,24 @@ differs, this wins.
   replaces Remove What Sandhill Installed: the record with ticks, none
   ticked, removing the ticked items still as Sandhill left them, each
   with the tool that installed it.
+  Sandhill's own R and Python (Huan, 2026-11-20;
+  `docs/design/clean-footprint-plan.md`): the first time Sandhill runs,
+  Welcome asks in three steps, each with its suggested answer picked:
+  where R and Python come from (what's on this computer, or everything
+  in one folder, `~/.sandhill/environment` unless the user picks
+  another), what the user will work on (the five kits: Bulk RNA-seq,
+  Single-cell in R, Single-cell in Python, Plots and reports, Pathways
+  and gene sets, with a core always included; Bulk RNA-seq and Plots and
+  reports ticked), and a review (what, where, download size, free space,
+  about how long) before Set Up. Set up later skips it. Until the user
+  chooses, Sandhill behaves as before. The folder is made with
+  micromamba from conda-forge and bioconda, and nothing outside it
+  changes. Getting Ready shows the choice at its top, can switch at any
+  time (switching removes nothing), adds kits, and removes the folder
+  (asked in its row). GSVA, which bioconda doesn't build for
+  Apple-silicon Macs, is built there with Apple's developer tools,
+  offered by Install Developer Tools; without them the set-up goes on
+  without it and says so.
   The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
   a title-bar switch shared by every Explore window on this Mac. Until
   that switch is used, the pane shows only with a signed-in Claude Code

@@ -8,9 +8,7 @@ use serde_json::{Value, json};
 use tokio::io::{BufReader, Lines};
 use tokio::net::unix::OwnedReadHalf;
 
-use super::{
-    Bridge, COMMAND_TIMEOUT, account_command, conversation_args, headless, history, turn_args,
-};
+use super::{Bridge, COMMAND_TIMEOUT, conversation_args, headless, history, turn_args};
 
 type Commands = Lines<BufReader<OwnedReadHalf>>;
 
@@ -60,7 +58,7 @@ impl Bridge {
         };
         let args = conversation_args(&self.help, &self.state.lock().unwrap());
         let before = history::load(self, &conversation).await?;
-        let mut command = account_command(&self.agy);
+        let mut command = self.conversation_command();
         command
             .args(args)
             .current_dir(&self.cwd)
@@ -89,7 +87,7 @@ impl Bridge {
     /// and ends, without a model turn. Reaped before the command line opens.
     async fn start_conversation(&self) -> Result<String> {
         let args = turn_args(&self.help, &self.state.lock().unwrap());
-        let mut command = account_command(&self.agy);
+        let mut command = self.conversation_command();
         command
             .args(args)
             .current_dir(&self.cwd)

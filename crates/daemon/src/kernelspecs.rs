@@ -63,6 +63,8 @@ pub struct Search {
     pub ark: Option<PathBuf>,
     /// The project folder whose own environments to look in.
     pub project: Option<PathBuf>,
+    /// When set, only kernels running programs inside this folder are offered.
+    pub own: Option<PathBuf>,
 }
 
 impl Search {
@@ -138,7 +140,16 @@ impl Search {
             version_dirs: pyenv.map(|p| p.join("versions")).into_iter().collect(),
             ark: in_home(sandhill_proto::ARK_PATH).filter(|p| p.is_file()),
             project: None,
+            own: None,
         }
+    }
+
+    pub(crate) fn in_own(mut self, own: Option<PathBuf>) -> Self {
+        if let Some(folder) = &own {
+            self.conda_roots.insert(0, folder.join("conda"));
+        }
+        self.own = own;
+        self
     }
 
     /// Also looks in the environments inside `project`'s folder.
@@ -281,6 +292,28 @@ fn runnable(spec: &JupyterKernelspec, search: &Search) -> bool {
     path.is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
+/// Where the first word resolves, keeping its spelling for venv symlinks.
+pub(crate) fn program(spec: &JupyterKernelspec, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let word = spec.argv.first()?;
+    let program = Path::new(word);
+    if program.is_absolute() {
+        return crate::own_env::executable(program).then(|| program.to_path_buf());
+    }
+    if word.contains('/') {
+        return None;
+    }
+    let path = spec
+        .env
+        .as_ref()
+        .and_then(|vars| vars.get("PATH"))
+        .map(std::ffi::OsStr::new)
+        .or(path)?;
+    std::env::split_paths(path)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(word))
+        .find(|p| crate::own_env::executable(p))
+}
+
 const ARK_NAME: &str = "Ark R";
 
 pub fn find(search: &Search, name: &str) -> Option<KernelspecDir> {
@@ -306,6 +339,16 @@ pub fn discover(search: &Search) -> Vec<Found> {
             continue;
         }
         for (dir_name, path, spec) in kernels_of(&source) {
+            let (mut kernelspec, env) = resolve(spec, source.env.as_ref(), search);
+            if let Some(folder) = &search.own {
+                let Some(program) = program(&kernelspec, search.path.as_deref())
+                    .filter(|program| crate::own_env::inside(folder, program))
+                else {
+                    continue;
+                };
+                // Launch may override PATH; don't let it select a different program.
+                kernelspec.argv[0] = program.to_string_lossy().into_owned();
+            }
             let mut name = match &source.names {
                 Some(prefix) => sanitize(&format!("{prefix}-{}", short_name(&dir_name))),
                 None => dir_name.clone(),
@@ -329,7 +372,6 @@ pub fn discover(search: &Search) -> Vec<Found> {
             if !names.insert(name.clone()) {
                 continue;
             }
-            let (kernelspec, env) = resolve(spec, source.env.as_ref(), search);
             let duplicate = !commands.insert(command_key(&kernelspec.argv));
             found.push(Found {
                 dir: KernelspecDir {
@@ -343,6 +385,10 @@ pub fn discover(search: &Search) -> Vec<Found> {
         }
     }
     if let Some(ark) = ark_kernel(search)
+        && search.own.as_ref().is_none_or(|folder| {
+            program(&ark.kernelspec, search.path.as_deref())
+                .is_some_and(|program| crate::own_env::inside(folder, &program))
+        })
         && names.insert(ark.kernel_name.clone())
     {
         commands.insert(command_key(&ark.kernelspec.argv));
@@ -761,6 +807,12 @@ pub fn conda_envs(search: &Search) -> Vec<PathBuf> {
     candidates
         .into_iter()
         .filter(|prefix| prefix.join("conda-meta").is_dir() && seen.insert(canonical(prefix)))
+        .filter(|prefix| {
+            search
+                .own
+                .as_ref()
+                .is_none_or(|folder| crate::own_env::inside(folder, prefix))
+        })
         .collect()
 }
 
@@ -932,6 +984,53 @@ mod tests {
         std::fs::create_dir_all(prefix.join("bin")).unwrap();
         std::fs::write(prefix.join("bin/python"), "").unwrap();
         std::os::unix::fs::symlink("python", prefix.join("bin/python3")).unwrap();
+    }
+
+    #[test]
+    fn own_kernel_list_and_find_require_the_real_program_to_be_inside() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let own = tmp.path().join("own");
+        let local = crate::own_env::prefix(&own, "python");
+        let user = tmp.path().join("user");
+        let external = tmp.path().join("external");
+        conda_env(&local);
+        python(&external);
+        for folder in [&local, &external] {
+            std::fs::set_permissions(
+                folder.join("bin/python"),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+        }
+        // An outside registration can't take the name of an inside kernel.
+        kernel(
+            &user,
+            "conda-env-sandhill-python-py",
+            ipykernel(external.join("bin/python").to_str().unwrap()),
+        );
+        std::os::unix::fs::symlink(external.join("bin/python"), local.join("bin/link-outside"))
+            .unwrap();
+        kernel(
+            &user,
+            "link-outside",
+            ipykernel(local.join("bin/link-outside").to_str().unwrap()),
+        );
+        let search = Search {
+            user_dir: Some(user),
+            ..Search::default()
+        }
+        .in_own(Some(own));
+        let kernels = list(&search);
+        assert_eq!(kernels.len(), 1);
+        let name = "conda-env-sandhill-python-py";
+        assert_eq!(kernels[0].name, name);
+        assert_eq!(
+            find(&search, name).unwrap().kernelspec.argv[0],
+            local.join("bin/python").to_str().unwrap()
+        );
+        assert!(find(&search, "link-outside").is_none());
     }
 
     fn names(found: &[Found]) -> Vec<(&str, bool)> {

@@ -372,7 +372,7 @@ Each step is usable on its own and committed when done:
    the same rules. Built 2026-11-20.
 2. Section 3 and the first-run steps of section 9: Sandhill's own
    environment and kits, with the Terminal, kernels and agents' commands
-   kept inside.
+   kept inside. Built 2026-11-20.
 3. Section 9's R and Python page: Add Packages search, Updates, Check and
    Repair, Undo Last Change, More.
 4. Section 9's missing-packages bar, Install on errors, plain errors.
@@ -393,9 +393,11 @@ Each step is usable on its own and committed when done:
 
 ## To confirm while building
 
-- That micromamba keeps its environments out of `~/.conda/environments.txt`
-  when its root is Sandhill's folder; if not, Sandhill removes its own
-  lines there.
+- Confirmed 2026-11-20: micromamba 2.10 ignores `register_envs: false`
+  and writes `~/.conda/environments.txt`, `~/.mamba/pkgs` and
+  `~/.cache/conda`. Sandhill therefore runs it with `HOME`,
+  `XDG_CACHE_HOME`, `CONDARC` and `MAMBA_ROOT_PREFIX` inside its folder
+  (and `pkgs_dirs` in its condarc); a test run wrote nothing outside.
 - That a project's `.Rprofile` can run from Sandhill's own R profile
   without running the home folder's.
 - How each macOS per-app folder is named for Sandhill (from a real run).

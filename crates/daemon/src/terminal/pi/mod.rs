@@ -454,6 +454,7 @@ impl Bridge {
             .env("SANDHILL_MCP_URL", &self.mcp_url)
             .env("SANDHILL_MCP_TOKEN", &self.token)
             .current_dir(&self.cwd);
+        super::Terminals::scope_child(&mut command, &self.dir);
         command
     }
 

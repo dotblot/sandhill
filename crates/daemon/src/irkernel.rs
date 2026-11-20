@@ -51,6 +51,13 @@ pub fn find(search: &Search) -> Vec<Candidate> {
     let mut add = |r: PathBuf, how: How| {
         if r.is_file() {
             let real = canonical(&r);
+            if search
+                .own
+                .as_ref()
+                .is_some_and(|folder| !real.starts_with(folder))
+            {
+                return;
+            }
             if !have.contains(&real) && seen.insert(real) {
                 found.push((r, how));
             }
@@ -283,6 +290,13 @@ fn kernel_dir(candidate: &Candidate, search: &Search) -> (String, PathBuf) {
 /// installation, else whichever is on `PATH`.
 pub(crate) fn conda_tool(prefix: &Path) -> String {
     let root = kernelspecs::conda_root(prefix);
+    if let Some(folder) = root
+        .parent()
+        .filter(|folder| crate::own_env::marked(folder))
+        && root == folder.join("conda")
+    {
+        return folder.join("bin/micromamba").to_string_lossy().into_owned();
+    }
     ["bin/mamba", "bin/conda", "condabin/conda"]
         .iter()
         .map(|rel| root.join(rel))
@@ -384,7 +398,12 @@ pub(crate) fn parse_libraries(out: &str) -> Vec<RLibrary> {
 /// The package libraries of the R at `r`, as R reads them with the user's
 /// own `.Renviron` and `.Rprofile`, as the install job and the kernel do.
 pub fn libraries(r: &Path) -> Result<Vec<RLibrary>> {
-    let out = Command::new(r)
+    let mut command = Command::new(r);
+    if let Some(folder) = crate::own_env::containing(r) {
+        crate::own_env::apply(&mut command, &folder);
+        command.current_dir(folder);
+    }
+    let out = command
         .args(["--no-save", "--no-restore", "-s", "-e", LIBRARIES_CODE])
         .stdin(Stdio::null())
         .stderr(Stdio::null())

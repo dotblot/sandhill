@@ -53,6 +53,15 @@ pub fn keep_awake(pid: u32) {
 /// folder, allowing Quarto to discover the enclosing project itself.
 /// Other jobs use `cwd`, then the project folder, then the script's folder.
 pub fn launch(job: &JobSpec, cwd: Option<&Path>, project: Option<&str>) -> Result<Launch> {
+    launch_scoped(job, cwd, project, None)
+}
+
+pub(crate) fn launch_scoped(
+    job: &JobSpec,
+    cwd: Option<&Path>,
+    project: Option<&str>,
+    own: Option<&Path>,
+) -> Result<Launch> {
     let root = project.map(Path::new);
     let args = job
         .command
@@ -67,6 +76,22 @@ pub fn launch(job: &JobSpec, cwd: Option<&Path>, project: Option<&str>) -> Resul
             }
             let kind = Kind::of(script);
             let (program, bin) = match kind {
+                Kind::R | Kind::Python if let Some(folder) = own => {
+                    let (lang, name) = if kind == Kind::R {
+                        ("r", "Rscript")
+                    } else {
+                        ("python", "python")
+                    };
+                    let program = crate::own_env::prefix(folder, lang).join("bin").join(name);
+                    if !crate::own_env::executable(&program)
+                        || !crate::own_env::inside(folder, &program)
+                    {
+                        bail!(
+                            "{name} isn't installed in Sandhill's folder. Add it in Getting Ready or switch to use what's on this computer."
+                        );
+                    }
+                    (Some(program), None)
+                }
                 Kind::R | Kind::Python => interpreter(kind, root),
                 _ => (None, None),
             };
@@ -77,7 +102,9 @@ pub fn launch(job: &JobSpec, cwd: Option<&Path>, project: Option<&str>) -> Resul
                 (Kind::Shell, _) => vec!["bash".into()],
                 (Kind::Nextflow, _) => vec!["nextflow".into(), "run".into()],
                 (Kind::Quarto, None) => {
-                    let search = Search::from_env().in_project(root);
+                    let search = Search::from_env()
+                        .in_project(root)
+                        .in_own(own.map(Path::to_path_buf));
                     let Some(quarto) = crate::preview::find_quarto(&search) else {
                         bail!("{}", crate::preview::install_advice());
                     };

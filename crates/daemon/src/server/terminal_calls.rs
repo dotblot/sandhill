@@ -65,8 +65,11 @@ impl Daemon {
     ) -> Result<Value> {
         let project = project.map(|p| projects::normalize(&p)).transpose()?;
         let cwd = cwd.map(|cwd| files::resolve(&cwd)).transpose()?;
-        let launch =
-            blocking(move || crate::jobs::launch(&job, cwd.as_deref(), project.as_deref())).await?;
+        let own = self.own_folder();
+        let launch = blocking(move || {
+            crate::jobs::launch_scoped(&job, cwd.as_deref(), project.as_deref(), own.as_deref())
+        })
+        .await?;
         // A job with no folder given runs in its script's.
         self.trusted(vec![launch.cwd.clone()], "run jobs").await?;
         let started = self.terminals.start(launch).await?;
@@ -78,11 +81,16 @@ impl Daemon {
     pub(super) async fn restart_terminal_job(&self, terminal: String) -> Result<Value> {
         // A job runs again as it was asked to, in the same place.
         let info = self.terminals.info(&terminal)?;
-        let job = info.job.unwrap_or_default();
+        let job = info
+            .job
+            .context("Review this install or removal again in Getting Ready to run it.")?;
         let cwd = PathBuf::from(&info.cwd);
         let project = info.project;
-        let launch =
-            blocking(move || crate::jobs::launch(&job, Some(&cwd), project.as_deref())).await?;
+        let own = self.own_folder();
+        let launch = blocking(move || {
+            crate::jobs::launch_scoped(&job, Some(&cwd), project.as_deref(), own.as_deref())
+        })
+        .await?;
         let started = self.terminals.restart(&terminal, launch, &[]).await?;
         self.keep_awake(&started.id);
         Ok(serde_json::to_value(started)?)

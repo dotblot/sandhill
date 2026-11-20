@@ -376,6 +376,12 @@ impl Bridge {
         Ok(())
     }
 
+    fn conversation_command(&self) -> tokio::process::Command {
+        let mut command = account_command(&self.agy);
+        super::Terminals::scope_child(&mut command, &self.dir);
+        command
+    }
+
     /// Runs one of agy's own commands: whether it succeeded, and what it said.
     async fn agy_command(&self, args: &[&str]) -> Result<(bool, String)> {
         let mut command = account_command(&self.agy);

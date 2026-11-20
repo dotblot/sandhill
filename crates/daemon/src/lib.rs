@@ -34,6 +34,7 @@ pub mod mcp;
 pub mod memory;
 pub mod notebook;
 pub mod outputs;
+mod own_env;
 pub mod packages;
 pub mod pages;
 pub mod patch;

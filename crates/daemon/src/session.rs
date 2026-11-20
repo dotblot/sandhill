@@ -148,7 +148,8 @@ impl SessionHandle {
             .as_deref()
             .map(PathBuf::from)
             .filter(|p| p.is_dir());
-        let spec = kernel::find_kernelspec(kernel, root.as_deref()).await?;
+        let spec =
+            kernel::find_scoped(kernel, root.as_deref(), kernel::own_folder(kernels_dir)).await?;
         let language = spec.kernelspec.language.clone();
         let ark = is_ark_spec(&language, &spec.kernelspec.argv);
         // R reads `.Rprofile` and `.Renviron` in the folder it starts in,
@@ -906,6 +907,20 @@ impl Actor {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
+        // A control request can stop IPython's event loops while its
+        // first shell request is still starting, leaving it unable to exit.
+        // Let our own startup code reach idle before asking it to stop.
+        let ready = async {
+            while self.prelude.is_some() && self.kernel_alive() {
+                tokio::select! {
+                    Some(msg) = self.kernel_rx.recv() => self.on_kernel_message(msg).await,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                }
+            }
+        };
+        tokio::time::timeout(SHUTDOWN_GRACE, ready)
+            .await
+            .context("The kernel is still getting ready. Try stopping it again in a moment.")?;
         let started = tokio::time::Instant::now();
         let deadline = started + SHUTDOWN_GRACE;
         let msg = JupyterMessage::new(ShutdownRequest { restart: false }, None);

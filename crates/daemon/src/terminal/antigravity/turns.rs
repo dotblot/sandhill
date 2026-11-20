@@ -121,7 +121,7 @@ impl Bridge {
         args: Vec<String>,
         input: String,
     ) -> Result<Vec<String>> {
-        let mut command = account_command(&self.agy);
+        let mut command = self.conversation_command();
         command
             .args(&args)
             .current_dir(&self.cwd)

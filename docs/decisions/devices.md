@@ -62,6 +62,9 @@ where an older plan differs, this wins.
   installed it (R's own installer, mamba/conda, pip, uv, Homebrew;
   CRAN's R through macOS's own password dialog). The record also keeps
   each install's tool, date and reason.
+  Sandhill's own R and Python folder (Huan, 2026-11-20) is in the record
+  too; removing it stops its kernels and deletes the whole folder, only
+  one marked as Sandhill's.
 
 ## Folder trust
 - Folder trust (Huan, 2026-11-12): the first open of a folder asks once;

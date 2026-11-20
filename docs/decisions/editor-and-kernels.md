@@ -101,6 +101,14 @@ by sentence); where an older plan differs, this wins.
   exact command) as a job with progress, never by typing code into the
   Console. Installs go in Sandhill's record with the reason "From the
   Packages pane".
+- With "Everything in one folder" chosen (Huan, 2026-11-20;
+  `docs/design/clean-footprint-plan.md`), kernel pickers list only
+  Sandhill's own kernels, and kernels, the Terminal, jobs and the
+  agents' commands use only its R and Python: their libraries, caches
+  and settings live in its folder, and the home folder's `.Renviron` and
+  `.Rprofile` are not read (a project's own `.Rprofile` still runs). A
+  document asking for another kernel gets the "wasn't found" message,
+  which says Getting Ready can switch.
 
 ## Plots
 - Console plots stay inline unless sent to

@@ -87,6 +87,7 @@ pub struct Daemon {
     /// Ends `serve`, for `stop_daemon`.
     stop: Arc<Notify>,
     lifecycle_gate: tokio::sync::RwLock<()>,
+    own_sessions: Arc<tokio::sync::RwLock<()>>,
     pub(crate) maintenance: AtomicBool,
     pub(crate) stopping: AtomicBool,
     pub(crate) analysis_gate: tokio::sync::Mutex<()>,
@@ -157,6 +158,7 @@ impl Daemon {
             sessions: Mutex::new(HashMap::new()),
             windows: Windows::default(),
             language_servers: crate::lsp::LanguageServers::default(),
+            own_sessions: Arc::new(tokio::sync::RwLock::new(())),
             next_connection: AtomicU64::new(1),
             options,
             started_ms: crate::journal::now_ms(),
@@ -273,11 +275,13 @@ impl Daemon {
             }
             Call::Ping => self.ping()?,
             Call::ListKernelspecs => {
-                serde_json::to_value(crate::kernel::list_kernelspecs(None).await)?
+                serde_json::to_value(crate::kernel::list_scoped(None, self.own_folder()).await)?
             }
             Call::ListProjectKernelspecs { path } => {
                 let root = PathBuf::from(projects::normalize(&path)?);
-                serde_json::to_value(crate::kernel::list_kernelspecs(Some(root)).await)?
+                serde_json::to_value(
+                    crate::kernel::list_scoped(Some(root), self.own_folder()).await,
+                )?
             }
             Call::ListRWithoutIrkernel { project } => self.list_r_without_irkernel(project).await?,
             Call::InstallIrkernel {
@@ -296,6 +300,14 @@ impl Daemon {
             Call::InstallPrefs => self.install_prefs().await?,
             Call::SetInstallPrefs { without_asking } => {
                 self.set_install_prefs(without_asking).await?
+            }
+            Call::SetEnvMode { mode } => self.set_env_mode(mode).await?,
+            Call::PlanOwnSetup { setup } => self.plan_own_setup(setup).await?,
+            Call::RunOwnSetup { setup } => self.run_own_setup(setup).await?,
+            Call::RemoveOwnEnvironment => self.remove_own_environment().await?,
+            Call::InstallDeveloperTools => {
+                blocking(crate::quick::own::install_developer_tools).await?;
+                Value::Null
             }
             Call::RemoveInstalled { items } => self.remove_installed(items).await?,
             Call::QuickInstallAgent { kind } => self.quick_install_agent(kind).await?,
@@ -688,7 +700,10 @@ impl Daemon {
             }
             Call::GetProjectSettings { path } => {
                 let root = PathBuf::from(projects::normalize(&path)?);
-                serde_json::to_value(blocking(move || Ok(projects::setup(&root))).await?)?
+                let own = self.own_folder();
+                serde_json::to_value(
+                    blocking(move || Ok(projects::setup_scoped(&root, own))).await?,
+                )?
             }
             Call::SaveProjectSettings { path, settings } => {
                 self.save_project_settings(path, settings).await?

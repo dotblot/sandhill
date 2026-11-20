@@ -5,6 +5,7 @@
 pub(crate) mod archive;
 pub mod folder;
 pub mod install;
+pub(crate) mod own;
 mod package_plan;
 pub mod python;
 pub mod recognise;

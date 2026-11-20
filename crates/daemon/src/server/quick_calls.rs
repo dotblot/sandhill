@@ -5,13 +5,13 @@
 use std::time::Duration;
 
 use sandhill_proto::{
-    EVENT_RUN_FINISHED, InstalledKey, NewRuntime, PackageChange, QuickAgentTool,
-    QuickArchiveSelection, QuickCard, QuickRequest,
+    EVENT_RUN_FINISHED, EnvMode, InstalledKey, NewRuntime, OwnSetup, PackageChange, QuickAgentTool,
+    QuickArchiveSelection, QuickCard, QuickInstalling, QuickRequest,
 };
 use tokio::sync::broadcast::error::RecvError;
 
 use super::*;
-use crate::quick::{archive, folder, install, python, record, run, setup};
+use crate::quick::{archive, folder, install, own, python, record, run, setup};
 use crate::terminal::Launch;
 
 /// How long one template may run: loading a large table, a big heatmap.
@@ -21,6 +21,99 @@ impl Daemon {
     /// Sandhill's record of what it installed on this device.
     pub(super) fn install_record(&self) -> PathBuf {
         self.state.root().join(record::FILE)
+    }
+
+    pub(super) fn own_folder(&self) -> Option<PathBuf> {
+        crate::own_env::chosen(&self.install_record())
+    }
+
+    pub(super) async fn plan_own_setup(&self, setup: OwnSetup) -> Result<Value> {
+        Ok(serde_json::to_value(
+            blocking(move || Ok(own::plan(setup))).await?,
+        )?)
+    }
+
+    pub(super) async fn run_own_setup(&self, setup: OwnSetup) -> Result<Value> {
+        let record = self.install_record();
+        let executable = self.options.executable.clone();
+        self.quick_job(move |log| {
+            let plan = own::plan(setup);
+            if let Some(refused) = &plan.refused {
+                bail!("{refused}");
+            }
+            install::launch(
+                &executable,
+                &record,
+                install::Job::OwnSetup(plan),
+                log,
+                "Set up Sandhill's own R and Python",
+            )
+        })
+        .await
+    }
+
+    pub(super) async fn set_env_mode(&self, mode: Option<EnvMode>) -> Result<Value> {
+        let _guard = self.own_sessions.write().await;
+        let record = self.install_record();
+        Ok(serde_json::to_value(
+            blocking(move || own::set_mode(&record, mode)).await?,
+        )?)
+    }
+
+    pub(super) async fn remove_own_environment(self: &Arc<Self>) -> Result<Value> {
+        let folder = PathBuf::from(install::prefs(&self.install_record()).own_folder);
+        self.remove_own_folders(vec![folder], Vec::new()).await
+    }
+
+    async fn remove_own_folders(
+        self: &Arc<Self>,
+        folders: Vec<PathBuf>,
+        items: Vec<InstalledKey>,
+    ) -> Result<Value> {
+        // No new kernel can start between shutting these down and removing their files.
+        let guard = self.own_sessions.clone().write_owned().await;
+        for folder in &folders {
+            own::removable(folder)?;
+        }
+        for session in self.journal.sessions()? {
+            let own = crate::lifecycle::recorded_kernel(&session.connection_file)
+                .and_then(|identity| identity.program())
+                .is_some_and(|program| {
+                    folders.iter().any(|folder| {
+                        // Linux adds " (deleted)" when a live program no longer has a file.
+                        program.starts_with(folder) || crate::own_env::inside(folder, &program)
+                    })
+                });
+            if own {
+                self.live(&session.id)?.shutdown().await?;
+                self.sessions.lock().unwrap().remove(&session.id);
+            }
+        }
+        let record = self.install_record();
+        let executable = self.options.executable.clone();
+        let started = self
+            .quick_job_started(move |log| {
+                install::launch(
+                    &executable,
+                    &record,
+                    install::Job::RemoveOwn(folders, items),
+                    log,
+                    "Remove Sandhill's own R and Python",
+                )
+            })
+            .await?;
+        let id = started.job.id.clone();
+        let daemon = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let _guard = guard;
+            while daemon
+                .upgrade()
+                .is_some_and(|d| d.terminals.info(&id).is_ok_and(|info| info.running))
+            {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        Ok(serde_json::to_value(started)?)
     }
 
     pub(super) async fn quick_readiness(&self) -> Result<Value> {
@@ -48,24 +141,32 @@ impl Daemon {
         &self,
         make: impl FnOnce(&Path) -> Result<Launch> + Send + 'static,
     ) -> Result<Value> {
+        Ok(serde_json::to_value(self.quick_job_started(make).await?)?)
+    }
+
+    async fn quick_job_started(
+        &self,
+        make: impl FnOnce(&Path) -> Result<Launch> + Send + 'static,
+    ) -> Result<QuickInstalling> {
         let log = std::env::temp_dir().join(format!(
             "sandhill-quick-install-{}.log",
             uuid::Uuid::new_v4().simple()
         ));
         let at = log.clone();
         let launch = blocking(move || make(&at)).await?;
-        let started = self.terminals.start(launch).await?;
+        let started = self.terminals.start_unmanaged(launch).await?;
         self.keep_awake(&started.id);
-        Ok(serde_json::to_value(sandhill_proto::QuickInstalling {
+        Ok(QuickInstalling {
             job: started,
             log: log.to_string_lossy().into_owned(),
-        })?)
+        })
     }
 
     pub(super) async fn plan_packages(&self, change: PackageChange) -> Result<Value> {
+        let own = self.own_folder();
         let plan = blocking(move || {
             Ok(install::plan_packages(
-                &crate::kernelspecs::Search::from_env(),
+                &crate::kernelspecs::Search::from_env().in_own(own),
                 change,
             ))
         })
@@ -76,8 +177,10 @@ impl Daemon {
     pub(super) async fn run_packages(&self, change: PackageChange) -> Result<Value> {
         let record = self.install_record();
         let executable = self.options.executable.clone();
+        let own = self.own_folder();
         self.quick_job(move |log| {
-            let plan = install::plan_packages(&crate::kernelspecs::Search::from_env(), change);
+            let plan =
+                install::plan_packages(&crate::kernelspecs::Search::from_env().in_own(own), change);
             if let Some(refused) = &plan.refused {
                 bail!("{refused}");
             }
@@ -142,11 +245,39 @@ impl Daemon {
         Ok(serde_json::to_value(prefs)?)
     }
 
-    pub(super) async fn remove_installed(&self, items: Vec<InstalledKey>) -> Result<Value> {
+    pub(super) async fn remove_installed(
+        self: &Arc<Self>,
+        items: Vec<InstalledKey>,
+    ) -> Result<Value> {
         if items.is_empty() {
             bail!("Choose at least one item to remove.");
         }
         let record = self.install_record();
+        if items
+            .iter()
+            .any(|item| item.kind == record::OWN_ENVIRONMENT)
+        {
+            let installed = record::read(&record);
+            let (own, others): (Vec<_>, Vec<_>) = items
+                .into_iter()
+                .partition(|item| item.kind == record::OWN_ENVIRONMENT);
+            let mut folders = Vec::new();
+            for item in own {
+                if !installed.iter().any(|row| {
+                    row.ours
+                        && row.kind == item.kind
+                        && row.name == item.name
+                        && row.place == item.place
+                }) {
+                    bail!("That folder isn't recorded as Sandhill's. Sandhill won't remove it.");
+                }
+                let folder = PathBuf::from(item.place);
+                if !folders.contains(&folder) {
+                    folders.push(folder);
+                }
+            }
+            return self.remove_own_folders(folders, others).await;
+        }
         let executable = self.options.executable.clone();
         self.quick_job(move |log| {
             install::launch(
@@ -170,10 +301,11 @@ impl Daemon {
     pub(super) async fn quick_add_ipykernel(&self, prefix: String) -> Result<Value> {
         let record = self.install_record();
         let self_executable = self.options.executable.clone();
+        let own = self.own_folder();
         self.quick_job(move |log| {
             python::add_ipykernel(
                 &self_executable,
-                &crate::kernelspecs::Search::from_env(),
+                &crate::kernelspecs::Search::from_env().in_own(own),
                 &prefix,
                 log,
                 &record,

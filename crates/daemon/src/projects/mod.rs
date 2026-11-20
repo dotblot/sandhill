@@ -63,6 +63,10 @@ pub fn recent(journal: &Journal) -> Result<Vec<ProjectInfo>> {
 /// A project's settings, what its files point to, and so the kernel each
 /// language runs in.
 pub fn setup(root: &Path) -> ProjectSetup {
+    setup_scoped(root, None)
+}
+
+pub(crate) fn setup_scoped(root: &Path, own: Option<PathBuf>) -> ProjectSetup {
     let (settings, saved, problem) = match settings::read(root) {
         Ok(Some(settings)) => (settings, true, None),
         Ok(None) => (ProjectSettings::default(), false, None),
@@ -72,11 +76,18 @@ pub fn setup(root: &Path) -> ProjectSetup {
             Some(format!("{err:#}")),
         ),
     };
-    let search = Search::from_env().in_project(Some(root));
+    let in_own = own.is_some();
+    let search = Search::from_env().in_project(Some(root)).in_own(own);
     let kernels = kernelspecs::list(&search);
     let found = environments::find(root, &kernels, &search);
     let kernel = |language: &str, chosen: &Option<String>| {
         chosen.clone().or_else(|| {
+            if in_own {
+                return kernels
+                    .iter()
+                    .find(|k| k.language.to_ascii_lowercase().starts_with(language))
+                    .map(|k| k.name.clone());
+            }
             found
                 .iter()
                 .filter(|f| f.language == language)

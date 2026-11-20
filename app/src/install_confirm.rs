@@ -140,6 +140,106 @@ pub(crate) fn runtime_name(runtime: &NewRuntime) -> String {
     }
 }
 
+pub(crate) fn own_setup(
+    review: &Review<sandhill_proto::OwnSetupPlan>,
+    expanded: bool,
+    details: Button,
+    developer_tools: Div,
+    p: &Palette,
+) -> Div {
+    let plan = match review {
+        Review::Planning => return body().child(line("Working out the setup…", p.muted)),
+        Review::Error(error) => return body().child(line(error.clone(), p.err)),
+        Review::Ready(plan) => plan,
+    };
+    let what = match (plan.setup.r, plan.setup.python) {
+        (true, true) => "R and Python",
+        (true, false) => "R",
+        (false, true) => "Python",
+        (false, false) => "No languages selected",
+    };
+    let summary = if plan.steps.is_empty() && plan.refused.is_none() {
+        "Everything selected is already installed.".into()
+    } else {
+        format!("Set up {what} and the selected packages in one folder.")
+    };
+    body()
+        .child(line(summary, p.text).font_weight(FontWeight::MEDIUM))
+        .child(line(format!("Folder: {}", plan.setup.folder), p.muted))
+        .when(plan.refused.is_none(), |d| {
+            d.child(line(
+                format!(
+                    "About {} MB to download · {} MB free · about {} {}",
+                    plan.download_mb,
+                    plan.free_mb,
+                    plan.minutes,
+                    if plan.minutes == 1 {
+                        "minute"
+                    } else {
+                        "minutes"
+                    },
+                ),
+                p.muted,
+            ))
+        })
+        .when_some(plan.refused.as_ref(), |d, reason| {
+            d.child(line(reason.clone(), p.err))
+        })
+        .children(plan.notes.iter().map(|note| line(note.clone(), p.muted)))
+        .when(plan.needs_developer_tools, |d| d.child(developer_tools))
+        .when(!plan.steps.is_empty(), |d| {
+            d.child(h_flex().child(details.label(if expanded {
+                "Hide Details"
+            } else {
+                "Details"
+            })))
+            .children(plan.steps.iter().enumerate().map(|(ix, step)| {
+                v_flex()
+                    .min_w_0()
+                    .gap(px(look::GAP_4))
+                    .child(line(step.what.clone(), p.text))
+                    .when(expanded && !step.command.is_empty(), |d| {
+                        d.child(command_with_copy(ix, &step.command, p))
+                    })
+            }))
+        })
+        .when(expanded, |d| {
+            d.children(
+                [
+                    ("R packages", &plan.r_packages),
+                    ("Python packages", &plan.python_packages),
+                ]
+                .into_iter()
+                .filter(|(_, packages)| !packages.is_empty())
+                .map(|(title, packages)| {
+                    v_flex().child(line(title, p.text)).child(line(
+                        packages
+                            .iter()
+                            .map(|item| format!("{} ({})", item.name, item.source))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        p.muted,
+                    ))
+                }),
+            )
+        })
+}
+
+/// The first-run review uses the same package details as every other install.
+pub(crate) fn setup_packages<T: 'static>(
+    reviews: &[Review<PackagePlan>],
+    libraries: &[String],
+    pick: impl Fn(&mut T, usize, Choice, &mut Context<T>) + Copy + 'static,
+    p: &Palette,
+    cx: &mut Context<T>,
+) -> Div {
+    body().children(reviews.iter().enumerate().map(|(ix, review)| match review {
+        Review::Planning => line("Working out the command…", p.muted),
+        Review::Ready(plan) => package_plan(ix, plan, libraries, pick, p, cx),
+        Review::Error(error) => line(error.clone(), p.err),
+    }))
+}
+
 fn line(text: impl Into<SharedString>, color: Hsla) -> Div {
     let text: SharedString = text.into();
     div()
@@ -586,6 +686,7 @@ mod tests {
                 },
                 tool: InstallTool::R,
             }],
+            ..InstallPrefs::default()
         }
     }
 

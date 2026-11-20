@@ -5,7 +5,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use sandhill_proto::{
@@ -16,9 +15,6 @@ use sandhill_proto::{
 use super::record;
 use crate::kernelspecs::{self, Search};
 use crate::terminal::Launch;
-
-/// How long reading the installed packages may take.
-const LIST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The packages Quick Tools uses: `(name, from Bioconductor, what for)`.
 /// The organism packages for gene symbols are large and installed only
@@ -63,14 +59,38 @@ pub fn readiness(
     agents: Vec<sandhill_proto::AgentInfo>,
 ) -> QuickReadiness {
     let installed_by_sandhill = record::read(record_path);
-    let kernel = r_kernels(search).into_iter().next();
+    let prefs = super::install::prefs(record_path);
+    let own = super::own::readiness(search, Path::new(&prefs.own_folder));
+    let scoped = search.clone().in_own(
+        (prefs.mode == Some(sandhill_proto::EnvMode::Own))
+            .then(|| PathBuf::from(&prefs.own_folder)),
+    );
+    let search = &scoped;
+    let developer_tools = super::own::developer_tools(search);
+    let own_r = own.as_ref().and_then(|env| env.r.as_ref());
+    let kernel = if let Some(folder) = &search.own {
+        own_r.filter(|r| !r.kernel.is_empty()).map(|r| {
+            (
+                r.kernel.clone(),
+                crate::own_env::prefix(folder, "r").join("bin/R"),
+            )
+        })
+    } else {
+        r_kernels(search).into_iter().next()
+    };
     let r = match &kernel {
         Some((_, program)) => Some(program.clone()),
+        None if search.own.is_some() => own_r.map(|r| Path::new(&r.prefix).join("bin/R")),
         None => newest_r(search),
     };
     let r = r.map(|path| {
-        let version = crate::irkernel::r_version(&path).unwrap_or_default();
-        let listed = installed(&path);
+        let version = if search.own.is_some() {
+            own_r.map(|r| r.version.clone())
+        } else {
+            crate::irkernel::r_version(&path)
+        }
+        .unwrap_or_default();
+        let listed = installed(&path, search.own.as_deref());
         (
             QuickR {
                 new_enough: new_enough(&version),
@@ -78,7 +98,7 @@ pub fn readiness(
                 path: path.to_string_lossy().into_owned(),
                 version,
                 binaries: listed.binaries,
-                can_build: can_build(),
+                can_build: developer_tools,
                 libraries: listed.libraries,
             },
             listed.packages,
@@ -138,7 +158,9 @@ pub fn readiness(
         tools,
         brew,
         brew_version,
-        prefs: super::install::prefs(record_path),
+        prefs,
+        own,
+        developer_tools,
     }
 }
 
@@ -227,7 +249,7 @@ struct Listed {
 /// packages, and its libraries. R reads the user's `.Renviron` and
 /// `.Rprofile`, as the install job and the kernel do, so libraries set
 /// there count.
-fn installed(r: &Path) -> Listed {
+fn installed(r: &Path, own: Option<&Path>) -> Listed {
     let names = PACKAGES
         .iter()
         .map(|(n, ..)| format!("\"{n}\""))
@@ -237,34 +259,11 @@ fn installed(r: &Path) -> Listed {
         "cat('SANDHILL_PKGTYPE\\t', .Platform$pkgType, '\\n', sep = ''); {libraries}; for (p in c({names})) {{ d <- tryCatch(find.package(p), error = function(e) NA); if (!is.na(d)) cat('SANDHILL_PKG', p, as.character(utils::packageVersion(p, lib.loc = dirname(d))), dirname(d), sep = '\\t'); if (!is.na(d)) cat('\\n') }}",
         libraries = crate::irkernel::LIBRARIES_CODE,
     );
-    let Ok(mut child) = Command::new(r)
-        .args(["--no-save", "--no-restore", "-s", "-e"])
-        .arg(&code)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+    let Some(out) =
+        super::install::probe_in(r, &["--no-save", "--no-restore", "-s", "-e", &code], own)
     else {
         return Listed::default();
     };
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < LIST_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(20))
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Listed::default();
-            }
-        }
-    }
-    let mut out = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = std::io::Read::read_to_string(&mut stdout, &mut out);
-    }
     parse_installed(&out)
 }
 

@@ -167,6 +167,26 @@ pub struct QuickPython {
     /// Environments that could get a kernel with ipykernel.
     #[serde(default)]
     pub bare: Vec<QuickCondaEnv>,
+    /// The Python that installs go into by default: the environment of
+    /// the first Python kernel found (as kernel pickers order them).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub found: Option<QuickPythonFound>,
+}
+
+/// A Python on this computer that has a kernel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickPythonFound {
+    /// Its program, `sys.executable`.
+    pub program: String,
+    /// Its environment's folder, `sys.prefix`.
+    pub prefix: String,
+    /// `3.12.4`; empty when unknown.
+    #[serde(default)]
+    pub version: String,
+    /// Where it comes from, in plain words: `conda, omicverse`, `uv`,
+    /// `Homebrew`, `python.org`.
+    #[serde(default)]
+    pub description: String,
 }
 
 /// The package sets a new Python environment can have besides `python` and
@@ -275,6 +295,13 @@ pub struct QuickReadiness {
     pub brew_version: String,
     #[serde(default)]
     pub prefs: crate::InstallPrefs,
+    /// Sandhill's own R and Python, when its folder exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own: Option<crate::OwnEnvironment>,
+    /// Apple's developer tools (or a C compiler elsewhere) are there, so
+    /// packages can be built on this computer.
+    #[serde(default)]
+    pub developer_tools: bool,
 }
 
 /// A package install started: its job, and the file its output also goes

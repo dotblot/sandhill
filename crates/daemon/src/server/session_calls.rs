@@ -5,9 +5,11 @@ use super::*;
 impl Daemon {
     pub(super) async fn list_r_without_irkernel(&self, project: Option<String>) -> Result<Value> {
         let root = project.map(|p| projects::normalize(&p)).transpose()?;
+        let own = self.own_folder();
         let found = blocking(move || {
-            let search =
-                crate::kernelspecs::Search::from_env().in_project(root.as_deref().map(Path::new));
+            let search = crate::kernelspecs::Search::from_env()
+                .in_project(root.as_deref().map(Path::new))
+                .in_own(own);
             Ok(crate::irkernel::find(&search)
                 .iter()
                 .map(|candidate| candidate.info(&search))
@@ -27,9 +29,11 @@ impl Daemon {
         let root = project.clone();
         let record = self.install_record();
         let executable = self.options.executable.clone();
+        let own = self.own_folder();
         let (mut launch, trust) = blocking(move || {
-            let search =
-                crate::kernelspecs::Search::from_env().in_project(root.as_deref().map(Path::new));
+            let search = crate::kernelspecs::Search::from_env()
+                .in_project(root.as_deref().map(Path::new))
+                .in_own(own);
             crate::irkernel::launch(&executable, &r, library.as_deref(), &search, &record)
         })
         .await?;
@@ -66,6 +70,7 @@ impl Daemon {
             Some(root) => blocking(move || Ok(projects::kernel_env(Path::new(&root)))).await?,
             None => Vec::new(),
         };
+        let _guard = self.own_sessions.read().await;
         let handle = SessionHandle::start(
             self.journal.clone(),
             &self.state.kernels_dir(),
@@ -95,9 +100,10 @@ impl Daemon {
         let (id, port) = match crate::preview::running(&self.terminals, &file) {
             Some(found) => found,
             None => {
-                let quarto = blocking(|| {
+                let own = self.own_folder();
+                let quarto = blocking(move || {
                     Ok(crate::preview::find_quarto(
-                        &crate::kernelspecs::Search::from_env(),
+                        &crate::kernelspecs::Search::from_env().in_own(own),
                     ))
                 })
                 .await?

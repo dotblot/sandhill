@@ -50,11 +50,12 @@ impl Daemon {
             anyhow::bail!("{} is not a folder", root.display());
         }
         let machine = settings.chat_history == ChatHistory::Machine;
+        let own = self.own_folder();
         let setup = blocking({
             let root = root.clone();
             move || {
                 projects::settings::write(&root, &settings)?;
-                Ok(projects::setup(&root))
+                Ok(projects::setup_scoped(&root, own))
             }
         })
         .await?;

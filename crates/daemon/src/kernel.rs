@@ -22,21 +22,56 @@ use crate::kernelspecs::{self, Search};
 /// The installed kernels, and with `project`, those of the environments
 /// inside its folder.
 pub async fn list_kernelspecs(project: Option<PathBuf>) -> Vec<KernelspecInfo> {
+    list_scoped(project, None).await
+}
+
+pub(crate) async fn list_scoped(
+    project: Option<PathBuf>,
+    own: Option<PathBuf>,
+) -> Vec<KernelspecInfo> {
     tokio::task::spawn_blocking(move || {
-        kernelspecs::list(&Search::from_env().in_project(project.as_deref()))
+        kernelspecs::list(
+            &Search::from_env()
+                .in_project(project.as_deref())
+                .in_own(own),
+        )
     })
     .await
     .unwrap_or_default()
 }
 
 pub async fn find_kernelspec(name: &str, project: Option<&Path>) -> Result<KernelspecDir> {
+    find_scoped(name, project, None).await
+}
+
+pub(crate) async fn find_scoped(
+    name: &str,
+    project: Option<&Path>,
+    own: Option<PathBuf>,
+) -> Result<KernelspecDir> {
+    let note = if own.is_some() {
+        crate::own_env::SWITCH_HINT
+    } else {
+        ""
+    };
     let wanted = name.to_string();
     let project = project.map(Path::to_path_buf);
     tokio::task::spawn_blocking(move || {
-        kernelspecs::find(&Search::from_env().in_project(project.as_deref()), &wanted)
+        kernelspecs::find(
+            &Search::from_env()
+                .in_project(project.as_deref())
+                .in_own(own),
+            &wanted,
+        )
     })
     .await?
-    .with_context(|| format!("no Jupyter kernel named {name:?} is installed"))
+    .with_context(|| {
+        if note.is_empty() {
+            format!("no Jupyter kernel named {name:?} is installed")
+        } else {
+            format!("no Jupyter kernel named {name:?} is installed. {note}")
+        }
+    })
 }
 
 /// A freshly started kernel process.
@@ -104,6 +139,14 @@ pub async fn launch(
         Some(Stdio::from(log)),
     )?;
     command.current_dir(cwd).process_group(0);
+    if let Some(folder) = own_folder(kernels_dir) {
+        anyhow::ensure!(
+            crate::own_env::inside(&folder, Path::new(&program)),
+            "The kernel's program wasn't found in Sandhill's folder. {}",
+            crate::own_env::SWITCH_HINT
+        );
+        crate::own_env::apply(command.as_std_mut(), &folder);
+    }
     let mut child = command.spawn().map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             let place = if program.contains('/') {
@@ -132,6 +175,10 @@ pub async fn launch(
         connection_info,
         connection_file,
     })
+}
+
+pub(crate) fn own_folder(kernels_dir: &Path) -> Option<PathBuf> {
+    crate::own_env::chosen(&kernels_dir.parent()?.join(crate::quick::record::FILE))
 }
 
 pub fn read_connection_file(path: &Path) -> Result<ConnectionInfo> {

@@ -292,6 +292,30 @@ impl Terminals {
 
     /// Starts `launch` in a new terminal.
     pub async fn start(&self, launch: Launch) -> Result<TerminalInfo> {
+        self.start_with(launch, self.own_folder()).await
+    }
+
+    /// An explicit install may target a different environment, and AI
+    /// agent installers shouldn't change anyone's computing environment.
+    pub(crate) async fn start_unmanaged(&self, launch: Launch) -> Result<TerminalInfo> {
+        self.start_with(launch, None).await
+    }
+
+    fn own_folder(&self) -> Option<PathBuf> {
+        crate::own_env::chosen(&self.root.parent()?.join(crate::quick::record::FILE))
+    }
+
+    /// Bridge children may start again without a new terminal host, so
+    /// they reapply the current mode before launching their agent.
+    pub(super) fn scope_child(command: &mut tokio::process::Command, terminal_dir: &Path) {
+        if let Some(state) = terminal_dir.parent().and_then(Path::parent)
+            && let Some(folder) = crate::own_env::chosen(&state.join(crate::quick::record::FILE))
+        {
+            crate::own_env::apply_to_shell(command.as_std_mut(), &folder);
+        }
+    }
+
+    async fn start_with(&self, launch: Launch, own: Option<PathBuf>) -> Result<TerminalInfo> {
         let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let paths = Paths::new(self.root.join(&id));
         std::fs::create_dir_all(paths.dir())?;
@@ -317,7 +341,7 @@ impl Terminals {
         };
         std::fs::write(paths.meta(), serde_json::to_vec_pretty(&meta)?)?;
         write_report(&paths, serde_json::Map::new(), &launch.options)?;
-        if let Err(err) = self.spawn_host(&paths, &launch).await {
+        if let Err(err) = self.spawn_host(&paths, &launch, own.as_deref()).await {
             // A host that failed leaves nothing behind; one still starting
             // keeps its folder.
             if !host_alive(&paths) {
@@ -385,7 +409,8 @@ impl Terminals {
                 "kind": "account", "account": account.id, "name": account.name, "at_ms": now_ms()
             }))?;
         }
-        self.spawn_host(&paths, &launch).await?;
+        self.spawn_host(&paths, &launch, self.own_folder().as_deref())
+            .await?;
         self.info(id)
     }
 
@@ -472,7 +497,7 @@ impl Terminals {
 
     /// Starts the terminal host for `launch` in its folder and waits until
     /// it serves.
-    async fn spawn_host(&self, paths: &Paths, launch: &Launch) -> Result<()> {
+    async fn spawn_host(&self, paths: &Paths, launch: &Launch, own: Option<&Path>) -> Result<()> {
         let (cols, rows) = launch.size.unwrap_or(DEFAULT_SIZE);
         let log = std::fs::File::create(paths.host_log())?;
         let mut host = tokio::process::Command::new(&self.executable);
@@ -486,9 +511,25 @@ impl Terminals {
             .arg("--rows")
             .arg(rows.to_string())
             .arg("--")
-            .arg(&launch.program)
-            .args(&launch.args)
-            .env("TERM", "xterm-256color")
+            .arg(&launch.program);
+        if let Some(folder) = own
+            && launch
+                .program
+                .file_name()
+                .is_some_and(|name| name == "bash")
+        {
+            // Bash skips --rcfile for a login shell. Let our rc file run
+            // the login files first, then restore the environment.
+            host.arg("--rcfile").arg(folder.join("shell/bashrc"));
+            if launch.args.first().is_some_and(|arg| arg == "-l") {
+                host.args(&launch.args[1..]).env("SANDHILL_BASH_LOGIN", "1");
+            } else {
+                host.args(&launch.args);
+            }
+        } else {
+            host.args(&launch.args);
+        }
+        host.env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
             .env("SANDHILL_TERMINAL", paths.dir())
             .envs(launch.env.iter().map(|(k, v)| (k, v)))
@@ -497,6 +538,9 @@ impl Terminals {
             .stderr(log)
             // Its own process group, like kernels, so it outlives the daemon.
             .process_group(0);
+        if let Some(folder) = own {
+            crate::own_env::apply_to_shell(host.as_std_mut(), folder);
+        }
         let mut child = host.spawn().context("cannot start the terminal host")?;
         let started = async {
             loop {
@@ -1076,6 +1120,59 @@ fn outdated(meta: &Meta) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_child_uses_current_mode_and_keeps_the_original_shell_files() {
+        let state = tempfile::tempdir().unwrap();
+        let dir = state.path().join("terminals/conversation");
+        let record = state.path().join(crate::quick::record::FILE);
+        let folder = state.path().join("environment");
+        let wrapper = folder.join("shell/zsh");
+        let user_zdotdir = Path::new("/user/shell");
+
+        let mut command = tokio::process::Command::new("agent");
+        command.env("PYTHONPATH", "/outside/python");
+        Terminals::scope_child(&mut command, &dir);
+        assert_eq!(command.as_std().get_envs().count(), 1);
+
+        crate::quick::install::update_prefs(&record, |prefs| {
+            prefs.mode = Some(sandhill_proto::EnvMode::Own);
+            prefs.own_folder = folder.to_str().unwrap().into();
+        })
+        .unwrap();
+        command
+            .env("PATH", "/node/bin:/usr/bin")
+            .env("ZDOTDIR", &wrapper)
+            .env("SANDHILL_USER_ZDOTDIR", user_zdotdir)
+            .env("BASH_ENV", "/user/bash-startup");
+        Terminals::scope_child(&mut command, &dir);
+        // Reapplying at a bridge spawn doesn't lose original startup files.
+        Terminals::scope_child(&mut command, &dir);
+        let vars: HashMap<_, _> = command.as_std().get_envs().collect();
+        let key = std::ffi::OsStr::new;
+        assert_eq!(vars[key("PYTHONPATH")], None);
+        assert_eq!(vars[key("ZDOTDIR")], Some(wrapper.as_os_str()));
+        assert_eq!(
+            vars[key("SANDHILL_USER_ZDOTDIR")],
+            Some(user_zdotdir.as_os_str())
+        );
+        assert_eq!(
+            vars[key("BASH_ENV")],
+            Some(folder.join("shell/bashrc").as_os_str())
+        );
+        assert_eq!(
+            vars[key("SANDHILL_USER_BASH_ENV")],
+            Some(key("/user/bash-startup"))
+        );
+        let path = vars[key("PATH")].unwrap();
+        let parts: Vec<_> = std::env::split_paths(path).collect();
+        assert_eq!(parts[0], folder.join("conda/envs/sandhill-python/bin"));
+        assert_eq!(parts[1], folder.join("conda/envs/sandhill-r/bin"));
+        assert_eq!(parts[2], folder.join("bin"));
+        assert_eq!(parts[3], Path::new("/node/bin"));
+        assert_eq!(parts[4], Path::new("/usr/bin"));
+        assert_eq!(parts.len(), 5);
+    }
 
     #[tokio::test]
     async fn old_host_snapshot_separates_replay_from_immediately_queued_live_output() {

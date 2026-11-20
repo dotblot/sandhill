@@ -49,12 +49,20 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
     let program;
     let prefix: Option<std::path::PathBuf>;
     let mut python_probe = None;
+    let target_own;
     match target {
         InstallTarget::R { r, library } => {
             program = Path::new(r);
             plan.folder.clone_from(library);
             if !executable(program) {
                 bail!("R wasn't found at {r}.");
+            }
+            target_own = crate::own_env::containing(program);
+            if let Some(folder) = search.own.as_deref().or(target_own.as_deref())
+                && (!crate::own_env::inside(folder, program)
+                    || !crate::own_env::inside(folder, Path::new(library)))
+            {
+                bail!("{}", crate::own_env::SWITCH_HINT);
             }
             // R.home("bin") may be <prefix>/lib/R/bin, not <prefix>/bin.
             let canonical = fs::canonicalize(program).ok();
@@ -77,6 +85,13 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
             plan.folder.clone_from(folder);
             if !executable(program) || !root.is_absolute() || !root.is_dir() {
                 bail!("This Python or its environment folder couldn't be found.");
+            }
+            target_own = crate::own_env::containing(program);
+            if let Some(folder) = search.own.as_deref().or(target_own.as_deref())
+                && (!crate::own_env::inside(folder, program)
+                    || !crate::own_env::inside(folder, root))
+            {
+                bail!("{}", crate::own_env::SWITCH_HINT);
             }
             let actual = inspect_python(program)
                 .context("This Python couldn't tell Sandhill where its packages go.")?;
@@ -104,13 +119,12 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
             python_probe = Some(actual);
         }
     }
-    let selected = match *tool {
+    let mut selected = match *tool {
         Some(choice) => plan.tools.iter().find(|info| info.tool == choice)
             .with_context(|| format!("{} isn't available for this folder. Choose another tool.", choice.label()))?,
         None => plan.tools.first().context("No tool can change packages in this Python. Make an environment in Getting Ready first.")?,
     }
     .clone();
-    plan.change.tool = Some(selected.tool);
     if packages.is_empty() {
         bail!("Enter at least one package name.");
     }
@@ -132,6 +146,61 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
             })
         })
         .collect::<Result<_>>()?;
+    let mut conda_r = std::collections::HashMap::new();
+    if selected.tool == Conda && target_own.is_some() && *action == PackageAction::Install {
+        let prefix = prefix
+            .as_deref()
+            .context("This isn't a conda environment.")?;
+        let installed = record::conda_packages(prefix)?;
+        let mut missing = None;
+        for (&name, spec) in requested.iter().zip(packages) {
+            let tool_path = Path::new(&selected.path);
+            if is_r {
+                match conda_r_package(tool_path, name, *action, &installed) {
+                    Ok((spec, source, version)) => {
+                        conda_r.insert(name, (spec, source, version));
+                    }
+                    Err(error) => {
+                        missing = Some((name, error));
+                        break;
+                    }
+                }
+            } else {
+                let conda = conda_kit_python(name);
+                let requirements = &spec[name.len()..];
+                let known = requirements.is_empty()
+                    && (installed.contains_key(conda) || conda_kit_python_known(conda));
+                if !known
+                    && (requirements.contains("~=")
+                        || requirements.contains("===")
+                        || conda_search(tool_path, conda, &format!("{conda}{requirements}"))
+                            .is_none())
+                {
+                    missing = Some((
+                        name,
+                        anyhow::anyhow!("Micromamba couldn't find {name} for this folder."),
+                    ));
+                    break;
+                }
+            }
+        }
+        if let Some((name, error)) = missing {
+            if tool.is_some() {
+                return Err(error);
+            }
+            let fallback = if is_r { R } else { Pip };
+            if let Some(other) = plan.tools.iter().find(|info| info.tool == fallback) {
+                selected = other.clone();
+                plan.notes.push(format!(
+                    "Micromamba couldn't provide {name}. This plan uses {} instead.",
+                    fallback.label()
+                ));
+            } else {
+                return Err(error);
+            }
+        }
+    }
+    plan.change.tool = Some(selected.tool);
     let tool_path = Path::new(&selected.path);
     let command = match selected.tool {
         R => {
@@ -152,7 +221,7 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
             if !executable(&rscript) {
                 bail!("There is no Rscript beside {}.", program.display());
             }
-            let r = inspect_r(&rscript, library)
+            let r = inspect_r(&rscript, library, target_own.as_deref())
                 .context("R couldn't open this library. Choose another R or library.")?;
             if *action == PackageAction::Remove {
                 guard_r_remove(library, &r.standard, &requested)?;
@@ -182,7 +251,8 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
                     plan.notes.push(
                         "Packages that need to be built may fail without developer tools.".into(),
                     );
-                    if known_to_need_compiler(&rscript, &requested, use_bioc) {
+                    if known_to_need_compiler(&rscript, &requested, use_bioc, target_own.as_deref())
+                    {
                         bail!(
                             "None of these packages can be built here without developer tools. Install those tools or choose another R."
                         );
@@ -214,11 +284,15 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
                 .then(|| conda_distribution_names(prefix));
             for (&name, spec) in requested.iter().zip(packages.iter()) {
                 let (spec, source, version) = if is_r {
-                    conda_r_package(tool_path, name, *action, &installed)?
+                    match conda_r.remove(name) {
+                        Some(found) => found,
+                        None => conda_r_package(tool_path, name, *action, &installed)?,
+                    }
                 } else {
                     let basename = record::python_name(name);
-                    let conda_name = if installed.contains_key(name) {
-                        name
+                    let kit_name = conda_kit_python(name);
+                    let conda_name = if kit_name != name || installed.contains_key(name) {
+                        kit_name
                     } else {
                         python_conda_names
                             .as_ref()
@@ -314,7 +388,11 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
             )
         }
     };
-    Ok(command)
+    if let Some(folder) = target_own.filter(|_| selected.tool != Conda) {
+        Ok(crate::own_env::command(&folder, &command))
+    } else {
+        Ok(command)
+    }
 }
 
 fn same_folder(a: &Path, b: &Path) -> bool {
@@ -398,6 +476,26 @@ fn bioconductor(name: &str) -> bool {
     setup::PACKAGES
         .iter()
         .any(|&(n, bioc, _)| n == name && bioc)
+        || kits()
+            .flat_map(|kit| kit.r)
+            .any(|&(n, bioc)| bioc && n.eq_ignore_ascii_case(name))
+}
+
+fn kits() -> impl Iterator<Item = &'static sandhill_proto::Kit> {
+    std::iter::once(&sandhill_proto::CORE_KIT).chain(sandhill_proto::KITS)
+}
+
+fn conda_kit_python(name: &str) -> &str {
+    kits()
+        .flat_map(|kit| kit.python)
+        .find(|&&(_, pypi)| pypi.eq_ignore_ascii_case(name))
+        .map_or(name, |&(conda, _)| conda)
+}
+
+fn conda_kit_python_known(name: &str) -> bool {
+    kits()
+        .flat_map(|kit| kit.python)
+        .any(|&(conda, _)| conda == name)
 }
 
 fn conda_command(
@@ -462,6 +560,12 @@ fn conda_r_package(
     if github_repo(name) {
         bail!("Use R's own installer for GitHub packages like {name}.");
     }
+    if action == PackageAction::Install
+        && name.eq_ignore_ascii_case("GSVA")
+        && cfg!(all(target_os = "macos", target_arch = "aarch64"))
+    {
+        bail!("Conda doesn't have GSVA for this Mac. Use R's own installer instead.");
+    }
     let lower = name.to_ascii_lowercase();
     let r = format!("r-{lower}");
     let bioc = format!("bioconductor-{lower}");
@@ -485,10 +589,13 @@ fn conda_r_package(
         if setup::PACKAGES
             .iter()
             .any(|&(n, bioc, _)| name == n && bioc == (source == "bioconda"))
+            || kits()
+                .flat_map(|kit| kit.r)
+                .any(|&(n, bioc)| name.eq_ignore_ascii_case(n) && bioc == (source == "bioconda"))
         {
             return Ok((spec.clone(), source, None));
         }
-        if let Some(version) = conda_search(tool, spec) {
+        if let Some(version) = conda_search(tool, spec, spec) {
             return Ok((spec.clone(), source, Some(version)));
         }
     }
@@ -500,11 +607,11 @@ fn conda_r_package(
     )
 }
 
-fn conda_search(tool: &Path, name: &str) -> Option<String> {
+fn conda_search(tool: &Path, name: &str, spec: &str) -> Option<String> {
     let mut args = vec!["search", "--json"];
     args.extend(CHANNELS);
-    args.push(name);
-    let out = probe(tool, &args)?;
+    args.push(spec);
+    let out = install::probe_conda_search(tool, &args)?;
     let json: Value = serde_json::from_str(&out).ok()?;
     let builds = json
         .get(name)
@@ -579,12 +686,12 @@ struct RInfo {
     standard: std::path::PathBuf,
 }
 
-fn inspect_r(rscript: &Path, library: &Path) -> Option<RInfo> {
+fn inspect_r(rscript: &Path, library: &Path, own: Option<&Path>) -> Option<RInfo> {
     let code = format!(
         r#".libPaths(c({}, .libPaths())); cat("\nSANDHILL\t", .Platform$pkgType, "\t", nzchar(system.file(package = "BiocManager")), "\t", .Library, "\n", sep = "")"#,
         r_string(library.to_string_lossy().as_ref())
     );
-    let result = probe(rscript, &["-e", &code])?;
+    let result = install::probe_in(rscript, &["-e", &code], own)?;
     let fields = result
         .lines()
         .find_map(|line| line.strip_prefix("SANDHILL\t"))?;
@@ -613,7 +720,12 @@ fn guard_r_remove(library: &Path, standard: &Path, names: &[&str]) -> Result<()>
     Ok(())
 }
 
-fn known_to_need_compiler(rscript: &Path, names: &[&str], use_bioc: bool) -> bool {
+fn known_to_need_compiler(
+    rscript: &Path,
+    names: &[&str],
+    use_bioc: bool,
+    own: Option<&Path>,
+) -> bool {
     if names.iter().any(|name| github_repo(name)) {
         return false;
     }
@@ -626,7 +738,7 @@ fn known_to_need_compiler(rscript: &Path, names: &[&str], use_bioc: bool) -> boo
         r#"options(timeout = 10L); repos <- c(CRAN = "{CRAN}"); a <- suppressWarnings(utils::available.packages(repos = {repos}, type = "source", fields = "NeedsCompilation")); n <- {}; cat("\nSANDHILL:", all(n %in% rownames(a)) && isTRUE(all(a[n, "NeedsCompilation"] == "yes")), "\n", sep = "")"#,
         r_vector(names)
     );
-    probe(rscript, &["-e", &code])
+    install::probe_in(rscript, &["-e", &code], own)
         .is_some_and(|text| text.lines().any(|line| line == "SANDHILL:TRUE"))
 }
 
@@ -786,6 +898,66 @@ fn github_match(folder: &Path, name: &str, wanted: &str) -> bool {
 mod tests {
     use super::*;
     use PackageAction::{Install, Remove, Update};
+
+    #[test]
+    fn own_package_falls_back_to_r_but_explicit_conda_still_refuses() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().canonicalize().unwrap();
+        let prefix = crate::own_env::prefix(&folder, "r");
+        let library = prefix.join("lib/R/library");
+        for dir in [
+            folder.join("bin"),
+            prefix.join("bin"),
+            prefix.join("conda-meta"),
+            library.clone(),
+        ] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(folder.join(crate::own_env::MARKER), "").unwrap();
+        let set = |path: &Path, body: &str| {
+            fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        };
+        let r = prefix.join("bin/R");
+        set(&r, "echo 'R version 4.5.3'");
+        set(
+            &prefix.join("bin/Rscript"),
+            "printf 'SANDHILL\\tmac.binary\\tTRUE\\t/test\\n'",
+        );
+        let shim = folder.join("bin/micromamba");
+        set(
+            &shim,
+            "case \"$1\" in --version) echo '2.10.0';; *) echo '{\"result\":{\"pkgs\":[]}}';; esac",
+        );
+        assert_eq!(crate::irkernel::conda_tool(&prefix), shim.to_str().unwrap());
+        let mut change = PackageChange {
+            action: Install,
+            target: InstallTarget::R {
+                r: r.to_string_lossy().into_owned(),
+                library: library.to_string_lossy().into_owned(),
+            },
+            packages: vec!["notavailablefromconda".into()],
+            tool: None,
+            reason: String::new(),
+        };
+        let search = Search::default().in_own(Some(folder));
+        let automatic = plan(&search, change.clone());
+        assert_eq!(automatic.refused, None);
+        assert_eq!(automatic.change.tool, Some(InstallTool::R));
+        assert!(automatic.notes[0].contains("uses R"));
+        assert!(automatic.command.contains("R_PROFILE_USER="));
+        change.tool = Some(InstallTool::Conda);
+        assert!(
+            plan(&search, change)
+                .refused
+                .unwrap()
+                .contains("couldn't find")
+        );
+        assert!(bioconductor("GSVA"));
+        assert_eq!(conda_kit_python("igraph"), "python-igraph");
+        assert_eq!(conda_kit_python("decoupler"), "decoupler-py");
+    }
 
     #[test]
     fn validates_names_without_admitting_urls_paths_or_options() {

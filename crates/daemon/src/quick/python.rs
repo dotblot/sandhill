@@ -10,15 +10,22 @@ use std::path::{Path, PathBuf};
 use crate::kernelspecs::{self, Search};
 use crate::terminal::Launch;
 use anyhow::{Result, bail};
-use sandhill_proto::{QuickCondaEnv, QuickCondaTool, QuickPython, ipykernel_args};
+use sandhill_proto::{
+    QuickCondaEnv, QuickCondaTool, QuickPython, QuickPythonFound, ipykernel_args,
+};
 
 /// What Getting Ready shows about Python.
 pub fn readiness(search: &Search) -> QuickPython {
-    let mut kernels: Vec<String> = kernelspecs::list(search)
+    let listed: Vec<_> = kernelspecs::list(search)
         .into_iter()
         .filter(|k| k.language.to_ascii_lowercase().starts_with("python"))
-        .map(|k| k.display_name)
         .collect();
+    let found = listed.first().and_then(|k| {
+        let spec = kernelspecs::find(search, &k.name)?;
+        let program = kernelspecs::program(&spec.kernelspec, search.path.as_deref())?;
+        found(&program, k.version.clone(), search.own.as_deref())
+    });
+    let mut kernels: Vec<_> = listed.into_iter().map(|k| k.display_name).collect();
     kernels.dedup();
     QuickPython {
         kernels,
@@ -28,12 +35,71 @@ pub fn readiness(search: &Search) -> QuickPython {
             root: root.to_string_lossy().into_owned(),
         }),
         bare: bare_envs(search),
+        found,
     }
+}
+
+fn found(
+    program: &Path,
+    listed_version: Option<String>,
+    own: Option<&Path>,
+) -> Option<QuickPythonFound> {
+    let around = program.parent()?.parent()?;
+    let prefix = if around.join("conda-meta").is_dir() || around.join("pyvenv.cfg").is_file() {
+        around.to_path_buf()
+    } else {
+        let result =
+            super::install::probe_in(program, &["-I", "-c", "import sys; print(sys.prefix)"], own)?;
+        let prefix = PathBuf::from(result.trim());
+        if !prefix.is_absolute() || !prefix.is_dir() {
+            return None;
+        }
+        prefix
+    };
+    let (description, fallback_version) = describe_python(program, &prefix);
+    Some(QuickPythonFound {
+        program: program.to_string_lossy().into_owned(),
+        prefix: prefix.to_string_lossy().into_owned(),
+        version: listed_version.or(fallback_version).unwrap_or_default(),
+        description,
+    })
+}
+
+fn describe_python(program: &Path, prefix: &Path) -> (String, Option<String>) {
+    if prefix.join("conda-meta").is_dir() {
+        return (
+            format!("conda, {}", kernelspecs::conda_name(prefix)),
+            conda_package_version(prefix, "python"),
+        );
+    }
+    if let Ok(config) = std::fs::read_to_string(prefix.join("pyvenv.cfg")) {
+        let uv = config.lines().any(|line| {
+            line.split_once('=')
+                .is_some_and(|(key, _)| key.trim() == "uv")
+        });
+        return (if uv { "uv" } else { "venv" }.into(), None);
+    }
+    let real = kernelspecs::canonical(program);
+    let name = if ["/opt/homebrew", "/usr/local/Cellar", "/home/linuxbrew"]
+        .iter()
+        .any(|dir| real.starts_with(dir))
+    {
+        "Homebrew"
+    } else if real.starts_with("/Library/Frameworks/Python.framework") {
+        "python.org"
+    } else {
+        "other"
+    };
+    (name.into(), None)
 }
 
 /// The mamba Getting Ready uses, else conda, and the installation it
 /// belongs to: from the usual conda installations first, then `PATH`.
 pub(super) fn find_tool(search: &Search) -> Option<(PathBuf, PathBuf)> {
+    if let Some(folder) = &search.own {
+        let shim = folder.join("bin/micromamba");
+        return crate::own_env::executable(&shim).then(|| (shim, folder.join("conda")));
+    }
     let mut roots: Vec<PathBuf> = search
         .conda_roots
         .iter()
@@ -186,6 +252,44 @@ mod tests {
                 .unwrap();
             }
         }
+    }
+
+    #[test]
+    fn own_and_existing_python_prefixes_describe_where_the_kernel_runs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conda = tmp.path().join("micromamba");
+        installation(&conda, &[("omicverse", true)]);
+        let prefix = conda.join("envs/omicverse");
+        let program = prefix.join("bin/python");
+        let env = found(&program, None, None).unwrap();
+        assert_eq!(env.description, "conda, omicverse");
+        assert_eq!(env.prefix, prefix.to_str().unwrap());
+        assert_eq!(env.program, program.to_str().unwrap());
+        assert_eq!(env.version, "3.12.4");
+
+        let prefix = tmp.path().join("project/.venv");
+        std::fs::create_dir_all(&prefix).unwrap();
+        let cfg = prefix.join("pyvenv.cfg");
+        std::fs::write(&cfg, "version_info = 3.12.4\nuv = 0.9.0").unwrap();
+        let env = found(&prefix.join("bin/python"), Some("3.12.4".into()), None).unwrap();
+        assert_eq!(env.description, "uv");
+        std::fs::write(&cfg, "version = 3.12.4").unwrap();
+        assert_eq!(
+            describe_python(&prefix.join("bin/python"), &prefix).0,
+            "venv"
+        );
+        assert_eq!(
+            describe_python(Path::new("/opt/homebrew/bin/python3"), &prefix.join("else")).0,
+            "Homebrew"
+        );
+        assert_eq!(
+            describe_python(
+                Path::new("/Library/Frameworks/Python.framework/bin/python3"),
+                &prefix.join("else")
+            )
+            .0,
+            "python.org"
+        );
     }
 
     fn search(root: &Path) -> Search {

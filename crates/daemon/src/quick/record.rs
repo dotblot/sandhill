@@ -11,7 +11,7 @@ use anyhow::{Result, bail};
 use sandhill_proto::{InstalledKey, QuickInstalled};
 use serde_json::Value;
 
-use super::install::{self, home, probe, quote, run_command};
+use super::install::{self, home, quote, run_command};
 use crate::kernelspecs::Search;
 
 pub const FILE: &str = "installed-by-sandhill.tsv";
@@ -27,6 +27,7 @@ pub const MINIFORGE: &str = "miniforge";
 pub const BREW: &str = "brew";
 pub const R_CRAN: &str = "r-cran";
 pub const UV_PYTHON: &str = "uv-python";
+pub const OWN_ENVIRONMENT: &str = "own-environment";
 const KINDS: &[&str] = &[
     R_PACKAGE,
     PYTHON_PACKAGE,
@@ -40,6 +41,7 @@ const KINDS: &[&str] = &[
     BREW,
     R_CRAN,
     UV_PYTHON,
+    OWN_ENVIRONMENT,
 ];
 
 pub(super) type Versions = BTreeMap<String, String>;
@@ -122,6 +124,12 @@ pub(super) fn add(record: &Path, entries: impl IntoIterator<Item = QuickInstalle
         });
         items.push(item);
     }
+    save(record, &items)
+}
+
+pub(super) fn forget_own(record: &Path, folder: &Path) -> Result<()> {
+    let mut items = load(record)?;
+    items.retain(|item| !Path::new(&item.place).starts_with(folder));
     save(record, &items)
 }
 
@@ -281,7 +289,7 @@ fn python_version(prefix: &Path, name: &str) -> Option<String> {
 }
 
 pub(super) fn brew_packages(brew: &Path) -> Option<Versions> {
-    let text = probe(brew, &["list", "--formula", "--versions"])?;
+    let text = install::probe_brew(brew, &["list", "--formula", "--versions"])?;
     Some(
         text.lines()
             .filter_map(|line| {
@@ -400,6 +408,8 @@ fn check(items: &mut [QuickInstalled]) -> HashSet<InstalledKey> {
                 }
                 PYTHON_ENV | CONDA_ENV if prefix.join("conda-meta").is_dir() => Status::Ours,
                 PYTHON_ENV | CONDA_ENV if prefix.exists() => Status::Changed,
+                OWN_ENVIRONMENT if crate::own_env::marked(prefix) => Status::Ours,
+                OWN_ENVIRONMENT if prefix.exists() => Status::Changed,
                 MINIFORGE if prefix.exists() => Status::Changed, // checked after its environments
                 BREW => {
                     let packages = brews.get_or_insert_with(|| {

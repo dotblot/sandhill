@@ -218,6 +218,7 @@ fn configured_command(options: &Options, dir: &std::path::Path) -> tokio::proces
         command.arg("-c").arg(trust_override(&folder, &cwd));
     }
     configure_account(&mut command, None);
+    super::Terminals::scope_child(&mut command, dir);
     command
 }
 

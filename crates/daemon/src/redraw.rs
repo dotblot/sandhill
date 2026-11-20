@@ -102,11 +102,12 @@ pub const PYTHON_KEEP: &str = r#"def _sandhill_keep_figures():
 
     tools.print_figure = keep(tools.print_figure)
     tools.retina_figure = keep(tools.retina_figure)
-    try:
-        from matplotlib.figure import Figure
-    except Exception:
+    # Only existing formatters need replacing. If matplotlib isn't loaded,
+    # let the first plot pay for loading it, not every new Python session.
+    from sys import modules
+    Figure = getattr(modules.get("matplotlib.figure"), "Figure", None)
+    if Figure is None:
         return
-    # Formatters set up before this keep their own copy: wrap those too.
     for formatter in get_ipython().display_formatter.formatters.values():
         if Figure in formatter.type_printers:
             formatter.for_type(Figure, keep(formatter.type_printers[Figure]))
