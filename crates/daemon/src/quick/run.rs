@@ -8,7 +8,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use sandhill_proto::{
-    GeneIds, QuickColumn, QuickPlot, QuickRequest, QuickResult, QuickSettings, QuickTable, hex,
+    GeneIds, Known, QuickColumn, QuickDeBatch, QuickDifferentialInfo, QuickDifferentialTable,
+    QuickPlot, QuickPlotBatch, QuickRequest, QuickResult, QuickSettings, QuickTable,
+    QuickTableKind, QuickValues, hex,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -17,7 +19,11 @@ use sha2::{Digest, Sha256};
 use super::folder::inside;
 
 /// The templates (`assets/quick/quick.R`).
-pub const SCRIPT: &str = include_str!("../../assets/quick/quick.R");
+pub const SCRIPT: &str = concat!(
+    include_str!("../../assets/quick/combat_ref.R"),
+    "\n",
+    include_str!("../../assets/quick/quick.R"),
+);
 
 fn digest() -> String {
     hex(&Sha256::digest(SCRIPT.as_bytes()))[..16].to_string()
@@ -58,7 +64,7 @@ pub fn define_code() -> String {
       request <- jsonlite::fromJSON(json, simplifyVector = FALSE)
       result <- sandhill_quick(request)
       text <- as.character(jsonlite::toJSON(result, auto_unbox = TRUE, null = "null", na = "null", digits = NA))
-      cat("SANDHILL_QUICK_", token, ":", text, "\n", sep = "")
+      cat("\nSANDHILL_QUICK_", token, ":", text, "\n", sep = "")
       invisible(NULL)
     }}
   }}), envir = globalenv())
@@ -84,6 +90,41 @@ pub fn resolve(folder: &Path, request: &QuickRequest) -> Result<QuickRequest> {
                 value: value.clone(),
             }
         }
+        QuickRequest::Factors { table, .. } => {
+            if !r_name(table) {
+                bail!("Choose a sample sheet.");
+            }
+            request.clone()
+        }
+        QuickRequest::DeCoefficients { .. } => request.clone(),
+        QuickRequest::Differential { table, settings } => {
+            if !r_name(table) {
+                bail!("Choose a counts table.");
+            }
+            let mut names = std::collections::HashSet::new();
+            if settings.outputs.is_empty()
+                || settings
+                    .outputs
+                    .iter()
+                    .map(|out| &out.name)
+                    .chain([&settings.normalized])
+                    .any(|name| !r_name(name) || name == table || !names.insert(name))
+            {
+                bail!("Choose a different name for each new table.");
+            }
+            if settings.directory != "results" {
+                bail!("Differential expression tables must be saved in the results folder.");
+            }
+            let mut settings = settings.clone();
+            settings.directory = full(&settings.directory)?;
+            for name in names {
+                inside(folder, &format!("results/{name}.csv"))?;
+            }
+            QuickRequest::Differential {
+                table: table.clone(),
+                settings,
+            }
+        }
         QuickRequest::Load { file, sheet, name } => {
             if !r_name(name) {
                 bail!("{name} can't be an R variable's name");
@@ -91,6 +132,36 @@ pub fn resolve(folder: &Path, request: &QuickRequest) -> Result<QuickRequest> {
             QuickRequest::Load {
                 file: full(file)?,
                 sheet: sheet.clone(),
+                name: name.clone(),
+            }
+        }
+        QuickRequest::CombineCounts { files, file, name } => {
+            if !r_name(name) || files.len() < 2 {
+                bail!("Choose at least two samples and a name for the combined table.");
+            }
+            let at = inside(folder, file)?;
+            let results = folder.join("results");
+            if at.parent() != Some(results.as_path())
+                || at.extension().and_then(|s| s.to_str()) != Some("csv")
+                || !std::fs::symlink_metadata(&results).is_ok_and(|m| m.is_dir())
+                || !matches!(std::fs::symlink_metadata(&at), Err(err) if err.kind() == std::io::ErrorKind::NotFound)
+            {
+                bail!("Choose a new CSV file in the session's results folder.");
+            }
+            let mut seen = std::collections::HashSet::with_capacity(files.len());
+            let files = files
+                .iter()
+                .map(|file| {
+                    let at = inside(folder, file)?;
+                    if !at.is_file() || !seen.insert(std::fs::canonicalize(&at)?) {
+                        bail!("Each sample needs its own counts file in the session.");
+                    }
+                    Ok(at.to_string_lossy().into_owned())
+                })
+                .collect::<Result<_>>()?;
+            QuickRequest::CombineCounts {
+                files,
+                file: at.to_string_lossy().into_owned(),
                 name: name.clone(),
             }
         }
@@ -197,6 +268,28 @@ struct RawTable {
     columns: Vec<QuickColumn>,
 }
 
+impl RawTable {
+    fn recognized(self, file: String, sheet: Option<String>) -> QuickTable {
+        let recognition = super::recognise::recognise(&self.columns);
+        QuickTable {
+            name: self.name,
+            file,
+            sheet,
+            rows: self.rows,
+            columns: self.columns,
+            recognition,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DeTable {
+    table: RawTable,
+    gene: String,
+    label: Option<String>,
+    changed: Option<u64>,
+}
+
 /// The run's result, from the template's reply to `request` (as the app
 /// sent it, with names relative to the session folder).
 pub fn result(request: &QuickRequest, reply: Value) -> Result<QuickResult> {
@@ -216,15 +309,33 @@ pub fn result(request: &QuickRequest, reply: Value) -> Result<QuickResult> {
         QuickRequest::Load { file, sheet, .. } => {
             let raw: RawTable = serde_json::from_value(reply["table"].clone())
                 .context("the template's table can't be read")?;
-            let recognition = super::recognise::recognise(&raw.columns);
-            result.table = Some(QuickTable {
-                name: raw.name,
-                file: file.clone(),
-                sheet: sheet.clone(),
-                rows: raw.rows,
-                columns: raw.columns,
-                recognition,
-            });
+            result.table = Some(raw.recognized(file.clone(), sheet.clone()));
+        }
+        QuickRequest::CombineCounts { file, .. } => {
+            let raw: RawTable = serde_json::from_value(reply["table"].clone())
+                .context("the combined table can't be read")?;
+            result.table = Some(raw.recognized(file.clone(), None));
+            let kept = result.facts["kept"]
+                .as_u64()
+                .context("the shared gene count is missing")?;
+            let inputs = result.facts["inputs"]
+                .as_array()
+                .context("the sample gene counts are missing")?;
+            let mut details = Vec::with_capacity(inputs.len());
+            for sample in inputs {
+                let name = sample["sample"]
+                    .as_str()
+                    .context("a sample name is missing")?;
+                let genes = sample["genes"]
+                    .as_u64()
+                    .context("a sample's gene count is missing")?;
+                details.push(format!("{name}: {}", thousands(genes)));
+            }
+            result.sentence = Some(format!(
+                "Kept {} genes found in every sample. Genes in each file: {}.",
+                thousands(kept),
+                details.join("; ")
+            ));
         }
         QuickRequest::Plot { plot, settings, .. } => {
             result.sentence = sentence(*plot, settings, &result.facts);
@@ -232,6 +343,96 @@ pub fn result(request: &QuickRequest, reply: Value) -> Result<QuickResult> {
         QuickRequest::Pairs { .. } => {
             result.pairs = serde_json::from_value(reply["pairs"].clone())
                 .context("the template's pairs can't be read")?;
+        }
+        QuickRequest::Factors { .. } => {
+            result.factors = serde_json::from_value(reply["factors"].clone())
+                .context("the sample factors can't be read")?;
+        }
+        QuickRequest::DeCoefficients { .. } => {
+            result.coefficients = serde_json::from_value(reply["coefficients"].clone())
+                .context("the design coefficients can't be read")?;
+        }
+        QuickRequest::Differential { settings, .. } => {
+            let tables: Vec<DeTable> = serde_json::from_value(reply["tables"].clone())
+                .context("the differential expression tables can't be read")?;
+            let formula = result.facts["formula"]
+                .as_str()
+                .context("the design formula is missing")?;
+            let test = result.facts["test"]
+                .as_str()
+                .context("the test name is missing")?;
+            let methods = result.facts["methods"]
+                .as_str()
+                .context("the methods are missing")?;
+            let batch = match &settings.batch {
+                QuickDeBatch::Model { factor } | QuickDeBatch::Pairs { factor } => {
+                    Some(Box::new(QuickPlotBatch {
+                        design: settings.design.clone(),
+                        factor: factor.clone(),
+                    }))
+                }
+                _ => None,
+            };
+            let batch_note = match &settings.batch {
+                QuickDeBatch::CombatSeq { factor } => {
+                    Some(format!("Counts corrected by ComBat-seq for {factor}"))
+                }
+                QuickDeBatch::CombatRef { factor } => {
+                    Some(format!("Counts corrected by ComBat-ref for {factor}"))
+                }
+                _ => None,
+            };
+            let mut comparisons = Vec::new();
+            for raw in tables {
+                let name = &raw.table.name;
+                let output = settings.outputs.iter().find(|out| &out.name == name);
+                let normalized = name == &settings.normalized;
+                if !normalized && output.is_none() {
+                    bail!("The template returned an unexpected table.");
+                }
+                let file = format!("{}/{name}.csv", settings.directory);
+                let mut table = raw.table.recognized(file, None);
+                table.recognition.gene = Some(raw.gene.clone());
+                let info = if let Some(out) = output {
+                    if let Some(changed) = raw.changed {
+                        comparisons.push(format!(
+                            "{} vs {}: {} changed",
+                            out.comparison.higher,
+                            out.comparison.lower,
+                            thousands(changed)
+                        ));
+                    }
+                    table.recognition.kind = QuickTableKind::Results;
+                    QuickDifferentialInfo {
+                        comparison: Some(Known::found(out.comparison.clone())),
+                        expression_table: Some(settings.normalized.clone()),
+                        methods: Some(methods.to_string()),
+                        omnibus: settings.reduced.is_some(),
+                        ..QuickDifferentialInfo::default()
+                    }
+                } else {
+                    table.recognition.kind = QuickTableKind::Normalized;
+                    table.recognition.samples.clone_from(&settings.samples);
+                    table.recognition.values = Some(QuickValues::Logged);
+                    QuickDifferentialInfo {
+                        plot_batch: batch.clone(),
+                        batch_note: batch_note.clone(),
+                        ..QuickDifferentialInfo::default()
+                    }
+                };
+                result.differential.push(QuickDifferentialTable {
+                    table,
+                    gene: raw.gene,
+                    label: raw.label,
+                    samples: settings.samples.clone(),
+                    info,
+                });
+            }
+            result.sentence = Some(format!(
+                "{} used {formula} with {test}. {}.",
+                settings.method.label(),
+                comparisons.join("; ")
+            ));
         }
         QuickRequest::Workbook { .. } => {}
         QuickRequest::Symbols { ids, .. } => {
@@ -280,7 +481,10 @@ fn symbols_sentence(ids: GeneIds, facts: &Value) -> Option<String> {
 pub fn record_step(folder: &Path, request: &QuickRequest) -> Result<()> {
     if matches!(
         request,
-        QuickRequest::Sheets { .. } | QuickRequest::Pairs { .. }
+        QuickRequest::Sheets { .. }
+            | QuickRequest::Pairs { .. }
+            | QuickRequest::Factors { .. }
+            | QuickRequest::DeCoefficients { .. }
     ) {
         return Ok(());
     }
@@ -363,11 +567,20 @@ fn listed(items: &[String]) -> String {
 /// What a plot shows, in one or two plain sentences from its numbers.
 pub fn sentence(plot: QuickPlot, settings: &QuickSettings, facts: &Value) -> Option<String> {
     let cut = settings.cutoffs;
-    Some(match plot {
+    let mut summary = match plot {
         QuickPlot::Volcano | QuickPlot::Ma | QuickPlot::UpDown => {
             let tested = number(facts, "tested")?;
             let up = number(facts, "up")?;
             let down = number(facts, "down")?;
+            if let Some(changed) = number(facts, "omnibus_changed") {
+                return Some(format!(
+                    "{} genes pass the full-design test (adjusted p below {}). For the chosen comparison, {} have a positive fold change and {} a negative one.",
+                    thousands(changed),
+                    cut.padj,
+                    thousands(up),
+                    thousands(down)
+                ));
+            }
             let mut text = format!(
                 "{} of {} genes pass the cutoffs (adjusted p below {}, at least {}): ",
                 thousands(up + down),
@@ -479,7 +692,11 @@ pub fn sentence(plot: QuickPlot, settings: &QuickSettings, facts: &Value) -> Opt
             }
             text
         }
-    })
+    };
+    if let Some(batch) = facts["batch"].as_str() {
+        summary.push_str(&format!(" {batch}."));
+    }
+    Some(summary)
 }
 
 #[cfg(test)]

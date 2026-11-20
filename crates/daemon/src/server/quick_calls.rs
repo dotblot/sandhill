@@ -4,11 +4,13 @@
 
 use std::time::Duration;
 
-use sandhill_proto::{EVENT_RUN_FINISHED, QuickAgentTool, QuickCard, QuickRequest};
+use sandhill_proto::{
+    EVENT_RUN_FINISHED, QuickAgentTool, QuickArchiveSelection, QuickCard, QuickRequest,
+};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::*;
-use crate::quick::{folder, python, record, run, setup};
+use crate::quick::{archive, folder, python, record, run, setup};
 use crate::terminal::Launch;
 
 /// How long one template may run: loading a large table, a big heatmap.
@@ -133,6 +135,42 @@ impl Daemon {
         })
         .await?;
         Ok(Value::String(made.to_string_lossy().into_owned()))
+    }
+
+    pub(super) async fn quick_list_archive(&self, path: String) -> Result<Value> {
+        Ok(serde_json::to_value(
+            blocking(move || archive::list(&path)).await?,
+        )?)
+    }
+
+    pub(super) async fn quick_open_archives(
+        &self,
+        project: Option<String>,
+        tables: Vec<String>,
+        archives: Vec<QuickArchiveSelection>,
+        combine: bool,
+    ) -> Result<Value> {
+        let root = project
+            .as_deref()
+            .map(projects::normalize)
+            .transpose()?
+            .map(PathBuf::from);
+        if let Some(root) = &root {
+            self.trusted(vec![root.clone()], "open tables from an archive")
+                .await?;
+        }
+        let journal = self.journal.clone();
+        let explore = self.explore_dir();
+        let opened = blocking(move || {
+            if root.is_none() {
+                // The session stays in Sandhill's own storage.
+                std::fs::create_dir_all(&explore)?;
+                projects::trust::trust(&journal, &explore.to_string_lossy())?;
+            }
+            folder::open_archives(&explore, root, &tables, &archives, combine)
+        })
+        .await?;
+        Ok(serde_json::to_value(opened)?)
     }
 
     pub(super) async fn quick_keep(

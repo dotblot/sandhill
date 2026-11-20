@@ -16,6 +16,9 @@ use sandhill_proto::{
     python_create_args, python_env_name_ok,
 };
 
+use crate::view::quick_archive::{ArchivePicker, TABLE_TYPES};
+use sandhill_proto::{QuickArchiveOpened, QuickArchiveSelection};
+
 use super::*;
 
 /// How often a running install is looked at.
@@ -27,7 +30,7 @@ const NODE: &str = "https://nodejs.org/";
 #[derive(Clone, PartialEq, Eq)]
 enum Installing {
     /// The missing packages for exploring tables, into this library.
-    Packages(String),
+    Packages(String, QuickTool),
     Kernel(String),
     /// An organism package for gene symbols (with AnnotationDbi when
     /// missing), into `library`.
@@ -52,7 +55,10 @@ enum Installing {
 impl Installing {
     fn what(&self) -> String {
         match self {
-            Installing::Packages(_) => "Installing packages".into(),
+            Installing::Packages(_, QuickTool::Differential) => {
+                "Installing packages for finding changed genes".into()
+            }
+            Installing::Packages(..) => "Installing packages".into(),
             Installing::Kernel(_) => "Installing IRkernel".into(),
             Installing::Symbols { package, .. } => format!("Installing {package}"),
             Installing::Agent(kind) => format!("Installing {}", agent_name(kind)),
@@ -68,7 +74,7 @@ impl Installing {
     /// Which box its progress shows in.
     fn section(&self) -> Section {
         match self {
-            Installing::Packages(_) | Installing::Kernel(_) | Installing::Symbols { .. } => {
+            Installing::Packages(..) | Installing::Kernel(_) | Installing::Symbols { .. } => {
                 Section::R
             }
             Installing::CreatePython { .. } | Installing::Ipykernel(_) | Installing::Miniforge => {
@@ -119,7 +125,7 @@ struct Install {
 enum LibraryFor {
     Kernel,
     /// The missing packages for exploring tables.
-    Packages,
+    Packages(QuickTool),
     /// An organism package for gene symbols.
     Symbols(String),
 }
@@ -152,6 +158,7 @@ pub(crate) struct QuickPage {
     python_form: Option<PythonForm>,
     /// Tables being opened.
     opening: bool,
+    archive_picker: Option<ArchivePicker>,
     /// A recent session whose actions are shown, and one asked about
     /// deleting.
     actions: Option<String>,
@@ -256,12 +263,12 @@ impl AppWindow {
         };
         let r = readiness.r.as_ref().map(|r| r.path.clone());
         let started = match what.clone() {
-            Installing::Packages(library) => {
+            Installing::Packages(library, tool) => {
                 let Some(r) = r else { return };
                 let missing: Vec<String> = readiness
                     .packages
                     .iter()
-                    .filter(|p| p.version.is_none() && p.tool == QuickTool::Plot)
+                    .filter(|p| p.version.is_none() && p.tool == tool)
                     .map(|p| p.name.clone())
                     .collect();
                 let call = daemon.call::<QuickInstalling>(Call::QuickInstall {
@@ -421,36 +428,90 @@ impl AppWindow {
         .detach();
     }
 
-    /// Tables chosen or dropped open at once, in Sandhill's own storage:
-    /// nothing is made beside them until the user keeps the session
-    /// (Huan, 2026-11-19).
-    pub(super) fn quick_open(&mut self, tables: Vec<String>, cx: &mut Context<Self>) {
-        let tables: Vec<String> = tables
+    /// Tables chosen or dropped open in Sandhill's own storage. Archives
+    /// first show which tables can be opened.
+    pub(super) fn quick_open(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        if self.start.quick.opening || self.start.quick.archive_picker.is_some() {
+            return;
+        }
+        let (tables, archives): (Vec<_>, Vec<_>) = paths
             .into_iter()
-            .filter(|t| crate::quick::is_table(t))
-            .collect();
-        if tables.is_empty() {
-            self.start.problem = Some("Sandhill explores CSV, TSV, text and Excel tables.".into());
+            .filter(|p| crate::quick::is_table(p) || crate::quick::is_archive(p))
+            .partition(|p| crate::quick::is_table(p));
+        self.start.page = Page::Explore;
+        self.start.problem = None;
+        if tables.is_empty() && archives.is_empty() {
+            self.start.problem = Some(TABLE_TYPES.into());
             cx.notify();
+            return;
+        }
+        if archives.is_empty() {
+            self.quick_open_selected(tables, Vec::new(), false, cx);
             return;
         }
         let Some(daemon) = self.local_daemon() else {
             return;
         };
-        if self.start.quick.opening {
-            return;
-        }
         self.start.quick.opening = true;
-        self.start.page = Page::Explore;
-        let started = daemon.call::<String>(Call::QuickStart { tables });
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let started = started.await;
+            let picker = ArchivePicker::read(daemon, tables, archives, false).await;
+            this.update(cx, |this, cx| {
+                this.start.quick.opening = false;
+                match picker {
+                    Ok(picker) => this.start.quick.archive_picker = Some(picker),
+                    Err(err) => {
+                        this.start.problem = Some(format!("Could not read the archive: {err:#}"))
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn quick_open_archive_selection(&mut self, combine: bool, cx: &mut Context<Self>) {
+        if let Some(picker) = self.start.quick.archive_picker.take() {
+            let (tables, archives, _) = picker.into_selection();
+            self.quick_open_selected(tables, archives, combine, cx);
+        }
+    }
+
+    fn quick_open_selected(
+        &mut self,
+        tables: Vec<String>,
+        archives: Vec<QuickArchiveSelection>,
+        combine: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(daemon) = self.local_daemon() else {
+            return;
+        };
+        self.start.quick.opening = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let started = if archives.is_empty() {
+                daemon
+                    .call::<String>(Call::QuickStart { tables })
+                    .await
+                    .map(|folder| (folder, None))
+            } else {
+                daemon
+                    .call::<QuickArchiveOpened>(Call::QuickOpenArchives {
+                        project: None,
+                        tables,
+                        archives,
+                        combine,
+                    })
+                    .await
+                    .map(|opened| (opened.folder, opened.combine))
+            };
             this.update(cx, |this, cx| {
                 this.start.quick.opening = false;
                 match started {
-                    Ok(folder) => {
-                        cx.defer(move |cx| crate::shell::app_window::open_quick(folder, cx))
+                    Ok((folder, counts)) => {
+                        cx.defer(move |cx| crate::shell::app_window::open_quick(folder, counts, cx))
                     }
                     Err(err) => this.start.problem = Some(format!("{err:#}")),
                 }
@@ -578,13 +639,17 @@ impl AppWindow {
                 &p,
             ))
             .child(look::settings_group(
+                "Find Changed Genes",
+                vec![offer_row(
+                    "From raw counts and sample factors",
+                    "Compare groups with DESeq2, edgeR or limma-voom. Add a sample sheet or enter the factors yourself.",
+                    &p,
+                )],
+                &p,
+            ))
+            .child(look::settings_group(
                 "Coming next",
                 vec![
-                    offer_row(
-                        "Find Changed Genes",
-                        "DESeq2 from raw counts and a sample sheet.",
-                        &p,
-                    ),
                     offer_row(
                         "Find Enriched Pathways",
                         "GO enrichment from the changed genes.",
@@ -795,7 +860,7 @@ impl AppWindow {
             }
             rows.push(self.quick_packages_row(readiness, r, &missing, busy || !writable, p, cx));
             if let Some(Confirm::Library(
-                target @ (LibraryFor::Packages | LibraryFor::Symbols(_)),
+                target @ (LibraryFor::Packages(_) | LibraryFor::Symbols(_)),
             )) = q.confirm.clone()
             {
                 rows.push(self.quick_library_choice(r, target, busy, p, cx));
@@ -1176,7 +1241,7 @@ impl AppWindow {
                         let library = path.clone();
                         let what = match &target {
                             LibraryFor::Kernel => Installing::Kernel(library),
-                            LibraryFor::Packages => Installing::Packages(library),
+                            LibraryFor::Packages(tool) => Installing::Packages(library, *tool),
                             LibraryFor::Symbols(package) => Installing::Symbols {
                                 library,
                                 package: package.clone(),
@@ -1195,7 +1260,10 @@ impl AppWindow {
                     .gap(px(look::GAP_8))
                     .child(div().flex_1().child(match &target {
                         LibraryFor::Kernel => "Install IRkernel into which library?".to_string(),
-                        LibraryFor::Packages => {
+                        LibraryFor::Packages(QuickTool::Differential) => {
+                            "Install the packages for finding changed genes into which library?".to_string()
+                        }
+                        LibraryFor::Packages(_) => {
                             "Install the missing packages into which library?".to_string()
                         }
                         LibraryFor::Symbols(package) => {
@@ -1237,7 +1305,7 @@ impl AppWindow {
         // a compiler: Apple's developer tools on a Mac.
         let blocked = !missing.is_empty() && !r.binaries && !r.can_build;
         let detail = if missing.is_empty() {
-            "Every package for exploring tables is installed.".to_string()
+            "Every package for reading and plotting tables is installed.".to_string()
         } else if r.binaries {
             format!(
                 "Missing: {}. They go into the library you choose, ready-built, and nothing you already have changes.",
@@ -1267,7 +1335,8 @@ impl AppWindow {
                     .label("Install Missing Packages…")
                     .disabled(busy || blocked)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.start.quick.confirm = Some(Confirm::Library(LibraryFor::Packages));
+                        this.start.quick.confirm =
+                            Some(Confirm::Library(LibraryFor::Packages(QuickTool::Plot)));
                         cx.notify();
                     })),
             );
@@ -1277,6 +1346,10 @@ impl AppWindow {
                 None if pkg.tool == QuickTool::Plot => ("missing".to_string(), p.err),
                 None if pkg.tool == QuickTool::Symbols => (
                     "not installed: for gene symbols, when you need them".to_string(),
+                    p.muted,
+                ),
+                None if pkg.tool == QuickTool::Differential => (
+                    "not installed: for finding changed genes, when you need them".to_string(),
                     p.muted,
                 ),
                 None => ("not installed, needed later".to_string(), p.muted),
@@ -1318,6 +1391,12 @@ impl AppWindow {
                     }))
             })
             .collect::<Vec<_>>();
+        let differential: Vec<_> = readiness
+            .packages
+            .iter()
+            .filter(|pkg| pkg.tool == QuickTool::Differential && pkg.version.is_none())
+            .map(|pkg| pkg.name.as_str())
+            .collect();
         v_flex()
             .child(head)
             .child(
@@ -1338,6 +1417,29 @@ impl AppWindow {
                     )
                     .children(symbols),
                 )
+            })
+            .child({
+                let detail = if differential.is_empty() {
+                    "DESeq2, edgeR, limma, apeglm, sva and RUVSeq are installed.".to_string()
+                } else {
+                    format!("Missing: {}. Install these when you want to compare raw counts.{}", differential.join(", "),
+                        if !r.binaries && !r.can_build { " This R needs developer tools to install packages." }
+                        else if !r.binaries { " This R builds packages on this computer, which can take a few minutes." }
+                        else { "" })
+                };
+                look::settings_row("For finding changed genes", Some(look::settings_detail(detail, p)))
+                    .when(!differential.is_empty(), |row| row.child(
+                        Button::new("quick-install-differential")
+                            .small()
+                            .label("Install Missing Packages…")
+                            .disabled(busy || (!r.binaries && !r.can_build))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.start.quick.confirm = Some(Confirm::Library(
+                                    LibraryFor::Packages(QuickTool::Differential),
+                                ));
+                                cx.notify();
+                            })),
+                    ))
             })
             .into_any_element()
     }
@@ -1598,6 +1700,15 @@ impl AppWindow {
     }
 
     fn quick_drop_area(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(picker) = &self.start.quick.archive_picker {
+            return picker.render(
+                p,
+                |this: &mut Self| &mut this.start.quick.archive_picker,
+                Self::quick_open_archive_selection,
+                cx,
+            );
+        }
+        let opening = self.start.quick.opening;
         let accent = p.accent_soft;
         v_flex()
             .id("quick-drop")
@@ -1620,17 +1731,22 @@ impl AppWindow {
                 this.quick_open(tables, cx);
             }))
             .child(icon("table").size(px(look::ICON_LARGE)).text_color(p.muted))
-            .child(div().child("Drop a table here"))
+            .child(div().child(if opening {
+                "Opening files…"
+            } else {
+                "Drop a table or archive here"
+            }))
             .child(
                 div()
                     .text_size(px(look::small()))
                     .text_color(p.muted)
-                    .child("CSV, TSV, text or Excel, from an email, Google Drive or Box"),
+                    .child("CSV, TSV, text and Excel, including gzip, ZIP and TAR"),
             )
             .child(
                 Button::new("quick-choose")
                     .small()
                     .label("Choose a File…")
+                    .disabled(opening)
                     .on_click(cx.listener(|this, _, _, cx| this.quick_choose_tables(cx))),
             )
             .into_any_element()
@@ -1668,7 +1784,7 @@ impl AppWindow {
                                 move |_, _, cx| {
                                     let path = open_path.clone();
                                     cx.defer(move |cx| {
-                                        crate::shell::app_window::open_quick(path, cx)
+                                        crate::shell::app_window::open_quick(path, None, cx)
                                     });
                                 },
                             )

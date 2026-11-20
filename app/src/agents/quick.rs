@@ -321,7 +321,7 @@ fn state(quick: &Quick) -> Value {
             "tables": card.tables,
             "organism": card.organism,
             "comparison": card.comparison,
-            "groups": card.groups,
+            "factors": card.factors,
             "cutoffs": {
                 "value": card.cutoffs,
                 "from": if card.cutoffs == Default::default() { "default" } else { "told" },
@@ -392,18 +392,22 @@ fn suggest(card: &mut QuickCard, loaded: Option<&QuickTable>, input: QuickSugges
         "Name two different groups.",
     );
     reply.set(
-        "groups",
-        &mut card.groups,
-        input.groups,
-        |groups| {
-            !groups.is_empty()
-                && groups.iter().enumerate().all(|(i, (sample, group))| {
-                    text(sample)
-                        && text(group)
-                        && !groups[..i].iter().any(|(other, _)| other == sample)
-                })
+        "factors",
+        &mut card.factors,
+        input.factors,
+        |factors| {
+            !factors.is_empty() && factors.iter().enumerate().all(|(i, factor)| {
+                text(&factor.name) && factor.name != "." && !factors[..i].iter().any(|f| f.name == factor.name)
+                    && factor.levels.len() >= 2
+                    && factor.levels.iter().enumerate().all(|(i, level)| text(level) && !factor.levels[..i].contains(level))
+                    && !factor.assignments.is_empty()
+                    && factor.assignments.iter().enumerate().all(|(i, (sample, level))| {
+                        text(sample) && factor.levels.contains(level)
+                            && !factor.assignments[..i].iter().any(|(other, _)| other == sample)
+                    })
+            })
         },
-        "Give each sample one group.",
+        "Give each factor a different name, put its reference level first, and give each sample one level.",
     );
     macro_rules! table_fact {
         ($field:ident, $check:expr, $invalid:expr) => {{
@@ -516,14 +520,26 @@ pub(crate) fn suggestions(card: &QuickCard) -> Vec<Suggestion<'_>> {
     );
     row!(
         None,
-        groups,
-        card.groups.as_ref(),
-        "Groups",
-        |groups: &Vec<(String, String)>| groups
+        factors,
+        card.factors.as_ref(),
+        "Sample factors",
+        |factors: &Vec<sandhill_proto::QuickFactor>| factors
             .iter()
-            .map(|(sample, group)| format!("{sample}: {group}"))
+            .map(|f| {
+                let assignments = f
+                    .assignments
+                    .iter()
+                    .map(|(s, level)| format!("{s}: {level}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "{} (level order: {}): {assignments}",
+                    f.name,
+                    f.levels.join(", ")
+                )
+            })
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("; ")
     );
     for t in &card.tables {
         let table = Some(t.name.as_str());
@@ -593,7 +609,7 @@ fn accept(card: &mut QuickCard, pick: Option<(Option<&str>, &str)>) -> bool {
             })+
         };
     }
-    fields!(None, card; organism, comparison, groups);
+    fields!(None, card; organism, comparison, factors);
     for t in &mut card.tables {
         let table = Some(t.name.as_str());
         if picked(table, "kind") && fact(&mut t.kind) {

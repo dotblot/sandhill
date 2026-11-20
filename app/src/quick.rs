@@ -7,15 +7,20 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
 use sandhill_proto::{
     Call, DirEntry, EntryKind, GeneIds, Known, QuickCard, QuickCardTable, QuickComparison,
-    QuickCutoffs, QuickFrom, QuickPlot, QuickRequest, QuickResult, QuickSettings, QuickTable,
-    QuickTableKind, QuickValues,
+    QuickCutoffs, QuickDifferentialTable, QuickFactor, QuickFrom, QuickPlot, QuickPlotBatch,
+    QuickRequest, QuickResult, QuickSettings, QuickTable, QuickTableKind, QuickValues,
+};
+use sandhill_proto::{
+    QuickArchiveCounts, QuickArchiveOpened, QuickArchiveSelection, quick_archive_stem,
+    quick_table_stem,
 };
 use serde_json::{Value, json};
 
+use crate::view::quick_archive::{ArchivePicker, TABLE_TYPES};
+
 use crate::workbench::{Session, Workbench};
 
-/// The table files Sandhill explores, as the daemon's `quick::folder`.
-const TABLE_EXTENSIONS: &[&str] = &["csv", "tsv", "tab", "txt", "xlsx", "xls"];
+pub(crate) mod differential;
 
 /// A fact on the card that can be opened to change it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,9 +46,12 @@ pub(crate) enum Edit {
     Column(Item, String),
     Values(QuickValues),
     Organism(Option<String>),
-    /// `(sample, group)`; no group takes the sample out.
-    Group(String, Option<String>),
-    AddGroup(String),
+    /// `(factor, sample, level)`; no level takes the sample out.
+    Group(String, String, Option<String>),
+    AddLevel(String, String),
+    AddFactor(String),
+    MoveLevel(String, usize, usize),
+    RemoveLevel(String, usize),
     Comparison(String, String),
     Cutoffs(f64, f64),
     /// The column genes are labelled by (gene symbols), or none: by ID.
@@ -55,6 +63,9 @@ pub(crate) struct Inputs {
     pub higher: Entity<InputState>,
     pub lower: Entity<InputState>,
     pub group: Entity<InputState>,
+    pub factor: Entity<InputState>,
+    pub formula: Entity<InputState>,
+    pub reduced: Entity<InputState>,
     pub gene: Entity<InputState>,
     pub padj: Entity<InputState>,
     pub lfc: Entity<InputState>,
@@ -98,8 +109,10 @@ pub(crate) struct Quick {
     /// The R variable the Data Explorer shows: the picked table, or a
     /// table made from it.
     pub viewing: Option<String>,
-    /// Group names added on the card that no sample is in yet.
-    pub added_groups: Vec<String>,
+    pub editing_factor: Option<String>,
+    pub colour_by: Option<String>,
+    pub de: differential::DeForm,
+    pub show_differential: bool,
     /// The session the tables were loaded into.
     pub loaded_in: Option<String>,
     /// What is happening, in a few words.
@@ -124,23 +137,38 @@ pub(crate) struct Quick {
     /// The user continued without AI in this window, not a Mac-wide choice.
     pub ai_hidden: bool,
     pub ai_ready: bool,
+    pub archive_picker: Option<ArchivePicker>,
+    pub pending_counts: Option<QuickArchiveCounts>,
 }
 
 pub(crate) fn is_table(name: &str) -> bool {
-    name.rsplit_once('.').is_some_and(|(stem, ext)| {
-        !stem.is_empty() && TABLE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
-    })
+    quick_table_stem(name).is_some()
+}
+
+pub(crate) fn is_archive(name: &str) -> bool {
+    quick_archive_stem(name).is_some()
 }
 
 fn is_excel(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with(".xlsx") || lower.ends_with(".xls")
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("xlsx") || ext.eq_ignore_ascii_case("xls"))
 }
 
 /// An R variable for a table: its file's name (and sheet), made a plain R
 /// name, numbered when taken: `de_results`, `samples_Sheet1`, `de_results_2`.
 pub(crate) fn variable_name(file: &str, sheet: Option<&str>, taken: &[String]) -> String {
-    let stem = file.rsplit_once('.').map(|(s, _)| s).unwrap_or(file);
+    variable_name_with_limit(file, sheet, taken, 48)
+}
+
+fn variable_name_with_limit(
+    file: &str,
+    sheet: Option<&str>,
+    taken: &[String],
+    limit: usize,
+) -> String {
+    let base = crate::panes::files::base_name(file);
+    let stem = quick_table_stem(base)
+        .unwrap_or_else(|| base.rsplit_once('.').map_or(base, |(stem, _)| stem));
     let raw = match sheet {
         Some(sheet) => format!("{stem}_{sheet}"),
         None => stem.to_string(),
@@ -156,7 +184,7 @@ pub(crate) fn variable_name(file: &str, sheet: Option<&str>, taken: &[String]) -
     if !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
         name.insert_str(0, "table_");
     }
-    name.truncate(48);
+    name.truncate(limit);
     let mut candidate = name.clone();
     let mut n = 2;
     while taken.contains(&candidate) {
@@ -187,6 +215,7 @@ pub(crate) fn card_table(table: &QuickTable) -> QuickCardTable {
         count: found(&r.count),
         ratio: found(&r.ratio),
         labels: None,
+        differential: None,
         dates: r.dates,
         question: r.question.clone(),
     }
@@ -209,9 +238,29 @@ pub(crate) fn merge(card: &mut QuickCard, table: &QuickTable) {
     {
         card.organism = Some(Known::found(organism.clone()));
     }
-    if card.groups.is_none() && !r.groups.is_empty() {
-        card.groups = Some(Known::found(r.groups.clone()));
+    if card.factors.is_none() && !r.groups.is_empty() {
+        card.factors = Some(Known::found(vec![QuickFactor::from_pairs(
+            "group".into(),
+            r.groups.clone(),
+        )]));
     }
+}
+
+fn add_differential_table(
+    quick: &mut Quick,
+    output: QuickDifferentialTable,
+    gene_ids: Option<GeneIds>,
+) {
+    let mut card = card_table(&output.table);
+    card.gene = Some(Known::found(output.gene));
+    card.gene_ids = gene_ids.map(Known::found).or(card.gene_ids);
+    card.labels = output.label.map(Known::found);
+    card.samples = Some(Known::found(output.samples));
+    card.values = Some(Known::found(QuickValues::Logged));
+    card.differential = Some(output.info);
+    card.question = None;
+    quick.card.tables.push(card);
+    quick.tables.push(output.table);
 }
 
 pub(crate) fn kind_label(kind: QuickTableKind) -> &'static str {
@@ -290,14 +339,52 @@ fn usable<T: Clone>(known: &Option<Known<T>>) -> Option<T> {
     known.as_ref().and_then(|k| k.usable().cloned())
 }
 
-/// The groups of `table`'s samples.
-fn groups_of(card: &QuickCard, table: &QuickCardTable) -> Vec<(String, String)> {
-    let samples = usable(&table.samples).unwrap_or_default();
-    usable(&card.groups)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(sample, _)| samples.contains(sample))
-        .collect()
+pub(crate) fn factors(card: &QuickCard) -> &[QuickFactor] {
+    card.factors
+        .as_ref()
+        .and_then(Known::usable)
+        .map_or(&[], Vec::as_slice)
+}
+
+pub(crate) fn comparison<'a>(
+    card: &'a QuickCard,
+    table: &'a QuickCardTable,
+) -> Option<&'a Known<QuickComparison>> {
+    match &table.differential {
+        Some(info) => info.comparison.as_ref(),
+        None => card.comparison.as_ref(),
+    }
+}
+
+pub(crate) fn colour_factor<'a>(
+    card: &'a QuickCard,
+    table: &QuickCardTable,
+    chosen: Option<&str>,
+) -> Option<&'a QuickFactor> {
+    let samples = table.samples.as_ref()?.usable()?;
+    let choices = || {
+        factors(card).iter().filter(|f| {
+            f.assignments
+                .iter()
+                .any(|(sample, _)| samples.contains(sample))
+        })
+    };
+    choices()
+        .find(|f| Some(f.name.as_str()) == chosen)
+        .or_else(|| choices().next())
+}
+
+fn apply_colour(settings: &mut QuickSettings, factor: Option<&QuickFactor>) {
+    if let Some(factor) = factor {
+        settings.groups = factor
+            .assignments
+            .iter()
+            .filter(|(sample, _)| settings.samples.contains(sample))
+            .cloned()
+            .collect();
+        settings.group_levels.clone_from(&factor.levels);
+        settings.group_name = Some(factor.name.clone());
+    }
 }
 
 /// What a plot still needs, in plain words; empty when it can be made.
@@ -370,7 +457,12 @@ pub(crate) fn missing(
 
 /// What a template is told: the card's usable facts only.
 pub(crate) fn settings(card: &QuickCard, table: &QuickCardTable, show_gene: &str) -> QuickSettings {
-    QuickSettings {
+    let info = table.differential.as_ref();
+    let expression = info
+        .and_then(|i| i.expression_table.as_ref())
+        .and_then(|name| card.tables.iter().find(|t| &t.name == name));
+    let plotted = expression.unwrap_or(table).differential.as_ref();
+    let mut settings = QuickSettings {
         gene: usable(&table.gene),
         fc: usable(&table.fc),
         padj: usable(&table.padj),
@@ -378,15 +470,21 @@ pub(crate) fn settings(card: &QuickCard, table: &QuickCardTable, show_gene: &str
         mean_log: table.mean.as_ref().and_then(Known::usable).is_some() && table.mean_log,
         samples: usable(&table.samples).unwrap_or_default(),
         values: usable(&table.values),
-        groups: groups_of(card, table),
-        comparison: usable(&card.comparison),
+        comparison: comparison(card, table).and_then(Known::usable).cloned(),
+        expression_table: expression.map(|t| t.name.clone()),
+        plot_batch: plotted.and_then(|i| i.plot_batch.clone()),
+        batch_note: plotted.and_then(|i| i.batch_note.clone()),
+        omnibus: info.is_some_and(|i| i.omnibus),
         cutoffs: card.cutoffs,
         term: usable(&table.term),
         count: usable(&table.count),
         ratio: usable(&table.ratio),
         show_gene: (!show_gene.trim().is_empty()).then(|| show_gene.trim().to_string()),
         label: usable(&table.labels),
-    }
+        ..QuickSettings::default()
+    };
+    apply_colour(&mut settings, colour_factor(card, table, None));
+    settings
 }
 
 /// Applies a change to the card; table facts change on `table`.
@@ -429,24 +527,42 @@ pub(crate) fn apply(card: &mut QuickCard, table: Option<&str>, edit: Edit) {
             }
         }
         Edit::Organism(organism) => card.organism = organism.map(Known::told),
-        Edit::Group(sample, group) => {
-            let mut groups = card
-                .groups
-                .take()
-                .filter(|g| g.usable().is_some())
-                .map(|g| g.value)
-                .unwrap_or_default();
-            groups.retain(|(s, _)| *s != sample);
+        Edit::Group(name, sample, group) => change_factor(card, &name, |factor| {
+            factor.assignments.retain(|(s, _)| *s != sample);
             if let Some(group) = group {
-                groups.push((sample, group));
+                if !factor.levels.contains(&group) {
+                    factor.levels.push(group.clone());
+                }
+                factor.assignments.push((sample, group));
             }
-            card.groups = Some(Known::told(groups));
-        }
-        Edit::AddGroup(_) => {}
+        }),
+        Edit::AddFactor(name) => change_factor(card, &name, |_| {}),
+        Edit::AddLevel(name, level) => change_factor(card, &name, |factor| {
+            if !factor.levels.contains(&level) {
+                factor.levels.push(level);
+            }
+        }),
+        Edit::MoveLevel(name, from, to) => change_factor(card, &name, |factor| {
+            if from < factor.levels.len() && to < factor.levels.len() {
+                factor.levels.swap(from, to);
+            }
+        }),
+        Edit::RemoveLevel(name, index) => change_factor(card, &name, |factor| {
+            if let Some(level) = factor.levels.get(index)
+                && !factor.assignments.iter().any(|(_, value)| value == level)
+            {
+                factor.levels.remove(index);
+            }
+        }),
         Edit::Comparison(higher, lower) => {
             let (higher, lower) = (higher.trim().to_string(), lower.trim().to_string());
-            card.comparison = (!higher.is_empty() && !lower.is_empty())
+            let comparison = (!higher.is_empty() && !lower.is_empty())
                 .then(|| Known::told(QuickComparison { higher, lower }));
+            if let Some(info) = at.and_then(|ix| card.tables[ix].differential.as_mut()) {
+                info.comparison = comparison;
+            } else {
+                card.comparison = comparison;
+            }
         }
         Edit::Cutoffs(padj, lfc) => card.cutoffs = QuickCutoffs { padj, lfc },
         Edit::Labels(column) => {
@@ -478,20 +594,25 @@ pub(crate) fn symbols_request(
     })
 }
 
-/// The group names on the card, in first-seen order, and any added.
-pub(crate) fn group_names(card: &QuickCard, added: &[String]) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for (_, group) in usable(&card.groups).unwrap_or_default() {
-        if !names.contains(&group) {
-            names.push(group);
-        }
+fn change_factor(card: &mut QuickCard, name: &str, change: impl FnOnce(&mut QuickFactor)) {
+    if name.is_empty() || name == "." {
+        return;
     }
-    for name in added {
-        if !names.contains(name) {
-            names.push(name.clone());
-        }
-    }
-    names
+    let mut factors = card
+        .factors
+        .take()
+        .filter(|k| k.usable().is_some())
+        .map(|k| k.value)
+        .unwrap_or_default();
+    let index = factors
+        .iter()
+        .position(|f| f.name == name)
+        .unwrap_or_else(|| {
+            factors.push(QuickFactor::from_pairs(name.into(), Vec::new()));
+            factors.len() - 1
+        });
+    change(&mut factors[index]);
+    card.factors = Some(Known::told(factors));
 }
 
 /// The workbook's Read_me rows: what each table is and what the numbers
@@ -529,9 +650,14 @@ pub(crate) fn readme(card: &QuickCard, session: &str) -> Vec<(String, String)> {
             Some(sheet) => format!("{} (sheet {sheet})", table.file),
             None => table.file.clone(),
         };
+        let comparison = comparison(card, table)
+            .and_then(Known::usable)
+            .map_or_else(String::new, |c| {
+                format!(" Fold change: {} vs {}.", c.higher, c.lower)
+            });
         rows.push((
             table.name.clone(),
-            format!("{}, from {from}.", kind_label(table.kind.value)),
+            format!("{}, from {from}.{comparison}", kind_label(table.kind.value)),
         ));
     }
     rows
@@ -543,17 +669,29 @@ pub(crate) fn methods(card: &QuickCard) -> String {
         "Methods\n\nTables were read and plotted in R with Sandhill's fixed templates (ggplot2, ggrepel, pheatmap, readxl, writexl).",
     );
     text.push_str(&format!(
-        " Genes were counted as changed when their adjusted p-value was below {} and their absolute log2 fold change was at least {}.",
+        " For a single comparison, genes were counted as changed when their adjusted p-value was below {} and their absolute log2 fold change was at least {}. Omnibus tests use only the adjusted p-value cutoff.",
         card.cutoffs.padj, card.cutoffs.lfc
     ));
-    match usable(&card.comparison) {
-        Some(c) => text.push_str(&format!(
+    if let Some(c) = usable(&card.comparison) {
+        text.push_str(&format!(
             " Positive log2 fold changes mean higher expression in {} than in {}.",
             c.higher, c.lower
-        )),
-        None => text.push_str(
-            " The results table did not record which group a positive fold change is higher in.",
-        ),
+        ));
+    }
+    for table in &card.tables {
+        if let Some(methods) = table
+            .differential
+            .as_ref()
+            .and_then(|info| info.methods.as_deref())
+        {
+            text.push_str(&format!("\n\n{}: {methods}", table.name));
+            if let Some(c) = comparison(card, table).and_then(Known::usable) {
+                text.push_str(&format!(
+                    " The fold change shows {} vs {}.",
+                    c.higher, c.lower
+                ));
+            }
+        }
     }
     if card.tables.iter().any(|t| usable(&t.labels).is_some())
         && let Some(package) = usable(&card.organism)
@@ -565,7 +703,7 @@ pub(crate) fn methods(card: &QuickCard) -> String {
         ));
     }
     text.push_str(
-        " Sample-level plots use log2(counts per million + 1) for raw counts and log2(value + 1) for normalized values; heatmaps scale each gene to its own mean.\n\nThe exact steps are in steps.R in the session folder.\n",
+        "\n\nSample-level plots use log2(counts per million + 1) for raw counts and log2(value + 1) for unlogged normalized values; analysis tables use the method's variance-stabilized or logged values directly. Where marked, PCA and heatmaps remove the recorded batch from plotted values only. Heatmaps scale each gene to its own mean.\n\nThe exact steps are in steps.R in the session folder.\n",
     );
     text
 }
@@ -589,12 +727,23 @@ impl Workbench {
             let inputs = Inputs {
                 higher: field("treated", window, cx),
                 lower: field("control", window, cx),
-                group: field("New group", window, cx),
+                group: field("New level", window, cx),
+                factor: field("New factor name", window, cx),
+                formula: field("~ genotype * dose", window, cx),
+                reduced: field("~ genotype", window, cx),
                 gene: field("Gene, like STAT1", window, cx),
                 padj: field("0.05", window, cx),
                 lfc: field("1", window, cx),
                 keep_name: field("Folder name", window, cx),
             };
+            for field in [&inputs.formula, &inputs.reduced] {
+                cx.subscribe_in(field, window, |_, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        cx.notify();
+                    }
+                })
+                .detach();
+            }
             let gene = inputs.gene.clone();
             cx.subscribe_in(&gene, window, |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -677,7 +826,15 @@ impl Workbench {
         let Some(quick) = &mut self.quick else {
             return;
         };
-        quick.busy = Some("Reading your tables…".into());
+        let combine = quick.pending_counts.take();
+        quick.busy = Some(
+            if combine.is_some() {
+                "Combining counts…"
+            } else {
+                "Reading your tables…"
+            }
+            .into(),
+        );
         quick.error = None;
         let known: Vec<QuickCardTable> = quick.card.tables.clone();
         let organism = usable(&quick.card.organism);
@@ -686,6 +843,14 @@ impl Workbench {
             sizes: false,
             marks: false,
         });
+        let results =
+            (!only_new && known.iter().any(|t| t.file.starts_with("results/"))).then(|| {
+                daemon.call::<Vec<DirEntry>>(Call::ListDir {
+                    path: format!("{project}/results"),
+                    sizes: false,
+                    marks: false,
+                })
+            });
         let handle = self.window_handle;
         let generation = self.generation;
         cx.notify();
@@ -706,6 +871,21 @@ impl Workbench {
                     Vec::new()
                 }
             };
+            let saved: Vec<String> = if let Some(results) = results {
+                match results.await {
+                    Ok(entries) => entries
+                        .into_iter()
+                        .filter(|e| e.kind == EntryKind::File)
+                        .map(|e| format!("results/{}", e.name))
+                        .collect(),
+                    Err(err) => {
+                        problems.push(format!("The results folder can't be read: {err:#}"));
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
             let run = |request: QuickRequest| {
                 daemon.call::<QuickResult>(Call::QuickRun {
                     session: session.clone(),
@@ -718,7 +898,7 @@ impl Workbench {
                 wanted.extend(
                     known
                         .iter()
-                        .filter(|t| files.contains(&t.file))
+                        .filter(|t| files.contains(&t.file) || saved.contains(&t.file))
                         .map(|t| (t.file.clone(), t.sheet.clone(), t.name.clone())),
                 );
             }
@@ -759,7 +939,13 @@ impl Workbench {
                     }) => {
                         // Gene symbols added before are added again.
                         let again = known.iter().find(|t| t.name == table.name).and_then(|t| {
-                            symbols_request(t, organism.as_deref(), Some(usable(&t.labels)?))
+                            let label = usable(&t.labels)?;
+                            if t.differential.is_some()
+                                && table.columns.iter().any(|c| c.name == label)
+                            {
+                                return None;
+                            }
+                            symbols_request(t, organism.as_deref(), Some(label))
                         });
                         if let Some(request) = again
                             && let Err(err) = run(request).await
@@ -772,10 +958,45 @@ impl Workbench {
                     Err(err) => problems.push(format!("{file}: {err:#}")),
                 }
             }
+            let mut combined = None;
+            if let Some(QuickArchiveCounts { files, file }) = combine {
+                let name = variable_name(&file, None, &taken);
+                match run(QuickRequest::CombineCounts { files, file, name }).await {
+                    Ok(QuickResult {
+                        table: Some(table),
+                        sentence,
+                        ..
+                    }) => {
+                        combined = Some((table.name.clone(), table.file.clone(), sentence));
+                        loaded.push(table);
+                    }
+                    Ok(_) => problems.push("The combined counts table didn't come back.".into()),
+                    Err(err) => problems.push(format!("Could not combine the counts: {err:#}")),
+                }
+            }
             cx.update_window(handle, |_, window, cx| {
                 this.update(cx, |this, cx| {
                     if this.generation == generation {
+                        let sentence = if let Some((name, file, sentence)) = combined {
+                            if let Some(quick) = &mut this.quick {
+                                quick.shown = Some(name);
+                                quick.made = true;
+                            }
+                            if let Some(agents) = &this.agents {
+                                agents.update(cx, |agents, cx| {
+                                    agents.add_explore_files(vec![file], cx)
+                                });
+                            }
+                            sentence
+                        } else {
+                            None
+                        };
                         this.quick_loaded(session, loaded, problems, window, cx);
+                        if let Some(quick) = &mut this.quick
+                            && sentence.is_some()
+                        {
+                            quick.sentence = sentence;
+                        }
                     }
                 })
                 .ok();
@@ -813,31 +1034,33 @@ impl Workbench {
         if let Some(name) = shown {
             self.quick_show(session, name, window, cx);
         }
-        // A sample sheet gives the groups: on its own when there are none
-        // yet and a column is named like groups, or because the user
-        // imported it as one.
+        // A sample sheet provides every column other than the sample names.
         let wanted = self
             .quick
             .as_mut()
             .is_some_and(|q| std::mem::take(&mut q.sheet_wanted));
-        let from_import = wanted
-            .then(|| {
-                self.quick
-                    .as_mut()
-                    .and_then(|q| take_imported_sheet(q, &new_names))
-            })
-            .flatten();
-        let found = from_import.clone().or_else(|| {
+        let from_import = if wanted {
             self.quick
-                .as_ref()
-                .filter(|q| q.card.groups.is_none())
-                .and_then(|q| {
-                    sheet_columns(q)
-                        .into_iter()
-                        .find_map(|(t, k, cols)| guess_group_column(&cols).map(|v| (t, k, v)))
-                })
+                .as_mut()
+                .and_then(|q| take_imported_sheet(q, &new_names))
+        } else {
+            None
+        };
+        let found = from_import.clone().or_else(|| {
+            let q = self.quick.as_ref()?;
+            if wanted
+                || q.card
+                    .factors
+                    .as_ref()
+                    .is_some_and(|f| f.from == QuickFrom::Told)
+            {
+                return None;
+            }
+            sheet_columns(q)
+                .into_iter()
+                .find(|(table, _)| new_names.contains(table))
         });
-        if let Some((table, key, value)) = found {
+        if let Some((table, key)) = found {
             let from = if from_import.is_some() {
                 QuickFrom::Told
             } else {
@@ -846,21 +1069,20 @@ impl Workbench {
             if from == QuickFrom::Told {
                 self.quick_save_card(cx);
             }
-            self.quick_groups_from(table, key, value, from, cx);
+            self.quick_factors_from(table, key, from, cx);
         } else if wanted && let Some(quick) = self.quick_mut() {
             quick.error = Some(
-                "That table has no column of sample names and groups. A sample sheet has one row per sample: its name, then its group.".into(),
+                "A sample sheet needs a column with sample names and at least one other column for a factor.".into(),
             );
         }
         cx.notify();
     }
 
-    /// Sets the groups from two columns of a sample sheet.
-    pub(crate) fn quick_groups_from(
+    /// Reads sample factors from a sheet in the order they were written.
+    pub(crate) fn quick_factors_from(
         &mut self,
         table: String,
         key: String,
-        value: String,
         from: QuickFrom,
         cx: &mut Context<Self>,
     ) {
@@ -873,7 +1095,7 @@ impl Workbench {
         let read = daemon.call::<QuickResult>(Call::QuickRun {
             session,
             project,
-            request: QuickRequest::Pairs { table, key, value },
+            request: QuickRequest::Factors { table, key },
         });
         cx.spawn(async move |this, cx| {
             let read = read.await;
@@ -882,31 +1104,26 @@ impl Workbench {
                     return;
                 };
                 match read {
-                    Ok(result) => {
-                        let samples: Vec<String> = quick
-                            .card
-                            .tables
-                            .iter()
-                            .filter_map(|t| t.samples.as_ref())
-                            .flat_map(|s| s.value.iter().cloned())
-                            .collect();
-                        let pairs: Vec<(String, String)> = result
-                            .pairs
-                            .into_iter()
-                            .filter(|(sample, _)| samples.contains(sample))
-                            .collect();
-                        if pairs.is_empty() {
-                            if from == QuickFrom::Told {
-                                quick.error = Some(
-                                    "None of the sample sheet's samples are columns of the tables."
-                                        .into(),
-                                );
+                    Ok(result) if !result.factors.is_empty() => {
+                        let overlaps = quick.card.tables.iter()
+                            .filter_map(|t| t.samples.as_ref().and_then(Known::usable))
+                            .flatten()
+                            .any(|sample| result.factors.iter().any(|f| f.assignments.iter().any(|(s, _)| s == sample)));
+                        if !overlaps && from == QuickFrom::Told && quick.card.tables.iter().any(|t| t.samples.is_some()) {
+                            quick.error = Some("None of the sample sheet's samples match the sample columns in this session.".into());
+                        } else if from == QuickFrom::Told || quick.card.factors.as_ref().is_none_or(|f| f.from != QuickFrom::Told) {
+                            let mut incoming = result.factors;
+                            let previous = usable(&quick.card.factors).unwrap_or_default();
+                            for factor in previous {
+                                if !incoming.iter().any(|f| f.name == factor.name) {
+                                    incoming.push(factor);
+                                }
                             }
-                        } else if from == QuickFrom::Told || quick.card.groups.is_none() {
-                            quick.card.groups = Some(Known { value: pairs, from });
+                            quick.card.factors = Some(Known { value: incoming, from });
                             this.quick_save_card(cx);
                         }
                     }
+                    Ok(_) => quick.error = Some("The sample sheet has no sample factors.".into()),
                     Err(err) => quick.error = Some(format!("{err:#}")),
                 }
                 cx.notify();
@@ -1010,15 +1227,19 @@ impl Workbench {
         let Some(quick) = &mut self.quick else {
             return;
         };
-        // Placing samples in groups takes several clicks: the form stays.
-        let stays = matches!(edit, Edit::Group(..) | Edit::AddGroup(_));
-        if let Edit::AddGroup(name) = &edit {
-            let name = name.trim().to_string();
-            if !name.is_empty() && !quick.added_groups.contains(&name) {
-                quick.added_groups.push(name);
-            }
-            cx.notify();
-            return;
+        let stays = matches!(
+            edit,
+            Edit::Group(..)
+                | Edit::AddLevel(..)
+                | Edit::AddFactor(_)
+                | Edit::MoveLevel(..)
+                | Edit::RemoveLevel(..)
+        );
+        if let Edit::AddFactor(name) = &edit
+            && !name.is_empty()
+            && name != "."
+        {
+            quick.editing_factor = Some(name.clone());
         }
         let shown = quick.shown.clone();
         apply(&mut quick.card, shown.as_deref(), edit);
@@ -1111,6 +1332,108 @@ impl Workbench {
         .detach();
     }
 
+    pub(crate) fn quick_analyze(&mut self, cx: &mut Context<Self>) {
+        let (Some(quick), Some(table)) = (&self.quick, self.quick_table()) else {
+            return;
+        };
+        let mut taken: Vec<_> = quick
+            .card
+            .tables
+            .iter()
+            .map(|t| t.name.clone())
+            .chain(quick.outputs.iter().map(|(name, _)| name.clone()))
+            .collect();
+        let formula = self.quick_input(|i| &i.formula, cx);
+        let reduced = self.quick_input(|i| &i.reduced, cx);
+        if let Some(request) = quick
+            .de
+            .request(&quick.card, table, &formula, &reduced, &mut taken)
+        {
+            self.quick_run_analysis(request, cx);
+        } else if let Some(quick) = self.quick_mut() {
+            quick.error = Some("Choose a counts table, sample factors and a comparison. For your own formula, fill in the design and list coefficients before choosing one.".into());
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn quick_run_analysis(&mut self, request: QuickRequest, cx: &mut Context<Self>) {
+        let (Some(daemon), Some(project), Some(quick)) =
+            (self.daemon(), self.project.clone(), &mut self.quick)
+        else {
+            return;
+        };
+        let (Some(session), None) = (quick.loaded_in.clone(), &quick.busy) else {
+            return;
+        };
+        let reading = matches!(&request, QuickRequest::DeCoefficients { .. });
+        let gene_ids = match &request {
+            QuickRequest::Differential { table, .. } => quick
+                .card
+                .tables
+                .iter()
+                .find(|t| &t.name == table)
+                .and_then(|t| usable(&t.gene_ids)),
+            _ => None,
+        };
+        quick.busy = Some(
+            if reading {
+                "Checking the design…"
+            } else {
+                "Finding changed genes…"
+            }
+            .into(),
+        );
+        quick.error = None;
+        quick.sentence = None;
+        let run = daemon.call::<QuickResult>(Call::QuickRun {
+            session: session.clone(),
+            project,
+            request: request.clone(),
+        });
+        let handle = self.window_handle;
+        let generation = self.generation;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let run = run.await;
+            cx.update_window(handle, |_, window, cx| {
+                this.update(cx, |this, cx| {
+                    if this.generation != generation {
+                        return;
+                    }
+                    let Some(quick) = this.quick_mut() else {
+                        return;
+                    };
+                    quick.busy = None;
+                    match run {
+                        Ok(result) if reading => {
+                            quick.de.coefficients = Some((request, result.coefficients))
+                        }
+                        Ok(result) => {
+                            quick.made = true;
+                            let sentence = result.sentence;
+                            let first = result.differential.first().map(|r| r.table.name.clone());
+                            for output in result.differential {
+                                add_differential_table(quick, output, gene_ids);
+                            }
+                            this.quick_save_card(cx);
+                            if let Some(name) = first {
+                                this.quick_show(session, name, window, cx);
+                            }
+                            if let Some(quick) = this.quick_mut() {
+                                quick.sentence = sentence;
+                            }
+                        }
+                        Err(err) => quick.error = Some(format!("{err:#}")),
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Makes a plot (or the top genes table) from the table shown.
     pub(crate) fn quick_make(&mut self, plot: QuickPlot, cx: &mut Context<Self>) {
         let show_gene = self.quick_input(|i| &i.gene, cx);
@@ -1169,7 +1492,24 @@ impl Workbench {
         if !needs.is_empty() {
             bail!("{} needs {}.", plot_label(plot), needs.join(", "));
         }
-        let settings = settings(&quick.card, table, show_gene);
+        let mut settings = settings(&quick.card, table, show_gene);
+        if let Some(chosen) = &quick.colour_by {
+            apply_colour(
+                &mut settings,
+                colour_factor(&quick.card, table, Some(chosen)),
+            );
+        }
+        if matches!(
+            plot,
+            QuickPlot::Pca | QuickPlot::VariableHeatmap | QuickPlot::Correlation
+        ) && table.differential.is_none()
+            && let Some((design, Some(factor))) =
+                quick
+                    .de
+                    .active_design(&quick.card, table, &self.quick_input(|i| &i.formula, cx))
+        {
+            settings.plot_batch = Some(Box::new(QuickPlotBatch { design, factor }));
+        }
         let output = (plot == QuickPlot::TopGenes).then(|| {
             let taken: Vec<String> = quick
                 .tables
@@ -1325,37 +1665,122 @@ impl Workbench {
         .detach();
     }
 
-    /// Tables dropped onto the window join the session.
+    /// Files dropped onto the window join the session.
     pub(crate) fn quick_add(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
+        self.quick_add_paths(paths, false, cx);
+    }
+
+    fn quick_add_paths(&mut self, paths: Vec<String>, sample_sheet: bool, cx: &mut Context<Self>) {
+        let Some(daemon) = self.daemon() else { return };
+        let Some(quick) = self.quick_mut() else {
             return;
         };
-        let tables: Vec<String> = paths.into_iter().filter(|p| is_table(p)).collect();
-        if tables.is_empty() {
-            if let Some(quick) = self.quick_mut() {
-                quick.error = Some("Sandhill explores CSV, TSV, text and Excel tables.".into());
-            }
+        if quick.busy.is_some() || quick.archive_picker.is_some() || quick.keeping.is_some() {
+            quick.error = Some("Wait for this step to finish before adding more tables.".into());
             cx.notify();
             return;
         }
-        let added = daemon.call::<Vec<String>>(Call::QuickAddTables { project, tables });
+        let (tables, archives): (Vec<_>, Vec<_>) = paths
+            .into_iter()
+            .filter(|p| is_table(p) || is_archive(p))
+            .partition(|p| is_table(p));
+        if archives.is_empty() {
+            if tables.is_empty() {
+                quick.error = Some(TABLE_TYPES.into());
+                cx.notify();
+            } else {
+                self.quick_add_selected(tables, Vec::new(), false, sample_sheet, cx);
+            }
+            return;
+        }
+        quick.busy = Some("Reading the archive…".into());
+        quick.error = None;
+        let generation = self.generation;
+        cx.notify();
         cx.spawn(async move |this, cx| {
-            let added = added.await;
+            let picker = ArchivePicker::read(daemon, tables, archives, sample_sheet).await;
             this.update(cx, |this, cx| {
+                if this.generation == generation
+                    && let Some(quick) = this.quick_mut()
+                {
+                    quick.busy = None;
+                    match picker {
+                        Ok(picker) => quick.archive_picker = Some(picker),
+                        Err(err) => {
+                            quick.error = Some(format!("Could not read the archive: {err:#}"))
+                        }
+                    }
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn quick_open_archive_selection(&mut self, combine: bool, cx: &mut Context<Self>) {
+        if let Some(picker) = self.quick_mut().and_then(|q| q.archive_picker.take()) {
+            let (tables, archives, sample_sheet) = picker.into_selection();
+            self.quick_add_selected(tables, archives, combine, sample_sheet, cx);
+        }
+    }
+
+    fn quick_add_selected(
+        &mut self,
+        tables: Vec<String>,
+        archives: Vec<QuickArchiveSelection>,
+        combine: bool,
+        sample_sheet: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
+            return;
+        };
+        if let Some(quick) = self.quick_mut() {
+            quick.busy = Some("Adding tables…".into());
+            quick.error = None;
+        }
+        let generation = self.generation;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let added = if archives.is_empty() {
+                daemon
+                    .call::<Vec<String>>(Call::QuickAddTables { project, tables })
+                    .await
+                    .map(|files| (files, None))
+            } else {
+                daemon
+                    .call::<QuickArchiveOpened>(Call::QuickOpenArchives {
+                        project: Some(project),
+                        tables,
+                        archives,
+                        combine,
+                    })
+                    .await
+                    .map(|opened| (opened.files, opened.combine))
+            };
+            this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                let Some(quick) = &mut this.quick else { return };
+                quick.busy = None;
                 match added {
-                    Ok(files) => {
+                    Ok((files, counts)) => {
+                        quick.sheet_wanted = sample_sheet;
+                        if counts.is_some() {
+                            quick.pending_counts = counts;
+                        }
+                        let session = quick.loaded_in.clone();
                         if let Some(agents) = &this.agents {
                             agents.update(cx, |agents, cx| agents.add_explore_files(files, cx));
                         }
-                        if let Some(session) = this.quick.as_ref().and_then(|q| q.loaded_in.clone())
-                        {
+                        if let Some(session) = session {
                             this.quick_load(session, true, cx);
                         }
                     }
                     Err(err) => {
-                        if let Some(quick) = this.quick_mut() {
-                            quick.error = Some(format!("{err:#}"));
-                        }
+                        quick.error = Some(format!("Could not add the tables: {err:#}"));
                     }
                 }
                 cx.notify();
@@ -1365,14 +1790,22 @@ impl Workbench {
         .detach();
     }
 
+    pub(crate) fn quick_choose_tables(&mut self, cx: &mut Context<Self>) {
+        self.quick_choose_files(false, cx);
+    }
+
     /// Import a Sample Sheet…: a table of samples and their groups, added
     /// to the session and used for the groups.
     pub(crate) fn quick_import_sheet(&mut self, cx: &mut Context<Self>) {
+        self.quick_choose_files(true, cx);
+    }
+
+    fn quick_choose_files(&mut self, sample_sheet: bool, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
-            multiple: false,
-            prompt: Some("Import".into()),
+            multiple: !sample_sheet,
+            prompt: Some(if sample_sheet { "Import" } else { "Open" }.into()),
         });
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = picked.await else {
@@ -1382,13 +1815,8 @@ impl Workbench {
                 .into_iter()
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect();
-            this.update(cx, |this, cx| {
-                if let Some(quick) = this.quick_mut() {
-                    quick.sheet_wanted = true;
-                }
-                this.quick_add(paths, cx);
-            })
-            .ok();
+            this.update(cx, |this, cx| this.quick_add_paths(paths, sample_sheet, cx))
+                .ok();
         })
         .detach();
     }
@@ -1405,10 +1833,10 @@ impl Workbench {
             && let Some(first) = quick.card.sources.first()
         {
             let base = crate::panes::files::base_name(first);
-            return base
-                .rsplit_once('.')
-                .map_or(base, |(stem, _)| stem)
-                .to_string();
+            return quick_table_stem(base)
+                .or_else(|| quick_archive_stem(base))
+                .unwrap_or(base)
+                .to_owned();
         }
         self.project
             .as_deref()
@@ -1645,9 +2073,8 @@ impl Workbench {
     }
 }
 
-/// Each sample sheet loaded: its R variable, its sample column, and its
-/// other text columns, which may hold groups.
-pub(crate) fn sheet_columns(quick: &Quick) -> Vec<(String, String, Vec<String>)> {
+/// Pickable sample sheets and their sample-name columns.
+pub(crate) fn sheet_columns(quick: &Quick) -> Vec<(String, String)> {
     quick
         .card
         .tables
@@ -1655,75 +2082,54 @@ pub(crate) fn sheet_columns(quick: &Quick) -> Vec<(String, String, Vec<String>)>
         .filter(|t| t.kind.usable() == Some(&QuickTableKind::SampleSheet))
         .filter_map(|t| {
             let loaded = quick.tables.iter().find(|l| l.name == t.name)?;
-            let key = loaded.recognition.sample_column.clone()?;
-            let columns = loaded
-                .columns
-                .iter()
-                .filter(|c| c.name != key && c.kind != sandhill_proto::QuickColumnKind::Number)
-                .filter(|c| c.distinct >= 2 && c.distinct < loaded.rows.max(2))
-                .map(|c| c.name.clone())
-                .collect();
-            Some((t.name.clone(), key, columns))
+            Some((t.name.clone(), sheet_key(loaded, &quick.card)?))
         })
         .collect()
 }
 
-/// The column that most likely holds the groups.
-pub(crate) fn guess_group_column(columns: &[String]) -> Option<String> {
-    const NAMES: &[&str] = &[
-        "condition",
-        "group",
-        "treatment",
-        "genotype",
-        "status",
-        "disease",
-    ];
-    NAMES.iter().find_map(|wanted| {
-        columns
-            .iter()
-            .find(|c| c.to_ascii_lowercase().contains(wanted))
-            .cloned()
-    })
+fn sheet_key(table: &QuickTable, card: &QuickCard) -> Option<String> {
+    if table.columns.len() < 2 {
+        return None;
+    }
+    let samples: std::collections::HashSet<_> = card
+        .tables
+        .iter()
+        .filter_map(|t| t.samples.as_ref().and_then(Known::usable))
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    let matched = table
+        .columns
+        .iter()
+        .filter_map(|column| {
+            let n = column
+                .examples
+                .iter()
+                .filter(|s| samples.contains(s.as_str()))
+                .count();
+            (n > 0).then_some((n, &column.name))
+        })
+        .max_by_key(|&(n, _)| n)
+        .map(|(_, name)| name.clone());
+    matched
+        .or_else(|| table.recognition.sample_column.clone())
+        .or_else(|| Some(table.columns[0].name.clone()))
 }
 
-/// An imported sample sheet among `new_names`: marked as a sample sheet on
-/// the card (the user said so), with its sample column (recognised, else
-/// its first text column) and group column (one named like groups, else
-/// the first other text column with repeats).
-fn take_imported_sheet(
-    quick: &mut Quick,
-    new_names: &[String],
-) -> Option<(String, String, String)> {
+/// Mark an explicitly imported sheet and choose its sample-name column.
+fn take_imported_sheet(quick: &mut Quick, new_names: &[String]) -> Option<(String, String)> {
     for name in new_names {
         let Some(loaded) = quick.tables.iter().find(|t| &t.name == name) else {
             continue;
         };
-        let texts: Vec<&sandhill_proto::QuickColumn> = loaded
-            .columns
-            .iter()
-            .filter(|c| c.kind != sandhill_proto::QuickColumnKind::Number)
-            .collect();
-        let Some(key) = loaded
-            .recognition
-            .sample_column
-            .clone()
-            .or_else(|| texts.first().map(|c| c.name.clone()))
-        else {
-            continue;
-        };
-        let others: Vec<String> = texts
-            .iter()
-            .filter(|c| c.name != key && c.distinct >= 2 && c.distinct < loaded.rows.max(2))
-            .map(|c| c.name.clone())
-            .collect();
-        let Some(value) = guess_group_column(&others).or_else(|| others.first().cloned()) else {
+        let Some(key) = sheet_key(loaded, &quick.card) else {
             continue;
         };
         if let Some(entry) = quick.card.tables.iter_mut().find(|t| &t.name == name) {
             entry.kind = Known::told(QuickTableKind::SampleSheet);
             entry.question = None;
         }
-        return Some((name.clone(), key, value));
+        return Some((name.clone(), key));
     }
     None
 }
@@ -1779,8 +2185,8 @@ mod tests {
     // Not `super::*`: gpui's own `test` macro would replace `#[test]`.
     use super::{
         Edit, GeneIds, Item, Known, QuickCard, QuickComparison, QuickFrom, QuickPlot, QuickTable,
-        QuickTableKind, apply, group_names, is_table, merge, missing, session_name, settings,
-        symbols_request, variable_name,
+        QuickTableKind, apply, factors, is_archive, is_excel, is_table, merge, missing,
+        session_name, settings, symbols_request, variable_name,
     };
     use sandhill_proto::{QuickColumn, QuickColumnKind, QuickRecognition, QuickRequest};
 
@@ -1933,24 +2339,171 @@ mod tests {
         apply(
             &mut card,
             None,
-            Edit::Group("S1".into(), Some("control".into())),
+            Edit::Group("condition".into(), "S1".into(), Some("control".into())),
         );
         apply(
             &mut card,
             None,
-            Edit::Group("S2".into(), Some("treated".into())),
+            Edit::Group("condition".into(), "S2".into(), Some("treated".into())),
         );
         apply(
             &mut card,
             None,
-            Edit::Group("S1".into(), Some("treated".into())),
+            Edit::Group("condition".into(), "S1".into(), Some("treated".into())),
         );
-        apply(&mut card, None, Edit::Group("S2".into(), None));
+        apply(
+            &mut card,
+            None,
+            Edit::Group("condition".into(), "S2".into(), None),
+        );
+        apply(&mut card, None, Edit::MoveLevel("condition".into(), 1, 0));
+        let condition = &factors(&card)[0];
+        assert_eq!(condition.levels, ["treated", "control"]);
+        assert_eq!(condition.assignments, [("S1".into(), "treated".into())]);
+    }
+
+    #[test]
+    fn an_old_card_reads_groups_as_a_factor() {
+        let card: QuickCard = serde_json::from_value(serde_json::json!({
+            "tables": [],
+            "groups": {"from": "told", "value": [["S1", "control"], ["S2", "treated"], ["S3", "control"]]}
+        })).unwrap();
+        assert_eq!(factors(&card)[0].name, "group");
+        assert_eq!(factors(&card)[0].levels, ["control", "treated"]);
+        let saved = serde_json::to_value(card).unwrap();
+        assert!(saved.get("groups").is_none());
+        assert_eq!(saved["factors"]["value"][0]["assignments"][1][0], "S2");
+    }
+
+    #[test]
+    fn ready_designs_cover_one_factor_and_two_factor_questions() {
+        use super::differential::{Question, ready_designs};
+        fn f(name: &str, levels: &[&str]) -> sandhill_proto::QuickFactor {
+            sandhill_proto::QuickFactor {
+                name: name.into(),
+                levels: levels.iter().map(|s| (*s).into()).collect(),
+                assignments: vec![],
+            }
+        }
+        let empty = QuickCard::default();
+        let condition = f("condition", &["control", "GBM", "metastasis"]);
+        let one = ready_designs(&condition, None, &empty);
+        assert_eq!(one.len(), 3);
+        assert_eq!(one[0].effects[0].label(), "GBM vs control");
+        assert_eq!(one[1].effects.len(), 2);
+        assert_eq!(one[2].reduced.as_deref(), Some("~ 1"));
+        assert!(one[2].pick_effect);
+
+        let genotype = f("genotype", &["WT", "KO"]);
+        let dose = f("dose", &["0", "1", "10"]);
+        let two = ready_designs(&genotype, Some(&dose), &empty);
+        assert_eq!(two.len(), 6);
+        assert_eq!(two[0].formula, "~ group");
+        assert_eq!(two[0].effects[2].label(), "KO_1 vs KO_0");
+        assert_eq!(two[1].effects[2].label(), "KO_10 vs WT_10");
+        assert_eq!(two[2].formula, "~ dose + genotype");
+        assert_eq!(two[3].formula, "~ genotype + dose + genotype:dose");
+        assert_eq!(two[3].reduced.as_deref(), Some("~ genotype + dose"));
+        assert_eq!(two[4].reduced.as_deref(), Some("~ genotype"));
+        assert_eq!(two[4].effects[3].label(), "KO_10 vs KO_0");
+        assert_eq!(two[5].numeric.as_deref(), Some("dose"));
+        assert_eq!(two[5].formula, "~ genotype + dose");
+        let binary = f("dose", &["vehicle", "drug"]);
+        let two_levels = ready_designs(&genotype, Some(&binary), &empty);
+        assert_eq!(two_levels.len(), 5);
+        assert!(
+            two_levels
+                .iter()
+                .find(|d| d.question == Question::Interaction)
+                .unwrap()
+                .reduced
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn choices_and_generated_comparisons_survive_the_request_and_card() {
+        use super::differential::{BatchChoice, DeForm, Question};
+        use super::{Quick, add_differential_table, comparison};
+        use sandhill_proto::{
+            QuickDeBatch, QuickDeMethod, QuickDifferentialInfo, QuickDifferentialTable, QuickFactor,
+        };
+
+        let mut q = Quick::default();
+        merge(&mut q.card, &table("counts", QuickTableKind::Counts));
+        let samples: Vec<String> = ["S1", "S2", "S3", "S4"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        q.card.tables[0].samples = Some(Known::found(samples.clone()));
+        q.card.tables[0].labels = Some(Known::told("symbol".into()));
+        let f = |name: &str, values: [&str; 4]| {
+            QuickFactor::from_pairs(
+                name.into(),
+                samples
+                    .iter()
+                    .cloned()
+                    .zip(values.map(str::to_string))
+                    .collect(),
+            )
+        };
+        q.card.factors = Some(Known::told(vec![
+            f("condition", ["control", "control", "GBM", "GBM"]),
+            f("batch", ["one", "two", "one", "two"]),
+        ]));
+        let form = DeForm {
+            method: QuickDeMethod::Limma,
+            question: Some(Question::EachReference),
+            batch: BatchChoice::Model,
+            quality_weights: true,
+            shrink: true,
+            ..Default::default()
+        };
+        let Some(QuickRequest::Differential { settings: opts, .. }) = form.request(
+            &q.card,
+            &q.card.tables[0],
+            "",
+            "",
+            &mut vec!["counts".into()],
+        ) else {
+            panic!("a ready design builds a request")
+        };
+        assert_eq!(opts.design.formula, "~ condition");
         assert_eq!(
-            card.groups,
-            Some(Known::told(vec![("S1".to_string(), "treated".to_string())]))
+            opts.batch,
+            QuickDeBatch::Model {
+                factor: "batch".into()
+            }
         );
-        assert_eq!(group_names(&card, &["new".into()]), vec!["treated", "new"]);
+        assert!(opts.quality_weights && !opts.shrink);
+        assert_eq!(opts.label.as_deref(), Some("symbol"));
+        assert_eq!(opts.outputs[0].name, "counts_limma_GBM_vs_control");
+
+        let mut result = table(&opts.outputs[0].name, QuickTableKind::Results);
+        result.file = format!("results/{}.csv", result.name);
+        add_differential_table(
+            &mut q,
+            QuickDifferentialTable {
+                table: result.clone(),
+                gene: "id".into(),
+                label: Some("symbol".into()),
+                samples,
+                info: QuickDifferentialInfo {
+                    comparison: Some(Known::found(opts.outputs[0].comparison.clone())),
+                    expression_table: Some(opts.normalized.clone()),
+                    ..Default::default()
+                },
+            },
+            Some(GeneIds::Ensembl),
+        );
+        merge(&mut q.card, &result);
+        let entry = q.card.tables.last().unwrap();
+        assert_eq!(comparison(&q.card, entry).unwrap().value.higher, "GBM");
+        assert_eq!(
+            settings(&q.card, entry, "").label.as_deref(),
+            Some("symbol")
+        );
+        assert!(missing(entry, QuickPlot::ResultsHeatmap, "").is_empty());
     }
 
     #[test]
@@ -1963,6 +2516,23 @@ mod tests {
     fn only_tables_are_read() {
         assert!(is_table("de.CSV"));
         assert!(is_table("book.xlsx"));
+        for name in [
+            "sample.csv.gz",
+            "sample.TSV.GZ",
+            "sample.txt.gz",
+            "sample.tab.gz",
+        ] {
+            assert!(is_table(name), "{name}");
+            assert!(!is_excel(name), "{name}");
+            assert_eq!(variable_name(name, None, &[]), "sample");
+        }
+        assert_eq!(
+            variable_name("/data/my sample.CSV.GZ", None, &["my_sample".into()]),
+            "my_sample_2"
+        );
+        assert!(!is_table("book.xlsx.gz"));
+        assert!(!is_table("samples.tar.gz"));
+        assert!(is_archive("samples.tar.gz"));
         assert!(!is_table("steps.R"));
         assert!(!is_table(".csv"));
     }

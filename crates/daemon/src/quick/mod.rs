@@ -2,6 +2,7 @@
 //! What we know card, the R packages it needs, and its fixed R templates.
 //! See `docs/design/quick-tools-plan.md`.
 
+pub(crate) mod archive;
 pub mod folder;
 pub mod python;
 pub mod recognise;

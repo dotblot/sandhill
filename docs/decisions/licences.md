@@ -16,3 +16,8 @@ are in `look.md`.
   library under a licence not accepted in `notices/about.toml` fails the
   build; `notices/libghostty-vt/` holds the terminal engine's C/C++/Zig
   libraries' licences; Ark, ruff and ty keep theirs in `daemons/*.notices`.
+- ComBat-ref (Huan, 2026-11-19): the Explore a Table R templates include
+  Xiaoyu Zhang's MIT-licensed ComBat-ref code. Keep its copyright and
+  permission notice with the code, including in the copy used by `steps.R`.
+  `crates/daemon/assets/quick/combat_ref.R` records the pinned upstream
+  revision and carries the full notice.

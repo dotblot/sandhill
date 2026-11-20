@@ -29,6 +29,7 @@ mod cells;
 mod console_pane;
 mod layout;
 mod quick;
+pub(crate) mod quick_archive;
 mod side;
 mod top_bar;
 
@@ -266,6 +267,7 @@ impl Render for Workbench {
             .children(self.render_signature(cx))
             .children(self.render_close_card(cx))
             .children(self.render_quick_keep(cx))
+            .children(self.render_quick_archive(cx))
     }
 }
 

@@ -524,6 +524,8 @@ pub struct QuickCardTable {
     /// itself stays the IDs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<Known<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub differential: Option<QuickDifferentialInfo>,
     /// Gene names that look like Excel dates (a warning on the table).
     #[serde(default)]
     pub dates: u64,
@@ -556,6 +558,51 @@ impl Default for QuickCutoffs {
     }
 }
 
+/// A named sample annotation. The first level is the reference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickFactor {
+    pub name: String,
+    pub levels: Vec<String>,
+    pub assignments: Vec<(String, String)>,
+}
+
+impl QuickFactor {
+    pub fn from_pairs(name: String, assignments: Vec<(String, String)>) -> Self {
+        let mut levels = Vec::new();
+        for (_, level) in &assignments {
+            if !levels.contains(level) {
+                levels.push(level.clone());
+            }
+        }
+        Self {
+            name,
+            levels,
+            assignments,
+        }
+    }
+}
+
+fn read_factors<'de, D>(deserializer: D) -> Result<Option<Known<Vec<QuickFactor>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Saved {
+        Factors(Known<Vec<QuickFactor>>),
+        Groups(Known<Vec<(String, String)>>),
+    }
+    Ok(
+        Option::<Saved>::deserialize(deserializer)?.map(|saved| match saved {
+            Saved::Factors(factors) => factors,
+            Saved::Groups(groups) => Known {
+                from: groups.from,
+                value: vec![QuickFactor::from_pairs("group".into(), groups.value)],
+            },
+        }),
+    )
+}
+
 /// The What we know card, kept in the session folder's
 /// `.sandhill/quick.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -565,9 +612,13 @@ pub struct QuickCard {
     pub organism: Option<Known<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comparison: Option<Known<QuickComparison>>,
-    /// `(sample, group)` for the samples that are in a group.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub groups: Option<Known<Vec<(String, String)>>>,
+    #[serde(
+        default,
+        alias = "groups",
+        deserialize_with = "read_factors",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub factors: Option<Known<Vec<QuickFactor>>>,
     #[serde(default)]
     pub cutoffs: QuickCutoffs,
     /// The tables' own paths, as opened, in order.
@@ -613,7 +664,7 @@ pub struct QuickSuggestion {
     pub table: Option<String>,
     pub organism: Option<String>,
     pub comparison: Option<QuickComparison>,
-    pub groups: Option<Vec<(String, String)>>,
+    pub factors: Option<Vec<QuickFactor>>,
     pub kind: Option<QuickTableKind>,
     pub gene: Option<String>,
     pub gene_ids: Option<GeneIds>,
@@ -680,6 +731,19 @@ pub struct QuickSettings {
     /// `(sample, group)`.
     #[serde(default)]
     pub groups: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_levels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
+    /// The expression table and its optional correction for heatmaps/PCA.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression_table: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plot_batch: Option<Box<QuickPlotBatch>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_note: Option<String>,
+    #[serde(default)]
+    pub omnibus: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comparison: Option<QuickComparison>,
     #[serde(default)]
@@ -700,6 +764,206 @@ pub struct QuickSettings {
     pub label: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuickDeMethod {
+    #[default]
+    Deseq2,
+    Edger,
+    Limma,
+}
+
+impl QuickDeMethod {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Deseq2 => "DESeq2",
+            Self::Edger => "edgeR",
+            Self::Limma => "limma-voom",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum QuickDeBatch {
+    #[default]
+    None,
+    Model {
+        factor: String,
+    },
+    Pairs {
+        factor: String,
+    },
+    Sva,
+    Ruv,
+    CombatSeq {
+        factor: String,
+    },
+    CombatRef {
+        factor: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickDeCombined {
+    pub name: String,
+    pub first: String,
+    pub second: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickDeDesign {
+    pub formula: String,
+    pub factors: Vec<QuickFactor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numeric: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combined: Option<QuickDeCombined>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QuickDeContrast {
+    /// Compare levels at the reference levels of other factors unless `at` says otherwise.
+    Levels {
+        factor: String,
+        higher: String,
+        lower: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        at: Vec<(String, String)>,
+    },
+    Coefficient {
+        name: String,
+    },
+    /// The difference of the second factor's effects in two levels of the first.
+    Interaction {
+        first: String,
+        second: String,
+        first_higher: String,
+        second_higher: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickDeOutput {
+    pub name: String,
+    pub comparison: QuickComparison,
+    pub contrast: QuickDeContrast,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuickDeSettings {
+    pub method: QuickDeMethod,
+    pub design: QuickDeDesign,
+    /// A reduced formula selects an omnibus test instead of a single contrast test.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduced: Option<String>,
+    #[serde(default)]
+    pub batch: QuickDeBatch,
+    #[serde(default)]
+    pub shrink: bool,
+    #[serde(default)]
+    pub quality_weights: bool,
+    pub gene: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub samples: Vec<String>,
+    #[serde(default)]
+    pub cutoffs: QuickCutoffs,
+    pub outputs: Vec<QuickDeOutput>,
+    pub normalized: String,
+    /// Relative to the session until resolved by the daemon.
+    pub directory: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickPlotBatch {
+    /// The biology to preserve (without the batch term).
+    pub design: QuickDeDesign,
+    pub factor: String,
+}
+
+/// Recorded per output so reopening the CSV keeps its plot labels and methods.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct QuickDifferentialInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<Known<QuickComparison>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression_table: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub methods: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plot_batch: Option<Box<QuickPlotBatch>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_note: Option<String>,
+    /// Whether an omnibus test selected the hits, with a separate fold change for display.
+    #[serde(default)]
+    pub omnibus: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuickDifferentialTable {
+    pub table: QuickTable,
+    pub gene: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub samples: Vec<String>,
+    pub info: QuickDifferentialInfo,
+}
+
+/// File suffixes supported by Explore a Table. Gzip is an extra suffix
+/// only for delimited tables.
+pub const QUICK_TABLE_EXTENSIONS: &[&str] = &[
+    "csv.gz", "tsv.gz", "txt.gz", "tab.gz", "csv", "tsv", "txt", "tab", "xlsx", "xls",
+];
+
+pub fn quick_table_stem(name: &str) -> Option<&str> {
+    quick_stem(name, QUICK_TABLE_EXTENSIONS)
+}
+
+pub fn quick_archive_stem(name: &str) -> Option<&str> {
+    quick_stem(name, &["tar.gz", "tgz", "tar", "zip"])
+}
+
+fn quick_stem<'a>(name: &'a str, extensions: &[&str]) -> Option<&'a str> {
+    let name = name.rsplit('/').next()?;
+    extensions.iter().find_map(|ext| {
+        let dot = name.len().checked_sub(ext.len() + 1)?;
+        (dot > 0
+            && name.as_bytes()[dot] == b'.'
+            && name.as_bytes()[dot + 1..].eq_ignore_ascii_case(ext.as_bytes()))
+        .then(|| &name[..dot])
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickArchiveMember {
+    pub index: usize,
+    pub name: String,
+    /// It looks like one gene column and one count column in a short preview.
+    pub sample_counts: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuickArchiveSelection {
+    pub path: String,
+    pub members: Vec<QuickArchiveMember>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuickArchiveOpened {
+    pub folder: String,
+    pub files: Vec<String>,
+    pub combine: Option<QuickArchiveCounts>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuickArchiveCounts {
+    pub files: Vec<String>,
+    pub file: String,
+}
+
 /// What a Quick Tools run is asked to do. Sent to R as JSON, never as code.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -711,6 +975,12 @@ pub enum QuickRequest {
         file: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sheet: Option<String>,
+        name: String,
+    },
+    /// Joins per-sample counts files on shared gene IDs and saves a CSV.
+    CombineCounts {
+        files: Vec<String>,
+        file: String,
         name: String,
     },
     /// Draws `plot` from the table in `table`. [`QuickPlot::TopGenes`]
@@ -728,6 +998,18 @@ pub enum QuickRequest {
         table: String,
         key: String,
         value: String,
+    },
+    /// Every annotation column other than the sample name column.
+    Factors { table: String, key: String },
+    /// Validate the formula and return the names of its model matrix coefficients.
+    DeCoefficients {
+        samples: Vec<String>,
+        design: Box<QuickDeDesign>,
+        batch: QuickDeBatch,
+    },
+    Differential {
+        table: String,
+        settings: Box<QuickDeSettings>,
     },
     /// Writes an Excel workbook: a `Read_me` sheet of `(field, text)` rows,
     /// then one sheet per `(sheet name, R variable)`.
@@ -768,7 +1050,7 @@ pub struct QuickResult {
     /// The numbers the template measured, as it returned them.
     #[serde(default)]
     pub facts: Value,
-    /// [`QuickRequest::Load`]: the table, recognised.
+    /// A loaded or generated table, recognised.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<QuickTable>,
     /// [`QuickRequest::Sheets`].
@@ -780,4 +1062,10 @@ pub struct QuickResult {
     /// A table the run made (top genes): its R variable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub factors: Vec<QuickFactor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coefficients: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub differential: Vec<QuickDifferentialTable>,
 }

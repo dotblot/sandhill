@@ -11,10 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, bail};
-use sandhill_proto::QuickCard;
+use sandhill_proto::{QuickArchiveOpened, QuickArchiveSelection, QuickCard, quick_table_stem};
 
-/// The table files Sandhill explores.
-pub const TABLE_EXTENSIONS: &[&str] = &["csv", "tsv", "tab", "txt", "xlsx", "xls"];
+use super::archive;
 
 const CARD: &str = ".sandhill/quick.json";
 /// Sessions left in Sandhill's storage this long without a change (the
@@ -29,12 +28,12 @@ fn table_path(path: &str) -> Result<PathBuf> {
     if !path.is_file() {
         bail!("{} isn't a file", path.display());
     }
-    let extension = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
-    if !TABLE_EXTENSIONS.contains(&extension.as_str()) {
+    if path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(quick_table_stem)
+        .is_none()
+    {
         bail!(
             "{} isn't a table Sandhill can explore (CSV, TSV, text or Excel)",
             path.display()
@@ -46,11 +45,51 @@ fn table_path(path: &str) -> Result<PathBuf> {
 /// Starts a session in `explore` (Sandhill's storage) with links to
 /// `tables`. Returns its folder.
 pub fn start(explore: &Path, tables: &[String]) -> Result<PathBuf> {
+    let (folder, _) = start_session(explore, tables, &[], false)?;
+    Ok(folder)
+}
+
+pub(crate) fn open_archives(
+    explore: &Path,
+    folder: Option<PathBuf>,
+    tables: &[String],
+    archives: &[QuickArchiveSelection],
+    combine: bool,
+) -> Result<QuickArchiveOpened> {
+    if let Some(folder) = folder {
+        if !fs::symlink_metadata(folder.join(".sandhill")).is_ok_and(|m| m.is_dir())
+            || !fs::symlink_metadata(folder.join(CARD)).is_ok_and(|m| m.is_file())
+        {
+            bail!("Open an Explore session to add tables from an archive.");
+        }
+        let tables = tables
+            .iter()
+            .map(|t| table_path(t))
+            .collect::<Result<Vec<_>>>()?;
+        let mut card = card(&folder)?;
+        let mut opened = unpack_archives(&folder, &mut card, archives, combine)?;
+        opened
+            .files
+            .extend(add_to_card(&folder, &tables, &mut card)?);
+        save_card(&folder, &card)?;
+        mirror(&folder)?;
+        Ok(opened)
+    } else {
+        start_session(explore, tables, archives, combine).map(|(_, opened)| opened)
+    }
+}
+
+fn start_session(
+    explore: &Path,
+    tables: &[String],
+    archives: &[QuickArchiveSelection],
+    combine: bool,
+) -> Result<(PathBuf, QuickArchiveOpened)> {
     let tables = tables
         .iter()
         .map(|t| table_path(t))
         .collect::<Result<Vec<_>>>()?;
-    if tables.is_empty() {
+    if tables.is_empty() && archives.is_empty() {
         bail!("no table to open");
     }
     fs::create_dir_all(explore).context("cannot make Sandhill's explore folder")?;
@@ -60,24 +99,56 @@ pub fn start(explore: &Path, tables: &[String]) -> Result<PathBuf> {
         fs::create_dir(&folder)?;
         fs::create_dir(folder.join("results"))?;
         fs::create_dir(folder.join(".sandhill"))?;
-        link_tables(&folder, &tables)?;
-        save_card(
-            &folder,
-            &QuickCard {
-                sources: tables
-                    .iter()
-                    .map(|t| t.to_string_lossy().into_owned())
-                    .collect(),
-                scratch: true,
-                ..QuickCard::default()
-            },
-        )
+        let mut card = QuickCard {
+            scratch: true,
+            ..QuickCard::default()
+        };
+        let files = add_to_card(&folder, &tables, &mut card)?;
+        let mut opened = if archives.is_empty() {
+            QuickArchiveOpened {
+                folder: folder.to_string_lossy().into_owned(),
+                files: Vec::new(),
+                combine: None,
+            }
+        } else {
+            unpack_archives(&folder, &mut card, archives, combine)?
+        };
+        opened.files.extend(files);
+        save_card(&folder, &card)?;
+        Ok(opened)
     })();
-    if let Err(err) = made {
-        let _ = fs::remove_dir_all(&folder);
-        return Err(err);
+    match made {
+        Ok(opened) => Ok((folder, opened)),
+        Err(err) => {
+            let _ = fs::remove_dir_all(&folder);
+            Err(err)
+        }
     }
-    Ok(folder)
+}
+
+fn unpack_archives(
+    folder: &Path,
+    card: &mut QuickCard,
+    archives: &[QuickArchiveSelection],
+    combine: bool,
+) -> Result<QuickArchiveOpened> {
+    let kept = card
+        .kept
+        .as_deref()
+        .map(Path::new)
+        .filter(|path| card.scratch && path.is_dir());
+    let (files, combine) = archive::extract(folder, kept, archives, combine)?;
+    card.sources.extend(
+        archives
+            .iter()
+            .filter(|a| !a.members.is_empty())
+            .map(|a| a.path.clone()),
+    );
+    Ok(QuickArchiveOpened {
+        folder: folder.to_string_lossy().into_owned(),
+        files,
+        combine,
+    })
 }
 
 /// Removes sessions in `explore` untouched for [`STALE`].
@@ -105,17 +176,22 @@ pub fn add_tables(folder: &Path, tables: &[String]) -> Result<Vec<String>> {
         .map(|t| table_path(t))
         .collect::<Result<Vec<_>>>()?;
     let mut card = card(folder)?;
+    let names = add_to_card(folder, &tables, &mut card)?;
+    save_card(folder, &card)?;
+    mirror(folder)?;
+    Ok(names)
+}
+
+fn add_to_card(folder: &Path, tables: &[PathBuf], card: &mut QuickCard) -> Result<Vec<String>> {
     let names = if card.scratch {
-        link_tables(folder, &tables)?
+        link_tables(folder, tables)?
     } else {
-        copy_tables(folder, &tables)?
+        copy_tables(folder, tables)?
     };
     card.sources
         .extend(tables.iter().map(|t| t.to_string_lossy().into_owned()));
-    save_card(folder, &card)?;
     if let Some(kept) = card.kept.clone().filter(|_| card.scratch) {
-        copy_tables(Path::new(&kept), &tables)?;
-        mirror(folder)?;
+        copy_tables(Path::new(&kept), tables)?;
     }
     Ok(names)
 }

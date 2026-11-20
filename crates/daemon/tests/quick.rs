@@ -5,6 +5,8 @@
 //! the templates use.
 
 mod common;
+#[path = "quick/differential.rs"]
+mod differential;
 
 use std::fmt::Write as _;
 use std::io;
@@ -646,4 +648,203 @@ async fn only_explore_tools_reach_the_registered_explore_window() {
             .unwrap()
             .contains("doesn't say which group is higher")
     );
+}
+
+#[tokio::test]
+async fn gzipped_tables_and_counts_archives_open_in_explore() {
+    use flate2::{Compression, write::GzEncoder};
+    use sandhill_proto::{QuickArchiveMember, QuickArchiveOpened, QuickArchiveSelection};
+    use std::io::Write as _;
+    use zip::write::SimpleFileOptions;
+
+    if sandhill_daemon::kernel::find_kernelspec("ir", None)
+        .await
+        .is_err()
+    {
+        eprintln!("skipping compressed Explore tables: Jupyter kernel \"ir\" is not installed");
+        return;
+    }
+    let dir = common::tempdir().unwrap();
+    let state = dir.path().join("state");
+    let downloads = dir.path().join("Downloads");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::create_dir_all(&downloads).unwrap();
+    let plain = downloads.join("de results.csv");
+    let compressed = downloads.join("de results.csv.gz");
+    let csv = deseq2_csv();
+    std::fs::write(&plain, &csv).unwrap();
+    let gzip = |content: &[u8]| {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(content).unwrap();
+        encoder.finish().unwrap()
+    };
+    std::fs::write(&compressed, gzip(csv.as_bytes())).unwrap();
+
+    let archive = downloads.join("study_RAW.zip");
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file(
+        "one/GSM123_control_counts.txt.gz",
+        SimpleFileOptions::default(),
+    )
+    .unwrap();
+    zip.write_all(&gzip(
+        b"ENSG00000000001\t3\nENSG00000000002\t7\nENSG00000000003\t9\n__no_feature\t5\n",
+    ))
+    .unwrap();
+    zip.start_file(
+        "two/GSM456_treated_counts.tsv",
+        SimpleFileOptions::default(),
+    )
+    .unwrap();
+    zip.write_all(b"gene_id\treads\nENSG00000000002\t12\nENSG00000000004\t2\nENSG00000000001\t10\nENSG00000000005\t1\n").unwrap();
+    let original_archive = zip.finish().unwrap().into_inner();
+    std::fs::write(&archive, &original_archive).unwrap();
+
+    let (_daemon, socket) = start(&state).await;
+    let client = Client::connect_unix(&socket).await.unwrap();
+    let archive = archive.to_string_lossy().into_owned();
+    let members: Vec<QuickArchiveMember> = client
+        .call(Call::QuickListArchive {
+            path: archive.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(members.len(), 2);
+    assert!(members.iter().all(|member| member.sample_counts));
+    let selection = QuickArchiveSelection {
+        path: archive.clone(),
+        members,
+    };
+    let opened: QuickArchiveOpened = client
+        .call(Call::QuickOpenArchives {
+            project: None,
+            tables: vec![plain.to_string_lossy().into_owned()],
+            archives: vec![selection.clone()],
+            combine: true,
+        })
+        .await
+        .unwrap();
+    let folder = opened.folder;
+    let counts = opened.combine.unwrap();
+    let added: Vec<String> = client
+        .call(Call::QuickAddTables {
+            project: folder.clone(),
+            tables: vec![compressed.to_string_lossy().into_owned()],
+        })
+        .await
+        .unwrap();
+    assert_eq!(added, ["de results.csv.gz"]);
+    assert!(
+        std::fs::symlink_metadata(Path::new(&folder).join(&added[0]))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read_dir(&downloads).unwrap().count(), 3);
+    assert_eq!(std::fs::read(&archive).unwrap(), original_archive);
+
+    let session: SessionInfo = client
+        .call(Call::StartSession {
+            kernel: "ir".into(),
+            cwd: Some(folder.clone()),
+            project: Some(folder.clone()),
+        })
+        .await
+        .unwrap();
+    let run = |request: QuickRequest| {
+        client.call::<QuickResult>(Call::QuickRun {
+            session: session.id.clone(),
+            project: folder.clone(),
+            request,
+        })
+    };
+    let load = |file: &str, name: &str| {
+        run(QuickRequest::Load {
+            file: file.into(),
+            sheet: None,
+            name: name.into(),
+        })
+    };
+    let plain = load("de results.csv", "plain")
+        .await
+        .unwrap()
+        .table
+        .unwrap();
+    let compressed = load(&added[0], "compressed").await.unwrap().table.unwrap();
+    assert_eq!(plain.columns, compressed.columns);
+    assert_eq!(plain.rows, compressed.rows);
+    assert_eq!(plain.recognition, compressed.recognition);
+
+    let made = run(QuickRequest::CombineCounts {
+        files: counts.files.clone(),
+        file: counts.file.clone(),
+        name: "combined_counts".into(),
+    })
+    .await
+    .unwrap();
+    let combined = made.table.unwrap();
+    assert_eq!(combined.rows, 2);
+    assert_eq!(combined.recognition.kind, QuickTableKind::Counts);
+    assert_eq!(
+        combined.recognition.samples,
+        ["GSM123_control", "GSM456_treated"]
+    );
+    assert_eq!(made.facts["kept"], 2);
+    assert_eq!(made.facts["inputs"][0]["genes"], 3);
+    assert_eq!(made.facts["inputs"][1]["genes"], 4);
+    assert_eq!(
+        made.sentence.as_deref(),
+        Some(
+            "Kept 2 genes found in every sample. Genes in each file: GSM123_control: 3; GSM456_treated: 4."
+        )
+    );
+    let output = Path::new(&folder).join(&counts.file);
+    let csv = std::fs::read_to_string(&output).unwrap();
+    assert_eq!(
+        csv,
+        "\"gene\",\"GSM123_control\",\"GSM456_treated\"\n\"ENSG00000000001\",3,10\n\"ENSG00000000002\",7,12\n"
+    );
+    let reloaded = load(&counts.file, "reloaded").await.unwrap().table.unwrap();
+    assert_eq!(reloaded.columns, combined.columns);
+    assert_eq!(reloaded.recognition, combined.recognition);
+
+    let kept: String = client
+        .call(Call::QuickKeep {
+            project: folder.clone(),
+            parent: downloads.to_string_lossy().into_owned(),
+            name: "Combined study".into(),
+        })
+        .await
+        .unwrap();
+    let kept = Path::new(&kept);
+    for file in &counts.files {
+        assert_eq!(
+            std::fs::read(kept.join(file)).unwrap(),
+            std::fs::read(Path::new(&folder).join(file)).unwrap()
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(kept.join(&counts.file)).unwrap(),
+        csv
+    );
+    let steps = std::fs::read_to_string(kept.join("steps.R")).unwrap();
+    assert!(steps.contains(r#""action":"combine_counts""#), "{steps}");
+    assert!(!steps.contains(&folder), "{steps}");
+
+    let opened: QuickArchiveOpened = client
+        .call(Call::QuickOpenArchives {
+            project: Some(folder.clone()),
+            tables: Vec::new(),
+            archives: vec![QuickArchiveSelection {
+                members: vec![selection.members[1].clone()],
+                ..selection
+            }],
+            combine: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(opened.files, ["GSM456_treated_counts.tsv"]);
+    assert!(opened.combine.is_none());
+    assert!(Path::new(&folder).join(&opened.files[0]).is_file());
+    assert!(kept.join(&opened.files[0]).is_file());
+    client.shutdown(&session.id).await.unwrap();
 }

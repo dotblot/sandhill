@@ -14,10 +14,10 @@ use crate::look::side_pane;
 use crate::quick::{self, Edit, Item};
 use crate::quick_layout::{Layout, Panel as QuickPanel, Side};
 
+mod differential;
+
 /// The width of a fact's name on the card.
 const FACT_LABEL: f32 = 92.;
-/// The width of a sample's name beside its group choices.
-const SAMPLE_LABEL: f32 = 64.;
 
 /// The table names genes by Ensembl or Entrez IDs, which symbols can
 /// replace on plots.
@@ -673,7 +673,14 @@ impl Workbench {
         let mut body = v_flex()
             .gap(px(look::GAP_8))
             .px(px(look::PANE_PAD_X))
-            .py(px(look::PANE_PAD_Y));
+            .py(px(look::PANE_PAD_Y))
+            .child(
+                Button::new("quick-add-table")
+                    .small()
+                    .label("Add Table…")
+                    .disabled(q.busy.is_some() || q.archive_picker.is_some())
+                    .on_click(cx.listener(|this, _, _, cx| this.quick_choose_tables(cx))),
+            );
         if q.not_ready {
             body = body.child(
                 v_flex()
@@ -771,6 +778,13 @@ impl Workbench {
         if let Some(table) = self.quick_table().cloned() {
             body = body
                 .child(self.render_quick_card(&table, cx))
+                .when(
+                    table.kind.usable() == Some(&QuickTableKind::Counts),
+                    |body| {
+                        body.child(heading("Find Changed Genes", &p))
+                            .child(self.render_find_changed_genes(&table, cx))
+                    },
+                )
                 .child(heading("Make Plots", &p))
                 .child(self.render_quick_make(&table, cx));
             if let Some(sentence) = &q.sentence {
@@ -942,12 +956,14 @@ impl Workbench {
                             }),
                             cx,
                         ))
-                        .child(self.fact(Item::Groups, "Groups", self.groups_summary(samples), cx));
+                        .child(self.fact(
+                            Item::Groups,
+                            "Sample factors",
+                            self.factor_summary(samples),
+                            cx,
+                        ));
                 }
-                let comparison = q
-                    .card
-                    .comparison
-                    .as_ref()
+                let comparison = quick::comparison(&q.card, table)
                     .filter(|c| c.usable().is_some())
                     .map(|c| {
                         (
@@ -956,14 +972,23 @@ impl Workbench {
                         )
                     });
                 card = card.child(self.fact(Item::Comparison, "Positive means", comparison, cx));
+                let omnibus = table.differential.as_ref().is_some_and(|info| info.omnibus);
+                if omnibus {
+                    card = card.child(div().text_color(p.muted)
+                        .child("P-values test the full design against the reduced design. Fold changes show the chosen comparison."));
+                }
                 card = card.child(self.fact(
                     Item::Cutoffs,
                     "Cutoffs",
                     Some((
-                        format!(
-                            "adjusted p below {}, |log2 fold change| at least {}",
-                            q.card.cutoffs.padj, q.card.cutoffs.lfc
-                        ),
+                        if omnibus {
+                            format!("adjusted p below {}", q.card.cutoffs.padj)
+                        } else {
+                            format!(
+                                "adjusted p below {}, |log2 fold change| at least {}",
+                                q.card.cutoffs.padj, q.card.cutoffs.lfc
+                            )
+                        },
                         sandhill_proto::QuickFrom::Told,
                     )),
                     cx,
@@ -991,8 +1016,8 @@ impl Workbench {
                 if let Some(samples) = samples {
                     card = card.child(self.fact(
                         Item::Groups,
-                        "Groups",
-                        self.groups_summary(samples),
+                        "Sample factors",
+                        self.factor_summary(samples),
                         cx,
                     ));
                 }
@@ -1084,29 +1109,20 @@ impl Workbench {
         )
     }
 
-    fn groups_summary(&self, samples: &[String]) -> Option<(String, sandhill_proto::QuickFrom)> {
+    fn factor_summary(&self, samples: &[String]) -> Option<(String, sandhill_proto::QuickFrom)> {
         let q = self.quick.as_ref()?;
-        let groups = q.card.groups.as_ref()?;
-        let samples_groups = groups.usable()?;
-        let mut counts: Vec<(String, usize)> = Vec::new();
-        for (sample, group) in samples_groups {
-            if !samples.contains(sample) {
-                continue;
-            }
-            match counts.iter_mut().find(|(g, _)| g == group) {
-                Some((_, n)) => *n += 1,
-                None => counts.push((group.clone(), 1)),
-            }
-        }
-        if counts.is_empty() {
-            return None;
-        }
-        let text = counts
+        let known = q.card.factors.as_ref()?;
+        let matching: Vec<_> = known
+            .usable()?
             .iter()
-            .map(|(g, n)| format!("{g} ({n})"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        Some((text, groups.from))
+            .filter(|f| {
+                f.assignments
+                    .iter()
+                    .any(|(sample, _)| samples.contains(sample))
+            })
+            .map(|f| format!("{} ({})", f.name, f.levels.len()))
+            .collect();
+        (!matching.is_empty()).then(|| (matching.join(", "), known.from))
     }
 
     /// One fact: its name, value and where it came from; a click opens its
@@ -1318,162 +1334,38 @@ impl Workbench {
                 )
                 .into_any_element()
             }
-            Item::Groups => {
-                let names = quick::group_names(&q.card, &q.added_groups);
-                let samples = table
-                    .samples
-                    .as_ref()
-                    .map(|s| s.value.clone())
-                    .unwrap_or_default();
-                let groups = q
-                    .card
-                    .groups
-                    .as_ref()
-                    .map(|g| g.value.clone())
-                    .unwrap_or_default();
-                let mut list = v_flex().gap(px(look::GAP_4));
-                let sheets = quick::sheet_columns(q);
-                if sheets.iter().any(|(_, _, cols)| !cols.is_empty()) {
-                    let mut from = h_flex().flex_wrap().gap(px(look::GAP_4));
-                    let mut ix = 0usize;
-                    for (sheet, key, cols) in sheets {
-                        for col in cols {
-                            let (sheet, key, value) = (sheet.clone(), key.clone(), col.clone());
-                            from = from.child(
-                                Self::tab(
-                                    ("quick-groups-from", ix),
-                                    None,
-                                    format!("{sheet}: {col}"),
-                                    false,
-                                    &p,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.quick_groups_from(
-                                            sheet.clone(),
-                                            key.clone(),
-                                            value.clone(),
-                                            sandhill_proto::QuickFrom::Told,
-                                            cx,
-                                        )
-                                    },
-                                )),
-                            );
-                            ix += 1;
-                        }
-                    }
-                    list = list
-                        .child(
-                            div()
-                                .text_color(p.muted)
-                                .child("Take the groups from a sample sheet:"),
-                        )
-                        .child(from)
-                        .child(div().text_color(p.muted).child("Or place each sample:"));
-                }
-                for (row, sample) in samples.into_iter().enumerate() {
-                    let now = groups
-                        .iter()
-                        .find(|(s, _)| *s == sample)
-                        .map(|(_, g)| g.clone());
-                    let mut choices: Vec<(String, bool, Edit)> = names
-                        .iter()
-                        .map(|name| {
-                            (
-                                name.clone(),
-                                now.as_deref() == Some(name),
-                                Edit::Group(sample.clone(), Some(name.clone())),
-                            )
-                        })
-                        .collect();
-                    choices.push((
-                        "None".into(),
-                        now.is_none(),
-                        Edit::Group(sample.clone(), None),
-                    ));
-                    list = list.child(
-                        h_flex()
-                            .gap(px(look::GAP_8))
-                            .child(
-                                div()
-                                    .w(px(SAMPLE_LABEL))
-                                    .flex_none()
-                                    .truncate()
-                                    .child(sample),
-                            )
-                            .child(pills(&format!("sample-{row}"), choices, cx)),
-                    );
-                }
-                let input = q.inputs.as_ref().map(|i| i.group.clone());
-                list.child(
-                    h_flex()
-                        .gap(px(look::GAP_8))
-                        .children(input.map(|i| div().flex_1().child(Input::new(&i).small())))
-                        .child(
-                            Button::new("quick-add-group")
-                                .small()
-                                .label("Add Group")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let name = this.quick_input(|i| &i.group, cx);
-                                    if let Some(input) = this
-                                        .quick
-                                        .as_ref()
-                                        .and_then(|q| q.inputs.as_ref())
-                                        .map(|i| i.group.clone())
-                                    {
-                                        input.update(cx, |input, cx| {
-                                            input.set_value("", window, cx)
-                                        });
-                                    }
-                                    this.quick_edit(Edit::AddGroup(name), cx);
-                                })),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap(px(look::GAP_8))
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_color(p.muted)
-                                .child("Or a table with each sample's group:"),
-                        )
-                        .child(
-                            Button::new("quick-import-sheet")
-                                .small()
-                                .label("Import a Sample Sheet…")
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.quick_import_sheet(cx)),
-                                ),
-                        ),
-                )
-                .into_any_element()
-            }
+            Item::Groups => self.render_sample_factors(table, cx),
             Item::Comparison => {
                 let inputs = q
                     .inputs
                     .as_ref()
                     .map(|i| (i.higher.clone(), i.lower.clone()));
-                // With the groups known, each way round is one click.
-                let names = quick::group_names(&q.card, &q.added_groups);
-                let now = q.card.comparison.as_ref().map(|c| c.value.clone());
-                let mut ways: Vec<(String, bool, Edit)> = Vec::new();
-                for higher in &names {
-                    for lower in names.iter().filter(|l| *l != higher) {
-                        ways.push((
-                            format!("{higher} vs {lower}"),
-                            now.as_ref()
-                                .is_some_and(|c| &c.higher == higher && &c.lower == lower),
-                            Edit::Comparison(higher.clone(), lower.clone()),
-                        ));
-                    }
-                }
-                ways.truncate(12);
+                let names = quick::colour_factor(&q.card, table, None)
+                    .map_or(&[][..], |f| f.levels.as_slice());
+                let now = quick::comparison(&q.card, table).map(|c| &c.value);
+                let ways: Vec<(String, bool, Edit)> = names
+                    .iter()
+                    .flat_map(|higher| {
+                        names
+                            .iter()
+                            .filter(move |lower| *lower != higher)
+                            .map(move |lower| {
+                                (
+                                    format!("{higher} vs {lower}"),
+                                    now.is_some_and(|c| &c.higher == higher && &c.lower == lower),
+                                    Edit::Comparison(higher.clone(), lower.clone()),
+                                )
+                            })
+                    })
+                    .take(12)
+                    .collect();
                 v_flex()
                     .gap(px(look::GAP_4))
-                    .child(div().text_color(p.muted).child(
-                        "Which group is a positive fold change higher in? The table itself doesn't say.",
-                    ))
+                    .child(
+                        div()
+                            .text_color(p.muted)
+                            .child("Which group is a positive fold change higher in?"),
+                    )
                     .when(!ways.is_empty(), |d| d.child(pills("comparison", ways, cx)))
                     .children(inputs.map(|(higher, lower)| {
                         h_flex()
@@ -1496,6 +1388,7 @@ impl Workbench {
                     .into_any_element()
             }
             Item::Cutoffs => {
+                let omnibus = table.differential.as_ref().is_some_and(|info| info.omnibus);
                 let inputs = q.inputs.as_ref().map(|i| (i.padj.clone(), i.lfc.clone()));
                 v_flex()
                     .gap(px(look::GAP_4))
@@ -1504,14 +1397,16 @@ impl Workbench {
                             .gap(px(look::GAP_4))
                             .child(div().flex_none().child("Adjusted p below"))
                             .child(div().flex_1().child(Input::new(&padj).small()))
-                            .child(div().flex_none().child("log2 fold change"))
-                            .child(div().flex_1().child(Input::new(&lfc).small()))
+                            .when(!omnibus, |row| {
+                                row.child(div().flex_none().child("log2 fold change"))
+                                    .child(div().flex_1().child(Input::new(&lfc).small()))
+                            })
                     }))
                     .child(
                         Button::new("quick-save-cutoffs")
                             .small()
                             .label("Save")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, _, cx| {
                                 let now = this
                                     .quick
                                     .as_ref()
@@ -1524,13 +1419,16 @@ impl Workbench {
                                     .ok()
                                     .filter(|v| *v > 0. && *v <= 1.)
                                     .unwrap_or(now.padj);
-                                let lfc = this
-                                    .quick_input(|i| &i.lfc, cx)
-                                    .trim()
-                                    .parse::<f64>()
-                                    .ok()
-                                    .filter(|v| *v >= 0.)
-                                    .unwrap_or(now.lfc);
+                                let lfc = if omnibus {
+                                    now.lfc
+                                } else {
+                                    this.quick_input(|i| &i.lfc, cx)
+                                        .trim()
+                                        .parse::<f64>()
+                                        .ok()
+                                        .filter(|v| *v >= 0.)
+                                        .unwrap_or(now.lfc)
+                                };
                                 this.quick_edit(Edit::Cutoffs(padj, lfc), cx);
                             })),
                     )
@@ -1566,7 +1464,7 @@ impl Workbench {
                 .text_color(p.muted)
                 .child(match kind {
                     QuickTableKind::SampleSheet => {
-                        "A sample sheet has nothing to plot on its own. Its groups can be set on a counts table's card."
+                        "A sample sheet has nothing to plot on its own. Its factors can be set on a counts table's card."
                     }
                     _ => "Choose what this table is above to see what can be made from it.",
                 })
@@ -1574,7 +1472,9 @@ impl Workbench {
         }
         let show_gene = self.quick_input(|i| &i.gene, cx);
         let busy = q.busy.is_some() || q.loaded_in.is_none();
-        let mut list = v_flex().gap(px(look::GAP_4));
+        let mut list = v_flex()
+            .gap(px(look::GAP_4))
+            .children(self.render_colour_choice(table, cx));
         for (ix, plot) in plots.iter().copied().enumerate() {
             if plot == QuickPlot::GeneByGroup
                 && let Some(input) = q.inputs.as_ref().map(|i| i.gene.clone())

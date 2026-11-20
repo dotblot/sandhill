@@ -302,7 +302,11 @@ fn open_main(places: Places, cx: &mut App) {
 /// Opens the Explore a Table session in `folder` on this Mac in its own window,
 /// or brings its window forward. Only kept sessions go in Recent; the
 /// caller remembers them.
-pub(crate) fn open_quick(folder: String, cx: &mut App) {
+pub(crate) fn open_quick(
+    folder: String,
+    counts: Option<sandhill_proto::QuickArchiveCounts>,
+    cx: &mut App,
+) {
     let open = cx
         .global::<Windows>()
         .quick
@@ -323,6 +327,18 @@ pub(crate) fn open_quick(folder: String, cx: &mut App) {
     };
     let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
     if let Some(shell) = open_app_window(places, Kind::Quick, WindowBounds::Windowed(bounds), cx) {
+        if let Some(counts) = counts {
+            shell.update(cx, |this, _, cx| {
+                if let Some(tab) = this.tabs.first() {
+                    tab.workbench.update(cx, |wb, cx| {
+                        if let Some(quick) = &mut wb.quick {
+                            quick.pending_counts = Some(counts);
+                            cx.notify();
+                        }
+                    });
+                }
+            });
+        }
         cx.global_mut::<Windows>().quick.push((folder, shell));
     }
 }

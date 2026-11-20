@@ -311,6 +311,16 @@ impl Daemon {
             Call::QuickAddTables { project, tables } => {
                 self.quick_add_tables(project, tables).await?
             }
+            Call::QuickListArchive { path } => self.quick_list_archive(path).await?,
+            Call::QuickOpenArchives {
+                project,
+                tables,
+                archives,
+                combine,
+            } => {
+                self.quick_open_archives(project, tables, archives, combine)
+                    .await?
+            }
             Call::QuickCard { project } => self.quick_card(project).await?,
             Call::SaveQuickCard { project, card } => self.save_quick_card(project, card).await?,
             Call::QuickRun {

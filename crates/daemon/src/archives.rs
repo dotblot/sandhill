@@ -326,10 +326,31 @@ fn make_staging(dir: &Path, name: &str) -> Result<PathBuf> {
 
 /// The first of `name`, "name 2" and so on that nothing is at.
 pub(crate) fn free_path(dir: &Path, name: &str, is_dir: bool) -> Result<PathBuf> {
+    free_path_in(dir, None, name, is_dir)
+}
+
+/// The first name free in both a scratch session and its kept copy.
+pub(crate) fn free_path_in(
+    dir: &Path,
+    mirror: Option<&Path>,
+    name: &str,
+    is_dir: bool,
+) -> Result<PathBuf> {
     (1..NAMES)
-        .map(|n| dir.join(numbered(name, n, is_dir)))
-        .find(|p| fs::symlink_metadata(p).is_err())
+        .map(|n| numbered(name, n, is_dir))
+        .find_map(|name| {
+            let path = dir.join(&name);
+            (missing(&path) && mirror.is_none_or(|m| missing(&m.join(&name)))).then_some(path)
+        })
         .with_context(|| format!("no free name for {name} in {}", dir.display()))
+}
+
+fn missing(path: &Path) -> bool {
+    matches!(fs::symlink_metadata(path), Err(err) if err.kind() == ErrorKind::NotFound)
+}
+
+pub(crate) fn create_new(path: &Path) -> io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 /// A new file at the first free name `name_for(1)`, `name_for(2)`…, made
@@ -337,11 +358,7 @@ pub(crate) fn free_path(dir: &Path, name: &str, is_dir: bool) -> Result<PathBuf>
 fn create_free(dir: &Path, name_for: impl Fn(u32) -> String) -> Result<(PathBuf, File)> {
     for n in 1..NAMES {
         let candidate = dir.join(name_for(n));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
+        match create_new(&candidate) {
             Ok(file) => return Ok((candidate, file)),
             Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
             Err(err) => {
@@ -358,7 +375,10 @@ fn numbered(name: &str, n: u32, whole: bool) -> String {
     if n == 1 {
         return name.to_string();
     }
-    match name.rfind('.').filter(|&dot| dot > 0 && !whole) {
+    let dot = sandhill_proto::quick_table_stem(name)
+        .map(str::len)
+        .or_else(|| name.rfind('.'));
+    match dot.filter(|&dot| dot > 0 && !whole) {
         Some(dot) => format!("{} {n}{}", &name[..dot], &name[dot..]),
         None => format!("{name} {n}"),
     }

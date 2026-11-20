@@ -994,6 +994,18 @@ pub enum Call {
         project: String,
         tables: Vec<String>,
     },
+    /// Lists safe table files in an archive. Returns [`QuickArchiveMember`]s.
+    QuickListArchive {
+        path: String,
+    },
+    /// Copies selected archive members into an existing or new Explore
+    /// session. Returns [`QuickArchiveOpened`].
+    QuickOpenArchives {
+        project: Option<String>,
+        tables: Vec<String>,
+        archives: Vec<QuickArchiveSelection>,
+        combine: bool,
+    },
     /// The session's What we know card. Returns [`QuickCard`].
     QuickCard {
         project: String,

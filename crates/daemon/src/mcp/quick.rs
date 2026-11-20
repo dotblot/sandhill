@@ -64,7 +64,7 @@ pub(super) fn tool_list() -> [Value; 3] {
         json!({
             "name": QuickAgentTool::State.method(),
             "title": "Read the Explore session",
-            "description": "Read the What we know card with the source of each fact, the loaded tables and what they were recognized as, and the templates each table can use and what they still need. Suggested facts are not accepted yet.",
+            "description": "Read the What we know card with the source of each fact, its sample factors (first level is the reference), the recognized tables and their available plots. Suggested facts are not accepted yet.",
             "inputSchema": {"type": "object", "additionalProperties": false},
             "annotations": {"readOnlyHint": true},
         }),
@@ -78,8 +78,13 @@ pub(super) fn tool_list() -> [Value; 3] {
                 "comparison": {"type": "object", "required": ["higher", "lower"], "additionalProperties": false, "properties": {
                     "higher": {"type": "string"}, "lower": {"type": "string"}
                 }},
-                "groups": {"type": "array", "description": "Pairs [sample column, group] for the session.", "items": {
-                    "type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}
+                "factors": {"type": "array", "description": "Sample factors for the session. The first level is the reference.", "items": {
+                    "type": "object", "required": ["name", "levels", "assignments"], "additionalProperties": false, "properties": {
+                        "name": {"type": "string"}, "levels": {"type": "array", "items": {"type": "string"}},
+                        "assignments": {"type": "array", "items": {
+                            "type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}
+                        }}
+                    }
                 }},
                 "kind": {"enum": ["results", "counts", "normalized", "sample_sheet", "enrichment"]},
                 "gene": {"type": "string", "description": "Column holding gene identifiers."},

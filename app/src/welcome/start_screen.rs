@@ -721,7 +721,7 @@ impl AppWindow {
                                 .paths()
                                 .iter()
                                 .map(|path| path.to_string_lossy().into_owned())
-                                .partition(|path| crate::quick::is_table(path));
+                                .partition(|path| (crate::quick::is_table(path) || crate::quick::is_archive(path)) && !std::path::Path::new(path).is_dir());
                             if !tables.is_empty() {
                                 this.quick_open(tables, cx);
                             }

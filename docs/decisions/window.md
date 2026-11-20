@@ -114,8 +114,8 @@ differs, this wins.
   window and Welcome, titled "<name> · Explore": the Data Explorer and
   Plots side by side and the Guide (what is known, what can be made, the
   AI) on the right, with no Files, editor, Console, Terminal, Jobs, Git or
-  Variables. Make Plots is phase 1; Find Changed Genes (DESeq2) and Find
-  Enriched Pathways (GO) come next, each named for its question. They run
+  Variables. Make Plots and Find Changed Genes work from the Guide; Find
+  Enriched Pathways (GO) comes next. They run
   Sandhill's own R templates (R only); everything works without an AI
   account. Sandhill carries no R or packages. An AI suggestion takes a
   click before a plot uses it.
@@ -173,6 +173,25 @@ differs, this wins.
   2026-11-19). Use IDs Instead goes back. The organism packages (about
   90 MB each) install on their own from Getting Ready, into the library
   the user picks.
+  Find Changed Genes (Huan, 2026-11-19; `docs/design/find-changed-genes-plan.md`)
+  starts from raw counts and named sample factors. Every annotation
+  column in a sample sheet is a factor; the first level is the reference
+  and can be moved. Ready-made designs cover one or two factors, their
+  interaction and numeric dose trends. A custom formula is checked in R.
+  The methods are DESeq2, edgeR and limma-voom. Batch handling can use
+  fixed terms for batches or donors, SVA, RUVg, ComBat-seq or ComBat-ref.
+  `removeBatchEffect()` is for PCA and heatmap values only. Each comparison
+  adds a results table with its direction and gene symbols carried over.
+  Omnibus tests report a fold change for a separately chosen comparison.
+  The exact run is in `steps.R`; methods include the design, test, batch
+  handling and package versions. The packages install on demand from
+  Getting Ready into the library the user picks.
+  Compressed tables (Huan, 2026-11-19; `docs/design/find-changed-genes-plan.md`):
+  CSV, TSV, TAB and TXT also open gzipped. For ZIP, TAR and gzipped TAR,
+  choose which tables to copy into the session; the archive stays as it is.
+  For one counts file per sample, Combine into One Counts Table keeps the
+  genes found in every sample, lists the gene counts, and saves a CSV
+  and the recipe in `steps.R`.
 - Linux (Huan, 2026-11-18): Sandhill comes to Linux by way of Ubuntu
   (`docs/design/linux-plan.md`); other Linux systems and desktops wait.
   There Sandhill draws close, minimise and maximise in its title bar, on
