@@ -289,18 +289,17 @@ impl Daemon {
                 blocking(move || crate::irkernel::libraries(Path::new(&r))).await?,
             )?,
             Call::QuickReadiness => self.quick_readiness().await?,
-            Call::QuickInstall {
-                r,
-                packages,
-                library,
-            } => self.quick_install(r, packages, library).await?,
-            Call::QuickInstallAgent { kind } => self.quick_install_agent(kind).await?,
-            Call::QuickUninstall => self.quick_uninstall().await?,
-            Call::QuickCreatePython { name, python, sets } => {
-                self.quick_create_python(name, python, sets).await?
+            Call::PlanPackages { change } => self.plan_packages(change).await?,
+            Call::RunPackages { change } => self.run_packages(change).await?,
+            Call::PlanRuntime { runtime } => self.plan_runtime(runtime).await?,
+            Call::RunRuntime { runtime } => self.run_runtime(runtime).await?,
+            Call::InstallPrefs => self.install_prefs().await?,
+            Call::SetInstallPrefs { without_asking } => {
+                self.set_install_prefs(without_asking).await?
             }
+            Call::RemoveInstalled { items } => self.remove_installed(items).await?,
+            Call::QuickInstallAgent { kind } => self.quick_install_agent(kind).await?,
             Call::QuickAddIpykernel { prefix } => self.quick_add_ipykernel(prefix).await?,
-            Call::QuickInstallMiniforge => self.quick_install_miniforge().await?,
             Call::QuickStart { tables } => self.quick_start(tables).await?,
             Call::QuickKeep {
                 project,

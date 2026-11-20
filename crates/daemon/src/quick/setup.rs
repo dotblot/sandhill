@@ -1,26 +1,24 @@
 //! What Explore a Table needs on this computer: R, an R kernel and the R
-//! packages its templates use, Claude Code and Codex for its AI helper, and
-//! the jobs that install what is missing, each recorded (`record`) so
-//! Sandhill can later remove exactly what it installed.
+//! packages its templates use, Claude Code and Codex for its AI helper,
+//! the install tools found, and the job that installs an agent, recorded
+//! (`record`) so Sandhill can later remove exactly what it installed.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use sandhill_proto::{
-    JobSpec, KernelspecInfo, QUICK_R_MIN, QuickAgent, QuickPackage, QuickR, QuickReadiness,
-    QuickTool, RLibrary, RSource,
+    KernelspecInfo, QUICK_R_MIN, QuickAgent, QuickPackage, QuickR, QuickReadiness, QuickTool,
+    RLibrary, RSource,
 };
 
 use super::record;
-use crate::agents::shell_quote;
 use crate::kernelspecs::{self, Search};
 use crate::terminal::Launch;
 
 /// How long reading the installed packages may take.
 const LIST_TIMEOUT: Duration = Duration::from_secs(20);
-const CRAN: &str = "https://cloud.r-project.org";
 
 /// The packages Quick Tools uses: `(name, from Bioconductor, what for)`.
 /// The organism packages for gene symbols are large and installed only
@@ -128,13 +126,19 @@ pub fn readiness(
             })
         })
         .collect();
+    let python = super::python::readiness(search);
+    let (tools, brew, brew_version) = super::install::readiness_tools(search, python.tool.as_ref());
     QuickReadiness {
         r,
         kernel: kernel.map(|(name, _)| name),
         packages,
         agents,
         installed: installed_by_sandhill,
-        python: super::python::readiness(search),
+        python,
+        tools,
+        brew,
+        brew_version,
+        prefs: super::install::prefs(record_path),
     }
 }
 
@@ -288,7 +292,7 @@ fn parse_installed(out: &str) -> Listed {
 
 /// Whether packages can be built from source here: Apple's developer tools
 /// on a Mac (`xcode-select -p` names them), a C compiler elsewhere.
-fn can_build() -> bool {
+pub(super) fn can_build() -> bool {
     if cfg!(target_os = "macos") {
         Command::new("xcode-select")
             .arg("-p")
@@ -305,113 +309,9 @@ fn can_build() -> bool {
     }
 }
 
-/// A string as R writes one.
-fn r_string(text: &str) -> String {
-    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn r_vector(names: &[&str]) -> String {
-    let quoted: Vec<String> = names.iter().map(|n| r_string(n)).collect();
-    format!("c({})", quoted.join(", "))
-}
-
-/// The R code that installs `cran` and `bioconductor` packages into
-/// `library`, the one of R's libraries the user chose (never created
-/// here), never updating what is there: ready-built packages when this R
-/// takes them (never compiling then), else built from source, as
-/// Homebrew's and conda's R need. What it adds goes in `record`.
-fn install_code(cran: &[&str], bioconductor: &[&str], library: &str, record_path: &Path) -> String {
-    format!(
-        r#"local({{
-  {append}
-  binary <- .Platform$pkgType != "source"
-  type <- if (binary) "binary" else "source"
-  if (binary) options(install.packages.compile.from.source = "never")
-  else message("This R builds packages from their source code on this computer. It can take a few minutes.")
-  repos <- c(CRAN = {mirror})
-  lib <- {library}
-  {check_library}
-  before <- rownames(utils::installed.packages(lib.loc = lib))
-  on.exit(sandhill_record(lib, before), add = TRUE)
-  cran <- {cran}
-  bioc <- {bioc}
-  if (length(cran)) {{
-    message("Installing ", paste(cran, collapse = ", "), " into ", lib)
-    utils::install.packages(cran, lib = lib, repos = repos, type = type, Ncpus = max(1L, parallel::detectCores() - 1L))
-  }}
-  if (length(bioc)) {{
-    if (!requireNamespace("BiocManager", quietly = TRUE)) utils::install.packages("BiocManager", lib = lib, repos = repos, type = type)
-    message("Installing ", paste(bioc, collapse = ", "), " from Bioconductor into ", lib)
-    BiocManager::install(bioc, lib = lib, ask = FALSE, update = FALSE, type = type)
-  }}
-  wanted <- c(cran, bioc)
-  missing <- wanted[!vapply(wanted, requireNamespace, logical(1), quietly = TRUE)]
-  if (length(missing)) stop("These packages couldn't be installed: ", paste(missing, collapse = ", "), if (binary) ". A ready-built copy may not exist for this R yet." else ". Building them failed; the messages above say why.", call. = FALSE)
-  message("Done: every package for exploring tables is installed.")
-}})"#,
-        append = record::r_append(record_path),
-        mirror = r_string(CRAN),
-        library = r_string(library),
-        check_library = crate::irkernel::check_library_code(),
-        cran = r_vector(cran),
-        bioc = r_vector(bioconductor),
-    )
-}
-
-/// The job that installs `packages` (names from [`PACKAGES`]) into
-/// `library` of the R at `r`, with its output also written to `log`.
-pub fn install(
-    r: &str,
-    packages: &[String],
-    library: &str,
-    log: &Path,
-    record_path: &Path,
-) -> Result<Launch> {
-    let r = PathBuf::from(r);
-    if !r.is_file() {
-        bail!("{} isn't an R program", r.display());
-    }
-    if !Path::new(library).is_dir() {
-        bail!("the library {library} doesn't exist; Sandhill doesn't create libraries");
-    }
-    let mut cran = Vec::new();
-    let mut bioconductor = Vec::new();
-    for name in packages {
-        let Some(&(known, bioc, _)) = PACKAGES.iter().find(|(n, ..)| n == name) else {
-            bail!("{name} isn't one of the packages for exploring tables");
-        };
-        if bioc {
-            bioconductor.push(known);
-        } else {
-            cran.push(known);
-        }
-    }
-    if cran.is_empty() && bioconductor.is_empty() {
-        bail!("no packages to install");
-    }
-    let rscript = r
-        .parent()
-        .map(|bin| bin.join("Rscript"))
-        .filter(|p| p.is_file())
-        .with_context(|| format!("there is no Rscript beside {}", r.display()))?;
-    let home = PathBuf::from(std::env::var_os("HOME").context("HOME isn't set")?);
-    let job = JobSpec {
-        path: None,
-        command: Some(format!(
-            "set -o pipefail; {} -e {} 2>&1 | tee {}",
-            shell_quote(&rscript.to_string_lossy()),
-            shell_quote(&install_code(&cran, &bioconductor, library, record_path)),
-            shell_quote(&log.to_string_lossy())
-        )),
-    };
-    let mut launch = crate::jobs::launch(&job, Some(&home), None)?;
-    launch.title = "Install packages for exploring tables".into();
-    Ok(launch)
-}
-
 /// The job that installs Claude Code or Codex with its own command, its
 /// output also in `log`, and records it.
-pub fn install_agent(kind: &str, log: &Path, record_path: &Path) -> Result<Launch> {
+pub fn install_agent(exe: &Path, kind: &str, log: &Path, record_path: &Path) -> Result<Launch> {
     let Some(&(kind, how, command)) = AGENTS.iter().find(|(k, ..)| *k == kind) else {
         bail!("{kind} isn't an agent Sandhill installs");
     };
@@ -421,25 +321,17 @@ pub fn install_agent(kind: &str, log: &Path, record_path: &Path) -> Result<Launc
     if how == "npm" && crate::agents::find("npm").is_none() {
         bail!("Codex needs Node.js, which isn't installed");
     }
-    let home = PathBuf::from(std::env::var_os("HOME").context("HOME isn't set")?);
-    let job = JobSpec {
-        path: None,
-        command: Some(format!(
-            "set -o pipefail; ( {command} && {} ) 2>&1 | tee {}",
-            record::sh_append_agent(record_path, kind, how),
-            shell_quote(&log.to_string_lossy())
-        )),
+    let job = super::install::Job::Agent {
+        command: command.into(),
+        name: kind.into(),
+        method: how.into(),
     };
-    let mut launch = crate::jobs::launch(&job, Some(&home), None)?;
-    launch.title = format!(
-        "Install {}",
-        if kind == "claude" {
-            "Claude Code"
-        } else {
-            "Codex"
-        }
-    );
-    Ok(launch)
+    let title = if kind == "claude" {
+        "Install Claude Code"
+    } else {
+        "Install Codex"
+    };
+    super::install::launch(exe, record_path, job, log, title)
 }
 
 #[cfg(test)]
@@ -493,53 +385,16 @@ mod tests {
     }
 
     #[test]
-    fn only_quick_tools_packages_and_agents_can_be_installed() {
+    fn only_supported_agents_can_be_installed() {
         let record = Path::new("/tmp/record.tsv");
-        let err = install(
-            "/bin/sh",
-            &["Seurat".to_string()],
-            "/tmp",
+        let err = install_agent(
+            Path::new("/sandhilld"),
+            "pi",
             Path::new("/tmp/x.log"),
             record,
         )
         .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("isn't one of the packages for exploring tables")
-        );
-        let err = install(
-            "/bin/sh",
-            &["ggplot2".to_string()],
-            "/nonexistent/sandhill-library",
-            Path::new("/tmp/x.log"),
-            record,
-        )
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Sandhill doesn't create libraries")
-        );
-        let err = install_agent("pi", Path::new("/tmp/x.log"), record).unwrap_err();
         assert!(err.to_string().contains("isn't an agent Sandhill installs"));
-    }
-
-    #[test]
-    fn install_code_records_never_compiles_ready_built_packages_or_updates() {
-        let code = install_code(
-            &["ggplot2"],
-            &["DESeq2"],
-            "/opt/homebrew/lib/R/4.6/site-library",
-            Path::new("/tmp/record.tsv"),
-        );
-        assert!(
-            code.contains("if (binary) options(install.packages.compile.from.source = \"never\")")
-        );
-        assert!(code.contains("type <- if (binary) \"binary\" else \"source\""));
-        assert!(code.contains("update = FALSE"));
-        assert!(code.contains("lib <- \"/opt/homebrew/lib/R/4.6/site-library\""));
-        assert!(!code.contains("dir.create(lib"));
-        assert!(code.contains("on.exit(sandhill_record(lib, before)"));
-        assert!(code.contains("/tmp/record.tsv"));
     }
 
     #[test]

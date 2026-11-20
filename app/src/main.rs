@@ -10,6 +10,7 @@ mod connection;
 mod daemon;
 mod editor;
 mod git;
+mod install_confirm;
 mod look;
 mod panes;
 mod prefs;

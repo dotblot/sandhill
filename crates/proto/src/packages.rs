@@ -137,6 +137,18 @@ pub struct Packages {
     /// Python: whether the environment is a conda one.
     #[serde(default)]
     pub conda: bool,
+    /// The session's R program (`R.home("bin")/R`) or Python program
+    /// (`sys.executable`): with `libraries`, where its packages change.
+    #[serde(default)]
+    pub program: String,
+    /// Python: the environment's folder (`sys.prefix`).
+    #[serde(default)]
+    pub prefix: String,
+    /// R: those of `libraries` the session can write to
+    /// (`file.access(lib, 2) == 0`), as the session itself sees them, so a
+    /// project's own library (renv) counts.
+    #[serde(default)]
+    pub writable_libraries: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

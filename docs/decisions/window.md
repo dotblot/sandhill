@@ -141,6 +141,24 @@ differs, this wins.
   Each shows its exact command before it runs; packages come from
   conda-forge only, and Miniforge's installer leaves the shell's settings
   alone.
+  Asking before installing (Huan, 2026-11-20;
+  `docs/design/clean-footprint-plan.md`): nothing installs, updates or is
+  removed in the user's own R or Python until its row has shown what
+  (packages, where each comes from, versions when known), which tool
+  (from those that suit the target: R's own installer, mamba/conda, pip,
+  uv; the suggested one first), which folder (full path) and the exact
+  command; then Cancel or the verb. Getting Ready lists the tools found
+  (mamba/conda, uv, Homebrew). Without R it offers R from CRAN (Mac),
+  Homebrew or a conda environment; a new Python environment can be made
+  with mamba/conda or uv, in a folder the user can change; Install
+  Miniforge… shows only when there is neither. Install Without Asking
+  (off by default) reuses the last target and tool chosen for that
+  language, only for installs into that same target, and says afterwards
+  what it did; updates and removals always ask. Every install goes in
+  the record with its tool, date and reason. What Sandhill Installed
+  replaces Remove What Sandhill Installed: the record with ticks, none
+  ticked, removing the ticked items still as Sandhill left them, each
+  with the tool that installed it.
   The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
   a title-bar switch shared by every Explore window on this Mac. Until
   that switch is used, the pane shows only with a signed-in Claude Code

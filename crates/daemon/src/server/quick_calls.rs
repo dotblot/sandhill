@@ -5,12 +5,13 @@
 use std::time::Duration;
 
 use sandhill_proto::{
-    EVENT_RUN_FINISHED, QuickAgentTool, QuickArchiveSelection, QuickCard, QuickRequest,
+    EVENT_RUN_FINISHED, InstalledKey, NewRuntime, PackageChange, QuickAgentTool,
+    QuickArchiveSelection, QuickCard, QuickRequest,
 };
 use tokio::sync::broadcast::error::RecvError;
 
 use super::*;
-use crate::quick::{archive, folder, python, record, run, setup};
+use crate::quick::{archive, folder, install, python, record, run, setup};
 use crate::terminal::Launch;
 
 /// How long one template may run: loading a large table, a big heatmap.
@@ -61,60 +62,122 @@ impl Daemon {
         })?)
     }
 
-    pub(super) async fn quick_install(
-        &self,
-        r: String,
-        packages: Vec<String>,
-        library: String,
-    ) -> Result<Value> {
-        let record = self.install_record();
-        self.quick_job(move |log| setup::install(&r, &packages, &library, log, &record))
-            .await
+    pub(super) async fn plan_packages(&self, change: PackageChange) -> Result<Value> {
+        let plan = blocking(move || {
+            Ok(install::plan_packages(
+                &crate::kernelspecs::Search::from_env(),
+                change,
+            ))
+        })
+        .await?;
+        Ok(serde_json::to_value(plan)?)
     }
 
-    pub(super) async fn quick_install_agent(&self, kind: String) -> Result<Value> {
+    pub(super) async fn run_packages(&self, change: PackageChange) -> Result<Value> {
         let record = self.install_record();
-        self.quick_job(move |log| setup::install_agent(&kind, log, &record))
-            .await
-    }
-
-    pub(super) async fn quick_uninstall(&self) -> Result<Value> {
-        let record = self.install_record();
-        self.quick_job(move |log| record::uninstall(&record, log))
-            .await
-    }
-
-    pub(super) async fn quick_create_python(
-        &self,
-        name: String,
-        version: String,
-        sets: Vec<String>,
-    ) -> Result<Value> {
-        let record = self.install_record();
+        let executable = self.options.executable.clone();
         self.quick_job(move |log| {
-            let search = crate::kernelspecs::Search::from_env();
-            python::create(&search, &name, &version, &sets, log, &record)
+            let plan = install::plan_packages(&crate::kernelspecs::Search::from_env(), change);
+            if let Some(refused) = &plan.refused {
+                bail!("{refused}");
+            }
+            let title = install::package_title(&plan);
+            let launch = install::launch(
+                &executable,
+                &record,
+                install::Job::Packages(plan.clone()),
+                log,
+                &title,
+            )?;
+            install::remember(&record, &plan)?;
+            Ok(launch)
         })
         .await
     }
 
-    pub(super) async fn quick_add_ipykernel(&self, prefix: String) -> Result<Value> {
-        let record = self.install_record();
-        self.quick_job(move |log| {
-            python::add_ipykernel(
+    pub(super) async fn plan_runtime(&self, runtime: NewRuntime) -> Result<Value> {
+        let plan = blocking(move || {
+            Ok(install::plan_runtime(
                 &crate::kernelspecs::Search::from_env(),
-                &prefix,
-                log,
+                runtime,
+            ))
+        })
+        .await?;
+        Ok(serde_json::to_value(plan)?)
+    }
+
+    pub(super) async fn run_runtime(&self, runtime: NewRuntime) -> Result<Value> {
+        let record = self.install_record();
+        let executable = self.options.executable.clone();
+        self.quick_job(move |log| {
+            let plan = install::plan_runtime(&crate::kernelspecs::Search::from_env(), runtime);
+            if let Some(refused) = &plan.refused {
+                bail!("{refused}");
+            }
+            let title = install::runtime_title(&plan.runtime);
+            install::launch(
+                &executable,
                 &record,
+                install::Job::Runtime(plan),
+                log,
+                title,
             )
         })
         .await
     }
 
-    pub(super) async fn quick_install_miniforge(&self) -> Result<Value> {
+    pub(super) async fn install_prefs(&self) -> Result<Value> {
         let record = self.install_record();
+        Ok(serde_json::to_value(
+            blocking(move || Ok(install::prefs(&record))).await?,
+        )?)
+    }
+
+    pub(super) async fn set_install_prefs(&self, without_asking: bool) -> Result<Value> {
+        let record = self.install_record();
+        let prefs = blocking(move || {
+            install::update_prefs(&record, |prefs| prefs.without_asking = without_asking)
+        })
+        .await?;
+        Ok(serde_json::to_value(prefs)?)
+    }
+
+    pub(super) async fn remove_installed(&self, items: Vec<InstalledKey>) -> Result<Value> {
+        if items.is_empty() {
+            bail!("Choose at least one item to remove.");
+        }
+        let record = self.install_record();
+        let executable = self.options.executable.clone();
         self.quick_job(move |log| {
-            python::install_miniforge(&crate::kernelspecs::Search::from_env(), log, &record)
+            install::launch(
+                &executable,
+                &record,
+                install::Job::Remove(items),
+                log,
+                "Remove what Sandhill installed",
+            )
+        })
+        .await
+    }
+
+    pub(super) async fn quick_install_agent(&self, kind: String) -> Result<Value> {
+        let record = self.install_record();
+        let executable = self.options.executable.clone();
+        self.quick_job(move |log| setup::install_agent(&executable, &kind, log, &record))
+            .await
+    }
+
+    pub(super) async fn quick_add_ipykernel(&self, prefix: String) -> Result<Value> {
+        let record = self.install_record();
+        let self_executable = self.options.executable.clone();
+        self.quick_job(move |log| {
+            python::add_ipykernel(
+                &self_executable,
+                &crate::kernelspecs::Search::from_env(),
+                &prefix,
+                log,
+                &record,
+            )
         })
         .await
     }

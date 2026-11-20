@@ -105,18 +105,30 @@ pub struct QuickAgent {
 /// One thing Sandhill installed, from its record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuickInstalled {
-    /// `r-package`, `kernel`, `agent`, `python-env`, `ipykernel` or
-    /// `miniforge`.
+    /// `r-package`, `python-package`, `conda-package`, `kernel`, `agent`,
+    /// `python-env`, `conda-env`, `ipykernel`, `miniforge`, `brew`,
+    /// `r-cran` or `uv-python`.
     pub kind: String,
     pub name: String,
     #[serde(default)]
     pub version: String,
-    /// The library, kernel folder, install method, environment or
+    /// The library, environment, kernel folder, install method or
     /// Miniforge folder.
     pub place: String,
     /// Still as Sandhill left it, so removing it is Sandhill's to do. A
     /// package updated or reinstalled since is the user's now.
     pub ours: bool,
+    /// The day it was installed, `2026-11-20`.
+    #[serde(default)]
+    pub date: String,
+    /// What installed it: an [`InstallTool::id`](crate::InstallTool::id),
+    /// `brew`, `npm`, `native` or `installer`; empty in older records.
+    #[serde(default)]
+    pub tool: String,
+    /// Why, in plain words; empty in older records and for what came
+    /// along with what was asked for.
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// The conda or mamba Getting Ready uses for Python environments.
@@ -251,6 +263,18 @@ pub struct QuickReadiness {
     pub installed: Vec<QuickInstalled>,
     #[serde(default)]
     pub python: QuickPython,
+    /// The install tools found on this computer besides each R's own
+    /// installer and each Python's pip: mamba or conda, and uv.
+    #[serde(default)]
+    pub tools: Vec<crate::InstallToolInfo>,
+    /// Homebrew's `brew`, when there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brew: Option<String>,
+    /// Homebrew's version, like `4.6.3`; empty when unknown.
+    #[serde(default)]
+    pub brew_version: String,
+    #[serde(default)]
+    pub prefs: crate::InstallPrefs,
 }
 
 /// A package install started: its job, and the file its output also goes

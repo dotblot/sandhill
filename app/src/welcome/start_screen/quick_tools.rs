@@ -6,83 +6,44 @@
 //! installing what is missing and removing what Sandhill installed), and
 //! the tables explored, which Recent lists.
 
-use std::collections::HashMap;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
 
 use gpui_kit::component::checkbox::Checkbox;
 use sandhill_proto::{
-    AgentAccount, FileText, MINIFORGE_COMMAND, PYTHON_ENV_NAME, PYTHON_SETS, PYTHON_VERSIONS,
-    QuickInstalling, QuickPython, QuickReadiness, QuickTool, RSource, ipykernel_args,
-    python_create_args, python_env_name_ok,
+    AgentAccount, InstallPrefs, InstallTool, InstalledKey, NewRuntime, PYTHON_ENV_NAME,
+    PYTHON_SETS, PYTHON_VERSIONS, PackageAction, PackageChange, PackagePlan, QuickInstalled,
+    QuickInstalling, QuickReadiness, QuickTool, RSource, RuntimePlan, ipykernel_args,
+    python_env_name_ok,
 };
 
+use crate::install_confirm::{self as review, Choice, Job, Review};
 use crate::view::quick_archive::{ArchivePicker, TABLE_TYPES};
 use sandhill_proto::{QuickArchiveOpened, QuickArchiveSelection};
 
 use super::*;
 
-/// How often a running install is looked at.
-const INSTALL_POLL: Duration = Duration::from_secs(2);
-const CRAN_MAC: &str = "https://cloud.r-project.org/bin/macosx/";
+use crate::welcome::folder_dialog::choose_local_path;
 const NODE: &str = "https://nodejs.org/";
 
-/// What is being installed or removed.
 #[derive(Clone, PartialEq, Eq)]
-enum Installing {
-    /// The missing packages for exploring tables, into this library.
-    Packages(String, QuickTool),
-    Kernel(String),
-    /// An organism package for gene symbols (with AnnotationDbi when
-    /// missing), into `library`.
-    Symbols {
-        library: String,
-        package: String,
-    },
-    /// Claude Code (`claude`) or Codex (`codex`).
-    Agent(String),
-    Remove,
-    /// A new Python environment.
-    CreatePython {
-        name: String,
-        python: String,
-        sets: Vec<String>,
-    },
-    /// ipykernel into the environment at this prefix.
-    Ipykernel(String),
+enum PackageRow {
+    Plots,
+    ChangedGenes,
+    Symbols(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RuntimeRow {
+    CranR,
+    BrewR,
+    CondaR,
+    Python,
     Miniforge,
 }
 
-impl Installing {
-    fn what(&self) -> String {
-        match self {
-            Installing::Packages(_, QuickTool::Differential) => {
-                "Installing packages for finding changed genes".into()
-            }
-            Installing::Packages(..) => "Installing packages".into(),
-            Installing::Kernel(_) => "Installing IRkernel".into(),
-            Installing::Symbols { package, .. } => format!("Installing {package}"),
-            Installing::Agent(kind) => format!("Installing {}", agent_name(kind)),
-            Installing::Remove => "Removing what Sandhill installed".into(),
-            Installing::CreatePython { name, .. } => {
-                format!("Creating the Python environment {name}")
-            }
-            Installing::Ipykernel(_) => "Adding ipykernel".into(),
-            Installing::Miniforge => "Installing Miniforge".into(),
-        }
-    }
-
-    /// Which box its progress shows in.
-    fn section(&self) -> Section {
-        match self {
-            Installing::Packages(..) | Installing::Kernel(_) | Installing::Symbols { .. } => {
-                Section::R
-            }
-            Installing::CreatePython { .. } | Installing::Ipykernel(_) | Installing::Miniforge => {
-                Section::Python
-            }
-            Installing::Agent(_) | Installing::Remove => Section::Ai,
-        }
-    }
+enum QuickReview {
+    Packages(PackageRow, Vec<String>, Review<PackagePlan>),
+    Runtime(RuntimeRow, Review<RuntimePlan>),
 }
 
 /// Getting Ready's boxes.
@@ -91,6 +52,7 @@ enum Section {
     R,
     Python,
     Ai,
+    Record,
 }
 
 /// The new Python environment's choices, while its form is open.
@@ -99,6 +61,8 @@ struct PythonForm {
     _changed: Subscription,
     version: &'static str,
     sets: Vec<&'static str>,
+    tool: InstallTool,
+    parent: Option<String>,
 }
 
 fn agent_name(kind: &str) -> &'static str {
@@ -110,39 +74,18 @@ fn agent_name(kind: &str) -> &'static str {
 }
 
 struct Install {
-    what: Installing,
-    job: String,
-    log: Option<String>,
-    /// The install's latest line, as progress.
-    last: Option<String>,
-    /// Its whole output, for Show details.
-    output: String,
-    failed: bool,
-}
-
-/// What the library being chosen is for.
-#[derive(Clone, PartialEq, Eq)]
-enum LibraryFor {
-    Kernel,
-    /// The missing packages for exploring tables.
-    Packages(QuickTool),
-    /// An organism package for gene symbols.
-    Symbols(String),
+    section: Section,
+    job: Job,
+    notice: Option<String>,
 }
 
 /// A question asked in its row before something runs.
 #[derive(Clone, PartialEq, Eq)]
 enum Confirm {
-    /// Install this agent with its own command.
     Agent(String),
-    /// Remove what Sandhill installed.
     Remove,
-    /// Which of R's libraries packages or IRkernel go in: asked every
-    /// time, and none is ever created (Huan, 2026-11-19).
-    Library(LibraryFor),
-    /// Add ipykernel to the environment at this prefix.
+    Kernel,
     Ipykernel(String),
-    Miniforge,
 }
 
 #[derive(Default)]
@@ -150,7 +93,14 @@ pub(crate) struct QuickPage {
     readiness: Option<Result<QuickReadiness, String>>,
     checking: bool,
     install: Option<Install>,
-    details: bool,
+    starting: Option<Section>,
+    install_error: Option<(Section, String)>,
+    notice: Option<(Section, String)>,
+    reviewing: Option<QuickReview>,
+    plan_id: u64,
+    setting_prefs: bool,
+    prefs_error: Option<String>,
+    selected: HashSet<InstalledKey>,
     confirm: Option<Confirm>,
     /// Whether each agent's own login is signed in, as the Agents page
     /// last saw it; never asked of the agent here.
@@ -174,6 +124,20 @@ fn parent_of(path: &str) -> String {
 }
 
 impl QuickPage {
+    fn busy(&self) -> bool {
+        self.starting.is_some()
+            || self
+                .install
+                .as_ref()
+                .is_some_and(|i| i.job.finished.is_none())
+    }
+
+    fn clear_review(&mut self) {
+        self.reviewing = None;
+        self.confirm = None;
+        self.plan_id += 1;
+    }
+
     /// Checks this Mac again the next time the page shows.
     pub(super) fn forget_check(&mut self) {
         if !self.checking {
@@ -254,97 +218,225 @@ impl AppWindow {
         .detach();
     }
 
-    fn quick_install(&mut self, what: Installing, cx: &mut Context<Self>) {
+    fn quick_plan_packages(&mut self, row: PackageRow, cx: &mut Context<Self>) {
+        let Some(Ok(found)) = &self.start.quick.readiness else {
+            return;
+        };
+        let Some(r) = &found.r else { return };
+        let libraries = r
+            .libraries
+            .iter()
+            .filter(|l| l.writable)
+            .map(|l| l.path.clone())
+            .collect::<Vec<_>>();
+        let (tool, reason) = match &row {
+            PackageRow::Plots => (QuickTool::Plot, "Explore a Table needs it to make plots"),
+            PackageRow::ChangedGenes => (QuickTool::Differential, "Find Changed Genes needs it"),
+            PackageRow::Symbols(name) => (
+                QuickTool::Symbols,
+                if name == "org.Hs.eg.db" {
+                    "Gene symbols for human genes"
+                } else {
+                    "Gene symbols for mouse genes"
+                },
+            ),
+        };
+        let packages = found
+            .packages
+            .iter()
+            .filter(|p| {
+                p.version.is_none()
+                    && p.tool == tool
+                    && match &row {
+                        PackageRow::Symbols(name) => p.name == *name || p.name == "AnnotationDbi",
+                        _ => true,
+                    }
+            })
+            .map(|p| p.name.clone())
+            .collect::<Vec<_>>();
+        if packages.is_empty() || self.start.quick.busy() {
+            return;
+        }
+        let mut change = PackageChange {
+            action: PackageAction::Install,
+            target: review::r_target(r.path.clone(), &libraries, &found.prefs),
+            packages,
+            tool: None,
+            reason: reason.into(),
+        };
+        let automatic = review::automatic_tool(&change, &found.prefs);
+        change.tool = automatic;
+        self.quick_request_packages(row, libraries, change, automatic, cx);
+    }
+
+    fn quick_request_packages(
+        &mut self,
+        row: PackageRow,
+        libraries: Vec<String>,
+        change: PackageChange,
+        automatic: Option<InstallTool>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(daemon) = self.local_daemon() else {
             return;
         };
-        let Some(Ok(readiness)) = &self.start.quick.readiness else {
+        let q = &mut self.start.quick;
+        q.clear_review();
+        q.python_form = None;
+        q.reviewing = Some(QuickReview::Packages(
+            row.clone(),
+            libraries.clone(),
+            Review::Planning,
+        ));
+        let id = q.plan_id;
+        let pending = daemon.call::<PackagePlan>(Call::PlanPackages { change });
+        cx.spawn(async move |this, cx| {
+            let result = pending.await;
+            this.update(cx, |this, cx| {
+                if this.start.quick.plan_id != id {
+                    return;
+                }
+                if let (Some(tool), Ok(plan)) = (automatic, &result)
+                    && plan.change.tool == Some(tool)
+                    && plan.refused.is_none()
+                    && !plan.command.is_empty()
+                {
+                    this.quick_run_packages(plan, true, cx);
+                    return;
+                }
+                this.start.quick.reviewing =
+                    Some(QuickReview::Packages(row, libraries, result.into()));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn quick_change_plan(&mut self, choice: Choice, cx: &mut Context<Self>) {
+        let Some(QuickReview::Packages(row, libraries, Review::Ready(plan))) =
+            &self.start.quick.reviewing
+        else {
             return;
         };
-        let r = readiness.r.as_ref().map(|r| r.path.clone());
-        let started = match what.clone() {
-            Installing::Packages(library, tool) => {
-                let Some(r) = r else { return };
-                let missing: Vec<String> = readiness
-                    .packages
-                    .iter()
-                    .filter(|p| p.version.is_none() && p.tool == tool)
-                    .map(|p| p.name.clone())
-                    .collect();
-                let call = daemon.call::<QuickInstalling>(Call::QuickInstall {
-                    r,
-                    packages: missing,
-                    library,
-                });
-                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
-            }
-            Installing::Symbols { library, package } => {
-                let Some(r) = r else { return };
-                let packages: Vec<String> = readiness
-                    .packages
-                    .iter()
-                    .filter(|p| {
-                        p.version.is_none() && (p.name == package || p.name == "AnnotationDbi")
-                    })
-                    .map(|p| p.name.clone())
-                    .collect();
-                let call = daemon.call::<QuickInstalling>(Call::QuickInstall {
-                    r,
-                    packages,
-                    library,
-                });
-                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
-            }
-            Installing::Kernel(library) => {
-                let Some(r) = r else { return };
-                let call = daemon.call::<TerminalInfo>(Call::InstallIrkernel {
-                    r,
-                    project: None,
-                    library: Some(library),
-                });
-                cx.background_spawn(async move { call.await.map(|job| (job.id, None)) })
-            }
-            Installing::Agent(kind) => {
-                let call = daemon.call::<QuickInstalling>(Call::QuickInstallAgent { kind });
-                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
-            }
-            Installing::Remove => {
-                let call = daemon.call::<QuickInstalling>(Call::QuickUninstall);
-                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
-            }
-            Installing::CreatePython { name, python, sets } => {
-                let call =
-                    daemon.call::<QuickInstalling>(Call::QuickCreatePython { name, python, sets });
-                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
-            }
-            Installing::Ipykernel(prefix) => {
-                let call = daemon.call::<QuickInstalling>(Call::QuickAddIpykernel { prefix });
-                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
-            }
-            Installing::Miniforge => {
-                let call = daemon.call::<QuickInstalling>(Call::QuickInstallMiniforge);
-                cx.background_spawn(async move { call.await.map(|i| (i.job.id, Some(i.log))) })
-            }
+        let mut change = plan.change.clone();
+        choice.apply(&mut change);
+        if change != plan.change {
+            self.quick_request_packages(row.clone(), libraries.clone(), change, None, cx);
+        }
+    }
+
+    fn quick_plan_runtime(&mut self, row: RuntimeRow, runtime: NewRuntime, cx: &mut Context<Self>) {
+        let Some(daemon) = self.local_daemon() else {
+            return;
         };
-        self.start.quick.confirm = None;
-        self.start.quick.python_form = None;
+        let q = &mut self.start.quick;
+        if q.busy() {
+            return;
+        }
+        q.clear_review();
+        if row != RuntimeRow::Python {
+            q.python_form = None;
+        }
+        q.reviewing = Some(QuickReview::Runtime(row, Review::Planning));
+        let id = q.plan_id;
+        let pending = daemon.call::<RuntimePlan>(Call::PlanRuntime { runtime });
+        cx.spawn(async move |this, cx| {
+            let result = pending.await;
+            this.update(cx, |this, cx| {
+                if this.start.quick.plan_id == id {
+                    this.start.quick.reviewing = Some(QuickReview::Runtime(row, result.into()));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn quick_run_review(&mut self, cx: &mut Context<Self>) {
+        match &self.start.quick.reviewing {
+            Some(QuickReview::Packages(_, _, Review::Ready(plan)))
+                if plan.refused.is_none() && !plan.command.is_empty() =>
+            {
+                let plan = plan.clone();
+                self.quick_run_packages(&plan, false, cx);
+            }
+            Some(QuickReview::Runtime(row, Review::Ready(plan)))
+                if plan.refused.is_none() && !plan.command.is_empty() =>
+            {
+                let runtime = plan.runtime.clone();
+                let section = match row {
+                    RuntimeRow::CranR | RuntimeRow::BrewR | RuntimeRow::CondaR => Section::R,
+                    RuntimeRow::Python | RuntimeRow::Miniforge => Section::Python,
+                };
+                let title = format!("Installing {}", review::runtime_name(&runtime));
+                self.quick_start_install(Call::RunRuntime { runtime }, section, title, None, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn quick_run_packages(&mut self, plan: &PackagePlan, automatic: bool, cx: &mut Context<Self>) {
+        self.quick_start_install(
+            Call::RunPackages {
+                change: plan.change.clone(),
+            },
+            Section::R,
+            review::progress_title(&plan.change),
+            automatic.then(|| review::auto_notice(plan)),
+            cx,
+        );
+    }
+
+    fn quick_start_install(
+        &mut self,
+        call: Call,
+        section: Section,
+        title: String,
+        notice: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(daemon) = self.local_daemon() else {
+            return;
+        };
+        let q = &mut self.start.quick;
+        if q.busy() {
+            return;
+        }
+        q.clear_review();
+        q.python_form = None;
+        q.install = None;
+        q.install_error = None;
+        q.notice = None;
+        q.starting = Some(section);
+        let kernel = matches!(&call, Call::InstallIrkernel { .. });
+        let started = if kernel {
+            let call = daemon.call::<TerminalInfo>(call);
+            cx.background_spawn(async move { call.await.map(|job| (job, None)) })
+        } else {
+            let call = daemon.call::<QuickInstalling>(call);
+            cx.background_spawn(async move { call.await.map(|i| (i.job, Some(i.log))) })
+        };
         cx.spawn(async move |this, cx| {
             let started = started.await;
             this.update(cx, |this, cx| {
+                let q = &mut this.start.quick;
+                q.starting = None;
                 match started {
-                    Ok((job, log)) => {
-                        this.start.quick.install = Some(Install {
-                            what,
+                    Ok((info, log)) => {
+                        let job = Job::new(info, log, title);
+                        review::watch(daemon, &job, Self::quick_install_status, cx).detach();
+                        q.install = Some(Install {
+                            section,
                             job,
-                            log,
-                            last: None,
-                            output: String::new(),
-                            failed: false,
+                            notice,
                         });
-                        this.quick_watch_install(cx);
                     }
                     Err(err) => {
-                        this.start.problem = Some(format!("Installing didn't start: {err:#}"))
+                        q.install_error = Some((section, format!("{title} didn't start: {err}")))
                     }
                 }
                 cx.notify();
@@ -352,80 +444,35 @@ impl AppWindow {
             .ok();
         })
         .detach();
+        cx.notify();
     }
 
-    /// Follows a running install until it ends, then checks again.
-    fn quick_watch_install(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
-            return;
+    fn quick_install_status(
+        &mut self,
+        id: &str,
+        output: Option<String>,
+        finished: Option<bool>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let q = &mut self.start.quick;
+        let Some(install) = q.install.as_mut().filter(|i| i.job.id == id) else {
+            return false;
         };
-        let Some(install) = &self.start.quick.install else {
-            return;
-        };
-        let job = install.job.clone();
-        let log = install.log.clone();
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(INSTALL_POLL).await;
-                let terminals = daemon.call::<Vec<TerminalInfo>>(Call::ListTerminals).await;
-                let output = match &log {
-                    Some(path) => daemon
-                        .call::<FileText>(Call::ReadFile { path: path.clone() })
-                        .await
-                        .map(|f| f.text)
-                        .unwrap_or_default(),
-                    None => String::new(),
-                };
-                let ended = terminals.as_ref().ok().and_then(|list| {
-                    list.iter()
-                        .find(|t| t.id == job)
-                        .map(|t| (!t.running).then(|| t.exit.as_ref().and_then(|e| e.code)))
-                });
-                let done = this
-                    .update(cx, |this, cx| {
-                        let Some(install) = &mut this.start.quick.install else {
-                            return true;
-                        };
-                        if install.job != job {
-                            return true;
-                        }
-                        install.last = output
-                            .lines()
-                            .rev()
-                            .map(str::trim)
-                            .find(|l| !l.is_empty())
-                            .map(str::to_string);
-                        install.output = output.clone();
-                        // Found and ended: its exit code says how; still
-                        // running: wait; gone from the list: look again.
-                        let finished = match ended {
-                            Some(Some(code)) => Some(code == Some(0)),
-                            Some(None) => None,
-                            None if terminals.is_ok() => Some(true),
-                            None => None,
-                        };
-                        cx.notify();
-                        match finished {
-                            Some(true) => {
-                                this.start.quick.install = None;
-                                this.quick_check(cx);
-                                true
-                            }
-                            Some(false) => {
-                                install.failed = true;
-                                this.quick_check(cx);
-                                true
-                            }
-                            None => false,
-                        }
-                    })
-                    .unwrap_or(true);
-                if done {
-                    break;
-                }
+        if let Some(output) = output {
+            install.job.output = output;
+        }
+        install.job.finished = finished;
+        if finished.is_some() {
+            if finished == Some(true) {
+                q.notice = install
+                    .notice
+                    .take()
+                    .map(|notice| (install.section, notice));
             }
-        })
-        .detach();
+            self.quick_check(cx);
+        }
+        cx.notify();
+        true
     }
 
     /// Tables chosen or dropped open in Sandhill's own storage. Archives
@@ -728,7 +775,7 @@ impl AppWindow {
             .filter(|p| p.version.is_none() && p.tool == QuickTool::Plot)
             .map(|p| p.name.as_str())
             .collect();
-        let busy = q.install.as_ref().is_some_and(|i| !i.failed);
+        let busy = q.busy() || q.checking || q.setting_prefs;
         let mut rows: Vec<AnyElement> = Vec::new();
         let r_row = look::settings_row(
             if r_ok { r_text.clone() } else { "R".into() },
@@ -751,34 +798,45 @@ impl AppWindow {
                         };
                         format!("{from}: {}. {builds}", r.path)
                     }
-                    _ => {
-                        let chip = if cfg!(target_arch = "aarch64") {
-                            "the file ending in arm64.pkg (Apple chip)"
-                        } else {
-                            "the file ending in x86_64.pkg (Intel chip)"
-                        };
-                        format!(
-                            "{r_text} Get R opens R's download page: choose {chip}, open it and follow the installer, then come back here."
-                        )
-                    }
+                    _ => r_text.clone(),
                 },
                 p,
             )),
         );
-        rows.push(
-            if r_ok {
-                r_row
-            } else {
-                r_row.child(
-                    Button::new("quick-get-r")
-                        .small()
-                        .primary()
-                        .label("Get R…")
-                        .on_click(|_, _, cx| cx.open_url(CRAN_MAC)),
-                )
+        rows.push(r_row.into_any_element());
+        if !r_ok {
+            if cfg!(target_os = "macos") {
+                rows.push(self.quick_runtime_offer(
+                    RuntimeRow::CranR,
+                    NewRuntime::RFromCran,
+                    "Install R from CRAN…",
+                    busy,
+                    p,
+                    cx,
+                ));
             }
-            .into_any_element(),
-        );
+            if readiness.brew.is_some() {
+                rows.push(self.quick_runtime_offer(
+                    RuntimeRow::BrewR,
+                    NewRuntime::RFromHomebrew,
+                    "Install R with Homebrew…",
+                    busy,
+                    p,
+                    cx,
+                ));
+            }
+            if let Some(tool) = &readiness.python.tool {
+                let prefix = format!("{}/envs/r", tool.root);
+                rows.push(self.quick_runtime_offer(
+                    RuntimeRow::CondaR,
+                    NewRuntime::RConda { prefix },
+                    "Create an R Environment…",
+                    busy,
+                    p,
+                    cx,
+                ));
+            }
+        }
         if let Some(r) = readiness.r.as_ref().filter(|_| r_ok) {
             let writable = r.libraries.iter().any(|l| l.writable);
             let listed = r.libraries.iter().map(|lib| {
@@ -810,7 +868,7 @@ impl AppWindow {
                         "R's libraries",
                         Some(look::settings_detail(
                             if writable {
-                                "Where this R keeps packages, in the order it looks. Sandhill asks which one before it installs anything."
+                                "Where this R keeps packages, in the order it looks. Sandhill shows which one before it installs anything."
                             } else {
                                 "None of these can be written to, and Sandhill doesn't create libraries. Make one yourself (for example, set R_LIBS_USER in ~/.Renviron and create that folder), then Check Again."
                             },
@@ -847,36 +905,27 @@ impl AppWindow {
                             .label("Install…")
                             .disabled(busy || !writable)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.start.quick.confirm =
-                                    Some(Confirm::Library(LibraryFor::Kernel));
+                                this.start.quick.clear_review();
+                                this.start.quick.confirm = Some(Confirm::Kernel);
                                 cx.notify();
                             })),
                     )
                 }
                 .into_any_element(),
             );
-            if q.confirm == Some(Confirm::Library(LibraryFor::Kernel)) {
-                rows.push(self.quick_library_choice(r, LibraryFor::Kernel, busy, p, cx));
+            if q.confirm == Some(Confirm::Kernel) {
+                rows.push(self.quick_kernel_review(r, busy, p, cx));
             }
-            rows.push(self.quick_packages_row(readiness, r, &missing, busy || !writable, p, cx));
-            if let Some(Confirm::Library(
-                target @ (LibraryFor::Packages(_) | LibraryFor::Symbols(_)),
-            )) = q.confirm.clone()
-            {
-                rows.push(self.quick_library_choice(r, target, busy, p, cx));
-            }
+            rows.push(self.quick_packages_row(readiness, &missing, busy, p, cx));
         }
         rows.extend(self.quick_install_in(Section::R, p, cx));
-        let mut python = self.quick_python_rows(&readiness.python, busy, p, cx);
+        let mut python = self.quick_python_rows(readiness, busy, p, cx);
         python.extend(self.quick_install_in(Section::Python, p, cx));
         let mut agents: Vec<AnyElement> = readiness
             .agents
             .iter()
             .map(|agent| self.quick_agent_row(agent, busy, p, cx))
             .collect();
-        if readiness.installed.iter().any(|i| i.ours) {
-            agents.push(self.quick_remove_row(readiness, busy, p, cx));
-        }
         agents.extend(self.quick_install_in(Section::Ai, p, cx));
         let heading = |title| {
             div()
@@ -884,8 +933,56 @@ impl AppWindow {
                 .px(px(look::PANE_PAD_X))
                 .child(section_title(title, p))
         };
+        let mut record = self.quick_record_rows(readiness, busy, p, cx);
+        record.extend(self.quick_install_in(Section::Record, p, cx));
+        let mut tools = readiness
+            .tools
+            .iter()
+            .map(|tool| {
+                let name = review::tool_name(tool);
+                let folder = parent_of(&tool.path);
+                let version = tool.version.trim();
+                if version.is_empty() {
+                    format!("{name} ({folder})")
+                } else if version.starts_with(name) {
+                    format!("{version} ({folder})")
+                } else {
+                    format!("{name} {version} ({folder})")
+                }
+            })
+            .collect::<Vec<_>>();
+        if let Some(path) = &readiness.brew {
+            let version = readiness
+                .brew_version
+                .trim()
+                .strip_prefix("Homebrew ")
+                .unwrap_or(readiness.brew_version.trim());
+            tools.push(if version.is_empty() {
+                format!("Homebrew ({})", parent_of(path))
+            } else {
+                format!("Homebrew {version} ({})", parent_of(path))
+            });
+        }
         v_flex()
             .gap(px(look::GAP_6))
+            .child(look::settings_box(
+                vec![
+                    look::settings_row(
+                        "Install tools",
+                        Some(look::settings_detail(
+                            if tools.is_empty() {
+                                "No mamba, conda, uv or Homebrew found.".into()
+                            } else {
+                                tools.join(", ")
+                            },
+                            p,
+                        )),
+                    )
+                    .into_any_element(),
+                    self.quick_prefs_row(readiness, p, cx),
+                ],
+                p,
+            ))
             .child(
                 h_flex()
                     .px(px(look::PANE_PAD_X))
@@ -897,6 +994,8 @@ impl AppWindow {
             .child(look::settings_box(python, p))
             .child(heading("AI helpers"))
             .child(look::settings_box(agents, p))
+            .child(heading("What Sandhill Installed"))
+            .child(look::settings_box(record, p))
             .into_any_element()
     }
 
@@ -906,11 +1005,12 @@ impl AppWindow {
     /// action shows its command in the row before it runs.
     fn quick_python_rows(
         &self,
-        python: &QuickPython,
+        readiness: &QuickReadiness,
         busy: bool,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        let python = &readiness.python;
         let q = &self.start.quick;
         let mut rows = Vec::new();
         rows.push(
@@ -928,50 +1028,19 @@ impl AppWindow {
             )
             .into_any_element(),
         );
-        match &python.tool {
-            Some(tool) => {
-                let program = std::path::Path::new(&tool.path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                rows.push(
-                    look::settings_row(
-                        format!("{program} {}", tool.version).trim().to_string(),
-                        Some(look::settings_detail(
-                            format!("{}. New environments go in {}/envs.", tool.path, tool.root),
-                            p,
-                        )),
-                    )
-                    .into_any_element(),
-                );
-            }
-            None => {
-                let asking = q.confirm == Some(Confirm::Miniforge);
-                let row = look::settings_row(
-                    "mamba",
-                    Some(look::settings_detail(
-                        if asking {
-                            "Install Miniforge? Sandhill runs conda-forge's own installer into ~/miniforge3. Your shell's settings stay as they are; to use mamba in Terminal, run ~/miniforge3/bin/mamba shell init yourself."
-                        } else {
-                            "No mamba or conda found. Miniforge, from conda-forge, brings both."
-                        },
-                        p,
-                    )),
-                );
-                rows.push(self.quick_confirm_row(
-                    row,
-                    asking,
-                    "miniforge",
-                    "Install Miniforge…",
-                    "Install",
-                    MINIFORGE_COMMAND.to_string(),
-                    busy,
-                    Confirm::Miniforge,
-                    Installing::Miniforge,
-                    p,
-                    cx,
-                ));
-            }
+        let uv = readiness
+            .tools
+            .iter()
+            .any(|tool| tool.tool == InstallTool::Uv);
+        if python.tool.is_none() && !uv {
+            rows.push(self.quick_runtime_offer(
+                RuntimeRow::Miniforge,
+                NewRuntime::Miniforge,
+                "Install Miniforge…",
+                busy,
+                p,
+                cx,
+            ));
         }
         for env in &python.bare {
             let asking = q.confirm == Some(Confirm::Ipykernel(env.prefix.clone()));
@@ -987,30 +1056,46 @@ impl AppWindow {
                     p,
                 )),
             );
-            rows.push(self.quick_confirm_row(
-                row,
-                asking,
-                &format!("ipykernel-{}", env.prefix),
-                "Add ipykernel…",
-                "Add",
-                ipykernel_args(&env.tool, &env.prefix).join(" "),
-                busy,
-                Confirm::Ipykernel(env.prefix.clone()),
-                Installing::Ipykernel(env.prefix.clone()),
-                p,
-                cx,
-            ));
+            rows.push(
+                self.quick_confirm_row(
+                    row,
+                    asking,
+                    &format!("ipykernel-{}", env.prefix),
+                    "Add ipykernel…",
+                    "Add",
+                    ipykernel_args(&env.tool, &env.prefix)
+                        .iter()
+                        .map(|arg| sandhill_daemon::agents::shell_quote(arg))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    busy,
+                    Confirm::Ipykernel(env.prefix.clone()),
+                    Call::QuickAddIpykernel {
+                        prefix: env.prefix.clone(),
+                    },
+                    p,
+                    cx,
+                ),
+            );
         }
-        let Some(tool) = &python.tool else {
+        let default_tool = if python.tool.is_some() {
+            InstallTool::Conda
+        } else if uv {
+            InstallTool::Uv
+        } else {
             return rows;
         };
         let new_row = look::settings_row(
             "New environment",
             Some(look::settings_detail(
-                "A conda environment with Python and ipykernel, from conda-forge. Its kernel then shows in every notebook's kernel picker.",
+                "Set up Python and ipykernel. The environment then shows in the notebook's kernel picker.",
                 p,
             )),
         );
+        if let Some(confirm) = self.quick_runtime_review(RuntimeRow::Python, p, cx) {
+            rows.push(v_flex().child(new_row).child(confirm).into_any_element());
+            return rows;
+        }
         let Some(form) = &q.python_form else {
             rows.push(
                 new_row
@@ -1019,8 +1104,8 @@ impl AppWindow {
                             .small()
                             .label("Create a Python Environment…")
                             .disabled(busy)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.quick_python_form(window, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.quick_python_form(default_tool, window, cx)
                             })),
                     )
                     .into_any_element(),
@@ -1031,8 +1116,65 @@ impl AppWindow {
         let name_ok = python_env_name_ok(&name);
         let version = form.version;
         let sets: Vec<String> = form.sets.iter().map(|s| s.to_string()).collect();
-        let prefix = format!("{}/envs/{name}", tool.root);
-        let command = python_create_args(&tool.path, &prefix, version, &sets).join(" ");
+        let home = self
+            .start
+            .machines
+            .get(sandhill_link::LOCAL)
+            .and_then(|m| m.home.clone())
+            .or_else(|| std::env::var("HOME").ok());
+        let parent = form.parent.clone().or_else(|| match form.tool {
+            InstallTool::Conda => python
+                .tool
+                .as_ref()
+                .map(|tool| format!("{}/envs", tool.root)),
+            _ => home.map(|home| format!("{home}/.venvs")),
+        });
+        let prefix = parent.map(|parent| {
+            std::path::Path::new(&parent)
+                .join(&name)
+                .to_string_lossy()
+                .into_owned()
+        });
+        let runtime = prefix.as_ref().map(|prefix| match form.tool {
+            InstallTool::Conda => NewRuntime::PythonConda {
+                prefix: prefix.clone(),
+                python: version.into(),
+                sets: sets.clone(),
+            },
+            _ => NewRuntime::PythonUv {
+                prefix: prefix.clone(),
+                python: version.into(),
+                sets: sets.clone(),
+            },
+        });
+        let tools = [InstallTool::Conda, InstallTool::Uv]
+            .into_iter()
+            .filter(|tool| match tool {
+                InstallTool::Conda => python.tool.is_some(),
+                InstallTool::Uv => uv,
+                _ => false,
+            })
+            .map(|tool| {
+                let label = readiness
+                    .tools
+                    .iter()
+                    .find(|found| found.tool == tool)
+                    .map_or(tool.label(), review::tool_name)
+                    .to_owned();
+                Button::new(SharedString::from(format!("python-tool-{}", tool.id())))
+                    .small()
+                    .label(label)
+                    .when(form.tool == tool, |b| b.primary())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(form) = &mut this.start.quick.python_form
+                            && form.tool != tool
+                        {
+                            form.tool = tool;
+                            form.parent = None;
+                        }
+                        cx.notify();
+                    }))
+            });
         let versions = PYTHON_VERSIONS.iter().map(|&choice| {
             let chosen = version == choice;
             Button::new(SharedString::from(format!("python-version-{choice}")))
@@ -1088,8 +1230,31 @@ impl AppWindow {
                                 .child(div().flex_none().child("Python"))
                                 .children(versions),
                         )
+                        .child(h_flex().gap(px(look::GAP_6)).child("Tool").children(tools))
+                        .child(
+                            h_flex()
+                                .gap(px(look::GAP_8))
+                                .child(
+                                    look::settings_detail(
+                                        prefix.as_ref().map_or_else(
+                                            || "Choose a folder for the environment.".into(),
+                                            |prefix| format!("Folder: {prefix}"),
+                                        ),
+                                        p,
+                                    )
+                                    .flex_1()
+                                    .min_w_0(),
+                                )
+                                .child(
+                                    Button::new("python-choose-folder")
+                                        .small()
+                                        .label("Choose Folder…")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.quick_python_choose_folder(cx)
+                                        })),
+                                ),
+                        )
                         .children(checks)
-                        .child(command_block(command, p))
                         .child(
                             h_flex()
                                 .justify_end()
@@ -1107,17 +1272,16 @@ impl AppWindow {
                                     Button::new("python-create-go")
                                         .small()
                                         .primary()
-                                        .label("Create")
-                                        .disabled(busy || !name_ok)
+                                        .label("Create…")
+                                        .disabled(busy || !name_ok || runtime.is_none())
                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.quick_install(
-                                                Installing::CreatePython {
-                                                    name: name.clone(),
-                                                    python: version.to_string(),
-                                                    sets: sets.clone(),
-                                                },
-                                                cx,
-                                            )
+                                            if let Some(runtime) = &runtime {
+                                                this.quick_plan_runtime(
+                                                    RuntimeRow::Python,
+                                                    runtime.clone(),
+                                                    cx,
+                                                );
+                                            }
                                         })),
                                 ),
                         ),
@@ -1129,17 +1293,207 @@ impl AppWindow {
 
     /// Opens Create a Python Environment's choices, with the default name,
     /// version and both package sets.
-    fn quick_python_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn quick_python_form(
+        &mut self,
+        tool: InstallTool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let name = cx.new(|cx| InputState::new(window, cx).default_value(PYTHON_ENV_NAME));
         let changed = cx.subscribe(&name, |_, _, _: &InputEvent, cx| cx.notify());
-        self.start.quick.confirm = None;
+        self.start.quick.clear_review();
         self.start.quick.python_form = Some(PythonForm {
             name,
             _changed: changed,
             version: PYTHON_VERSIONS[0],
             sets: PYTHON_SETS.iter().map(|(id, ..)| *id).collect(),
+            tool,
+            parent: None,
         });
         cx.notify();
+    }
+
+    fn quick_python_choose_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &self.start.quick.python_form else {
+            return;
+        };
+        let name = form.name.clone();
+        let choose = choose_local_path("Choose a Parent Folder", false, true, cx);
+        cx.spawn(async move |this, cx| {
+            if let Some(parent) = choose.await {
+                this.update(cx, |this, cx| {
+                    if let Some(form) = &mut this.start.quick.python_form
+                        && form.name == name
+                    {
+                        form.parent = Some(parent);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn quick_prefs_row(
+        &self,
+        readiness: &QuickReadiness,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let q = &self.start.quick;
+        let label = "Install Without Asking";
+        let switch = Switch::new("quick-without-asking")
+            .small()
+            .color(p.accent)
+            .checked(readiness.prefs.without_asking)
+            .accessibility_label(label)
+            .disabled(q.setting_prefs || q.checking || q.busy() || q.reviewing.is_some())
+            .on_change(cx.listener(|this, on: &bool, _, cx| this.quick_set_prefs(*on, cx)));
+        v_flex()
+            .child(look::settings_row(label, Some(look::settings_detail(
+                "Use the library or environment and tool you chose last time, without asking. Sandhill tells you what it installed afterwards.", p,
+            ))).child(switch))
+            .when_some(q.prefs_error.clone(), |d, error| {
+                d.child(look::settings_row("Couldn't save this choice", Some(look::settings_detail(error, p))))
+            })
+            .into_any_element()
+    }
+
+    fn quick_set_prefs(&mut self, without_asking: bool, cx: &mut Context<Self>) {
+        let Some(daemon) = self.local_daemon() else {
+            return;
+        };
+        self.start.quick.setting_prefs = true;
+        self.start.quick.prefs_error = None;
+        let saved = daemon.call::<InstallPrefs>(Call::SetInstallPrefs { without_asking });
+        cx.spawn(async move |this, cx| {
+            let saved = saved.await;
+            this.update(cx, |this, cx| {
+                let q = &mut this.start.quick;
+                q.setting_prefs = false;
+                match saved {
+                    Ok(prefs) => {
+                        if let Some(Ok(found)) = &mut q.readiness {
+                            found.prefs = prefs;
+                        }
+                    }
+                    Err(err) => q.prefs_error = Some(err.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn quick_review_buttons(cx: &mut Context<Self>) -> (Button, Button) {
+        (
+            review::cancel_button().on_click(cx.listener(|this, _, _, cx| {
+                this.start.quick.clear_review();
+                cx.notify();
+            })),
+            review::run_button().on_click(cx.listener(|this, _, _, cx| this.quick_run_review(cx))),
+        )
+    }
+
+    fn quick_runtime_review(
+        &self,
+        row: RuntimeRow,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let Some(QuickReview::Runtime(at, planned)) = &self.start.quick.reviewing else {
+            return None;
+        };
+        if *at != row {
+            return None;
+        }
+        let (cancel, run) = Self::quick_review_buttons(cx);
+        Some(review::runtime(planned, cancel, run, p))
+    }
+
+    fn quick_runtime_offer(
+        &self,
+        at: RuntimeRow,
+        runtime: NewRuntime,
+        label: &'static str,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let detail = match at {
+            RuntimeRow::CranR => "Use the official R installer for this Mac.",
+            RuntimeRow::BrewR => "Use the Homebrew already on this computer.",
+            RuntimeRow::CondaR => "Keep R and IRkernel together in a new folder.",
+            RuntimeRow::Miniforge => {
+                "No mamba, conda or uv found. Miniforge provides mamba and conda."
+            }
+            RuntimeRow::Python => unreachable!(),
+        };
+        let row = look::settings_row(
+            review::runtime_name(&runtime),
+            Some(look::settings_detail(detail, p)),
+        );
+        if let Some(confirm) = self.quick_runtime_review(at, p, cx) {
+            v_flex().child(row).child(confirm).into_any_element()
+        } else {
+            row.child(
+                Button::new(label)
+                    .small()
+                    .label(label)
+                    .disabled(busy)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.quick_plan_runtime(at, runtime.clone(), cx)
+                    })),
+            )
+            .into_any_element()
+        }
+    }
+
+    fn quick_package_offer(
+        &self,
+        row: Div,
+        at: PackageRow,
+        label: &'static str,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = match &at {
+            PackageRow::Plots => SharedString::from("quick-install-packages"),
+            PackageRow::ChangedGenes => "quick-install-differential".into(),
+            PackageRow::Symbols(name) => format!("quick-symbols-{name}").into(),
+        };
+        if let Some(QuickReview::Packages(current, libraries, planned)) =
+            &self.start.quick.reviewing
+            && *current == at
+        {
+            let panel = review::packages(
+                std::slice::from_ref(planned),
+                &[],
+                libraries,
+                Self::quick_review_buttons(cx),
+                |this: &mut Self, _, choice, cx: &mut Context<Self>| {
+                    this.quick_change_plan(choice, cx)
+                },
+                p,
+                cx,
+            );
+            v_flex().child(row).child(panel).into_any_element()
+        } else {
+            row.child(
+                Button::new(id)
+                    .small()
+                    .label(label)
+                    .disabled(busy)
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.quick_plan_packages(at.clone(), cx)),
+                    ),
+            )
+            .into_any_element()
+        }
     }
 
     /// A row whose action asks first: its button opens the question, which
@@ -1155,7 +1509,7 @@ impl AppWindow {
         command: String,
         busy: bool,
         confirm: Confirm,
-        install: Installing,
+        call: Call,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1167,6 +1521,7 @@ impl AppWindow {
                         .label(ask_label)
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start.quick.clear_review();
                             this.start.quick.python_form = None;
                             this.start.quick.confirm = Some(confirm.clone());
                             cx.notify();
@@ -1192,7 +1547,13 @@ impl AppWindow {
                         .label(go_label)
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.quick_install(install.clone(), cx)
+                            this.quick_start_install(
+                                call.clone(),
+                                Section::Python,
+                                "Adding ipykernel".into(),
+                                None,
+                                cx,
+                            );
                         })),
                 ),
             )
@@ -1200,93 +1561,60 @@ impl AppWindow {
                 div()
                     .px(px(look::PANE_PAD_X))
                     .pb(px(look::PANE_PAD_Y))
-                    .child(command_block(command, p)),
+                    .child(review::command_block(&command, p)),
             )
             .into_any_element()
     }
 
-    /// "Install into which library?": each of R's libraries the user can
-    /// write to, with Install Here, and Cancel.
-    fn quick_library_choice(
+    // Registering IRkernel still uses its dedicated setup job.
+    fn quick_kernel_review(
         &self,
         r: &sandhill_proto::QuickR,
-        target: LibraryFor,
         busy: bool,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let choices = r.libraries.iter().filter(|l| l.writable).map(|lib| {
-            let path = lib.path.clone();
-            let target = target.clone();
-            h_flex()
-                .gap(px(look::GAP_8))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(look::small()))
-                        .child(lib.path.clone()),
-                )
-                .child(
-                    Button::new(SharedString::from(format!(
-                        "quick-install-here-{}",
-                        lib.path
-                    )))
-                    .small()
-                    .primary()
-                    .label("Install Here")
-                    .disabled(busy)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let library = path.clone();
-                        let what = match &target {
-                            LibraryFor::Kernel => Installing::Kernel(library),
-                            LibraryFor::Packages(tool) => Installing::Packages(library, *tool),
-                            LibraryFor::Symbols(package) => Installing::Symbols {
-                                library,
-                                package: package.clone(),
-                            },
-                        };
-                        this.quick_install(what, cx)
-                    })),
-                )
-        });
+        let summary = look::settings_row(
+            "Install IRkernel?",
+            Some(look::settings_detail(
+                "Choose the library IRkernel goes into if it isn't there yet. Sandhill then registers it as a kernel.",
+                p,
+            )),
+        ).child(review::cancel_button().on_click(cx.listener(|this, _, _, cx| {
+            this.start.quick.clear_review();
+            cx.notify();
+        })));
+        let choices = r
+            .libraries
+            .iter()
+            .filter(|lib| lib.writable)
+            .map(|lib| lib.path.clone())
+            .collect::<Vec<_>>();
         v_flex()
-            .px(px(look::PANE_PAD_X))
-            .py(px(look::PANE_PAD_Y))
-            .gap(px(look::GAP_6))
-            .child(
-                h_flex()
-                    .gap(px(look::GAP_8))
-                    .child(div().flex_1().child(match &target {
-                        LibraryFor::Kernel => "Install IRkernel into which library?".to_string(),
-                        LibraryFor::Packages(QuickTool::Differential) => {
-                            "Install the packages for finding changed genes into which library?".to_string()
-                        }
-                        LibraryFor::Packages(_) => {
-                            "Install the missing packages into which library?".to_string()
-                        }
-                        LibraryFor::Symbols(package) => {
-                            format!("Install {package} into which library?")
-                        }
-                    }))
-                    .child(
-                        Button::new("quick-library-cancel")
-                            .small()
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.start.quick.confirm = None;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .text_size(px(look::small()))
-                    .text_color(p.muted)
-                    .child("Your own R work uses these libraries too. Nothing already in them changes."),
-            )
-            .children(choices)
+            .child(summary)
+            .children(choices.into_iter().enumerate().map(|(index, library)| {
+                let program = r.path.clone();
+                look::settings_row(library.clone(), None).child(
+                    Button::new(("quick-kernel-install", index))
+                        .small()
+                        .primary()
+                        .label("Install")
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.quick_start_install(
+                                Call::InstallIrkernel {
+                                    r: program.clone(),
+                                    project: None,
+                                    library: Some(library.clone()),
+                                },
+                                Section::R,
+                                "Installing IRkernel".into(),
+                                None,
+                                cx,
+                            );
+                        })),
+                )
+            }))
             .into_any_element()
     }
 
@@ -1295,52 +1623,29 @@ impl AppWindow {
     fn quick_packages_row(
         &self,
         readiness: &QuickReadiness,
-        r: &sandhill_proto::QuickR,
         missing: &[&str],
         busy: bool,
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Homebrew's and conda's R build packages from source, which needs
-        // a compiler: Apple's developer tools on a Mac.
-        let blocked = !missing.is_empty() && !r.binaries && !r.can_build;
         let detail = if missing.is_empty() {
             "Every package for reading and plotting tables is installed.".to_string()
-        } else if r.binaries {
-            format!(
-                "Missing: {}. They go into the library you choose, ready-built, and nothing you already have changes.",
-                missing.join(", ")
-            )
-        } else if r.can_build {
-            format!(
-                "Missing: {}. This R builds packages on this computer, which can take a few minutes. They go into the library you choose, and nothing you already have changes.",
-                missing.join(", ")
-            )
         } else {
-            format!(
-                "Missing: {}. This R builds packages on this computer, which needs {}",
-                missing.join(", "),
-                look::mac_or(
-                    "Apple's developer tools. Open Terminal, run xcode-select --install, follow its window, then Check Again.",
-                    "a C compiler. Install your system's build tools, then Check Again.",
-                )
+            format!("Missing: {}.", missing.join(", "))
+        };
+        let head = look::settings_row("R packages", Some(look::settings_detail(detail, p)));
+        let head = if missing.is_empty() {
+            head.into_any_element()
+        } else {
+            self.quick_package_offer(
+                head,
+                PackageRow::Plots,
+                "Install Missing Packages…",
+                busy,
+                p,
+                cx,
             )
         };
-        let mut head = look::settings_row("R packages", Some(look::settings_detail(detail, p)));
-        if !missing.is_empty() {
-            head = head.child(
-                Button::new("quick-install-packages")
-                    .small()
-                    .primary()
-                    .label("Install Missing Packages…")
-                    .disabled(busy || blocked)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.start.quick.confirm =
-                            Some(Confirm::Library(LibraryFor::Packages(QuickTool::Plot)));
-                        cx.notify();
-                    })),
-            );
-        }
         let list = readiness.packages.iter().map(|pkg| {
             let (state, color) = match &pkg.version {
                 None if pkg.tool == QuickTool::Plot => ("missing".to_string(), p.err),
@@ -1379,16 +1684,29 @@ impl AppWindow {
             .filter(|pkg| pkg.tool == QuickTool::Symbols && pkg.version.is_none())
             .filter(|pkg| pkg.name.starts_with("org."))
             .map(|pkg| {
-                let package = pkg.name.clone();
-                Button::new(SharedString::from(format!("quick-symbols-{package}")))
-                    .small()
-                    .label(format!("Install {package}…"))
-                    .disabled(busy)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.start.quick.confirm =
-                            Some(Confirm::Library(LibraryFor::Symbols(package.clone())));
-                        cx.notify();
-                    }))
+                let organism = if pkg.name == "org.Hs.eg.db" {
+                    "human"
+                } else {
+                    "mouse"
+                };
+                let row = look::settings_row(
+                    format!("Gene symbols for {organism} genes"),
+                    Some(look::settings_detail(
+                        format!(
+                            "{} gives Explore a Table gene symbols, about 90 MB.",
+                            pkg.name
+                        ),
+                        p,
+                    )),
+                );
+                self.quick_package_offer(
+                    row,
+                    PackageRow::Symbols(pkg.name.clone()),
+                    "Install…",
+                    busy,
+                    p,
+                    cx,
+                )
             })
             .collect::<Vec<_>>();
         let differential: Vec<_> = readiness
@@ -1406,40 +1724,32 @@ impl AppWindow {
                     .gap(px(look::GAP_2))
                     .children(list),
             )
-            .when(!symbols.is_empty(), |d| {
-                d.child(
-                    look::settings_row(
-                        "Gene symbols",
-                        Some(look::settings_detail(
-                            "Explore a Table names genes by symbol with org.Hs.eg.db (human) or org.Mm.eg.db (mouse), about 90 MB each. Install one when you need it.",
-                            p,
-                        )),
-                    )
-                    .children(symbols),
-                )
-            })
+            .children(symbols)
             .child({
                 let detail = if differential.is_empty() {
                     "DESeq2, edgeR, limma, apeglm, sva and RUVSeq are installed.".to_string()
                 } else {
-                    format!("Missing: {}. Install these when you want to compare raw counts.{}", differential.join(", "),
-                        if !r.binaries && !r.can_build { " This R needs developer tools to install packages." }
-                        else if !r.binaries { " This R builds packages on this computer, which can take a few minutes." }
-                        else { "" })
+                    format!(
+                        "Missing: {}. Install these when you want to compare raw counts.",
+                        differential.join(", ")
+                    )
                 };
-                look::settings_row("For finding changed genes", Some(look::settings_detail(detail, p)))
-                    .when(!differential.is_empty(), |row| row.child(
-                        Button::new("quick-install-differential")
-                            .small()
-                            .label("Install Missing Packages…")
-                            .disabled(busy || (!r.binaries && !r.can_build))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.start.quick.confirm = Some(Confirm::Library(
-                                    LibraryFor::Packages(QuickTool::Differential),
-                                ));
-                                cx.notify();
-                            })),
-                    ))
+                let row = look::settings_row(
+                    "For finding changed genes",
+                    Some(look::settings_detail(detail, p)),
+                );
+                if differential.is_empty() {
+                    row.into_any_element()
+                } else {
+                    self.quick_package_offer(
+                        row,
+                        PackageRow::ChangedGenes,
+                        "Install Missing Packages…",
+                        busy,
+                        p,
+                        cx,
+                    )
+                }
             })
             .into_any_element()
     }
@@ -1451,76 +1761,39 @@ impl AppWindow {
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let install = self.start.quick.install.as_ref()?;
-        (install.what.section() == section).then(|| self.quick_install_row(install, p, cx))
-    }
-
-    /// A running or failed install's progress, with its output on request.
-    fn quick_install_row(
-        &self,
-        install: &Install,
-        p: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
         let q = &self.start.quick;
-        let what = install.what.what();
-        let status = if install.failed {
-            format!("{what} didn't finish. Show Details has the messages.")
-        } else {
-            match &install.last {
-                Some(line) => format!("{what}: {line}"),
-                None => format!("{what}…"),
-            }
-        };
-        let mut row = v_flex()
-            .px(px(look::PANE_PAD_X))
-            .py(px(look::PANE_PAD_Y))
-            .gap(px(look::GAP_6))
-            .child(
-                h_flex()
-                    .gap(px(look::GAP_8))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if install.failed { p.err } else { p.muted })
-                            .child(status),
-                    )
-                    .when(install.log.is_some(), |d| {
-                        d.child(
-                            Button::new("quick-install-details")
-                                .small()
-                                .label(if q.details {
-                                    "Hide Details"
-                                } else {
-                                    "Show Details"
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.start.quick.details = !this.start.quick.details;
-                                    cx.notify();
-                                })),
-                        )
-                    }),
-            );
-        if q.details {
-            let tail: Vec<&str> = install.output.lines().rev().take(40).collect();
-            let text = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-            row = row.child(
-                div()
-                    .id("quick-install-log")
-                    .max_h(px(220.))
-                    .overflow_y_scroll()
-                    .p(px(look::GAP_8))
-                    .rounded(px(look::CONTROL_RADIUS))
-                    .bg(p.ink(look::ROW_HOVER))
-                    .font_family(look::mono())
-                    .text_size(px(look::small()))
-                    .whitespace_normal()
-                    .child(text),
+        if q.starting == Some(section) {
+            return Some(look::settings_row("Starting…", None).into_any_element());
+        }
+        if let Some((_, error)) = q.install_error.as_ref().filter(|(at, _)| *at == section) {
+            return Some(
+                look::settings_row(
+                    "Couldn't start",
+                    Some(look::settings_detail(error.clone(), p)),
+                )
+                .into_any_element(),
             );
         }
-        row.into_any_element()
+        let install = q.install.as_ref().filter(|i| i.section == section)?;
+        let details = Button::new("quick-install-details")
+            .small()
+            .on_click(cx.listener(|this, _, _, cx| {
+                if let Some(i) = &mut this.start.quick.install {
+                    i.job.details = !i.job.details;
+                    cx.notify();
+                }
+            }));
+        Some(
+            v_flex()
+                .children(
+                    q.notice
+                        .as_ref()
+                        .filter(|(at, _)| *at == section)
+                        .map(|(_, notice)| look::settings_row(notice.clone(), None)),
+                )
+                .child(install.job.render(details, p))
+                .into_any_element(),
+        )
     }
 
     /// Claude Code or Codex: installed or not, signed in as the Agents
@@ -1577,7 +1850,13 @@ impl AppWindow {
                         .label("Install")
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.quick_install(Installing::Agent(kind.clone()), cx)
+                            this.quick_start_install(
+                                Call::QuickInstallAgent { kind: kind.clone() },
+                                Section::Ai,
+                                format!("Installing {}", agent_name(&kind)),
+                                None,
+                                cx,
+                            );
                         })),
                 )
             } else if agent.installable {
@@ -1587,6 +1866,7 @@ impl AppWindow {
                         .label("Install…")
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start.quick.clear_review();
                             this.start.quick.confirm = Some(Confirm::Agent(kind.clone()));
                             cx.notify();
                         })),
@@ -1609,94 +1889,181 @@ impl AppWindow {
                 div()
                     .px(px(look::PANE_PAD_X))
                     .pb(px(look::PANE_PAD_Y))
-                    .child(command_block(agent.install.clone(), p)),
+                    .child(review::command_block(&agent.install, p)),
             )
             .into_any_element()
     }
 
-    /// Removes what Sandhill installed and is still as it left it, after
-    /// asking in the row (Cancel, then a red Remove).
-    fn quick_remove_row(
+    fn quick_record_rows(
         &self,
         readiness: &QuickReadiness,
         busy: bool,
         p: &Palette,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let ours: Vec<String> = readiness
+    ) -> Vec<AnyElement> {
+        let q = &self.start.quick;
+        let asking = q.confirm == Some(Confirm::Remove);
+        let available = readiness
             .installed
             .iter()
             .filter(|i| i.ours)
-            .map(|i| match i.kind.as_str() {
-                "r-package" => format!("{} {}", i.name, i.version),
-                "agent" => agent_name(&i.name).to_string(),
-                "python-env" => format!("the Python environment {}", i.name),
-                "ipykernel" => format!(
-                    "ipykernel in {}",
-                    std::path::Path::new(&i.place)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                ),
-                "miniforge" => "Miniforge".into(),
-                _ => i.name.clone(),
-            })
-            .collect();
-        let asking = self.start.quick.confirm == Some(Confirm::Remove);
-        let row = look::settings_row(
-            if asking {
-                "Remove what Sandhill installed?"
-            } else {
-                "Installed by Sandhill"
-            },
-            Some(look::settings_detail(
-                if asking {
-                    format!(
-                        "{}. Your own R work may use these packages too. Settings and sign-ins of Claude Code and Codex stay.",
-                        ours.join(", ")
-                    )
-                } else {
-                    format!(
-                        "{}. Anything updated since is yours and stays.",
-                        ours.join(", ")
-                    )
-                },
-                p,
-            )),
-        );
-        if asking {
-            row.child(
-                Button::new("quick-remove-cancel")
-                    .small()
-                    .label("Cancel")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.start.quick.confirm = None;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("quick-remove-go")
-                    .small()
-                    .danger()
-                    .label("Remove")
-                    .disabled(busy)
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.quick_install(Installing::Remove, cx)),
-                    ),
-            )
-        } else {
-            row.child(
-                Button::new("quick-remove")
-                    .small()
-                    .label("Remove What Sandhill Installed…")
-                    .disabled(busy)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.start.quick.confirm = Some(Confirm::Remove);
-                        cx.notify();
-                    })),
-            )
+            .map(installed_key)
+            .collect::<Vec<_>>();
+        if readiness.installed.is_empty() {
+            return vec![look::settings_row("No installs recorded yet", None).into_any_element()];
         }
-        .into_any_element()
+        let count = available
+            .iter()
+            .filter(|key| q.selected.contains(*key))
+            .count();
+        let mut rows = Vec::new();
+        for group in [
+            "R packages",
+            "Python packages",
+            "Environments and R",
+            "Kernels",
+            "Agents",
+        ] {
+            let mut items = readiness
+                .installed
+                .iter()
+                .enumerate()
+                .filter(|(_, i)| installed_group(i) == group)
+                .peekable();
+            if items.peek().is_none() {
+                continue;
+            }
+            rows.push(look::settings_row(group, None).into_any_element());
+            for (index, item) in items {
+                let key = installed_key(item);
+                let version = if item.version.is_empty() {
+                    "Version not recorded".into()
+                } else {
+                    format!("Version {}", item.version)
+                };
+                let title = if item.kind == "agent" {
+                    agent_name(&item.name).into()
+                } else {
+                    item.name.clone()
+                };
+                let tool = match item.tool.as_str() {
+                    "r" => "R's own installer",
+                    "conda" => "mamba/conda",
+                    "brew" => "Homebrew",
+                    "installer" => "Installer",
+                    "native" => "Official installer",
+                    "" => "Not recorded",
+                    tool => tool,
+                };
+                let where_ = if item.place.is_empty() {
+                    "Not recorded"
+                } else {
+                    &item.place
+                };
+                let date = if item.date.is_empty() {
+                    "Not recorded"
+                } else {
+                    &item.date
+                };
+                let mut detail =
+                    format!("{version} · Folder: {where_} · Tool: {tool} · Date: {date}");
+                if !item.reason.is_empty() {
+                    detail.push_str(&format!(" · {}", item.reason));
+                }
+                if !item.ours {
+                    detail.push_str(" · changed since: yours now");
+                }
+                rows.push(
+                    look::settings_row(title, Some(look::settings_detail(detail, p)))
+                        .child(
+                            Checkbox::new(("quick-record-check", index))
+                                .checked(q.selected.contains(&key) && item.ours)
+                                .disabled(busy || asking || !item.ours)
+                                .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                                    let selected = &mut this.start.quick.selected;
+                                    if *on {
+                                        selected.insert(key.clone());
+                                    } else {
+                                        selected.remove(&key);
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                        .into_any_element(),
+                );
+            }
+        }
+        let action = if asking {
+            look::settings_row(
+                format!("Remove {count} selected {}?", if count == 1 { "item" } else { "items" }),
+                Some(look::settings_detail("Your own work may use these packages too. Removing an environment removes its contents.", p)),
+            )
+            .child(review::cancel_button().on_click(cx.listener(|this, _, _, cx| {
+                this.start.quick.clear_review();
+                cx.notify();
+            })))
+            .child(Button::new("quick-remove-record-go").small().danger().label("Remove")
+                .disabled(busy || count == 0).on_click(cx.listener(|this, _, _, cx| this.quick_remove_selected(cx))))
+        } else {
+            look::settings_row(format!("{count} selected"), None)
+                .child(
+                    Button::new("quick-record-all")
+                        .small()
+                        .label("Select All")
+                        .disabled(busy || count == available.len())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start.quick.selected = available.iter().cloned().collect();
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("quick-record-none")
+                        .small()
+                        .label("Select None")
+                        .disabled(busy || count == 0)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.start.quick.selected.clear();
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("quick-record-remove")
+                        .small()
+                        .label("Remove Selected…")
+                        .disabled(busy || count == 0)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.start.quick.clear_review();
+                            this.start.quick.confirm = Some(Confirm::Remove);
+                            cx.notify();
+                        })),
+                )
+        };
+        rows.push(action.into_any_element());
+        rows
+    }
+
+    fn quick_remove_selected(&mut self, cx: &mut Context<Self>) {
+        let q = &self.start.quick;
+        let Some(Ok(readiness)) = &q.readiness else {
+            return;
+        };
+        let items = readiness
+            .installed
+            .iter()
+            .filter(|i| i.ours)
+            .map(installed_key)
+            .filter(|key| q.selected.contains(key))
+            .collect::<Vec<_>>();
+        if !items.is_empty() {
+            self.start.quick.selected.clear();
+            self.quick_start_install(
+                Call::RemoveInstalled { items },
+                Section::Record,
+                "Removing selected items".into(),
+                None,
+                cx,
+            );
+        }
     }
 
     fn quick_drop_area(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -1932,11 +2299,38 @@ fn page_title(title: &'static str, detail: &'static str, p: &Palette) -> Div {
         )
 }
 
+fn installed_key(item: &QuickInstalled) -> InstalledKey {
+    InstalledKey {
+        kind: item.kind.clone(),
+        name: item.name.clone(),
+        place: item.place.clone(),
+    }
+}
+
+fn installed_group(item: &QuickInstalled) -> &'static str {
+    match item.kind.as_str() {
+        "r-package" => "R packages",
+        "conda-package"
+            if item.name.starts_with("r-") || item.name.starts_with("bioconductor-") =>
+        {
+            "R packages"
+        }
+        "python-package" | "conda-package" | "ipykernel" => "Python packages",
+        "kernel" => "Kernels",
+        "agent" => "Agents",
+        _ => "Environments and R",
+    }
+}
+
 fn check_again(cx: &mut Context<AppWindow>) -> Button {
     Button::new("quick-check")
         .small()
         .label("Check Again")
         .on_click(cx.listener(|this, _, _, cx| {
+            if this.start.quick.setting_prefs || this.start.quick.checking {
+                return;
+            }
+            this.start.quick.clear_review();
             this.start.quick.readiness = None;
             this.quick_check(cx);
         }))
@@ -1950,16 +2344,4 @@ fn section_title(title: &'static str, p: &Palette) -> Div {
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(p.muted)
         .child(title)
-}
-
-/// A command shown before it runs, in the code font.
-fn command_block(command: String, p: &Palette) -> Div {
-    div()
-        .p(px(look::GAP_8))
-        .rounded(px(look::CONTROL_RADIUS))
-        .bg(p.ink(look::ROW_HOVER))
-        .font_family(look::mono())
-        .text_size(px(look::small()))
-        .whitespace_normal()
-        .child(command)
 }

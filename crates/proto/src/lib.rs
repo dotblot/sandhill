@@ -14,6 +14,7 @@ mod connectors;
 mod files;
 mod git;
 mod h5ad;
+mod install;
 mod packages;
 mod projects;
 mod quick;
@@ -28,6 +29,7 @@ pub use connectors::*;
 pub use files::*;
 pub use git::*;
 pub use h5ad::*;
+pub use install::*;
 pub use packages::*;
 pub use projects::*;
 pub use quick::*;
@@ -445,6 +447,20 @@ pub enum Call {
     /// a while. Returns [`PackageUpdates`].
     PackageUpdates {
         session: String,
+    },
+    /// What a package change will do, worked out without changing
+    /// anything: the tools that suit the target, the folder, each package
+    /// and where it comes from, and the exact command. Returns
+    /// [`PackagePlan`].
+    PlanPackages {
+        change: PackageChange,
+    },
+    /// Does a change exactly as [`Call::PlanPackages`] showed it, in a job
+    /// that writes what it installs to Sandhill's record and remembers the
+    /// target and tool for Install Without Asking. Returns
+    /// [`QuickInstalling`].
+    RunPackages {
+        change: PackageChange,
     },
     /// A ghost cell: asks a coding agent (Claude Code or Codex, run once
     /// as its own CLI, with no tools) for the code of the cell to come
@@ -927,34 +943,34 @@ pub enum Call {
     /// What Quick Tools needs here (R, an R kernel, its packages) and what
     /// is installed. Returns [`QuickReadiness`].
     QuickReadiness,
-    /// Installs the Quick Tools `packages` that are missing into
-    /// `library`, one of the R at `r`'s libraries that the user chose, in
-    /// a job, recording what it adds. Returns [`QuickInstalling`].
-    QuickInstall {
-        r: String,
-        packages: Vec<String>,
-        library: String,
+    /// What setting up R, Python or Miniforge in an official way will do.
+    /// Returns [`RuntimePlan`].
+    PlanRuntime {
+        runtime: NewRuntime,
+    },
+    /// Sets it up as [`Call::PlanRuntime`] showed, in a job, recording it.
+    /// Returns [`QuickInstalling`].
+    RunRuntime {
+        runtime: NewRuntime,
+    },
+    /// This computer's install settings, read without checking anything
+    /// else. Returns [`InstallPrefs`].
+    InstallPrefs,
+    /// Turns Install Without Asking on or off for this computer. Returns
+    /// [`InstallPrefs`].
+    SetInstallPrefs {
+        without_asking: bool,
     },
     /// Installs Claude Code (`claude`) or Codex (`codex`) with its own
     /// install command in a job, recording it. Returns [`QuickInstalling`].
     QuickInstallAgent {
         kind: String,
     },
-    /// Removes what Sandhill's record says it installed and is still as it
-    /// left it (R packages, kernel files, agents' programs, Python
-    /// environments, ipykernel, Miniforge), in a job, then clears the
-    /// record. Returns [`QuickInstalling`].
-    QuickUninstall,
-    /// Creates the Python environment `name` (a [`python_env_name_ok`]
-    /// name) in the conda installation Getting Ready found, with Python
-    /// `python` (one of [`PYTHON_VERSIONS`]), ipykernel and the package
-    /// `sets` (ids from [`PYTHON_SETS`]), from conda-forge, in a job,
-    /// recording it. Returns [`QuickInstalling`].
-    QuickCreatePython {
-        name: String,
-        python: String,
-        #[serde(default)]
-        sets: Vec<String>,
+    /// Removes the record's `items` that are still as Sandhill left them,
+    /// each with the tool that installed it, in a job, and drops them from
+    /// the record. Returns [`QuickInstalling`].
+    RemoveInstalled {
+        items: Vec<InstalledKey>,
     },
     /// Adds ipykernel to the environment at `prefix`, one Getting Ready
     /// listed as having no kernel, in a job, recording it. Returns
@@ -962,10 +978,6 @@ pub enum Call {
     QuickAddIpykernel {
         prefix: String,
     },
-    /// Installs Miniforge into `~/miniforge3` with [`MINIFORGE_COMMAND`]
-    /// when no conda or mamba is found, in a job, recording it. Returns
-    /// [`QuickInstalling`].
-    QuickInstallMiniforge,
     /// Starts an Explore a Table session in Sandhill's own storage, with
     /// links to `tables` (absolute paths), which stay where they are.
     /// Nothing is made beside the tables (Huan, 2026-11-19). Returns the

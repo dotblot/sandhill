@@ -108,6 +108,9 @@ impl Daemon {
             cran: listed.cran,
             bioconductor: listed.bioconductor,
             conda: listed.conda,
+            program: listed.program,
+            prefix: listed.prefix,
+            writable_libraries: listed.writable_libraries,
         })?)
     }
 

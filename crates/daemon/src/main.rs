@@ -159,6 +159,9 @@ enum Command {
         #[arg(last = true)]
         path: PathBuf,
     },
+    /// Apply a confirmed installation plan in a job that can outlive the daemon.
+    #[command(hide = true)]
+    InstallWorker { record: PathBuf, job: String },
 }
 
 fn main() -> Result<()> {
@@ -190,6 +193,9 @@ async fn run(cli: Cli) -> Result<()> {
     let socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
     match cli.command {
         Command::DescribeH5ad { path } => sandhill_daemon::h5ad::worker(&path),
+        Command::InstallWorker { record, job } => {
+            sandhill_daemon::quick::install::worker(&record, &job)
+        }
         Command::Serve { ref started_by } => {
             let started_by = started_by.clone().unwrap_or_else(service_manager);
             serve(state, socket, started_by).await

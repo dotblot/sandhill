@@ -1,26 +1,16 @@
 //! Python for notebooks, in Getting Ready (Huan, 2026-11-19;
 //! `docs/design/python-ready-plan.md`): the Python kernels Sandhill finds,
 //! the mamba (else conda) it would use, the conda environments with Python
-//! but no ipykernel, and the jobs that create an environment, add
-//! ipykernel or install Miniforge, each from conda-forge and recorded
-//! (`record`) so Sandhill can later remove exactly what it made.
+//! but no ipykernel, and the job that adds ipykernel, recorded (`record`)
+//! so Sandhill can later remove exactly what it added. New environments
+//! and Miniforge are planned in `runtime_plan`.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
-use anyhow::{Context, Result, bail};
-use sandhill_proto::{
-    JobSpec, PYTHON_SETS, PYTHON_VERSIONS, QuickCondaEnv, QuickCondaTool, QuickPython,
-    ipykernel_args, python_create_args, python_env_name_ok,
-};
-
-use super::record;
-use crate::agents::shell_quote;
 use crate::kernelspecs::{self, Search};
 use crate::terminal::Launch;
-
-/// Where Install Miniforge puts it, under the home folder.
-const MINIFORGE_DIR: &str = "miniforge3";
+use anyhow::{Result, bail};
+use sandhill_proto::{QuickCondaEnv, QuickCondaTool, QuickPython, ipykernel_args};
 
 /// What Getting Ready shows about Python.
 pub fn readiness(search: &Search) -> QuickPython {
@@ -43,7 +33,7 @@ pub fn readiness(search: &Search) -> QuickPython {
 
 /// The mamba Getting Ready uses, else conda, and the installation it
 /// belongs to: from the usual conda installations first, then `PATH`.
-fn find_tool(search: &Search) -> Option<(PathBuf, PathBuf)> {
+pub(super) fn find_tool(search: &Search) -> Option<(PathBuf, PathBuf)> {
     let mut roots: Vec<PathBuf> = search
         .conda_roots
         .iter()
@@ -70,17 +60,9 @@ fn find_tool(search: &Search) -> Option<(PathBuf, PathBuf)> {
 }
 
 /// `2.10.0` from `mamba --version`, or conda's `conda 25.1.1`.
-fn tool_version(tool: &Path) -> String {
-    Command::new(tool)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|out| {
-            let text = String::from_utf8_lossy(&out.stdout).into_owned();
-            sandhill_proto::version_in(text.lines().next()?)
-        })
+pub(super) fn tool_version(tool: &Path) -> String {
+    super::install::probe(tool, &["--version"])
+        .and_then(|out| sandhill_proto::version_in(out.lines().next()?))
         .unwrap_or_default()
 }
 
@@ -128,77 +110,10 @@ fn bare_envs(search: &Search) -> Vec<QuickCondaEnv> {
         .collect()
 }
 
-fn home() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME isn't set")
-}
-
-/// A job running `command` with its output also in `log`.
-fn job(command: String, log: &Path, title: &str) -> Result<Launch> {
-    let job = JobSpec {
-        path: None,
-        command: Some(format!(
-            "set -o pipefail; ( {command} ) 2>&1 | tee {}",
-            shell_quote(&log.to_string_lossy())
-        )),
-    };
-    let mut launch = crate::jobs::launch(&job, Some(&home()?), None)?;
-    launch.title = title.into();
-    Ok(launch)
-}
-
-fn quoted(args: &[String]) -> String {
-    args.iter()
-        .map(|a| shell_quote(a))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The job that creates the environment `name` in the installation
-/// Getting Ready found, and records it.
-pub fn create(
-    search: &Search,
-    name: &str,
-    python: &str,
-    sets: &[String],
-    log: &Path,
-    record_path: &Path,
-) -> Result<Launch> {
-    if !python_env_name_ok(name) {
-        bail!("an environment's name can only have letters, digits, - and _");
-    }
-    if !PYTHON_VERSIONS.contains(&python) {
-        bail!("Python {python} isn't one of the versions offered");
-    }
-    if let Some(set) = sets
-        .iter()
-        .find(|s| !PYTHON_SETS.iter().any(|(id, ..)| id == s))
-    {
-        bail!("{set} isn't a package set Getting Ready offers");
-    }
-    let (tool, root) = find_tool(search).context("there is no mamba or conda here")?;
-    let prefix = root.join("envs").join(name);
-    if prefix.exists() || kernelspecs::conda_env_exists(search, name) {
-        bail!("an environment called {name} exists already");
-    }
-    let prefix = prefix.to_string_lossy().into_owned();
-    let args = python_create_args(&tool.to_string_lossy(), &prefix, python, sets);
-    let command = format!(
-        "{} && {}",
-        quoted(&args),
-        record::sh_append(record_path, record::PYTHON_ENV, name, python, &prefix)
-    );
-    job(
-        command,
-        log,
-        &format!("Create the Python environment {name}"),
-    )
-}
-
 /// The job that adds ipykernel to an environment Getting Ready listed as
 /// having none, and records the version it added.
 pub fn add_ipykernel(
+    exe: &Path,
     search: &Search,
     prefix: &str,
     log: &Path,
@@ -207,48 +122,40 @@ pub fn add_ipykernel(
     let Some(env) = bare_envs(search).into_iter().find(|e| e.prefix == prefix) else {
         bail!("{prefix} isn't an environment without ipykernel that Sandhill found");
     };
-    let args = ipykernel_args(&env.tool, prefix);
-    // The version comes from the environment once it's installed.
-    let version = format!(
-        "\"$(ls {} | sed -n 's/^ipykernel-\\(.*\\)-[^-]*\\.json$/\\1/p' | head -1)\"",
-        shell_quote(&format!("{prefix}/conda-meta"))
-    );
-    let command = format!(
-        "{} && {}",
-        quoted(&args),
-        record::sh_append_raw(
-            record_path,
-            record::IPYKERNEL,
-            "ipykernel",
-            &version,
-            prefix
-        )
-    );
-    job(command, log, &format!("Add ipykernel to {}", env.name))
-}
-
-/// The job that installs Miniforge into `~/miniforge3`, only when there is
-/// no conda or mamba, and records it with how many packages its base had,
-/// so it is removed later only if nothing was added.
-pub fn install_miniforge(search: &Search, log: &Path, record_path: &Path) -> Result<Launch> {
-    if let Some((tool, _)) = find_tool(search) {
-        bail!("{} is here already", tool.display());
-    }
-    let root = home()?.join(MINIFORGE_DIR);
-    if root.exists() {
-        bail!("{} exists already", root.display());
-    }
-    let root = root.to_string_lossy().into_owned();
-    let count = format!(
-        "\"$(ls {} | grep -c '\\.json$')\"",
-        shell_quote(&format!("{root}/conda-meta"))
-    );
-    let command = format!(
-        "{} && {}",
-        sandhill_proto::MINIFORGE_COMMAND,
-        record::sh_append_raw(record_path, record::MINIFORGE, "miniforge", &count, &root)
-    );
-    job(command, log, "Install Miniforge")
+    let plan = sandhill_proto::PackagePlan {
+        change: sandhill_proto::PackageChange {
+            action: sandhill_proto::PackageAction::Install,
+            target: sandhill_proto::InstallTarget::Python {
+                prefix: prefix.into(),
+                python: format!("{prefix}/bin/python"),
+            },
+            packages: vec!["ipykernel".into()],
+            tool: Some(sandhill_proto::InstallTool::Conda),
+            reason: "Python needs it to run in Sandhill".into(),
+        },
+        tools: vec![sandhill_proto::InstallToolInfo {
+            tool: sandhill_proto::InstallTool::Conda,
+            path: env.tool.clone(),
+            version: String::new(),
+        }],
+        folder: env.prefix,
+        packages: vec![sandhill_proto::PlannedPackage {
+            name: "ipykernel".into(),
+            spec: "ipykernel".into(),
+            source: "conda-forge".into(),
+            version: None,
+        }],
+        command: super::install::quote(ipykernel_args(&env.tool, prefix)),
+        notes: vec![],
+        refused: None,
+    };
+    super::install::launch(
+        exe,
+        record_path,
+        super::install::Job::Packages(plan),
+        log,
+        &format!("Add ipykernel to {}", env.name),
+    )
 }
 
 #[cfg(test)]
@@ -304,42 +211,6 @@ mod tests {
         assert_eq!(
             conda_package_version(&root.join("envs/omicverse"), "ipykernel").as_deref(),
             Some("7.2.0")
-        );
-    }
-
-    #[test]
-    fn refuses_bad_names_versions_sets_and_existing_environments() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("miniforge3");
-        installation(&root, &[("taken", true)]);
-        let search = search(&root);
-        let record = dir.path().join("record.tsv");
-        let log = dir.path().join("log");
-        let err = |result: Result<Launch>| result.err().unwrap().to_string();
-        assert!(err(create(&search, "a b", "3.12", &[], &log, &record)).contains("letters"));
-        assert!(err(create(&search, "x", "2.7", &[], &log, &record)).contains("versions"));
-        assert!(
-            err(create(&search, "x", "3.12", &["r".into()], &log, &record)).contains("package set")
-        );
-        assert!(err(create(&search, "taken", "3.12", &[], &log, &record)).contains("exists"));
-        assert!(
-            err(add_ipykernel(&search, "/nowhere", &log, &record)).contains("without ipykernel")
-        );
-        let none = Search::default();
-        assert!(err(create(&none, "x", "3.12", &[], &log, &record)).contains("no mamba"));
-        assert!(err(install_miniforge(&search, &log, &record)).contains("here already"));
-    }
-
-    #[test]
-    fn the_create_command_uses_conda_forge_only_and_the_chosen_sets() {
-        let args = python_create_args("/m/bin/mamba", "/m/envs/x", "3.12", &["singlecell".into()]);
-        let line = args.join(" ");
-        assert!(line.starts_with("/m/bin/mamba create -y -p /m/envs/x -c conda-forge --override-channels python=3.12 ipykernel"));
-        assert!(line.contains("scanpy") && !line.contains("seaborn"));
-        assert!(
-            ipykernel_args("mamba", "/p")
-                .join(" ")
-                .contains("--freeze-installed ipykernel")
         );
     }
 }

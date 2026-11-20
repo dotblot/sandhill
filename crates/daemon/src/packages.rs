@@ -1,8 +1,8 @@
 //! The packages installed for a session's language, for the Packages pane:
 //! R's libraries (`installed.packages()`), or the Python environment's
 //! distributions (`importlib.metadata`), with which are loaded. Listed by
-//! running a short piece of code in the session, quietly. Installing and
-//! removing run in the Console, where they can be seen, so they aren't here.
+//! running a short piece of code in the session, quietly. Changes are
+//! planned and run separately through Getting Ready's install jobs.
 //! Updates are asked of the repositories the same way: CRAN and
 //! Bioconductor for R, PyPI and conda's channels for Python.
 
@@ -29,7 +29,10 @@ const R: &str = r#"local({
   .cran <- if ("CRAN" %in% names(.repos)) .repos[["CRAN"]] else ""
   .line("SANDHILL_PKGS", as.integer(!is.na(.cran) && nzchar(.cran) && .cran != "@CRAN@"),
     as.integer("BiocManager" %in% .ip[, "Package"]), 0L)
+  .line("SANDHILL_PROGRAM", .esc(file.path(R.home("bin"), "R")))
   writeLines(paste("SANDHILL_LIB", .esc(.libPaths()), sep = "\t"))
+  .writable <- Filter(function(lib) file.access(lib, 2) == 0, .libPaths())
+  if (length(.writable)) writeLines(paste("SANDHILL_WRITABLE", .esc(.writable), sep = "\t"))
   if (nrow(.ip)) {
     .name <- .ip[, "Package"]
     .title <- .ip[, "Title"]
@@ -84,6 +87,8 @@ const PYTHON: &str = r#"def _sandhill_packages():
             used.add(name.split(".")[0])
     loaded = {name.split(".")[0] for name in list(sys.modules)}
     line("SANDHILL_PKGS", 0, 0, int(os.path.isdir(os.path.join(sys.prefix, "conda-meta"))))
+    line("SANDHILL_PROGRAM", esc(sys.executable))
+    line("SANDHILL_PREFIX", esc(sys.prefix))
     line("SANDHILL_LIB", esc(sys.prefix))
     seen = set()
     for d in md.distributions():
@@ -328,6 +333,9 @@ pub struct Listed {
     pub cran: bool,
     pub bioconductor: bool,
     pub conda: bool,
+    pub program: String,
+    pub prefix: String,
+    pub writable_libraries: Vec<String>,
 }
 
 pub fn parse(stdout: &str) -> Listed {
@@ -341,6 +349,11 @@ pub fn parse(stdout: &str) -> Listed {
                 parsed.conda = flag(fields.next());
             }
             Some("SANDHILL_LIB") => parsed.libraries.push(unescape(fields.next().unwrap_or(""))),
+            Some("SANDHILL_WRITABLE") => parsed
+                .writable_libraries
+                .push(unescape(fields.next().unwrap_or(""))),
+            Some("SANDHILL_PROGRAM") => parsed.program = unescape(fields.next().unwrap_or("")),
+            Some("SANDHILL_PREFIX") => parsed.prefix = unescape(fields.next().unwrap_or("")),
             Some("SANDHILL_PKG") => {
                 let name = unescape(fields.next().unwrap_or(""));
                 let version = unescape(fields.next().unwrap_or(""));
@@ -388,10 +401,13 @@ mod tests {
 
     #[test]
     fn parses_the_listing() {
-        let out = "SANDHILL_PKGS\t1\t0\t0\nSANDHILL_LIB\t/home/me/R\nSANDHILL_LIB\t/usr/lib/R/library\nSANDHILL_PKG\tstats\t4.3.3\tThe R Stats Package\t/usr/lib/R/library\t1\t1\t1\t\nSANDHILL_PKG\tSeurat\t5.1.0\tTools for \\tSingle Cell\t/home/me/R\t0\t1\t0\t\nSANDHILL_PKG\tscikit-learn\t1.5\tA set of tools\t/env\t0\t0\t0\tsklearn\tconda\n";
+        let out = "SANDHILL_PKGS\t1\t0\t0\nSANDHILL_PROGRAM\t/usr/lib/R/bin/R\nSANDHILL_LIB\t/home/me/R\nSANDHILL_WRITABLE\t/home/me/R\nSANDHILL_LIB\t/usr/lib/R/library\nSANDHILL_PKG\tstats\t4.3.3\tThe R Stats Package\t/usr/lib/R/library\t1\t1\t1\t\nSANDHILL_PKG\tSeurat\t5.1.0\tTools for \\tSingle Cell\t/home/me/R\t0\t1\t0\t\nSANDHILL_PKG\tscikit-learn\t1.5\tA set of tools\t/env\t0\t0\t0\tsklearn\tconda\n";
         let listed = parse(out);
         assert!(listed.cran && !listed.bioconductor && !listed.conda);
         assert_eq!(listed.libraries, vec!["/home/me/R", "/usr/lib/R/library"]);
+        assert_eq!(listed.writable_libraries, vec!["/home/me/R"]);
+        assert_eq!(listed.program, "/usr/lib/R/bin/R");
+        assert!(listed.prefix.is_empty());
         let names: Vec<&str> = listed.packages.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["scikit-learn", "Seurat", "stats"]);
         assert_eq!(

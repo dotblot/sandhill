@@ -56,6 +56,12 @@ where an older plan differs, this wins.
   (while still the recorded version) and Miniforge it installed (only
   while Miniforge holds nothing but Sandhill's environments and its base
   is as installed). Other conda environments and Pythons are never touched.
+  Removing some (Huan, 2026-11-20; `docs/design/clean-footprint-plan.md`):
+  What Sandhill Installed lists the record with ticks, and removes only
+  the ticked items still as Sandhill left them, each with the tool that
+  installed it (R's own installer, mamba/conda, pip, uv, Homebrew;
+  CRAN's R through macOS's own password dialog). The record also keeps
+  each install's tool, date and reason.
 
 ## Folder trust
 - Folder trust (Huan, 2026-11-12): the first open of a folder asks once;

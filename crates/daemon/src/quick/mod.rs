@@ -4,8 +4,11 @@
 
 pub(crate) mod archive;
 pub mod folder;
+pub mod install;
+mod package_plan;
 pub mod python;
 pub mod recognise;
 pub mod record;
 pub mod run;
+mod runtime_plan;
 pub mod setup;

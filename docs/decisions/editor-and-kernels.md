@@ -95,6 +95,12 @@ by sentence); where an older plan differs, this wins.
   asks is interrupted; an agent is told its code waits for the user. A
   visual debugger (breakpoints in the editor) stays out (Huan, 2026-11-17;
   `docs/design/done/console-input-plan.md`).
+- The Packages pane (Huan, 2026-11-20;
+  `docs/design/clean-footprint-plan.md`) installs, updates and removes
+  through the same confirmation as Getting Ready (what, tool, folder, the
+  exact command) as a job with progress, never by typing code into the
+  Console. Installs go in Sandhill's record with the reason "From the
+  Packages pane".
 
 ## Plots
 - Console plots stay inline unless sent to

@@ -397,6 +397,7 @@ pub fn libraries(r: &Path) -> Result<Vec<RLibrary>> {
 /// itself installs it (the offer `needs_library`), and the folder it acts
 /// on that must be trusted (a pixi project's), if any.
 pub fn launch(
+    exe: &Path,
     r: &str,
     library: Option<&str>,
     search: &Search,
@@ -428,21 +429,35 @@ pub fn launch(
                 record,
             );
             (
-                format!(
-                    "{} -e {}",
-                    shell_quote(&rscript.to_string_lossy()),
-                    shell_quote(&code)
-                ),
+                crate::quick::install::worker_command(
+                    exe,
+                    record,
+                    &crate::quick::install::Job::Irkernel {
+                        command: format!(
+                            "{} -e {}",
+                            shell_quote(&rscript.to_string_lossy()),
+                            shell_quote(&code)
+                        ),
+                        prefix: None,
+                    },
+                )?,
                 home,
                 None,
             )
         }
         How::Conda { prefix, .. } => (
-            format!(
-                "{} install -y -p {} -c conda-forge r-irkernel",
-                shell_quote(&conda_tool(prefix)),
-                shell_quote(&prefix.to_string_lossy())
-            ),
+            crate::quick::install::worker_command(
+                exe,
+                record,
+                &crate::quick::install::Job::Irkernel {
+                    command: format!(
+                        "{} install -y -p {} -c conda-forge r-irkernel",
+                        shell_quote(&conda_tool(prefix)),
+                        shell_quote(&prefix.to_string_lossy())
+                    ),
+                    prefix: Some(prefix.to_string_lossy().into_owned()),
+                },
+            )?,
             home,
             None,
         ),

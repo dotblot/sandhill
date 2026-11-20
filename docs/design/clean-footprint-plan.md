@@ -1,8 +1,9 @@
 # Clean install, clean uninstall
 
-Huan, 2026-11-20. Status: draft; Huan's decisions on the lock, the
-uninstall ticks and the kits are in (2026-11-20). Replaces the draft
-"Sandhill's own R and Python" plan of the same day.
+Huan, 2026-11-20. Status: approved by Huan (2026-11-20), with his
+decisions on the lock, the uninstall ticks and the kits, and GSVA kept
+with Install Developer Tools. Replaces the draft "Sandhill's own R and
+Python" plan of the same day.
 
 ## The promise
 
@@ -368,7 +369,7 @@ would double what is built and explained.
 Each step is usable on its own and committed when done:
 1. Section 2: asking with tool and folder, Install Without Asking, the
    wider record, What Sandhill Installed with ticks; the Packages pane on
-   the same rules.
+   the same rules. Built 2026-11-20.
 2. Section 3 and the first-run steps of section 9: Sandhill's own
    environment and kits, with the Terminal, kernels and agents' commands
    kept inside.
