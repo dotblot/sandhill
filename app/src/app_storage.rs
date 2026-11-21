@@ -508,6 +508,10 @@ mod footprint_tests {
         );
         assert!(old_media.join("session-1-1-1/preview-1").is_file());
 
+        // Unlock, as the preview cache's own lease does: closing alone
+        // leaves the lock held while a process forked by another test
+        // (editor::media::cache's WaitingChild) still has the file.
+        lease.unlock().unwrap();
         drop(lease);
         let second = Storage::open(&home, false, |_| None);
         assert_eq!(second.media_root(), home.join(CACHE_PATH).join("media"));
