@@ -67,6 +67,17 @@ pub(crate) const UNSET: &[&str] = &[
     "CONDA_ENVS_PATH",
     "CONDA_PKGS_DIRS",
     "MAMBARC",
+    "RENV_PATHS_LIBRARY",
+    "RENV_PATHS_LIBRARY_STAGING",
+    "RENV_PATHS_SANDBOX",
+    "RENV_PATHS_LOCAL",
+    "RENV_PATHS_CELLAR",
+    "RENV_PATHS_SOURCE",
+    "RENV_PATHS_BINARY",
+    "RENV_PATHS_RENV",
+    "RENV_PATHS_LOCKFILE",
+    "RENV_PATHS_PREFIX",
+    "RENV_PROFILE",
 ];
 
 const PATHS: &[(&str, &str)] = &[
@@ -77,6 +88,11 @@ const PATHS: &[(&str, &str)] = &[
     ("R_USER_CACHE_DIR", "r/cache"),
     ("R_USER_DATA_DIR", "r/data"),
     ("R_USER_CONFIG_DIR", "r/config"),
+    ("RENV_PATHS_ROOT", "renv"),
+    ("RENV_PATHS_LIBRARY_ROOT", "renv/library"),
+    ("RENV_PATHS_CACHE", "renv/cache"),
+    ("RENV_PATHS_SANDBOX", "renv/sandbox"),
+    ("RENV_PATHS_LIBRARY_STAGING", "renv/staging"),
     ("PYTHONUSERBASE", "python/user"),
     ("PIP_CONFIG_FILE", "python/pip.conf"),
     ("PIP_CACHE_DIR", "python/cache"),
@@ -190,6 +206,19 @@ fn restore(folder: &Path) -> String {
         );
     }
     script
+}
+
+pub(crate) fn apply_renv(command: &mut std::process::Command, project: &Path, own: Option<&Path>) {
+    let library = crate::quick::project_packages::renv_root(project, own);
+    if (own.is_some() || library.is_dir())
+        && project.join("renv.lock").is_file()
+        && project.join("renv/activate.R").is_file()
+    {
+        command.env("RENV_PATHS_LIBRARY", library);
+        command.env("RENV_PATHS_RENV", project.join("renv"));
+        command.env("RENV_PATHS_LOCKFILE", project.join("renv.lock"));
+        command.env_remove("RENV_PROFILE");
+    }
 }
 
 const R_PROFILE: &str = r#"local({

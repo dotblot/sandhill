@@ -29,23 +29,40 @@ impl Daemon {
     }
 
     pub(super) async fn plan_own_setup(&self, setup: OwnSetup) -> Result<Value> {
-        Ok(serde_json::to_value(
-            blocking(move || Ok(own::plan(setup))).await?,
-        )?)
+        let record = self.install_record();
+        let requested = setup.clone();
+        let work = blocking(move || Ok(own::plan(&record, setup))).await?;
+        let reply = serde_json::to_value(work.plan())?;
+        if !requested.copy_from.is_empty() {
+            *self.own_copy_plan.lock().unwrap() = Some((requested, work));
+        }
+        Ok(reply)
     }
 
     pub(super) async fn run_own_setup(&self, setup: OwnSetup) -> Result<Value> {
         let record = self.install_record();
         let executable = self.options.executable.clone();
+        let reviewed = if setup.copy_from.is_empty() {
+            None
+        } else {
+            let mut saved = self.own_copy_plan.lock().unwrap();
+            anyhow::ensure!(
+                saved
+                    .as_ref()
+                    .is_some_and(|(raw, work)| *raw == setup || work.plan().setup == setup),
+                "Review the copy table before setting up Sandhill's folder."
+            );
+            saved.take().map(|(_, work)| work.into_job())
+        };
         self.quick_job(move |log| {
-            let plan = own::plan(setup);
-            if let Some(refused) = &plan.refused {
+            let work = reviewed.unwrap_or_else(|| own::job(&record, setup));
+            if let Some(refused) = &work.plan().refused {
                 bail!("{refused}");
             }
             install::launch(
                 &executable,
                 &record,
-                install::Job::OwnSetup(plan),
+                install::Job::OwnSetup(work),
                 log,
                 "Set up Sandhill's own R and Python",
             )
@@ -138,7 +155,7 @@ impl Daemon {
 
     /// Starts an install or removal job whose output is also in a log the
     /// app reads for its progress line.
-    async fn quick_job(
+    pub(super) async fn quick_job(
         &self,
         make: impl FnOnce(&Path) -> Result<Launch> + Send + 'static,
     ) -> Result<Value> {

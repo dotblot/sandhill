@@ -1,0 +1,37 @@
+{
+  "R": {
+    "Version": "4.5.2",
+    "Repositories": [
+      {
+        "Name": "CRAN",
+        "URL": "https://cloud.r-project.org"
+      }
+    ]
+  },
+  "Bioconductor": {
+    "Version": "3.22"
+  },
+  "Packages": {
+    "A": {
+      "Package": "A",
+      "Version": "1.0",
+      "Source": "Repository",
+      "Repository": "CRAN"
+    },
+    "B": {
+      "Package": "B",
+      "Version": "2.1",
+      "Source": "Bioconductor"
+    },
+    "C": {
+      "Package": "C",
+      "Version": "3.2",
+      "Source": "GitHub",
+      "RemoteType": "github",
+      "RemoteHost": "api.github.com",
+      "RemoteUsername": "someone",
+      "RemoteRepo": "c-package",
+      "RemoteSha": "123456789abcdef"
+    }
+  }
+}

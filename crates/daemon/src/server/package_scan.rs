@@ -174,7 +174,7 @@ enum Token<'a> {
     Other,
 }
 
-fn scan(language: Language, code: &str, imports: &mut Vec<String>) {
+pub(super) fn scan(language: Language, code: &str, imports: &mut Vec<String>) {
     let tokens = tokens(language, code);
     match language {
         Language::R => scan_r(&tokens, imports),

@@ -302,8 +302,9 @@ pub(crate) fn remember(record: &Path, plan: &PackagePlan) -> Result<()> {
 pub(crate) enum Job {
     Packages(PackagePlan),
     Runtime(RuntimePlan),
-    OwnSetup(sandhill_proto::OwnSetupPlan),
+    OwnSetup(super::own::Work),
     Environment(super::env_actions::Work),
+    ProjectSetup(super::project_packages::Work),
     RemoveOwn(Vec<PathBuf>, Vec<InstalledKey>),
     Remove(Vec<InstalledKey>),
     Agent {
@@ -327,6 +328,18 @@ pub(crate) fn worker_command(exe: &Path, record: &Path, job: &Job) -> Result<Str
     ))
 }
 
+fn job_payload(log: &Path, job: &Job) -> Result<String> {
+    use std::io::Write as _;
+    let path = log.with_extension("work.json");
+    let mut file = tempfile::NamedTempFile::new_in(
+        path.parent().context("The job log folder wasn't found.")?,
+    )?;
+    serde_json::to_writer(&mut file, job)?;
+    file.flush()?;
+    file.persist_noclobber(&path)?;
+    Ok(format!("@{}", path.display()))
+}
+
 pub(crate) fn launch(
     exe: &Path,
     record: &Path,
@@ -336,9 +349,18 @@ pub(crate) fn launch(
 ) -> Result<Launch> {
     let own_install = matches!(
         &job,
-        Job::OwnSetup(_) | Job::RemoveOwn(..) | Job::Environment(_)
+        Job::OwnSetup(_) | Job::RemoveOwn(..) | Job::Environment(_) | Job::ProjectSetup(_)
     );
-    let worker = worker_command(exe, record, &job)?;
+    let worker = if matches!(&job, Job::OwnSetup(_) | Job::ProjectSetup(_)) {
+        format!(
+            "{} install-worker {} {}",
+            shell_quote(&exe.to_string_lossy()),
+            shell_quote(&record.to_string_lossy()),
+            shell_quote(&job_payload(log, &job)?)
+        )
+    } else {
+        worker_command(exe, record, &job)?
+    };
     let spec = JobSpec {
         path: None,
         command: Some(format!(
@@ -394,7 +416,14 @@ pub(super) fn run_command(command: &str) -> Result<()> {
 /// Entry point for the terminal job, so recording continues if the daemon restarts.
 #[doc(hidden)]
 pub async fn worker(record_path: &Path, payload: &str) -> Result<()> {
-    let job = serde_json::from_str(payload)?;
+    let job = if let Some(path) = payload.strip_prefix('@') {
+        let path = Path::new(path);
+        let job = serde_json::from_reader(File::open(path)?)?;
+        fs::remove_file(path)?;
+        job
+    } else {
+        serde_json::from_str(payload)?
+    };
     let _lock = match record::lock(record_path, false) {
         Ok(lock) => lock,
         Err(_) => {
@@ -408,6 +437,7 @@ pub async fn worker(record_path: &Path, payload: &str) -> Result<()> {
         Job::Runtime(plan) => runtime_plan::run(record_path, &plan),
         Job::OwnSetup(plan) => super::own::run(record_path, &plan),
         Job::Environment(work) => super::env_actions::run(record_path, work).await,
+        Job::ProjectSetup(work) => super::project_packages::run(record_path, work).await,
         Job::RemoveOwn(folders, keys) => {
             for folder in folders {
                 super::own::remove(record_path, &folder)?;

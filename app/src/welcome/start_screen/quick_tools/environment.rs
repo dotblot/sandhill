@@ -1,8 +1,8 @@
 //! The first-run R and Python setup and kit review for Sandhill's own folder.
 
 use sandhill_proto::{
-    CORE_KIT, EnvMode, InstallTarget, KITS, Kit, OWN_FOLDER, OwnRuntime, OwnSetup, OwnSetupPlan,
-    RSource,
+    CORE_KIT, CopyReport, EnvCard, EnvMode, InstallTarget, KITS, Kit, OWN_FOLDER, OwnRuntime,
+    OwnSetup, OwnSetupPlan, RSource,
 };
 
 use super::*;
@@ -45,6 +45,8 @@ struct Flow {
     adding: bool,
     plan: Option<SetupReview>,
     details: bool,
+    copy: bool,
+    copy_details: bool,
     choosing: bool,
     requesting_tools: bool,
     tools_message: Option<(String, bool)>,
@@ -335,6 +337,7 @@ impl AppWindow {
                         .filter(|id| KITS.iter().any(|kit| kit.id == id.as_str()))
                         .cloned()
                         .collect(),
+                    copy_from: Vec::new(),
                 },
                 Step::Kits,
             )
@@ -348,6 +351,7 @@ impl AppWindow {
                     r: true,
                     python: true,
                     kits: vec!["bulk".into(), "plots".into()],
+                    copy_from: Vec::new(),
                 },
                 Step::Source,
             )
@@ -365,6 +369,8 @@ impl AppWindow {
             adding: adding_for_python.is_some(),
             plan: None,
             details: false,
+            copy: false,
+            copy_details: false,
             choosing: false,
             requesting_tools: false,
             tools_message: None,
@@ -451,6 +457,7 @@ impl AppWindow {
         };
         flow.plan = None;
         flow.details = false;
+        flow.copy_details = false;
         flow.tools_message = None;
         flow.requesting_tools = false;
         state.generation += 1;
@@ -626,6 +633,8 @@ impl AppWindow {
                 let setup = plan.setup.clone();
                 let title = if flow.adding {
                     "Adding kits"
+                } else if !setup.copy_from.is_empty() {
+                    "Setting up and copying packages"
                 } else {
                     "Setting up Sandhill's own R and Python"
                 };
@@ -671,10 +680,10 @@ impl AppWindow {
         if q.busy() || q.checking || q.setting_prefs || q.environment.switching {
             return;
         }
-        let Some(Ok(found)) = &q.readiness else {
+        if q.readiness.as_ref().is_none_or(Result::is_err) {
             return;
-        };
-        if mode == EnvMode::Own && found.own.is_none() {
+        }
+        if mode == EnvMode::Own {
             self.quick_begin_setup(Some(EnvMode::Own), None, None, cx);
             return;
         }
@@ -782,6 +791,16 @@ impl AppWindow {
         let state = &q.environment;
         let flow = state.flow.as_ref()?;
         let found = q.readiness.as_ref().and_then(|result| result.as_ref().ok());
+        let card_list = q.cards.list.as_ref();
+        let cards = card_list.and_then(|result| result.as_ref().ok());
+        let sources = cards.into_iter().flatten().filter(|card| {
+            card.kind != "own"
+                && match card.language.as_str() {
+                    "r" => flow.setup.r,
+                    "python" => flow.setup.python,
+                    _ => false,
+                }
+        });
         let busy =
             q.busy() || q.checking || state.switching || flow.choosing || flow.requesting_tools;
         let (step, title) = match flow.step {
@@ -897,6 +916,50 @@ impl AppWindow {
                     Some(kit_choice(tick, kit.about, packages, p).into_any_element())
                 }));
                 panel = panel.child(look::settings_box(rows, p));
+                if flow.mode == EnvMode::Own && !flow.adding {
+                    let sources: Vec<_> = sources.collect();
+                    if !sources.is_empty() || flow.copy {
+                        can_continue &= !flow.copy
+                            || (!q.cards.loading
+                                && !flow.setup.copy_from.is_empty()
+                                && flow
+                                    .setup
+                                    .copy_from
+                                    .iter()
+                                    .all(|id| sources.iter().any(|card| &card.id == id)));
+                        panel = panel.child(self.quick_copy_options(flow, &sources, busy, p, cx));
+                    } else if let Some(Err(error)) = card_list {
+                        panel = panel.child(look::settings_box(
+                            vec![
+                                look::settings_row(
+                                    "Couldn't list environments to copy from",
+                                    Some(look::settings_detail(error.clone(), p)),
+                                )
+                                .child(
+                                    Button::new("setup-copy-retry")
+                                        .small()
+                                        .label("Check Again")
+                                        .disabled(q.cards.loading)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.quick_list_cards(cx)),
+                                        ),
+                                )
+                                .into_any_element(),
+                            ],
+                            p,
+                        ));
+                    } else if q.cards.loading {
+                        can_continue &= found.is_none_or(|found| {
+                            found.r.is_none()
+                                && found.python.found.is_none()
+                                && found.python.bare.is_empty()
+                        });
+                        panel = panel.child(look::settings_detail(
+                            "Checking for environments you can copy from…",
+                            p,
+                        ));
+                    }
+                }
             }
             Step::Review => match &flow.plan {
                 Some(SetupReview::Own(plan)) => {
@@ -937,13 +1000,25 @@ impl AppWindow {
                                         })),
                                 ),
                         );
-                    panel = panel.child(look::settings_box(
-                        vec![
-                            review::own_setup(plan, flow.details, details, developer_tools, p)
-                                .into_any_element(),
-                        ],
-                        p,
-                    ));
+                    let copy_details =
+                        Button::new("setup-copy-details")
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(flow) = &mut this.start.quick.environment.flow {
+                                    flow.copy_details = !flow.copy_details;
+                                    cx.notify();
+                                }
+                            }));
+                    let content = v_flex()
+                        .child(review::own_setup(
+                            plan,
+                            flow.details,
+                            details,
+                            developer_tools,
+                            p,
+                        ))
+                        .children(review::own_copy(plan, flow.copy_details, copy_details, p));
+                    panel = panel.child(look::settings_box(vec![content.into_any_element()], p));
                 }
                 Some(SetupReview::Existing(review)) => {
                     can_continue &= found.is_some()
@@ -1011,6 +1086,8 @@ impl AppWindow {
                                     "Continue"
                                 } else if flow.adding {
                                     "Add Kits"
+                                } else if flow.mode == EnvMode::Own && flow.copy {
+                                    "Set Up and Copy"
                                 } else {
                                     "Set Up"
                                 })
@@ -1056,6 +1133,9 @@ impl AppWindow {
                 .on_click(cx.listener(|this, on: &bool, _, cx| {
                     if let Some(flow) = &mut this.start.quick.environment.flow {
                         flow.setup.r = *on;
+                        if !on {
+                            flow.setup.copy_from.retain(|id| !id.starts_with("r:"));
+                        }
                         cx.notify();
                     }
                 })),
@@ -1068,10 +1148,152 @@ impl AppWindow {
                 .on_click(cx.listener(|this, on: &bool, _, cx| {
                     if let Some(flow) = &mut this.start.quick.environment.flow {
                         flow.setup.python = *on;
+                        if !on {
+                            flow.setup.copy_from.retain(|id| !id.starts_with("python:"));
+                        }
                         cx.notify();
                     }
                 })),
         )
+    }
+
+    fn quick_copy_options(
+        &self,
+        flow: &Flow,
+        sources: &[&EnvCard],
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut rows = vec![
+            look::settings_row(
+                "What should Sandhill's own R and Python start with?",
+                Some(look::settings_detail(
+                    "Sandhill only reads the environments you choose. It doesn't change them.",
+                    p,
+                )),
+            )
+            .into_any_element(),
+        ];
+        rows.push(
+            h_flex()
+                .flex_wrap()
+                .gap(px(look::GAP_6))
+                .px(px(look::PANE_PAD_X))
+                .py(px(look::PANE_PAD_Y))
+                .children(
+                    [
+                        (false, "Only what Sandhill needs"),
+                        (true, "Also the packages in my current R / Python"),
+                    ]
+                    .into_iter()
+                    .map(|(copy, label)| {
+                        Button::new(("setup-copy-choice", usize::from(copy)))
+                            .small()
+                            .label(label)
+                            .when(flow.copy == copy, |b| b.primary())
+                            .disabled(busy || flow.copy == copy)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(flow) = &mut this.start.quick.environment.flow {
+                                    flow.copy = copy;
+                                    flow.setup.copy_from.clear();
+                                    cx.notify();
+                                }
+                            }))
+                    }),
+                )
+                .into_any_element(),
+        );
+        if flow.copy {
+            rows.push(
+                look::settings_row(
+                    if sources.is_empty() {
+                        "No environments available to copy from"
+                    } else {
+                        "Choose up to one R and one Python environment"
+                    },
+                    None,
+                )
+                .into_any_element(),
+            );
+            rows.extend(sources.iter().enumerate().map(|(ix, card)| {
+                let id = card.id.clone();
+                let language = card.language.clone();
+                let checked = flow.setup.copy_from.contains(&id);
+                v_flex()
+                    .min_w_0()
+                    .gap(px(look::GAP_4))
+                    .px(px(look::PANE_PAD_X))
+                    .py(px(look::PANE_PAD_Y))
+                    .child(
+                        Checkbox::new(("setup-copy-source", ix))
+                            .label(card.name.clone())
+                            .checked(checked)
+                            .disabled(busy)
+                            .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                                if let Some(flow) = &mut this.start.quick.environment.flow {
+                                    let prefix = if language == "r" { "r:" } else { "python:" };
+                                    flow.setup.copy_from.retain(|id| !id.starts_with(prefix));
+                                    if *on {
+                                        flow.setup.copy_from.push(id.clone());
+                                    }
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                    .child(look::settings_detail(card.program.clone(), p))
+                    .into_any_element()
+            }));
+        }
+        look::settings_box(rows, p)
+    }
+
+    pub(super) fn quick_copy_report(
+        &self,
+        folder: &str,
+        report: &CopyReport,
+        busy: bool,
+        progress: Option<AnyElement>,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut rows = vec![
+            look::settings_row(
+                "Sandhill's own folder",
+                Some(look::settings_detail(folder.to_owned(), p)),
+            )
+            .into_any_element(),
+        ];
+        rows.extend(progress);
+        rows.push(
+            look::settings_row(
+                "Package Copy Report",
+                Some(look::settings_detail(
+                    format!("Copy finished on {}.", report.date),
+                    p,
+                )),
+            )
+            .into_any_element(),
+        );
+        rows.push(
+            review::copy_report(
+                report,
+                busy,
+                |this: &mut Self, change, cx| {
+                    this.quick_request_packages(
+                        PackageRow::Retry(Section::Environment),
+                        Vec::new(),
+                        vec![change],
+                        None,
+                        cx,
+                    );
+                },
+                p,
+                cx,
+            )
+            .into_any_element(),
+        );
+        look::settings_box(rows, p)
     }
 
     fn quick_existing_setup_review(

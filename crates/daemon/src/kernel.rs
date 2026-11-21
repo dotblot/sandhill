@@ -130,6 +130,7 @@ pub(crate) async fn launch_scoped(
             .or_insert_with(|| path.to_string_lossy().into_owned());
     }
     let program = spec.kernelspec.argv.first().cloned().unwrap_or_default();
+    let r = crate::cells::normalize_language(&spec.kernelspec.language) == "r";
     let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let (ports, listeners) = jupyter_zmq_client::peek_ports_with_listeners(ip, 5).await?;
     let connection_info = ConnectionInfo {
@@ -174,6 +175,9 @@ pub(crate) async fn launch_scoped(
             crate::own_env::SWITCH_HINT
         );
         crate::own_env::apply(command.as_std_mut(), folder);
+    }
+    if r {
+        crate::own_env::apply_renv(command.as_std_mut(), cwd, own);
     }
     let mut child = command.spawn().map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {

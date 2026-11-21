@@ -60,7 +60,7 @@ pub fn readiness(
 ) -> QuickReadiness {
     let installed_by_sandhill = record::read(record_path);
     let prefs = super::install::prefs(record_path);
-    let own = super::own::readiness(search, Path::new(&prefs.own_folder));
+    let own = super::own::readiness(search, record_path, Path::new(&prefs.own_folder));
     let scoped = search.clone().in_own(
         (prefs.mode == Some(sandhill_proto::EnvMode::Own))
             .then(|| PathBuf::from(&prefs.own_folder)),

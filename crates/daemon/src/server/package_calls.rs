@@ -231,7 +231,7 @@ fn spec_language(spec: &Found) -> Option<Language> {
 }
 
 /// Match project defaults and the daemon's usual language choices without starting a kernel.
-fn choose_spec<'a>(
+pub(super) fn choose_spec<'a>(
     search: &Search,
     specs: &'a [Found],
     language: Language,

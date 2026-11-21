@@ -131,6 +131,11 @@ differs, this wins.
   time (Getting Ready and the kernel picker's Install IRkernel). It never
   creates a library (no more `R_LIBS_USER` folder made for the user);
   with no library it can write to, it says how to make one and stops.
+  One exception (Huan, 2026-11-20; `docs/design/clean-footprint-plan.md`):
+  a project that carries its own `renv.lock` is set up inside the
+  project (`<project>/renv/library`, renv's own way), shown and asked
+  first, so its pinned versions never change the user's other work. In
+  "Everything in one folder" that library lives in Sandhill's folder.
   Python for notebooks (Huan, 2026-11-19; `docs/design/python-ready-plan.md`):
   a Getting Ready box between R and the AI helpers shows the Python
   kernels Sandhill finds and the mamba (else conda) it uses. It offers
@@ -190,6 +195,18 @@ differs, this wins.
   (New Environment, Duplicate, Export, Import, Delete, asked in its row).
   Every action shows its plan and command before it runs. Claude Code and
   Codex moved to Manage → Agents.
+  Switching to Sandhill's own (Huan, 2026-11-20): Sandhill asks whether
+  its own R and Python start with only what Sandhill needs or also copy
+  the packages of the user's current R and Python. A copy first shows a
+  table of where each copy comes from (conda at the same or another
+  version, CRAN or Bioconductor, PyPI, GitHub, or can't be copied and
+  why); the user's R and Python are only read; a report afterwards
+  lists what failed, each with its reason and fix. Project Settings can
+  Save This Project's Packages (`renv.lock`, `environment.yml` or
+  `requirements.txt` in the project, written by Sandhill from what the
+  project's code uses) and Set Up This Project's Packages from such a
+  file; the missing-packages bar offers the set-up when the project
+  carries one.
   The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
   a title-bar switch shared by every Explore window on this Mac. Until
   that switch is used, the pane shows only with a signed-in Claude Code

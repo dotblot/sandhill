@@ -55,9 +55,14 @@ impl LogContext {
 pub(super) fn remember(log: &Path, job: &Job) -> Result<()> {
     let context = match job {
         Job::Packages(plan) | Job::Environment(Work::Packages(plan)) => LogContext::packages(plan),
-        Job::OwnSetup(plan) => LogContext {
-            folder: Some(PathBuf::from(&plan.setup.folder)),
-            download_mb: Some(plan.download_mb),
+        Job::OwnSetup(work) => LogContext {
+            folder: Some(PathBuf::from(&work.plan().setup.folder)),
+            download_mb: Some(work.plan().download_mb),
+            ..Default::default()
+        },
+        Job::ProjectSetup(work) => LogContext {
+            folder: Some(PathBuf::from(&work.plan().folder)),
+            download_mb: work.plan().download_mb,
             ..Default::default()
         },
         Job::Runtime(plan) => LogContext {
@@ -72,6 +77,23 @@ pub(super) fn remember(log: &Path, job: &Job) -> Result<()> {
         &serde_json::to_vec(&context)?,
     )?;
     Ok(())
+}
+
+pub(super) fn copy_failure(
+    log: &str,
+    folder: &Path,
+    package: &str,
+    alternative: Option<PackageChange>,
+) -> Option<InstallFailure> {
+    classify(
+        log,
+        &LogContext {
+            folder: Some(folder.into()),
+            package: Some(package.into()),
+            alternative,
+            download_mb: None,
+        },
+    )
 }
 
 pub(crate) fn explain(log_dir: &Path, path: &Path) -> Result<Option<InstallFailure>> {

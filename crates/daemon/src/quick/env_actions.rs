@@ -216,16 +216,7 @@ fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepare
                 )?;
             plan.what = "Make a new conda environment from this file".into();
             plan.folder = destination.to_string_lossy().into_owned();
-            plan.command = quote([
-                tool.to_string_lossy().as_ref(),
-                "env",
-                "create",
-                "-y",
-                "-p",
-                &plan.folder,
-                "--file",
-                &source.to_string_lossy(),
-            ]);
+            plan.command = conda_import_command(&tool, &destination, &source);
             Effect::Add {
                 folder: destination,
                 conda: true,
@@ -489,7 +480,7 @@ fn deletable(env: &Environment, search: &Search) -> Result<PathBuf> {
     Ok(folder)
 }
 
-fn conda_root(tool: &str) -> Option<PathBuf> {
+pub(super) fn conda_root(tool: &str) -> Option<PathBuf> {
     let out = install::probe(Path::new(tool), &["info", "--json"])?;
     let json: serde_json::Value = serde_json::from_str(&out).ok()?;
     ["root_prefix", "base environment", "base_environment"]
@@ -499,6 +490,19 @@ fn conda_root(tool: &str) -> Option<PathBuf> {
             let path = PathBuf::from(path);
             path.is_absolute().then_some(path)
         })
+}
+
+pub(super) fn conda_import_command(tool: &Path, destination: &Path, source: &Path) -> String {
+    quote([
+        tool.to_string_lossy().as_ref(),
+        "env",
+        "create",
+        "-y",
+        "-p",
+        &destination.to_string_lossy(),
+        "--file",
+        &source.to_string_lossy(),
+    ])
 }
 
 fn duplicate_conda(tool: &str, source: &Path, destination: &Path) -> String {

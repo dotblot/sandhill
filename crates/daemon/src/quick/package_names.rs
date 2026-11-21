@@ -50,6 +50,13 @@ pub(crate) fn import_name<'a>(import: &'a str, target: &InstallTarget, search: &
         .map_or(import, |&(_, pypi, forge)| if conda { forge } else { pypi })
 }
 
+pub(super) fn module_distribution(module: &str) -> &str {
+    PYTHON_NAMES
+        .iter()
+        .find(|&&(name, _, _)| name == module)
+        .map_or(module, |&(_, pypi, _)| pypi)
+}
+
 /// Keep the same package when a plan is re-run with another source.
 pub(super) fn distribution(name: &str, tool: InstallTool) -> &str {
     PYTHON_NAMES

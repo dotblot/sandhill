@@ -131,6 +131,7 @@ async fn own_python_never_installs_into_home_and_is_removed_with_its_kernel() {
         r: false,
         python: true,
         kits: Vec::new(),
+        copy_from: Vec::new(),
     };
     let plan: OwnSetupPlan = client
         .call(Call::PlanOwnSetup {

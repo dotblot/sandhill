@@ -1036,6 +1036,35 @@ pub enum Call {
     ExplainInstallFailure {
         log: String,
     },
+    /// The package files a project carries and whether each is set up.
+    /// Returns `Vec<ProjectPackageFile>`.
+    ProjectPackageFiles {
+        project: String,
+    },
+    /// What Save This Project's Packages will write for `language`.
+    /// Returns [`ProjectFilePlan`].
+    PlanProjectFile {
+        project: String,
+        language: String,
+    },
+    /// Writes it exactly as [`Call::PlanProjectFile`] showed. Returns the
+    /// written [`ProjectFilePlan`].
+    WriteProjectFile {
+        project: String,
+        language: String,
+    },
+    /// What Set Up This Project's Packages will do with `file`. Returns
+    /// [`ProjectSetupPlan`].
+    PlanProjectSetup {
+        project: String,
+        file: String,
+    },
+    /// Does it as [`Call::PlanProjectSetup`] showed, in a job. Returns
+    /// [`QuickInstalling`].
+    RunProjectSetup {
+        project: String,
+        file: String,
+    },
     /// Turns Install Without Asking on or off for this computer. Returns
     /// [`InstallPrefs`].
     SetInstallPrefs {

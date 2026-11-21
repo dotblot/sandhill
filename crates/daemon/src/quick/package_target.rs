@@ -12,7 +12,7 @@ use serde::Deserialize;
 use super::package_plan::{same_folder, writable};
 use crate::irkernel::{LIBRARIES_CODE, parse_libraries};
 
-const R_BASE: &[&str] = &[
+pub(super) const R_BASE: &[&str] = &[
     "base",
     "compiler",
     "datasets",
@@ -196,7 +196,7 @@ pub(crate) fn r_files(
         && let Some(project) = project.filter(|p| p.join("renv.lock").is_file())
         && let Some((version, platform)) = version
     {
-        let root = project.join("renv/library");
+        let root = super::project_packages::renv_root(project, own);
         let version = format!("R-{version}");
         // renv may add a platform folder above R-<major>.<minor> as well as below it.
         let candidates =
@@ -312,13 +312,13 @@ print(json.dumps(dict(prefix=sys.prefix, version='python%d.%d' % sys.version_inf
     sites=site.getsitepackages(), user_site=site.getusersitepackages())))"#;
 
 #[derive(Deserialize)]
-struct PythonInfo {
-    prefix: PathBuf,
-    version: String,
-    stdlib_path: PathBuf,
-    stdlib: HashSet<String>,
-    sites: Vec<PathBuf>,
-    user_site: PathBuf,
+pub(super) struct PythonInfo {
+    pub prefix: PathBuf,
+    pub version: String,
+    pub stdlib_path: PathBuf,
+    pub stdlib: HashSet<String>,
+    pub sites: Vec<PathBuf>,
+    pub user_site: PathBuf,
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -327,7 +327,7 @@ struct PythonKey {
     modified: Option<std::time::SystemTime>,
 }
 
-fn python_info(program: &Path, restricted: bool) -> Option<Arc<PythonInfo>> {
+pub(super) fn python_info(program: &Path, restricted: bool) -> Option<Arc<PythonInfo>> {
     type Probe = Arc<OnceLock<Option<Arc<PythonInfo>>>>;
     static CACHE: LazyLock<Mutex<HashMap<PythonKey, Probe>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -495,7 +495,7 @@ fn config<'a>(text: &'a str, key: &str) -> Option<&'a str> {
         .find_map(|(name, value)| (name.trim() == key).then_some(value.trim()))
 }
 
-fn subdirs(path: &Path) -> impl Iterator<Item = PathBuf> + use<> {
+pub(super) fn subdirs(path: &Path) -> impl Iterator<Item = PathBuf> + use<> {
     std::fs::read_dir(path)
         .into_iter()
         .flatten()
@@ -540,7 +540,7 @@ fn distribution_imports(sites: &[PathBuf], names: &[String]) -> HashSet<usize> {
     found
 }
 
-fn record_module(line: &str) -> Option<&str> {
+pub(super) fn record_module(line: &str) -> Option<&str> {
     let path = if let Some(quoted) = line.strip_prefix('"') {
         quoted.split_once("\",")?.0
     } else {

@@ -378,6 +378,8 @@ Each step is usable on its own and committed when done:
 4. Section 9's missing-packages bar, Install on errors, plain errors.
    Built 2026-11-20.
 5. Section 4: switching and copying packages; section 9's project files.
+   Built 2026-11-20 (a project's `renv.lock` is set up inside the project,
+   Huan's decision).
 6. Section 6: one folder for Sandhill's own files, the move, `SMAppService`.
 7. Sections 5 and 7: agents' settings, the footprint page, the new
    uninstall.

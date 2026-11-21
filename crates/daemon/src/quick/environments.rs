@@ -14,14 +14,14 @@ use crate::{irkernel, kernelspecs, own_env};
 use kernelspecs::Search;
 
 #[derive(Clone)]
-struct Found {
-    program: PathBuf,
-    prefix: Option<PathBuf>,
+pub(super) struct Found {
+    pub program: PathBuf,
+    pub prefix: Option<PathBuf>,
     kernel: Option<String>,
     name: String,
-    version: String,
+    pub version: String,
     own: Option<PathBuf>,
-    r: bool,
+    pub r: bool,
     explore: bool,
 }
 
@@ -35,10 +35,10 @@ pub(super) fn id(target: &InstallTarget) -> String {
     }
 }
 
-fn discover(search: &Search, record: &Path) -> Vec<Found> {
+fn discover(search: &Search, record: &Path, include_existing: bool) -> Vec<Found> {
     let prefs = install::prefs(record);
     let own = PathBuf::from(&prefs.own_folder);
-    let only_own = prefs.mode == Some(EnvMode::Own) || search.own.is_some();
+    let only_own = !include_existing && (prefs.mode == Some(EnvMode::Own) || search.own.is_some());
     let own = search.own.clone().unwrap_or(own);
     let own = own_env::marked(&own).then_some(own);
     let mut rs = Vec::new();
@@ -671,7 +671,7 @@ fn size_mb(paths: Vec<PathBuf>) -> u64 {
 pub(crate) fn list(search: &Search, path: &Path) -> Vec<EnvCard> {
     undo::prune(path);
     let installed = record::read(path);
-    let found = discover(search, path);
+    let found = discover(search, path, false);
     std::thread::scope(|scope| {
         let installed = &installed;
         found
@@ -686,7 +686,7 @@ pub(crate) fn list(search: &Search, path: &Path) -> Vec<EnvCard> {
 
 pub(super) fn get(search: &Search, path: &Path, wanted: &str) -> Result<Environment> {
     let search = search.clone().in_own(own_env::chosen(path));
-    let found = discover(&search, path)
+    let found = discover(&search, path, false)
         .into_iter()
         .find(|f| {
             let (language, path) = if f.r {
@@ -705,6 +705,31 @@ pub(super) fn get(search: &Search, path: &Path, wanted: &str) -> Result<Environm
         })
         .context("This environment couldn't be found. Refresh the R and Python page.")?;
     probe(found, &search, path, &[], false).context("This environment couldn't be read.")
+}
+
+pub(super) fn copy_sources(search: &Search, record: &Path, ids: &[String]) -> Result<Vec<Found>> {
+    let found = discover(search, record, true);
+    ids.iter()
+        .map(|id| {
+            found
+                .iter()
+                .find(|f| {
+                    f.own.is_none()
+                        && id.split_once(':').is_some_and(|(lang, path)| {
+                            if f.r {
+                                lang == "r" && same_r(Path::new(path), &f.program)
+                            } else {
+                                lang == "python"
+                                    && f.prefix.as_ref().is_some_and(|prefix| {
+                                        package_plan::same_folder(Path::new(path), prefix)
+                                    })
+                            }
+                        })
+                })
+                .cloned()
+                .context("A copy source couldn't be found. Refresh the R and Python page.")
+        })
+        .collect()
 }
 
 pub(super) fn state_path(record: &Path, area: &str, id: &str) -> PathBuf {

@@ -99,9 +99,10 @@ pub fn find(root: &Path, kernels: &[KernelspecInfo], search: &Search) -> Vec<Fou
         let Ok(text) = std::fs::read_to_string(root.join(file)) else {
             continue;
         };
-        let Some(name) = conda_name(&text) else {
+        let Ok(name) = conda_name(&text) else {
             continue;
         };
+        let name = name.unwrap_or_else(|| crate::quick::project_packages::project_name(root));
         let installed = kernels
             .iter()
             .any(|k| k.env.as_deref() == Some(name.as_str()))
@@ -190,13 +191,12 @@ fn mentions(path: &Path, text: &str) -> bool {
     std::fs::read_to_string(path).is_ok_and(|t| t.contains(text))
 }
 
-/// The `name:` an `environment.yml` gives its environment.
-fn conda_name(text: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        let name = line.strip_prefix("name:")?.trim();
-        let name = name.split('#').next()?.trim().trim_matches(['"', '\'']);
-        (!name.is_empty()).then(|| name.to_string())
-    })
+fn conda_name(text: &str) -> Result<Option<String>, serde_yaml_ng::Error> {
+    let yaml = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(text)?;
+    Ok(yaml
+        .get("name")
+        .and_then(serde_yaml_ng::Value::as_str)
+        .map(str::to_owned))
 }
 
 /// Whether an `environment.yml` lists a package among its dependencies,
@@ -321,10 +321,12 @@ mod tests {
     #[test]
     fn environment_files_are_read_loosely() {
         assert_eq!(
-            conda_name("channels: []\nname: \"scvi\"\n").as_deref(),
+            conda_name("channels: []\nname: \"scvi\"\n")
+                .unwrap()
+                .as_deref(),
             Some("scvi")
         );
-        assert_eq!(conda_name("dependencies: []\n"), None);
+        assert_eq!(conda_name("dependencies: []\n").unwrap(), None);
         assert!(lists(
             "dependencies:\n  - conda-forge::r-base>=4.3\n",
             "r-base"

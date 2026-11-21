@@ -1,7 +1,7 @@
 //! Missing packages at the top of a document and under the run that needs them.
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{Sizable, h_flex, v_flex};
+use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use sandhill_proto::{
     FailureFix, InstallPrefs, MissingPackages, PackageAction, PackageChange, PackagePlan,
@@ -11,6 +11,7 @@ use sandhill_proto::{
 use super::*;
 use crate::install_confirm::{self as review, Choice, InstallCompletions, Job, Review};
 use crate::look::{self, Palette};
+use crate::welcome::project_settings::SET_UP_PACKAGES;
 
 #[derive(Default)]
 pub(super) struct MissingBar {
@@ -170,6 +171,7 @@ impl Workbench {
         if count != 0 && (self.missing_completion.0 != host || self.missing_completion.1 != count) {
             self.missing_completion = (host, count);
             self.refresh_packages(cx);
+            self.read_project_package_files(true, cx);
             self.refresh_missing_documents(true, cx);
         }
     }
@@ -194,6 +196,7 @@ impl Workbench {
         force: bool,
         cx: &mut Context<Self>,
     ) {
+        self.read_project_package_files(false, cx);
         let Some(daemon) = self.daemon() else {
             return;
         };
@@ -281,9 +284,6 @@ impl Workbench {
     }
 
     fn ask_document_install(&mut self, path: String, cx: &mut Context<Self>) {
-        if self.held_back("install packages", cx) {
-            return;
-        }
         let Some(open) = self.open_at(&path).filter(|open| !open.missing.dismissed) else {
             return;
         };
@@ -295,6 +295,16 @@ impl Workbench {
         else {
             return;
         };
+        if self.project_package_files_loading(&path) {
+            return;
+        }
+        if let Some(file) = self.project_package_file_for(&path, change.target.language()) {
+            self.ask_project_package_setup(file.to_owned(), Some(path), cx);
+            return;
+        }
+        if self.held_back("install packages", cx) {
+            return;
+        }
         let place = Place::Document(path);
         if let Some(id) = self.start_attempt(&place, cx) {
             self.plan_missing_install(place, id, change, true, cx);
@@ -627,14 +637,26 @@ impl Workbench {
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !open.missing.visible() {
+        let path = &open.notebook.path;
+        let project_setup = self.render_document_project_setup(path, p, cx);
+        if project_setup.is_none() && !open.missing.visible() {
             return None;
         }
-        let path = &open.notebook.path;
-        let content = if let Some(attempt) = open.missing.install.as_deref() {
+        let content = if let Some(setup) = project_setup {
+            setup
+        } else if let Some(attempt) = open.missing.install.as_deref() {
             self.render_inline_install(Place::Document(path.clone()), attempt, false, p, cx)
         } else {
-            let prompt = open.missing.found.as_ref()?.prompt.clone();
+            let offer = open.missing.found.as_ref()?;
+            let file = self.project_package_file_for(path, offer.change.target.language());
+            let checking = self.project_package_files_loading(path);
+            let prompt = match file {
+                Some(file) => format!(
+                    "Some packages this document needs are missing. Set up the versions saved in {file}?"
+                ).into(),
+                None if checking => "Checking whether this project carries a package file…".into(),
+                None => offer.prompt.clone(),
+            };
             let install_path = path.clone();
             let dismiss_path = path.clone();
             h_flex()
@@ -667,11 +689,19 @@ impl Workbench {
                         .child(
                             look::button(
                                 "missing-install",
-                                "Install…",
+                                if file.is_some() {
+                                    SET_UP_PACKAGES
+                                } else {
+                                    "Install…"
+                                },
                                 None,
                                 look::ButtonSize::Row,
                             )
                             .primary()
+                            .disabled(
+                                checking
+                                    || (file.is_some() && self.project_package_action_active()),
+                            )
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
                                     this.ask_document_install(install_path.clone(), cx);

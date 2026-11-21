@@ -68,11 +68,10 @@ impl Workbench {
     /// The notebook and source jumps share the same unobscured viewport edge.
     /// Find has a 24px input, 12px padding and 1px edge; Replace adds 28px.
     pub(crate) fn notebook_header_height(&self) -> f32 {
-        if self
-            .open
-            .as_ref()
-            .is_some_and(Open::has_missing_package_bar)
-        {
+        if self.open.as_ref().is_some_and(|open| {
+            open.has_missing_package_bar()
+                || self.showing_project_package_setup(&open.notebook.path)
+        }) {
             return 0.;
         }
         look::strip()

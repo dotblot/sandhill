@@ -10,9 +10,10 @@ use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{
-    Call, EnvAction, EnvActionPlan, FailureFix, FileText, InstallFailure, InstallFailureKind,
-    InstallPrefs, InstallTarget, InstallTool, InstallToolInfo, NewRuntime, PackageAction,
-    PackageChange, PackagePlan, RuntimePlan, TerminalInfo,
+    Call, CopyReport, CopyRow, EnvAction, EnvActionPlan, FailureFix, FileText, InstallFailure,
+    InstallFailureKind, InstallPrefs, InstallTarget, InstallTool, InstallToolInfo, NewRuntime,
+    OwnSetupPlan, PackageAction, PackageChange, PackagePlan, ProjectFilePlan, ProjectSetupPlan,
+    RuntimePlan, TerminalInfo,
 };
 
 use crate::daemon::Daemon;
@@ -162,7 +163,7 @@ pub(crate) fn own_setup(
         (false, true) => "Python",
         (false, false) => "No languages selected",
     };
-    let summary = if plan.steps.is_empty() && plan.refused.is_none() {
+    let summary = if plan.steps.is_empty() && plan.copy.is_empty() && plan.refused.is_none() {
         "Everything selected is already installed.".into()
     } else {
         format!("Set up {what} and the selected packages in one folder.")
@@ -227,6 +228,167 @@ pub(crate) fn own_setup(
                 }),
             )
         })
+}
+
+fn copy_summary(rows: &[CopyRow]) -> String {
+    let mut counts = [0; 7];
+    for row in rows {
+        let ix = match (row.cant.as_ref(), row.source.as_deref(), row.tool) {
+            (Some(_), _, _) | (_, None, _) => 6,
+            (_, _, Some(InstallTool::Conda)) | (_, Some("conda-forge" | "bioconda"), _) => {
+                usize::from(row.new_version.as_ref().is_some_and(|v| v != &row.version))
+            }
+            (_, Some("CRAN" | "Bioconductor"), _) => 2,
+            (_, Some("PyPI"), _) => 3,
+            (_, Some("GitHub"), _) => 4,
+            _ => 5,
+        };
+        counts[ix] += 1;
+    }
+    counts
+        .into_iter()
+        .zip([
+            "from conda, same version",
+            "from conda, another version",
+            "from CRAN or Bioconductor, built here",
+            "from PyPI",
+            "from GitHub",
+            "from another source",
+            "can't be copied",
+        ])
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, label)| format!("{count} {label}"))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+pub(crate) fn own_copy(
+    review: &Review<OwnSetupPlan>,
+    expanded: bool,
+    details: Button,
+    p: &Palette,
+) -> Option<Div> {
+    let Review::Ready(plan) = review else {
+        return None;
+    };
+    if plan.setup.copy_from.is_empty() || plan.refused.is_some() {
+        return None;
+    }
+    let panel = body()
+        .border_t_1()
+        .border_color(p.line)
+        .child(line("Where the copies will come from", p.text).font_weight(FontWeight::MEDIUM));
+    if plan.copy.is_empty() {
+        return Some(panel.child(line("No additional packages to copy.", p.muted)));
+    }
+    let summary = format!("{}.", copy_summary(&plan.copy));
+    let row = |cells: [Div; 4]| {
+        let [name, current, source, version] = cells;
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap(px(look::GAP_8))
+            .py(px(look::GAP_4))
+            .child(name.w(relative(0.24)))
+            .child(current.w(relative(0.18)))
+            .child(source.w(relative(0.22)))
+            .child(version.flex_1())
+    };
+    Some(
+        panel
+            .child(line(summary, p.muted))
+            .child(h_flex().child(details.label(if expanded {
+                "Hide Copy Table"
+            } else {
+                "Show Copy Table"
+            })))
+            .when(expanded, |d| {
+                d.child(row([
+                    "Package",
+                    "Your version",
+                    "Copy from",
+                    "New version or reason",
+                ]
+                .map(|heading| {
+                    line(heading, p.text).font_weight(FontWeight::MEDIUM)
+                })))
+                .child(
+                    div()
+                        .id("setup-copy-table")
+                        .max_h(px(look::row() * 9.))
+                        .overflow_y_scroll()
+                        .children(plan.copy.iter().map(|item| {
+                            let language = if item.language == "r" { "R" } else { "Python" };
+                            let name = format!("{} ({language})", item.name);
+                            let current = format!("{}\n{}", item.version, item.from);
+                            let source = item.source.as_deref().unwrap_or("Can't be copied");
+                            let version = item
+                                .cant
+                                .as_deref()
+                                .or(item.new_version.as_deref())
+                                .unwrap_or("Not known yet");
+                            row([
+                                line(name, p.text),
+                                line(current, p.muted),
+                                line(source.to_owned(), p.muted),
+                                line(
+                                    version.to_owned(),
+                                    if item.cant.is_some() { p.warn } else { p.muted },
+                                ),
+                            ])
+                            .border_t_1()
+                            .border_color(p.line)
+                        })),
+                )
+            }),
+    )
+}
+
+pub(crate) fn copy_report<T: 'static>(
+    report: &CopyReport,
+    busy: bool,
+    fix: impl Fn(&mut T, PackageChange, &mut Context<T>) + Copy + 'static,
+    p: &Palette,
+    cx: &mut Context<T>,
+) -> Div {
+    let count = report.failed.len();
+    let copied = report.copied;
+    let packages = if copied == 1 { "package" } else { "packages" };
+    let summary = if count == 0 {
+        format!("Copied {copied} {packages}.")
+    } else {
+        format!("Copied {copied} {packages}. {count} didn't copy:")
+    };
+    body().child(line(summary, p.text)).when(count > 0, |d| {
+        d.child(
+            div()
+                .id("setup-copy-report")
+                .max_h(px(look::row() * 9.))
+                .overflow_y_scroll()
+                .children(report.failed.iter().enumerate().map(|(ix, problem)| {
+                    look::settings_row(
+                        problem.package.clone(),
+                        Some(look::settings_detail(problem.reason.clone(), p)),
+                    )
+                    .pl(px(0.))
+                    .border_t_1()
+                    .border_color(p.line)
+                    .when_some(problem.fix.clone(), |row, change| {
+                        row.child(
+                            Button::new(("setup-copy-fix", ix))
+                                .small()
+                                .label("Repair…")
+                                .disabled(busy)
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        fix(this, change.clone(), cx)
+                                    }),
+                                ),
+                        )
+                    })
+                })),
+        )
+    })
 }
 
 /// The first-run review uses the same package details as every other install.
@@ -364,22 +526,11 @@ fn package_plan<T: 'static>(
         .when(!change.reason.is_empty(), |d| {
             d.child(line(format!("Why: {}.", change.reason), p.muted))
         })
-        .children(plan.packages.iter().map(|item| {
-            let version = item.version.as_deref().unwrap_or("");
-            let description = [item.name.as_str(), version]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-            line(
-                if item.source.is_empty() {
-                    description
-                } else {
-                    format!("{description} ({})", item.source)
-                },
-                p.muted,
-            )
-        }));
+        .children(
+            plan.packages
+                .iter()
+                .map(|item| pinned_package(&item.name, item.version.as_deref(), &item.source, p)),
+        );
     if plan.tools.len() > 1 {
         panel = panel.child(line("Tool", p.muted)).child(
             h_flex()
@@ -601,6 +752,143 @@ pub(crate) fn environment(
         )
 }
 
+fn project_review_buttons(cancel: Button, run: Option<Button>) -> Div {
+    h_flex()
+        .justify_end()
+        .gap(px(look::GAP_8))
+        .child(cancel)
+        .children(run.map(|b| b.primary()))
+}
+
+fn pinned_package(name: &str, version: Option<&str>, source: &str, p: &Palette) -> Div {
+    let mut text = name.to_owned();
+    if let Some(version) = version.filter(|version| !version.is_empty()) {
+        text.push(' ');
+        text.push_str(version);
+    }
+    if !source.is_empty() {
+        text.push_str(" (");
+        text.push_str(source);
+        text.push(')');
+    }
+    line(text, p.muted)
+}
+
+pub(crate) fn project_file(
+    review: &Review<ProjectFilePlan>,
+    expanded: bool,
+    contents: Button,
+    (cancel, save): (Button, Button),
+    p: &Palette,
+) -> Div {
+    let plan = match review {
+        Review::Planning => return status_row(line("Working out what to save…", p.muted), cancel),
+        Review::Error(error) => return status_row(line(error.clone(), p.err), cancel),
+        Review::Ready(plan) => plan,
+    };
+    body()
+        .when(!plan.path.is_empty(), |d| {
+            d.child(line(format!("File: {}", plan.path), p.text).font_weight(FontWeight::MEDIUM))
+        })
+        .when(plan.replaces, |d| {
+            d.child(line(
+                "Saving replaces the file that's already there.",
+                p.warn,
+            ))
+        })
+        .children(
+            plan.refused
+                .as_ref()
+                .map(|reason| line(reason.clone(), p.err)),
+        )
+        .children(plan.notes.iter().map(|note| line(note.clone(), p.muted)))
+        .when(!plan.packages.is_empty(), |d| {
+            d.child(line("Packages to save", p.text)).child(
+                div()
+                    .id("project-file-packages")
+                    .max_h(px(look::row() * 6.))
+                    .overflow_y_scroll()
+                    .children(plan.packages.iter().map(|item| {
+                        pinned_package(&item.name, Some(&item.version), &item.source, p)
+                    })),
+            )
+        })
+        .when(!plan.contents.is_empty(), |d| {
+            d.child(h_flex().child(contents.label(if expanded {
+                "Hide File Contents"
+            } else {
+                "Show File Contents"
+            })))
+            .when(expanded, |d| {
+                d.child(
+                    div()
+                        .id("project-file-contents")
+                        .max_h(px(look::row() * 8.))
+                        .overflow_y_scroll()
+                        .p(px(look::GAP_8))
+                        .rounded(px(look::CONTROL_RADIUS))
+                        .bg(p.ink(look::ROW_HOVER))
+                        .font_family(look::mono())
+                        .child(line(plan.contents.clone(), p.text)),
+                )
+            })
+        })
+        .child(project_review_buttons(
+            cancel,
+            plan.refused.is_none().then(|| save.label("Save")),
+        ))
+}
+
+pub(crate) fn project_setup(
+    review: &Review<ProjectSetupPlan>,
+    (cancel, run): (Button, Button),
+    p: &Palette,
+) -> Div {
+    let plan = match review {
+        Review::Planning => return status_row(line("Working out the setup…", p.muted), cancel),
+        Review::Error(error) => return status_row(line(error.clone(), p.err), cancel),
+        Review::Ready(plan) => plan,
+    };
+    body()
+        .child(line(plan.what.clone(), p.text).font_weight(FontWeight::MEDIUM))
+        .when(!plan.folder.is_empty(), |d| {
+            d.child(line(format!("Folder: {}", plan.folder), p.muted))
+        })
+        .when_some(plan.download_mb, |d, mb| {
+            d.child(line(format!("About {mb} MB to download"), p.muted))
+        })
+        .children(
+            plan.refused
+                .as_ref()
+                .map(|reason| line(reason.clone(), p.err)),
+        )
+        .children(plan.notes.iter().map(|note| line(note.clone(), p.muted)))
+        .when(!plan.packages.is_empty(), |d| {
+            d.child(line("Packages in the file", p.text)).child(
+                div()
+                    .id("project-setup-packages")
+                    .max_h(px(look::row() * 6.))
+                    .overflow_y_scroll()
+                    .children(plan.packages.iter().map(|item| {
+                        pinned_package(&item.name, item.version.as_deref(), &item.source, p)
+                    })),
+            )
+        })
+        .children(plan.steps.iter().enumerate().map(|(ix, step)| {
+            v_flex()
+                .min_w_0()
+                .gap(px(look::GAP_4))
+                .child(line(step.what.clone(), p.text))
+                .when(!step.command.is_empty(), |d| {
+                    d.child(command_with_copy(ix, &step.command, p))
+                })
+        }))
+        .child(project_review_buttons(
+            cancel,
+            (plan.refused.is_none() && !plan.steps.is_empty()).then(|| run.label("Set Up")),
+        ))
+}
+
 pub(crate) fn cancel_button() -> Button {
     Button::new("install-review-cancel").small().label("Cancel")
 }
@@ -724,6 +1012,18 @@ impl Job {
                     cx.listener(move |this, _, window, cx| handle(this, fix.clone(), window, cx)),
                 ),
         )
+    }
+
+    /// A project file pins the sources, so a repair can't swap them out.
+    pub(crate) fn pinned_fix_button<T: 'static>(
+        &self,
+        handle: impl Fn(&mut T, FailureFix, &mut Window, &mut Context<T>) + 'static,
+        cx: &mut Context<T>,
+    ) -> Option<Button> {
+        match self.failure.as_ref()?.fix.as_ref()? {
+            FailureFix::OtherTool { .. } => None,
+            _ => self.fix_button(handle, cx),
+        }
     }
 
     pub(crate) fn request_developer_tools<T: 'static>(
@@ -912,10 +1212,37 @@ pub(crate) fn watch<T: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{automatic_tool, progress_title, r_target};
+    use super::{automatic_tool, copy_summary, progress_title, r_target};
     use sandhill_proto::{
-        InstallChoice, InstallPrefs, InstallTarget, InstallTool, PackageAction, PackageChange,
+        CopyRow, InstallChoice, InstallPrefs, InstallTarget, InstallTool, PackageAction,
+        PackageChange,
     };
+
+    #[test]
+    fn copied_packages_are_grouped_by_source_and_version() {
+        let row = |source: Option<&str>, version: Option<&str>, tool| CopyRow {
+            name: "example".into(),
+            language: "r".into(),
+            version: "1.0".into(),
+            from: "this computer".into(),
+            source: source.map(str::to_owned),
+            new_version: version.map(str::to_owned),
+            tool,
+            cant: source.is_none().then(|| "Not available.".into()),
+        };
+        assert_eq!(
+            copy_summary(&[
+                row(Some("conda-forge"), Some("1.0"), Some(InstallTool::Conda)),
+                row(Some("bioconda"), Some("2.0"), Some(InstallTool::Conda)),
+                row(Some("CRAN"), None, Some(InstallTool::R)),
+                row(Some("Bioconductor"), None, Some(InstallTool::R)),
+                row(Some("PyPI"), Some("1.0"), Some(InstallTool::Pip)),
+                row(Some("GitHub"), Some("1.0"), Some(InstallTool::R)),
+                row(None, None, None),
+            ]),
+            "1 from conda, same version; 1 from conda, another version; 2 from CRAN or Bioconductor, built here; 1 from PyPI; 1 from GitHub; 1 can't be copied"
+        );
+    }
 
     fn prefs(without_asking: bool, library: &str) -> InstallPrefs {
         InstallPrefs {

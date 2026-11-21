@@ -40,6 +40,7 @@ mod file_history;
 mod help_calls;
 mod package_calls;
 mod package_scan;
+mod project_package_calls;
 mod quick_calls;
 mod request_helpers;
 mod session_calls;
@@ -90,6 +91,9 @@ pub struct Daemon {
     stop: Arc<Notify>,
     lifecycle_gate: tokio::sync::RwLock<()>,
     own_sessions: Arc<tokio::sync::RwLock<()>>,
+    project_package_plans: Mutex<HashMap<(String, String), sandhill_proto::ProjectFilePlan>>,
+    project_setup_plans: Mutex<HashMap<(String, String), crate::quick::project_packages::Work>>,
+    own_copy_plan: Mutex<Option<(sandhill_proto::OwnSetup, crate::quick::own::Work)>>,
     pub(crate) maintenance: AtomicBool,
     pub(crate) stopping: AtomicBool,
     pub(crate) analysis_gate: tokio::sync::Mutex<()>,
@@ -161,6 +165,9 @@ impl Daemon {
             windows: Windows::default(),
             language_servers: crate::lsp::LanguageServers::default(),
             own_sessions: Arc::new(tokio::sync::RwLock::new(())),
+            project_package_plans: Mutex::default(),
+            project_setup_plans: Mutex::default(),
+            own_copy_plan: Mutex::default(),
             next_connection: AtomicU64::new(1),
             options,
             started_ms: crate::journal::now_ms(),
@@ -323,6 +330,19 @@ impl Daemon {
             Call::EnvUpdates { env } => self.env_updates(env).await?,
             Call::PlanEnvAction { action } => self.plan_env_action(action).await?,
             Call::RunEnvAction { action } => self.run_env_action(action).await?,
+            Call::ProjectPackageFiles { project } => self.project_package_files(project).await?,
+            Call::PlanProjectFile { project, language } => {
+                self.plan_project_file(project, language).await?
+            }
+            Call::WriteProjectFile { project, language } => {
+                self.write_project_file(project, language).await?
+            }
+            Call::PlanProjectSetup { project, file } => {
+                self.plan_project_setup(project, file).await?
+            }
+            Call::RunProjectSetup { project, file } => {
+                self.run_project_setup(project, file).await?
+            }
             Call::PlanRuntime { runtime } => self.plan_runtime(runtime).await?,
             Call::RunRuntime { runtime } => self.run_runtime(runtime).await?,
             Call::InstallPrefs => self.install_prefs().await?,

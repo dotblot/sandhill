@@ -825,11 +825,11 @@ impl AppWindow {
         if self.start.quick.readiness.is_none() && !self.start.quick.checking {
             self.quick_check(cx);
         }
-        if let Some(setup) = self.quick_setup_page(&p, cx) {
-            return setup.into_any_element();
-        }
         if self.start.quick.cards.list.is_none() {
             self.quick_list_cards(cx);
+        }
+        if let Some(setup) = self.quick_setup_page(&p, cx) {
+            return setup.into_any_element();
         }
         self.quick_focus_explore(window, cx);
         v_flex()
@@ -886,14 +886,21 @@ impl AppWindow {
         let own = readiness.prefs.mode == Some(sandhill_proto::EnvMode::Own);
         let mut record = self.quick_record_rows(readiness, busy, p, cx);
         record.extend(self.quick_install_in(Section::Record, p, cx));
+        let progress = self.quick_install_in(Section::Environment, p, cx);
+        let copy_report = readiness
+            .own
+            .as_ref()
+            .and_then(|folder| folder.copy_report.as_ref().map(|report| (folder, report)));
         v_flex()
             .gap(px(look::GAP_6))
             .child(self.quick_mode_card(readiness, busy, p, cx))
             .child(self.quick_tools_box(readiness, p, cx))
-            .when_some(
-                self.quick_install_in(Section::Environment, p, cx),
-                |d, progress| d.child(look::settings_box(vec![progress], p)),
-            )
+            .children(match copy_report {
+                Some((folder, report)) => {
+                    Some(self.quick_copy_report(&folder.folder, report, busy, progress, p, cx))
+                }
+                None => progress.map(|row| look::settings_box(vec![row], p)),
+            })
             .child(self.quick_environment_cards(readiness, busy || q.cards.loading, own, p, cx))
             .child(heading("What Sandhill Installed", p))
             .child(look::settings_box(record, p))

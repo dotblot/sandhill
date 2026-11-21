@@ -20,6 +20,9 @@ use crate::look::{self, Palette, icon};
 use crate::workbench::Workbench;
 use gpui_kit::base::ElementExt as _;
 
+mod packages;
+pub(crate) use packages::SET_UP_PACKAGES;
+
 /// Why a language's list has no other kernel to pick.
 fn only_kernel(language: &str) -> &'static str {
     if language == "r" {
@@ -81,6 +84,7 @@ pub(crate) struct Setup {
     pub setup: Option<ProjectSetup>,
     pub kernels: Vec<KernelspecInfo>,
     pub dialog: Option<SettingsDialog>,
+    packages: packages::State,
 }
 
 pub(crate) fn new_env_input(
@@ -189,15 +193,20 @@ impl Workbench {
             saving: false,
             error: None,
         });
+        self.read_project_package_files(true, cx);
         cx.notify();
     }
 
     pub(crate) fn close_settings_dialog(&mut self, cx: &mut Context<Self>) {
+        self.close_project_package_settings();
         self.setup.dialog = None;
         cx.notify();
     }
 
     pub(crate) fn save_project_settings(&mut self, cx: &mut Context<Self>) {
+        if self.project_package_action_active() {
+            return;
+        }
         let (Some(daemon), Some(project)) = (self.daemon(), self.project.clone()) else {
             return;
         };
@@ -343,10 +352,23 @@ impl Workbench {
             }
             // One grey line: what Automatic found, else why there's no
             // other kernel to pick.
-            let mut said: Vec<String> = found.iter().map(|f| found_note(f)).collect();
+            let mut said: Vec<String> = found
+                .iter()
+                .map(|f| {
+                    if f.hint.is_some() && self.project_package_file_needs_setup(&f.file) {
+                        format!(
+                            "Found {}. Use Set Up This Project's Packages below.",
+                            f.file
+                        )
+                    } else {
+                        found_note(f)
+                    }
+                })
+                .collect();
             if id == "r" && found.iter().any(|f| f.file == "renv.lock") {
                 said.push(
-                    "R starts in the project's folder, so renv loads the project's library.".into(),
+                    "Once set up, R starts in the project's folder and uses the project's packages."
+                        .into(),
                 );
             }
             if said.is_empty() && specs.len() < 2 {
@@ -538,6 +560,7 @@ impl Workbench {
                 d.child(div().text_color(p.err).child(format!("Couldn't read the file: {problem}")))
             })
             .child(look::settings_group("Kernels", kernels, &p))
+            .child(self.render_project_package_settings(&p, cx))
             .child(look::settings_group("Running", running, &p))
             .child(look::settings_group("AI", ai, &p))
             .when_some(dialog.error.clone(), |d, err| d.child(div().text_color(p.err).child(err)))
@@ -563,7 +586,7 @@ impl Workbench {
                             .small()
                             .primary()
                             .label("Save")
-                            .disabled(dialog.saving)
+                            .disabled(dialog.saving || self.project_package_action_active())
                             .on_click(cx.listener(|this, _, _, cx| this.save_project_settings(cx))),
                     ),
             );

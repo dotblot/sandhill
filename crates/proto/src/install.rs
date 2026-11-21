@@ -402,6 +402,46 @@ pub struct OwnSetup {
     /// them; what is there already stays.
     #[serde(default)]
     pub kits: Vec<String>,
+    /// Also copy the packages of these environments ([`EnvCard::id`]s of
+    /// the user's own R and Python), which are only read (plan section 4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copy_from: Vec<String>,
+}
+
+/// One package of a copy, and where its copy will come from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyRow {
+    /// `r` or `python`.
+    pub language: String,
+    pub name: String,
+    /// The version the user has now.
+    pub version: String,
+    /// Where the user's copy came from: `CRAN`, `Bioconductor`, `GitHub`,
+    /// `conda-forge`, `bioconda`, `PyPI` or `this computer`.
+    pub from: String,
+    /// Where the new copy comes from, as [`PlannedPackage::source`] says;
+    /// `None` when it can't be copied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The version that will be installed, when it differs or is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<InstallTool>,
+    /// Why it can't be copied, in plain words: "Built from a folder on this
+    /// computer, so there is nowhere to get it from."
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cant: Option<String>,
+}
+
+/// What the last copy did, for the report afterwards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyReport {
+    pub date: String,
+    pub copied: u32,
+    /// What failed, each with a plain reason and, when there is one, a fix.
+    #[serde(default)]
+    pub failed: Vec<EnvProblem>,
 }
 
 /// One step of a set-up, shown before it runs.
@@ -436,6 +476,9 @@ pub struct OwnSetupPlan {
     /// without them the set-up goes on without that package.
     #[serde(default)]
     pub needs_developer_tools: bool,
+    /// The copy table, when `setup.copy_from` names environments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copy: Vec<CopyRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
 }
@@ -466,6 +509,8 @@ pub struct OwnEnvironment {
     /// Its size on disk, in MB.
     #[serde(default)]
     pub size_mb: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_report: Option<CopyReport>,
 }
 
 /// The last change Sandhill made to an environment, which Undo Last
@@ -695,4 +740,76 @@ pub struct InstallFailure {
     pub detail: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fix: Option<FailureFix>,
+}
+
+/// A package a project's file pins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectPackage {
+    pub name: String,
+    pub version: String,
+    /// `CRAN`, `Bioconductor`, `GitHub`, `conda-forge`, `bioconda`, `PyPI`.
+    pub source: String,
+}
+
+/// What Save This Project's Packages will write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectFilePlan {
+    pub project: String,
+    /// `r` or `python`.
+    pub language: String,
+    /// The file's full path: `renv.lock`, `environment.yml` or
+    /// `requirements.txt` in the project folder.
+    pub path: String,
+    /// A file by that name is there and will be replaced.
+    #[serde(default)]
+    pub replaces: bool,
+    /// What the project's code uses, and for R what those need.
+    pub packages: Vec<ProjectPackage>,
+    /// The file as it will be written.
+    pub contents: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+}
+
+/// What Set Up This Project's Packages will do with a project's
+/// `renv.lock`, `environment.yml` or `requirements.txt`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectSetupPlan {
+    pub project: String,
+    /// The file's name in the project folder.
+    pub file: String,
+    /// One plain sentence.
+    pub what: String,
+    /// Where the packages go: the project's `renv/library` (Huan,
+    /// 2026-11-20: the one exception to "Sandhill never creates an R
+    /// library", for projects that carry their own `renv.lock`), a conda
+    /// environment, the project's `.venv`, or in Sandhill's own folder.
+    pub folder: String,
+    pub packages: Vec<PlannedPackage>,
+    pub steps: Vec<SetupStep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_mb: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+}
+
+/// A project's package files and whether they are set up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectPackageFile {
+    /// `renv.lock`, `environment.yml`, `environment.yaml` or
+    /// `requirements.txt`.
+    pub file: String,
+    /// `r` or `python`.
+    pub language: String,
+    /// How many packages it pins.
+    pub packages: u32,
+    /// Its packages are installed where Set Up puts them, at its versions.
+    pub set_up: bool,
+    /// Those that aren't, when not set up: `Seurat 4.4.0 (have 5.1.0)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub differences: Vec<String>,
 }

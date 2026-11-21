@@ -146,6 +146,8 @@ struct Change {
 struct Snapshot {
     info: UndoInfo,
     changes: Vec<Change>,
+    #[serde(default)]
+    created: Option<(QuickInstalled, String)>,
 }
 
 pub(super) struct Pending {
@@ -193,10 +195,12 @@ pub(super) fn begin(record_path: &Path, title: String, tracks: Vec<Track>) -> Re
             fs::create_dir(&backups)?;
             for name in before.keys() {
                 let from = track.folder.join(name);
+                let backup = backups.join(name);
                 if from.is_symlink() {
-                    continue;
+                    std::os::unix::fs::symlink(fs::read_link(from)?, backup)?;
+                } else {
+                    clone_package(&from, &backup)?;
                 }
-                clone_package(&from, &backups.join(name))?;
             }
         }
         changes.push(Change {
@@ -215,6 +219,7 @@ pub(super) fn begin(record_path: &Path, title: String, tracks: Vec<Track>) -> Re
                 date: record::today(),
             },
             changes,
+            created: None,
         },
     })
 }
@@ -273,7 +278,9 @@ impl Pending {
                 }
             }
         }
-        if self.snapshot.changes.iter().all(|c| c.before == c.after) {
+        if self.snapshot.created.is_none()
+            && self.snapshot.changes.iter().all(|c| c.before == c.after)
+        {
             return Ok(());
         }
         crate::files::write_atomic(
@@ -296,6 +303,28 @@ impl Pending {
         }
         Ok(())
     }
+}
+
+pub(super) fn created(record: &Path, id: &str, item: QuickInstalled) -> Result<()> {
+    let identity = record::directory_identity(Path::new(&item.place))
+        .context("The new environment couldn't be checked for Undo.")?;
+    let root = record.with_file_name("undo");
+    fs::create_dir_all(&root)?;
+    Pending {
+        id: id.into(),
+        dir: tempfile::Builder::new()
+            .prefix(".pending-")
+            .tempdir_in(root)?,
+        snapshot: Snapshot {
+            info: UndoInfo {
+                what: "setting up the project's packages".into(),
+                date: record::today(),
+            },
+            changes: Vec::new(),
+            created: Some((item, identity)),
+        },
+    }
+    .finish(record)
 }
 
 fn expired(dir: &Path) -> bool {
@@ -374,7 +403,9 @@ fn commands(path: &Path, snapshot: &Snapshot) -> Result<(Vec<String>, Vec<String
                     InstallTool::R => {
                         let backup = path.join(index.to_string()).join(name);
                         ensure!(
-                            backup.is_dir(),
+                            backup
+                                .symlink_metadata()
+                                .is_ok_and(|meta| meta.is_dir() || meta.is_symlink()),
                             "Sandhill couldn't save the previous folder for {name}. Undo is not available."
                         );
                         let target = track.folder.join(name);
@@ -386,7 +417,7 @@ fn commands(path: &Path, snapshot: &Snapshot) -> Result<(Vec<String>, Vec<String
                         ]));
                         commands.push(install::quote([
                             "/bin/cp",
-                            "-pR",
+                            "-pRP",
                             "--",
                             &backup.to_string_lossy(),
                             &target.to_string_lossy(),
@@ -469,22 +500,70 @@ fn commands(path: &Path, snapshot: &Snapshot) -> Result<(Vec<String>, Vec<String
     Ok((commands, notes))
 }
 
+fn created_plan(record: &Path, snapshot: &Snapshot) -> Result<Option<(String, Vec<String>)>> {
+    let Some((item, identity)) = &snapshot.created else {
+        return Ok(None);
+    };
+    ensure!(
+        record::directory_identity(Path::new(&item.place)).as_ref() == Some(identity),
+        "The folder has changed since Sandhill set it up, or it is no longer there."
+    );
+    let search = crate::kernelspecs::Search::from_env().in_own(crate::own_env::chosen(record));
+    let command = record::undo_creation(record, item, &search)?;
+    Ok(Some((
+        command,
+        vec![format!(
+            "Remove only the folder Sandhill created: {}.",
+            item.place
+        )],
+    )))
+}
+
 pub(super) fn plan(record: &Path, id: &str) -> Result<(String, String, Vec<String>)> {
     let (path, snapshot) = load(record, id)?;
-    let (commands, notes) = commands(&path, &snapshot)?;
-    Ok((snapshot.info.what, commands.join(" && "), notes))
+    let (command, notes) = if let Some(plan) = created_plan(record, &snapshot)? {
+        plan
+    } else {
+        let (commands, notes) = commands(&path, &snapshot)?;
+        (commands.join(" && "), notes)
+    };
+    Ok((snapshot.info.what, command, notes))
 }
 
 pub(super) fn run(record_path: &Path, id: &str, approved: &str) -> Result<()> {
     let (path, snapshot) = load(record_path, id)?;
+    if let Some((command, _)) = created_plan(record_path, &snapshot)? {
+        ensure!(
+            command == approved,
+            "The last change is different now. Review Undo Last Change again."
+        );
+        record::remove(
+            record_path,
+            &[record::key(&snapshot.created.as_ref().unwrap().0)],
+        )?;
+        fs::remove_dir_all(path)?;
+        return Ok(());
+    }
     let (commands, _) = commands(&path, &snapshot)?;
     let command = commands.join(" && ");
     ensure!(
         command == approved,
         "The last change is different now. Review Undo Last Change again."
     );
-    install::run_command(&command)?;
     let mut rows = record::load(record_path)?;
+    let changed_libraries: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            row.kind == record::RENV_LIBRARY
+                && snapshot
+                    .changes
+                    .iter()
+                    .any(|change| change.track.folder.starts_with(&row.place))
+                && record::directory_identity(Path::new(&row.place)).as_ref() == Some(&row.version)
+        })
+        .map(|row| row.place.clone())
+        .collect();
+    install::run_command(&command)?;
     for change in snapshot.changes {
         let names = changed(&change.before, &change.after);
         let current = change.track.inventory()?;
@@ -511,6 +590,14 @@ pub(super) fn run(record_path: &Path, id: &str, approved: &str) -> Result<()> {
                 .into_iter()
                 .filter(|row| names.contains(row.name.as_str())),
         );
+    }
+    for row in rows
+        .iter_mut()
+        .filter(|row| row.kind == record::RENV_LIBRARY && changed_libraries.contains(&row.place))
+    {
+        if let Some(identity) = record::directory_identity(Path::new(&row.place)) {
+            row.version = identity;
+        }
     }
     record::save(record_path, &rows)?;
     fs::remove_dir_all(path)?;
@@ -656,4 +743,33 @@ mod tests {
             assert_eq!(notes.len(), 2);
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn undo_new_renv_library_keeps_activation_and_shared_cache() {
+    let temp = crate::quick::test_common::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let project = root.join("project");
+    let library = project.join("renv/library");
+    let cache = root.join("cache");
+    fs::create_dir_all(&library).unwrap();
+    fs::create_dir(&cache).unwrap();
+    fs::write(project.join("renv/activate.R"), "# keep").unwrap();
+    let record_path = root.join(record::FILE);
+    let row = record::entry(
+        record::RENV_LIBRARY,
+        "project",
+        record::directory_identity(&library).unwrap(),
+        &library.to_string_lossy(),
+        "renv",
+        "Set up this project's packages",
+    );
+    record::add(&record_path, [row.clone()]).unwrap();
+    created(&record_path, "test-r", row).unwrap();
+    let (_, command, _) = plan(&record_path, "test-r").unwrap();
+    run(&record_path, "test-r", &command).unwrap();
+    assert!(!library.exists());
+    assert!(project.join("renv/activate.R").is_file());
+    assert!(cache.is_dir());
 }

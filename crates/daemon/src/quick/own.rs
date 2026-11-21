@@ -147,7 +147,7 @@ fn package(name: &str, spec: String, source: &str, version: Option<String>) -> P
     }
 }
 
-fn r_package(name: &str, bioc: bool) -> String {
+pub(super) fn r_package(name: &str, bioc: bool) -> String {
     format!(
         "{}-{}",
         if bioc { "bioconductor" } else { "r" },
@@ -254,12 +254,87 @@ fn step(plan: &mut OwnSetupPlan, what: &str, command: String) {
     });
 }
 
-pub(crate) fn plan(setup: OwnSetup) -> OwnSetupPlan {
-    plan_for(
-        setup,
-        PLATFORM,
-        || developer_tools(&Search::from_env()),
-        free_mb,
+pub(crate) fn plan(record: &Path, setup: OwnSetup) -> Work {
+    let (plan, copy, core_steps) = prepare(record, setup);
+    Work {
+        plan,
+        copy,
+        core_steps,
+    }
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+pub(crate) struct Work {
+    plan: OwnSetupPlan,
+    copy: Vec<super::own_copy::Task>,
+    core_steps: usize,
+}
+
+impl Work {
+    pub fn plan(&self) -> &OwnSetupPlan {
+        &self.plan
+    }
+
+    pub fn into_job(mut self) -> Self {
+        self.plan.steps.truncate(self.core_steps);
+        self
+    }
+}
+
+pub(crate) fn job(record: &Path, setup: OwnSetup) -> Work {
+    plan(record, setup).into_job()
+}
+
+fn prepare(record: &Path, setup: OwnSetup) -> (OwnSetupPlan, Vec<super::own_copy::Task>, usize) {
+    let tools = || developer_tools(&Search::from_env());
+    let mut plan = plan_for(setup, PLATFORM, tools, free_mb);
+    let core_steps = plan.steps.len();
+    let base_download = plan.download_mb;
+    let mut copy = Vec::new();
+    if let (None, Some(platform)) = (&plan.refused, PLATFORM)
+        && !plan.setup.copy_from.is_empty()
+    {
+        let result = (|| -> Result<()> {
+            let mut core = HashSet::new();
+            for kit in selections(&plan.setup)? {
+                core.extend(kit.r.iter().map(|(name, _)| ("r", (*name).into())));
+                core.extend(
+                    kit.python
+                        .iter()
+                        .map(|(_, name)| ("python", record::python_name(name))),
+                );
+            }
+            copy = super::own_copy::prepare(record, &mut plan, platform, &core)?;
+            if plan
+                .copy
+                .iter()
+                .any(|row| row.tool == Some(sandhill_proto::InstallTool::R))
+                && !tools()
+            {
+                plan.needs_developer_tools = true;
+            }
+            let extra = plan.download_mb - base_download;
+            let required = (plan.download_mb * 48).div_ceil(10);
+            ensure!(
+                extra == 0 || plan.free_mb >= required,
+                "This setup and copy need about {required} MB of free space. Only {} MB is free in this folder.",
+                plan.free_mb
+            );
+            plan.minutes += (extra.div_ceil(300) * 2) as u32;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            plan.refused = Some(error.to_string());
+        }
+    }
+    (plan, copy, core_steps)
+}
+
+pub(super) fn download_mamba(binary: &Path, platform: &str) -> String {
+    let url = format!("https://micro.mamba.pm/api/micromamba/{platform}/latest");
+    let target = install::quote([binary.to_string_lossy().as_ref()]);
+    format!(
+        "curl -q -fsSL {url} | /usr/bin/env -u TAR_OPTIONS tar -xjOf - bin/micromamba > {target} && chmod 700 {target}"
     )
 }
 
@@ -279,6 +354,7 @@ fn plan_for(
         minutes: 2,
         notes: vec!["Nothing outside this folder changes.".into()],
         needs_developer_tools: false,
+        copy: Vec::new(),
         refused: None,
     };
     if let Err(error) = build(&mut plan, platform, tools, free) {
@@ -313,16 +389,14 @@ fn build(
         free(&folder).context("Couldn't check how much space is free for this folder.")?;
     let shim = folder.join("bin/micromamba");
     let binary = folder.join("micromamba");
-    let binary = binary.to_string_lossy();
-    if !executable(Path::new(binary.as_ref())) {
-        let url = format!("https://micro.mamba.pm/api/micromamba/{platform}/latest");
-        let target = install::quote([binary.as_ref()]);
+    if !executable(&binary) {
         step(
             plan,
             "Download micromamba, conda's one-file installer",
             format!(
-                "umask 077; mkdir -p {} && curl -q -fsSL {url} | /usr/bin/env -u TAR_OPTIONS tar -xjOf - bin/micromamba > {target} && chmod 700 {target}",
-                install::quote([plan.setup.folder.as_str()])
+                "umask 077; mkdir -p {} && {}",
+                install::quote([plan.setup.folder.as_str()]),
+                download_mamba(&binary, platform)
             ),
         );
         plan.download_mb += 7;
@@ -493,7 +567,8 @@ pub(crate) fn set_mode(path: &Path, mode: Option<EnvMode>) -> Result<InstallPref
     install::update_prefs(path, |prefs| prefs.mode = mode)
 }
 
-pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan) -> Result<()> {
+pub(super) fn run(record_path: &Path, work: &Work) -> Result<()> {
+    let plan = &work.plan;
     ensure!(plan.refused.is_none(), "This setup wasn't ready to run.");
     let folder = folder(Path::new(&plan.setup.folder))?;
     ensure!(
@@ -534,15 +609,32 @@ pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan) -> Result<()> {
                 path: folder.join("bin/micromamba").to_string_lossy().into_owned(),
             }];
             if language == "r"
-                && plan
+                && (plan
                     .r_packages
                     .iter()
                     .any(|p| p.name == "GSVA" && p.spec == "GSVA")
+                    || plan
+                        .copy
+                        .iter()
+                        .any(|row| row.language == "r" && row.tool == Some(InstallTool::R)))
+            {
+                tracks.push(super::undo::Track {
+                    target: target.clone(),
+                    folder: library,
+                    tool: InstallTool::R,
+                    path: String::new(),
+                });
+            }
+            if language == "python"
+                && plan
+                    .copy
+                    .iter()
+                    .any(|row| row.language == language && row.tool == Some(InstallTool::Pip))
             {
                 tracks.push(super::undo::Track {
                     target,
-                    folder: library,
-                    tool: InstallTool::R,
+                    folder: own_env::prefix(&folder, language),
+                    tool: InstallTool::Pip,
                     path: String::new(),
                 });
             }
@@ -572,6 +664,9 @@ pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan) -> Result<()> {
             }
             return Err(error);
         }
+    }
+    if !plan.setup.copy_from.is_empty() {
+        super::own_copy::run(record_path, plan, &work.copy)?;
     }
     for snapshot in snapshots {
         snapshot.finish(record_path)?;
@@ -616,6 +711,7 @@ pub(super) fn remove(record: &Path, folder: &Path) -> Result<()> {
         let _ = fs::remove_dir(parent);
     }
     record::forget_own(record, folder)?;
+    super::own_copy::forget(record, folder);
     install::update_prefs(record, |prefs| {
         if Path::new(&prefs.own_folder) == folder {
             prefs.mode = None;
@@ -632,7 +728,7 @@ pub(super) fn remove(record: &Path, folder: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn readiness(search: &Search, folder: &Path) -> Option<OwnEnvironment> {
+pub(super) fn readiness(search: &Search, record: &Path, folder: &Path) -> Option<OwnEnvironment> {
     if !own_env::marked(folder) {
         return None;
     }
@@ -681,6 +777,7 @@ pub(super) fn readiness(search: &Search, folder: &Path) -> Option<OwnEnvironment
         python: python_ready,
         kits,
         size_mb: disk_bytes(folder, &mut HashSet::new()).div_ceil(MB),
+        copy_report: super::own_copy::report(record, folder),
     })
 }
 
@@ -716,6 +813,7 @@ mod tests {
             r: true,
             python: true,
             kits: Vec::new(),
+            copy_from: Vec::new(),
         }
     }
 

@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use sandhill_proto::{InstalledKey, QuickInstalled};
 use serde_json::Value;
 
@@ -28,6 +28,7 @@ pub const BREW: &str = "brew";
 pub const R_CRAN: &str = "r-cran";
 pub const UV_PYTHON: &str = "uv-python";
 pub const OWN_ENVIRONMENT: &str = "own-environment";
+pub(crate) const RENV_LIBRARY: &str = "renv-library";
 const KINDS: &[&str] = &[
     R_PACKAGE,
     PYTHON_PACKAGE,
@@ -42,6 +43,7 @@ const KINDS: &[&str] = &[
     R_CRAN,
     UV_PYTHON,
     OWN_ENVIRONMENT,
+    RENV_LIBRARY,
 ];
 
 pub(super) type Versions = BTreeMap<String, String>;
@@ -348,6 +350,50 @@ fn version_status(version: Option<&str>, recorded: &str) -> Status {
     }
 }
 
+pub(super) fn directory_identity(folder: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let meta = folder.symlink_metadata().ok()?;
+    if !meta.is_dir() || folder.canonicalize().ok()? != folder {
+        return None;
+    }
+    let mut entries = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(dir) = folders.pop() {
+        for ent in fs::read_dir(dir).ok()? {
+            let ent = ent.ok()?;
+            let path = ent.path();
+            let stat = path.symlink_metadata().ok()?;
+            entries.push((
+                path.strip_prefix(folder)
+                    .ok()?
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .to_vec(),
+                stat.ino(),
+                stat.size(),
+                stat.mtime(),
+                stat.mtime_nsec(),
+            ));
+            if stat.is_dir() {
+                folders.push(path);
+            }
+        }
+    }
+    entries.sort_unstable();
+    let mut hash = sha2::Sha256::new();
+    hash.update(meta.dev().to_le_bytes());
+    hash.update(meta.ino().to_le_bytes());
+    for (path, ino, size, time, nanos) in entries {
+        hash.update(path.len().to_le_bytes());
+        hash.update(path);
+        hash.update(ino.to_le_bytes());
+        hash.update(size.to_le_bytes());
+        hash.update(time.to_le_bytes());
+        hash.update(nanos.to_le_bytes());
+    }
+    Some(sandhill_proto::hex(&hash.finalize()))
+}
+
 fn check(items: &mut [QuickInstalled]) -> HashSet<InstalledKey> {
     let search = Search::from_env();
     let mut brews = None;
@@ -410,6 +456,13 @@ fn check(items: &mut [QuickInstalled]) -> HashSet<InstalledKey> {
                 PYTHON_ENV | CONDA_ENV if prefix.exists() => Status::Changed,
                 OWN_ENVIRONMENT if crate::own_env::marked(prefix) => Status::Ours,
                 OWN_ENVIRONMENT if prefix.exists() => Status::Changed,
+                RENV_LIBRARY if prefix.symlink_metadata().is_ok() => {
+                    if directory_identity(prefix).as_deref() == Some(version) {
+                        Status::Ours
+                    } else {
+                        Status::Changed
+                    }
+                }
                 MINIFORGE if prefix.exists() => Status::Changed, // checked after its environments
                 BREW => {
                     let packages = brews.get_or_insert_with(|| {
@@ -539,6 +592,7 @@ fn removal_command(group: &[&QuickInstalled], search: &Search) -> Option<String>
         ]),
         _ if group.len() > 1 => return None,
         KERNEL | MINIFORGE => quote(["rm", "-rf", &item.place]),
+        RENV_LIBRARY => quote(["/bin/rm", "-rf", "--", &item.place]),
         AGENT if item.name == "claude" && item.place == "native" => {
             "rm -f \"$HOME/.local/bin/claude\" && rm -rf \"$HOME/.local/share/claude\"".into()
         }
@@ -559,6 +613,21 @@ fn removal_command(group: &[&QuickInstalled], search: &Search) -> Option<String>
         R_CRAN => super::runtime_plan::cran_remove()?,
         _ => return None,
     })
+}
+
+pub(super) fn undo_creation(
+    record: &Path,
+    item: &QuickInstalled,
+    search: &Search,
+) -> Result<String> {
+    let mut items = load(record)?;
+    check(&mut items);
+    let id = key(item);
+    let row = items
+        .iter()
+        .find(|row| row.ours && key(row) == id && row.version == item.version)
+        .context("The folder has changed since Sandhill set it up, or it is no longer there.")?;
+    removal_command(&[row], search).context("The tool that made this folder wasn't found.")
 }
 
 fn package_key(name: &str) -> bool {
@@ -633,7 +702,7 @@ pub(super) fn remove(record: &Path, keys: &[InstalledKey]) -> Result<()> {
         .filter(|item| {
             matches!(
                 item.kind.as_str(),
-                PYTHON_ENV | CONDA_ENV | MINIFORGE | R_CRAN
+                PYTHON_ENV | CONDA_ENV | MINIFORGE | R_CRAN | RENV_LIBRARY
             )
         })
         .collect();
