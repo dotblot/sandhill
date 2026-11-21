@@ -284,9 +284,11 @@ async fn codex_works_through_the_chat() {
         resume: None,
     };
     let mut launch = agents::launch("codex", &options, &context).await.unwrap();
-    launch
-        .env
-        .push(("CODEX_HOME".into(), home.to_string_lossy().into()));
+    // Its own home too, so usage notes land in the test's folder.
+    launch.env.extend([
+        ("CODEX_HOME".into(), home.to_string_lossy().into()),
+        ("HOME".into(), dir.path().to_string_lossy().into()),
+    ]);
     let terminals = Terminals::new(dir.path().join("state/terminals"), exe.clone());
     let info = terminals.start(launch).await.unwrap();
     let (out, mut events) = mpsc::unbounded_channel();
@@ -486,9 +488,10 @@ async fn codex_works_through_the_chat() {
         resume: Some(&thread),
     };
     let mut launch = agents::launch("codex", &options, &context).await.unwrap();
-    launch
-        .env
-        .push(("CODEX_HOME".into(), home.to_string_lossy().into()));
+    launch.env.extend([
+        ("CODEX_HOME".into(), home.to_string_lossy().into()),
+        ("HOME".into(), dir.path().to_string_lossy().into()),
+    ]);
     let restarted = terminals
         .restart(&info.id, launch, &agents::RESUME_KEYS)
         .await
@@ -555,6 +558,8 @@ async fn codex_lists_its_models_before_a_conversation() {
         .arg(&state)
         .arg("serve")
         .env("CODEX_HOME", &home)
+        // Agents' usage notes go under the home folder: the test's own.
+        .env("HOME", dir.path())
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)

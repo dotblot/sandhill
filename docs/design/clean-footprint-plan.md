@@ -267,7 +267,8 @@ fresh Linux machine, list every file outside the test projects; install
 Sandhill; use every part (both modes, Getting Ready, installs and removals,
 Install Without Asking, switching with a copy, agents, Terminal, Explore,
 notebooks); uninstall; list again. Any difference other than the projects
-fails the test. It runs by hand before a release, not on every push.
+fails the test. It runs by hand before a release, not on every push. The
+procedure and the snapshot script are in `tests/leftover/` (2026-11-21).
 
 ## 9. Everything inside Sandhill, no Terminal
 
@@ -464,7 +465,9 @@ Each step is usable on its own and committed when done:
    under their own sandbox or the lock on a Mac; Miniforge, Homebrew and
    uv's Python downloads and auto-configured proxies not yet on mirrors).
 9. Section 8: the leftover test, run once on this Mac in a fresh user
-   account after Huan agrees.
+   account after Huan agrees. Procedure ready 2026-11-21
+   (`tests/leftover/`); it found tests writing into the real home folder,
+   now fixed.
 
 ## Decided (Huan, 2026-11-20)
 

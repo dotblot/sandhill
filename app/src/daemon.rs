@@ -571,10 +571,15 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        // SAFETY: this is the only test that reads these variables.
+        // SAFETY: this is the only test that reads these variables. The
+        // state folder keeps `attach --start` out of the real home folder,
+        // and without the builds (app/.cargo/config.toml sets them for
+        // `cargo run`) no helper is installed into it.
         unsafe {
             std::env::set_var("SANDHILL_DAEMON", &exe);
             std::env::set_var("SANDHILL_SOCKET", &socket);
+            std::env::set_var("SANDHILL_STATE_DIR", &state);
+            std::env::remove_var("SANDHILL_DAEMON_BUILDS");
         }
         let (daemon, streams) = rt
             .block_on(Daemon::connect(rt.clone(), Target::Local))
