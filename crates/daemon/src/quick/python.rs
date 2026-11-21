@@ -39,7 +39,7 @@ pub fn readiness(search: &Search) -> QuickPython {
     }
 }
 
-fn found(
+pub(super) fn found(
     program: &Path,
     listed_version: Option<String>,
     own: Option<&Path>,
@@ -65,7 +65,7 @@ fn found(
     })
 }
 
-fn describe_python(program: &Path, prefix: &Path) -> (String, Option<String>) {
+pub(super) fn describe_python(program: &Path, prefix: &Path) -> (String, Option<String>) {
     if prefix.join("conda-meta").is_dir() {
         return (
             format!("conda, {}", kernelspecs::conda_name(prefix)),

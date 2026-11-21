@@ -20,7 +20,7 @@ use crate::own_env::{self, MARKER, executable, prefix};
 const MB: u64 = 1_000_000;
 const NAME: &str = "Sandhill's own R and Python";
 const MISSING: &str =
-    "Sandhill's own R and Python aren't set up. Set them up in Getting Ready first.";
+    "Sandhill's own R and Python aren't set up. Set them up on the R and Python page first.";
 const PLATFORM: Option<&str> = if_cfg_platform();
 
 const fn if_cfg_platform() -> Option<&'static str> {
@@ -501,6 +501,58 @@ pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan) -> Result<()> {
         "The chosen folder changed after Sandhill checked it."
     );
     let new = !own_env::marked(&folder);
+    let mut snapshots = Vec::new();
+    if !new {
+        use sandhill_proto::{InstallTarget, InstallTool};
+        for (language, wanted) in [("r", plan.setup.r), ("python", plan.setup.python)] {
+            let prefix = own_env::prefix(&folder, language);
+            if !wanted || !prefix.join("conda-meta").is_dir() {
+                continue;
+            }
+            let program = prefix.join(if language == "r" {
+                "bin/R"
+            } else {
+                "bin/python"
+            });
+            let program = program.to_string_lossy().into_owned();
+            let library = prefix.join("lib/R/library");
+            let target = if language == "r" {
+                InstallTarget::R {
+                    r: program,
+                    library: library.to_string_lossy().into_owned(),
+                }
+            } else {
+                InstallTarget::Python {
+                    python: program,
+                    prefix: prefix.to_string_lossy().into_owned(),
+                }
+            };
+            let mut tracks = vec![super::undo::Track {
+                target: target.clone(),
+                folder: prefix,
+                tool: InstallTool::Conda,
+                path: folder.join("bin/micromamba").to_string_lossy().into_owned(),
+            }];
+            if language == "r"
+                && plan
+                    .r_packages
+                    .iter()
+                    .any(|p| p.name == "GSVA" && p.spec == "GSVA")
+            {
+                tracks.push(super::undo::Track {
+                    target,
+                    folder: library,
+                    tool: InstallTool::R,
+                    path: String::new(),
+                });
+            }
+            snapshots.push(super::undo::begin(
+                record_path,
+                "the last kit additions".into(),
+                tracks,
+            )?);
+        }
+    }
     for step in &plan.steps {
         println!("{}", step.what);
         if let Err(error) = install::run_command(&format!("set -e -o pipefail\n{}", step.command)) {
@@ -515,8 +567,14 @@ pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan) -> Result<()> {
                     let _ = fs::remove_file(folder.join(name));
                 }
             }
+            for snapshot in snapshots {
+                snapshot.finish(record_path)?;
+            }
             return Err(error);
         }
+    }
+    for snapshot in snapshots {
+        snapshot.finish(record_path)?;
     }
     crate::files::write_atomic(&folder.join(MARKER), b"Sandhill's own R and Python\n")?;
     record::add(
@@ -527,7 +585,7 @@ pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan) -> Result<()> {
             "",
             &plan.setup.folder,
             "micromamba",
-            "Getting Ready set it up",
+            "Set up from the R and Python page",
         )],
     )?;
     install::update_prefs(record_path, |prefs| {

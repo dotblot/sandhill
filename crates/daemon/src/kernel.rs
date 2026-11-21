@@ -88,11 +88,33 @@ pub struct Launched {
 /// doesn't change what the kernelspec sets, such as the `PATH` that
 /// activates its environment.
 pub async fn launch(
+    spec: KernelspecDir,
+    cwd: &Path,
+    env: &[(String, String)],
+    kernels_dir: &Path,
+    session_id: &str,
+) -> Result<Launched> {
+    let own = own_folder(kernels_dir);
+    launch_scoped(
+        spec,
+        cwd,
+        env,
+        kernels_dir,
+        session_id,
+        own.as_deref(),
+        true,
+    )
+    .await
+}
+
+pub(crate) async fn launch_scoped(
     mut spec: KernelspecDir,
     cwd: &Path,
     env: &[(String, String)],
     kernels_dir: &Path,
     session_id: &str,
+    own: Option<&Path>,
+    persistent: bool,
 ) -> Result<Launched> {
     if !env.is_empty() {
         let vars = spec.kernelspec.env.get_or_insert_with(Default::default);
@@ -138,14 +160,20 @@ pub async fn launch(
         Some(Stdio::from(log.try_clone()?)),
         Some(Stdio::from(log)),
     )?;
-    command.current_dir(cwd).process_group(0);
-    if let Some(folder) = own_folder(kernels_dir) {
+    command.current_dir(cwd);
+    if persistent {
+        command.process_group(0);
+    } else {
+        // A stopped Check job must stop its test kernel too.
+        command.kill_on_drop(true);
+    }
+    if let Some(folder) = own {
         anyhow::ensure!(
-            crate::own_env::inside(&folder, Path::new(&program)),
+            crate::own_env::inside(folder, Path::new(&program)),
             "The kernel's program wasn't found in Sandhill's folder. {}",
             crate::own_env::SWITCH_HINT
         );
-        crate::own_env::apply(command.as_std_mut(), &folder);
+        crate::own_env::apply(command.as_std_mut(), folder);
     }
     let mut child = command.spawn().map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -164,7 +192,7 @@ pub async fn launch(
     // The kernel binds these ports as soon as it starts; release them now.
     drop(listeners);
     let pid = child.id().context("kernel exited immediately")?;
-    if let Err(err) = crate::lifecycle::record_kernel(&connection_file, pid) {
+    if persistent && let Err(err) = crate::lifecycle::record_kernel(&connection_file, pid) {
         let _ = child.start_kill();
         let _ = child.wait().await;
         return Err(err.context("cannot record kernel ownership"));

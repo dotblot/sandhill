@@ -374,7 +374,7 @@ Each step is usable on its own and committed when done:
    environment and kits, with the Terminal, kernels and agents' commands
    kept inside. Built 2026-11-20.
 3. Section 9's R and Python page: Add Packages search, Updates, Check and
-   Repair, Undo Last Change, More.
+   Repair, Undo Last Change, More. Built 2026-11-20.
 4. Section 9's missing-packages bar, Install on errors, plain errors.
 5. Section 4: switching and copying packages; section 9's project files.
 6. Section 6: one folder for Sandhill's own files, the move, `SMAppService`.

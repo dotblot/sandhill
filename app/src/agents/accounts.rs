@@ -129,7 +129,7 @@ impl AccountManager {
     }
 
     /// Reads which agents the device has, and their versions.
-    fn load_agents(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn load_agents(&mut self, cx: &mut Context<Self>) {
         let listed = self.daemon.call::<Vec<AgentInfo>>(Call::ListAgents);
         cx.spawn(async move |this, cx| {
             if let Ok(agents) = listed.await {

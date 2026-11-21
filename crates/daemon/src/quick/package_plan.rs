@@ -19,7 +19,7 @@ use crate::kernelspecs::Search;
 const CRAN: &str = "https://cloud.r-project.org";
 const CHANNELS: &[&str] = &["-c", "conda-forge", "-c", "bioconda", "--override-channels"];
 
-pub(crate) fn plan(search: &Search, change: PackageChange) -> PackagePlan {
+pub(crate) fn plan(search: &Search, record: Option<&Path>, change: PackageChange) -> PackagePlan {
     let mut plan = PackagePlan {
         change,
         tools: Vec::new(),
@@ -29,14 +29,14 @@ pub(crate) fn plan(search: &Search, change: PackageChange) -> PackagePlan {
         notes: Vec::new(),
         refused: None,
     };
-    match build(search, &mut plan) {
+    match build(search, record, &mut plan) {
         Ok(command) => plan.command = command,
         Err(error) => plan.refused = Some(error.to_string()),
     }
     plan
 }
 
-fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
+fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) -> Result<String> {
     use InstallTool::{Conda, Pip, R, Uv};
     let change = plan.change.clone();
     let PackageChange {
@@ -109,7 +109,7 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
                 }
             } else if actual.managed {
                 bail!(
-                    "This Python is managed by Homebrew or the system and refuses pip. Make an environment for it in Getting Ready first."
+                    "This Python is managed by Homebrew or the system and refuses pip. Make an environment for it on the R and Python page first."
                 );
             }
             let pip = info(Pip, program);
@@ -119,19 +119,31 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
             python_probe = Some(actual);
         }
     }
+    let is_r = matches!(target, InstallTarget::R { .. });
+    let has_files = packages.iter().any(|name| Path::new(name).is_absolute());
+    let compatible = |tool| !has_files || tool != Conda;
     let mut selected = match *tool {
         Some(choice) => plan.tools.iter().find(|info| info.tool == choice)
             .with_context(|| format!("{} isn't available for this folder. Choose another tool.", choice.label()))?,
-        None => plan.tools.first().context("No tool can change packages in this Python. Make an environment in Getting Ready first.")?,
+        None => plan.tools.iter().find(|info| compatible(info.tool)).context("No tool can change packages in this folder. Choose another environment on the R and Python page.")?,
     }
     .clone();
+    if !compatible(selected.tool) {
+        bail!("Choose R's own installer, pip or uv to install a downloaded package file.");
+    }
     if packages.is_empty() {
         bail!("Enter at least one package name.");
     }
-    let is_r = matches!(target, InstallTarget::R { .. });
     let requested: Vec<_> = packages
         .iter()
         .map(|spec| {
+            if Path::new(spec).is_absolute() {
+                if *action == PackageAction::Remove {
+                    bail!("Remove installed packages by name, not by file.");
+                }
+                package_file(spec, is_r)?;
+                return Ok(spec.as_str());
+            }
             let name = if is_r {
                 if record::r_name(spec) || (*action != PackageAction::Remove && github_repo(spec)) {
                     Some(spec.as_str())
@@ -202,6 +214,7 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
     }
     plan.change.tool = Some(selected.tool);
     let tool_path = Path::new(&selected.path);
+    let repair = *action == PackageAction::Update && change.reason == super::env_check::REASON;
     let command = match selected.tool {
         R => {
             let library = Path::new(&plan.folder);
@@ -226,11 +239,26 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
             if *action == PackageAction::Remove {
                 guard_r_remove(library, &r.standard, &requested)?;
             }
-            let use_bioc = r.bioc || requested.iter().any(|name| bioconductor(name));
+            let indexed = if *action != PackageAction::Remove
+                && requested.iter().any(|name| {
+                    record::r_name(name)
+                        && !setup::PACKAGES.iter().any(|(known, ..)| known == name)
+                        && !kits().flat_map(|kit| kit.r).any(|(known, _)| known == name)
+                }) {
+                record_path
+                    .map(super::package_search::bioc_names)
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            };
+            let from_bioc = |name: &str| bioconductor(name) || indexed.contains(name);
+            let use_bioc = r.bioc || requested.iter().any(|name| from_bioc(name));
             for &name in &requested {
-                let source = if github_repo(name) {
+                let source = if Path::new(name).is_absolute() {
+                    "This file"
+                } else if github_repo(name) {
                     "GitHub"
-                } else if bioconductor(name) {
+                } else if from_bioc(name) {
                     "Bioconductor"
                 } else if use_bioc && !setup::PACKAGES.iter().any(|(n, ..)| n == &name) {
                     "CRAN or Bioconductor"
@@ -240,7 +268,15 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
                 let version = (*action == PackageAction::Remove)
                     .then(|| record::package_version(library, name))
                     .flatten();
-                plan.packages.push(package(name, name, source, version));
+                let label = (source == "This file")
+                    .then(|| r_archive_name(name))
+                    .flatten();
+                plan.packages.push(package(
+                    label.as_deref().unwrap_or_else(|| file_label(name)),
+                    name,
+                    source,
+                    version,
+                ));
             }
             if *action != PackageAction::Remove && !r.binary {
                 plan.notes.push(
@@ -331,7 +367,7 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
                 plan.notes
                     .push("This tool may add other packages that these need.".into());
             }
-            conda_command(&selected.path, prefix, *action, &plan.packages)
+            conda_command(&selected.path, prefix, *action, &plan.packages, repair)
         }
         Pip | Uv => {
             let prefix = prefix
@@ -358,11 +394,17 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
                     }
                     _ => pinned(spec, name),
                 };
-                plan.packages.push(package(name, spec, "PyPI", version));
+                let source = if Path::new(spec).is_absolute() {
+                    "This file"
+                } else {
+                    "PyPI"
+                };
+                plan.packages
+                    .push(package(file_label(name), spec, source, version));
             }
             if !writable(&actual.package_folder) {
                 bail!(
-                    "You can't write to {}. Make an environment in Getting Ready first.",
+                    "You can't write to {}. Make an environment on the R and Python page first.",
                     actual.package_folder.display()
                 );
             }
@@ -373,18 +415,19 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
                     })
                 {
                     bail!(
-                        "This Python would install packages outside the folder shown. Make an environment in Getting Ready first."
+                        "This Python would install packages outside the folder shown. Make an environment on the R and Python page first."
                     );
                 }
                 plan.notes
                     .push("Other packages that these need may be installed too.".into());
             }
-            python_command(
+            python_command_with(
                 selected.tool,
                 &selected.path,
                 program.to_string_lossy().as_ref(),
                 *action,
                 packages,
+                repair,
             )
         }
     };
@@ -395,7 +438,7 @@ fn build(search: &Search, plan: &mut PackagePlan) -> Result<String> {
     }
 }
 
-fn same_folder(a: &Path, b: &Path) -> bool {
+pub(super) fn same_folder(a: &Path, b: &Path) -> bool {
     a == b
         || fs::canonicalize(a)
             .ok()
@@ -412,14 +455,14 @@ fn package(name: &str, spec: &str, source: &str, version: Option<String>) -> Pla
     }
 }
 
-fn writable(path: &Path) -> bool {
+pub(super) fn writable(path: &Path) -> bool {
     CString::new(path.as_os_str().as_bytes()).is_ok_and(|dir| {
         // SAFETY: a valid, NUL-terminated path; this doesn't change the folder.
         unsafe { libc::access(dir.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
     })
 }
 
-fn github_repo(name: &str) -> bool {
+pub(super) fn github_repo(name: &str) -> bool {
     let part = |s: &str| {
         s.starts_with(|c: char| c.is_ascii_alphanumeric())
             && s.bytes()
@@ -429,9 +472,67 @@ fn github_repo(name: &str) -> bool {
         .is_some_and(|(owner, repo)| part(owner) && part(repo))
 }
 
+pub(super) fn package_file(text: &str, is_r: bool) -> Result<()> {
+    let path = Path::new(text);
+    let valid = if is_r {
+        [".tar.gz", ".tgz", ".zip"].as_slice()
+    } else {
+        [".whl", ".tar.gz"].as_slice()
+    };
+    if !path.is_absolute() || !valid.iter().any(|suffix| text.ends_with(suffix)) || !path.is_file()
+    {
+        bail!(
+            "Choose an existing package file ending in {}.",
+            valid.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn file_label(spec: &str) -> &str {
+    if Path::new(spec).is_absolute() {
+        Path::new(spec)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(spec)
+    } else {
+        spec
+    }
+}
+
+fn r_archive_name(spec: &str) -> Option<String> {
+    use std::io::Read as _;
+    let archive = fs::File::open(spec).ok()?;
+    let description = |path: &Path| {
+        path.components().count() == 2 && path.file_name().is_some_and(|s| s == "DESCRIPTION")
+    };
+    let mut text = String::new();
+    if spec.ends_with(".zip") {
+        let mut zip = zip::ZipArchive::new(archive).ok()?;
+        let index = zip
+            .file_names()
+            .position(|name| name.is_ok_and(|n| description(Path::new(n.as_ref()))))?;
+        zip.by_index(index)
+            .ok()?
+            .take(256 * 1024)
+            .read_to_string(&mut text)
+            .ok()?;
+    } else {
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
+        for entry in tar.entries().ok()?.flatten() {
+            if entry.header().entry_type().is_file() && description(&entry.path().ok()?) {
+                entry.take(256 * 1024).read_to_string(&mut text).ok()?;
+                break;
+            }
+        }
+    }
+    let name = record::r_field(&text, "Package")?;
+    record::r_name(name).then(|| name.into())
+}
+
 /// A PyPI name with optional comma-separated version comparisons; not a
 /// path, direct URL, environment marker, or option.
-fn python_spec(spec: &str) -> Option<&str> {
+pub(super) fn python_spec(spec: &str) -> Option<&str> {
     let end = spec.find(['<', '>', '=', '!', '~']).unwrap_or(spec.len());
     let name = &spec[..end];
     if !name.starts_with(|c: char| c.is_ascii_alphanumeric())
@@ -472,7 +573,7 @@ fn pinned(spec: &str, name: &str) -> Option<String> {
     (!version.contains([',', '*'])).then(|| version.into())
 }
 
-fn bioconductor(name: &str) -> bool {
+pub(super) fn bioconductor(name: &str) -> bool {
     setup::PACKAGES
         .iter()
         .any(|&(n, bioc, _)| n == name && bioc)
@@ -481,7 +582,7 @@ fn bioconductor(name: &str) -> bool {
             .any(|&(n, bioc)| bioc && n.eq_ignore_ascii_case(name))
 }
 
-fn kits() -> impl Iterator<Item = &'static sandhill_proto::Kit> {
+pub(super) fn kits() -> impl Iterator<Item = &'static sandhill_proto::Kit> {
     std::iter::once(&sandhill_proto::CORE_KIT).chain(sandhill_proto::KITS)
 }
 
@@ -503,9 +604,11 @@ fn conda_command(
     prefix: &Path,
     action: PackageAction,
     packages: &[PlannedPackage],
+    repair: bool,
 ) -> String {
     let verb = match action {
         PackageAction::Install => "install",
+        PackageAction::Update if repair => "install",
         PackageAction::Update => "update",
         PackageAction::Remove => "remove",
     };
@@ -514,19 +617,32 @@ fn conda_command(
     if action != PackageAction::Remove {
         args.extend(CHANNELS);
     }
-    if action == PackageAction::Install {
+    if repair {
+        args.push("--force-reinstall");
+    } else if action == PackageAction::Install {
         args.push("--freeze-installed");
     }
     args.extend(packages.iter().map(|p| p.spec.as_str()));
     quote(args)
 }
 
-fn python_command(
+pub(super) fn python_command(
     tool: InstallTool,
     path: &str,
     python: &str,
     action: PackageAction,
     packages: &[String],
+) -> String {
+    python_command_with(tool, path, python, action, packages, false)
+}
+
+fn python_command_with(
+    tool: InstallTool,
+    path: &str,
+    python: &str,
+    action: PackageAction,
+    packages: &[String],
+    repair: bool,
 ) -> String {
     let verb = if action == PackageAction::Remove {
         "uninstall"
@@ -539,6 +655,11 @@ fn python_command(
         vec![python, "-m", "pip", verb]
     };
     match action {
+        PackageAction::Update if repair => args.push(if tool == InstallTool::Uv {
+            "--reinstall"
+        } else {
+            "--force-reinstall"
+        }),
         PackageAction::Update => args.push(if tool == InstallTool::Uv {
             "--upgrade"
         } else {
@@ -625,7 +746,9 @@ fn conda_search(tool: &Path, name: &str, spec: &str) -> Option<String> {
 
 /// Python distributions can have a different name in conda (`igraph` is
 /// `python-igraph`). The conda record names the files it installed.
-fn conda_distribution_names(prefix: &Path) -> std::collections::BTreeMap<String, String> {
+pub(super) fn conda_distribution_names(
+    prefix: &Path,
+) -> std::collections::BTreeMap<String, String> {
     fs::read_dir(prefix.join("conda-meta"))
         .into_iter()
         .flatten()
@@ -652,19 +775,19 @@ fn conda_distribution_names(prefix: &Path) -> std::collections::BTreeMap<String,
 }
 
 #[derive(serde::Deserialize)]
-struct Python {
-    prefix: String,
-    managed: bool,
-    package_folder: std::path::PathBuf,
+pub(super) struct Python {
+    pub prefix: String,
+    pub managed: bool,
+    pub package_folder: std::path::PathBuf,
 }
 
-fn inspect_python(program: &Path) -> Option<Python> {
+pub(super) fn inspect_python(program: &Path) -> Option<Python> {
     let code = r#"import json, os, sys, sysconfig
 print(json.dumps(dict(prefix=sys.prefix, managed=os.path.isfile(os.path.join(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED')), package_folder=sysconfig.get_path('purelib'))))"#;
     serde_json::from_str(&probe(program, &["-I", "-c", code])?).ok()
 }
 
-fn python_inventory(program: &Path, folder: &Path) -> Result<record::Versions> {
+pub(super) fn python_inventory(program: &Path, folder: &Path) -> Result<record::Versions> {
     let code = r#"import importlib.metadata as md, json, os, re, sys, sysconfig
 prefix = os.path.realpath(sys.argv[1])
 if os.path.realpath(sys.prefix) != prefix:
@@ -726,7 +849,10 @@ fn known_to_need_compiler(
     use_bioc: bool,
     own: Option<&Path>,
 ) -> bool {
-    if names.iter().any(|name| github_repo(name)) {
+    if names
+        .iter()
+        .any(|name| github_repo(name) || Path::new(name).is_absolute())
+    {
         return false;
     }
     let repos = if use_bioc {
@@ -764,7 +890,12 @@ fn r_vector(names: &[&str]) -> String {
     )
 }
 
-fn r_code(action: PackageAction, library: &Path, names: &[&str], use_bioc: bool) -> String {
+pub(super) fn r_code(
+    action: PackageAction,
+    library: &Path,
+    names: &[&str],
+    use_bioc: bool,
+) -> String {
     let library = r_string(library.to_string_lossy().as_ref());
     let check = crate::irkernel::check_library_code();
     if action == PackageAction::Remove {
@@ -773,8 +904,12 @@ fn r_code(action: PackageAction, library: &Path, names: &[&str], use_bioc: bool)
             r_vector(names)
         );
     }
-    let (github, other): (Vec<_>, Vec<_>) =
-        names.iter().copied().partition(|name| github_repo(name));
+    let (files, names): (Vec<_>, Vec<_>) = names
+        .iter()
+        .copied()
+        .partition(|name| Path::new(name).is_absolute());
+    let files = r_vector(&files);
+    let (github, other): (Vec<_>, Vec<_>) = names.into_iter().partition(|name| github_repo(name));
     let other = r_vector(&other);
     let github = r_vector(&github);
     // A copy in another of R's libraries doesn't count: the user chose this one.
@@ -803,12 +938,23 @@ fn r_code(action: PackageAction, library: &Path, names: &[&str], use_bioc: bool)
   if (binary) options(install.packages.compile.from.source = "never")
   else message("This R builds packages from their source code. That can take a few minutes.")
   repos <- c(CRAN = "{CRAN}")
+  fail_install <- function(w) {{
+    if (grepl("non-zero exit status|not available|not supported|not valid", conditionMessage(w)))
+      stop(conditionMessage(w), call. = FALSE)
+  }}
   wanted <- {other}{only_missing}
   if (length(wanted)) {{
     message("{rverb} ", paste(wanted, collapse = ", "), " in ", lib)
-    {install}
+    withCallingHandlers({{ {install} }}, warning = fail_install)
     missing <- setdiff(wanted, rownames(utils::installed.packages(lib.loc = lib, noCache = TRUE)))
     if (length(missing)) stop("These packages couldn't be installed: ", paste(missing, collapse = ", "), call. = FALSE)
+  }}
+  for (file in {files}) {{
+    message("{rverb} from ", file)
+    local_type <- if (endsWith(file, ".zip")) "win.binary" else if (endsWith(file, ".tgz") && .Platform$pkgType != "source") .Platform$pkgType else "source"
+    withCallingHandlers(
+      utils::install.packages(file, repos = NULL, lib = lib, type = local_type),
+      warning = fail_install)
   }}
   github <- {github}
   if (length(github)) {{
@@ -842,9 +988,24 @@ pub(super) fn run(record_path: &Path, plan: &PackagePlan) -> Result<()> {
     } else {
         Default::default()
     };
+    let pending = super::undo::begin(
+        record_path,
+        install::package_title(plan),
+        vec![super::undo::Track::from_plan(plan)?],
+    )?;
     let result = install::run_command(&plan.command);
+    pending.finish(record_path)?;
     if action != PackageAction::Remove {
         let after = snapshot()?;
+        if tool == InstallTool::R && result.is_ok() {
+            for source in plan.packages.iter().filter(|p| p.source == "This file") {
+                if let Some(version) = after.get(&source.name) {
+                    let path = archive_record(record_path, folder, &source.name, version);
+                    fs::create_dir_all(path.parent().unwrap())?;
+                    crate::files::write_atomic(&path, source.spec.as_bytes())?;
+                }
+            }
+        }
         let fresh = after.into_iter().filter_map(|(name, version)| {
             let old_version = before.get(&name);
             let old_record = owned.get(&name);
@@ -854,6 +1015,8 @@ pub(super) fn run(record_path: &Path, plan: &PackagePlan) -> Result<()> {
                 return None;
             }
             let requested = plan.packages.iter().any(|p| match tool {
+                InstallTool::R if p.source == "This file" => p.name == name,
+                _ if p.source == "This file" => file_requested(&p.name, &name),
                 InstallTool::R => p.name == name || github_match(folder, &name, &p.name),
                 InstallTool::Conda => {
                     p.spec.split(['=', '<', '>', '!', '~']).next() == Some(name.as_str())
@@ -880,6 +1043,38 @@ pub(super) fn run(record_path: &Path, plan: &PackagePlan) -> Result<()> {
     result?;
     println!("Done.");
     Ok(())
+}
+
+fn file_requested(file: &str, name: &str) -> bool {
+    let base = file.split(['_', '-']).next().unwrap_or(file);
+    base.eq_ignore_ascii_case(name) || record::python_name(file).starts_with(&format!("{name}-"))
+}
+
+pub(super) fn r_archive_for(
+    record_path: &Path,
+    library: &Path,
+    name: &str,
+    version: &str,
+) -> Option<String> {
+    let path = fs::read_to_string(archive_record(record_path, library, name, version)).ok()?;
+    package_file(&path, true).ok()?;
+    Some(path)
+}
+
+fn archive_record(
+    record_path: &Path,
+    library: &Path,
+    name: &str,
+    version: &str,
+) -> std::path::PathBuf {
+    super::environments::state_path(
+        record_path,
+        "r-package-files",
+        &format!(
+            "{}\n{name}\n{version}",
+            crate::kernelspecs::canonical(library).display()
+        ),
+    )
 }
 
 fn github_match(folder: &Path, name: &str, wanted: &str) -> bool {
@@ -942,14 +1137,14 @@ mod tests {
             reason: String::new(),
         };
         let search = Search::default().in_own(Some(folder));
-        let automatic = plan(&search, change.clone());
+        let automatic = plan(&search, None, change.clone());
         assert_eq!(automatic.refused, None);
         assert_eq!(automatic.change.tool, Some(InstallTool::R));
         assert!(automatic.notes[0].contains("uses R"));
         assert!(automatic.command.contains("R_PROFILE_USER="));
         change.tool = Some(InstallTool::Conda);
         assert!(
-            plan(&search, change)
+            plan(&search, None, change)
                 .refused
                 .unwrap()
                 .contains("couldn't find")
@@ -1028,15 +1223,15 @@ mod tests {
         );
         let known = plan_r_conda();
         assert_eq!(
-            conda_command("/mamba", Path::new("/env"), Install, &known),
+            conda_command("/mamba", Path::new("/env"), Install, &known, false),
             "'/mamba' 'install' '-y' '-p' '/env' '-c' 'conda-forge' '-c' 'bioconda' '--override-channels' '--freeze-installed' 'bioconductor-deseq2'"
         );
         assert_eq!(
-            conda_command("/mamba", Path::new("/env"), Remove, &known),
+            conda_command("/mamba", Path::new("/env"), Remove, &known, false),
             "'/mamba' 'remove' '-y' '-p' '/env' 'bioconductor-deseq2'"
         );
         assert!(
-            !conda_command("/mamba", Path::new("/env"), Update, &known)
+            !conda_command("/mamba", Path::new("/env"), Update, &known, false)
                 .contains("--freeze-installed")
         );
         let r = r_code(
@@ -1058,6 +1253,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn downloaded_files_need_the_right_extension_and_are_quoted() {
+        let temp = tempfile::tempdir().unwrap();
+        let files = temp.path().join("name with spaces.tar.gz");
+        let path = files.to_str().unwrap();
+        assert!(package_file(path, true).is_err());
+        fs::write(&files, "").unwrap();
+        assert!(package_file(path, true).is_ok());
+        assert!(package_file(path, false).is_ok());
+        let wheel = temp.path().join("hello-1-py3-none-any.whl");
+        fs::write(&wheel, "").unwrap();
+        assert!(package_file(wheel.to_str().unwrap(), false).is_ok());
+        assert!(package_file(wheel.to_str().unwrap(), true).is_err());
+        assert!(package_file("relative.tar.gz", true).is_err());
+        assert!(r_code(Install, temp.path(), &[path], false).contains("repos = NULL"));
+        assert!(
+            python_command(
+                InstallTool::Pip,
+                "/bin/python",
+                "/bin/python",
+                Install,
+                &[path.into()]
+            )
+            .ends_with(&quote([path]))
+        );
+    }
+
     fn plan_r_conda() -> Vec<PlannedPackage> {
         let (spec, source, version) =
             conda_r_package(Path::new("/mamba"), "DESeq2", Install, &Default::default()).unwrap();
@@ -1070,6 +1292,7 @@ mod tests {
         let missing = temp.path().join("missing");
         let plan = plan(
             &Search::default(),
+            None,
             PackageChange {
                 action: Install,
                 target: InstallTarget::R {

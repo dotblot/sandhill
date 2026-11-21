@@ -290,7 +290,7 @@ impl Workbench {
                     .text_color(p.muted)
                     .whitespace_normal()
                     .child(if offer.needs_library {
-                        "It runs in the Jobs tab and goes on if Sandhill disconnects. Sandhill notes what it installs, so Remove What Sandhill Installed (Welcome, Getting Ready) can take it out later."
+                        "It runs in the Jobs tab and goes on if Sandhill disconnects. To take it out later, go to What Sandhill Installed under R and Python in Welcome."
                     } else {
                         "It runs in the Jobs tab and goes on if Sandhill disconnects. Sandhill never removes it; uninstall it yourself if you no longer want it."
                     }),

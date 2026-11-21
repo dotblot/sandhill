@@ -11,7 +11,7 @@ use crate::quick::install;
 
 pub(crate) const MARKER: &str = ".sandhill-environment";
 pub(crate) const SWITCH_HINT: &str =
-    "Sandhill is using its own R and Python. Switch in Getting Ready to use others.";
+    "Sandhill is using its own R and Python. Switch on the R and Python page to use others.";
 
 pub(crate) fn marked(folder: &Path) -> bool {
     folder.is_absolute()

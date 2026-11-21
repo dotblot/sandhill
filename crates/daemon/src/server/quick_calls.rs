@@ -5,13 +5,14 @@
 use std::time::Duration;
 
 use sandhill_proto::{
-    EVENT_RUN_FINISHED, EnvMode, InstalledKey, NewRuntime, OwnSetup, PackageChange, QuickAgentTool,
-    QuickArchiveSelection, QuickCard, QuickInstalling, QuickRequest,
+    EVENT_RUN_FINISHED, EnvAction, EnvMode, InstalledKey, NewRuntime, OwnSetup, PackageChange,
+    QuickAgentTool, QuickArchiveSelection, QuickCard, QuickInstalling, QuickRequest,
 };
 use tokio::sync::broadcast::error::RecvError;
 
 use super::*;
 use crate::quick::{archive, folder, install, own, python, record, run, setup};
+use crate::quick::{env_actions, env_updates, environments, package_search};
 use crate::terminal::Launch;
 
 /// How long one template may run: loading a large table, a big heatmap.
@@ -164,9 +165,11 @@ impl Daemon {
 
     pub(super) async fn plan_packages(&self, change: PackageChange) -> Result<Value> {
         let own = self.own_folder();
+        let record = self.install_record();
         let plan = blocking(move || {
             Ok(install::plan_packages(
                 &crate::kernelspecs::Search::from_env().in_own(own),
+                Some(&record),
                 change,
             ))
         })
@@ -179,8 +182,11 @@ impl Daemon {
         let executable = self.options.executable.clone();
         let own = self.own_folder();
         self.quick_job(move |log| {
-            let plan =
-                install::plan_packages(&crate::kernelspecs::Search::from_env().in_own(own), change);
+            let plan = install::plan_packages(
+                &crate::kernelspecs::Search::from_env().in_own(own),
+                Some(&record),
+                change,
+            );
             if let Some(refused) = &plan.refused {
                 bail!("{refused}");
             }
@@ -196,6 +202,128 @@ impl Daemon {
             Ok(launch)
         })
         .await
+    }
+
+    pub(super) async fn list_environments(&self) -> Result<Value> {
+        let record = self.install_record();
+        let cards = blocking(move || {
+            Ok(environments::list(
+                &crate::kernelspecs::Search::from_env(),
+                &record,
+            ))
+        })
+        .await?;
+        Ok(serde_json::to_value(cards)?)
+    }
+
+    pub(super) async fn search_packages(&self, env: String, query: String) -> Result<Value> {
+        let record = self.install_record();
+        let hits = blocking(move || {
+            package_search::search(
+                &crate::kernelspecs::Search::from_env(),
+                &record,
+                &env,
+                &query,
+            )
+        })
+        .await?;
+        Ok(serde_json::to_value(hits)?)
+    }
+
+    pub(super) async fn env_updates(&self, env: String) -> Result<Value> {
+        let record = self.install_record();
+        let updates = blocking(move || {
+            env_updates::updates(&crate::kernelspecs::Search::from_env(), &record, &env)
+        })
+        .await?;
+        Ok(serde_json::to_value(updates)?)
+    }
+
+    async fn prepare_env_action(&self, action: EnvAction) -> Result<env_actions::Prepared> {
+        let record = self.install_record();
+        let executable = self.options.executable.clone();
+        blocking(move || {
+            Ok(env_actions::prepare(
+                &crate::kernelspecs::Search::from_env(),
+                &record,
+                &executable,
+                action,
+            ))
+        })
+        .await
+    }
+
+    pub(super) async fn plan_env_action(&self, action: EnvAction) -> Result<Value> {
+        Ok(serde_json::to_value(
+            self.prepare_env_action(action).await?.plan,
+        )?)
+    }
+
+    pub(super) async fn run_env_action(self: &Arc<Self>, action: EnvAction) -> Result<Value> {
+        let guard = if matches!(&action, EnvAction::Delete { .. }) {
+            Some(self.own_sessions.clone().write_owned().await)
+        } else {
+            None
+        };
+        let prepared = self.prepare_env_action(action).await?;
+        let work = prepared
+            .work
+            .ok_or_else(|| anyhow::anyhow!(prepared.plan.refused.unwrap_or_default()))?;
+        if let Some(folder) = prepared.stop {
+            for session in self.journal.sessions()? {
+                if session.ended_ms.is_some() {
+                    continue;
+                }
+                let in_folder = crate::lifecycle::recorded_kernel(&session.connection_file)
+                    .and_then(|identity| identity.program())
+                    .is_some_and(|program| {
+                        program.starts_with(&folder) || crate::own_env::inside(&folder, &program)
+                    });
+                // A venv can use a symlink to another Python; its kernelspec
+                // keeps the original path while the process reports the target.
+                let uses_spec = || {
+                    let search = crate::kernelspecs::Search::from_env()
+                        .in_project(session.project.as_deref().map(Path::new));
+                    crate::kernelspecs::find(&search, &session.kernel)
+                        .and_then(|spec| {
+                            crate::kernelspecs::program(&spec.kernelspec, search.path.as_deref())
+                        })
+                        .is_some_and(|program| program.starts_with(&folder))
+                };
+                if in_folder || uses_spec() {
+                    self.live(&session.id)?.shutdown().await?;
+                    self.sessions.lock().unwrap().remove(&session.id);
+                }
+            }
+        }
+        let record = self.install_record();
+        let executable = self.options.executable.clone();
+        let title = prepared.plan.what;
+        let started = self
+            .quick_job_started(move |log| {
+                install::launch(
+                    &executable,
+                    &record,
+                    install::Job::Environment(work),
+                    log,
+                    &title,
+                )
+            })
+            .await?;
+        if let Some(guard) = guard {
+            let id = started.job.id.clone();
+            let daemon = Arc::downgrade(self);
+            tokio::spawn(async move {
+                let _guard = guard;
+                while daemon
+                    .upgrade()
+                    .is_some_and(|d| d.terminals.info(&id).is_ok_and(|info| info.running))
+                {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            });
+        }
+        Ok(serde_json::to_value(started)?)
     }
 
     pub(super) async fn plan_runtime(&self, runtime: NewRuntime) -> Result<Value> {

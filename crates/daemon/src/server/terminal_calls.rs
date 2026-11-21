@@ -83,7 +83,7 @@ impl Daemon {
         let info = self.terminals.info(&terminal)?;
         let job = info
             .job
-            .context("Review this install or removal again in Getting Ready to run it.")?;
+            .context("Review this install or removal again on the R and Python page to run it.")?;
         let cwd = PathBuf::from(&info.cwd);
         let project = info.project;
         let own = self.own_folder();

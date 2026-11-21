@@ -1,10 +1,8 @@
-//! The first-run R and Python setup and Sandhill's own folder in Getting Ready.
-
-use std::collections::VecDeque;
+//! The first-run R and Python setup and kit review for Sandhill's own folder.
 
 use sandhill_proto::{
-    CORE_KIT, EnvMode, InstallTarget, KITS, Kit, OWN_FOLDER, OwnEnvironment, OwnRuntime, OwnSetup,
-    OwnSetupPlan,
+    CORE_KIT, EnvMode, InstallTarget, KITS, Kit, OWN_FOLDER, OwnRuntime, OwnSetup, OwnSetupPlan,
+    RSource,
 };
 
 use super::*;
@@ -45,8 +43,6 @@ struct Flow {
     setup: OwnSetup,
     back_to: Option<Page>,
     adding: bool,
-    has_r: bool,
-    has_python: bool,
     plan: Option<SetupReview>,
     details: bool,
     choosing: bool,
@@ -54,21 +50,13 @@ struct Flow {
     tools_message: Option<(String, bool)>,
 }
 
-struct PackageForm {
-    name: Entity<InputState>,
-    _change: Subscription,
-    python: bool,
-}
-
 #[derive(Default)]
 pub(super) struct State {
     first_run: FirstRun,
     flow: Option<Flow>,
     generation: u64,
-    waiting: VecDeque<PackageChange>,
     pub(super) switching: bool,
     switch_error: Option<String>,
-    package: Option<PackageForm>,
 }
 
 impl State {
@@ -152,29 +140,32 @@ pub(super) fn own_r_target(r: &OwnRuntime) -> InstallTarget {
     }
 }
 
-fn own_python_target(python: &OwnRuntime) -> InstallTarget {
-    InstallTarget::Python {
-        prefix: python.prefix.clone(),
-        python: format!("{}/bin/python", python.prefix),
-    }
-}
-
-fn kit_packages(kit: &Kit, mode: EnvMode) -> String {
+fn kit_packages(kit: &Kit, mode: EnvMode, r: bool, python: bool) -> String {
     kit.r
         .iter()
+        .filter(|_| r)
         .map(|&(name, _)| name)
-        .chain(kit.python.iter().map(
-            |&(conda, pypi)| {
-                if mode == EnvMode::Own { conda } else { pypi }
-            },
-        ))
+        .chain(kit.python.iter().filter(|_| python).map(|&(conda, pypi)| {
+            if mode == EnvMode::Own { conda } else { pypi }
+        }))
         .chain(
             kit.conda_only
                 .iter()
+                .filter(|_| r)
                 .map(|&name| if name == "quarto" { "Quarto" } else { name }),
         )
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+pub(super) fn kit_choice(tick: Checkbox, about: &str, packages: String, p: &Palette) -> Div {
+    v_flex()
+        .px(px(look::PANE_PAD_X))
+        .py(px(look::PANE_PAD_Y))
+        .gap(px(look::GAP_2))
+        .child(tick)
+        .child(look::settings_detail(about.to_owned(), p))
+        .child(look::settings_detail(packages, p))
 }
 
 fn existing_changes(
@@ -263,7 +254,7 @@ impl AppWindow {
         if let Some(Ok(found)) = &q.readiness {
             q.environment.first_run = FirstRun::Done;
             if found.prefs.mode.is_none() {
-                self.quick_begin_setup(None, false, Some(self.start.page.clone()), cx);
+                self.quick_begin_setup(None, None, Some(self.start.page.clone()), cx);
             }
             return;
         }
@@ -299,10 +290,14 @@ impl AppWindow {
         .detach();
     }
 
+    pub(super) fn quick_begin_own_kits(&mut self, python: bool, cx: &mut Context<Self>) {
+        self.quick_begin_setup(Some(EnvMode::Own), Some(python), None, cx);
+    }
+
     fn quick_begin_setup(
         &mut self,
         mode: Option<EnvMode>,
-        adding: bool,
+        adding_for_python: Option<bool>,
         back_to: Option<Page>,
         cx: &mut Context<Self>,
     ) {
@@ -327,15 +322,13 @@ impl AppWindow {
                         .to_string_lossy()
                         .into_owned()
                 });
-        let (setup, step, has_r, has_python) = if adding {
+        let (setup, step) = if let Some(python) = adding_for_python {
             let Some(own) = &found.own else { return };
-            let has_r = own.r.is_some();
-            let has_python = own.python.is_some();
             (
                 OwnSetup {
                     folder: own.folder.clone(),
-                    r: has_r,
-                    python: has_python,
+                    r: !python,
+                    python,
                     kits: own
                         .kits
                         .iter()
@@ -344,8 +337,6 @@ impl AppWindow {
                         .collect(),
                 },
                 Step::Kits,
-                has_r,
-                has_python,
             )
         } else {
             (
@@ -359,14 +350,11 @@ impl AppWindow {
                     kits: vec!["bulk".into(), "plots".into()],
                 },
                 Step::Source,
-                false,
-                false,
             )
         };
         let mode = mode.unwrap_or_else(|| suggested(found));
         q.clear_review();
         q.python_form = None;
-        q.environment.package = None;
         q.environment.switch_error = None;
         q.environment.generation += 1;
         q.environment.flow = Some(Flow {
@@ -374,9 +362,7 @@ impl AppWindow {
             mode,
             setup,
             back_to,
-            adding,
-            has_r,
-            has_python,
+            adding: adding_for_python.is_some(),
             plan: None,
             details: false,
             choosing: false,
@@ -689,12 +675,11 @@ impl AppWindow {
             return;
         };
         if mode == EnvMode::Own && found.own.is_none() {
-            self.quick_begin_setup(Some(EnvMode::Own), false, None, cx);
+            self.quick_begin_setup(Some(EnvMode::Own), None, None, cx);
             return;
         }
         q.clear_review();
         q.python_form = None;
-        q.environment.package = None;
         q.environment.switching = true;
         q.environment.switch_error = None;
         let set = daemon.call::<InstallPrefs>(Call::SetEnvMode { mode: Some(mode) });
@@ -707,16 +692,17 @@ impl AppWindow {
                     Ok(prefs) => {
                         if let Some(jobs) = jobs {
                             q.environment.flow = None;
-                            q.environment.waiting = jobs;
+                            q.waiting = jobs;
                             if let Some(Ok(found)) = &mut q.readiness {
                                 found.prefs = prefs;
                             }
-                            if this.quick_advance_setup_jobs(true, cx) {
+                            if this.quick_advance_jobs(Section::Environment, true, cx) {
                                 return;
                             }
                         }
                         this.start.quick.readiness = None;
                         this.quick_check(cx);
+                        this.quick_invalidate_cards(cx);
                     }
                     Err(error) => q.environment.switch_error = Some(error.to_string()),
                 }
@@ -726,40 +712,6 @@ impl AppWindow {
         })
         .detach();
         cx.notify();
-    }
-
-    pub(super) fn quick_advance_setup_jobs(
-        &mut self,
-        success: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let q = &mut self.start.quick;
-        if !success {
-            if !q.environment.waiting.is_empty() {
-                q.environment.waiting.clear();
-                q.notice = Some((
-                    Section::Environment,
-                    "The remaining kit packages weren't installed.".into(),
-                ));
-            }
-            return false;
-        }
-        let Some(change) = q.environment.waiting.pop_front() else {
-            return false;
-        };
-        let language = if change.target.language() == "r" {
-            "R"
-        } else {
-            "Python"
-        };
-        self.quick_start_install(
-            Call::RunPackages { change },
-            Section::Environment,
-            format!("Installing {language} kit packages"),
-            None,
-            cx,
-        );
-        true
     }
 
     pub(super) fn quick_mode_card(
@@ -807,7 +759,7 @@ impl AppWindow {
                         .label("Set Up…")
                         .disabled(busy || state.switching)
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.quick_begin_setup(None, false, None, cx)
+                            this.quick_begin_setup(None, None, None, cx)
                         })),
                 )
                 .into_any_element(),
@@ -904,6 +856,10 @@ impl AppWindow {
                 }
                 panel = panel
                     .children(found.map(|found| look::settings_detail(detected(found), p)))
+                    .child(look::settings_detail(
+                        "You can also set up later from R and Python in Welcome.",
+                        p,
+                    ))
                     .child(look::settings_box(rows, p));
             }
             Step::Kits => {
@@ -914,36 +870,31 @@ impl AppWindow {
                     )
                     .into_any_element(),
                 ];
-                if flow.adding && (!flow.has_r || !flow.has_python) {
-                    rows.push(
-                        self.quick_setup_languages(flow, busy, p, cx)
-                            .into_any_element(),
-                    );
-                }
-                rows.extend(KITS.iter().enumerate().map(|(ix, kit)| {
+                rows.extend(KITS.iter().enumerate().filter_map(|(ix, kit)| {
+                    let (r, python) = if flow.mode == EnvMode::Own {
+                        (flow.setup.r, flow.setup.python)
+                    } else {
+                        (true, true)
+                    };
+                    let packages = kit_packages(kit, flow.mode, r, python);
+                    if packages.is_empty() {
+                        return None;
+                    }
                     let checked = flow.setup.kits.iter().any(|id| id == kit.id);
-                    v_flex()
-                        .px(px(look::PANE_PAD_X))
-                        .py(px(look::PANE_PAD_Y))
-                        .gap(px(look::GAP_2))
-                        .child(
-                            Checkbox::new(("setup-kit", ix))
-                                .label(kit.label)
-                                .checked(checked)
-                                .disabled(busy)
-                                .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                                    if let Some(flow) = &mut this.start.quick.environment.flow {
-                                        flow.setup.kits.retain(|id| id != kit.id);
-                                        if *checked {
-                                            flow.setup.kits.push(kit.id.into());
-                                        }
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                        .child(look::settings_detail(kit.about, p))
-                        .child(look::settings_detail(kit_packages(kit, flow.mode), p))
-                        .into_any_element()
+                    let tick = Checkbox::new(("setup-kit", ix))
+                        .label(kit.label)
+                        .checked(checked)
+                        .disabled(busy)
+                        .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                            if let Some(flow) = &mut this.start.quick.environment.flow {
+                                flow.setup.kits.retain(|id| id != kit.id);
+                                if *checked {
+                                    flow.setup.kits.push(kit.id.into());
+                                }
+                                cx.notify();
+                            }
+                        }));
+                    Some(kit_choice(tick, kit.about, packages, p).into_any_element())
                 }));
                 panel = panel.child(look::settings_box(rows, p));
             }
@@ -1101,7 +1052,7 @@ impl AppWindow {
             Checkbox::new("setup-r")
                 .label("R")
                 .checked(flow.setup.r)
-                .disabled(busy || flow.has_r)
+                .disabled(busy)
                 .on_click(cx.listener(|this, on: &bool, _, cx| {
                     if let Some(flow) = &mut this.start.quick.environment.flow {
                         flow.setup.r = *on;
@@ -1113,7 +1064,7 @@ impl AppWindow {
             Checkbox::new("setup-python")
                 .label("Python")
                 .checked(flow.setup.python)
-                .disabled(busy || flow.has_python)
+                .disabled(busy)
                 .on_click(cx.listener(|this, on: &bool, _, cx| {
                     if let Some(flow) = &mut this.start.quick.environment.flow {
                         flow.setup.python = *on;
@@ -1188,252 +1139,8 @@ impl AppWindow {
             rows.push(look::settings_row("Choose a Python environment", Some(look::settings_detail("Set up a Python environment here, then review its packages, or continue without them.", p))).into_any_element());
             rows.extend(self.quick_python_rows(found, busy, p, cx));
         }
-        rows.extend(self.quick_install_in(Section::R, p, cx));
-        rows.extend(self.quick_install_in(Section::Python, p, cx));
+        rows.extend(self.quick_install_in(Section::Cards, p, cx));
         look::settings_box(rows, p)
-    }
-
-    pub(super) fn quick_own_card(
-        &self,
-        found: &QuickReadiness,
-        busy: bool,
-        p: &Palette,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let Some(own) = &found.own else {
-            return look::settings_box(
-                vec![
-                    look::settings_row("Sandhill's folder wasn't found", None)
-                        .child(check_again(cx))
-                        .into_any_element(),
-                ],
-                p,
-            );
-        };
-        let mut rows = vec![
-            look::settings_row(
-                "Sandhill's own R and Python",
-                Some(look::settings_detail(
-                    format!("{} · {} MB on disk", own.folder, own.size_mb),
-                    p,
-                )),
-            )
-            .child(check_again(cx))
-            .into_any_element(),
-        ];
-        for (label, runtime) in [("R", own.r.as_ref()), ("Python", own.python.as_ref())] {
-            let (label, detail) = match runtime {
-                Some(runtime) => (
-                    if runtime.version.is_empty() {
-                        label.into()
-                    } else {
-                        format!("{label} {}", runtime.version)
-                    },
-                    if runtime.kernel.is_empty() {
-                        "No kernel found yet.".into()
-                    } else {
-                        format!("Kernel: {}", runtime.kernel)
-                    },
-                ),
-                None => (label.into(), "Not set up in this folder.".into()),
-            };
-            rows.push(
-                look::settings_row(label, Some(look::settings_detail(detail, p)))
-                    .into_any_element(),
-            );
-        }
-        let kits = std::iter::once(&CORE_KIT)
-            .chain(KITS)
-            .filter(|kit| own.kits.iter().any(|id| id == kit.id))
-            .map(|kit| kit.label)
-            .collect::<Vec<_>>();
-        rows.push(
-            look::settings_row(
-                "Kits installed",
-                Some(look::settings_detail(
-                    if kits.is_empty() {
-                        "No complete kits found.".into()
-                    } else {
-                        kits.join(", ")
-                    },
-                    p,
-                )),
-            )
-            .child(
-                Button::new("own-add-kits")
-                    .small()
-                    .label("Add Kits…")
-                    .disabled(busy)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.quick_begin_setup(Some(EnvMode::Own), true, None, cx)
-                    })),
-            )
-            .into_any_element(),
-        );
-        if own.r.is_some() || own.python.is_some() {
-            rows.push(self.quick_own_package_row(own, busy, p, cx));
-        }
-        if own.r.is_some() && found.r.is_some() {
-            let missing: Vec<_> = found
-                .packages
-                .iter()
-                .filter(|pkg| pkg.tool == QuickTool::Plot && pkg.version.is_none())
-                .map(|pkg| pkg.name.as_str())
-                .collect();
-            rows.push(self.quick_packages_row(found, &missing, busy, p, cx));
-        }
-        rows.extend(self.quick_install_in(Section::R, p, cx));
-        let asking = self.start.quick.confirm == Some(Confirm::RemoveOwn);
-        rows.push(if asking {
-            look::settings_row("Remove Sandhill's own R and Python?", Some(look::settings_detail(
-                "Sandhill stops the kernels from this folder and removes the folder and all its contents. Nothing outside it is removed.", p,
-            )))
-                .child(Button::new("own-remove-cancel").small().label("Cancel").on_click(cx.listener(|this, _, _, cx| {
-                    this.start.quick.clear_review(); cx.notify();
-                })))
-                .child(Button::new("own-remove-go").small().label("Remove").danger().disabled(busy).on_click(cx.listener(|this, _, _, cx| {
-                    this.quick_start_install(Call::RemoveOwnEnvironment, Section::Environment, "Removing Sandhill's own R and Python".into(), None, cx);
-                })))
-        } else {
-            look::settings_row("Remove this folder", Some(look::settings_detail("Switching where R and Python come from doesn't remove this folder.", p)))
-                .child(Button::new("own-remove").small().label("Remove Sandhill's Own R and Python…").disabled(busy)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.start.quick.clear_review();
-                        this.start.quick.environment.package = None;
-                        this.start.quick.confirm = Some(Confirm::RemoveOwn);
-                        cx.notify();
-                    })))
-        }.into_any_element());
-        look::settings_box(rows, p)
-    }
-
-    fn quick_own_package_row(
-        &self,
-        own: &OwnEnvironment,
-        busy: bool,
-        p: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let row = look::settings_row(
-            "Add packages",
-            Some(look::settings_detail(
-                "Install into Sandhill's folder only.",
-                p,
-            )),
-        );
-        if let Some(panel) = self.quick_package_panel(&PackageRow::Own, p, cx) {
-            return v_flex().child(row).child(panel).into_any_element();
-        }
-        if let Some(form) = &self.start.quick.environment.package {
-            let package = form.name.read(cx).value().trim().to_owned();
-            let target = if form.python {
-                own.python.as_ref().map(own_python_target)
-            } else {
-                own.r.as_ref().map(own_r_target)
-            };
-            let langs = [
-                (false, "R", own.r.is_some()),
-                (true, "Python", own.python.is_some()),
-            ];
-            return v_flex()
-                .child(row)
-                .child(
-                    v_flex()
-                        .px(px(look::PANE_PAD_X))
-                        .pb(px(look::PANE_PAD_Y))
-                        .gap(px(look::GAP_6))
-                        .child(
-                            h_flex().gap(px(look::GAP_6)).children(
-                                langs
-                                    .into_iter()
-                                    .filter(|&(_, _, installed)| installed)
-                                    .map(|(python, label, _)| {
-                                        Button::new(("own-package-language", usize::from(python)))
-                                            .small()
-                                            .label(label)
-                                            .when(form.python == python, |b| b.primary())
-                                            .disabled(busy)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if let Some(form) =
-                                                    &mut this.start.quick.environment.package
-                                                {
-                                                    form.python = python;
-                                                    cx.notify();
-                                                }
-                                            }))
-                                    }),
-                            ),
-                        )
-                        .child(Input::new(&form.name).small())
-                        .when(!form.python, |d| {
-                            d.child(look::settings_detail(
-                                "For R, you can also enter a GitHub owner/repository.",
-                                p,
-                            ))
-                        })
-                        .child(
-                            h_flex()
-                                .justify_end()
-                                .gap(px(look::GAP_8))
-                                .child(
-                                    Button::new("own-package-cancel")
-                                        .small()
-                                        .label("Cancel")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.start.quick.environment.package = None;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    Button::new("own-package-review")
-                                        .small()
-                                        .primary()
-                                        .label("Review…")
-                                        .disabled(busy || package.is_empty() || target.is_none())
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(target) = &target {
-                                                this.start.quick.environment.package = None;
-                                                this.quick_request_packages(
-                                                    PackageRow::Own,
-                                                    Vec::new(),
-                                                    PackageChange {
-                                                        action: PackageAction::Install,
-                                                        target: target.clone(),
-                                                        packages: vec![package.clone()],
-                                                        tool: None,
-                                                        reason: "Installed from Getting Ready"
-                                                            .into(),
-                                                    },
-                                                    None,
-                                                    cx,
-                                                );
-                                            }
-                                        })),
-                                ),
-                        ),
-                )
-                .into_any_element();
-        }
-        let python = own.r.is_none();
-        row.child(
-            Button::new("own-install-package")
-                .small()
-                .label("Install a Package…")
-                .disabled(busy)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    let name = cx.new(|cx| InputState::new(window, cx).placeholder("Package name"));
-                    let change = cx.subscribe(&name, |_, _, _: &InputEvent, cx| cx.notify());
-                    this.start.quick.clear_review();
-                    name.update(cx, |input, cx| input.focus(window, cx));
-                    this.start.quick.environment.package = Some(PackageForm {
-                        name,
-                        _change: change,
-                        python,
-                    });
-                    cx.notify();
-                })),
-        )
-        .into_any_element()
     }
 }
 

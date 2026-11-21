@@ -1306,7 +1306,7 @@ fn quietly(code: &str) -> JupyterMessage {
 /// message arrive. Seeing IOPub traffic proves the subscription is live, so
 /// no output from the first cell can be lost. Returns the language version
 /// the reply gives.
-async fn wait_until_ready(
+pub(crate) async fn wait_until_ready(
     conn: &mut KernelConnection,
     rx: &mut mpsc::Receiver<KernelMsg>,
 ) -> Result<Option<String>> {

@@ -222,12 +222,12 @@ const PYTHON_UPDATES: &str = r#"def _sandhill_updates():
             if isinstance(actions, list):
                 actions = actions[0] if actions else {}
             def versions(kind):
-                return {p.get("name"): str(p.get("version", "")) for p in actions.get(kind) or [] if isinstance(p, dict)}
+                return {p.get("name"): (str(p.get("version", "")), p.get("channel") or "conda") for p in actions.get(kind) or [] if isinstance(p, dict)}
             old = versions("UNLINK")
-            for name, version in versions("LINK").items():
+            for name, (version, source) in versions("LINK").items():
                 dist = dists.get(norm(name or ""))
-                if dist and name in old and newer(version, old[name]):
-                    found[norm(name)] = (dist[0], dist[1], version, dist[4])
+                if dist and name in old and newer(version, old[name][0]):
+                    found[norm(name)] = (dist[0], dist[1], version, dist[4], source)
         elif tool:
             missed.append("conda's channels")
 
@@ -250,13 +250,13 @@ const PYTHON_UPDATES: &str = r#"def _sandhill_updates():
             reached.append(index)
             for dist, version, _ in answers:
                 if version and newer(version, dist[1]):
-                    found[norm(dist[0])] = (dist[0], dist[1], version, dist[4])
+                    found[norm(dist[0])] = (dist[0], dist[1], version, dist[4], "PyPI")
         else:
             missed.append(index)
     if missed and not reached:
         raise RuntimeError("couldn't reach " + " or ".join(missed))
-    for name, installed, available, where in found.values():
-        line("SANDHILL_UPDATE", esc(name), esc(installed), esc(available), esc(where), 0)
+    for name, installed, available, where, source in found.values():
+        line("SANDHILL_UPDATE", esc(name), esc(installed), esc(available), esc(where), 0, esc(source))
     for repo in reached + missed:
         line("SANDHILL_REPO", esc(repo), int(repo in missed))
 
@@ -289,12 +289,22 @@ pub fn parse_updates(stdout: &str) -> Updates {
         match fields.next() {
             Some("SANDHILL_UPDATE") => {
                 let mut next = || unescape(fields.next().unwrap_or(""));
+                let (name, installed, available, library, bioconductor) =
+                    (next(), next(), next(), next(), next() == "1");
+                let source = fields.next().map(unescape).unwrap_or_else(|| {
+                    if bioconductor {
+                        "Bioconductor".into()
+                    } else {
+                        "CRAN".into()
+                    }
+                });
                 let update = PackageUpdate {
-                    name: next(),
-                    installed: next(),
-                    available: next(),
-                    library: next(),
-                    bioconductor: next() == "1",
+                    name,
+                    installed,
+                    available,
+                    library,
+                    bioconductor,
+                    source,
                 };
                 if !update.name.is_empty() {
                     parsed.updates.push(update);
@@ -449,6 +459,7 @@ mod tests {
                 available: "1.2.3".into(),
                 library: "/home/me/R".into(),
                 bioconductor: false,
+                source: "CRAN".into(),
             }
         );
         assert!(updates[0].bioconductor);

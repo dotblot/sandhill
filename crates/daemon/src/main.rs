@@ -194,7 +194,7 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::DescribeH5ad { path } => sandhill_daemon::h5ad::worker(&path),
         Command::InstallWorker { record, job } => {
-            sandhill_daemon::quick::install::worker(&record, &job)
+            sandhill_daemon::quick::install::worker(&record, &job).await
         }
         Command::Serve { ref started_by } => {
             let started_by = started_by.clone().unwrap_or_else(service_manager);

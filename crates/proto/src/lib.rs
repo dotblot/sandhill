@@ -981,6 +981,32 @@ pub enum Call {
     /// Opens Apple's own installer for its developer tools
     /// (`xcode-select --install`). macOS only. Returns nothing.
     InstallDeveloperTools,
+    /// Every R and Python on this computer, Sandhill's own first, as the R
+    /// and Python page's cards. Returns `Vec<EnvCard>`.
+    ListEnvironments,
+    /// Add Packages' search for the environment `env` (an
+    /// [`EnvCard::id`]): CRAN and Bioconductor for R, PyPI for Python,
+    /// and conda-forge and bioconda for conda environments, at once; a
+    /// GitHub `owner/repo` or a package file's path finds itself. Returns
+    /// `Vec<PackageHit>`.
+    SearchPackages {
+        env: String,
+        query: String,
+    },
+    /// The packages of `env` that have a newer version. Returns
+    /// `Vec<PackageUpdate>`.
+    EnvUpdates {
+        env: String,
+    },
+    /// What an [`EnvAction`] will do. Returns [`EnvActionPlan`].
+    PlanEnvAction {
+        action: EnvAction,
+    },
+    /// Does it as [`Call::PlanEnvAction`] showed, in a job. Returns
+    /// [`QuickInstalling`].
+    RunEnvAction {
+        action: EnvAction,
+    },
     /// Turns Install Without Asking on or off for this computer. Returns
     /// [`InstallPrefs`].
     SetInstallPrefs {

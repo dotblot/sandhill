@@ -195,7 +195,7 @@ async fn own_python_never_installs_into_home_and_is_removed_with_its_kernel() {
     assert_eq!(kernels.len(), 1, "{kernels:?}");
     assert_eq!(kernels[0].name, python.kernel);
     let missing = client.start_session("outside", None).await.unwrap_err();
-    assert!(missing.to_string().contains("Switch in Getting Ready"));
+    assert!(missing.to_string().contains("R and Python page"));
     let session = client
         .start_session(&python.kernel, root.to_str())
         .await

@@ -118,7 +118,7 @@ pub(crate) struct Quick {
     /// What is happening, in a few words.
     pub busy: Option<String>,
     pub error: Option<String>,
-    /// R or its kernel is missing: Welcome → Getting Ready sets it up.
+    /// R or its kernel is missing: Welcome → R and Python sets it up.
     pub not_ready: bool,
     /// What the last plot shows.
     pub sentence: Option<String>,

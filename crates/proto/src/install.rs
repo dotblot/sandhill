@@ -467,3 +467,153 @@ pub struct OwnEnvironment {
     #[serde(default)]
     pub size_mb: u64,
 }
+
+/// The last change Sandhill made to an environment, which Undo Last
+/// Change puts back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UndoInfo {
+    /// In plain words: "Installed DESeq2 and 12 packages it needed".
+    pub what: String,
+    /// `2026-11-20`.
+    pub date: String,
+}
+
+/// One package Check and Repair found wrong.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvProblem {
+    pub package: String,
+    /// In plain words: "Built for R 4.5; this is R 4.6.", "Needs
+    /// Rcpp, which isn't installed.", "Its compiled part can't load."
+    pub reason: String,
+    /// The change that repairs it, planned like any other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<PackageChange>,
+}
+
+/// What Check and Repair found last time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvCheck {
+    /// `2026-11-20`.
+    pub date: String,
+    /// How many packages were loaded.
+    pub checked: u32,
+    /// Why the kernel didn't start, in plain words; `None` when it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<String>,
+    #[serde(default)]
+    pub problems: Vec<EnvProblem>,
+}
+
+/// One R or Python on this computer, as the R and Python page shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvCard {
+    /// Stable while it exists: `r:<R program>` or `python:<prefix>`.
+    pub id: String,
+    /// `r` or `python`.
+    pub language: String,
+    /// As kernel pickers name it: "R 4.6.2", "Python 3.12 (omicverse)".
+    pub name: String,
+    /// Where it comes from: `own` (Sandhill's folder), `conda`, `venv`,
+    /// `uv`, `homebrew`, `cran`, `python.org`, `system`, `other`.
+    pub kind: String,
+    pub program: String,
+    /// Python: the environment's folder. R: `R.home()`.
+    pub folder: String,
+    /// R: its libraries, in R's order.
+    #[serde(default)]
+    pub libraries: Vec<crate::RLibrary>,
+    /// Its kernel's name, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<String>,
+    /// One plain line: "Ready for Explore a Table and bulk RNA-seq",
+    /// "2 packages missing for single-cell", "Needs repair: 3 packages
+    /// were built for R 4.5".
+    pub status: String,
+    /// The kits whose packages are all there.
+    #[serde(default)]
+    pub kits: Vec<String>,
+    /// R packages built for another R version.
+    #[serde(default)]
+    pub needs_repair: Vec<String>,
+    /// Its size on disk, in MB (its libraries' for R).
+    #[serde(default)]
+    pub size_mb: u64,
+    /// How many packages it has.
+    #[serde(default)]
+    pub packages: u32,
+    /// Sandhill made it (its record says so).
+    #[serde(default)]
+    pub by_sandhill: bool,
+    /// The tools that change its packages, the suggested one first.
+    #[serde(default)]
+    pub tools: Vec<InstallToolInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undo: Option<UndoInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<EnvCheck>,
+}
+
+/// A package Add Packages found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageHit {
+    /// As it is installed with `tool`.
+    pub name: String,
+    /// Its one-line description.
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// `CRAN`, `Bioconductor`, `conda-forge`, `bioconda`, `PyPI`,
+    /// `GitHub` or `This file`.
+    pub source: String,
+    pub tool: InstallTool,
+    /// Already installed in this environment, at this version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed: Option<String>,
+}
+
+/// What the R and Python page's More menu, Check and Repair and Undo Last
+/// Change do. Shown as an [`EnvActionPlan`] first, then run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EnvAction {
+    /// Load every package and start the kernel; the result becomes the
+    /// card's `check`.
+    Check { env: String },
+    /// Put back the packages as they were before Sandhill's last change.
+    Undo { env: String },
+    /// A copy of a conda environment or a venv, at `prefix`.
+    Duplicate { env: String, prefix: String },
+    /// Write its package list to `path`: `environment.yml` for conda,
+    /// `requirements.txt` for a venv, a `.csv` of R packages for R.
+    Export { env: String, path: String },
+    /// From a file [`EnvAction::Export`] writes (or the usual ones): an
+    /// `environment.yml` makes a new conda environment at `prefix`; a
+    /// `requirements.txt` or an R package list installs into `env`.
+    Import {
+        file: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        env: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prefix: Option<String>,
+    },
+    /// Delete a conda environment or a venv (never an R installation or
+    /// a Python the system or Homebrew manages).
+    Delete { env: String },
+}
+
+/// What an [`EnvAction`] will do, shown before it runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvActionPlan {
+    pub action: EnvAction,
+    /// One plain sentence.
+    pub what: String,
+    /// The folder it changes or makes.
+    pub folder: String,
+    /// The exact command, run as shown. Empty when `refused`.
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+}

@@ -108,7 +108,7 @@ by sentence); where an older plan differs, this wins.
   and settings live in its folder, and the home folder's `.Renviron` and
   `.Rprofile` are not read (a project's own `.Rprofile` still runs). A
   document asking for another kernel gets the "wasn't found" message,
-  which says Getting Ready can switch.
+  which says the R and Python page can switch.
 
 ## Plots
 - Console plots stay inline unless sent to

@@ -135,9 +135,17 @@ pub(super) fn probe_brew(program: &Path, args: &[&str]) -> Option<String> {
 }
 
 pub(super) fn probe_conda_search(program: &Path, args: &[&str]) -> Option<String> {
+    probe_conda_search_timeout(program, args, Duration::from_secs(25))
+}
+
+pub(super) fn probe_conda_search_timeout(
+    program: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
     if crate::own_env::containing(program).is_some() {
         // Sandhill's shim already sends every file to its own folder.
-        return probe(program, args);
+        return probe_timeout(program, args, None, timeout);
     }
     let scratch = tempfile::Builder::new()
         .prefix("sandhill-conda-")
@@ -148,7 +156,7 @@ pub(super) fn probe_conda_search(program: &Path, args: &[&str]) -> Option<String
         .env("HOME", scratch.path())
         .env("XDG_CACHE_HOME", scratch.path().join("cache"))
         .env("CONDA_PKGS_DIRS", scratch.path().join("pkgs"));
-    probe_command(command, args)
+    probe_command_with(command, args, timeout, false)
 }
 
 /// Run a bounded probe. Read stdout as it arrives: a conda search can fill the pipe.
@@ -157,15 +165,51 @@ pub(super) fn probe(program: &Path, args: &[&str]) -> Option<String> {
 }
 
 pub(super) fn probe_in(program: &Path, args: &[&str], own: Option<&Path>) -> Option<String> {
+    probe_timeout(program, args, own, Duration::from_secs(25))
+}
+
+pub(super) fn probe_timeout(
+    program: &Path,
+    args: &[&str],
+    own: Option<&Path>,
+    timeout: Duration,
+) -> Option<String> {
+    scoped_probe(program, args, own, timeout, false)
+}
+
+pub(super) fn probe_allow_failure(
+    program: &Path,
+    args: &[&str],
+    own: Option<&Path>,
+) -> Option<String> {
+    scoped_probe(program, args, own, Duration::from_secs(25), true)
+}
+
+fn scoped_probe(
+    program: &Path,
+    args: &[&str],
+    own: Option<&Path>,
+    timeout: Duration,
+    allow_failure: bool,
+) -> Option<String> {
     let mut command = Command::new(program);
     if let Some(folder) = own {
         crate::own_env::apply(&mut command, folder);
         command.current_dir(folder);
     }
-    probe_command(command, args)
+    probe_command_with(command, args, timeout, allow_failure)
 }
 
-fn probe_command(mut command: Command, args: &[&str]) -> Option<String> {
+fn probe_command(command: Command, args: &[&str]) -> Option<String> {
+    probe_command_with(command, args, Duration::from_secs(25), false)
+}
+
+fn probe_command_with(
+    mut command: Command,
+    args: &[&str],
+    timeout: Duration,
+    allow_failure: bool,
+) -> Option<String> {
     let mut process = command
         .args(args)
         .stdin(Stdio::null())
@@ -183,8 +227,8 @@ fn probe_command(mut command: Command, args: &[&str]) -> Option<String> {
         let started = Instant::now();
         let ok = loop {
             match process.try_wait() {
-                Ok(Some(status)) => break status.success(),
-                Ok(None) if started.elapsed() < Duration::from_secs(25) => {
+                Ok(Some(status)) => break status.success() || allow_failure,
+                Ok(None) if started.elapsed() < timeout => {
                     std::thread::sleep(Duration::from_millis(15))
                 }
                 _ => {
@@ -259,6 +303,7 @@ pub(crate) enum Job {
     Packages(PackagePlan),
     Runtime(RuntimePlan),
     OwnSetup(sandhill_proto::OwnSetupPlan),
+    Environment(super::env_actions::Work),
     RemoveOwn(Vec<PathBuf>, Vec<InstalledKey>),
     Remove(Vec<InstalledKey>),
     Agent {
@@ -289,7 +334,10 @@ pub(crate) fn launch(
     log: &Path,
     title: &str,
 ) -> Result<Launch> {
-    let own_install = matches!(&job, Job::OwnSetup(_) | Job::RemoveOwn(..));
+    let own_install = matches!(
+        &job,
+        Job::OwnSetup(_) | Job::RemoveOwn(..) | Job::Environment(_)
+    );
     let worker = worker_command(exe, record, &job)?;
     let spec = JobSpec {
         path: None,
@@ -344,7 +392,7 @@ pub(super) fn run_command(command: &str) -> Result<()> {
 
 /// Entry point for the terminal job, so recording continues if the daemon restarts.
 #[doc(hidden)]
-pub fn worker(record_path: &Path, payload: &str) -> Result<()> {
+pub async fn worker(record_path: &Path, payload: &str) -> Result<()> {
     let job = serde_json::from_str(payload)?;
     let _lock = match record::lock(record_path, false) {
         Ok(lock) => lock,
@@ -353,10 +401,12 @@ pub fn worker(record_path: &Path, payload: &str) -> Result<()> {
             record::lock(record_path, true)?
         }
     };
+    super::undo::prune_locked(record_path);
     match job {
         Job::Packages(plan) => super::package_plan::run(record_path, &plan),
         Job::Runtime(plan) => runtime_plan::run(record_path, &plan),
         Job::OwnSetup(plan) => super::own::run(record_path, &plan),
+        Job::Environment(work) => super::env_actions::run(record_path, work).await,
         Job::RemoveOwn(folders, keys) => {
             for folder in folders {
                 super::own::remove(record_path, &folder)?;
@@ -383,7 +433,7 @@ pub fn worker(record_path: &Path, payload: &str) -> Result<()> {
                     version,
                     &method,
                     &method,
-                    "Getting Ready installed it",
+                    "Installed from the R and Python page",
                 )],
             )
         }

@@ -62,7 +62,7 @@ differs, this wins.
   there, closing Welcome; closing the main window (or its last project)
   brings Welcome back; closing Welcome alone quits (with the background-work
   question). Welcome's sidebar and content reach the window top; the sidebar
-  is Start (Recent, Explore a Table, Getting Ready), Devices, then Manage
+  is Start (Recent, Explore a Table, R and Python), Devices, then Manage
   (General, Resources and Storage, Trusted Folders, Agents), one row
   selected with its page on the right; it opens on Recent, or on Explore a
   Table when nothing is recent (Huan, 2026-11-19: Start replaced the
@@ -177,6 +177,19 @@ differs, this wins.
   Apple-silicon Macs, is built there with Apple's developer tools,
   offered by Install Developer Tools; without them the set-up goes on
   without it and says so.
+  R and Python (Huan, 2026-11-20; `docs/design/clean-footprint-plan.md`):
+  Getting Ready is renamed R and Python (Start → R and Python). It shows
+  the choice above, the tools and Install Without Asking, one card per
+  environment (Sandhill's own, else each R and each Python with a
+  kernel), and What Sandhill Installed. A card's line says in plain
+  words what it is ready for or what is missing or needs repair; opened,
+  it has Add Packages (one search over CRAN, Bioconductor, conda-forge,
+  bioconda and PyPI, a GitHub owner/repo or a downloaded package file,
+  and kits), Updates, Check and Repair (each problem with a plain reason
+  and Repair), Undo Last Change (Sandhill's last change to it), and More
+  (New Environment, Duplicate, Export, Import, Delete, asked in its row).
+  Every action shows its plan and command before it runs. Claude Code and
+  Codex moved to Manage → Agents.
   The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
   a title-bar switch shared by every Explore window on this Mac. Until
   that switch is used, the pane shows only with a signed-in Claude Code

@@ -50,7 +50,7 @@ pub(super) fn lock(record: &Path, wait: bool) -> io::Result<File> {
     install::lock(&record.with_file_name(".install-record.lock"), wait)
 }
 
-fn load(record: &Path) -> io::Result<Vec<QuickInstalled>> {
+pub(super) fn load(record: &Path) -> io::Result<Vec<QuickInstalled>> {
     match fs::read_to_string(record) {
         Ok(text) => Ok(parse(&text)),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
@@ -90,7 +90,7 @@ fn parse(text: &str) -> Vec<QuickInstalled> {
     items
 }
 
-fn save(record: &Path, items: &[QuickInstalled]) -> Result<()> {
+pub(super) fn save(record: &Path, items: &[QuickInstalled]) -> Result<()> {
     use std::fmt::Write as _;
     let mut tsv = String::new();
     for item in items {
@@ -154,7 +154,7 @@ pub(super) fn entry(
 }
 
 /// Today's local date, `2026-11-20`.
-fn today() -> String {
+pub(super) fn today() -> String {
     // SAFETY: `time` accepts a null pointer and `localtime_r` gets valid pointers.
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -399,7 +399,7 @@ fn check(items: &mut [QuickInstalled]) -> HashSet<InstalledKey> {
                         Status::Gone
                     }
                 }
-                PYTHON_ENV if item.tool == "uv" && prefix.join("pyvenv.cfg").is_file() => {
+                PYTHON_ENV if prefix.join("pyvenv.cfg").is_file() => {
                     if prefix.join("bin/python").is_file() {
                         Status::Ours
                     } else {
@@ -545,7 +545,9 @@ fn removal_command(group: &[&QuickInstalled], search: &Search) -> Option<String>
         AGENT if item.name == "codex" && item.place == "npm" => {
             quote(["npm", "uninstall", "-g", "@openai/codex"])
         }
-        PYTHON_ENV if item.tool == "uv" => quote(["rm", "-rf", &item.place]),
+        PYTHON_ENV if matches!(item.tool.as_str(), "uv" | "pip") => {
+            quote(["rm", "-rf", &item.place])
+        }
         PYTHON_ENV | CONDA_ENV => quote([
             &path(install::conda(search, prefix)?),
             "env",

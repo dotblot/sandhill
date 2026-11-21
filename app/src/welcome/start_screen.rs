@@ -64,7 +64,7 @@ pub(crate) enum StartMode {
     Accounts(String),
     /// This Mac's choices for every project (⌘,).
     General,
-    /// Getting Ready: what this Mac needs to explore tables.
+    /// R and Python, with Explore a Table's R open when it is found.
     Ready,
 }
 
@@ -73,7 +73,7 @@ pub(crate) enum StartMode {
 pub(crate) enum Page {
     /// Explore a Table (Huan, 2026-11-19): dropping or choosing tables.
     Explore,
-    /// Getting Ready: R, its kernel and the packages for exploring tables.
+    /// R and Python environments and how to manage them.
     Ready,
     /// Recent (Huan, 2026-11-19): tables explored, then pinned, open,
     /// running and recently opened projects on every connected device.
@@ -325,6 +325,7 @@ impl Start {
                 self.page = Page::Ready;
                 self.page_chosen = true;
                 self.quick.forget_check();
+                self.quick.focus_explore_r();
             }
             StartMode::Picking(host) => {
                 self.selected_host = host.clone();
@@ -467,7 +468,7 @@ impl AppWindow {
                 sidebar_row(
                     "start-ready",
                     "step.done",
-                    "Getting Ready",
+                    "R and Python",
                     page == Page::Ready,
                     &p,
                 )
@@ -690,7 +691,7 @@ impl AppWindow {
         let list_height = (window.viewport_size().height - px(340.)).max(px(140.));
         let content = match page {
             Page::Explore => self.explore_page(cx),
-            Page::Ready => self.ready_page(cx),
+            Page::Ready => self.ready_page(window, cx),
             Page::Projects => self.projects_page(list_height, cx),
             Page::Device => self.host_projects(host, list_height, cx),
             Page::Resources => self.resource_page(window, cx),

@@ -165,7 +165,7 @@ pub fn readiness(
 }
 
 /// Where an R came from, by where it is installed.
-fn source(r: &Path) -> RSource {
+pub(super) fn source(r: &Path) -> RSource {
     let real = std::fs::canonicalize(r).unwrap_or_else(|_| r.to_path_buf());
     let text = real.to_string_lossy();
     if text.starts_with("/Library/Frameworks/R.framework") {
@@ -214,7 +214,7 @@ fn r_kernels(search: &Search) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-fn version_key(version: &Option<String>) -> Vec<u32> {
+pub(super) fn version_key(version: &Option<String>) -> Vec<u32> {
     version
         .as_deref()
         .unwrap_or("")

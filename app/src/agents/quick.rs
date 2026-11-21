@@ -178,7 +178,11 @@ impl Agents {
             .iter()
             .any(|agent| agent.kind == self.new_kind && agent.path.is_some())
             && !self.explore_kind_ready(self.new_kind))
-        .then(|| format!("Sign in to {name} in Welcome → Agents before sending a message."))
+        .then(|| {
+            format!(
+                "Sign in to {name} in Welcome under Manage, then Agents, before sending a message."
+            )
+        })
     }
 
     pub(super) fn explore_notice(&self, p: &Palette, cx: &mut Context<Self>) -> Option<AnyElement> {

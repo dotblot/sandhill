@@ -197,7 +197,7 @@ fn check_python(python: &str, sets: &[String]) -> Result<()> {
         .iter()
         .find(|set| !PYTHON_SETS.iter().any(|(id, ..)| id == set))
     {
-        bail!("{set} isn't a package set Getting Ready offers.");
+        bail!("{set} isn't a package set the R and Python page offers.");
     }
     Ok(())
 }
@@ -367,7 +367,7 @@ pub(super) fn run(record_path: &Path, plan: &RuntimePlan) -> Result<()> {
                         version.as_str(),
                         R_FRAMEWORK,
                         "installer",
-                        "Getting Ready installed R",
+                        "Installed R from the R and Python page",
                     )],
                 )?;
             }
@@ -391,7 +391,7 @@ pub(super) fn run(record_path: &Path, plan: &RuntimePlan) -> Result<()> {
                     .filter(|(formula, _)| !before.contains_key(formula))
                     .map(|(formula, version)| {
                         let reason = if formula == "r" {
-                            "Getting Ready installed R"
+                            "Installed R from the R and Python page"
                         } else {
                             ""
                         };
@@ -405,13 +405,15 @@ pub(super) fn run(record_path: &Path, plan: &RuntimePlan) -> Result<()> {
             let packages = record::conda_packages(Path::new(prefix)).unwrap_or_default();
             if Path::new(prefix).join("conda-meta").is_dir() {
                 let (kind, package, reason) = match plan.runtime {
-                    NewRuntime::RConda { .. } => {
-                        (record::CONDA_ENV, "r-base", "Getting Ready made it for R")
-                    }
+                    NewRuntime::RConda { .. } => (
+                        record::CONDA_ENV,
+                        "r-base",
+                        "Made it for R from the R and Python page",
+                    ),
                     _ => (
                         record::PYTHON_ENV,
                         "python",
-                        "Getting Ready made it for Python",
+                        "Made it for Python from the R and Python page",
                     ),
                 };
                 let version = packages.get(package).cloned().unwrap_or_default();
@@ -455,7 +457,7 @@ pub(super) fn run(record_path: &Path, plan: &RuntimePlan) -> Result<()> {
                     python.as_str(),
                     prefix,
                     "uv",
-                    "Getting Ready made it for Python",
+                    "Made it for Python from the R and Python page",
                 ));
             }
             let kernel = kernel_dir(&Search::from_env(), &name)?;
@@ -483,7 +485,7 @@ pub(super) fn run(record_path: &Path, plan: &RuntimePlan) -> Result<()> {
                         packages.len().to_string(),
                         &plan.folder,
                         "installer",
-                        "Getting Ready installed it for Python",
+                        "Installed it for Python from the R and Python page",
                     )],
                 )?;
             }

@@ -21,11 +21,9 @@ impl AppWindow {
                 .as_ref()
                 .is_some_and(|(device, attached, _)| device == &host && *attached == attempt)
             {
-                self.start.accounts = Some((
-                    host.clone(),
-                    attempt,
-                    cx.new(|cx| AccountManager::new(daemon, host.clone(), cx)),
-                ));
+                let accounts = cx.new(|cx| AccountManager::new(daemon, host.clone(), cx));
+                cx.observe(&accounts, |_, _, cx| cx.notify()).detach();
+                self.start.accounts = Some((host.clone(), attempt, accounts));
             }
         } else {
             self.start.accounts = None;
@@ -82,6 +80,9 @@ impl AppWindow {
                 "Choose which agents Sandhill offers, and the accounts they run on. Switching accounts in a conversation is always your choice.",
             ))
             .child(h_flex().child(devices));
+        if host == sandhill_link::LOCAL && self.start.accounts.is_some() {
+            page = page.child(self.quick_ai_helpers(&p, cx));
+        }
         if let Some((_, _, accounts)) = &self.start.accounts {
             page = page.child(accounts.clone());
         } else {

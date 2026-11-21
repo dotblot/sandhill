@@ -7,8 +7,9 @@ use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{
-    Call, FileText, InstallPrefs, InstallTarget, InstallTool, InstallToolInfo, NewRuntime,
-    PackageAction, PackageChange, PackagePlan, RuntimePlan, TerminalInfo,
+    Call, EnvAction, EnvActionPlan, FileText, InstallPrefs, InstallTarget, InstallTool,
+    InstallToolInfo, NewRuntime, PackageAction, PackageChange, PackagePlan, RuntimePlan,
+    TerminalInfo,
 };
 
 use crate::daemon::Daemon;
@@ -433,8 +434,8 @@ fn package_plan<T: 'static>(
 
 /// One confirmation for one or more plans (an R update gets one per
 /// library), with what was left out (`skipped`) in plain words. Folder
-/// choices from `libraries` show for a single plan only. The verb runs
-/// the plans that can run.
+/// choices from `libraries` apply to installs only. The verb runs the
+/// plans that can run.
 pub(crate) fn packages<T: 'static>(
     reviews: &[Review<PackagePlan>],
     skipped: &[String],
@@ -468,7 +469,11 @@ pub(crate) fn packages<T: 'static>(
     let action = plans
         .first()
         .map_or(PackageAction::Install, |plan| plan.change.action);
-    let choices = if plans.len() == 1 { libraries } else { &[] };
+    let choices = if action == PackageAction::Install {
+        libraries
+    } else {
+        &[]
+    };
     let any = plans.iter().any(|plan| runnable(plan));
     let mut panel = body();
     for (ix, plan) in plans.into_iter().enumerate() {
@@ -529,6 +534,66 @@ pub(crate) fn runtime(
             p,
         ))
         .child(buttons(PackageAction::Install, can_run, (cancel, run)))
+}
+
+pub(crate) fn env_job_title(action: &EnvAction) -> &'static str {
+    match action {
+        EnvAction::Check { .. } => "Checking the environment",
+        EnvAction::Undo { .. } => "Undoing the last change",
+        EnvAction::Duplicate { .. } => "Duplicating the environment",
+        EnvAction::Export { .. } => "Exporting the package list",
+        EnvAction::Import { .. } => "Importing the package list",
+        EnvAction::Delete { .. } => "Deleting the environment",
+    }
+}
+
+pub(crate) fn environment(
+    review: &Review<EnvActionPlan>,
+    name: &str,
+    (cancel, run): (Button, Button),
+    p: &Palette,
+) -> Div {
+    let plan = match review {
+        Review::Planning => return status_row(line("Working out the command…", p.muted), cancel),
+        Review::Error(err) => return status_row(line(err.clone(), p.err), cancel),
+        Review::Ready(plan) => plan,
+    };
+    let (label, delete) = match plan.action {
+        EnvAction::Check { .. } => ("Check", false),
+        EnvAction::Undo { .. } => ("Undo", false),
+        EnvAction::Duplicate { .. } => ("Duplicate", false),
+        EnvAction::Export { .. } => ("Export", false),
+        EnvAction::Import { .. } => ("Import", false),
+        EnvAction::Delete { .. } => ("Delete", true),
+    };
+    body()
+        .when(delete, |d| {
+            d.child(line(format!("Delete {name}?"), p.text).font_weight(FontWeight::SEMIBOLD))
+        })
+        .child(line(plan.what.clone(), p.text).font_weight(FontWeight::MEDIUM))
+        .when(!plan.folder.is_empty(), |d| {
+            d.child(line(format!("Folder: {}", plan.folder), p.muted))
+        })
+        .children(plan.notes.iter().map(|note| line(note.clone(), p.muted)))
+        .child(command_or_refusal(
+            0,
+            &plan.command,
+            plan.refused.as_deref(),
+            p,
+        ))
+        .child(
+            h_flex()
+                .justify_end()
+                .gap(px(look::GAP_8))
+                .child(cancel)
+                .when(plan.refused.is_none() && !plan.command.is_empty(), |d| {
+                    d.child(if delete {
+                        run.label(label).danger()
+                    } else {
+                        run.label(label).primary()
+                    })
+                }),
+        )
 }
 
 pub(crate) fn cancel_button() -> Button {

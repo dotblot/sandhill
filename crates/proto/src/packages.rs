@@ -117,6 +117,10 @@ pub struct PackageUpdate {
     /// It comes from Bioconductor.
     #[serde(default)]
     pub bioconductor: bool,
+    /// Where the newer version comes from: `CRAN`, `Bioconductor`,
+    /// `conda-forge`, `bioconda` or `PyPI`; empty when the session asked.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 /// Installed packages, as [`Call::ListPackages`] asked.

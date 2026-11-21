@@ -87,7 +87,7 @@ pub(crate) fn launch_scoped(
                         || !crate::own_env::inside(folder, &program)
                     {
                         bail!(
-                            "{name} isn't installed in Sandhill's folder. Add it in Getting Ready or switch to use what's on this computer."
+                            "{name} isn't installed in Sandhill's folder. Add it on the R and Python page or switch to use what's on this computer."
                         );
                     }
                     (Some(program), None)

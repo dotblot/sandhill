@@ -686,13 +686,13 @@ impl Workbench {
                 v_flex()
                     .gap(px(look::GAP_8))
                     .child(div().text_color(p.warn).child(look::mac_or(
-                        "R isn't ready to explore tables on this Mac yet. Getting Ready in Welcome shows what is missing and installs it.",
-                        "R isn't ready to explore tables on this computer yet. Getting Ready in Welcome shows what is missing and installs it.",
+                        "R isn't ready to explore tables on this Mac yet. Open R and Python in Welcome to see what's missing.",
+                        "R isn't ready to explore tables on this computer yet. Open R and Python in Welcome to see what's missing.",
                     )))
                     .child(
                         Button::new("quick-setup")
                             .small()
-                            .label("Open Getting Ready")
+                            .label("Open R and Python")
                             .on_click(cx.listener(|_, _, _, cx| {
                                 cx.defer(|cx| {
                                     crate::shell::app_window::show_welcome(
@@ -711,7 +711,7 @@ impl Workbench {
                     .child(
                         div()
                             .text_color(p.muted)
-                            .child("The AI helper isn't set up. Everything here works without it."),
+                            .child("Everything here works without AI. To set up a helper, go to Manage, then Agents in Welcome."),
                     )
                     .child(
                         Button::new("setup-explore-ai")
@@ -720,7 +720,7 @@ impl Workbench {
                             .on_click(|_, _, cx| {
                                 cx.defer(|cx| {
                                     crate::shell::app_window::show_welcome(
-                                        Some(crate::welcome::start_screen::StartMode::Ready),
+                                        Some(crate::welcome::start_screen::StartMode::Accounts(sandhill_link::LOCAL.into())),
                                         cx,
                                     )
                                 });
@@ -733,12 +733,12 @@ impl Workbench {
         }
         if let Some(error) = &q.error {
             body = body.child(div().text_color(p.err).child(error.clone()));
-            // A template's packages are installed from Getting Ready.
+            // A template's packages are installed from R and Python.
             if error.contains("Missing R packages") {
                 body = body.child(
                     Button::new("quick-open-ready")
                         .small()
-                        .label("Open Getting Ready…")
+                        .label("Open R and Python")
                         .on_click(|_, _, cx| {
                             cx.defer(|cx| {
                                 crate::shell::app_window::show_welcome(

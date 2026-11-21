@@ -162,6 +162,9 @@ differs, this wins.
   shown in the row before they run, as a job. Signing in stays on Welcome →
   Agents; Getting Ready shows signed in as Agents last saw, never asking
   the agent.
+  Moved (Huan, 2026-11-20; `docs/design/clean-footprint-plan.md`): the
+  agents are not part of R and Python, so installing them and their
+  status moved from Getting Ready to Manage → Agents, beside signing in.
 - Exploring tables (Huan, 2026-11-19; `docs/design/explore-next-plan.md`):
   Claude Code and Codex work in the session folder. Sandhill tells them
   to use plain words, say what the data cannot show, and read the open
