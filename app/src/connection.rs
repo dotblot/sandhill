@@ -124,7 +124,7 @@ impl Workbench {
                 .filter_map(|p| p.strip_prefix(&prefix).map(str::to_string))
                 .collect();
         }
-        self.connect(self.target.clone(), project, cx);
+        self.connect(self.target.clone(), project, true, cx);
     }
 
     /// Leaves the daemon. Kernels keep running there; Connect comes back.
@@ -159,7 +159,10 @@ impl Workbench {
         cx.spawn(async move |this, cx| {
             let stopped = stopped.await;
             this.update(cx, |this, cx| match stopped {
-                Ok(_) => this.reconnect(cx),
+                Ok(_) if !crate::welcome::resource_manager::host_blocked(&this.host(), cx) => {
+                    this.reconnect(cx)
+                }
+                Ok(_) => {}
                 Err(err) => {
                     this.problem = Some(format!("Could not restart sandhilld: {err:#}"));
                     cx.notify();

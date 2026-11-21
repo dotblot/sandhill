@@ -11,9 +11,9 @@
 //!   through `sandhilld terminal-event`;
 //! - for Codex, nothing: Sandhill drives its conversation through `codex
 //!   app-server` (see `terminal::codex`), and tells it the same things;
-//! - for Antigravity, nothing either: Sandhill runs `agy` headless for each
-//!   message (see `terminal::antigravity`), which adds Sandhill's MCP server
-//!   to agy's settings, the only place agy reads them from;
+//! - for Antigravity, Sandhill runs `agy` headless for each message (see
+//!   `terminal::antigravity`). Its MCP entry is added only on explicit
+//!   request from Manage, since agy reads it from its own settings.
 //! - for OpenScience and Oh My Pi, nothing either: Sandhill drives them
 //!   over ACP (see `terminal::acp`), passing its tools per run;
 //! - for pi, nothing either: Sandhill drives `pi --mode rpc` (see
@@ -95,6 +95,12 @@ const AGENTS: [Agent; 7] = [
         install: "curl -fsSL https://assistant.posit.co/builds/install-tui.sh | bash",
     },
 ];
+
+impl Agent {
+    fn install_command(&self) -> &'static str {
+        crate::quick::setup::agent_install(self.kind).map_or(self.install, |(_, command)| command)
+    }
+}
 
 /// Where `pa` reads administrator defaults: settings under the user's own.
 const POSIT_DEFAULTS: &str = "POSIT_ASSISTANT_SETTINGS_DEFAULT";
@@ -178,7 +184,8 @@ pub async fn describe(kind: &str) -> Option<AgentInfo> {
         name: agent.name.into(),
         path: path.map(|p| p.to_string_lossy().into_owned()),
         version,
-        install: agent.install.into(),
+        install: agent.install_command().into(),
+        tools_in_settings: (kind == ANTIGRAVITY).then(crate::lifecycle::antigravity_tools_allowed),
     })
 }
 
@@ -189,8 +196,13 @@ pub async fn models(kind: &str) -> Result<Value> {
         .iter()
         .find(|a| a.kind == kind)
         .with_context(|| format!("no agent {kind:?}"))?;
-    let program = find(agent.program)
-        .with_context(|| format!("{} is not installed: {}", agent.name, agent.install))?;
+    let program = find(agent.program).with_context(|| {
+        format!(
+            "{} is not installed: {}",
+            agent.name,
+            agent.install_command()
+        )
+    })?;
     match kind {
         CODEX => crate::terminal::codex::list_models(&program).await,
         ANTIGRAVITY => crate::terminal::antigravity::list_models(&program).await,
@@ -365,7 +377,7 @@ pub async fn launch(kind: &str, options: &AgentOptions, context: &Context<'_>) -
         bail!(
             "{} is not installed on this machine; install it with `{}`",
             agent.name,
-            agent.install
+            agent.install_command()
         );
     };
     let help = help_text(&program).await;

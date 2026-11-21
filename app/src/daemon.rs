@@ -259,6 +259,12 @@ impl Daemon {
         async move { client.wait_closed().await }
     }
 
+    pub(crate) fn is_closed(&self) -> bool {
+        let mut closed = std::pin::pin!(self.closed());
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        closed.as_mut().poll(&mut cx).is_ready()
+    }
+
     /// Sends one request; the reply arrives on the returned future.
     pub fn call<T>(&self, call: Call) -> impl Future<Output = Result<T>> + 'static
     where
@@ -367,7 +373,7 @@ impl Daemon {
         &self,
         call: Call,
         limit: std::time::Duration,
-    ) -> impl Future<Output = Result<T>> + 'static
+    ) -> impl Future<Output = Result<T>> + 'static + use<T>
     where
         T: DeserializeOwned + Send + 'static,
     {

@@ -38,16 +38,17 @@ pub const PACKAGES: &[(&str, bool, QuickTool)] = &[
     ("org.Mm.eg.db", true, QuickTool::Symbols),
 ];
 
-/// The agents Getting Ready offers: `(kind, how Sandhill installs it, the
-/// command)`.
-const AGENTS: &[(&str, &str, &str)] = &[
-    (
-        "claude",
-        "native",
-        "curl -fsSL https://claude.ai/install.sh | bash",
-    ),
-    ("codex", "npm", "npm install -g @openai/codex"),
-];
+/// One command for both the Agents page and the install job it starts.
+pub(crate) fn agent_install(kind: &str) -> Option<(&'static str, &'static str)> {
+    match kind {
+        "claude" => Some(("native", "curl -fsSL https://claude.ai/install.sh | bash")),
+        "codex" if super::install::brew(&Search::from_env()).is_some() => {
+            Some(("brew", "brew install --cask codex"))
+        }
+        "codex" => Some(("npm", "npm install -g @openai/codex")),
+        _ => None,
+    }
+}
 
 /// What is there: the R an R kernel runs (IRkernel before Ark, the newest
 /// first), else the newest R found, its packages, the agents (from
@@ -59,6 +60,10 @@ pub fn readiness(
     agents: Vec<sandhill_proto::AgentInfo>,
 ) -> QuickReadiness {
     let installed_by_sandhill = record::read(record_path);
+    let installed_by_sandhill: Vec<_> = installed_by_sandhill
+        .into_iter()
+        .filter(|item| item.kind != record::AGENT_FOLDER)
+        .collect();
     let prefs = super::install::prefs(record_path);
     let own = super::own::readiness(search, record_path, Path::new(&prefs.own_folder));
     let scoped = search.clone().in_own(
@@ -129,16 +134,17 @@ pub fn readiness(
         })
         .collect();
     let npm = crate::agents::find("npm").is_some();
-    let agents = AGENTS
-        .iter()
-        .filter_map(|&(kind, how, install)| {
+    let agents = ["claude", "codex"]
+        .into_iter()
+        .filter_map(|kind| {
+            let (how, _) = agent_install(kind)?;
             let info = agents.iter().find(|a| a.kind == kind)?;
             Some(QuickAgent {
                 kind: kind.into(),
                 name: info.name.clone(),
                 path: info.path.clone(),
                 version: info.version.clone(),
-                install: install.into(),
+                install: info.install.clone(),
                 installable: how != "npm" || npm,
                 by_sandhill: installed_by_sandhill
                     .iter()
@@ -310,11 +316,27 @@ pub(super) fn can_build() -> bool {
 
 /// The job that installs Claude Code or Codex with its own command, its
 /// output also in `log`, and records it.
-pub fn install_agent(exe: &Path, kind: &str, log: &Path, record_path: &Path) -> Result<Launch> {
-    let Some(&(kind, how, command)) = AGENTS.iter().find(|(k, ..)| *k == kind) else {
+pub fn install_agent(
+    exe: &Path,
+    kind: &str,
+    reviewed: Option<&str>,
+    log: &Path,
+    record_path: &Path,
+) -> Result<Launch> {
+    let Some((how, command)) = agent_install(kind) else {
         bail!("{kind} isn't an agent Sandhill installs");
     };
-    if crate::agents::find(if kind == "claude" { "claude" } else { "codex" }).is_some() {
+    let name = if kind == "claude" {
+        "Claude Code"
+    } else {
+        "Codex"
+    };
+    if reviewed.is_some_and(|reviewed| reviewed != command) {
+        bail!(
+            "The way to install {name} changed since you looked (now: {command}). Check it and try again."
+        );
+    }
+    if crate::agents::find(kind).is_some() {
         bail!("it is already installed");
     }
     if how == "npm" && crate::agents::find("npm").is_none() {
@@ -325,12 +347,7 @@ pub fn install_agent(exe: &Path, kind: &str, log: &Path, record_path: &Path) -> 
         name: kind.into(),
         method: how.into(),
     };
-    let title = if kind == "claude" {
-        "Install Claude Code"
-    } else {
-        "Install Codex"
-    };
-    super::install::launch(exe, record_path, job, log, title)
+    super::install::launch(exe, record_path, job, log, &format!("Install {name}"))
 }
 
 #[cfg(test)]
@@ -389,11 +406,28 @@ mod tests {
         let err = install_agent(
             Path::new("/sandhilld"),
             "pi",
+            None,
             Path::new("/tmp/x.log"),
             record,
         )
         .unwrap_err();
         assert!(err.to_string().contains("isn't an agent Sandhill installs"));
+    }
+
+    #[test]
+    fn agent_install_requires_review_when_the_command_changed() {
+        let err = install_agent(
+            Path::new("/sandhilld"),
+            "claude",
+            Some("old command"),
+            Path::new("/not-run/install.log"),
+            Path::new("/not-run/record.tsv"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "The way to install Claude Code changed since you looked (now: curl -fsSL https://claude.ai/install.sh | bash). Check it and try again."
+        );
     }
 
     #[test]

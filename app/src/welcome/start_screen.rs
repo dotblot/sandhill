@@ -24,6 +24,7 @@ use crate::welcome::folder_dialog::{FolderDialog, FolderDialogDone, Place as Fol
 
 mod connectors;
 mod devices;
+mod footprint;
 mod general;
 mod manage;
 mod projects;
@@ -31,6 +32,8 @@ mod quick_tools;
 mod skills;
 mod trusted;
 mod usage;
+
+pub(crate) use footprint::uninstall_running;
 
 const SIDEBAR_WIDTH: f32 = 260.;
 /// The page column's widest, and the room around it.
@@ -81,6 +84,7 @@ pub(crate) enum Page {
     /// The selected device's projects.
     Device,
     Resources,
+    Footprint,
     Trusted,
     Skills,
     Connectors,
@@ -165,6 +169,10 @@ pub(crate) struct Start {
     font_menu: bool,
     /// The installed monospaced fonts, found when the list first opens.
     mono_fonts: Option<Vec<String>>,
+    footprint: footprint::FootprintPage,
+    content_scroll: ScrollHandle,
+    record_anchor: ScrollAnchor,
+    show_install_record: bool,
     font_trigger: crate::shell::popup::PopupTriggers,
     _subscriptions: Vec<Subscription>,
 }
@@ -197,6 +205,7 @@ impl Start {
                 },
             ),
         ];
+        let content_scroll = ScrollHandle::new();
         Start {
             servers: crate::prefs::servers(),
             auto_connect: crate::prefs::server_auto_connect(),
@@ -230,6 +239,10 @@ impl Start {
             quick: quick_tools::QuickPage::new(),
             font_menu: false,
             mono_fonts: None,
+            footprint: footprint::FootprintPage::default(),
+            record_anchor: ScrollAnchor::for_handle(content_scroll.clone()),
+            content_scroll,
+            show_install_record: false,
             font_trigger: Default::default(),
             _subscriptions: subscriptions,
         }
@@ -271,12 +284,12 @@ impl Start {
     }
 
     pub(crate) fn forget_host(&mut self, host: &str) {
-        self.set_machine(
-            host.to_string(),
-            MachineLink::Failed(
-                "Stopped or uninstalled. Connect explicitly to start again.".into(),
-            ),
-        );
+        let link = if crate::prefs::server_uninstalled(host) {
+            MachineLink::Disconnected
+        } else {
+            MachineLink::Failed("Stopped. Use Connect to start again.".into())
+        };
+        self.set_machine(host.to_string(), link);
     }
 
     /// This computer first, then saved servers alphabetically.
@@ -602,6 +615,16 @@ impl AppWindow {
             )
             .child(
                 sidebar_row(
+                    "start-footprint",
+                    "folder",
+                    "On This Computer",
+                    page == Page::Footprint,
+                    &p,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Footprint, cx))),
+            )
+            .child(
+                sidebar_row(
                     "start-trusted",
                     "lock",
                     "Trusted Folders",
@@ -695,6 +718,7 @@ impl AppWindow {
             Page::Projects => self.projects_page(list_height, cx),
             Page::Device => self.host_projects(host, list_height, cx),
             Page::Resources => self.resource_page(window, cx),
+            Page::Footprint => self.footprint_page(cx),
             Page::Trusted => self.trusted_folders(list_height, cx),
             Page::Accounts => self.agent_accounts_page(cx),
             Page::Usage => self.usage_page(cx),
@@ -715,10 +739,14 @@ impl AppWindow {
                 h_flex().items_stretch().flex_1().min_h_0().w_full()
                     .child(sidebar)
                     .child(div().id("start-content").flex_1().min_w_0().h_full().overflow_y_scroll().bg(p.bg).p(px(CONTENT_PAD)).pt(px(look::TITLE_BAR + CONTENT_PAD))
+                        .track_scroll(&self.start.content_scroll)
                         // Folders dragged from Finder open as projects on this
                         // Mac; tables go to Explore a Table (Huan, 2026-11-19).
                         .drag_over::<ExternalPaths>(move |d, _, _, _| d.bg(p.accent_soft))
                         .on_drop(cx.listener(|this, dropped: &ExternalPaths, window, cx| {
+                            if uninstall_running(cx) {
+                                return;
+                            }
                             let (tables, folders): (Vec<String>, Vec<String>) = dropped
                                 .paths()
                                 .iter()
@@ -813,6 +841,15 @@ impl AppWindow {
     /// projects, kernels and conversations read again. Resources and Storage
     /// keeps its state only while shown or while an action runs.
     pub(crate) fn show_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        if uninstall_running(cx) && page != Page::Footprint {
+            return;
+        }
+        if self.start.page != page {
+            self.start.content_scroll.set_offset(Point::default());
+        }
+        if page != Page::Ready {
+            self.start.show_install_record = false;
+        }
         if page != Page::Resources && self.resource_manager.as_ref().is_some_and(|m| !m.busy()) {
             self.resource_manager = None;
         }

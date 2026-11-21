@@ -82,6 +82,12 @@ pub struct AgentInfo {
     pub version: Option<String>,
     /// A shell command that installs the CLI, for when it is missing.
     pub install: String,
+    /// For an agent that can reach Sandhill's tools only through an entry
+    /// in its own settings (Antigravity): whether the user allowed that
+    /// entry (Huan, 2026-11-20: never written without asking). `None` for
+    /// agents that get the tools when started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools_in_settings: Option<bool>,
 }
 
 /// An account an agent can run a conversation on (see

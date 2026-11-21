@@ -149,7 +149,7 @@ pub enum FromHost {
 const MAX_SOCKET_PATH: usize = 100;
 
 /// Where sockets go when the terminal's folder is too deep: private to the user.
-fn short_socket_dir() -> PathBuf {
+pub(crate) fn short_socket_dir() -> PathBuf {
     // SAFETY: getuid has no preconditions.
     let uid = unsafe { libc::getuid() };
     PathBuf::from(format!("/tmp/sandhill-{uid}"))

@@ -24,6 +24,9 @@ struct Maintenance {
 impl Global for Maintenance {}
 
 pub(crate) fn host_blocked(host: &str, cx: &App) -> bool {
+    if crate::prefs::server_uninstalled(host) {
+        return true;
+    }
     cx.try_global::<Maintenance>()
         .is_some_and(|state| state.blocked.contains(host))
 }
@@ -46,7 +49,7 @@ pub(crate) fn allow_host(host: &str, cx: &mut App) -> bool {
     true
 }
 
-fn hold_host(host: &str, cx: &mut App) -> bool {
+pub(super) fn hold_host(host: &str, cx: &mut App) -> bool {
     if cx
         .try_global::<Maintenance>()
         .is_some_and(|state| state.active.contains(host))
@@ -58,7 +61,7 @@ fn hold_host(host: &str, cx: &mut App) -> bool {
     true
 }
 
-fn release_host(host: &str, cx: &mut App) {
+pub(super) fn release_host(host: &str, cx: &mut App) {
     cx.global_mut::<Maintenance>().active.remove(host);
 }
 
@@ -156,7 +159,6 @@ enum Action {
     Stop,
     Force,
     Clean,
-    Uninstall,
 }
 impl Action {
     fn label(self) -> &'static str {
@@ -164,7 +166,6 @@ impl Action {
             Self::Stop => "Stop all background resources",
             Self::Force => "Force stop all background resources",
             Self::Clean => "Clean selected storage",
-            Self::Uninstall => "Uninstall components",
         }
     }
 }
@@ -177,14 +178,10 @@ struct Device {
     status: String,
     errors: Vec<String>,
     force_available: bool,
-    uninstalled: bool,
 }
 pub(crate) struct Manager {
     devices: BTreeMap<String, Device>,
     categories: BTreeSet<String>,
-    delete_data: bool,
-    trash_app: bool,
-    app_path: Option<String>,
     confirm: Option<Action>,
     busy: bool,
     message: Option<String>,
@@ -229,38 +226,16 @@ impl AppWindow {
                         status,
                         errors: Vec::new(),
                         force_available: false,
-                        uninstalled: false,
                     },
                 )
             })
             .collect();
-        let (app_path, message) = match crate::welcome::app_uninstall::preview_path() {
-            Ok(Some(path)) => (Some(path.display().to_string()), None),
-            Ok(None) => (
-                None,
-                Some(match crate::welcome::app_uninstall::package_removal() {
-                    Some(command) => format!(
-                        "The app itself is a system package: remove it afterwards with `{command}`."
-                    ),
-                    None => {
-                        "Current app Trash is unavailable for this development executable.".into()
-                    }
-                }),
-            ),
-            Err(error) => (
-                None,
-                Some(format!("Current app Trash is unavailable: {error:#}")),
-            ),
-        };
         self.resource_manager = Some(Manager {
             devices,
             categories: BTreeSet::new(),
-            delete_data: false,
-            trash_app: false,
-            app_path,
             confirm: None,
             busy: false,
-            message,
+            message: None,
             expanded: BTreeSet::new(),
             focus: cx.focus_handle(),
             focus_on_open: std::cell::Cell::new(true),
@@ -281,7 +256,7 @@ impl AppWindow {
         let selected: Vec<_> = manager
             .devices
             .iter_mut()
-            .filter(|(_, device)| device.selected && !device.uninstalled)
+            .filter(|(_, device)| device.selected)
             .map(|(host, device)| {
                 device.errors.clear();
                 device.status = "Reading inventory…".into();
@@ -295,6 +270,7 @@ impl AppWindow {
                 let restarting = existing.is_none() && blocked && connect_selected;
                 let daemon = match existing {
                     Some(daemon) => Ok(daemon),
+                    None if crate::prefs::server_uninstalled(&host) => Err("Use Connect on this server's device page before reading its inventory. Connecting installs Sandhill again.".into()),
                     None if blocked && !connect_selected => Err("This device was stopped. Click Read selected inventories to explicitly restart only its daemon for inspection or cleanup.".into()),
                     None if connect_selected => {
                         match Target::parse(&host) {
@@ -384,11 +360,10 @@ impl AppWindow {
         let local_only = action == Action::Clean && local_categories_only(&manager.categories);
         if selected.is_empty()
             || selected.iter().any(|(host, device)| {
-                (device.daemon.is_none() || device.uninstalled)
-                    && !(local_only && host.as_str() == sandhill_link::LOCAL)
+                device.daemon.is_none() && !(local_only && host.as_str() == sandhill_link::LOCAL)
             })
         {
-            manager.message = Some("Read the inventory of every selected device first. Disconnected or uninstalled devices cannot be reported as successful.".into());
+            manager.message = Some("Read the inventory of every selected device first. Disconnected devices cannot be reported as successful.".into());
         } else if action == Action::Clean && manager.categories.is_empty() {
             manager.message = Some("Select at least one removable storage category.".into());
         } else if action == Action::Force
@@ -422,11 +397,9 @@ impl AppWindow {
             })
             .map(|(host, device)| (host.clone(), device.daemon.clone()))
             .collect();
-        // Remote errors must prevent local app settings removal and app Trash.
+        // Remote errors must prevent local app settings removal.
         selected.sort_by_key(|(host, _)| host == sandhill_link::LOCAL);
         let categories = manager.categories.clone();
-        let delete_data = manager.delete_data;
-        let trash_app = manager.trash_app && action == Action::Uninstall;
         let workbenches = quit::workbenches_from(self, cx.entity_id(), cx);
         let tasks: Vec<_> = workbenches
             .iter()
@@ -456,7 +429,7 @@ impl AppWindow {
                     }).ok();
                     continue;
                 }
-                let teardown = matches!(action, Action::Stop | Action::Force | Action::Uninstall);
+                let teardown = matches!(action, Action::Stop | Action::Force);
                 if teardown && !cx.update(|cx| hold_host(&host, cx)) {
                     all_success = false;
                     this.update(cx, |this, cx| {
@@ -471,7 +444,6 @@ impl AppWindow {
                 let call = match action {
                     Action::Stop | Action::Force => Call::StopResources { force: action == Action::Force },
                     Action::Clean => Call::CleanStorage { categories: categories.iter().filter(|category| !matches!(category.as_str(), "app_settings" | "media_previews")).cloned().collect() },
-                    Action::Uninstall => Call::UninstallComponents { delete_data },
                 };
                 let mut result = if local_only {
                     Ok(json!({"success": true, "results": [], "errors": [], "backend_requested": false}))
@@ -536,23 +508,18 @@ impl AppWindow {
                         }
                         if detach {
                             device.daemon = None;
-                            device.uninstalled = action == Action::Uninstall;
                         }
                     }
                     cx.notify();
                 }).ok();
             }
-            let trash_result = if trash_app && all_success { Some(crate::welcome::app_uninstall::move_to_trash().map_err(|error| format!("{error:#}"))) } else { None };
-            if trash_result.as_ref().is_some_and(Result::is_err) { all_success = false; }
             this.update(cx, |this, cx| {
                 if let Some(manager) = &mut this.resource_manager {
                     manager.busy = false;
-                    manager.message = Some(match trash_result {
-                        Some(Ok(path)) => format!("All selected devices confirmed uninstall. Moved {} to Trash. This running app can now be closed.", path.display()),
-                        Some(Err(error)) => format!("Backend results are shown below. The app was not moved to Trash: {error}"),
-                        None if trash_app => "The app was not moved to Trash because at least one selected device did not confirm success.".into(),
-                        None if all_success => "Completed on every selected device. Review the per-device results below.".into(),
-                        None => "Not every selected operation succeeded. No success is assumed for disconnected devices. Review the per-device results below.".into(),
+                    manager.message = Some(if all_success {
+                        "Completed on every selected device. Review the per-device results below.".into()
+                    } else {
+                        "Not every selected operation succeeded. Review the per-device results below.".into()
                     });
                 }
                 cx.notify();
@@ -723,7 +690,7 @@ impl AppWindow {
                     ),
             );
         for (i, error) in device.errors.iter().enumerate() {
-            // Clean and uninstall report their per-item results as JSON.
+            // Storage cleanup reports its per-item results as JSON.
             card = card.child(if error.trim_start().starts_with('{') {
                 div()
                     .id(SharedString::from(format!("manage-result-{index}-{i}")))
@@ -1154,37 +1121,35 @@ impl AppWindow {
                 .child(self.resource_confirmation(action, cx))
                 .into_any_element();
         }
-        let row =
-            |title: &str, detail: String, extra: Option<AnyElement>, buttons: Vec<AnyElement>| {
-                h_flex()
-                    .w_full()
-                    .items_start()
-                    .gap(px(look::GAP_12))
-                    .p(px(look::GAP_12))
-                    .rounded(px(look::RADIUS))
-                    .border_1()
-                    .border_color(p.line)
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap(px(look::GAP_4))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(look::small()))
-                                    .text_color(p.muted)
-                                    .whitespace_normal()
-                                    .child(detail),
-                            )
-                            .children(extra),
-                    )
-                    .child(h_flex().flex_none().gap(px(look::GAP_8)).children(buttons))
-            };
+        let row = |title: &str, detail: String, buttons: Vec<AnyElement>| {
+            h_flex()
+                .w_full()
+                .items_start()
+                .gap(px(look::GAP_12))
+                .p(px(look::GAP_12))
+                .rounded(px(look::RADIUS))
+                .border_1()
+                .border_color(p.line)
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(look::GAP_4))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(title.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(look::small()))
+                                .text_color(p.muted)
+                                .whitespace_normal()
+                                .child(detail),
+                        ),
+                )
+                .child(h_flex().flex_none().gap(px(look::GAP_8)).children(buttons))
+        };
         let force_available = manager
             .devices
             .values()
@@ -1217,7 +1182,6 @@ impl AppWindow {
         actions = actions.child(row(
             "Stop background work",
             "Stops kernels, terminals, jobs and agents on the ticked devices, then their backend. Nothing is deleted. Read restarts only the backend.".into(),
-            None,
             stop_buttons,
         ));
         let ticked: u64 = manager
@@ -1247,7 +1211,6 @@ impl AppWindow {
             actions.child(row(
                 "Clean ticked storage",
                 clean_detail,
-                None,
                 vec![
                     Button::new("manage-clean")
                         .small()
@@ -1259,57 +1222,16 @@ impl AppWindow {
                         .into_any_element(),
                 ],
             ));
-        let options = v_flex()
-            .gap(px(look::GAP_6))
-            .pt(px(look::GAP_4))
-            .child(
-                Checkbox::new("manage-delete-data")
-                    .label("Also delete backend data (including file history and caches)")
-                    .checked(manager.delete_data)
-                    .disabled(busy)
-                    .on_click(cx.listener(|this, on: &bool, _, cx| {
-                        if let Some(manager) = &mut this.resource_manager {
-                            manager.delete_data = *on;
-                            manager.confirm = None;
-                        }
-                        cx.notify();
-                    })),
-            )
-            .when_some(manager.app_path.clone(), |d, path| {
-                d.child(
-                    Checkbox::new("manage-trash-app")
-                        .label("Move this app to Trash afterwards")
-                        .checked(manager.trash_app)
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, on: &bool, _, cx| {
-                            if let Some(manager) = &mut this.resource_manager {
-                                manager.trash_app = *on;
-                                manager.confirm = None;
-                            }
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div()
-                        .pl(px(26.))
-                        .text_size(px(look::small()))
-                        .font_family(look::mono())
-                        .text_color(p.muted)
-                        .child(path),
-                )
-            });
         actions = actions.child(row(
-            "Uninstall Sandhill components",
-            "Stops everything and removes Sandhill's backend from the ticked devices. Project folders stay. The app goes to Trash only after every ticked device succeeds.".into(),
-            Some(options.into_any_element()),
+            "What Sandhill Has Put on This Computer",
+            "See Sandhill's files and installs, or review what uninstalling would remove.".into(),
             vec![
-                Button::new("manage-uninstall")
+                Button::new("manage-footprint")
                     .small()
-                    .danger()
-                    .label("Uninstall…")
+                    .label("Open")
                     .disabled(busy)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.request_resource_action(Action::Uninstall, cx)
+                        this.show_page(crate::welcome::start_screen::Page::Footprint, cx);
                     }))
                     .into_any_element(),
             ],
@@ -1340,9 +1262,6 @@ impl AppWindow {
             Action::Clean => {
                 "Delete files only in the ticked removable categories. Ticked history is irreversible. App settings cleanup closes the app."
             }
-            Action::Uninstall => {
-                "Stop resources and remove backend components. Every ticked device must confirm success before the current app can be moved to Trash. Reconnecting later is explicit."
-            }
         };
         v_flex()
             .gap(px(look::GAP_8))
@@ -1366,21 +1285,6 @@ impl AppWindow {
                         .join(", ")
                 )))
             })
-            .when(action == Action::Uninstall, |d| {
-                d.child(div().child(format!(
-                    "Backend data: {}. This app: {}.",
-                    if manager.delete_data {
-                        "DELETE"
-                    } else {
-                        "preserve"
-                    },
-                    if manager.trash_app {
-                        "move to Trash after success"
-                    } else {
-                        "keep"
-                    }
-                )))
-            })
             .child(
                 h_flex()
                     .justify_end()
@@ -1400,7 +1304,7 @@ impl AppWindow {
                         Button::new("manage-confirm")
                             .small()
                             .map(|b| {
-                                if matches!(action, Action::Force | Action::Uninstall) {
+                                if action == Action::Force {
                                     b.danger()
                                 } else {
                                     b.primary()
@@ -1459,7 +1363,7 @@ mod tests {
         assert!(!resources_stopped(&json!({"stopped":true})));
     }
     #[test]
-    fn uninstall_leftovers_or_unknown_results_are_not_success() {
+    fn storage_cleanup_leftovers_or_unknown_results_are_not_success() {
         assert!(operation_succeeded(
             &json!({"success":true,"remaining":[],"errors":[]})
         ));

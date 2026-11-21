@@ -700,7 +700,7 @@ pub(crate) fn removable(folder: &Path) -> Result<()> {
 }
 
 /// Called only while the install worker holds the lock, after kernels stop.
-pub(super) fn remove(record: &Path, folder: &Path) -> Result<()> {
+pub(crate) fn remove(record: &Path, folder: &Path) -> Result<()> {
     removable(folder)?;
     fs::remove_dir_all(folder).with_context(|| format!("Couldn't remove {}.", folder.display()))?;
     if let Some(home) = install::home().and_then(|home| home.canonicalize().ok())

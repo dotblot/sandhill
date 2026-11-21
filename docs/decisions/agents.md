@@ -165,6 +165,13 @@ differs, this wins.
   Moved (Huan, 2026-11-20; `docs/design/clean-footprint-plan.md`): the
   agents are not part of R and Python, so installing them and their
   status moved from Getting Ready to Manage → Agents, beside signing in.
+  Official ways only (Huan, 2026-11-20; `docs/design/clean-footprint-plan.md`,
+  section 5): Codex installs with Homebrew (`brew install --cask codex`)
+  when Homebrew is there, else npm; each install is recorded and removed
+  the same way if the user ticks it at uninstall. Sandhill writes into an
+  agent's own settings only when asked: Antigravity gets Sandhill's tools
+  only after "Let Antigravity use Sandhill's tools" in Manage → Agents,
+  and that exact entry is taken out when withdrawn or at uninstall.
 - Exploring tables (Huan, 2026-11-19; `docs/design/explore-next-plan.md`):
   Claude Code and Codex work in the session folder. Sandhill tells them
   to use plain words, say what the data cannot show, and read the open

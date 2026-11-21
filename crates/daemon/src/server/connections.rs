@@ -106,13 +106,16 @@ impl Daemon {
         stop_reply: Arc<Mutex<Option<u64>>>,
     ) {
         let id = request.id;
-        let shutdown_request =
-            matches!(request.call, Call::StopDaemon | Call::PrepareAttach { .. });
+        let shutdown_request = matches!(
+            request.call,
+            Call::StopDaemon | Call::PrepareAttach { .. } | Call::RunUninstall { .. }
+        );
         let exclusive = matches!(
             request.call,
             Call::StopResources { .. }
                 | Call::CleanStorage { .. }
-                | Call::UninstallComponents { .. }
+                | Call::RunUninstall { .. }
+                | Call::SetAgentTools { .. }
                 | Call::StopDaemon
                 | Call::PrepareAttach { .. }
         );
@@ -432,12 +435,12 @@ mod lifecycle_tests {
     }
 
     #[tokio::test]
-    async fn attach_cannot_interrupt_maintenance_or_restart_an_uninstall() {
+    async fn attach_cannot_interrupt_maintenance() {
         let temp = tempfile::tempdir().unwrap();
         let state = StateDir::new(temp.path().join("state"));
         let daemon = Daemon::open(state.clone()).await.unwrap();
         let client = connect(daemon.clone());
-        // The same exclusive guard held by CleanStorage/UninstallComponents.
+        // The same exclusive guard held by Clean Storage and Uninstall.
         let active = daemon.lifecycle_gate.write().await;
         let mut attach = tokio::spawn(async move {
             client
@@ -452,11 +455,10 @@ mod lifecycle_tests {
                 .is_err()
         );
         assert!(!daemon.stopping.load(Ordering::Acquire));
-        std::fs::write(state.root().join("uninstalled"), b"fixture uninstall").unwrap();
         drop(active);
-        let error = attach.await.unwrap().unwrap_err().to_string();
-        assert!(error.contains("uninstalled"), "{error}");
-        assert!(!daemon.stopping.load(Ordering::Acquire));
+        let reply = attach.await.unwrap().unwrap();
+        assert_eq!(reply["restart"], true);
+        assert!(daemon.stopping.load(Ordering::Acquire));
     }
 
     #[tokio::test]

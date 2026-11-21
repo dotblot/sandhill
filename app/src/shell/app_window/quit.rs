@@ -219,7 +219,10 @@ fn notify(cx: &mut App) {
 }
 
 pub(super) fn request(cx: &mut App) {
-    if active(cx) || cx.global::<Windows>().quitting {
+    if active(cx)
+        || cx.global::<Windows>().quitting
+        || crate::welcome::start_screen::uninstall_running(cx)
+    {
         return;
     }
     if shells(cx).is_empty() && !cx.global::<QuitState>().retired.is_empty() {

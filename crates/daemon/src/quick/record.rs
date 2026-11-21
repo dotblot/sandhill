@@ -20,6 +20,7 @@ pub const PYTHON_PACKAGE: &str = "python-package";
 pub const CONDA_PACKAGE: &str = "conda-package";
 pub const KERNEL: &str = "kernel";
 pub const AGENT: &str = "agent";
+pub(crate) const AGENT_FOLDER: &str = "agent-folder";
 pub const PYTHON_ENV: &str = "python-env";
 pub const CONDA_ENV: &str = "conda-env";
 pub const IPYKERNEL: &str = "ipykernel";
@@ -35,6 +36,7 @@ const KINDS: &[&str] = &[
     CONDA_PACKAGE,
     KERNEL,
     AGENT,
+    AGENT_FOLDER,
     PYTHON_ENV,
     CONDA_ENV,
     IPYKERNEL,
@@ -48,7 +50,7 @@ const KINDS: &[&str] = &[
 
 pub(super) type Versions = BTreeMap<String, String>;
 
-pub(super) fn lock(record: &Path, wait: bool) -> io::Result<File> {
+pub(crate) fn lock(record: &Path, wait: bool) -> io::Result<File> {
     install::lock(&record.with_file_name(".install-record.lock"), wait)
 }
 
@@ -129,6 +131,35 @@ pub(super) fn add(record: &Path, entries: impl IntoIterator<Item = QuickInstalle
     save(record, &items)
 }
 
+pub(crate) fn record_agent_folder(record: &Path, name: &str, folder: &Path) -> Result<()> {
+    let folder = folder.canonicalize()?;
+    let identity =
+        empty_agent_folder_identity(&folder).context("Could not identify the new agent folder")?;
+    let _guard = lock(record, false).context(
+        "Another install is using the record. Try adding the account again in a moment.",
+    )?;
+    add(
+        record,
+        [entry(
+            AGENT_FOLDER,
+            name,
+            identity,
+            folder
+                .to_str()
+                .context("Could not record the agent folder path")?,
+            "Sandhill",
+            "Shared with an account Sandhill added",
+        )],
+    )
+}
+
+/// Check ownership without changing the record while showing an uninstall plan.
+pub(crate) fn snapshot(record: &Path) -> Result<(Vec<QuickInstalled>, HashSet<InstalledKey>)> {
+    let mut items = load(record)?;
+    let gone = check(&mut items);
+    Ok((items, gone))
+}
+
 pub(super) fn forget_own(record: &Path, folder: &Path) -> Result<()> {
     let mut items = load(record)?;
     items.retain(|item| !Path::new(&item.place).starts_with(folder));
@@ -171,7 +202,7 @@ pub(super) fn today() -> String {
     )
 }
 
-pub(super) fn key(item: &QuickInstalled) -> InstalledKey {
+pub(crate) fn key(item: &QuickInstalled) -> InstalledKey {
     InstalledKey {
         kind: item.kind.clone(),
         name: item.name.clone(),
@@ -304,17 +335,51 @@ pub(super) fn brew_packages(brew: &Path) -> Option<Versions> {
     )
 }
 
-fn agent_path(name: &str, method: &str) -> Option<PathBuf> {
-    let path = match (name, method) {
-        ("claude", "native") => home()?.join(".local/bin/claude"),
-        ("codex", "npm") => crate::agents::find("codex")?,
-        _ => return None,
-    };
-    install::executable(&path).then_some(path)
-}
-
 pub(super) fn agent_version(name: &str, method: &str) -> Option<String> {
-    agent_path(name, method).map(|path| super::python::tool_version(&path))
+    match (name, method) {
+        ("claude", "native") => {
+            let home = home()?;
+            let path = home.join(".local/bin/claude");
+            if install::executable(&path) {
+                Some(super::python::tool_version(&path))
+            } else if home.join(".local/share/claude").symlink_metadata().is_ok() {
+                // A broken launcher still has an official install folder.
+                Some(String::new())
+            } else {
+                None
+            }
+        }
+        ("codex", "npm") => {
+            let npm = crate::agents::find("npm")?;
+            let scratch = tempfile::tempdir().ok()?;
+            let mut command = std::process::Command::new(&npm);
+            command
+                .env("npm_config_cache", scratch.path())
+                .env("npm_config_logs_max", "0");
+            if let Some(path) = crate::agents::path_for(&npm).ok()? {
+                command.env("PATH", path);
+            }
+            let output = install::probe_command_with(
+                command,
+                &["ls", "-g", "--depth=0", "--json", "@openai/codex"],
+                std::time::Duration::from_secs(10),
+                true,
+            )?;
+            let packages: Value = serde_json::from_str(&output).ok()?;
+            packages["dependencies"]["@openai/codex"]["version"]
+                .as_str()
+                .map(str::to_owned)
+        }
+        ("codex", "brew") => {
+            let brew = install::brew(&Search::from_env())?;
+            let installed = install::probe_brew(&brew, &["list", "--cask", "--versions"])?;
+            let row = installed
+                .lines()
+                .find_map(|line| line.strip_prefix("codex "))?;
+            Some(row.trim().to_owned())
+        }
+        _ => None,
+    }
 }
 
 /// The items of `kind` in `place` still as Sandhill left them, with why
@@ -348,6 +413,23 @@ fn version_status(version: Option<&str>, recorded: &str) -> Status {
         Some(current) if current == recorded => Status::Ours,
         Some(_) => Status::Changed,
     }
+}
+
+pub(crate) fn empty_agent_folder_identity(folder: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let meta = folder.symlink_metadata().ok()?;
+    if !meta.is_dir()
+        || folder.canonicalize().ok()? != folder
+        || fs::read_dir(folder).ok()?.next().is_some()
+    {
+        return None;
+    }
+    let mut digest = sha2::Sha256::new();
+    digest.update(meta.dev().to_le_bytes());
+    digest.update(meta.ino().to_le_bytes());
+    digest.update(meta.ctime().to_le_bytes());
+    digest.update(meta.ctime_nsec().to_le_bytes());
+    Some(sandhill_proto::hex(&digest.finalize()))
 }
 
 pub(super) fn directory_identity(folder: &Path) -> Option<String> {
@@ -437,12 +519,26 @@ fn check(items: &mut [QuickInstalled]) -> HashSet<InstalledKey> {
                         Status::Changed
                     }
                 }
-                // Agents update themselves; Sandhill installed this one wherever its version is now.
-                AGENT => {
-                    if agent_path(&item.name, &item.place).is_some() {
+                AGENT => match agent_version(&item.name, &item.place) {
+                    Some(current) if !version.is_empty() && current == version => Status::Ours,
+                    Some(_) => Status::Changed,
+                    None if crate::agents::find(&item.name).is_some()
+                        || (item.name == "codex"
+                            && match item.place.as_str() {
+                                "npm" => crate::agents::find("npm").is_none(),
+                                "brew" => install::brew(&search).is_none(),
+                                _ => true,
+                            }) =>
+                    {
+                        Status::Changed
+                    }
+                    None => Status::Gone,
+                },
+                AGENT_FOLDER if prefix.symlink_metadata().is_ok() => {
+                    if empty_agent_folder_identity(prefix).as_deref() == Some(version) {
                         Status::Ours
                     } else {
-                        Status::Gone
+                        Status::Changed
                     }
                 }
                 PYTHON_ENV if prefix.join("pyvenv.cfg").is_file() => {
@@ -551,6 +647,17 @@ pub fn r_append_kernel(record: &Path, dir: &str) -> String {
     )
 }
 
+fn agent_removal(name: &str, how: &str, program: Option<&Path>) -> Option<String> {
+    match (name, how) {
+        ("claude", "native") => Some(
+            "/bin/rm -f -- \"$HOME/.local/bin/claude\" && /bin/rm -rf -- \"$HOME/.local/share/claude\"".into(),
+        ),
+        ("codex", "npm") => Some(quote([program?.to_str()?, "uninstall", "-g", "@openai/codex"])),
+        ("codex", "brew") => Some(quote([program?.to_str()?, "uninstall", "--cask", "codex"])),
+        _ => None,
+    }
+}
+
 /// The command removing a group of items of one kind, from one place,
 /// installed by one tool.
 fn removal_command(group: &[&QuickInstalled], search: &Search) -> Option<String> {
@@ -593,11 +700,23 @@ fn removal_command(group: &[&QuickInstalled], search: &Search) -> Option<String>
         _ if group.len() > 1 => return None,
         KERNEL | MINIFORGE => quote(["rm", "-rf", &item.place]),
         RENV_LIBRARY => quote(["/bin/rm", "-rf", "--", &item.place]),
-        AGENT if item.name == "claude" && item.place == "native" => {
-            "rm -f \"$HOME/.local/bin/claude\" && rm -rf \"$HOME/.local/share/claude\"".into()
-        }
-        AGENT if item.name == "codex" && item.place == "npm" => {
-            quote(["npm", "uninstall", "-g", "@openai/codex"])
+        AGENT => {
+            let program = match (item.name.as_str(), item.place.as_str()) {
+                ("codex", "npm") => crate::agents::find("npm"),
+                ("codex", "brew") => install::brew(search),
+                _ => None,
+            };
+            let command = agent_removal(&item.name, &item.place, program.as_deref())?;
+            if let Some(program) = program
+                && let Some(path) = crate::agents::path_for(&program).ok()?
+            {
+                format!(
+                    "{} {command}",
+                    quote(["/usr/bin/env", &format!("PATH={path}")])
+                )
+            } else {
+                command
+            }
         }
         PYTHON_ENV if matches!(item.tool.as_str(), "uv" | "pip") => {
             quote(["rm", "-rf", &item.place])
@@ -670,9 +789,99 @@ fn conda_needed(prefix: &Path, removing: &HashSet<&str>) -> HashSet<String> {
     }
 }
 
+pub(crate) fn is_container(item: &QuickInstalled) -> bool {
+    matches!(
+        item.kind.as_str(),
+        PYTHON_ENV | CONDA_ENV | MINIFORGE | R_CRAN | RENV_LIBRARY
+    )
+}
+
+pub(crate) struct Removal<'a> {
+    pub items: Vec<&'a QuickInstalled>,
+    pub command: String,
+}
+
+type Skipped<'a> = (&'a QuickInstalled, &'static str);
+
+/// Plan the same tool commands for the install page and whole-app uninstall.
+pub(crate) fn removals<'a>(
+    chosen: &[&'a QuickInstalled],
+    search: &Search,
+) -> (Vec<Removal<'a>>, Vec<Skipped<'a>>) {
+    // What removes together: kind, place, tool, and the name when each
+    // goes on its own.
+    type GroupKey<'a> = (&'a str, &'a str, &'a str, &'a str);
+    let mut groups: Vec<(GroupKey, Vec<&QuickInstalled>)> = Vec::new();
+    let mut skipped = Vec::new();
+    for &item in chosen {
+        let kind = if item.kind == IPYKERNEL {
+            CONDA_PACKAGE
+        } else {
+            item.kind.as_str()
+        };
+        let grouped = matches!(
+            kind,
+            R_PACKAGE | CONDA_PACKAGE | PYTHON_PACKAGE | BREW | UV_PYTHON
+        );
+        let valid = if kind == R_PACKAGE {
+            r_name(&item.name)
+        } else {
+            !grouped || package_key(&item.name)
+        };
+        if !valid {
+            skipped.push((item, "Its name isn't one Sandhill can use."));
+            continue;
+        }
+        let place = if kind == UV_PYTHON {
+            ""
+        } else {
+            item.place.as_str()
+        };
+        let key = (
+            kind,
+            place,
+            item.tool.as_str(),
+            if grouped { "" } else { item.name.as_str() },
+        );
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, group)) => group.push(item),
+            None => groups.push((key, vec![item])),
+        }
+    }
+    let mut removals = Vec::new();
+    for ((kind, place, ..), mut group) in groups {
+        if kind == CONDA_PACKAGE {
+            let removing = group.iter().map(|i| i.name.as_str()).collect();
+            let needed = conda_needed(Path::new(place), &removing);
+            group.retain(|item| {
+                let keep = needed.contains(&item.name);
+                if keep {
+                    skipped.push((*item, "Other packages there need it."));
+                }
+                !keep
+            });
+        }
+        if group.is_empty() {
+            continue;
+        }
+        if let Some(command) = removal_command(&group, search) {
+            removals.push(Removal {
+                items: group,
+                command,
+            });
+        } else {
+            skipped.extend(
+                group
+                    .into_iter()
+                    .map(|item| (item, "The tool that installed it wasn't found.")),
+            );
+        }
+    }
+    (removals, skipped)
+}
+
 pub(super) fn remove(record: &Path, keys: &[InstalledKey]) -> Result<()> {
-    let mut items = load(record)?;
-    let gone = check(&mut items);
+    let (mut items, gone) = snapshot(record)?;
     let search = Search::from_env();
     let mut selected = HashSet::new();
     let mut chosen = Vec::new();
@@ -696,94 +905,35 @@ pub(super) fn remove(record: &Path, keys: &[InstalledKey]) -> Result<()> {
         }
     }
     // What is inside an environment or R being removed goes with it.
-    let containers: Vec<&QuickInstalled> = chosen
+    let containers: Vec<_> = chosen
         .iter()
         .copied()
-        .filter(|item| {
-            matches!(
-                item.kind.as_str(),
-                PYTHON_ENV | CONDA_ENV | MINIFORGE | R_CRAN | RENV_LIBRARY
-            )
-        })
+        .filter(|item| is_container(item))
         .collect();
     chosen.retain(|item| {
         !containers.iter().any(|root| {
-            !std::ptr::eq(*item, *root) && Path::new(&item.place).starts_with(&root.place)
+            !std::ptr::eq(*item, *root)
+                && root.place != item.place
+                && Path::new(&item.place).starts_with(&root.place)
         })
     });
-    /// What removes together: kind, place, tool, and the name when each
-    /// goes on its own.
-    type GroupKey<'a> = (&'a str, &'a str, &'a str, &'a str);
-    let mut groups: Vec<(GroupKey, Vec<&QuickInstalled>)> = Vec::new();
+    let (removals, skipped) = removals(&chosen, &search);
     let mut failed = 0;
-    for item in &chosen {
-        let kind = if item.kind == IPYKERNEL {
-            CONDA_PACKAGE
+    for (item, reason) in skipped {
+        println!("Left {} in {}: {reason}", item.name, item.place);
+        if reason == "Other packages there need it." {
+            left += 1;
         } else {
-            item.kind.as_str()
-        };
-        let grouped = matches!(
-            kind,
-            R_PACKAGE | CONDA_PACKAGE | PYTHON_PACKAGE | BREW | UV_PYTHON
-        );
-        let valid = if kind == R_PACKAGE {
-            r_name(&item.name)
-        } else {
-            !grouped || package_key(&item.name)
-        };
-        if !valid {
-            eprintln!(
-                "Couldn't remove {}: its name isn't one Sandhill can use.",
-                item.name
-            );
             failed += 1;
-            continue;
-        }
-        let place = if kind == UV_PYTHON {
-            ""
-        } else {
-            item.place.as_str()
-        };
-        let key = (
-            kind,
-            place,
-            item.tool.as_str(),
-            if grouped { "" } else { item.name.as_str() },
-        );
-        match groups.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, group)) => group.push(item),
-            None => groups.push((key, vec![item])),
         }
     }
-    for ((kind, place, ..), group) in &mut groups {
-        if *kind == CONDA_PACKAGE {
-            let removing = group.iter().map(|i| i.name.as_str()).collect();
-            let needed = conda_needed(Path::new(place), &removing);
-            group.retain(|item| {
-                let keep = needed.contains(&item.name);
-                if keep {
-                    println!(
-                        "Left {} in {}: other packages there need it.",
-                        item.name, item.place
-                    );
-                    left += 1;
-                }
-                !keep
-            });
-        }
-        if group.is_empty() {
-            continue;
-        }
-        let names: Vec<&str> = group.iter().map(|i| i.name.as_str()).collect();
+    for Removal {
+        items: group,
+        command,
+    } in removals
+    {
+        let names: Vec<_> = group.iter().map(|i| i.name.as_str()).collect();
         println!("Removing {} from {}.", names.join(", "), group[0].place);
-        let Some(command) = removal_command(group, &search) else {
-            eprintln!(
-                "Couldn't remove {}: the tool that installed it wasn't found.",
-                names.join(", ")
-            );
-            failed += group.len();
-            continue;
-        };
         if run_command(&command).is_ok() {
             continue;
         }
@@ -903,6 +1053,26 @@ mod tests {
             removal_command(&[&package], &search).unwrap(),
             quote([conda.to_str().unwrap(), "remove", "-y", "-p", at, "r-foo"])
         );
+    }
+
+    #[test]
+    fn agents_are_removed_only_by_the_recorded_install_method() {
+        let bin = Path::new("/my tools/npm");
+        let brew = Path::new("/my tools/brew");
+        let claude = agent_removal("claude", "native", None).unwrap();
+        assert!(claude.contains("\"$HOME/.local/bin/claude\""));
+        assert!(claude.contains("\"$HOME/.local/share/claude\""));
+        assert!(!claude.contains("\"$HOME/.claude"));
+        assert_eq!(
+            agent_removal("codex", "npm", Some(bin)).unwrap(),
+            "'/my tools/npm' 'uninstall' '-g' '@openai/codex'"
+        );
+        assert_eq!(
+            agent_removal("codex", "brew", Some(brew)).unwrap(),
+            "'/my tools/brew' 'uninstall' '--cask' 'codex'"
+        );
+        assert!(agent_removal("codex", "native", None).is_none());
+        assert!(agent_removal("antigravity", "brew", Some(brew)).is_none());
     }
 
     #[test]

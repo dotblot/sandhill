@@ -22,11 +22,12 @@ use crate::terminal::{Paths, ToHost};
 mod components;
 mod ownership;
 mod storage;
+mod uninstall;
 
 use components::{
     AGY_CONFIG, antigravity_entry, antigravity_manifest, antigravity_owned,
-    antigravity_registration_at, component_manifest, component_paths, legacy_components,
-    remove_antigravity_mcp_at, uninstall_one,
+    antigravity_registration_at, antigravity_tools_allowed_at, component_paths, legacy_components,
+    remove_antigravity_mcp_at,
 };
 use ownership::{process, processes, refresh};
 use storage::{SafeDir, path_exists, read_safe, remove_safe, storage_entry};
@@ -39,7 +40,9 @@ pub fn allowed_during_maintenance(call: &Call) -> bool {
             | Call::StopResources { .. }
             | Call::StorageInventory
             | Call::CleanStorage { .. }
-            | Call::UninstallComponents { .. }
+            | Call::Footprint
+            | Call::PlanUninstall { .. }
+            | Call::RunUninstall { .. }
             | Call::StopDaemon
             | Call::PrepareAttach { .. }
             | Call::ListSessions
@@ -312,9 +315,6 @@ impl Daemon {
     /// after any active cleanup or uninstall. Never clear the maintenance
     /// latch in place: a replacement opens only after this exits.
     pub(crate) fn prepare_attach(&self, build: &str) -> Result<Value> {
-        if self.state.root().join("uninstalled").try_exists()? {
-            bail!("Sandhill was uninstalled; automatic restart is disabled");
-        }
         // After an incomplete Stop All, resources may remain. An explicit
         // reopen still replaces the daemon: the replacement adopts what is
         // left, as after an upgrade, and lists it for another Stop All.
@@ -877,116 +877,81 @@ impl Daemon {
             json!({"success":errors.is_empty(),"results":results,"entries":self.storage_entries()?,"errors":errors}),
         )
     }
+}
 
-    pub(crate) async fn uninstall_components(&self, delete_data: bool) -> Result<Value> {
-        let stopped = self.stop_resources(false).await?;
-        if stopped["stopped"] != true {
-            return Ok(
-                json!({"success":false,"results":[],"remaining":stopped["remaining"].as_array().unwrap_or(&Vec::new()).iter().map(|r|r["id"].clone()).collect::<Vec<_>>(),"errors":stopped["errors"],"data_preserved":true}),
+/// Wait for a previous uninstall to finish before opening its folders again.
+#[doc(hidden)]
+pub async fn wait_for_removal(home: &Path) -> Result<()> {
+    uninstall::wait_for_removal(home).await
+}
+
+/// Whether Antigravity may use Sandhill's tools in a conversation.
+pub fn antigravity_tools_allowed() -> bool {
+    std::env::var_os("HOME")
+        .is_some_and(|home| antigravity_tools_allowed_at(Path::new(&home)).unwrap_or(false))
+}
+
+pub(crate) async fn set_agent_tools(kind: &str, allowed: bool, executable: &Path) -> Result<()> {
+    if kind != crate::agents::ANTIGRAVITY {
+        bail!("This agent doesn't use Sandhill's entry in its settings.");
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set")?;
+    // Withdrawing an older entry is safe even if the agent is paused. Never
+    // run the CLI while the agent is paused.
+    if !allowed {
+        if path_exists(&antigravity_manifest(&home))? {
+            remove_antigravity_mcp_at(&home)?;
+        }
+        return Ok(());
+    }
+    crate::agents::ensure_offered(kind)?;
+    let agy = crate::agents::find("agy").context("Antigravity isn't installed.")?;
+    set_antigravity_tools_at(&home, &agy, executable).await
+}
+
+async fn set_antigravity_tools_at(home: &Path, agy: &Path, executable: &Path) -> Result<()> {
+    let (server, already_added) = antigravity_registration_at(home, executable)?;
+    if !already_added {
+        let path = executable
+            .to_str()
+            .context("The Sandhill program path isn't text.")?;
+        let mut command = tokio::process::Command::new(agy);
+        command
+            .args(["mcp", "add", &server, "--", path, "mcp"])
+            .env("HOME", home)
+            .current_dir(home)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true);
+        if let Some(path) = crate::agents::path_for(agy)? {
+            command.env("PATH", path);
+        }
+        let output = tokio::time::timeout(Duration::from_secs(30), command.output())
+            .await
+            .context("Antigravity took too long to add Sandhill's tools.")??;
+        if !output.status.success() {
+            bail!(
+                "Antigravity couldn't add Sandhill's tools: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
             );
         }
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME is not set")?;
-        // Keep this tombstone even when data removal was explicitly requested.
-        let parent = SafeDir::open(self.state.root())?;
-        parent.write_file(
-            std::ffi::OsStr::new("uninstalled"),
-            b"Sandhill components were explicitly removed. Reinstall explicitly to reactivate.\n",
-        )?;
-        let mut results = Vec::new();
-        let mut remaining = Vec::new();
-        let mut errors = Vec::new();
-        for (id, relative) in component_paths()
-            .into_iter()
-            .map(|(id, path)| (id, std::borrow::Cow::Borrowed(path)))
-            .chain(legacy_components().map(|(id, path)| (id, std::borrow::Cow::Owned(path))))
-        {
-            let manifest = component_manifest(&home, id, &relative);
-            if !path_exists(&home.join(relative.as_ref()))? && manifest.is_none() {
-                continue;
-            }
-            let result = manifest
-                .with_context(|| {
-                    format!("{id}: no matching ownership record for {relative}; left in place")
-                })
-                .and_then(|manifest| uninstall_one(&home, id, &relative, &manifest));
-            let mut report = json!({"id":id,"path":relative.as_ref(),"removed":result.is_ok()});
-            if let Err(err) = result {
-                let message = format!("{err:#}");
-                report["error"] = message.clone().into();
-                remaining.push(id.to_string());
-                errors.push(message);
-            }
-            results.push(report);
-        }
-        let mcp_result = (|| -> Result<bool> {
-            if antigravity_entry(&home)?.is_none() {
-                return Ok(false);
-            }
-            remove_antigravity_mcp_at(&home)?;
-            Ok(true)
-        })();
-        match mcp_result {
-            Ok(true) => results.push(json!({"id":"antigravity-mcp","removed":true})),
-            Ok(false) => {}
-            Err(err) => {
-                let message = format!("{err:#}");
-                results.push(json!({"id":"antigravity-mcp","removed":false,"error":message}));
-                remaining.push("antigravity-mcp".into());
-                errors.push(message);
-            }
-        }
-        if delete_data {
-            let clean = self
-                .clean_storage(&["cache".into(), "history".into()])
-                .await?;
-            for report in clean["results"].as_array().into_iter().flatten() {
-                results.push(report.clone());
-            }
-            for error in clean["errors"].as_array().into_iter().flatten() {
-                errors.push(error.as_str().unwrap_or("data removal failed").to_string());
-            }
-            if clean["success"] != true {
-                remaining.push("selected device data".into());
-            }
-        }
-        // This is intentionally not a disconnect; every individual result must
-        // reach the client before it chooses StopDaemon.
-        Ok(
-            json!({"success":remaining.is_empty() && errors.is_empty(),"results":results,"remaining":remaining,"errors":errors,"data_preserved":!delete_data}),
-        )
     }
-}
-
-/// Preserve legacy/unowned registrations; use a separate tracked name rather
-/// than treating an old App path as proof that we may overwrite user settings.
-pub(crate) fn antigravity_registration(executable: &Path) -> Result<(String, bool)> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")?;
-    antigravity_registration_at(&home, executable)
-}
-
-pub(crate) fn record_antigravity_mcp(server: &str, executable: &Path) -> Result<()> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")?;
     let config: Value = serde_json::from_slice(&read_safe(&home.join(AGY_CONFIG))?)?;
     let entry = config
         .get("mcpServers")
-        .and_then(|v| v.get(server))
+        .and_then(|v| v.get(&server))
         .context("provider MCP config location was not confirmed")?;
     if entry["command"] != executable.to_string_lossy().as_ref() || entry["args"] != json!(["mcp"])
     {
         bail!("provider MCP entry does not match the just-installed command");
     }
-    let manifest = antigravity_manifest(&home);
+    let manifest = antigravity_manifest(home);
     let parent = SafeDir::ensure(manifest.parent().context("no manifest parent")?)?;
     parent.write_file(
         manifest.file_name().context("no manifest filename")?,
         &serde_json::to_vec_pretty(
-            &json!({"version":1,"component":"antigravity-mcp","path":AGY_CONFIG,"server":server,"entry":entry}),
+            &json!({"version":1,"component":"antigravity-mcp","path":AGY_CONFIG,"server":server,"entry":entry,"allowed":true}),
         )?,
     )
 }
@@ -994,6 +959,47 @@ pub(crate) fn record_antigravity_mcp(server: &str, executable: &Path) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn antigravity_settings_require_consent_and_remove_only_the_owned_entry() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let config = home.join(AGY_CONFIG);
+        let agy = home.join("agy");
+        let exe = Path::new("/Sandhill/sandhilld");
+        let legacy = json!({"command":exe,"args":["mcp"]});
+        SafeDir::ensure(config.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config,
+            json!({"mcpServers":{"sandhill":legacy}}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(&agy, r#"#!/bin/sh
+[ "$*" = 'mcp add sandhill-managed -- /Sandhill/sandhilld mcp' ] || exit 1
+printf '%s\n' 'called' >> "$HOME/calls"
+cat > "$HOME/.gemini/config/mcp_config.json" <<'EOF'
+{"mcpServers":{"sandhill":{"command":"/Sandhill/sandhilld","args":["mcp"]},"sandhill-managed":{"command":"/Sandhill/sandhilld","args":["mcp"]}}}
+EOF
+"#).unwrap();
+        std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        // Status is read-only; an identical but unowned setting isn't consent.
+        assert!(!antigravity_tools_allowed_at(&home).unwrap());
+        assert!(!home.join("calls").exists());
+        assert!(!antigravity_manifest(&home).exists());
+        set_antigravity_tools_at(&home, &agy, exe).await.unwrap();
+        assert!(antigravity_tools_allowed_at(&home).unwrap());
+        set_antigravity_tools_at(&home, &agy, exe).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(home.join("calls")).unwrap(),
+            "called\n"
+        );
+        remove_antigravity_mcp_at(&home).unwrap();
+        assert!(!antigravity_tools_allowed_at(&home).unwrap());
+        let settings: Value = serde_json::from_slice(&std::fs::read(config).unwrap()).unwrap();
+        assert_eq!(settings, json!({"mcpServers":{"sandhill":legacy}}));
+    }
 
     /// An adopted kernel is interrupted by identity: a process now holding
     /// its PID is left alone (Huan, 2026-11-18).

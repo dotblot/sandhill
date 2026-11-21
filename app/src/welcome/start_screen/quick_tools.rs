@@ -832,6 +832,17 @@ impl AppWindow {
             return setup.into_any_element();
         }
         self.quick_focus_explore(window, cx);
+        if self.start.show_install_record
+            && self
+                .start
+                .quick
+                .readiness
+                .as_ref()
+                .is_some_and(Result::is_ok)
+        {
+            self.start.show_install_record = false;
+            self.start.record_anchor.scroll_to(window, cx);
+        }
         v_flex()
             .w_full()
             .gap(px(look::GAP_12))
@@ -902,7 +913,11 @@ impl AppWindow {
                 None => progress.map(|row| look::settings_box(vec![row], p)),
             })
             .child(self.quick_environment_cards(readiness, busy || q.cards.loading, own, p, cx))
-            .child(heading("What Sandhill Installed", p))
+            .child(
+                heading("What Sandhill Installed", p)
+                    .id("quick-installed-heading")
+                    .anchor_scroll(Some(self.start.record_anchor.clone())),
+            )
             .child(look::settings_box(record, p))
             .into_any_element()
     }
@@ -1927,7 +1942,7 @@ impl AppWindow {
                 .iter()
                 .map(|agent| {
                     let index = usize::from(agent.kind == "codex");
-                    self.quick_agent_row(agent, signed_in[index], q.busy(), p, cx)
+                    self.quick_agent_row(agent, signed_in[index], q.busy() || q.checking, p, cx)
                 })
                 .collect(),
             Some(Err(_)) => {
@@ -1986,6 +2001,7 @@ impl AppWindow {
         let mut row = look::settings_row(label, Some(look::settings_detail(detail, p)));
         if agent.path.is_none() {
             row = if asking {
+                let command = agent.install.clone();
                 row.child(
                     Button::new(SharedString::from(format!("quick-agent-cancel-{kind}")))
                         .small()
@@ -2003,7 +2019,10 @@ impl AppWindow {
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.quick_start_install(
-                                Call::QuickInstallAgent { kind: kind.clone() },
+                                Call::QuickInstallAgent {
+                                    kind: kind.clone(),
+                                    command: Some(command.clone()),
+                                },
                                 Section::Ai,
                                 format!("Installing {}", agent_name(&kind)),
                                 None,

@@ -14,6 +14,25 @@ pub fn tempdir() -> std::io::Result<TempDir> {
     tempfile::tempdir().map(|dir| TempDir { dir })
 }
 
+/// The state an explicit Allow action leaves. Integration tests drive
+/// the Antigravity bridge directly while the agent is paused in the app.
+#[allow(dead_code)]
+pub fn allow_antigravity_tools(home: &Path, server: &str, entry: &serde_json::Value) {
+    let manifest = home
+        .join(sandhill_proto::INSTALL_PATH)
+        .join("antigravity-mcp.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(
+        manifest,
+        serde_json::json!({
+            "version":1, "component":"antigravity-mcp", "path":".gemini/config/mcp_config.json",
+            "server":server, "entry":entry, "allowed":true,
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
 impl TempDir {
     pub fn path(&self) -> &Path {
         self.dir.path()

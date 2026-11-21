@@ -232,6 +232,11 @@ async fn run(cli: Cli) -> Result<()> {
             // for every conversation: what differs comes from the
             // environment Sandhill gives agy.
             let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+            if env("SANDHILL_AGY_CHAT").is_some()
+                && !sandhill_daemon::lifecycle::antigravity_tools_allowed()
+            {
+                bail!("Antigravity hasn't been allowed to use Sandhill's tools.");
+            }
             let socket = match (&cli.socket, env("SANDHILL_SOCKET")) {
                 (None, Some(socket)) => PathBuf::from(socket),
                 _ => socket,
@@ -296,7 +301,6 @@ async fn run(cli: Cli) -> Result<()> {
             let code = sandhill_daemon::terminal::antigravity::run(
                 sandhill_daemon::terminal::antigravity::Options {
                     agy,
-                    executable: std::env::current_exe()?,
                     daemon: socket,
                     project,
                     options,
@@ -384,7 +388,6 @@ async fn serve(
     started_by: String,
     startup: Option<File>,
 ) -> Result<()> {
-    require_installed(&state)?;
     sandhill_daemon::memory::configure();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -452,6 +455,10 @@ async fn attach(
     start: bool,
     confirm_exit: bool,
 ) -> Result<()> {
+    let account_home = std::env::var_os("HOME").map(PathBuf::from);
+    if start && let Some(home) = &account_home {
+        sandhill_daemon::lifecycle::wait_for_removal(home).await?;
+    }
     let mut state = if home.is_some() {
         default.clone().existing_location()
     } else {
@@ -466,7 +473,6 @@ async fn attach(
         }
         let mut connected = None;
         for _ in 0..3 {
-            require_installed(&state)?;
             if prepare_daemon(&socket).await? {
                 connected = UnixStream::connect(&socket).await.ok();
                 if connected.is_some() {
@@ -476,6 +482,9 @@ async fn attach(
                 // An exiting daemon may have removed its socket while runtime
                 // teardown still holds the lifetime lock.
                 if wait_for_owner(&state, &socket).await? {
+                    if let Some(home) = &account_home {
+                        sandhill_daemon::lifecycle::wait_for_removal(home).await?;
+                    }
                     if let Some(home) = home.filter(|_| can_move) {
                         state = move_storage(home, &default)?;
                         socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
@@ -635,6 +644,12 @@ async fn ask_daemon(client: &Client, peer: &ProcessIdentity) -> Result<bool> {
                         .await
                         .context("stopped daemon did not acknowledge shutdown")??;
             }
+            Err(sandhill_proto::client::ClientError::Remote(message))
+                if message == "daemon shutdown is in progress; reconnect after it exits" =>
+            {
+                // Uninstall acquired the gate after the ping. Wait for
+                // this daemon, then check its finisher before starting one.
+            }
             Err(error) => return Err(error.into()),
         }
     }
@@ -728,7 +743,6 @@ async fn lock_startup(default: &StateDir, home: Option<&Path>) -> Result<(File, 
     } else {
         default.clone()
     };
-    require_installed(&state)?;
     state.create()?;
     Ok((
         startup_lock(&state.root().join("attach.lock")).await?,
@@ -738,7 +752,6 @@ async fn lock_startup(default: &StateDir, home: Option<&Path>) -> Result<(File, 
 
 fn move_storage(home: &Path, default: &StateDir) -> Result<StateDir> {
     let state = default.clone().existing_location();
-    require_installed(&state)?;
     let guard = (|| -> Result<Option<Vec<File>>> {
         let mut roots = vec![state.clone()];
         if let Some(old) = StateDir::legacy_location()
@@ -828,7 +841,6 @@ fn open_daemon_log(state: &StateDir) -> Result<File> {
 /// Do not move anything until that process is gone.
 async fn wait_for_owner(state: &StateDir, socket: &Path) -> Result<bool> {
     for _ in 0..150 {
-        require_installed(state)?;
         if UnixStream::connect(socket).await.is_ok() {
             return Ok(false);
         }
@@ -842,23 +854,9 @@ async fn wait_for_owner(state: &StateDir, socket: &Path) -> Result<bool> {
     )
 }
 
-/// An uninstall tombstone prevents stale clients/services from recreating data.
-fn require_installed(state: &StateDir) -> Result<()> {
-    let marker = state.root().join("uninstalled");
-    if marker.try_exists()? {
-        bail!(
-            "Sandhill was uninstalled for this state directory. Automatic startup is disabled. \
-             To explicitly reinstall, review and remove {} before connecting again.",
-            marker.display()
-        );
-    }
-    Ok(())
-}
-
 /// Starts `sandhilld serve` in its own session, logging to the state dir.
 fn start_detached(cli: &Cli, state: &StateDir) -> Result<()> {
     use std::os::unix::process::CommandExt;
-    require_installed(state)?;
     state.create()?;
     let log = open_daemon_log(state)?;
     let mut command = std::process::Command::new(std::env::current_exe()?);

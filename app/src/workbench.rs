@@ -771,7 +771,7 @@ impl Workbench {
             _subscriptions: subscriptions,
         };
         this.install_language(&this.console_input.clone(), None, cx);
-        this.connect(target, project, cx);
+        this.connect(target, project, false, cx);
         this
     }
 
@@ -890,16 +890,19 @@ impl Workbench {
         &mut self,
         target: Target,
         project: Option<String>,
+        explicit: bool,
         cx: &mut Context<Self>,
     ) {
-        if crate::shell::app_window::quit::active(cx) {
+        if crate::shell::app_window::quit::active(cx)
+            || crate::welcome::start_screen::uninstall_running(cx)
+        {
             return;
         }
         let host = match &target {
             Target::Local => sandhill_link::LOCAL,
             Target::Ssh(host) => host.as_str(),
         };
-        if crate::welcome::resource_manager::host_blocked(host, cx) {
+        if !explicit && crate::welcome::resource_manager::host_blocked(host, cx) {
             if !matches!(self.link, Link::Ready(_)) {
                 self.link = Link::Failed(
                     "Stopped or uninstalled. Connect explicitly to start again.".into(),
@@ -912,6 +915,7 @@ impl Workbench {
         let generation = self.generation;
         self.target = target.clone();
         self.link = Link::Connecting;
+        let host = host.to_owned();
         let connect = Daemon::connect(self.rt.clone(), target);
         let window_handle = self.window_handle;
         self.focus_sent = None;
@@ -922,7 +926,15 @@ impl Workbench {
                     if this.generation != generation {
                         return None;
                     }
+                    let remembered = if result.is_ok() {
+                        crate::prefs::set_server_uninstalled(&host, false)
+                    } else {
+                        Ok(())
+                    };
                     let streams = this.connected(result, project, cx);
+                    if let Err(error) = remembered {
+                        this.problem = Some(error);
+                    }
                     cx.notify();
                     streams
                 })

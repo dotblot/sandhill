@@ -11,8 +11,9 @@ use sandhill_daemon::blobs::BlobStore;
 use sandhill_daemon::journal::{Journal, SessionRecord};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    ACCOUNTS_PATH, ARK_PATH, BIN_PATH, Call, EVENT_RUN_FINISHED, INSTALL_PATH, LogTail,
-    OLD_DAEMON_LAYOUT, SANDHILL_DIR, STATE_PATH, SessionStatus,
+    ACCOUNTS_PATH, ARK_PATH, BIN_PATH, Call, EVENT_RUN_FINISHED, Footprint, INSTALL_PATH,
+    InstalledKey, LogTail, OLD_DAEMON_LAYOUT, SANDHILL_DIR, STATE_PATH, SessionStatus,
+    UninstallChoice, UninstallReport,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -162,14 +163,89 @@ async fn idle_home_moves_with_history_install_records_and_helpers() {
     assert_eq!(fs::read(home.join(".local/keep")).unwrap(), b"personal");
     let log: LogTail = client.call(Call::ReadLog { bytes: None }).await.unwrap();
     assert!(log.text.contains("Moved"), "{log:?}");
-    let result: Value = client
-        .call(Call::UninstallComponents { delete_data: false })
+    stop(client, bridge).await;
+}
+
+#[tokio::test]
+async fn uninstall_removes_selected_package_reports_and_exits_before_the_folder_goes() {
+    let temp = common::tempdir().unwrap();
+    let home = temp.path().canonicalize().unwrap();
+    let state = home.join(STATE_PATH);
+    let library = home.join("R-library");
+    fs::create_dir_all(library.join("sample")).unwrap();
+    fs::write(
+        library.join("sample/DESCRIPTION"),
+        "Package: sample\nVersion: 1.0\n",
+    )
+    .unwrap();
+    let extras = home.join("project/.sandhill");
+    fs::create_dir_all(&extras).unwrap();
+    fs::write(extras.join("results"), "user data").unwrap();
+    let (client, mut bridge) = open(command(&home)).await;
+    fs::write(
+        state.join("installed-by-sandhill.tsv"),
+        format!(
+            "r-package\tsample\t1.0\t{}\t2026-11-20\tr\n",
+            library.display()
+        ),
+    )
+    .unwrap();
+    let footprint: Footprint = client.call(Call::Footprint).await.unwrap();
+    assert_eq!(Path::new(&footprint.folder), home.join(SANDHILL_DIR));
+    assert!(
+        footprint
+            .items
+            .iter()
+            .any(|row| row.path == state.to_str().unwrap())
+    );
+    assert!(
+        footprint
+            .installed
+            .iter()
+            .any(|row| row.name == "sample" && row.ours)
+    );
+
+    let report: UninstallReport = client
+        .call(Call::RunUninstall {
+            choice: UninstallChoice {
+                installed: vec![InstalledKey {
+                    kind: "r-package".into(),
+                    name: "sample".into(),
+                    place: library.to_str().unwrap().into(),
+                }],
+                agents: Vec::new(),
+                keep_history: false,
+            },
+            app_pid: None,
+        })
         .await
         .unwrap();
-    assert_eq!(result["success"], true, "{result}");
-    assert!(!home.join(ARK_PATH).exists());
-    assert!(new.root().join("uninstalled").is_file());
-    stop(client, bridge).await;
+    assert!(report.success, "{report:?}");
+    assert_eq!(
+        report.removed,
+        [library.join("sample").display().to_string()]
+    );
+    assert!(report.finishing.contains(&footprint.folder));
+    assert!(!library.join("sample").exists());
+    let status = tokio::time::timeout(Duration::from_secs(20), bridge.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success(), "{status}");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while home.join(SANDHILL_DIR).exists() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the finisher did not remove Sandhill's folder");
+    assert_eq!(fs::read(extras.join("results")).unwrap(), b"user data");
+    assert!(!home.join("sandhill-uninstall-leftovers.txt").exists());
+    assert!(
+        !home
+            .join("Desktop/sandhill-uninstall-leftovers.txt")
+            .exists()
+    );
 }
 
 #[tokio::test]

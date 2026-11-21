@@ -79,6 +79,23 @@ where an older plan differs, this wins.
   remain only what the system decides: one Keychain entry, macOS's
   folders for the app id, a temporary socket folder, and the Antigravity
   entry when asked for.
+- What Sandhill has put here, and uninstalling (Huan, 2026-11-20;
+  `docs/design/clean-footprint-plan.md`, section 7): Manage → What
+  Sandhill Has Put on This Computer lists, any time and per device,
+  Sandhill's folder part by part with sizes, the places the system
+  decides (macOS's folders for `dev.sandhill.ide`, the Keychain entry,
+  the temporary socket folder), agent settings entries Sandhill added,
+  old places, what it installed into the user's R and Python, and the
+  agents it installed. Uninstall Sandhill is a card at its foot: what
+  it installed into the user's R and Python is ticked, the agents it
+  installed are not (sign-ins stay), history is kept unless the user
+  ticks deleting it, this device is ticked and others are not. A review
+  shows what goes, what stays and the commands; Uninstall stops the
+  device's work, removes what it can, and a finisher removes the folder
+  and macOS's folders once Sandhill has closed (leaving a list on the
+  Desktop only if something couldn't go). Projects, their `.sandhill`
+  folders, data and results are never touched. The app remembers
+  servers it was uninstalled from, so they don't reinstall by themselves.
 
 ## Folder trust
 - Folder trust (Huan, 2026-11-12): the first open of a folder asks once;

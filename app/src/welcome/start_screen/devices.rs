@@ -6,13 +6,14 @@ impl AppWindow {
     /// Render-time connects respect per-server preferences; explicit actions do not.
     pub(super) fn ensure_machine(&mut self, host: &str, cx: &mut Context<Self>) {
         if auto_connect_host(host, &self.start.auto_connect) {
-            self.connect_machine(host, cx);
+            self.connect_machine(host, false, cx);
         }
     }
 
-    pub(super) fn connect_machine(&mut self, host: &str, cx: &mut Context<Self>) {
+    pub(super) fn connect_machine(&mut self, host: &str, explicit: bool, cx: &mut Context<Self>) {
         if crate::shell::app_window::quit::active(cx)
-            || crate::welcome::resource_manager::host_blocked(host, cx)
+            || uninstall_running(cx)
+            || (!explicit && crate::welcome::resource_manager::host_blocked(host, cx))
             || self.resource_manager.is_some()
             || self.start.machines.contains_key(host)
         {
@@ -65,6 +66,9 @@ impl AppWindow {
         let attempt = self
             .start
             .set_machine(host.clone(), MachineLink::Ready(Rc::new(daemon)));
+        if let Err(error) = crate::prefs::set_server_uninstalled(&host, false) {
+            self.start.problem = Some(error);
+        }
         fetch(&mut self.start.machines, host.clone(), cx);
         let mut terminals = streams.terminals;
         let terminal_host = host.clone();
@@ -114,8 +118,11 @@ impl AppWindow {
         {
             return;
         }
+        if !crate::welcome::resource_manager::allow_host(host, cx) {
+            return;
+        }
         self.start.machines.remove(host);
-        self.connect_machine(host, cx);
+        self.connect_machine(host, true, cx);
         cx.notify();
     }
 
@@ -156,6 +163,12 @@ impl AppWindow {
                 return;
             }
         };
+        if !crate::welcome::resource_manager::allow_host(&host, cx) {
+            self.start.server_problem =
+                Some("Sandhill cannot connect to this server right now.".into());
+            cx.notify();
+            return;
+        }
         self.start.server_problem = None;
         self.start.connecting_server = Some(host.clone());
         self.start.server_attempt += 1;

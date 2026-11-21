@@ -9,8 +9,8 @@
 //!   make ([`super::chat`]), so the chat shows every agent the same way.
 //! - Headless agy can't ask for permission: what it would have asked about
 //!   is turned down, and the chat says so. Skip permissions runs everything.
-//! - Sandhill's tools reach it as an MCP server in agy's own settings,
-//!   added once with `agy mcp add sandhill`, as a user would add one.
+//! - Sandhill's tools reach it in agy's own settings only when the user
+//!   allows that in Manage, under Agents.
 //! - Headless agy runs without the conversation's terminal ([`headless`]),
 //!   and a message whose agy says nothing within [`START_TIMEOUT`] fails
 //!   with what it said on stderr (a sign-in it waits for, say).
@@ -63,8 +63,6 @@ const START_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Options {
     /// The `agy` CLI.
     pub agy: PathBuf,
-    /// `sandhilld`, which agy starts as Sandhill's MCP server.
-    pub executable: PathBuf,
     /// The daemon's socket, for where the user is and for the MCP server.
     pub daemon: PathBuf,
     pub project: Option<String>,
@@ -118,8 +116,8 @@ pub async fn run(options: Options) -> Result<i32> {
             .unwrap_or_default(),
         bridge.cwd.display()
     );
-    if let Err(err) = bridge.add_tools(&options.executable).await {
-        let text = format!("Antigravity doesn't have Sandhill's tools: {err:#}");
+    if !crate::lifecycle::antigravity_tools_allowed() {
+        let text = "Antigravity is running without Sandhill's tools. To allow them, open Manage, then Agents.";
         println!("{text}");
         bridge.chat(json!({"kind": "error", "text": text})).await;
     }
@@ -356,28 +354,9 @@ struct Reply {
 }
 
 impl Bridge {
-    /// Preserve legacy/user registrations and track our separate replacement.
-    async fn add_tools(&self, executable: &Path) -> Result<()> {
-        let (server, ready) = crate::lifecycle::antigravity_registration(executable)?;
-        if ready {
-            return Ok(());
-        }
-        let exe = executable.to_string_lossy();
-        let (ok, said) = self
-            .agy_command(&["mcp", "add", &server, "--", &exe, "mcp"])
-            .await?;
-        if !ok {
-            bail!("`agy mcp add {server}` failed: {}", said.trim());
-        }
-        crate::lifecycle::record_antigravity_mcp(&server, executable)?;
-        println!(
-            "Added Sandhill's tools to Antigravity (`agy mcp remove {server}` takes them out)."
-        );
-        Ok(())
-    }
-
     fn conversation_command(&self) -> tokio::process::Command {
         let mut command = account_command(&self.agy);
+        command.env("SANDHILL_AGY_CHAT", "1");
         super::Terminals::scope_child(&mut command, &self.dir);
         command
     }

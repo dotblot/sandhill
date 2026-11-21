@@ -401,10 +401,18 @@ pub(crate) fn package_title(plan: &PackagePlan) -> String {
     }
 }
 
-pub(super) fn run_command(command: &str) -> Result<()> {
-    let status = Command::new("/bin/bash")
-        .arg("-c")
-        .arg(command)
+pub(crate) fn run_command(command: &str) -> Result<()> {
+    run_command_with_path(command, None)
+}
+
+fn run_command_with_path(command: &str, path: Option<&str>) -> Result<()> {
+    let mut shell = Command::new("/bin/bash");
+    if let Some(path) = path {
+        shell.env("PATH", path);
+    }
+    let status = shell
+        .env_remove("BASH_ENV")
+        .args(["--noprofile", "--norc", "-o", "pipefail", "-c", command])
         .stdin(Stdio::null())
         .status()?;
     if !status.success() {
@@ -454,7 +462,19 @@ pub async fn worker(record_path: &Path, payload: &str) -> Result<()> {
             name,
             method,
         } => {
-            run_command(&command)?;
+            let program = match method.as_str() {
+                "brew" => brew(&Search::from_env()).context("Homebrew wasn't found.")?,
+                "npm" => crate::agents::find("npm").context("Node.js wasn't found.")?,
+                "native" if name == "claude" => PathBuf::from("/bin/bash"),
+                _ => bail!("Sandhill doesn't know how to install this agent."),
+            };
+            if crate::agents::find(&name).is_some()
+                || record::agent_version(&name, &method).is_some()
+            {
+                bail!("This agent is already installed.");
+            }
+            let path = crate::agents::path_for(&program)?;
+            run_command_with_path(&command, path.as_deref())?;
             let version = record::agent_version(&name, &method).unwrap_or_default();
             record::add(
                 record_path,
@@ -464,7 +484,7 @@ pub async fn worker(record_path: &Path, payload: &str) -> Result<()> {
                     version,
                     &method,
                     &method,
-                    "Installed from the R and Python page",
+                    "Installed from Manage, under Agents",
                 )],
             )
         }

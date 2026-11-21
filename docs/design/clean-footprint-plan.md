@@ -446,7 +446,7 @@ Each step is usable on its own and committed when done:
 6. Section 6: one folder for Sandhill's own files and the move (no
    login item, Huan 2026-11-20). Built 2026-11-20.
 7. Sections 5 and 7: agents' settings, the footprint page, the new
-   uninstall.
+   uninstall. Built 2026-11-21.
 8. Section 11, the lock and remote computers.
 9. Section 8: the leftover test, run once on this Mac in a fresh user
    account after Huan agrees.

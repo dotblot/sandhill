@@ -440,11 +440,17 @@ impl Daemon {
         .await
     }
 
-    pub(super) async fn quick_install_agent(&self, kind: String) -> Result<Value> {
+    pub(super) async fn quick_install_agent(
+        &self,
+        kind: String,
+        command: Option<String>,
+    ) -> Result<Value> {
         let record = self.install_record();
         let executable = self.options.executable.clone();
-        self.quick_job(move |log| setup::install_agent(&executable, &kind, log, &record))
-            .await
+        self.quick_job(move |log| {
+            setup::install_agent(&executable, &kind, command.as_deref(), log, &record)
+        })
+        .await
     }
 
     pub(super) async fn quick_add_ipykernel(&self, prefix: String) -> Result<Value> {

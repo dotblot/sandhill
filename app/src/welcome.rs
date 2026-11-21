@@ -1,6 +1,6 @@
 //! The Welcome window and what it reaches: devices and projects
 //! (`start_screen`), choosing folders on servers, folder trust, Resources
-//! and Storage with removing Sandhill, and project settings.
+//! and Storage, Sandhill's footprint and uninstall, and project settings.
 
 pub(crate) mod app_uninstall;
 pub(crate) mod folder_dialog;

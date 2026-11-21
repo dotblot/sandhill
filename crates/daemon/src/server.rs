@@ -279,8 +279,12 @@ impl Daemon {
             Call::StopResources { force } => self.stop_resources(force).await?,
             Call::StorageInventory => self.storage_inventory()?,
             Call::CleanStorage { categories } => self.clean_storage(&categories).await?,
-            Call::UninstallComponents { delete_data } => {
-                self.uninstall_components(delete_data).await?
+            Call::Footprint => serde_json::to_value(self.footprint().await?)?,
+            Call::PlanUninstall { choice } => {
+                serde_json::to_value(self.plan_uninstall(choice).await?)?
+            }
+            Call::RunUninstall { choice, app_pid } => {
+                serde_json::to_value(self.run_uninstall(choice, app_pid).await?)?
             }
             Call::Ping => self.ping()?,
             Call::ListKernelspecs => {
@@ -358,7 +362,9 @@ impl Daemon {
                 Value::Null
             }
             Call::RemoveInstalled { items } => self.remove_installed(items).await?,
-            Call::QuickInstallAgent { kind } => self.quick_install_agent(kind).await?,
+            Call::QuickInstallAgent { kind, command } => {
+                self.quick_install_agent(kind, command).await?
+            }
             Call::QuickAddIpykernel { prefix } => self.quick_add_ipykernel(prefix).await?,
             Call::QuickStart { tables } => self.quick_start(tables).await?,
             Call::QuickKeep {
@@ -821,6 +827,10 @@ impl Daemon {
                 serde_json::to_value(blocking(move || Ok(files::stat(&paths))).await?)?
             }
             Call::ListAgents => serde_json::to_value(crate::agents::list().await)?,
+            Call::SetAgentTools { kind, allowed } => {
+                crate::lifecycle::set_agent_tools(&kind, allowed, &self.options.executable).await?;
+                Value::Null
+            }
             Call::AgentModels { kind } => {
                 crate::agents::ensure_offered(&kind)?;
                 crate::agents::models(&kind).await?
@@ -846,11 +856,11 @@ impl Daemon {
                 api_key,
             } => {
                 crate::agents::ensure_offered(&kind)?;
-                serde_json::to_value(crate::accounts::Registry::from_env().add(
-                    &kind,
-                    &name,
-                    api_key.as_deref(),
-                )?)?
+                serde_json::to_value(
+                    crate::accounts::Registry::from_env()
+                        .with_state(self.state.root())
+                        .add(&kind, &name, api_key.as_deref())?,
+                )?
             }
             Call::RenameAgentAccount { id, name } => {
                 serde_json::to_value(crate::accounts::Registry::from_env().rename(&id, &name)?)?

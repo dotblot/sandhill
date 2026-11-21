@@ -228,9 +228,11 @@ async fn agy_over_ssh_answers_fails_in_bounded_time_and_opens_its_command_line()
     // Sandhill's tools are already in agy's settings.
     let config = home.join(".gemini/config/mcp_config.json");
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let entry = json!({"command":exe,"args":["mcp"]});
+    common::allow_antigravity_tools(&home, "sandhill", &entry);
     std::fs::write(
         &config,
-        json!({"mcpServers":{"sandhill":{"command":exe,"args":["mcp"]}}}).to_string(),
+        json!({"mcpServers":{"sandhill":entry}}).to_string(),
     )
     .unwrap();
     let project_name = project.to_string_lossy().into_owned();

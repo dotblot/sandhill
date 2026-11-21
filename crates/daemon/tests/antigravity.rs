@@ -342,9 +342,13 @@ async fn antigravity_works_through_the_chat() {
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     let legacy = json!({"command":"/expired/Sandhill.app/Contents/MacOS/sandhilld","args":["mcp"]});
     let user_server = json!({"command":"/user/custom-server","args":["--own"]});
+    let exe = PathBuf::from(env!("CARGO_BIN_EXE_sandhilld"));
+    let owned = json!({"command":exe,"args":["mcp"]});
+    common::allow_antigravity_tools(&home, "sandhill-managed", &owned);
     std::fs::write(
         &config,
-        json!({"mcpServers":{"sandhill":legacy,"user":user_server}}).to_string(),
+        json!({"mcpServers":{"sandhill":legacy,"sandhill-managed":owned,"user":user_server}})
+            .to_string(),
     )
     .unwrap();
 
@@ -353,7 +357,6 @@ async fn antigravity_works_through_the_chat() {
         documents: vec!["qc.ipynb".into()],
         ..AgentOptions::default()
     };
-    let exe = PathBuf::from(env!("CARGO_BIN_EXE_sandhilld"));
     let project_name = project.to_string_lossy().into_owned();
     let context = Context {
         executable: &exe,
@@ -415,7 +418,7 @@ async fn antigravity_works_through_the_chat() {
     let written: Value =
         serde_json::from_str(&std::fs::read_to_string(project.join("qc.ipynb")).unwrap()).unwrap();
     assert_eq!(written["cells"][1]["source"], json!(["print(6 * 7)"]));
-    // Sandhill's tools were added to agy's settings, as `agy mcp add` does.
+    // The chat does not change the settings left by explicit consent.
     let added: Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
     assert_eq!(
         added["mcpServers"]["sandhill-managed"]["command"],
@@ -667,7 +670,8 @@ async fn antigravity_works_through_the_chat() {
     assert_eq!(resumed[0].event["source"], "resume");
     let last = runs(&log).pop().unwrap();
     assert!(args(&last).ends_with(&["--conversation".into(), "conv-1".into()]));
-    // Resumed, it was told about Sandhill before, and is added once.
+    // Resumed, it was told about Sandhill before. Without the user's
+    // consent, Sandhill's tools are never added to agy's own settings.
     assert_eq!(
         last["prompt"].as_str().unwrap().lines().next(),
         Some("Make a file")
@@ -677,7 +681,7 @@ async fn antigravity_works_through_the_chat() {
         .lines()
         .filter(|l| l.contains("\"added\""))
         .count();
-    assert_eq!(added, 1);
+    assert_eq!(added, 0);
     terminals.close(&info.id).await.unwrap();
 }
 
@@ -700,4 +704,23 @@ async fn agy_lists_its_models_before_a_conversation() {
     assert_eq!(models[0]["id"], "gemini-3.6-flash-high");
     assert_eq!(models[0]["default"], true);
     assert_eq!(models[1]["id"], "gemini-3.1-pro-low");
+}
+
+#[test]
+fn antigravity_bridge_cannot_use_an_old_registration_without_consent() {
+    let home = common::tempdir().unwrap();
+    let config = home.path().join(".gemini/config/mcp_config.json");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let before = br#"{"mcpServers":{"sandhill":{"command":"sandhilld","args":["mcp"]}}}"#;
+    std::fs::write(&config, before).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sandhilld"))
+        .arg("mcp")
+        .env("HOME", home.path())
+        .env("SANDHILL_AGY_CHAT", "1")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("hasn't been allowed"));
+    assert_eq!(std::fs::read(&config).unwrap(), before);
+    assert!(!home.path().join(sandhill_proto::INSTALL_PATH).exists());
 }

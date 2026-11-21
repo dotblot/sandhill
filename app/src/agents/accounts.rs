@@ -7,6 +7,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -81,6 +82,9 @@ pub(crate) struct AccountManager {
     login_id: Option<String>,
     /// The device's agents: installed or not, and their versions.
     agents: Vec<AgentInfo>,
+    agents_revision: u64,
+    tools_busy: bool,
+    tools_error: Option<String>,
     /// The account whose ⋯ menu is open.
     menu: Option<String>,
     /// The account whose row asks "Remove …?", and why removing failed.
@@ -116,6 +120,9 @@ impl AccountManager {
             login: None,
             login_id: None,
             agents: Vec::new(),
+            agents_revision: 0,
+            tools_busy: false,
+            tools_error: None,
             menu: None,
             removing: None,
             remove_error: None,
@@ -130,17 +137,57 @@ impl AccountManager {
 
     /// Reads which agents the device has, and their versions.
     pub(crate) fn load_agents(&mut self, cx: &mut Context<Self>) {
+        self.agents_revision += 1;
+        let revision = self.agents_revision;
         let listed = self.daemon.call::<Vec<AgentInfo>>(Call::ListAgents);
         cx.spawn(async move |this, cx| {
             if let Ok(agents) = listed.await {
                 this.update(cx, |this, cx| {
-                    this.agents = agents;
-                    cx.notify();
+                    if this.agents_revision == revision {
+                        this.agents = agents;
+                        cx.notify();
+                    }
                 })
                 .ok();
             }
         })
         .detach();
+    }
+
+    fn set_antigravity_tools(&mut self, allowed: bool, cx: &mut Context<Self>) {
+        let kind = "antigravity";
+        if self.tools_busy || sandhill_proto::agent_paused(kind) {
+            return;
+        }
+        self.tools_busy = true;
+        self.tools_error = None;
+        let request = self.daemon.call::<()>(Call::SetAgentTools {
+            kind: kind.into(),
+            allowed,
+        });
+        cx.spawn(async move |this, cx| {
+            let result = request.await;
+            this.update(cx, |this, cx| {
+                this.tools_busy = false;
+                match result {
+                    Ok(()) => {
+                        if let Some(agent) = this.agents.iter_mut().find(|agent| agent.kind == kind)
+                        {
+                            agent.tools_in_settings = Some(allowed);
+                        }
+                        this.load_agents(cx);
+                    }
+                    Err(error) => {
+                        this.tools_error =
+                            Some(format!("Couldn't change Antigravity's settings: {error}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     /// The page's Refresh: the agents, and every account of an agent
@@ -894,6 +941,9 @@ impl AccountManager {
         let install = info
             .filter(|_| missing && on)
             .map(|info| info.install.clone());
+        if let Some(command) = install.as_ref() {
+            detail = detail.child(div().font_family(look::mono()).child(command.clone()));
+        }
         let id = kind.kind;
         let head = h_flex()
             .w_full()
@@ -939,6 +989,34 @@ impl AccountManager {
             )
             .into_any_element();
         let mut rows = vec![head];
+        if id == "antigravity"
+            && let Some(allowed) = info.and_then(|info| info.tools_in_settings)
+        {
+            rows.push(
+                v_flex()
+                    .pl(px(INDENT))
+                    .pr(px(look::PANE_PAD_X))
+                    .py(px(look::PANE_PAD_Y))
+                    .gap(px(look::GAP_4))
+                    .child(
+                        Checkbox::new("antigravity-tools-consent")
+                            .label("Let Antigravity use Sandhill's tools")
+                            .checked(allowed)
+                            .disabled(self.tools_busy || (missing && !allowed))
+                            .on_click(cx.listener(|this, allowed: &bool, _, cx| {
+                                this.set_antigravity_tools(*allowed, cx)
+                            })),
+                    )
+                    .child(look::settings_detail(
+                        "This adds a Sandhill entry to ~/.gemini/config/mcp_config.json. Untick it to remove just that entry.",
+                        p,
+                    ))
+                    .when_some(self.tools_error.as_ref(), |d, error| {
+                        d.child(div().text_color(p.err).whitespace_normal().child(error.clone()))
+                    })
+                    .into_any_element(),
+            );
+        }
         if on && WITH_ACCOUNTS.contains(&id) {
             let accounts: Vec<&AgentAccount> = self
                 .accounts

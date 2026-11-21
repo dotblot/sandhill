@@ -409,6 +409,9 @@ pub(crate) fn update_projects(
 /// Opens a project in the main window, opening that window if needed, and
 /// closes Welcome.
 pub(crate) fn open_in_main(host: String, path: String, cx: &mut App) {
+    if crate::welcome::start_screen::uninstall_running(cx) {
+        return;
+    }
     match cx.global::<Windows>().main.clone() {
         Some(main) => main.update(cx, |this, window, cx| {
             window.activate_window();
@@ -442,6 +445,9 @@ pub(crate) fn in_main(
 }
 
 fn close_welcome(cx: &mut App) {
+    if crate::welcome::start_screen::uninstall_running(cx) {
+        return;
+    }
     if let Some(welcome) = cx.global::<Windows>().welcome.clone() {
         welcome.update(cx, |_, window, _| window.remove_window());
     }
@@ -645,7 +651,7 @@ impl AppWindow {
             if cx.global::<Windows>().quitting {
                 return true;
             }
-            if quit::active(cx) {
+            if quit::active(cx) || crate::welcome::start_screen::uninstall_running(cx) {
                 return false;
             }
             // Welcome alone: closing it quits, asking about background work.
@@ -921,6 +927,9 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if crate::welcome::start_screen::uninstall_running(cx) {
+            return;
+        }
         if !self.welcome {
             cx.defer(move |cx| show_welcome(Some(mode), cx));
             return;
@@ -949,6 +958,9 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if crate::welcome::start_screen::uninstall_running(cx) {
+            return;
+        }
         // Welcome opens projects in the main window, then closes.
         if self.welcome {
             cx.defer(move |cx| open_in_main(host, path, cx));
@@ -1146,7 +1158,7 @@ impl AppWindow {
     /// Saves every edited document in every tab, then closes the window
     /// (⇧⌘W).
     pub(crate) fn save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if quit::active(cx) {
+        if quit::active(cx) || crate::welcome::start_screen::uninstall_running(cx) {
             return;
         }
         if self.welcome {
@@ -1314,6 +1326,17 @@ impl Render for AppWindow {
                 window.focus(&self.focus, cx);
             }
             self.render_start(window, cx)
+        } else if crate::welcome::start_screen::uninstall_running(cx) {
+            self.focus.focus(window, cx);
+            let p = Palette::get(cx);
+            look::wall(p)
+                .size_full()
+                .items_center()
+                .justify_center()
+                .text_size(px(look::chrome()))
+                .text_color(p.muted)
+                .child("Sandhill is uninstalling. See the report in Welcome.")
+                .into_any_element()
         } else {
             match self.shown().or_else(|| self.tabs.first()) {
                 Some(tab) => tab.workbench.clone().into_any_element(),
@@ -1360,9 +1383,12 @@ impl Render for AppWindow {
                 drop(w.prompt(PromptLevel::Info, "Sandhill", Some(&detail), &["OK"], cx));
             }))
             .child(content)
-            .when(!self.welcome && !self.quick, |d| {
-                d.child(self.render_project_tabs(cx))
-            })
+            .when(
+                !self.welcome
+                    && !self.quick
+                    && !crate::welcome::start_screen::uninstall_running(cx),
+                |d| d.child(self.render_project_tabs(cx)),
+            )
             .children(quit::render(self, cx))
     }
 }

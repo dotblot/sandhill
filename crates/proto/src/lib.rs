@@ -1105,9 +1105,13 @@ pub enum Call {
         without_asking: bool,
     },
     /// Installs Claude Code (`claude`) or Codex (`codex`) with its own
-    /// install command in a job, recording it. Returns [`QuickInstalling`].
+    /// install command in a job, recording it. `command` is the command
+    /// the user was shown; the daemon refuses when the one it would run
+    /// now differs. Returns [`QuickInstalling`].
     QuickInstallAgent {
         kind: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
     },
     /// Removes the record's `items` that are still as Sandhill left them,
     /// each with the tool that installed it, in a job, and drops them from
@@ -1216,11 +1220,33 @@ pub enum Call {
     CleanStorage {
         categories: Vec<String>,
     },
-    /// Removes only provenance-verified components after graceful resource stop.
-    /// Preserves data unless explicitly selected. Does not stop this daemon,
-    /// so clients receive individual failures rather than a false success.
-    UninstallComponents {
-        delete_data: bool,
+    /// Everything Sandhill has put on this computer, outside the user's
+    /// projects: its folder, the places the system decides, agent settings
+    /// entries it added, the record of what it installed into the user's
+    /// R and Python, and the agents it installed. Returns [`Footprint`].
+    Footprint,
+    /// What Uninstall Sandhill will remove and keep with `choice`, without
+    /// changing anything. Returns [`UninstallPlan`].
+    PlanUninstall {
+        choice: UninstallChoice,
+    },
+    /// Uninstalls as [`Call::PlanUninstall`] showed: stops this device's
+    /// kernels, terminals and jobs first, removes what it can at once and
+    /// leaves what can only go once Sandhill has closed to a finisher that
+    /// runs after the daemon exits (and, with `app_pid`, after the local
+    /// app that asked has quit). Returns [`UninstallReport`].
+    RunUninstall {
+        choice: UninstallChoice,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        app_pid: Option<u32>,
+    },
+    /// Allows or withdraws Sandhill's entry in an agent's own settings
+    /// (Antigravity's MCP server list): allowing adds it with the agent's
+    /// own command and records it; withdrawing takes exactly that entry
+    /// out. Returns nothing.
+    SetAgentTools {
+        kind: String,
+        allowed: bool,
     },
     /// Modification times of files, to notice changes made outside the app
     /// (by an agent, say). Returns `Vec<FileStat>` in the same order.
@@ -1724,8 +1750,15 @@ mod tests {
                 json!({"method":"clean_storage","params":{"categories":["cache"]}}),
             ),
             (
-                Call::UninstallComponents { delete_data: false },
-                json!({"method":"uninstall_components","params":{"delete_data":false}}),
+                Call::RunUninstall {
+                    choice: UninstallChoice {
+                        installed: vec![],
+                        agents: vec![],
+                        keep_history: true,
+                    },
+                    app_pid: None,
+                },
+                json!({"method":"run_uninstall","params":{"choice":{"installed":[],"agents":[],"keep_history":true}}}),
             ),
         ] {
             assert_eq!(serde_json::to_value(&call).unwrap(), wire);
@@ -1735,8 +1768,10 @@ mod tests {
             serde_json::from_value::<Call>(json!({"method":"stop_resources","params":{}})).is_err()
         );
         assert!(
-            serde_json::from_value::<Call>(json!({"method":"uninstall_components","params":{}}))
-                .is_err()
+            serde_json::from_value::<Call>(
+                json!({"method":"run_uninstall","params":{"choice":{}}})
+            )
+            .is_err()
         );
     }
     #[test]

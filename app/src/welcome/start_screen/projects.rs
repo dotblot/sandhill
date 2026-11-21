@@ -108,7 +108,7 @@ impl AppWindow {
             .is_none_or(|m| matches!(m.link, MachineLink::Disconnected))
         {
             self.start.machines.remove(&host);
-            self.connect_machine(&host, cx);
+            self.connect_machine(&host, false, cx);
         }
         let Some(daemon) = self.machine_daemon(&host) else {
             return;
@@ -867,6 +867,7 @@ impl AppWindow {
         let machine = self.start.machines.get(&host);
         let link = machine.map(|m| &m.link);
         let local = host == sandhill_link::LOCAL;
+        let removed = crate::prefs::server_uninstalled(&host);
         let connected = matches!(link, Some(MachineLink::Ready(_)));
         let subtitle = if connected {
             let projects = machine
@@ -880,6 +881,9 @@ impl AppWindow {
                     .count()
             });
             connected_summary(projects, kernels)
+        } else if removed && !matches!(link, Some(MachineLink::Connecting | MachineLink::Failed(_)))
+        {
+            "Use Connect to install Sandhill on this server again.".into()
         } else {
             connection_text(link)
         };
@@ -899,7 +903,9 @@ impl AppWindow {
                 d.child(self.welcome_connection_button(
                     host.clone(),
                     "host-connection",
-                    if matches!(link, Some(MachineLink::Failed(_))) {
+                    if removed && matches!(link, Some(MachineLink::Failed(_))) {
+                        "Try Again"
+                    } else if matches!(link, Some(MachineLink::Failed(_))) {
                         "Reconnect"
                     } else {
                         "Connect"
@@ -932,7 +938,8 @@ impl AppWindow {
                         Switch::new("host-auto-connect")
                             .small()
                             .color(p.accent)
-                            .checked(auto_connect_host(&host, &self.start.auto_connect))
+                            .checked(!removed && auto_connect_host(&host, &self.start.auto_connect))
+                            .disabled(removed)
                             .accessibility_label("Connect automatically")
                             .on_change(cx.listener(move |this, on: &bool, _, cx| {
                                 this.start.auto_connect.insert(auto_host.clone(), *on);

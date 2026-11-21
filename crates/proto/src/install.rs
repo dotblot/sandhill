@@ -813,3 +813,101 @@ pub struct ProjectPackageFile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub differences: Vec<String>,
 }
+
+/// What kind of place a [`FootprintItem`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FootprintKind {
+    /// Inside Sandhill's folder (`~/.sandhill`).
+    Folder,
+    /// A place the system decides: macOS's folders for the app id, the
+    /// Keychain entry, a temporary socket folder.
+    System,
+    /// An entry Sandhill added to an agent's own settings, or a folder it
+    /// made there, recorded so exactly it can be taken out.
+    AgentSetting,
+    /// An old place from before the one-folder layout, still in use or
+    /// left over.
+    OldPlace,
+}
+
+/// One place Sandhill has put something.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FootprintItem {
+    /// Its full path (for the Keychain, `Keychain: dev.sandhill.agent-account`).
+    pub path: String,
+    /// In plain words: "History and outputs", "Sandhill's own R and Python".
+    pub what: String,
+    pub kind: FootprintKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_mb: Option<u64>,
+    /// Anything to know, in plain words: "Still in use: a kernel from
+    /// before is running", "Removed once Sandhill has closed".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+/// What Sandhill has put on this computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Footprint {
+    /// Sandhill's folder, `~/.sandhill`.
+    pub folder: String,
+    /// Everything Sandhill has put here, in MB (its folder and the rest).
+    pub size_mb: u64,
+    pub items: Vec<FootprintItem>,
+    /// What Sandhill installed into the user's own R and Python (the
+    /// record, without agents).
+    #[serde(default)]
+    pub installed: Vec<crate::QuickInstalled>,
+    /// The agents Sandhill installed (record lines of kind `agent`).
+    #[serde(default)]
+    pub agents: Vec<crate::QuickInstalled>,
+}
+
+/// The user's answers on Uninstall Sandhill. Every field is required, so
+/// nothing is removed by a default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UninstallChoice {
+    /// Record lines to remove from the user's own R and Python (all ticked
+    /// by default, Huan 2026-11-20).
+    pub installed: Vec<InstalledKey>,
+    /// Agents (`claude`, `codex`) to remove in their official way (none
+    /// ticked by default); their sign-ins always stay.
+    pub agents: Vec<String>,
+    /// Keep Sandhill's history (conversations, file history, outputs) in
+    /// `~/.sandhill/state`.
+    pub keep_history: bool,
+}
+
+/// What Uninstall Sandhill will do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UninstallPlan {
+    pub choice: UninstallChoice,
+    pub remove: Vec<FootprintItem>,
+    /// What stays, each with why: the history when kept, the user's
+    /// projects and their `.sandhill` folders, data and results, items
+    /// changed since Sandhill left them.
+    pub keep: Vec<FootprintItem>,
+    /// The commands, in order.
+    pub steps: Vec<SetupStep>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+}
+
+/// What Uninstall Sandhill did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UninstallReport {
+    /// Removed, by path or name.
+    pub removed: Vec<String>,
+    /// What failed to go, each with the reason in its `note`. What was
+    /// kept on purpose is in [`UninstallPlan::keep`], never here.
+    pub left: Vec<FootprintItem>,
+    /// Removed by the finisher once Sandhill has closed (Sandhill's
+    /// folder, macOS's folders for the app).
+    pub finishing: Vec<String>,
+    /// Nothing failed and the finisher started: the app may move itself
+    /// to the Trash once every ticked device succeeded.
+    pub success: bool,
+}

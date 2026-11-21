@@ -76,11 +76,6 @@ pub(crate) async fn connect(
     progress: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<Connection, Error> {
     let server = probe(destination, options).await?;
-    if server.uninstalled {
-        return Err(Error::Failed(format!(
-            "Sandhill was uninstalled on {destination}; an explicit reinstall is required before reconnecting"
-        )));
-    }
     let build = match &options.builds {
         Some(dir) => find_build(dir, &server, "sandhilld")?,
         None => None,
@@ -179,7 +174,6 @@ struct Server {
     ark: Option<String>,
     ty: Option<String>,
     ruff: Option<String>,
-    uninstalled: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -195,29 +189,49 @@ fn legacy_dir(current: &str) -> &'static str {
         .expect("known Sandhill directory")
 }
 
-/// Match daemon startup, including explicitly empty state overrides.
-fn state_root_script() -> String {
-    let old = legacy_dir(STATE_PATH);
-    format!(
-        r#"
-if [ "${{SANDHILL_STATE_DIR+x}}" = x ]; then
-  state="${{SANDHILL_STATE_DIR:-.}}"
-else
-  state="$HOME/{STATE_PATH}"
-  if [ ! -e "$state" ] && [ ! -L "$state" ] && [ -d "$HOME/{old}" ]; then
-    state="$HOME/{old}"
-  fi
-fi
-"#
-    )
+// Marker names match the daemon's finisher. The home hash isolates two
+// independent installations under a single account, and the process start
+// time ensures a reused PID cannot keep a crashed uninstall on hold.
+const WAIT_FOR_UNINSTALL: &str = r#"
+wait_for_uninstall() {
+  home=$(cd -P -- "$HOME" && pwd -P) || return 1
+  hash=$(printf '%s' "$home" | sha256sum 2>/dev/null) ||
+    hash=$(printf '%s' "$home" | shasum -a 256) || return 1
+  uid=$(id -u) || return 1
+  deadline=$(($(date +%s) + 30))
+  while :; do
+    active=no
+    for marker in "/tmp/sandhill-uninstall-$uid-${hash%% *}-"*; do
+      [ -f "$marker" ] && [ ! -L "$marker" ] && [ -O "$marker" ] || continue
+      pid=${marker##*-}
+      case "$pid" in ''|*[!0-9]*) continue;; esac
+      [ "$pid" -gt 0 ] || continue
+      expected=$(cat "$marker") || continue
+      current=$(LC_ALL=C /bin/ps -o lstart= -p "$pid" 2>/dev/null) || current=
+      status=$(/bin/ps -o stat= -p "$pid" 2>/dev/null) || status=
+      case "$status" in ''|*Z*) current=;; esac
+      if [ -n "$current" ] && [ "$expected" = "$current" ]; then
+        active=yes
+      else
+        rm -f -- "$marker"
+      fi
+    done
+    [ "$active" = yes ] || return 0
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo 'Sandhill is still being removed from this computer. Try again in a moment.' >&2
+      return 1
+    fi
+    sleep 0.1
+  done
 }
+wait_for_uninstall || exit 1
+"#;
 
 /// Runs on the server with `sh -s`. Prints `key=value` lines. The login
 /// shell's output is cut down to its environment after a marker, because
 /// shell profiles can print anything. `timeout` guards against profiles
 /// that wait for input or start tmux.
 const PROBE: &str = r#"
-if [ -e "$state/uninstalled" ] || [ -L "$state/uninstalled" ]; then echo "uninstalled=yes"; fi
 echo "os=$(uname -s)"
 echo "arch=$(uname -m)"
 mark=__SANDHILL_ENV__
@@ -282,10 +296,9 @@ async fn probe(destination: &Destination, options: &Options) -> Result<Server, E
 }
 
 fn probe_script() -> String {
-    let state = state_root_script();
     let old_bin = legacy_dir(BIN_PATH);
     format!(
-        "{state}\nd=\"$HOME/{DAEMON_PATH}\"\nlegacy=\"$HOME/{OLD_DAEMON_PATH}\"\nbin=\"$HOME/{BIN_PATH}\"\nold_bin=\"$HOME/{old_bin}\"\n{PROBE}"
+        "{WAIT_FOR_UNINSTALL}\nd=\"$HOME/{DAEMON_PATH}\"\nlegacy=\"$HOME/{OLD_DAEMON_PATH}\"\nbin=\"$HOME/{BIN_PATH}\"\nold_bin=\"$HOME/{old_bin}\"\n{PROBE}"
     )
 }
 
@@ -300,7 +313,6 @@ fn parse_probe(text: &str) -> Server {
             "arch" => server.arch = value.trim().to_string(),
             "path" => server.path = Some(value.to_string()).filter(|p| !p.is_empty()),
             "r" => server.r = value.trim() == "yes",
-            "uninstalled" => server.uninstalled = value.trim() == "yes",
             "ark" => server.ark = Some(value.trim().to_string()).filter(|h| h.len() == 64),
             "ty" => server.ty = Some(value.trim().to_string()).filter(|h| h.len() == 64),
             "ruff" => server.ruff = Some(value.trim().to_string()).filter(|h| h.len() == 64),
@@ -483,7 +495,6 @@ pub(crate) fn install_script(target: &str, sha256: &str) -> Result<String, Error
     }
     let (dir, name) = target.rsplit_once('/').expect("allowlisted path");
     let manifest = install_manifest(component, target, sha256);
-    let state_root = state_root_script();
     let old_bin = legacy_dir(BIN_PATH);
     let old_install = legacy_dir(INSTALL_PATH);
     // A single-quoted outer command prevents the login shell from expanding
@@ -492,8 +503,7 @@ pub(crate) fn install_script(target: &str, sha256: &str) -> Result<String, Error
         r#"set -eu
 umask 077
 cd "$HOME"
-{state_root}
-[ ! -e "$state/uninstalled" ] && [ ! -L "$state/uninstalled" ] || {{ echo "Sandhill was uninstalled; explicit reinstall required" >&2; exit 1; }}
+{WAIT_FOR_UNINSTALL}
 for p in {SANDHILL_DIR} {dir} {INSTALL_PATH}; do
   [ ! -L "$p" ] || {{ echo "refusing a linked install folder: $p" >&2; exit 1; }}
 done
@@ -731,7 +741,6 @@ mod tests {
                 ark: Some(hash),
                 ty: None,
                 ruff: None,
-                uninstalled: false,
             }
         );
         // Nothing installed, and a shell that gave no PATH.
@@ -1043,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn installation_refuses_symlinked_directories_and_uninstalled_state() {
+    fn installation_refuses_symlinked_directories() {
         let home = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(), home.path().join(SANDHILL_DIR)).unwrap();
@@ -1058,17 +1067,45 @@ mod tests {
                 .join(Path::new(BIN_PATH).file_name().unwrap())
                 .exists()
         );
-        let retired = tempfile::tempdir().unwrap();
-        let state = retired.path().join(STATE_PATH);
-        std::fs::create_dir_all(&state).unwrap();
-        std::fs::write(state.join("uninstalled"), b"retired").unwrap();
+    }
+
+    #[test]
+    fn installation_waits_for_uninstall_and_clears_its_stale_marker() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path().canonicalize().unwrap();
+        let uid = std::process::Command::new("id").arg("-u").output().unwrap();
+        let uid = std::str::from_utf8(&uid.stdout).unwrap().trim();
+        let hash = sandhill_proto::hex(&Sha256::digest(home.as_os_str().as_bytes()));
+        let mut finisher = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = finisher.id();
+        let start = std::process::Command::new("/bin/ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
+        assert!(start.status.success());
+        let marker = PathBuf::from(format!("/tmp/sandhill-uninstall-{uid}-{hash}-{pid}"));
+        std::fs::write(&marker, start.stdout).unwrap();
+        let install_home = home.clone();
+        let worker =
+            std::thread::spawn(move || install_in(&install_home, DAEMON_PATH, b"build", None));
+        std::thread::sleep(Duration::from_millis(300));
+        let waiting = !home.join(SANDHILL_DIR).exists() && marker.exists();
+        finisher.kill().unwrap();
+        finisher.wait().unwrap();
+        let output = worker.join().unwrap();
+        assert!(waiting, "the installer didn't wait for the finisher");
         assert!(
-            !install_in(retired.path(), DAEMON_PATH, b"build", None)
-                .status
-                .success()
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
         );
-        assert!(!retired.path().join(DAEMON_PATH).exists());
-        assert!(parse_probe("uninstalled=yes\n").uninstalled);
+        assert!(home.join(DAEMON_PATH).is_file());
+        assert!(!marker.exists());
     }
 
     #[test]

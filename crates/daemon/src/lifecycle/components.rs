@@ -72,17 +72,17 @@ pub(super) fn antigravity_registration_at(
         json!({})
     };
     let owned_name = antigravity_server_name(home)?;
-    for name in ["sandhill", "sandhill-managed"] {
-        let Some(entry) = config.get("mcpServers").and_then(|v| v.get(name)) else {
-            return Ok((name.into(), false));
-        };
-        if entry["command"] == executable.to_string_lossy().as_ref()
+    let servers = &config["mcpServers"];
+    if let Some(entry) = servers.get(&owned_name)
+        && antigravity_owned(home, entry).is_ok()
+    {
+        let ready = entry["command"] == executable.to_string_lossy().as_ref()
             && entry["args"] == json!(["mcp"])
-            && entry.get("disabled").and_then(Value::as_bool) != Some(true)
-        {
-            return Ok((name.into(), true));
-        }
-        if name == owned_name && antigravity_owned(home, entry).is_ok() {
+            && entry.get("disabled").and_then(Value::as_bool) != Some(true);
+        return Ok((owned_name, ready));
+    }
+    for name in ["sandhill", "sandhill-managed"] {
+        if servers.get(name).is_none() {
             return Ok((name.into(), false));
         }
     }
@@ -117,8 +117,27 @@ pub(super) fn antigravity_owned(home: &Path, entry: &Value) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn antigravity_tools_allowed_at(home: &Path) -> Result<bool> {
+    let manifest = antigravity_manifest(home);
+    if !path_exists(&manifest)? {
+        return Ok(false);
+    }
+    let manifest: Value = serde_json::from_slice(&read_safe(&manifest)?)?;
+    Ok(manifest["allowed"] == true
+        && antigravity_entry(home)?.is_some_and(|entry| {
+            entry["disabled"] != true && antigravity_owned(home, &entry).is_ok()
+        }))
+}
+
 pub(super) fn remove_antigravity_mcp_at(home: &Path) -> Result<()> {
     let path = home.join(AGY_CONFIG);
+    let manifest = antigravity_manifest(home);
+    if !path_exists(&manifest)? {
+        bail!("Antigravity's tool entry was not added by Sandhill.");
+    }
+    if antigravity_entry(home)?.is_none() {
+        return remove_safe(&manifest);
+    }
     let server = antigravity_server_name(home)?;
     let before = read_safe(&path)?;
     let mut config: Value = serde_json::from_slice(&before)?;
@@ -137,96 +156,38 @@ pub(super) fn remove_antigravity_mcp_at(home: &Path) -> Result<()> {
         &before,
         &serde_json::to_vec_pretty(&config)?,
     )?;
-    remove_safe(&antigravity_manifest(home))?;
+    remove_safe(&manifest)?;
     Ok(())
 }
 
-pub(super) fn uninstall_one(home: &Path, id: &str, relative: &str, manifest: &Path) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    let bytes = read_safe(manifest)
-        .with_context(|| format!("{id}: no readable ownership manifest; preserved"))?;
+pub(super) fn owned_component(
+    home: &Path,
+    id: &str,
+    relative: &str,
+    manifest: &Path,
+) -> Result<String> {
+    let bytes = read_safe(manifest).context("No readable ownership record.")?;
     let record: Value = serde_json::from_slice(&bytes)?;
     if record["version"] != 1 || record["component"] != id || record["path"] != relative {
-        bail!("{id}: invalid ownership manifest; preserved");
+        bail!("The ownership record doesn't match this path.");
     }
     let path = home.join(relative);
-    if path_exists(&path)? {
-        let parent = SafeDir::open(path.parent().context("no installed file parent")?)?;
-        let mut file = parent.open_file(path.file_name().context("no installed filename")?)?;
-        let installed = file.metadata()?;
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 64 * 1024];
-        loop {
-            let count = file.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            hasher.update(&buffer[..count]);
+    let parent = SafeDir::open(path.parent().context("No installed file parent.")?)?;
+    let mut file = parent.open_file(path.file_name().context("No installed file name.")?)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let bytes = file.read(&mut buffer)?;
+        if bytes == 0 {
+            break;
         }
-        let digest = sandhill_proto::hex(&hasher.finalize());
-        if record["sha256"] != digest {
-            bail!("{id}: installed file was modified; preserved");
-        }
-        // Never stop this running service synchronously: StopDaemon follows the
-        // delivered response. Disable its future launch before removing files.
-        if id == "systemd" {
-            let status = std::process::Command::new("systemctl")
-                .args(["--user", "disable", "sandhilld.service"])
-                .status()?;
-            if !status.success() {
-                bail!("could not disable owned systemd service");
-            }
-            if std::process::Command::new("systemctl")
-                .args(["--user", "is-active", "--quiet", "sandhilld.service"])
-                .status()?
-                .success()
-            {
-                bail!(
-                    "owned systemd service is disabled but still loaded/running; stop it outside the daemon before removing its service file"
-                );
-            }
-        } else if id == "launchd" {
-            let target = format!("gui/{}/dev.sandhill.sandhilld", unsafe { libc::getuid() });
-            let status = std::process::Command::new("launchctl")
-                .args(["disable", &target])
-                .status()?;
-            if !status.success() {
-                bail!("could not disable owned launchd service");
-            }
-            if std::process::Command::new("launchctl")
-                .args(["print", &target])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()?
-                .success()
-            {
-                bail!(
-                    "owned launchd service is disabled but still loaded; unload it outside the daemon before removing its service file"
-                );
-            }
-        }
-        let current = parent
-            .open_file(path.file_name().context("no installed filename")?)?
-            .metadata()?;
-        if (
-            installed.dev(),
-            installed.ino(),
-            installed.len(),
-            installed.mtime(),
-            installed.mtime_nsec(),
-        ) != (
-            current.dev(),
-            current.ino(),
-            current.len(),
-            current.mtime(),
-            current.mtime_nsec(),
-        ) {
-            bail!("{id}: installed file changed during removal; preserved");
-        }
-        parent.remove(path.file_name().context("no installed filename")?)?;
+        hasher.update(&buffer[..bytes]);
     }
-    remove_safe(manifest)?;
-    Ok(())
+    let digest = sandhill_proto::hex(&hasher.finalize());
+    if record["sha256"] != digest {
+        bail!("The installed file has changed.");
+    }
+    Ok(digest)
 }
 
 #[cfg(test)]
@@ -242,16 +203,17 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"owned").unwrap();
         let manifest = home.join("manifest.json");
-        assert!(uninstall_one(&home, "sandhilld", relative, &manifest).is_err());
+        assert!(owned_component(&home, "sandhilld", relative, &manifest).is_err());
         assert!(path.exists());
         std::fs::write(&manifest, serde_json::to_vec(&json!({"version":1,"component":"sandhilld","path":relative,"sha256":sandhill_proto::hex(&Sha256::digest(b"owned"))})).unwrap()).unwrap();
         std::fs::write(&path, b"modified").unwrap();
-        assert!(uninstall_one(&home, "sandhilld", relative, &manifest).is_err());
+        assert!(owned_component(&home, "sandhilld", relative, &manifest).is_err());
         assert!(path.exists());
         std::fs::write(&path, b"owned").unwrap();
-        uninstall_one(&home, "sandhilld", relative, &manifest).unwrap();
-        assert!(!path.exists());
-        assert!(!manifest.exists());
+        assert_eq!(
+            owned_component(&home, "sandhilld", relative, &manifest).unwrap(),
+            sandhill_proto::hex(&Sha256::digest(b"owned")),
+        );
     }
     #[test]
     fn mcp_removal_preserves_unrelated_servers_and_auth_settings() {

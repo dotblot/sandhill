@@ -17,16 +17,21 @@ use crate::terminal::Launch;
 const KINDS: [&str; 3] = [CLAUDE, CODEX, ANTIGRAVITY];
 static LOCK: Mutex<()> = Mutex::new(());
 #[cfg(target_os = "macos")]
-const KEY_SERVICE: &str = "dev.sandhill.agent-account";
+pub(crate) const KEY_SERVICE: &str = "dev.sandhill.agent-account";
 
 pub struct Registry {
     root: PathBuf,
     homes: Homes,
+    record: Option<PathBuf>,
 }
 
 impl Registry {
     pub fn new(root: PathBuf, homes: Homes) -> Self {
-        Self { root, homes }
+        Self {
+            root,
+            homes,
+            record: None,
+        }
     }
 
     pub fn from_env() -> Self {
@@ -35,6 +40,16 @@ impl Registry {
             crate::paths::installed_path(&home, sandhill_proto::ACCOUNTS_PATH, ""),
             Homes::from_env(),
         )
+        .with_state(
+            crate::paths::StateDir::default_location()
+                .existing_location()
+                .root(),
+        )
+    }
+
+    pub(crate) fn with_state(mut self, state: &Path) -> Self {
+        self.record = Some(state.join(crate::quick::record::FILE));
+        self
     }
 
     fn folder(&self, id: &str) -> Result<PathBuf> {
@@ -199,8 +214,22 @@ impl Registry {
             ),
             _ => return Ok(()),
         };
-        // This empty conversation directory is the sole permitted write in the original home.
-        std::fs::create_dir_all(source.join(required))?;
+        // Only make the shared conversation folder when it isn't there yet.
+        let shared = source.join(required);
+        std::fs::create_dir_all(source)?;
+        match std::fs::create_dir(&shared) {
+            Ok(()) => {
+                if let Some(record) = &self.record
+                    && let Err(err) =
+                        crate::quick::record::record_agent_folder(record, &account.kind, &shared)
+                {
+                    let _ = std::fs::remove_dir(&shared);
+                    return Err(err);
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && shared.is_dir() => {}
+            Err(err) => return Err(err.into()),
+        }
         let destination = self.folder(&account.id)?;
         for name in links {
             let target = source.join(name);

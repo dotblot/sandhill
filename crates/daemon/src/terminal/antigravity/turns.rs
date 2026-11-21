@@ -38,7 +38,7 @@ impl Bridge {
             Default::default()
         };
         let mut input = String::new();
-        if tell {
+        if tell && crate::lifecycle::antigravity_tools_allowed() {
             input.push_str(&self.instructions);
             input.push_str("\n\n");
         }

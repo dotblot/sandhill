@@ -26,17 +26,22 @@ fn read() -> Value {
 }
 
 fn write(key: &str, value: Value) {
+    let _ = write_setting(key, value);
+}
+
+fn write_setting(key: &str, value: Value) -> Result<(), String> {
     if SAVES_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed) {
-        return;
+        return Err("Sandhill is closing after settings cleanup".into());
     }
-    let Some(storage) = app_storage::paths() else {
-        return;
-    };
+    let storage = app_storage::paths().ok_or("Cannot find the home folder")?;
     let mut all = read();
-    if let Some(map) = all.as_object_mut() {
-        map.insert(key.to_string(), value);
-    }
-    let _ = storage.write(Setting::Preferences, all.to_string().as_bytes());
+    let map = all
+        .as_object_mut()
+        .ok_or("Cannot read Sandhill's settings")?;
+    map.insert(key.to_string(), value);
+    storage
+        .write(Setting::Preferences, all.to_string().as_bytes())
+        .map_err(|err| format!("Cannot save Sandhill's settings: {err}"))
 }
 
 pub(crate) fn file_history_limits() -> sandhill_proto::FileHistoryLimits {
@@ -663,6 +668,38 @@ pub(crate) fn server_auto_connect() -> std::collections::BTreeMap<String, bool> 
 
 pub(crate) fn save_server_auto_connect(servers: &std::collections::BTreeMap<String, bool>) {
     write("serverAutoConnect", json!(servers));
+}
+
+type UninstalledServers = std::collections::BTreeSet<String>;
+static UNINSTALLED_SERVERS: std::sync::LazyLock<std::sync::Mutex<UninstalledServers>> =
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(
+            serde_json::from_value(read()["uninstalledServers"].clone()).unwrap_or_default(),
+        )
+    });
+
+/// Do not reinstall the server from a restored project or an automatic connection.
+pub(crate) fn server_uninstalled(host: &str) -> bool {
+    host != sandhill_link::LOCAL && UNINSTALLED_SERVERS.lock().unwrap().contains(host)
+}
+
+pub(crate) fn set_server_uninstalled(host: &str, uninstalled: bool) -> Result<(), String> {
+    if host == sandhill_link::LOCAL {
+        return Ok(());
+    }
+    let mut remembered = UNINSTALLED_SERVERS.lock().unwrap();
+    if remembered.contains(host) == uninstalled {
+        return Ok(());
+    }
+    let mut next = remembered.clone();
+    if uninstalled {
+        next.insert(host.into());
+    } else {
+        next.remove(host);
+    }
+    write_setting("uninstalledServers", json!(next))?;
+    *remembered = next;
+    Ok(())
 }
 
 pub fn save_servers(list: &[String]) -> Result<(), String> {
