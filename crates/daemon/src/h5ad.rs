@@ -27,6 +27,10 @@ const MAX_READ: usize = 16 * 1024 * 1024;
 const READ_BUDGET: u64 = 128 * 1024 * 1024;
 const MAX_REPLY: usize = 24 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// The memory a reader may use.
+const MEMORY: u64 = 256 * 1024 * 1024;
+#[cfg(target_os = "macos")]
+const TOO_BIG: &str = "This .h5ad needs more memory than a preview may use";
 static WORKERS: Semaphore = Semaphore::const_new(2);
 
 type Attrs = HashMap<String, AttrValue>;
@@ -41,6 +45,7 @@ pub(crate) async fn describe(executable: &Path, path: String) -> Result<Value> {
         .kill_on_drop(true)
         .spawn()
         .context("Could not start the AnnData reader")?;
+    let pid = child.id().context("The AnnData reader didn't start")?;
     let mut stdout = child
         .stdout
         .take()
@@ -49,12 +54,19 @@ pub(crate) async fn describe(executable: &Path, path: String) -> Result<Value> {
     let mut stderr = child.stderr.take().expect("piped stderr").take(4097);
     let mut reply = Vec::new();
     let mut error = Vec::new();
-    let (reply, error, status) = tokio::time::timeout(TIMEOUT, async {
+    let work = async {
         tokio::try_join!(
             async move { stdout.read_to_end(&mut reply).await.map(|_| reply) },
             async move { stderr.read_to_end(&mut error).await.map(|_| error) },
             child.wait(),
         )
+        .map_err(anyhow::Error::from)
+    };
+    let (reply, error, status) = tokio::time::timeout(TIMEOUT, async {
+        tokio::select! {
+            done = work => done,
+            over = watch_memory(pid, MEMORY) => Err(over),
+        }
     })
     .await
     .context("Reading this .h5ad took too long")??;
@@ -93,9 +105,12 @@ pub fn worker(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// On Linux the reader caps its own address space. On a Mac that cap counts
+/// what the system allocator reserves, not what is used: macOS 15 refused a
+/// tiny zlib allocation under it (GitHub's runner, 2026-11-21) and newer
+/// macOS ignores it, so [`watch_memory`] stops the reader from outside.
+#[cfg(not(target_os = "macos"))]
 fn limit_worker_memory() -> Result<()> {
-    const MEMORY: libc::rlim_t = 256 * 1024 * 1024;
-    let ceiling = already_mapped()?.saturating_add(MEMORY);
     let mut limit = libc::rlimit {
         rlim_cur: 0,
         rlim_max: 0,
@@ -105,8 +120,8 @@ fn limit_worker_memory() -> Result<()> {
         return Err(io::Error::last_os_error())
             .context("Could not get AnnData reader memory limit");
     }
-    limit.rlim_cur = limit.rlim_cur.min(ceiling);
-    limit.rlim_max = limit.rlim_max.min(ceiling);
+    limit.rlim_cur = limit.rlim_cur.min(MEMORY as libc::rlim_t);
+    limit.rlim_max = limit.rlim_max.min(MEMORY as libc::rlim_t);
     // SAFETY: setrlimit reads the initialized struct and limits only this worker.
     if unsafe { libc::setrlimit(libc::RLIMIT_AS, &limit) } != 0 {
         return Err(io::Error::last_os_error()).context("Could not limit AnnData reader memory");
@@ -115,32 +130,47 @@ fn limit_worker_memory() -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn already_mapped() -> Result<libc::rlim_t> {
-    // Darwin counts the shared system mappings and rejects any ceiling below
-    // the existing address space. Limit new mappings instead.
+fn limit_worker_memory() -> Result<()> {
+    Ok(())
+}
+
+/// Stops the reader `pid` once the memory it really uses passes `limit`,
+/// checked every 20 ms; never returns otherwise. The reader is a child not
+/// yet waited for, so its pid can't have been reused.
+#[cfg(target_os = "macos")]
+async fn watch_memory(pid: u32, limit: u64) -> anyhow::Error {
+    loop {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        if resident(pid).is_some_and(|used| used > limit) {
+            // SAFETY: signals only the reader this function was given.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            return anyhow!(TOO_BIG);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn watch_memory(_pid: u32, _limit: u64) -> anyhow::Error {
+    std::future::pending().await
+}
+
+/// The memory `pid` uses now, in bytes.
+#[cfg(target_os = "macos")]
+fn resident(pid: u32) -> Option<u64> {
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
     let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
-    // SAFETY: info is writable for size bytes; the PID is this worker's.
+    // SAFETY: info is writable for size bytes.
     let read = unsafe {
         libc::proc_pidinfo(
-            libc::getpid(),
+            pid as libc::c_int,
             libc::PROC_PIDTASKINFO,
             0,
             info.as_mut_ptr().cast(),
             size,
         )
     };
-    ensure!(
-        read == size,
-        "Could not measure AnnData reader address space"
-    );
     // SAFETY: proc_pidinfo reported writing the complete struct.
-    Ok(unsafe { info.assume_init() }.pti_virtual_size)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn already_mapped() -> Result<libc::rlim_t> {
-    Ok(0)
+    (read == size).then(|| unsafe { info.assume_init() }.pti_resident_size)
 }
 
 // Offset reads keep the input file off the heap even when it is many GB. Cap
@@ -361,4 +391,44 @@ fn clipped(mut value: String, limit: usize) -> String {
         value.push('…');
     }
     value
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    /// A process holding `mb` megabytes of touched memory, until killed.
+    fn holding(mb: usize) -> tokio::process::Child {
+        Command::new("/usr/bin/perl")
+            .args(["-e", &format!("$x = 'a' x ({mb} * 1024 * 1024); sleep 30")])
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_reader_is_stopped_only_past_its_memory() {
+        let mut big = holding(64);
+        let over = tokio::time::timeout(
+            Duration::from_secs(10),
+            watch_memory(big.id().unwrap(), 16 * 1024 * 1024),
+        )
+        .await
+        .expect("a process past the limit is stopped");
+        assert_eq!(over.to_string(), TOO_BIG);
+        let status = big.wait().await.unwrap();
+        assert_eq!(
+            std::os::unix::process::ExitStatusExt::signal(&status),
+            Some(libc::SIGKILL)
+        );
+
+        let mut small = holding(1);
+        let watched = tokio::time::timeout(
+            Duration::from_millis(500),
+            watch_memory(small.id().unwrap(), MEMORY),
+        )
+        .await;
+        assert!(watched.is_err(), "a process under the limit keeps running");
+        assert!(small.try_wait().unwrap().is_none());
+    }
 }
