@@ -138,7 +138,10 @@ impl Search {
             conda_lists: in_home(".conda/environments.txt").into_iter().collect(),
             conda_roots,
             version_dirs: pyenv.map(|p| p.join("versions")).into_iter().collect(),
-            ark: in_home(sandhill_proto::ARK_PATH).filter(|p| p.is_file()),
+            ark: var("HOME")
+                .map(PathBuf::from)
+                .map(|home| crate::paths::installed_path(&home, sandhill_proto::BIN_PATH, "ark"))
+                .filter(|p| p.is_file()),
             project: None,
             own: None,
         }

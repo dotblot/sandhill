@@ -17,11 +17,11 @@ pub fn find_binary(project: &Path, interpreter: Option<&Path>, name: &str) -> Op
         candidates.extend(std::env::split_paths(&path).map(|dir| dir.join(name)));
     }
     if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(
-            PathBuf::from(home)
-                .join(".local/share/sandhill/bin")
-                .join(name),
-        );
+        candidates.push(crate::paths::installed_path(
+            Path::new(&home),
+            sandhill_proto::BIN_PATH,
+            name,
+        ));
     }
     candidates.into_iter().find(|path| {
         std::fs::metadata(path)

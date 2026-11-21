@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use sandhill_proto::{ARK_PATH, RUFF_PATH, TY_PATH};
+use sandhill_proto::{ARK_PATH, DAEMON_PATH, RUFF_PATH, TY_PATH};
 use tokio::process::Command;
 use tokio::sync::OnceCell;
 
@@ -21,6 +21,21 @@ pub(crate) async fn connect(
 ) -> Result<Connection, Error> {
     let program = find().ok_or(Error::NotFound)?;
     let path = login_path().await;
+    let mut command = Command::new(&program);
+    if let Some(socket) = std::env::var_os("SANDHILL_SOCKET") {
+        command.arg("--socket").arg(socket);
+    }
+    command.args(["attach", "--start", "--confirm-exit"]);
+    // The daemon started from here passes this on to every kernel.
+    if let Some(path) = &path {
+        command.env("PATH", path);
+    }
+    if cfg!(target_os = "macos") && std::env::var_os("LANG").is_none() {
+        // Apps opened from the Finder get no locale, and R warns about it.
+        command.env("LANG", "en_US.UTF-8");
+    }
+    let connection = crate::attach(command, &program.display().to_string(), ANSWER_TIMEOUT).await?;
+    // Opening the daemon first lets it move the old bin and install folders.
     if let Some(dir) = &options.builds
         && let Some(home) = std::env::var_os("HOME")
     {
@@ -42,21 +57,7 @@ pub(crate) async fn connect(
         )
         .await;
     }
-    let mut command = Command::new(&program);
-    if let Some(socket) = std::env::var_os("SANDHILL_SOCKET") {
-        command.arg("--socket").arg(socket);
-    }
-    command.args(["attach", "--start", "--confirm-exit"]);
-    // The daemon started from here passes this on to every kernel.
-    if let Some(path) = path {
-        command.env("PATH", path);
-    }
-    if cfg!(target_os = "macos") && std::env::var_os("LANG").is_none() {
-        // Apps opened from the Finder get no locale, and R warns about it.
-        command.env("LANG", "en_US.UTF-8");
-    }
-
-    crate::attach(command, &program.display().to_string(), ANSWER_TIMEOUT).await
+    Ok(connection)
 }
 
 /// Whether `R` runs from `path` (else this process's `PATH`).
@@ -136,7 +137,7 @@ pub(crate) fn find() -> Option<PathBuf> {
         candidates.push(dir.join("sandhilld"));
     }
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        candidates.push(home.join(".local/bin/sandhilld"));
+        candidates.push(home.join(DAEMON_PATH));
         candidates.push(home.join(".cargo/bin/sandhilld"));
     }
     if let Some(path) = std::env::var_os("PATH") {
@@ -185,6 +186,7 @@ async fn read_login_path() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sandhill_proto::INSTALL_PATH;
 
     fn payloads(dir: &Path, bytes: &[u8]) {
         for name in ["ty", "ruff"] {
@@ -211,9 +213,7 @@ mod tests {
                 std::fs::read(home.path().join(target)).unwrap(),
                 b"first build"
             );
-            let record = home
-                .path()
-                .join(format!(".local/share/sandhill/install/{name}.json"));
+            let record = home.path().join(INSTALL_PATH).join(format!("{name}.json"));
             let text = std::fs::read_to_string(&record).unwrap();
             assert!(text.contains(&ssh::sha256_file(&home.path().join(target)).unwrap()));
             std::fs::remove_file(record).unwrap();
@@ -234,7 +234,8 @@ mod tests {
             assert!(
                 !home
                     .path()
-                    .join(format!(".local/share/sandhill/install/{name}.json"))
+                    .join(INSTALL_PATH)
+                    .join(format!("{name}.json"))
                     .exists()
             );
         }

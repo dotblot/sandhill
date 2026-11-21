@@ -2,9 +2,11 @@
 //! models. A small JSON file; reading or writing it failing is never an
 //! error.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde_json::{Value, json};
+
+use crate::app_storage::{self, Setting, safe_regular_file};
 
 static SAVES_SUSPENDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -12,21 +14,12 @@ pub(crate) fn suspend_saves_for_exit() {
     SAVES_SUSPENDED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn file() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let dir = if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/Sandhill")
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"))
-            .join("sandhill")
-    };
-    Some(dir.join("gpui.json"))
+fn file(setting: Setting) -> Option<&'static Path> {
+    Some(app_storage::paths()?.file(setting))
 }
 
 fn read() -> Value {
-    file()
+    file(Setting::Preferences)
         .and_then(|f| std::fs::read_to_string(f).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| json!({}))
@@ -36,15 +29,14 @@ fn write(key: &str, value: Value) {
     if SAVES_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let Some(path) = file() else { return };
+    let Some(storage) = app_storage::paths() else {
+        return;
+    };
     let mut all = read();
     if let Some(map) = all.as_object_mut() {
         map.insert(key.to_string(), value);
     }
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(path, all.to_string());
+    let _ = storage.write(Setting::Preferences, all.to_string().as_bytes());
 }
 
 pub(crate) fn file_history_limits() -> sandhill_proto::FileHistoryLimits {
@@ -656,24 +648,10 @@ mod sent_plot_tests {
     }
 }
 
-/// The app's data folder, named for its bundle id, where the list of
-/// servers is kept (where the earlier, Tauri app kept it too).
-fn data_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let base = if cfg!(target_os = "macos") {
-        home.join("Library/Application Support")
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".local/share"))
-    };
-    Some(base.join("dev.sandhill.ide"))
-}
-
 /// The servers the Start screen offers next to this Mac: ssh destinations.
 pub fn servers() -> Vec<String> {
-    data_dir()
-        .and_then(|dir| std::fs::read_to_string(dir.join("servers.json")).ok())
+    file(Setting::Servers)
+        .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
 }
@@ -691,21 +669,15 @@ pub fn save_servers(list: &[String]) -> Result<(), String> {
     if SAVES_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed) {
         return Err("Sandhill is closing after settings cleanup".into());
     }
-    let dir = data_dir().ok_or("no home folder")?;
-    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let storage = app_storage::paths().ok_or("Cannot find the home folder")?;
     let bytes = serde_json::to_vec_pretty(list).map_err(|err| err.to_string())?;
-    std::fs::write(dir.join("servers.json"), bytes)
-        .map_err(|err| format!("cannot save the list of servers: {err}"))
-}
-
-/// The windows open when the app last quit, and the tabs in each, saved
-/// next to this file's own settings.
-fn windows_file() -> Option<PathBuf> {
-    file().map(|f| f.with_file_name("gpui-windows.json"))
+    storage
+        .write(Setting::Servers, &bytes)
+        .map_err(|err| format!("Cannot save the list of servers: {err}"))
 }
 
 pub fn windows() -> Vec<crate::shell::app_window::Places> {
-    windows_file()
+    file(Setting::Windows)
         .and_then(|f| std::fs::read_to_string(f).ok())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .and_then(|v| serde_json::from_value(v["windows"].clone()).ok())
@@ -716,11 +688,13 @@ pub fn save_windows(windows: &[crate::shell::app_window::Places]) {
     if SAVES_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let Some(path) = windows_file() else { return };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(path, json!({ "windows": windows }).to_string());
+    let Some(storage) = app_storage::paths() else {
+        return;
+    };
+    let _ = storage.write(
+        Setting::Windows,
+        json!({ "windows": windows }).to_string().as_bytes(),
+    );
 }
 
 /// The theme picked on General or with the title bar's button, "light" or
@@ -1085,36 +1059,7 @@ mod plot_sizing_tests {
     }
 }
 
-fn owned_files() -> Vec<PathBuf> {
-    [
-        file(),
-        windows_file(),
-        data_dir().map(|dir| dir.join("servers.json")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
-}
-
-fn safe_regular_file(path: &std::path::Path) -> Result<u64, String> {
-    for ancestor in path.ancestors() {
-        match std::fs::symlink_metadata(ancestor) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err("Symbolic links are protected".into());
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    let meta = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if !meta.is_file() {
-        return Err("Not a regular settings file".into());
-    }
-    Ok(meta.len())
-}
-
-fn measured_bytes(path: &std::path::Path) -> Result<u64, String> {
+fn measured_bytes(path: &Path) -> Result<u64, String> {
     for ancestor in path.ancestors() {
         if std::fs::symlink_metadata(ancestor)
             .map_err(|error| error.to_string())?
@@ -1140,18 +1085,23 @@ fn measured_bytes(path: &std::path::Path) -> Result<u64, String> {
 }
 
 /// Only known app settings files are removable. Unknown neighboring files
-/// remain visible and protected; neither application-support root is deleted.
+/// remain visible and protected; the settings folders themselves stay.
 pub(crate) fn storage_inventory() -> Value {
-    let owned = owned_files();
-    let roots: std::collections::BTreeSet<_> = owned
-        .iter()
-        .filter_map(|path| path.parent().map(std::path::Path::to_path_buf))
-        .collect();
-    let mut paths: std::collections::BTreeSet<_> = owned.iter().cloned().collect();
+    let Some(storage) = app_storage::paths() else {
+        return json!({
+            "entries": [],
+            "errors": ["Cannot locate the app settings folder: no home directory"],
+        });
+    };
+    let owned: std::collections::BTreeSet<_> = storage.settings_files().collect();
+    let roots = [
+        &storage.app,
+        &storage.old_settings_dirs[0],
+        &storage.old_settings_dirs[1],
+    ];
+    let mut paths: std::collections::BTreeSet<_> =
+        owned.iter().map(|path| path.to_path_buf()).collect();
     let mut errors = Vec::new();
-    if owned.is_empty() {
-        errors.push("Cannot locate the app settings folder: no home directory".into());
-    }
     for root in roots {
         if root.ancestors().any(|ancestor| {
             std::fs::symlink_metadata(ancestor).is_ok_and(|meta| meta.file_type().is_symlink())
@@ -1159,7 +1109,7 @@ pub(crate) fn storage_inventory() -> Value {
             errors.push(format!("Protected symbolic-link path: {}", root.display()));
             continue;
         }
-        match std::fs::read_dir(&root) {
+        match std::fs::read_dir(root) {
             Ok(entries) => {
                 for entry in entries {
                     match entry {
@@ -1186,8 +1136,9 @@ pub(crate) fn storage_inventory() -> Value {
         if let Err(error) = &measured {
             errors.push(format!("{}: size unknown: {error}", path.display()));
         }
-        let removable = owned.contains(&path) && inspected.is_ok();
-        let reason = if !owned.contains(&path) {
+        let is_owned = owned.contains(path.as_path());
+        let removable = is_owned && inspected.is_ok();
+        let reason = if !is_owned {
             Some("Unknown app-support content is protected".to_string())
         } else {
             inspected.as_ref().err().cloned()
@@ -1198,25 +1149,36 @@ pub(crate) fn storage_inventory() -> Value {
             "removable": removable, "reason": reason,
         }));
     }
-    json!({"entries": entries, "errors": errors})
+    json!({
+        "entries": entries,
+        "errors": errors,
+        "locations": [
+            { "label": "App settings", "path": storage.app.to_string_lossy() },
+            { "label": "Media previews", "path": storage.media.to_string_lossy() },
+        ],
+        "notes": storage.notes,
+    })
 }
 
 /// The caller must save edits first, run remote operations first, then close
 /// the application and suspend preference writes only after successful cleanup.
 pub(crate) fn clean_storage() -> Value {
+    let Some(storage) = app_storage::paths() else {
+        return json!({
+            "success": false, "results": [],
+            "errors": ["Cannot locate the app settings folder: no home directory"],
+        });
+    };
     let mut results = Vec::new();
     let mut errors = Vec::new();
-    if owned_files().is_empty() {
-        errors.push("Cannot locate the app settings folder: no home directory".into());
-    }
-    for path in owned_files() {
-        if std::fs::symlink_metadata(&path)
+    for path in storage.settings_files() {
+        if std::fs::symlink_metadata(path)
             .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
         {
             continue;
         }
-        let result = safe_regular_file(&path)
-            .and_then(|_| std::fs::remove_file(&path).map_err(|error| error.to_string()));
+        let result = safe_regular_file(path)
+            .and_then(|_| std::fs::remove_file(path).map_err(|error| error.to_string()));
         if let Err(error) = &result {
             errors.push(format!("{}: {error}", path.display()));
         }

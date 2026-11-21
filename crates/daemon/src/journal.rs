@@ -220,6 +220,12 @@ impl Journal {
         })
     }
 
+    pub(crate) fn read_sessions(db_path: &Path) -> Result<Vec<SessionRecord>> {
+        let conn =
+            Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        Self::sessions_from(&conn)
+    }
+
     pub fn blobs(&self) -> &BlobStore {
         &self.blobs
     }
@@ -318,7 +324,10 @@ impl Journal {
     }
 
     pub fn sessions(&self) -> Result<Vec<SessionRecord>> {
-        let conn = self.conn.lock().unwrap();
+        Self::sessions_from(&self.conn.lock().unwrap())
+    }
+
+    fn sessions_from(conn: &Connection) -> Result<Vec<SessionRecord>> {
         let mut stmt = conn.prepare(
             "SELECT id, kernel, language, cwd, connection_file, client_session, pid,
                     interrupt_mode, status, created_ms, ended_ms, project, language_version

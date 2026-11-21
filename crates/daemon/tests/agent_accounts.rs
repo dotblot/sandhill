@@ -91,7 +91,7 @@ impl Machine {
     }
 
     fn root(&self) -> PathBuf {
-        self.home.join(".local/share/sandhill/accounts")
+        self.home.join(sandhill_proto::ACCOUNTS_PATH)
     }
 
     fn folder(&self, account: &AgentAccount) -> PathBuf {
@@ -386,7 +386,7 @@ async fn paused_agents_are_never_started_or_asked() {
 
 fn registry(home: &Path) -> Registry {
     Registry::new(
-        home.join(".local/share/sandhill/accounts"),
+        home.join(sandhill_proto::ACCOUNTS_PATH),
         Homes {
             claude: home.join(".claude"),
             codex: home.join(".codex"),

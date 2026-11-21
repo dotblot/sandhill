@@ -32,7 +32,7 @@ impl Registry {
     pub fn from_env() -> Self {
         let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
         Self::new(
-            home.join(".local/share/sandhill/accounts"),
+            crate::paths::installed_path(&home, sandhill_proto::ACCOUNTS_PATH, ""),
             Homes::from_env(),
         )
     }

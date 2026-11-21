@@ -158,11 +158,74 @@ caches and, in that mode, the computing environment. They are spread over
 move on first start of the new version.
 
 The places the operating system forces stay few, fixed and listed:
-- the daemon's start at login: on a Mac registered from inside the app
-  (`SMAppService`), so no file in `~/Library/LaunchAgents`; on Linux the
-  user service file in `~/.config/systemd/user`;
+- no login item: the app starts the daemon when it connects, so nothing
+  goes in `~/Library/LaunchAgents` or `~/.config/systemd/user` (Huan,
+  2026-11-20, below);
 - the folders macOS makes for every app, named by Sandhill's app id
-  (WebKit data, HTTP storage, caches, saved window state, preferences).
+  (WebKit data, HTTP storage, caches, saved window state, preferences);
+- one Keychain entry for Sandhill's own accounts' API key.
+
+### Step 6 in detail (approved by Huan 2026-11-20, without the login item)
+
+What Sandhill writes today (from the code, 2026-11-20):
+
+| Today | What it is | Moves to |
+|---|---|---|
+| `~/.local/state/sandhill` | The daemon's state: history (journal), outputs, kernels' files, logs, install record, undo snapshots, package lists | `~/.sandhill/state` |
+| `~/.local/share/sandhill/bin` | ark, ruff, ty | `~/.sandhill/bin` |
+| `~/.local/share/sandhill/install` | What Sandhill installed of itself, with checksums | `~/.sandhill/install` |
+| `~/.local/share/sandhill/accounts` | Sandhill's own agent accounts | `~/.sandhill/accounts` |
+| `~/.local/bin/sandhilld` (servers only; the Mac app carries its own) | The daemon | `~/.sandhill/bin/sandhilld` |
+| `~/Library/Application Support/Sandhill`, `~/Library/Application Support/dev.sandhill.ide` (Linux: `~/.config/sandhill`, `~/.local/share/dev.sandhill.ide`) | The app's settings, windows and servers list | `~/.sandhill/app` |
+| `~/Library/Caches/Sandhill/media` (Linux: `~/.cache/sandhill/media`) | Preview cache | `~/.sandhill/cache/media` |
+| `~/.sandhill/environment` | Sandhill's own R and Python (step 2) | stays |
+
+What stays outside, because the system decides: the Keychain item
+`dev.sandhill.agent-account` (an API key Sandhill keeps for its own
+accounts, so it isn't in a plain file), macOS's folders for the app id
+`dev.sandhill.ide` (WebKit, HTTP storage, saved window state,
+preferences), a socket folder in `/tmp` when the normal path is too long
+(the system empties it), and the Antigravity connection entry Sandhill
+writes only when asked. Step 7 lists and removes them.
+
+**No login item is needed.** The code shows Sandhill writes no file in
+`~/Library/LaunchAgents` and no systemd unit today: the app starts the
+daemon when it connects (`sandhilld attach --start`), and kernels keep
+running on their own. So `SMAppService` is dropped from this step; there
+is nothing to register. (Uninstall still removes an old plist or unit
+if an earlier version left one.)
+
+**The move, safely**, on the first start of the new version:
+1. The new daemon starts after the old one has stopped (as upgrades do
+   now). If `~/.sandhill/state` doesn't exist and the old state does, it
+   moves it with one rename (same disk, so instant and all-or-nothing; a
+   copy, check and delete only if the home folder spans disks).
+2. It waits while kernels or terminals from before are still running
+   (their open files live in the old folder) and keeps using the old
+   folder until a start when none are; then it moves. Nothing running is
+   ever cut off.
+3. Paths written inside the state (logs named in records, undo
+   snapshots, kernel files) are stored relative to the folder, or
+   rewritten during the move.
+4. The app moves its own settings and cache the same way when it
+   starts, before reading them.
+5. Each old folder is removed only once it is empty, and the move is
+   written to the daemon log. If any step fails, everything stays where
+   it was and Sandhill keeps working from there, saying so on Manage →
+   Resources and Storage.
+
+On servers the same happens with the daemon itself: the new
+`sandhilld` goes to `~/.sandhill/bin`, and the old `~/.local/bin/sandhilld`
+is removed only if its checksum matches what Sandhill installed.
+
+`SANDHILL_STATE_DIR` still points the state elsewhere for tests and for
+anyone who sets it; `XDG_STATE_HOME` and the other XDG folders are no
+longer used, so Linux matches the Mac.
+
+Checks: unit tests for every path; a test daemon with a fake home that
+has old-layout folders (and a running kernel) moves them only when idle,
+keeps history readable, and leaves no old folder; the SSH install tests
+for the new server layout; the app's move of its settings.
 
 ## 7. Seeing and removing it all
 
@@ -380,7 +443,8 @@ Each step is usable on its own and committed when done:
 5. Section 4: switching and copying packages; section 9's project files.
    Built 2026-11-20 (a project's `renv.lock` is set up inside the project,
    Huan's decision).
-6. Section 6: one folder for Sandhill's own files, the move, `SMAppService`.
+6. Section 6: one folder for Sandhill's own files and the move (no
+   login item, Huan 2026-11-20). Built 2026-11-20.
 7. Sections 5 and 7: agents' settings, the footprint page, the new
    uninstall.
 8. Section 11, the lock and remote computers.

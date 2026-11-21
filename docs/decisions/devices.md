@@ -65,6 +65,20 @@ where an older plan differs, this wins.
   Sandhill's own R and Python folder (Huan, 2026-11-20) is in the record
   too; removing it stops its kernels and deletes the whole folder, only
   one marked as Sandhill's.
+- One folder (Huan, 2026-11-20; `docs/design/clean-footprint-plan.md`,
+  section 6): Sandhill keeps its own files in `~/.sandhill` on a Mac, on
+  Linux and on servers: `state` (history and the daemon's files), `bin`
+  (the daemon on servers, ark, ruff, ty), `install`, `accounts`, `app`
+  (the app's settings and servers list), `cache` and `environment`.
+  The first start of a version with this layout moves the old folders
+  there with one rename, only when nothing from before is running;
+  until then, or if the move fails, Sandhill keeps using the old place
+  and says so on Resources and Storage. XDG folders are no longer used.
+  Sandhill writes no login item (no LaunchAgents plist, no systemd
+  unit): the app starts the daemon when it connects. Outside the folder
+  remain only what the system decides: one Keychain entry, macOS's
+  folders for the app id, a temporary socket folder, and the Antigravity
+  entry when asked for.
 
 ## Folder trust
 - Folder trust (Huan, 2026-11-12): the first open of a folder asks once;

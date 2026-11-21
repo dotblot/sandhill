@@ -49,9 +49,9 @@ impl MediaFile {
                 let root = root()?;
                 // Cleanup and creating/locking the session are one operation
                 // across processes; an unlocked new lease is not an orphan.
-                let _root_lock = lock_root(&root)?;
-                cleanup_locked(&root, false)?;
-                let session = Arc::new(Session::open(&root)?);
+                let _root_lock = lock_root(root)?;
+                cleanup_locked(root, false)?;
+                let session = Arc::new(Session::open(root)?);
                 *current = Some(session.clone());
                 session
             }
@@ -105,53 +105,62 @@ impl Session {
     }
 }
 
-fn private_dir(path: &Path) -> Result<()> {
+fn private_dir(path: &Path) -> io::Result<()> {
     match std::fs::DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => (),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => (),
-        Err(err) => return Err(err.into()),
+        Err(err) => return Err(err),
     }
+    check_private_dir(path)
+}
+
+fn check_private_dir(path: &Path) -> io::Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
-    ensure!(
-        metadata.is_dir() && !metadata.file_type().is_symlink(),
-        "unsafe preview cache directory: {}",
-        path.display()
-    );
-    ensure!(
-        metadata.permissions().mode() & 0o077 == 0,
-        "preview cache directory is not private: {}",
-        path.display()
-    );
+    if !metadata.is_dir() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(io::Error::other(format!(
+            "The media cache folder is not private: {}",
+            path.display()
+        )));
+    }
     Ok(())
 }
 
-#[cfg(test)]
-fn root() -> Result<PathBuf> {
-    static TEST_ROOT: LazyLock<tempfile::TempDir> =
-        LazyLock::new(|| tempfile::tempdir().expect("private preview test cache"));
-    Ok(TEST_ROOT.path().to_path_buf())
+fn root() -> Result<&'static Path> {
+    let storage = crate::app_storage::paths().context("Cannot find the home folder")?;
+    let root = storage.media_root();
+    if root == storage.media.as_path() {
+        crate::app_storage::prepare_new_parent(root)?;
+    }
+    check_private_dir(root.parent().expect("media cache has a parent"))?;
+    private_dir(root)?;
+    Ok(root)
 }
 
-#[cfg(not(test))]
-fn root() -> Result<PathBuf> {
-    let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
-    #[cfg(target_os = "macos")]
-    let base = home.join("Library/Caches");
-    #[cfg(not(target_os = "macos"))]
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| home.join(".cache"));
-    std::fs::create_dir_all(&base)?;
-    let base = base.canonicalize()?;
-    #[cfg(target_os = "macos")]
-    let app = base.join("Sandhill");
-    #[cfg(not(target_os = "macos"))]
-    let app = base.join("sandhill");
-    private_dir(&app)?;
-    let root = app.join("media");
-    private_dir(&root)?;
-    Ok(root)
+/// A running older app can have native previews that open their files by
+/// name. Leave the cache in place while any of those previews may need it.
+pub(crate) fn move_legacy(old: &Path, new: &Path) -> io::Result<()> {
+    check_private_dir(new.parent().expect("media cache has a parent"))?;
+    match check_private_dir(new) {
+        Ok(()) => return Err(io::ErrorKind::AlreadyExists.into()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => (),
+        Err(err) => return Err(err),
+    }
+    check_private_dir(old.parent().expect("legacy media cache has a parent"))?;
+    check_private_dir(old)?;
+    let _lock = lock_root(old).map_err(io::Error::other)?;
+    let sessions = scan(old).map_err(io::Error::other)?;
+    if sessions.iter().any(|session| session.active) {
+        return Err(io::Error::other(
+            "An older Sandhill window still has previews open",
+        ));
+    }
+    match crate::app_storage::rename_new(old, new) {
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            check_private_dir(new)?;
+            Err(err)
+        }
+        result => result,
+    }
 }
 
 struct SessionFiles {
@@ -249,7 +258,7 @@ fn entry(path: &Path, bytes: u64, removable: bool) -> Value {
 }
 
 pub(crate) fn inventory() -> Result<Value> {
-    inventory_at(&root()?)
+    inventory_at(root()?)
 }
 
 fn inventory_at(root: &Path) -> Result<Value> {
@@ -306,7 +315,7 @@ fn lock_root(root: &Path) -> Result<FileLock> {
 
 /// Explicit cleanup removes all inactive previews, never active native outputs.
 pub(crate) fn clean() -> Result<Value> {
-    cleanup_at(&root()?, true)
+    cleanup_at(root()?, true)
 }
 
 fn cleanup_at(root: &Path, all: bool) -> Result<Value> {

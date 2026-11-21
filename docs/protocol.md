@@ -1,8 +1,9 @@
 # sandhilld protocol
 
 Clients talk to `sandhilld` over a byte stream carrying **one JSON object per
-line**: a Unix socket locally (`~/.local/state/sandhill/sandhilld.sock`), or
-the stdin/stdout of `ssh host sandhilld attach --start` for a remote server.
+line**: a Unix socket locally (`~/.sandhill/state/sandhilld.sock`), or
+the stdin/stdout of `ssh host '~/.sandhill/bin/sandhilld attach --start'`
+for a remote server. `SANDHILL_STATE_DIR` overrides the state folder.
 Types live in `crates/proto`; this page is the overview.
 
 ## Requests and responses
@@ -635,7 +636,7 @@ project's broad lint/style policy. Server requests for configuration and
 capability registration are handled by the daemon, not by windows.
 Discovery is `.venv/bin`, `venv/bin`, the selected project kernel's interpreter
 directory (including conda), daemon/login PATH, then
-`~/.local/share/sandhill/bin/{ty,ruff}`. The kernel interpreter, or the project's
+`~/.sandhill/bin/{ty,ruff}`. The kernel interpreter, or the project's
 Python environment when no live kernel exists, is passed to ty's
 `initializationOptions.configuration.environment.python` (the `server`
 subcommand has no `--python` flag). User environments are never modified.
@@ -1303,7 +1304,7 @@ and `agent_accounts_query` calls remain read-only provider snapshots, not
 the account registry.
 
 For Claude and Codex, `add_agent_account` creates
-`~/.local/share/sandhill/accounts/<kind>/<slug>/` with Sandhill metadata
+`~/.sandhill/accounts/<kind>/<slug>/` with Sandhill metadata
 in `account.json`. Runs receive that folder as `CLAUDE_CONFIG_DIR` or
 `CODEX_HOME`. Extra Codex accounts use
 `cli_auth_credentials_store="file"` for that run, keeping their login out

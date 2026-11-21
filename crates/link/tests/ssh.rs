@@ -8,14 +8,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use sandhill_link::{Error, Options, Target, connect};
-use sandhill_proto::{ARK_PATH, RUFF_PATH, TY_PATH};
+use sandhill_proto::{
+    ARK_PATH, DAEMON_PATH, INSTALL_PATH, OLD_DAEMON_LAYOUT, OLD_DAEMON_PATH, RUFF_PATH, STATE_PATH,
+    TY_PATH,
+};
 use sha2::{Digest, Sha256};
 
 /// The sandhilld that `cargo test --workspace` builds next to this test.
 fn daemon_binary() -> Option<PathBuf> {
-    let deps = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let path = deps.parent()?.join("sandhilld");
-    path.is_file().then_some(path)
+    std::env::current_exe()
+        .ok()?
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("sandhilld"))
+        .find(|path| path.is_file())
 }
 
 fn this_triple() -> &'static str {
@@ -97,7 +103,7 @@ impl Server {
     }
 
     fn installed(&self) -> PathBuf {
-        self.home.path().join(".local/bin/sandhilld")
+        self.home.path().join(DAEMON_PATH)
     }
 
     fn ark(&self) -> PathBuf {
@@ -123,10 +129,7 @@ impl Server {
 impl Drop for Server {
     /// Stops the daemon the test started; it would outlive the test.
     fn drop(&mut self) {
-        let socket = self
-            .home
-            .path()
-            .join(".local/state/sandhill/sandhilld.sock");
+        let socket = self.home.path().join(STATE_PATH).join("sandhilld.sock");
         // Dropped inside the test's runtime, which tokio's stream needs.
         if let Ok(stream) = std::os::unix::net::UnixStream::connect(socket)
             && stream.set_nonblocking(true).is_ok()
@@ -265,7 +268,8 @@ async fn installs_python_language_servers_without_r_and_reuses_matching_payloads
             server
                 .home
                 .path()
-                .join(format!(".local/share/sandhill/install/{name}.json")),
+                .join(INSTALL_PATH)
+                .join(format!("{name}.json")),
         )
         .unwrap();
         assert_eq!(
@@ -309,15 +313,12 @@ async fn replaces_another_build() {
     // Replacing a prior build is allowed only when its ownership record
     // matches the exact bytes installed on this mock device.
     let checksum = sandhill_proto::hex(&Sha256::digest(std::fs::read(server.installed()).unwrap()));
-    let manifest = server
-        .home
-        .path()
-        .join(".local/share/sandhill/install/sandhilld.json");
+    let manifest = server.home.path().join(INSTALL_PATH).join("sandhilld.json");
     std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     std::fs::write(
         manifest,
         format!(
-            "{{\"version\":1,\"component\":\"sandhilld\",\"path\":\".local/bin/sandhilld\",\"sha256\":\"{checksum}\"}}"
+            "{{\"version\":1,\"component\":\"sandhilld\",\"path\":\"{DAEMON_PATH}\",\"sha256\":\"{checksum}\"}}"
         ),
     )
     .unwrap();
@@ -331,6 +332,59 @@ async fn replaces_another_build() {
         std::fs::read(server.installed()).unwrap(),
         std::fs::read(&daemon).unwrap()
     );
+}
+
+#[tokio::test]
+async fn removes_only_the_earlier_daemon_with_a_matching_record_after_the_new_one_answers() {
+    let Some(daemon) = daemon_binary() else {
+        eprintln!("skipping: sandhilld is not built (run `cargo test --workspace`)");
+        return;
+    };
+    let builds = builds(&daemon);
+    for mode in ["owned", "modified", "no-record"] {
+        let server = Server::new();
+        let home = server.home.path();
+        let old = home.join(OLD_DAEMON_PATH);
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        let installed = b"#!/bin/sh\n# old daemon\n";
+        std::fs::write(&old, installed).unwrap();
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let old_install = OLD_DAEMON_LAYOUT
+            .iter()
+            .find(|(_, new)| *new == INSTALL_PATH)
+            .unwrap()
+            .0;
+        let record = home.join(old_install).join("sandhilld.json");
+        if mode != "no-record" {
+            std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+            let checksum = sandhill_proto::hex(&Sha256::digest(installed));
+            std::fs::write(&record, format!(
+                "{{\"version\":1,\"component\":\"sandhilld\",\"path\":\"{OLD_DAEMON_PATH}\",\"sha256\":\"{checksum}\"}}\n"
+            )).unwrap();
+        }
+        if mode == "modified" {
+            std::fs::write(&old, b"user replacement").unwrap();
+        }
+        let notes = Mutex::new(Vec::new());
+        let connection = connect(&lab(), &server.options(Some(builds.path())), &|note| {
+            notes.lock().unwrap().push(note.to_owned());
+        })
+        .await
+        .unwrap();
+        connection.client.ping().await.unwrap();
+        assert!(server.installed().exists());
+        assert!(home.join(INSTALL_PATH).join("sandhilld.json").exists());
+        assert_eq!(old.exists(), mode != "owned");
+        assert_eq!(record.exists(), mode == "modified");
+        assert_eq!(
+            notes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|note| note.contains("left in place")),
+            mode != "owned"
+        );
+    }
 }
 
 #[tokio::test]
@@ -360,7 +414,7 @@ async fn upgrades_pre_manifest_daemon_and_ark_and_reports_preserved_originals() 
         .expect("connects after preserving pre-manifest installs");
     connection.client.ping().await.unwrap();
     let daemon_backup = server.home.path().join(format!(
-        ".local/bin/sandhilld.legacy-sha256-{}",
+        "{DAEMON_PATH}.legacy-sha256-{}",
         sandhill_proto::hex(&Sha256::digest(legacy_daemon))
     ));
     let ark_backup = server.home.path().join(format!(
@@ -388,11 +442,7 @@ async fn upgrades_pre_manifest_daemon_and_ark_and_reports_preserved_originals() 
         ]
     );
     for (component, target, bytes) in [
-        (
-            "sandhilld",
-            ".local/bin/sandhilld",
-            current_daemon.as_slice(),
-        ),
+        ("sandhilld", DAEMON_PATH, current_daemon.as_slice()),
         ("ark", ARK_PATH, ark.as_slice()),
     ] {
         assert_eq!(
@@ -400,7 +450,8 @@ async fn upgrades_pre_manifest_daemon_and_ark_and_reports_preserved_originals() 
                 server
                     .home
                     .path()
-                    .join(format!(".local/share/sandhill/install/{component}.json"))
+                    .join(INSTALL_PATH)
+                    .join(format!("{component}.json"))
             )
             .unwrap()
             .trim(),

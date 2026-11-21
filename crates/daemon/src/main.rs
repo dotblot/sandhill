@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -20,7 +21,7 @@ use tokio::net::{UnixListener, UnixStream};
     about = "Sandhill daemon: kernels and outputs that outlive the app"
 )]
 struct Cli {
-    /// State directory (default: $SANDHILL_STATE_DIR, $XDG_STATE_HOME/sandhill or ~/.local/state/sandhill).
+    /// State directory (default: $SANDHILL_STATE_DIR or ~/.sandhill/state).
     #[arg(long, global = true)]
     state_dir: Option<PathBuf>,
     /// Socket path (default: <state dir>/sandhilld.sock).
@@ -185,11 +186,21 @@ fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let state = cli
+    let home = if cli.state_dir.is_none() && std::env::var_os("SANDHILL_STATE_DIR").is_none() {
+        std::env::var_os("HOME").map(PathBuf::from)
+    } else {
+        None
+    };
+    let default = cli
         .state_dir
         .clone()
         .map(StateDir::new)
         .unwrap_or_else(StateDir::default_location);
+    let state = if home.is_some() {
+        default.clone().existing_location()
+    } else {
+        default.clone()
+    };
     let socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
     match cli.command {
         Command::DescribeH5ad { path } => sandhill_daemon::h5ad::worker(&path),
@@ -198,12 +209,24 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Command::Serve { ref started_by } => {
             let started_by = started_by.clone().unwrap_or_else(service_manager);
-            serve(state, socket, started_by).await
+            let (_startup, state) = if let Some(home) = home.as_deref() {
+                let (lock, can_move) = lock_startup(&default, Some(home)).await?;
+                let state = if can_move {
+                    move_storage(home, &default)?
+                } else {
+                    default.existing_location()
+                };
+                (Some(lock), state)
+            } else {
+                (None, state)
+            };
+            let socket = cli.socket.unwrap_or_else(|| state.socket_path());
+            serve(state, socket, started_by, _startup).await
         }
         Command::Attach {
             start,
             confirm_exit,
-        } => attach(&cli, state, socket, start, confirm_exit).await,
+        } => attach(&cli, default, home.as_deref(), start, confirm_exit).await,
         Command::Mcp { ref project } => {
             // Antigravity starts the server as its settings say, the same
             // for every conversation: what differs comes from the
@@ -355,7 +378,12 @@ fn service_manager() -> String {
     String::new()
 }
 
-async fn serve(state: StateDir, socket: PathBuf, started_by: String) -> Result<()> {
+async fn serve(
+    state: StateDir,
+    socket: PathBuf,
+    started_by: String,
+    startup: Option<File>,
+) -> Result<()> {
     require_installed(&state)?;
     sandhill_daemon::memory::configure();
     tracing_subscriber::fmt()
@@ -401,6 +429,7 @@ async fn serve(state: StateDir, socket: PathBuf, started_by: String) -> Result<(
         ..DaemonOptions::for_state(&state)
     };
     let daemon = Daemon::open_with(state, options).await?;
+    drop(startup);
     tracing::info!("sandhilld listening on {}", socket.display());
 
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -418,15 +447,23 @@ async fn serve(state: StateDir, socket: PathBuf, started_by: String) -> Result<(
 
 async fn attach(
     cli: &Cli,
-    state: StateDir,
-    socket: PathBuf,
+    default: StateDir,
+    home: Option<&Path>,
     start: bool,
     confirm_exit: bool,
 ) -> Result<()> {
+    let mut state = if home.is_some() {
+        default.clone().existing_location()
+    } else {
+        default.clone()
+    };
+    let mut socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
     let stream = if start {
-        require_installed(&state)?;
-        state.create()?;
-        let _startup = startup_lock(&state).await?;
+        let (_startup, can_move) = lock_startup(&default, home).await?;
+        if home.is_some() {
+            state = default.clone().existing_location();
+            socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
+        }
         let mut connected = None;
         for _ in 0..3 {
             require_installed(&state)?;
@@ -438,7 +475,14 @@ async fn attach(
             } else {
                 // An exiting daemon may have removed its socket while runtime
                 // teardown still holds the lifetime lock.
-                start_or_wait(cli, &state, &socket).await?;
+                if wait_for_owner(&state, &socket).await? {
+                    if let Some(home) = home.filter(|_| can_move) {
+                        state = move_storage(home, &default)?;
+                        socket = cli.socket.clone().unwrap_or_else(|| state.socket_path());
+                    }
+                    start_detached(cli, &state)?;
+                    drop(wait_for_socket(&socket).await?);
+                }
             }
         }
         connected.context("sandhilld did not become ready; see its log in the state directory")?
@@ -626,9 +670,16 @@ fn try_lock(path: &Path) -> Result<Option<File>> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .read(true)
         .write(true)
         .open(path)?;
+    let meta = file.metadata()?;
+    anyhow::ensure!(
+        meta.is_file() && meta.nlink() == 1,
+        "The daemon lock is not a regular file"
+    );
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
         return Ok(Some(file));
     }
@@ -640,9 +691,9 @@ fn try_lock(path: &Path) -> Result<Option<File>> {
     }
 }
 
-async fn startup_lock(state: &StateDir) -> Result<File> {
+async fn startup_lock(path: &Path) -> Result<File> {
     for _ in 0..300 {
-        if let Some(lock) = try_lock(&state.root().join("attach.lock"))? {
+        if let Some(lock) = try_lock(path)? {
             return Ok(lock);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -650,19 +701,139 @@ async fn startup_lock(state: &StateDir) -> Result<File> {
     bail!("another connection is starting sandhilld; try reconnecting after it finishes")
 }
 
-async fn start_or_wait(cli: &Cli, state: &StateDir, socket: &Path) -> Result<()> {
+/// Use a lock outside the movable state directory. An explicit state folder
+/// keeps its own lock. If the new home folder can't be prepared, retain the
+/// old state and its lock rather than stranding the device.
+async fn lock_startup(default: &StateDir, home: Option<&Path>) -> Result<(File, bool)> {
+    if let Some(home) = home {
+        match StateDir::prepare_home(home).map(|dir| dir.join("attach.lock")) {
+            Ok(path) => match startup_lock(&path).await {
+                Ok(lock) => return Ok((lock, true)),
+                Err(err) if err.downcast_ref::<std::io::Error>().is_none() => return Err(err),
+                Err(err) => log_move(
+                    &default.clone().existing_location(),
+                    &[format!(
+                        "Sandhill could not prepare the new folder: {err:#}"
+                    )],
+                ),
+            },
+            Err(err) => log_move(
+                &default.clone().existing_location(),
+                &[format!("Sandhill could not prepare the new folder: {err}")],
+            ),
+        }
+    }
+    let state = if home.is_some() {
+        default.clone().existing_location()
+    } else {
+        default.clone()
+    };
+    require_installed(&state)?;
+    state.create()?;
+    Ok((
+        startup_lock(&state.root().join("attach.lock")).await?,
+        false,
+    ))
+}
+
+fn move_storage(home: &Path, default: &StateDir) -> Result<StateDir> {
+    let state = default.clone().existing_location();
+    require_installed(&state)?;
+    let guard = (|| -> Result<Option<Vec<File>>> {
+        let mut roots = vec![state.clone()];
+        if let Some(old) = StateDir::legacy_location()
+            && old.root() != state.root()
+            && old.root().exists()
+        {
+            roots.push(old);
+        }
+        let mut locks = Vec::with_capacity(roots.len() + 2);
+        for root in roots {
+            if !root.root().exists() {
+                continue;
+            }
+            let mut dir = root.root();
+            while dir != home {
+                anyhow::ensure!(
+                    dir.symlink_metadata()?.is_dir(),
+                    "{} is not a regular folder",
+                    dir.display()
+                );
+                dir = dir
+                    .parent()
+                    .context("the state folder is not inside the home folder")?;
+            }
+            let Some(lock) = try_lock(&root.root().join("daemon.lock"))? else {
+                return Ok(None);
+            };
+            locks.push(lock);
+            if root.root() == default.root() {
+                continue;
+            }
+            for name in ["attach.lock", ".install-record.lock"] {
+                let path = root.root().join(name);
+                if name == ".install-record.lock" && !path.exists() {
+                    continue;
+                }
+                let Some(lock) = try_lock(&path)? else {
+                    return Ok(None);
+                };
+                locks.push(lock);
+            }
+        }
+        Ok(Some(locks))
+    })();
+    let notes = match guard {
+        Ok(Some(_locks)) => StateDir::migrate_home(home),
+        Ok(None) => vec!["Sandhill kept its old files because the old daemon or an install job is still using them.".into()],
+        Err(err) => vec![format!("Sandhill could not check its old folder: {err:#}")],
+    };
+    let state = default.clone().existing_location();
+    if !notes.is_empty() && !state.root().exists() && state.root() == default.root() {
+        state.create()?;
+    }
+    log_move(&state, &notes);
+    Ok(state)
+}
+
+fn log_move(state: &StateDir, notes: &[String]) {
+    if notes.is_empty() {
+        return;
+    }
+    use std::io::Write as _;
+    let log = open_daemon_log(state);
+    for note in notes {
+        if !matches!(&log, Ok(file) if writeln!(&*file, "{note}").is_ok()) {
+            eprintln!("{note}");
+        }
+    }
+}
+
+fn open_daemon_log(state: &StateDir) -> Result<File> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(state.log_path())?;
+    let meta = file.metadata()?;
+    anyhow::ensure!(
+        meta.is_file() && meta.nlink() == 1,
+        "The daemon log is not a regular file"
+    );
+    Ok(file)
+}
+
+/// An exiting daemon may hold the lifetime lock after its socket closes.
+/// Do not move anything until that process is gone.
+async fn wait_for_owner(state: &StateDir, socket: &Path) -> Result<bool> {
     for _ in 0..150 {
         require_installed(state)?;
         if UnixStream::connect(socket).await.is_ok() {
-            return Ok(());
+            return Ok(false);
         }
-        if let Some(owner) = try_lock(&state.root().join("daemon.lock"))? {
-            drop(owner);
-            // A service can still win after this observation. Its serve and
-            // ours share the lifetime lock, so only one can own the socket.
-            start_detached(cli, state)?;
-            drop(wait_for_socket(socket).await?);
-            return Ok(());
+        if !state.root().exists() || try_lock(&state.root().join("daemon.lock"))?.is_some() {
+            return Ok(true);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -689,10 +860,7 @@ fn start_detached(cli: &Cli, state: &StateDir) -> Result<()> {
     use std::os::unix::process::CommandExt;
     require_installed(state)?;
     state.create()?;
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(state.log_path())?;
+    let log = open_daemon_log(state)?;
     let mut command = std::process::Command::new(std::env::current_exe()?);
     command.arg("--state-dir").arg(state.root());
     if let Some(socket) = &cli.socket {

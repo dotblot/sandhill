@@ -95,7 +95,7 @@ pub enum Error {
     #[error("{0:?} is not a server name; use a Host from ~/.ssh/config or user@host")]
     BadHost(String),
     #[error(
-        "sandhilld was not found next to the app, in ~/.local/bin or on PATH; build it with `cargo build -p sandhill-daemon` or set SANDHILL_DAEMON"
+        "sandhilld was not found next to the app, in ~/.sandhill/bin, in ~/.cargo/bin or on PATH. Build it with `cargo build -p sandhill-daemon` or set SANDHILL_DAEMON."
     )]
     NotFound,
     #[error("sandhilld is not installed on {host}, and this app has no build of it for {platform}")]

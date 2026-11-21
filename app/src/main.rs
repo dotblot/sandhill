@@ -6,6 +6,7 @@
 //! `local` (the default) or an ssh destination such as `lab`.
 
 mod agents;
+mod app_storage;
 mod connection;
 mod daemon;
 mod editor;
@@ -176,6 +177,8 @@ fn main() -> anyhow::Result<()> {
             .enable_all()
             .build()?,
     );
+
+    let _ = app_storage::paths();
 
     // The web view (WebKitGTK) works only on X11, so on a Wayland desktop
     // Sandhill runs through XWayland.

@@ -331,9 +331,15 @@ impl AppWindow {
                             match storage {
                                 Ok(mut value) => {
                                     if host == sandhill_link::LOCAL {
-                                        let local = local_inventory();
-                                        if let Some(entries) = value["entries"].as_array_mut() {
-                                            entries.extend(local["entries"].as_array().into_iter().flatten().cloned());
+                                        let mut local = local_inventory();
+                                        for key in ["entries", "locations", "notes"] {
+                                            if let Value::Array(mut local_items) = local[key].take() {
+                                                if let Some(items) = value[key].as_array_mut() {
+                                                    items.append(&mut local_items);
+                                                } else {
+                                                    value[key] = Value::Array(local_items);
+                                                }
+                                            }
                                         }
                                         device.errors.extend(strings(&local["errors"]));
                                     }
@@ -872,6 +878,35 @@ impl AppWindow {
                             format!("{} protected", bytes(protected)),
                         )),
                 );
+            for location in storage["locations"].as_array().into_iter().flatten() {
+                list = list.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap(px(look::GAP_4))
+                        .text_size(px(look::small()))
+                        .text_color(p.muted)
+                        .child(format!("{}:", text(location, "label")))
+                        .child(
+                            div()
+                                .font_family(look::mono())
+                                .child(text(location, "path")),
+                        ),
+                );
+            }
+            for note in storage["notes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                list = list.child(
+                    div()
+                        .whitespace_normal()
+                        .text_size(px(look::small()))
+                        .text_color(p.muted)
+                        .child(note.to_string()),
+                );
+            }
             // One row per category, its items listed when opened.
             let mut groups: Vec<(String, Vec<&Value>)> = Vec::new();
             for entry in entries {

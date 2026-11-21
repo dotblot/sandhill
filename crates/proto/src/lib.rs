@@ -74,12 +74,46 @@ pub fn agent_paused(kind: &str) -> bool {
     PAUSED_AGENTS.contains(&kind)
 }
 
-/// Where the app installs Ark (Posit's R kernel) on a server, relative to
-/// the home folder. The daemon offers it as the `ark` kernel when R is on
-/// `PATH`. It is kept off `PATH`: KDE has a program called `ark` too.
-pub const ARK_PATH: &str = ".local/share/sandhill/bin/ark";
-pub const TY_PATH: &str = ".local/share/sandhill/bin/ty";
-pub const RUFF_PATH: &str = ".local/share/sandhill/bin/ruff";
+/// Sandhill's one folder for its own files, relative to the home folder,
+/// on a Mac, on Linux and on servers alike (Huan, 2026-11-20;
+/// `docs/design/clean-footprint-plan.md`, section 6).
+pub const SANDHILL_DIR: &str = ".sandhill";
+/// The daemon's state (history, outputs, kernels' files, logs, records).
+/// `SANDHILL_STATE_DIR` still points it elsewhere.
+pub const STATE_PATH: &str = ".sandhill/state";
+/// The daemon on servers, and the helper programs.
+pub const BIN_PATH: &str = ".sandhill/bin";
+pub const DAEMON_PATH: &str = ".sandhill/bin/sandhilld";
+/// What Sandhill installed of itself, with checksums.
+pub const INSTALL_PATH: &str = ".sandhill/install";
+/// Sandhill's own agent accounts.
+pub const ACCOUNTS_PATH: &str = ".sandhill/accounts";
+/// The app's settings, windows and servers list.
+pub const APP_PATH: &str = ".sandhill/app";
+/// The app's caches (previews).
+pub const CACHE_PATH: &str = ".sandhill/cache";
+
+/// Where Ark (Posit's R kernel) goes, relative to the home folder. The
+/// daemon offers it as the `ark` kernel when R is on `PATH`. It is kept
+/// off `PATH`: KDE has a program called `ark` too.
+pub const ARK_PATH: &str = ".sandhill/bin/ark";
+pub const TY_PATH: &str = ".sandhill/bin/ty";
+pub const RUFF_PATH: &str = ".sandhill/bin/ruff";
+
+/// Where earlier versions kept the daemon's files, each moved to its new
+/// place on the first start when nothing from before is running:
+/// `(old, new)`, relative to the home folder.
+pub const OLD_DAEMON_LAYOUT: &[(&str, &str)] = &[
+    (".local/state/sandhill", STATE_PATH),
+    (".local/share/sandhill/bin", BIN_PATH),
+    (".local/share/sandhill/install", INSTALL_PATH),
+    (".local/share/sandhill/accounts", ACCOUNTS_PATH),
+];
+
+/// Where earlier versions installed the daemon on servers, relative to
+/// the home folder; removed once the new one runs, when its manifest says
+/// Sandhill put it there.
+pub const OLD_DAEMON_PATH: &str = ".local/bin/sandhilld";
 
 /// Key used in place of a large or binary output value that was moved to the
 /// blob store. The value becomes `{"sandhill_blob": "<sha256>", "size": n}`.

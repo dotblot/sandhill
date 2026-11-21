@@ -1,11 +1,16 @@
 use super::*;
+use sandhill_proto::{
+    ARK_PATH, BIN_PATH, DAEMON_PATH, INSTALL_PATH, OLD_DAEMON_PATH, RUFF_PATH, TY_PATH,
+};
+
+use crate::paths::{installed_path, legacy_path};
 
 pub(super) fn component_paths() -> [(&'static str, &'static str); 6] {
     [
-        ("sandhilld", ".local/bin/sandhilld"),
-        ("ark", ".local/share/sandhill/bin/ark"),
-        ("ty", sandhill_proto::TY_PATH),
-        ("ruff", sandhill_proto::RUFF_PATH),
+        ("sandhilld", DAEMON_PATH),
+        ("ark", ARK_PATH),
+        ("ty", TY_PATH),
+        ("ruff", RUFF_PATH),
         ("systemd", ".config/systemd/user/sandhilld.service"),
         (
             "launchd",
@@ -13,12 +18,35 @@ pub(super) fn component_paths() -> [(&'static str, &'static str); 6] {
         ),
     ]
 }
+pub(super) fn legacy_components() -> impl Iterator<Item = (&'static str, String)> {
+    std::iter::once(("sandhilld", OLD_DAEMON_PATH.into())).chain(
+        ["ark", "ty", "ruff"]
+            .into_iter()
+            .map(|name| (name, format!("{}/{name}", legacy_path(BIN_PATH)))),
+    )
+}
+
+/// Find the record for this exact path, whether its folder has moved or not.
+pub(super) fn component_manifest(home: &Path, id: &str, relative: &str) -> Option<PathBuf> {
+    let name = format!("{id}.json");
+    [INSTALL_PATH, legacy_path(INSTALL_PATH)]
+        .into_iter()
+        .map(|dir| home.join(dir).join(&name))
+        .find(|path| {
+            read_safe(path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|value| value["path"] == relative)
+        })
+}
 
 pub(super) const AGY_CONFIG: &str = ".gemini/config/mcp_config.json";
-pub(super) const AGY_MANIFEST: &str = ".local/share/sandhill/install/antigravity-mcp.json";
+pub(super) fn antigravity_manifest(home: &Path) -> PathBuf {
+    installed_path(home, INSTALL_PATH, "antigravity-mcp.json")
+}
 
 fn antigravity_server_name(home: &Path) -> Result<String> {
-    let manifest = home.join(AGY_MANIFEST);
+    let manifest = antigravity_manifest(home);
     if !path_exists(&manifest)? {
         return Ok("sandhill".into());
     }
@@ -76,7 +104,7 @@ pub(super) fn antigravity_entry(home: &Path) -> Result<Option<Value>> {
 
 pub(super) fn antigravity_owned(home: &Path, entry: &Value) -> Result<()> {
     let manifest: Value = serde_json::from_slice(
-        &read_safe(&home.join(AGY_MANIFEST))
+        &read_safe(&antigravity_manifest(home))
             .context("Antigravity MCP entry has no ownership manifest; preserved")?,
     )?;
     if manifest["version"] != 1
@@ -109,7 +137,7 @@ pub(super) fn remove_antigravity_mcp_at(home: &Path) -> Result<()> {
         &before,
         &serde_json::to_vec_pretty(&config)?,
     )?;
-    remove_safe(&home.join(AGY_MANIFEST))?;
+    remove_safe(&antigravity_manifest(home))?;
     Ok(())
 }
 
@@ -209,7 +237,7 @@ mod tests {
     fn ownership_requires_manifest_and_matching_contents() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().canonicalize().unwrap();
-        let relative = ".local/bin/sandhilld";
+        let relative = DAEMON_PATH;
         let path = home.join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"owned").unwrap();
@@ -241,7 +269,7 @@ mod tests {
             serde_json::from_slice::<Value>(&std::fs::read(&config).unwrap()).unwrap(),
             document
         );
-        let manifest = home.join(AGY_MANIFEST);
+        let manifest = antigravity_manifest(&home);
         SafeDir::ensure(manifest.parent().unwrap()).unwrap();
         std::fs::write(
             &manifest,
@@ -282,7 +310,7 @@ mod tests {
             json!({"mcpServers":{"sandhill":legacy,"sandhill-managed":current}}).to_string(),
         )
         .unwrap();
-        let manifest = home.join(AGY_MANIFEST);
+        let manifest = antigravity_manifest(&home);
         SafeDir::ensure(manifest.parent().unwrap()).unwrap();
         std::fs::write(
             &manifest,

@@ -8,7 +8,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use sandhill_proto::client::Client;
 use sandhill_proto::{
-    BLOB_KEY, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED, Event, RunFinished,
+    BLOB_KEY, DAEMON_PATH, EVENT_RUN_FINISHED, EVENT_RUN_STARTED, EVENT_SESSION_ENDED, Event,
+    OLD_DAEMON_LAYOUT, RunFinished, STATE_PATH,
 };
 use serde_json::Value;
 
@@ -19,15 +20,15 @@ use serde_json::Value;
     about = "Talk to a local or remote sandhilld"
 )]
 struct Cli {
-    /// Daemon socket (default: ~/.local/state/sandhill/sandhilld.sock).
+    /// Daemon socket (default: ~/.sandhill/state/sandhilld.sock).
     #[arg(long, global = true)]
     socket: Option<PathBuf>,
-    /// Reach a remote daemon with `ssh HOST sandhilld attach --start`.
+    /// Reach a remote daemon over ssh.
     #[arg(long, global = true)]
     ssh: Option<String>,
     /// Path of sandhilld on the remote host.
-    #[arg(long, global = true, default_value = "sandhilld")]
-    remote_daemon: String,
+    #[arg(long, global = true)]
+    remote_daemon: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -189,12 +190,12 @@ async fn run(cli: Cli) -> Result<()> {
 async fn connect(cli: &Cli) -> Result<(Client, Option<tokio::process::Child>)> {
     if let Some(host) = &cli.ssh {
         let mut command = tokio::process::Command::new("ssh");
-        command
-            .arg("-T")
-            .arg(host)
-            .arg(&cli.remote_daemon)
-            .arg("attach")
-            .arg("--start");
+        command.arg("-T").arg(host);
+        if let Some(program) = &cli.remote_daemon {
+            command.args([program, "attach", "--start"]);
+        } else {
+            command.arg(format!("sh -c 'exec ~/{DAEMON_PATH} attach --start'"));
+        }
         let (client, child) = Client::connect_command(command).await?;
         return Ok((client, Some(child)));
     }
@@ -209,14 +210,30 @@ async fn connect(cli: &Cli) -> Result<(Client, Option<tokio::process::Child>)> {
 }
 
 fn default_socket() -> PathBuf {
-    let state = std::env::var_os("SANDHILL_STATE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("XDG_STATE_HOME").map(|d| PathBuf::from(d).join("sandhill")))
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state/sandhill"))
-        })
-        .unwrap_or_else(|| PathBuf::from("/tmp/sandhill"));
-    state.join("sandhilld.sock")
+    state_location(
+        std::env::var_os("SANDHILL_STATE_DIR"),
+        std::env::var_os("HOME"),
+    )
+    .join("sandhilld.sock")
+}
+
+fn state_location(state: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(state) = state {
+        return state.into();
+    }
+    let Some(home) = home.map(PathBuf::from) else {
+        return std::env::temp_dir().join(STATE_PATH);
+    };
+    let state = home.join(STATE_PATH);
+    if !state.exists()
+        && let Some((old, _)) = OLD_DAEMON_LAYOUT.iter().find(|(_, new)| *new == STATE_PATH)
+    {
+        let old = home.join(old);
+        if old.exists() {
+            return old;
+        }
+    }
+    state
 }
 
 /// Accepts a full session id or a unique prefix of one.
@@ -333,4 +350,22 @@ fn render_bundle(data: &Value) -> String {
 
 fn short(id: Option<&str>) -> &str {
     id.map(|id| &id[..8.min(id.len())]).unwrap_or("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_lookup_uses_the_home_layout_unless_state_is_overridden() {
+        let home = Some("/home/sandhill-test".into());
+        assert_eq!(
+            state_location(None, home.clone()),
+            PathBuf::from("/home/sandhill-test").join(STATE_PATH)
+        );
+        assert_eq!(
+            state_location(Some("/opt/sandhill-test".into()), home),
+            PathBuf::from("/opt/sandhill-test")
+        );
+    }
 }

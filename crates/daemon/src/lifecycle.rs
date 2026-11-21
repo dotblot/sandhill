@@ -24,8 +24,9 @@ mod ownership;
 mod storage;
 
 use components::{
-    AGY_CONFIG, AGY_MANIFEST, antigravity_entry, antigravity_owned, antigravity_registration_at,
-    component_paths, remove_antigravity_mcp_at, uninstall_one,
+    AGY_CONFIG, antigravity_entry, antigravity_manifest, antigravity_owned,
+    antigravity_registration_at, component_manifest, component_paths, legacy_components,
+    remove_antigravity_mcp_at, uninstall_one,
 };
 use ownership::{process, processes, refresh};
 use storage::{SafeDir, path_exists, read_safe, remove_safe, storage_entry};
@@ -204,6 +205,98 @@ fn read_record(path: &Path) -> Result<Option<Ownership>> {
         return Ok(None);
     }
     Ok(Some(serde_json::from_slice(&read_safe(path)?)?))
+}
+
+fn ownership_still_live(owner: &mut Ownership, all: &mut HashMap<u32, Process>) -> Result<bool> {
+    refresh(owner, all)?;
+    Ok(!owner.members.is_empty() || !owner.unverified.is_empty())
+}
+
+/// The same ownership and process checks as resource inventory, without
+/// opening a writable journal or updating any ownership records.
+pub(crate) fn old_resources_alive(
+    state: &crate::StateDir,
+    sessions: &[crate::journal::SessionRecord],
+) -> Result<bool> {
+    let mut all = processes()?;
+    let mut recorded = HashSet::new();
+    for session in sessions {
+        let path = session.connection_file.with_extension("owner.json");
+        if let Some(mut owner) = read_record(&path)? {
+            if ownership_still_live(&mut owner, &mut all)? {
+                return Ok(true);
+            }
+            recorded.insert(path);
+        } else if let Some(pid) = session.pid
+            && ownership::unrecorded_kernel_alive(pid, session.status == SessionStatus::Ended, &all)
+        {
+            return Ok(true);
+        }
+    }
+    let dir = state.kernels_dir();
+    if path_exists(&dir)? {
+        let _safe = SafeDir::open(&dir)?;
+        for entry in std::fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".owner.json"))
+                && !recorded.contains(&path)
+                && let Some(mut owner) = read_record(&path)?
+                && ownership_still_live(&mut owner, &mut all)?
+            {
+                return Ok(true);
+            }
+        }
+    }
+    let dir = state.terminals_dir();
+    if path_exists(&dir)? {
+        let _safe = SafeDir::open(&dir)?;
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            anyhow::ensure!(entry.file_type()?.is_dir(), "unexpected terminal file");
+            let paths = Paths::new(entry.path());
+            let mut owner =
+                read_record(&entry.path().join("lifecycle.json"))?.unwrap_or_else(|| Ownership {
+                    roots: Vec::new(),
+                    members: Vec::new(),
+                    unverified: Vec::new(),
+                });
+            let host = if path_exists(&paths.host())? {
+                Some(serde_json::from_slice::<Value>(&read_safe(&paths.host())?)?)
+            } else {
+                None
+            };
+            let mut older_pid_live = false;
+            if let Some(host) = host {
+                for (identity, pid) in [("host_identity", "host"), ("identity", "pid")] {
+                    if host.get(identity).is_none_or(Value::is_null)
+                        && !path_exists(&paths.exit())?
+                        && let Some(pid) =
+                            host[pid].as_u64().and_then(|pid| u32::try_from(pid).ok())
+                    {
+                        older_pid_live |= ownership::unrecorded_kernel_alive(pid, false, &all);
+                    }
+                }
+                for key in ["host_identity", "identity"] {
+                    if let Some(id) = host.get(key).filter(|value| !value.is_null()) {
+                        let identity = serde_json::from_value(id.clone())?;
+                        if !owner.roots.contains(&identity) {
+                            owner.roots.push(identity);
+                        }
+                    }
+                }
+            }
+            if ownership_still_live(&mut owner, &mut all)?
+                || older_pid_live
+                || std::os::unix::net::UnixStream::connect(paths.socket()).is_ok()
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 struct Resource {
@@ -626,6 +719,60 @@ impl Daemon {
                     entries.push(entry);
                 }
             }
+            for (id, path) in legacy_components() {
+                if let Some(mut entry) =
+                    storage_entry(&format!("old:{id}"), "programs", &home.join(path), false)?
+                {
+                    entry["reason"] = "Sandhill kept this older install. Removal requires a matching ownership record.".into();
+                    entries.push(entry);
+                }
+            }
+            let log = self.state.log_path();
+            let latest_move_note = log
+                .symlink_metadata()
+                .ok()
+                .filter(|m| m.is_file())
+                .and_then(|_| crate::logfile::tail(&log, 16 * 1024).ok())
+                .and_then(|tail| {
+                    tail.text
+                        .lines()
+                        .rev()
+                        .find(|line| {
+                            [
+                                "Sandhill kept its old files because",
+                                "Sandhill could not move its old files",
+                                "Sandhill could not check its old folder",
+                                "Sandhill could not prepare the new folder",
+                            ]
+                            .iter()
+                            .any(|prefix| line.starts_with(prefix))
+                        })
+                        .map(str::to_owned)
+                });
+            for &(old, new) in sandhill_proto::OLD_DAEMON_LAYOUT {
+                let path = home.join(old);
+                if let Some(mut entry) =
+                    storage_entry(&format!("old:{old}"), "settings", &path, false)?
+                {
+                    let reason = if path == root || !home.join(new).exists() {
+                        latest_move_note.as_deref().unwrap_or(
+                            "Sandhill has not moved this folder yet. See the daemon log for why.",
+                        )
+                    } else {
+                        "Sandhill kept this old folder because the new place already exists."
+                    };
+                    entry["reason"] = reason.into();
+                    entries.push(entry);
+                }
+            }
+            for (id, path) in [
+                ("component_manifests", sandhill_proto::INSTALL_PATH),
+                ("agent_accounts", sandhill_proto::ACCOUNTS_PATH),
+            ] {
+                if let Some(entry) = storage_entry(id, "settings", &home.join(path), false)? {
+                    entries.push(entry);
+                }
+            }
             match antigravity_entry(&home) {
                 Ok(Some(entry)) => {
                     let owned = antigravity_owned(&home, &entry).is_ok();
@@ -750,14 +897,21 @@ impl Daemon {
         let mut results = Vec::new();
         let mut remaining = Vec::new();
         let mut errors = Vec::new();
-        for (id, relative) in component_paths() {
-            let path = home.join(relative);
-            let manifest = home.join(format!(".local/share/sandhill/install/{id}.json"));
-            if !path_exists(&path)? && !path_exists(&manifest)? {
+        for (id, relative) in component_paths()
+            .into_iter()
+            .map(|(id, path)| (id, std::borrow::Cow::Borrowed(path)))
+            .chain(legacy_components().map(|(id, path)| (id, std::borrow::Cow::Owned(path))))
+        {
+            let manifest = component_manifest(&home, id, &relative);
+            if !path_exists(&home.join(relative.as_ref()))? && manifest.is_none() {
                 continue;
             }
-            let result = uninstall_one(&home, id, relative, &manifest);
-            let mut report = json!({"id":id,"removed":result.is_ok()});
+            let result = manifest
+                .with_context(|| {
+                    format!("{id}: no matching ownership record for {relative}; left in place")
+                })
+                .and_then(|manifest| uninstall_one(&home, id, &relative, &manifest));
+            let mut report = json!({"id":id,"path":relative.as_ref(),"removed":result.is_ok()});
             if let Err(err) = result {
                 let message = format!("{err:#}");
                 report["error"] = message.clone().into();
@@ -827,7 +981,7 @@ pub(crate) fn record_antigravity_mcp(server: &str, executable: &Path) -> Result<
     {
         bail!("provider MCP entry does not match the just-installed command");
     }
-    let manifest = home.join(AGY_MANIFEST);
+    let manifest = antigravity_manifest(&home);
     let parent = SafeDir::ensure(manifest.parent().context("no manifest parent")?)?;
     parent.write_file(
         manifest.file_name().context("no manifest filename")?,
