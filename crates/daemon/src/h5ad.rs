@@ -74,9 +74,21 @@ pub(crate) async fn describe(executable: &Path, path: String) -> Result<Value> {
 /// Runs only in the hidden reader command, before opening the HDF5 file.
 pub fn worker(path: &Path) -> Result<()> {
     limit_worker_memory()?;
-    std::panic::set_hook(Box::new(|_| {}));
-    let summary = std::panic::catch_unwind(|| read(path))
-        .map_err(|_| anyhow!("The AnnData reader could not read this .h5ad"))??;
+    // A panic inside the HDF5 library is kept, not printed, and becomes the
+    // details of the plain error.
+    static PANIC: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    std::panic::set_hook(Box::new(|info| {
+        if let Ok(mut said) = PANIC.lock() {
+            *said = info.to_string();
+        }
+    }));
+    let summary = std::panic::catch_unwind(|| read(path)).map_err(|_| {
+        let said = PANIC.lock().map(|said| said.clone()).unwrap_or_default();
+        anyhow!(
+            "The AnnData reader could not read this .h5ad. Details: {}",
+            clipped(said, 512)
+        )
+    })??;
     serde_json::to_writer(io::stdout().lock(), &summary)?;
     Ok(())
 }
