@@ -536,7 +536,9 @@ impl Workbench {
                 let run = review::run_button().on_click(cx.listener(move |this, _, _, cx| {
                     this.run_project_package_setup(id.clone(), cx);
                 }));
-                review::project_setup(plan, (close("Cancel", cx), run), p)
+                let space = review::space_button()
+                    .on_click(cx.listener(|this, _, _, cx| this.manage_resources(cx)));
+                review::project_setup(plan, (close("Cancel", cx), run), space, p)
             }
             Stage::Writing => status("Saving this project's packages…".into(), false),
             Stage::Starting => status("Starting the setup…".into(), false),

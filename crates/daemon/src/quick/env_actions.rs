@@ -10,11 +10,12 @@ use sandhill_proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::sources::{self, Sources};
 use super::{
     env_check,
     environments::{self, Environment},
     install::{self, quote},
-    package_plan, record, undo,
+    package_plan, record, space, undo, upgrades,
 };
 use crate::{
     kernelspecs::{self, Search},
@@ -25,7 +26,7 @@ use crate::{
 pub(crate) enum Work {
     Check(Box<Environment>),
     Undo { id: String, command: String },
-    Packages(PackagePlan),
+    Packages(Box<PackagePlan>),
     Shell { command: String, effect: Effect },
 }
 
@@ -65,6 +66,7 @@ pub(crate) fn prepare(
             command: String::new(),
             notes: Vec::new(),
             refused: None,
+            refused_fix: None,
         },
         work: None,
         stop: None,
@@ -72,6 +74,9 @@ pub(crate) fn prepare(
     match build(search, record_path, exe, &mut prepared) {
         Ok(work) => prepared.work = Some(work),
         Err(error) => {
+            if prepared.plan.refused_fix.is_none() {
+                prepared.plan.refused_fix = space::fix(&error);
+            }
             prepared.plan.refused = Some(error.to_string());
             prepared.plan.command.clear();
         }
@@ -79,14 +84,40 @@ pub(crate) fn prepare(
     prepared
 }
 
+/// What an interrupted environment action was doing, for its marker.
+pub(super) fn interrupted(
+    work: &Work,
+) -> Option<(
+    String,
+    String,
+    Option<super::interrupted::Rerun>,
+    Option<super::interrupted::Made>,
+)> {
+    match work {
+        Work::Packages(plan) => Some(super::interrupted::describe_packages(plan)),
+        Work::Shell {
+            effect: Effect::Add { folder, .. },
+            ..
+        } => Some((
+            "Making a new environment".into(),
+            folder.to_string_lossy().into_owned(),
+            None,
+            Some(super::interrupted::Made::Folder(folder.clone())),
+        )),
+        _ => None,
+    }
+}
+
 fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepared) -> Result<Work> {
+    let sources = sources::chosen(record_path);
     let plan = &mut prepared.plan;
     let id = match &plan.action {
         EnvAction::Check { env }
         | EnvAction::Undo { env }
         | EnvAction::Duplicate { env, .. }
         | EnvAction::Export { env, .. }
-        | EnvAction::Delete { env } => Some(env.as_str()),
+        | EnvAction::Delete { env }
+        | EnvAction::ReinstallFromOldR { env, .. } => Some(env.as_str()),
         EnvAction::Import { file, env, .. } if !is_yaml(file) => env.as_deref(),
         EnvAction::Import { .. } => None,
     };
@@ -133,7 +164,8 @@ fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepare
             } else if !env.is_r() && is_venv(&env) {
                 let (tool, path) = python_tool(&env)?;
                 method = tool.id();
-                let mut command = duplicate_venv(tool, path, &env.card.program, &destination);
+                let mut command =
+                    duplicate_venv(tool, path, &env.card.program, &destination, &sources);
                 if env.packages.contains_key("ipykernel") {
                     let (name, at, register) = register_venv(search, &destination)?;
                     plan.notes.push(format!("Register its kernel as {name}."));
@@ -149,6 +181,7 @@ fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepare
             };
             plan.folder = destination.to_string_lossy().into_owned();
             plan.what = format!("Copy {} to a new environment", env.card.name);
+            space::check(&destination, space::need_mb(None))?;
             Effect::Add {
                 folder: destination,
                 conda: is_conda,
@@ -216,7 +249,8 @@ fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepare
                 )?;
             plan.what = "Make a new conda environment from this file".into();
             plan.folder = destination.to_string_lossy().into_owned();
-            plan.command = conda_import_command(&tool, &destination, &source);
+            plan.command = conda_import_command(&tool, &destination, &source, &sources);
+            space::check(&destination, space::need_mb(None))?;
             Effect::Add {
                 folder: destination,
                 conda: true,
@@ -227,7 +261,8 @@ fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepare
         }
         (EnvAction::Import { file, .. }, Some(env)) => {
             let file = existing_file(file)?;
-            let packages = import_packages(&env, &file)?;
+            let packages = import_packages(&env, &file, &sources)?;
+            space::check(Path::new(&packages.folder), space::need_mb(None))?;
             plan.what = format!("Install packages from this file into {}", env.card.name);
             if env.is_r() {
                 plan.notes.push(format!(
@@ -245,7 +280,7 @@ fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepare
             }
             plan.folder.clone_from(&packages.folder);
             plan.command.clone_from(&packages.command);
-            return Ok(Work::Packages(packages));
+            return Ok(Work::Packages(Box::new(packages)));
         }
         (EnvAction::Import { .. }, None) => {
             bail!("Choose an environment to install these packages into.")
@@ -275,6 +310,11 @@ fn build(search: &Search, record_path: &Path, exe: &Path, prepared: &mut Prepare
                 folder,
                 id: env.card.id,
             }
+        }
+        (EnvAction::ReinstallFromOldR { library, .. }, Some(env)) => {
+            let library = library.clone();
+            let packages = reinstall_from_old_r(search, record_path, &env, &library, plan)?;
+            return Ok(Work::Packages(Box::new(packages)));
         }
         _ => bail!("Choose an environment first."),
     };
@@ -492,8 +532,15 @@ pub(super) fn conda_root(tool: &str) -> Option<PathBuf> {
         })
 }
 
-pub(super) fn conda_import_command(tool: &Path, destination: &Path, source: &Path) -> String {
-    quote([
+/// A new conda environment from an environment file, whose short channel
+/// names point at the chosen source.
+pub(super) fn conda_import_command(
+    tool: &Path,
+    destination: &Path,
+    source: &Path,
+    sources: &Sources,
+) -> String {
+    let create = quote([
         tool.to_string_lossy().as_ref(),
         "env",
         "create",
@@ -502,7 +549,11 @@ pub(super) fn conda_import_command(tool: &Path, destination: &Path, source: &Pat
         &destination.to_string_lossy(),
         "--file",
         &source.to_string_lossy(),
-    ])
+    ]);
+    match sources.channel_alias() {
+        Some(alias) => format!("{} {create}", quote(["/usr/bin/env", &alias[0], &alias[1]])),
+        None => create,
+    }
 }
 
 fn duplicate_conda(tool: &str, source: &Path, destination: &Path) -> String {
@@ -528,19 +579,43 @@ fn freeze(tool: InstallTool, path: &str, program: &str) -> String {
     }
 }
 
-fn duplicate_venv(tool: InstallTool, path: &str, program: &str, destination: &Path) -> String {
+fn duplicate_venv(
+    tool: InstallTool,
+    path: &str,
+    program: &str,
+    destination: &Path,
+    sources: &Sources,
+) -> String {
     let target = destination.to_string_lossy();
     let new_python = destination.join("bin/python");
     let new_python = new_python.to_string_lossy();
+    let [index, url] = sources.pip_index();
     let (create, install) = if tool == InstallTool::Uv {
         (
             quote([path, "venv", "--python", program, &target]),
-            quote([path, "pip", "install", "--python", &new_python, "-r"]),
+            quote([
+                path,
+                "pip",
+                "install",
+                "--python",
+                &new_python,
+                index,
+                url,
+                "-r",
+            ]),
         )
     } else {
         (
             quote([program, "-m", "venv", &target]),
-            quote([new_python.as_ref(), "-m", "pip", "install", "-r"]),
+            quote([
+                new_python.as_ref(),
+                "-m",
+                "pip",
+                "install",
+                index,
+                url,
+                "-r",
+            ]),
         )
     };
     with_freeze(
@@ -630,7 +705,7 @@ fn export_r(env: &Environment) -> String {
     }
 }
 
-fn import_packages(env: &Environment, file: &Path) -> Result<PackagePlan> {
+fn import_packages(env: &Environment, file: &Path, sources: &Sources) -> Result<PackagePlan> {
     let target = env.target(None)?;
     let (tool, folder, command, packages) = if let InstallTarget::R { r, library } = &target {
         ensure!(
@@ -694,7 +769,13 @@ fn import_packages(env: &Environment, file: &Path) -> Result<PackagePlan> {
         let command = quote([
             rscript.to_string_lossy().as_ref(),
             "-e",
-            &package_plan::r_code(PackageAction::Install, Path::new(library), &names, use_bioc),
+            &package_plan::r_code(
+                PackageAction::Install,
+                Path::new(library),
+                &names,
+                use_bioc,
+                sources,
+            ),
         ]);
         (InstallTool::R, library.clone(), command, packages)
     } else {
@@ -712,10 +793,13 @@ fn import_packages(env: &Environment, file: &Path) -> Result<PackagePlan> {
             "Python can't install packages into the folder shown."
         );
         let file = file.to_string_lossy();
+        let [index, url] = sources.pip_index();
         let command = if tool == InstallTool::Uv {
-            quote([path, "pip", "install", "--python", program, "-r", &file])
+            quote([
+                path, "pip", "install", "--python", program, index, url, "-r", &file,
+            ])
         } else {
-            quote([program, "-m", "pip", "install", "-r", &file])
+            quote([program, "-m", "pip", "install", index, url, "-r", &file])
         };
         (tool, env.card.folder.clone(), command, Vec::new())
     };
@@ -738,7 +822,86 @@ fn import_packages(env: &Environment, file: &Path) -> Result<PackagePlan> {
         command,
         notes: Vec::new(),
         refused: None,
+        refused_fix: None,
     })
+}
+
+/// Reinstall, for this R, what an earlier R's libraries hold (the card's
+/// `upgraded_from`), planned like any package install into `library`.
+fn reinstall_from_old_r(
+    search: &Search,
+    record_path: &Path,
+    env: &Environment,
+    library: &str,
+    plan: &mut EnvActionPlan,
+) -> Result<PackagePlan> {
+    ensure!(
+        env.is_r(),
+        "Only R can reinstall packages from an earlier R."
+    );
+    let upgrade = environments::list(search, record_path)
+        .into_iter()
+        .find(|card| card.id == env.card.id)
+        .and_then(|card| card.upgraded_from)
+        .context("This R has no packages left from an earlier R to reinstall.")?;
+    let libraries: Vec<_> = upgrade.libraries.iter().map(PathBuf::from).collect();
+    let have = env.packages.keys().map(String::as_str).collect();
+    let mut specs = Vec::new();
+    let mut cant = Vec::new();
+    for old in upgrades::missing(&libraries, &have) {
+        match old.source {
+            upgrades::Source::Cran | upgrades::Source::Bioconductor => specs.push(old.name),
+            upgrades::Source::Github(repo) => specs.push(repo),
+            upgrades::Source::Elsewhere => cant.push(old.name),
+        }
+    }
+    if !cant.is_empty() {
+        plan.notes.push(format!(
+            "These were installed from files on this computer or another site, so Sandhill can't reinstall them: {}.",
+            cant.join(", ")
+        ));
+    }
+    ensure!(
+        !specs.is_empty(),
+        "None of the packages from R {} came from CRAN, Bioconductor or GitHub, so Sandhill can't reinstall them.",
+        upgrade.version
+    );
+    let count = specs.len();
+    let change = PackageChange {
+        action: PackageAction::Install,
+        target: InstallTarget::R {
+            r: env.card.program.clone(),
+            library: library.into(),
+        },
+        packages: specs,
+        tool: Some(InstallTool::R),
+        reason: "Reinstalled after upgrading R".into(),
+    };
+    let packages = package_plan::plan(
+        &search.clone().in_own(own_env::chosen(record_path)),
+        Some(record_path),
+        change,
+    );
+    if let Some(refused) = &packages.refused {
+        plan.refused_fix.clone_from(&packages.refused_fix);
+        bail!("{refused}");
+    }
+    plan.what = if count == 1 {
+        format!("Reinstall 1 package from R {} for this R", upgrade.version)
+    } else {
+        format!(
+            "Reinstall {count} packages from R {} for this R",
+            upgrade.version
+        )
+    };
+    plan.folder.clone_from(&packages.folder);
+    plan.command.clone_from(&packages.command);
+    plan.notes.extend(packages.notes.iter().cloned());
+    plan.notes.push(format!(
+        "The packages for R {} stay where they are; Sandhill only reads them.",
+        upgrade.version
+    ));
+    Ok(packages)
 }
 
 fn csv(text: &str) -> Result<Vec<Vec<String>>> {
@@ -794,14 +957,32 @@ mod tests {
         assert!(
             duplicate_conda("/bin/micromamba", Path::new("/old"), &target).contains("--explicit")
         );
+        let mirror = Sources {
+            pypi: "https://mirrors.ustc.edu.cn/pypi/simple".into(),
+            conda: "https://mirrors.ustc.edu.cn/anaconda/cloud".into(),
+            ..Sources::default()
+        };
         assert!(
             duplicate_venv(
                 InstallTool::Pip,
                 "/old/bin/python",
                 "/old/bin/python",
-                &target
+                &target,
+                &mirror
             )
-            .contains("'pip' 'install' '-r'")
+            .contains(
+                "'pip' 'install' '--index-url' 'https://mirrors.ustc.edu.cn/pypi/simple' '-r'"
+            )
+        );
+        let file = Path::new("/p/environment.yml");
+        assert!(
+            conda_import_command(Path::new("/mamba"), &target, file, &Sources::default())
+                .starts_with("'/mamba' 'env' 'create'")
+        );
+        assert!(
+            conda_import_command(Path::new("/mamba"), &target, file, &mirror).starts_with(
+                "'/usr/bin/env' 'CONDA_CHANNEL_ALIAS=https://mirrors.ustc.edu.cn/anaconda/cloud' 'MAMBA_CHANNEL_ALIAS=https://mirrors.ustc.edu.cn/anaconda/cloud' '/mamba' 'env' 'create'"
+            )
         );
     }
 
@@ -838,11 +1019,15 @@ mod tests {
         );
         let csv = path.join("package-list.csv");
         fs::write(&csv, "name,version,source,library\npraise,1.0,CRAN,/old\nGenomicRanges,2.0,Bioconductor,/old\nother,3.0,GitHub: org/repo,/old\n").unwrap();
-        let plan = import_packages(&env, &csv).unwrap();
+        let plan = import_packages(&env, &csv, &Sources::default()).unwrap();
+        assert!(
+            plan.command
+                .contains("BioC_mirror = \"https://bioconductor.org\"")
+        );
         assert!(plan.command.contains("BiocManager::install") && plan.command.contains("org/repo"));
         assert_eq!(plan.folder, library.to_string_lossy());
         fs::write(&csv, "wrong,file\n").unwrap();
-        assert!(import_packages(&env, &csv).is_err());
+        assert!(import_packages(&env, &csv, &Sources::default()).is_err());
         let mut own = env;
         own.own = Some(path.to_path_buf());
         assert!(

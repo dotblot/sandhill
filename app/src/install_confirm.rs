@@ -150,6 +150,7 @@ pub(crate) fn own_setup(
     expanded: bool,
     details: Button,
     developer_tools: Div,
+    space: Button,
     p: &Palette,
 ) -> Div {
     let plan = match review {
@@ -189,6 +190,7 @@ pub(crate) fn own_setup(
         })
         .when_some(plan.refused.as_ref(), |d, reason| {
             d.child(line(reason.clone(), p.err))
+                .children(space_for(&plan.refused_fix, space))
         })
         .children(plan.notes.iter().map(|note| line(note.clone(), p.muted)))
         .when(plan.needs_developer_tools, |d| d.child(developer_tools))
@@ -395,13 +397,18 @@ pub(crate) fn copy_report<T: 'static>(
 pub(crate) fn setup_packages<T: 'static>(
     reviews: &[Review<PackagePlan>],
     libraries: &[String],
+    space: Button,
     pick: impl Fn(&mut T, usize, Choice, &mut Context<T>) + Copy + 'static,
     p: &Palette,
     cx: &mut Context<T>,
 ) -> Div {
+    let mut space = Some(space);
     body().children(reviews.iter().enumerate().map(|(ix, review)| match review {
         Review::Planning => line("Working out the command…", p.muted),
-        Review::Ready(plan) => package_plan(ix, plan, libraries, &pick, p, cx),
+        Review::Ready(plan) => {
+            let space = space.take_if(|_| needs_space(&plan.refused_fix));
+            package_plan(ix, plan, libraries, space, &pick, p, cx)
+        }
         Review::Error(error) => line(error.clone(), p.err),
     }))
 }
@@ -460,15 +467,41 @@ fn command_with_copy(ix: usize, command: &str, p: &Palette) -> Div {
         )
 }
 
-/// What runs, or why it can't, for one plan.
-fn command_or_refusal(ix: usize, command: &str, refused: Option<&str>, p: &Palette) -> Div {
+/// What runs, or why it can't, for one plan, with Free Up Space when the
+/// disk is too full for it.
+fn command_or_refusal(
+    ix: usize,
+    command: &str,
+    refused: Option<&str>,
+    space: Option<Button>,
+    p: &Palette,
+) -> Div {
     v_flex()
         .min_w_0()
         .gap(px(look::GAP_6))
         .when_some(refused, |d, text| d.child(line(text.to_owned(), p.err)))
+        .when(refused.is_some(), |d| {
+            d.children(space.map(|button| h_flex().child(button)))
+        })
         .when(refused.is_none() && !command.is_empty(), |d| {
             d.child(command_with_copy(ix, command, p))
         })
+}
+
+/// Free Up Space, shown beside a refusal because the disk is too full;
+/// the caller's click opens Resources and Storage, as for failures.
+pub(crate) fn space_button() -> Button {
+    Button::new("install-free-space")
+        .small()
+        .label("Free Up Space")
+}
+
+fn needs_space(fix: &Option<FailureFix>) -> bool {
+    matches!(fix, Some(FailureFix::FreeUpSpace))
+}
+
+fn space_for(fix: &Option<FailureFix>, space: Button) -> Option<Div> {
+    needs_space(fix).then(|| h_flex().child(space))
 }
 
 /// Cancel, then the verb when there is something to run; Remove is red.
@@ -502,6 +535,7 @@ fn package_plan<T: 'static>(
     ix: usize,
     plan: &PackagePlan,
     libraries: &[String],
+    space: Option<Button>,
     pick: &(impl Fn(&mut T, usize, Choice, &mut Context<T>) + Clone + 'static),
     p: &Palette,
     cx: &mut Context<T>,
@@ -579,6 +613,7 @@ fn package_plan<T: 'static>(
             ix,
             &plan.command,
             plan.refused.as_deref(),
+            space,
             p,
         ))
         .when(ix > 0, |d| {
@@ -592,11 +627,13 @@ fn package_plan<T: 'static>(
 /// library), with what was left out (`skipped`) in plain words. Folder
 /// choices from `libraries` apply to installs only. The verb runs the
 /// plans that can run.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn packages<T: 'static>(
     reviews: &[Review<PackagePlan>],
     skipped: &[String],
     libraries: &[String],
     (cancel, run): (Button, Button),
+    space: Button,
     pick: impl Fn(&mut T, usize, Choice, &mut Context<T>) + Clone + 'static,
     p: &Palette,
     cx: &mut Context<T>,
@@ -631,9 +668,11 @@ pub(crate) fn packages<T: 'static>(
         &[]
     };
     let any = plans.iter().any(|plan| runnable(plan));
+    let mut space = Some(space);
     let mut panel = body();
     for (ix, plan) in plans.into_iter().enumerate() {
-        panel = panel.child(package_plan(ix, plan, choices, &pick, p, cx));
+        let space = space.take_if(|_| needs_space(&plan.refused_fix));
+        panel = panel.child(package_plan(ix, plan, choices, space, &pick, p, cx));
     }
     panel
         .children(skipped)
@@ -644,6 +683,7 @@ pub(crate) fn runtime(
     review: &Review<RuntimePlan>,
     cancel: Button,
     run: Button,
+    space: Button,
     p: &Palette,
 ) -> Div {
     let plan = match review {
@@ -687,6 +727,7 @@ pub(crate) fn runtime(
             0,
             &plan.command,
             plan.refused.as_deref(),
+            needs_space(&plan.refused_fix).then_some(space),
             p,
         ))
         .child(buttons(PackageAction::Install, can_run, (cancel, run)))
@@ -700,6 +741,7 @@ pub(crate) fn env_job_title(action: &EnvAction) -> &'static str {
         EnvAction::Export { .. } => "Exporting the package list",
         EnvAction::Import { .. } => "Importing the package list",
         EnvAction::Delete { .. } => "Deleting the environment",
+        EnvAction::ReinstallFromOldR { .. } => "Reinstalling the packages from the earlier R",
     }
 }
 
@@ -707,6 +749,7 @@ pub(crate) fn environment(
     review: &Review<EnvActionPlan>,
     name: &str,
     (cancel, run): (Button, Button),
+    space: Button,
     p: &Palette,
 ) -> Div {
     let plan = match review {
@@ -721,6 +764,7 @@ pub(crate) fn environment(
         EnvAction::Export { .. } => ("Export", false),
         EnvAction::Import { .. } => ("Import", false),
         EnvAction::Delete { .. } => ("Delete", true),
+        EnvAction::ReinstallFromOldR { .. } => ("Reinstall", false),
     };
     body()
         .when(delete, |d| {
@@ -735,6 +779,7 @@ pub(crate) fn environment(
             0,
             &plan.command,
             plan.refused.as_deref(),
+            needs_space(&plan.refused_fix).then_some(space),
             p,
         ))
         .child(
@@ -842,6 +887,7 @@ pub(crate) fn project_file(
 pub(crate) fn project_setup(
     review: &Review<ProjectSetupPlan>,
     (cancel, run): (Button, Button),
+    space: Button,
     p: &Palette,
 ) -> Div {
     let plan = match review {
@@ -862,6 +908,9 @@ pub(crate) fn project_setup(
                 .as_ref()
                 .map(|reason| line(reason.clone(), p.err)),
         )
+        .when(plan.refused.is_some(), |d| {
+            d.children(space_for(&plan.refused_fix, space))
+        })
         .children(plan.notes.iter().map(|note| line(note.clone(), p.muted)))
         .when(!plan.packages.is_empty(), |d| {
             d.child(line("Packages in the file", p.text)).child(

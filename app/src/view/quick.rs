@@ -696,7 +696,7 @@ impl Workbench {
                             .on_click(cx.listener(|_, _, _, cx| {
                                 cx.defer(|cx| {
                                     crate::shell::app_window::show_welcome(
-                                        Some(crate::welcome::start_screen::StartMode::Ready),
+                                        Some(crate::welcome::start_screen::StartMode::Ready(sandhill_link::LOCAL.into())),
                                         cx,
                                     )
                                 });
@@ -742,7 +742,9 @@ impl Workbench {
                         .on_click(|_, _, cx| {
                             cx.defer(|cx| {
                                 crate::shell::app_window::show_welcome(
-                                    Some(crate::welcome::start_screen::StartMode::Ready),
+                                    Some(crate::welcome::start_screen::StartMode::Ready(
+                                        sandhill_link::LOCAL.into(),
+                                    )),
                                     cx,
                                 )
                             });

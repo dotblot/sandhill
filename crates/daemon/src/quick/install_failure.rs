@@ -11,12 +11,19 @@ use serde::{Deserialize, Serialize};
 
 use super::{env_actions::Work, install::Job};
 
+/// A write refused by the lock while Sandhill's own R and Python are
+/// chosen. The app shows the same sentence under such errors.
+pub const LOCKED_MESSAGE: &str = "Sandhill's own R and Python are chosen, so your other R and Python can't be changed from Sandhill. Switch on the R and Python page to change them.";
+
 #[derive(Default, Serialize, Deserialize)]
 struct LogContext {
     folder: Option<PathBuf>,
     download_mb: Option<u64>,
     package: Option<String>,
     alternative: Option<PackageChange>,
+    /// The folders locked when the job started (see `own_lock`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    locked: Vec<PathBuf>,
 }
 
 impl LogContext {
@@ -48,13 +55,15 @@ impl LogContext {
                 change.tool = Some(tool);
                 change
             }),
+            locked: Vec::new(),
         }
     }
 }
 
 pub(super) fn remember(log: &Path, job: &Job) -> Result<()> {
-    let context = match job {
-        Job::Packages(plan) | Job::Environment(Work::Packages(plan)) => LogContext::packages(plan),
+    let mut context = match job {
+        Job::Packages(plan) => LogContext::packages(plan),
+        Job::Environment(Work::Packages(plan)) => LogContext::packages(plan),
         Job::OwnSetup(work) => LogContext {
             folder: Some(PathBuf::from(&work.plan().setup.folder)),
             download_mb: Some(work.plan().download_mb),
@@ -72,6 +81,7 @@ pub(super) fn remember(log: &Path, job: &Job) -> Result<()> {
         },
         _ => return Ok(()),
     };
+    context.locked = super::own_lock::known();
     crate::files::write_atomic(
         &log.with_extension("meta.json"),
         &serde_json::to_vec(&context)?,
@@ -92,6 +102,7 @@ pub(super) fn copy_failure(
             package: Some(package.into()),
             alternative,
             download_mb: None,
+            locked: super::own_lock::known(),
         },
     )
 }
@@ -110,10 +121,15 @@ pub(crate) fn explain(log_dir: &Path, path: &Path) -> Result<Option<InstallFailu
     log_file.seek(SeekFrom::Start(length.saturating_sub(LIMIT)))?;
     let mut bytes = Vec::new();
     log_file.take(LIMIT).read_to_end(&mut bytes)?;
-    let context = open_file(&log.with_extension("meta.json"))
+    let mut context: LogContext = open_file(&log.with_extension("meta.json"))
         .ok()
         .and_then(|file| serde_json::from_reader(file.take(16 * 1024)).ok())
         .unwrap_or_default();
+    if context.locked.is_empty()
+        && let Some(state) = folder.parent()
+    {
+        context.locked = super::own_lock::locked_now(&state.join(super::record::FILE));
+    }
     Ok(classify(&String::from_utf8_lossy(&bytes), &context))
 }
 
@@ -213,6 +229,19 @@ fn classify(log: &str, context: &LogContext) -> Option<InstallFailure> {
             "There isn't enough free space to install these packages.",
             detail,
             Some(FailureFix::FreeUpSpace),
+        ));
+    }
+    if let Some(folder) = lines
+        .iter()
+        .rev()
+        .filter(|(_, lower)| any(lower, &["operation not permitted", "read-only file system"]))
+        .find_map(|(line, _)| locked_folder(line, &context.locked))
+    {
+        return Some(one(
+            Kind::Permission,
+            LOCKED_MESSAGE,
+            vec![format!("Folder: {}", folder.display())],
+            None,
         ));
     }
     if let Some(index) = find(|line| {
@@ -385,6 +414,27 @@ fn classify(log: &str, context: &LogContext) -> Option<InstallFailure> {
 
 fn any(line: &str, patterns: &[&str]) -> bool {
     patterns.iter().any(|p| line.contains(p))
+}
+
+/// The locked folder a refused write in `line` was in: by a path as the
+/// line writes it, or as the sandbox saw it, resolved.
+fn locked_folder<'a>(line: &str, locked: &'a [PathBuf]) -> Option<&'a Path> {
+    if locked.is_empty() {
+        return None;
+    }
+    line.split(|c: char| {
+        c.is_whitespace() || "'\"`\u{2018}\u{2019}\u{201c}\u{201d},;()[]{}<>".contains(c)
+    })
+    .map(|word| word.trim_end_matches([':', '.']))
+    .filter(|word| word.starts_with('/'))
+    .find_map(|word| {
+        let path = Path::new(word);
+        let real = super::own_lock::real(path);
+        locked
+            .iter()
+            .find(|folder| path.starts_with(folder) || real.starts_with(folder))
+    })
+    .map(PathBuf::as_path)
 }
 
 fn network(line: &str) -> bool {
@@ -633,8 +683,9 @@ mod tests {
             command: String::new(),
             notes: Vec::new(),
             refused: None,
+            refused_fix: None,
         };
-        remember(&log, &Job::Environment(Work::Packages(plan))).unwrap();
+        remember(&log, &Job::Environment(Work::Packages(Box::new(plan)))).unwrap();
         fs::write(
             &log,
             "ConnectionError: HTTPSConnectionPool(host='pypi.org')",
@@ -647,6 +698,52 @@ mod tests {
                 change: Some(conda_change()),
             })
         );
+    }
+
+    #[test]
+    fn a_write_refused_by_the_lock_says_how_to_switch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().canonicalize().unwrap();
+        let library = real.join("Library/R/arm64/4.5/library");
+        fs::create_dir_all(&library).unwrap();
+        let linked = real.join("linked");
+        std::os::unix::fs::symlink(real.join("Library"), &linked).unwrap();
+        let context = LogContext {
+            locked: vec![library.clone()],
+            ..Default::default()
+        };
+        for log in [
+            format!(
+                "Warning in install.packages: 'lib = \"{0}\"' is not writable\nError: ERROR: failed to lock directory '{0}' for modifying\nTry removing '{0}/00LOCK-x': Operation not permitted",
+                library.display()
+            ),
+            format!(
+                "ERROR: Could not install packages due to an OSError: [Errno 1] Operation not permitted: '{}'",
+                linked.join("R/arm64/4.5/library/numpy").display()
+            ),
+            format!("mkdir: {}/newpkg: Read-only file system", library.display()),
+        ] {
+            let shown = classify(&log, &context).unwrap();
+            assert_eq!(shown.kind, Kind::Permission, "{log}");
+            assert_eq!(shown.message, LOCKED_MESSAGE);
+            assert_eq!(shown.detail, [format!("Folder: {}", library.display())]);
+            assert_eq!(shown.fix, None);
+        }
+        // Outside a locked folder, or with nothing locked: the usual message.
+        let elsewhere = format!(
+            "cp: {}: Read-only file system",
+            real.join("other/file").display()
+        );
+        assert_ne!(
+            classify(&elsewhere, &context).unwrap().message,
+            LOCKED_MESSAGE
+        );
+        let unlocked = format!("mkdir: {}/x: Read-only file system", library.display());
+        assert_ne!(
+            classify(&unlocked, &LogContext::default()).unwrap().message,
+            LOCKED_MESSAGE
+        );
+        assert!(!LOCKED_MESSAGE.contains(['\u{2013}', '\u{2014}']));
     }
 
     #[test]

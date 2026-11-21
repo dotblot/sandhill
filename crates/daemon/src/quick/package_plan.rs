@@ -13,11 +13,9 @@ use sandhill_proto::{
 use serde_json::Value;
 
 use super::install::{self, executable, info, probe, quote};
-use super::{package_names, record, setup};
+use super::sources::Sources;
+use super::{package_names, record, setup, sources, space};
 use crate::kernelspecs::Search;
-
-const CRAN: &str = "https://cloud.r-project.org";
-const CHANNELS: &[&str] = &["-c", "conda-forge", "-c", "bioconda", "--override-channels"];
 
 pub(crate) fn plan(search: &Search, record: Option<&Path>, change: PackageChange) -> PackagePlan {
     let mut plan = PackagePlan {
@@ -28,16 +26,21 @@ pub(crate) fn plan(search: &Search, record: Option<&Path>, change: PackageChange
         command: String::new(),
         notes: Vec::new(),
         refused: None,
+        refused_fix: None,
     };
     match build(search, record, &mut plan) {
         Ok(command) => plan.command = command,
-        Err(error) => plan.refused = Some(error.to_string()),
+        Err(error) => {
+            plan.refused_fix = space::fix(&error);
+            plan.refused = Some(error.to_string());
+        }
     }
     plan
 }
 
 fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) -> Result<String> {
     use InstallTool::{Conda, Pip, R, Uv};
+    let sources = record_path.map(sources::chosen).unwrap_or_default();
     let change = plan.change.clone();
     let PackageChange {
         action,
@@ -120,6 +123,9 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
         }
     }
     let is_r = matches!(target, InstallTarget::R { .. });
+    if let Some(record) = record_path {
+        install::prefer(&mut plan.tools, &install::prefs(record), target.language());
+    }
     let has_files = packages.iter().any(|name| Path::new(name).is_absolute());
     let compatible = |tool| !has_files || tool != Conda;
     let mut selected = match *tool {
@@ -168,7 +174,7 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
         for (&name, spec) in requested.iter().zip(packages) {
             let tool_path = Path::new(&selected.path);
             if is_r {
-                match conda_r_package(tool_path, name, *action, &installed) {
+                match conda_r_package(tool_path, name, *action, &installed, &sources) {
                     Ok((spec, source, version)) => {
                         conda_r.insert(name, (spec, source, version));
                     }
@@ -185,8 +191,13 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
                 if !known
                     && (requirements.contains("~=")
                         || requirements.contains("===")
-                        || conda_search(tool_path, conda, &format!("{conda}{requirements}"))
-                            .is_none())
+                        || conda_search(
+                            tool_path,
+                            conda,
+                            &format!("{conda}{requirements}"),
+                            &sources,
+                        )
+                        .is_none())
                 {
                     missing = Some((
                         name,
@@ -287,8 +298,13 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
                     plan.notes.push(
                         "Packages that need to be built may fail without developer tools.".into(),
                     );
-                    if known_to_need_compiler(&rscript, &requested, use_bioc, target_own.as_deref())
-                    {
+                    if known_to_need_compiler(
+                        &rscript,
+                        &requested,
+                        use_bioc,
+                        target_own.as_deref(),
+                        &sources,
+                    ) {
                         bail!(
                             "None of these packages can be built here without developer tools. Install those tools or choose another R."
                         );
@@ -298,7 +314,7 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
             quote([
                 rscript.to_string_lossy().as_ref(),
                 "-e",
-                &r_code(*action, library, &requested, use_bioc),
+                &r_code(*action, library, &requested, use_bioc, &sources),
             ])
         }
         Conda => {
@@ -322,7 +338,7 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
                 let (spec, source, version) = if is_r {
                     match conda_r.remove(name) {
                         Some(found) => found,
-                        None => conda_r_package(tool_path, name, *action, &installed)?,
+                        None => conda_r_package(tool_path, name, *action, &installed, &sources)?,
                     }
                 } else {
                     let basename = record::python_name(name);
@@ -367,7 +383,14 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
                 plan.notes
                     .push("This tool may add other packages that these need.".into());
             }
-            conda_command(&selected.path, prefix, *action, &plan.packages, repair)
+            conda_command(
+                &selected.path,
+                prefix,
+                *action,
+                &plan.packages,
+                repair,
+                &sources,
+            )
         }
         Pip | Uv => {
             let prefix = prefix
@@ -438,9 +461,13 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
                 *action,
                 plan.packages.iter().map(|package| package.spec.as_str()),
                 repair,
+                &sources,
             )
         }
     };
+    if *action != PackageAction::Remove {
+        space::check(Path::new(&plan.folder), space::need_mb(None))?;
+    }
     if let Some(folder) = target_own.filter(|_| selected.tool != Conda) {
         Ok(crate::own_env::command(&folder, &command))
     } else {
@@ -619,6 +646,7 @@ fn conda_command(
     action: PackageAction,
     packages: &[PlannedPackage],
     repair: bool,
+    sources: &Sources,
 ) -> String {
     let verb = match action {
         PackageAction::Install => "install",
@@ -627,9 +655,10 @@ fn conda_command(
         PackageAction::Remove => "remove",
     };
     let folder = prefix.to_string_lossy();
+    let channels = sources.conda_args();
     let mut args = vec![tool, verb, "-y", "-p", folder.as_ref()];
     if action != PackageAction::Remove {
-        args.extend(CHANNELS);
+        args.extend(channels.iter().map(String::as_str));
     }
     if repair {
         args.push("--force-reinstall");
@@ -646,6 +675,7 @@ pub(super) fn python_command(
     python: &str,
     action: PackageAction,
     packages: &[String],
+    sources: &Sources,
 ) -> String {
     python_command_with(
         tool,
@@ -654,6 +684,7 @@ pub(super) fn python_command(
         action,
         packages.iter().map(String::as_str),
         false,
+        sources,
     )
 }
 
@@ -664,6 +695,7 @@ fn python_command_with<'a>(
     action: PackageAction,
     packages: impl IntoIterator<Item = &'a str>,
     repair: bool,
+    sources: &'a Sources,
 ) -> String {
     let verb = if action == PackageAction::Remove {
         "uninstall"
@@ -675,6 +707,9 @@ fn python_command_with<'a>(
     } else {
         vec![python, "-m", "pip", verb]
     };
+    if action != PackageAction::Remove {
+        args.extend(sources.pip_index());
+    }
     match action {
         PackageAction::Update if repair => args.push(if tool == InstallTool::Uv {
             "--reinstall"
@@ -698,6 +733,7 @@ fn conda_r_package(
     name: &str,
     action: PackageAction,
     installed: &record::Versions,
+    sources: &Sources,
 ) -> Result<(String, &'static str, Option<String>)> {
     if github_repo(name) {
         bail!("Use R's own installer for GitHub packages like {name}.");
@@ -737,7 +773,7 @@ fn conda_r_package(
         {
             return Ok((spec.clone(), source, None));
         }
-        if let Some(version) = conda_search(tool, spec, spec) {
+        if let Some(version) = conda_search(tool, spec, spec, sources) {
             return Ok((spec.clone(), source, Some(version)));
         }
     }
@@ -749,9 +785,10 @@ fn conda_r_package(
     )
 }
 
-fn conda_search(tool: &Path, name: &str, spec: &str) -> Option<String> {
+fn conda_search(tool: &Path, name: &str, spec: &str, sources: &Sources) -> Option<String> {
+    let channels = sources.conda_args();
     let mut args = vec!["search", "--json"];
-    args.extend(CHANNELS);
+    args.extend(channels.iter().map(String::as_str));
     args.push(spec);
     let out = install::probe_conda_search(tool, &args)?;
     let json: Value = serde_json::from_str(&out).ok()?;
@@ -869,6 +906,7 @@ fn known_to_need_compiler(
     names: &[&str],
     use_bioc: bool,
     own: Option<&Path>,
+    sources: &Sources,
 ) -> bool {
     if names
         .iter()
@@ -882,7 +920,8 @@ fn known_to_need_compiler(
         "repos"
     };
     let code = format!(
-        r#"options(timeout = 10L); repos <- c(CRAN = "{CRAN}"); a <- suppressWarnings(utils::available.packages(repos = {repos}, type = "source", fields = "NeedsCompilation")); n <- {}; cat("\nSANDHILL:", all(n %in% rownames(a)) && isTRUE(all(a[n, "NeedsCompilation"] == "yes")), "\n", sep = "")"#,
+        r#"options(timeout = 10L); {}; repos <- getOption("repos"); a <- suppressWarnings(utils::available.packages(repos = {repos}, type = "source", fields = "NeedsCompilation")); n <- {}; cat("\nSANDHILL:", all(n %in% rownames(a)) && isTRUE(all(a[n, "NeedsCompilation"] == "yes")), "\n", sep = "")"#,
+        sources.r_options(),
         r_vector(names)
     );
     install::probe_in(rscript, &["-e", &code], own)
@@ -916,8 +955,10 @@ pub(super) fn r_code(
     library: &Path,
     names: &[&str],
     use_bioc: bool,
+    sources: &Sources,
 ) -> String {
     let library = r_string(library.to_string_lossy().as_ref());
+    let options = sources.r_options();
     let check = crate::irkernel::check_library_code();
     if action == PackageAction::Remove {
         return format!(
@@ -958,7 +999,8 @@ pub(super) fn r_code(
   type <- if (binary) "binary" else "source"
   if (binary) options(install.packages.compile.from.source = "never")
   else message("This R builds packages from their source code. That can take a few minutes.")
-  repos <- c(CRAN = "{CRAN}")
+  {options}
+  repos <- getOption("repos")
   fail_install <- function(w) {{
     if (grepl("non-zero exit status|not available|not supported|not valid", conditionMessage(w)))
       stop(conditionMessage(w), call. = FALSE)
@@ -1206,17 +1248,42 @@ mod tests {
         assert!(!github_repo("../repo"));
     }
 
+    fn mirror() -> Sources {
+        Sources {
+            cran: "https://mirrors.tuna.tsinghua.edu.cn/CRAN".into(),
+            bioconductor: "https://mirrors.ustc.edu.cn/bioc".into(),
+            conda: "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud".into(),
+            pypi: "https://pypi.tuna.tsinghua.edu.cn/simple".into(),
+        }
+    }
+
     #[test]
-    fn package_commands_quote_arguments_and_match_each_tool() {
+    fn package_commands_quote_arguments_match_each_tool_and_carry_the_sources() {
         let packages = ["science>=2".to_string()];
         let platform = "/a b/bin/python";
+        let main = Sources::default();
+        let mirror = mirror();
         assert_eq!(
-            python_command(InstallTool::Pip, platform, platform, Install, &packages),
-            "'/a b/bin/python' '-m' 'pip' 'install' 'science>=2'"
+            python_command(
+                InstallTool::Pip,
+                platform,
+                platform,
+                Install,
+                &packages,
+                &main
+            ),
+            "'/a b/bin/python' '-m' 'pip' 'install' '--index-url' 'https://pypi.org/simple' 'science>=2'"
         );
         assert_eq!(
-            python_command(InstallTool::Pip, platform, platform, Update, &packages),
-            "'/a b/bin/python' '-m' 'pip' 'install' '-U' 'science>=2'"
+            python_command(
+                InstallTool::Pip,
+                platform,
+                platform,
+                Update,
+                &packages,
+                &mirror
+            ),
+            "'/a b/bin/python' '-m' 'pip' 'install' '--index-url' 'https://pypi.tuna.tsinghua.edu.cn/simple' '-U' 'science>=2'"
         );
         assert_eq!(
             python_command(
@@ -1224,13 +1291,14 @@ mod tests {
                 platform,
                 platform,
                 Remove,
-                &["science".into()]
+                &["science".into()],
+                &mirror
             ),
             "'/a b/bin/python' '-m' 'pip' 'uninstall' '-y' 'science'"
         );
         assert_eq!(
-            python_command(InstallTool::Uv, "/uv", platform, Update, &packages),
-            "'/uv' 'pip' 'install' '--python' '/a b/bin/python' '--upgrade' 'science>=2'"
+            python_command(InstallTool::Uv, "/uv", platform, Update, &packages, &mirror),
+            "'/uv' 'pip' 'install' '--python' '/a b/bin/python' '--index-url' 'https://pypi.tuna.tsinghua.edu.cn/simple' '--upgrade' 'science>=2'"
         );
         assert_eq!(
             python_command(
@@ -1238,21 +1306,22 @@ mod tests {
                 "/uv",
                 platform,
                 Remove,
-                &["science".into()]
+                &["science".into()],
+                &mirror
             ),
             "'/uv' 'pip' 'uninstall' '--python' '/a b/bin/python' 'science'"
         );
         let known = plan_r_conda();
         assert_eq!(
-            conda_command("/mamba", Path::new("/env"), Install, &known, false),
-            "'/mamba' 'install' '-y' '-p' '/env' '-c' 'conda-forge' '-c' 'bioconda' '--override-channels' '--freeze-installed' 'bioconductor-deseq2'"
+            conda_command("/mamba", Path::new("/env"), Install, &known, false, &mirror),
+            "'/mamba' 'install' '-y' '-p' '/env' '--override-channels' '-c' 'https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge' '-c' 'https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/bioconda' '--freeze-installed' 'bioconductor-deseq2'"
         );
         assert_eq!(
-            conda_command("/mamba", Path::new("/env"), Remove, &known, false),
+            conda_command("/mamba", Path::new("/env"), Remove, &known, false, &mirror),
             "'/mamba' 'remove' '-y' '-p' '/env' 'bioconductor-deseq2'"
         );
         assert!(
-            !conda_command("/mamba", Path::new("/env"), Update, &known, false)
+            !conda_command("/mamba", Path::new("/env"), Update, &known, false, &main)
                 .contains("--freeze-installed")
         );
         let r = r_code(
@@ -1260,8 +1329,13 @@ mod tests {
             Path::new("/R's lib"),
             &["ggplot2", "DESeq2", "org/repo"],
             true,
+            &mirror,
         );
         assert!(r.contains("BiocManager::install(wanted, lib = lib, ask = FALSE, update = FALSE"));
+        assert!(r.contains(
+            "options(repos = c(CRAN = \"https://mirrors.tuna.tsinghua.edu.cn/CRAN\"), BioC_mirror = \"https://mirrors.ustc.edu.cn/bioc\")\n  repos <- getOption(\"repos\")"
+        ));
+        assert!(r.find("BioC_mirror").unwrap() < r.find("BiocManager::install").unwrap());
         assert!(r.contains(
             "remotes::install_github(repo, lib = lib, upgrade = \"never\", repos = repos)"
         ));
@@ -1269,7 +1343,7 @@ mod tests {
             "wanted <- setdiff(wanted, rownames(utils::installed.packages(lib.loc = lib"
         ));
         assert!(
-            r_code(Remove, Path::new("/lib"), &["x"], false)
+            r_code(Remove, Path::new("/lib"), &["x"], false, &main)
                 .contains("utils::remove.packages(c(\"x\"), lib = lib)")
         );
     }
@@ -1288,22 +1362,32 @@ mod tests {
         assert!(package_file(wheel.to_str().unwrap(), false).is_ok());
         assert!(package_file(wheel.to_str().unwrap(), true).is_err());
         assert!(package_file("relative.tar.gz", true).is_err());
-        assert!(r_code(Install, temp.path(), &[path], false).contains("repos = NULL"));
+        assert!(
+            r_code(Install, temp.path(), &[path], false, &Sources::default())
+                .contains("repos = NULL")
+        );
         assert!(
             python_command(
                 InstallTool::Pip,
                 "/bin/python",
                 "/bin/python",
                 Install,
-                &[path.into()]
+                &[path.into()],
+                &Sources::default()
             )
             .ends_with(&quote([path]))
         );
     }
 
     fn plan_r_conda() -> Vec<PlannedPackage> {
-        let (spec, source, version) =
-            conda_r_package(Path::new("/mamba"), "DESeq2", Install, &Default::default()).unwrap();
+        let (spec, source, version) = conda_r_package(
+            Path::new("/mamba"),
+            "DESeq2",
+            Install,
+            &Default::default(),
+            &Sources::default(),
+        )
+        .unwrap();
         vec![package("DESeq2", &spec, source, version)]
     }
 

@@ -134,6 +134,10 @@ pub struct PackagePlan {
     /// environment for it first."
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    /// The button that fixes the refusal, when there is one (Free Up
+    /// Space when the disk is too full).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_fix: Option<FailureFix>,
 }
 
 /// The last target and tool the user chose for a language, which Install
@@ -174,6 +178,13 @@ pub struct InstallPrefs {
     /// empty until one is set up.
     #[serde(default)]
     pub own_folder: String,
+    /// Where packages are downloaded from (plan section 11).
+    #[serde(default)]
+    pub sources: SourcePrefs,
+    /// The tool suggested first for each language when it suits the
+    /// target (R and Python → Advanced); none: Sandhill's own order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preferred_tools: Vec<PreferredTool>,
 }
 
 impl InstallPrefs {
@@ -244,6 +255,8 @@ pub struct RuntimePlan {
     pub notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_fix: Option<FailureFix>,
 }
 
 /// The folder Sandhill's own R and Python go in, under the home folder,
@@ -481,6 +494,8 @@ pub struct OwnSetupPlan {
     pub copy: Vec<CopyRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_fix: Option<FailureFix>,
 }
 
 /// Sandhill's own R or Python, as it is now.
@@ -511,6 +526,10 @@ pub struct OwnEnvironment {
     pub size_mb: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copy_report: Option<CopyReport>,
+    /// Whether the user's other R, Python, conda and Homebrew are locked
+    /// against writes from Sandhill's kernels, Terminal, jobs and agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<LockStatus>,
 }
 
 /// The last change Sandhill made to an environment, which Undo Last
@@ -596,6 +615,15 @@ pub struct EnvCard {
     pub undo: Option<UndoInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<EnvCheck>,
+    /// R only: this R's minor version is newer than one whose packages
+    /// are still on this computer (an upgrade, such as Homebrew's 4.6 to
+    /// 4.7), so they can be reinstalled for this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upgraded_from: Option<RUpgrade>,
+    /// R only: the Bioconductor release this R uses (`3.22`), read from
+    /// the installed `BiocVersion` package; `None` when it isn't there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bioconductor: Option<String>,
 }
 
 /// A package Add Packages found.
@@ -645,6 +673,10 @@ pub enum EnvAction {
     /// Delete a conda environment or a venv (never an R installation or
     /// a Python the system or Homebrew manages).
     Delete { env: String },
+    /// Reinstall, for this R, the packages an earlier R's libraries hold
+    /// (see [`EnvCard::upgraded_from`]), each from where it came from
+    /// (CRAN, Bioconductor, GitHub), into this R's chosen library.
+    ReinstallFromOldR { env: String, library: String },
 }
 
 /// What an [`EnvAction`] will do, shown before it runs.
@@ -661,6 +693,8 @@ pub struct EnvActionPlan {
     pub notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_fix: Option<FailureFix>,
 }
 
 /// A package a document or an error needs that its kernel's environment
@@ -795,6 +829,8 @@ pub struct ProjectSetupPlan {
     pub notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_fix: Option<FailureFix>,
 }
 
 /// A project's package files and whether they are set up.
@@ -910,4 +946,109 @@ pub struct UninstallReport {
     /// Nothing failed and the finisher started: the app may move itself
     /// to the Trash once every ticked device succeeded.
     pub success: bool,
+}
+
+/// The download source chosen for one kind of package: `auto` (the
+/// fastest that works, checked once a day) or a source's URL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePrefs {
+    #[serde(default = "auto")]
+    pub cran: String,
+    #[serde(default = "auto")]
+    pub bioconductor: String,
+    #[serde(default = "auto")]
+    pub conda: String,
+    #[serde(default = "auto")]
+    pub pypi: String,
+}
+
+fn auto() -> String {
+    "auto".into()
+}
+
+impl Default for SourcePrefs {
+    fn default() -> Self {
+        Self {
+            cran: auto(),
+            bioconductor: auto(),
+            conda: auto(),
+            pypi: auto(),
+        }
+    }
+}
+
+/// A tool the user prefers for a language.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreferredTool {
+    /// `r` or `python`.
+    pub language: String,
+    pub tool: InstallTool,
+}
+
+/// One place a kind of package can come from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceOption {
+    /// "CRAN (cloud)", "Tsinghua University (China)".
+    pub name: String,
+    pub url: String,
+    /// How long it took to answer, when checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms: Option<u32>,
+    pub works: bool,
+}
+
+/// The sources for one kind of package and which is used now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceInfo {
+    /// `cran`, `bioconductor`, `conda` or `pypi`.
+    pub kind: String,
+    /// The URL used now.
+    pub chosen: String,
+    /// Chosen by Sandhill as the fastest that works.
+    pub automatic: bool,
+    pub options: Vec<SourceOption>,
+    /// The system's proxy, when one is set and followed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+}
+
+/// The lock while Sandhill's own R and Python are chosen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockStatus {
+    /// The lock is in force for what Sandhill starts.
+    pub active: bool,
+    /// The folders locked against writes.
+    #[serde(default)]
+    pub locked: Vec<String>,
+    /// In plain words, when it isn't active: "This computer has no
+    /// bubblewrap, so the lock can't be put in place."
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+/// An earlier R whose packages are still on this computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RUpgrade {
+    /// `4.6`.
+    pub version: String,
+    /// Its libraries that hold packages this R doesn't have.
+    pub libraries: Vec<String>,
+    /// How many of those packages this R lacks.
+    pub packages: u32,
+}
+
+/// An install that stopped part way (Sandhill quit, the Mac slept, the
+/// connection dropped), found on the next start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InterruptedInstall {
+    pub id: String,
+    /// In plain words: "Setting up Sandhill's own R and Python".
+    pub what: String,
+    /// The folder it was changing.
+    pub folder: String,
+    pub date: String,
+    /// Running it again finishes it.
+    pub can_finish: bool,
+    /// The snapshot taken before it can put things back.
+    pub can_undo: bool,
 }

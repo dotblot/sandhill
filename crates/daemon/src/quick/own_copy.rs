@@ -12,6 +12,7 @@ use sandhill_proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::sources::Sources;
 use super::{
     environments, install, install_failure, own, package_inventory as inventory, package_names,
     package_target, record,
@@ -135,7 +136,12 @@ fn candidates(
     Ok(result.into_values().collect())
 }
 
-fn index(record: &Path, platform: &str, candidates: &[Candidate]) -> Result<Hits> {
+fn index(
+    record: &Path,
+    platform: &str,
+    candidates: &[Candidate],
+    sources: &Sources,
+) -> Result<Hits> {
     let names = candidates
         .iter()
         .filter(|pkg| pkg.source != Source::Local)
@@ -172,7 +178,11 @@ fn index(record: &Path, platform: &str, candidates: &[Candidate]) -> Result<Hits
     if !cfg.is_file() {
         crate::files::write_atomic(&cfg, b"local_repodata_ttl: 86400\n")?;
     }
-    let fingerprint = names.iter().copied().collect::<Vec<_>>().join("\n");
+    let channels = sources.conda_args();
+    let fingerprint = std::iter::once(sources.conda.as_str())
+        .chain(names.iter().copied())
+        .collect::<Vec<_>>()
+        .join("\n");
     let cached = cache.join("last-query.json");
     let fresh = cached
         .metadata()
@@ -227,14 +237,9 @@ fn index(record: &Path, platform: &str, candidates: &[Candidate]) -> Result<Hits
         "--root-prefix",
         root.to_str()
             .context("Sandhill's state folder couldn't be read.")?,
-        "--override-channels",
-        "-c",
-        "conda-forge",
-        "-c",
-        "bioconda",
-        "--platform",
-        platform,
     ];
+    args.extend(channels.iter().map(String::as_str));
+    args.extend(["--platform", platform]);
     args.extend(names);
     if let Some(text) = install::probe_command_with(command, &args, Duration::from_secs(150), false)
         && let Ok(index) = parse(&text)
@@ -248,7 +253,11 @@ fn index(record: &Path, platform: &str, candidates: &[Candidate]) -> Result<Hits
     )
 }
 
-fn decide(pkg: &Candidate, hits: &Hits) -> (CopyRow, Option<(Route, String, u64)>) {
+fn decide(
+    pkg: &Candidate,
+    hits: &Hits,
+    sources: &Sources,
+) -> (CopyRow, Option<(Route, String, u64)>) {
     let mut row = CopyRow {
         language: pkg.language.into(),
         name: pkg.name.clone(),
@@ -289,7 +298,7 @@ fn decide(pkg: &Candidate, hits: &Hits) -> (CopyRow, Option<(Route, String, u64)
         row.new_version = Some(hit.version.clone());
         Some((
             Route::Conda,
-            format!("{source}::{}=={}", hit.name, hit.version),
+            format!("{}::{}=={}", sources.channel(source), hit.name, hit.version),
             hit.size.div_ceil(1_000_000).max(1),
         ))
     } else {
@@ -363,12 +372,13 @@ pub(super) fn prepare(
     plan: &mut OwnSetupPlan,
     platform: &str,
     core: &HashSet<(&str, String)>,
+    sources: &Sources,
 ) -> Result<Vec<Task>> {
     if plan.setup.copy_from.is_empty() {
         return Ok(Vec::new());
     }
     let candidates = candidates(record, plan, core)?;
-    let (hits, checked) = match index(record, platform, &candidates) {
+    let (hits, checked) = match index(record, platform, &candidates, sources) {
         Ok(hits) => (hits, true),
         Err(error) => {
             plan.notes.push(error.to_string());
@@ -377,7 +387,7 @@ pub(super) fn prepare(
     };
     let mut tasks = Vec::new();
     for pkg in &candidates {
-        let (mut row, choice) = decide(pkg, &hits);
+        let (mut row, choice) = decide(pkg, &hits, sources);
         if !checked && pkg.source == Source::Unknown && row.cant.is_some() {
             row.cant = Some("There was no recorded source, and Sandhill couldn't check the conda package lists.".into());
         }
@@ -409,7 +419,7 @@ pub(super) fn prepare(
                 Route::GithubR | Route::GithubPython => "Copy a package from GitHub".into(),
                 Route::Pip => "Copy packages from PyPI".into(),
             },
-            command: command(folder, &plan.copy, &batch),
+            command: command(folder, &plan.copy, &batch, sources),
         });
     }
     if tasks
@@ -448,7 +458,7 @@ fn batches<'a>(tasks: &'a [Task], rows: &[CopyRow]) -> Vec<Vec<&'a Task>> {
     all
 }
 
-fn command(folder: &Path, rows: &[CopyRow], batch: &[&Task]) -> String {
+fn command(folder: &Path, rows: &[CopyRow], batch: &[&Task], sources: &Sources) -> String {
     let task = batch[0];
     let row = &rows[task.row];
     let prefix = own_env::prefix(folder, &row.language);
@@ -471,13 +481,9 @@ fn command(folder: &Path, rows: &[CopyRow], batch: &[&Task]) -> String {
                 "-y",
                 "-p",
                 &prefix.to_string_lossy(),
-                "--override-channels",
-                "-c",
-                "conda-forge",
-                "-c",
-                "bioconda",
             ]
             .into_iter()
+            .chain(sources.conda_args().iter().map(String::as_str))
             .chain(batch.iter().map(|task| task.spec.as_str())),
         ),
         Route::Pip | Route::GithubPython => isolated(quote(
@@ -488,6 +494,8 @@ fn command(folder: &Path, rows: &[CopyRow], batch: &[&Task]) -> String {
                 "pip",
                 "install",
                 "--no-deps",
+                sources.pip_index()[0],
+                sources.pip_index()[1],
                 "--",
             ]
             .into_iter()
@@ -506,7 +514,8 @@ fn command(folder: &Path, rows: &[CopyRow], batch: &[&Task]) -> String {
                 ),
             };
             let code = format!(
-                "options(repos=c(CRAN='https://cloud.r-project.org')); withCallingHandlers({{{code}}}, warning=function(w) {{ if (grepl('non-zero exit status|not available|not supported', conditionMessage(w))) stop(conditionMessage(w), call.=FALSE) }}); stopifnot(nzchar(system.file(package={name})))"
+                "{}; withCallingHandlers({{{code}}}, warning=function(w) {{ if (grepl('non-zero exit status|not available|not supported', conditionMessage(w))) stop(conditionMessage(w), call.=FALSE) }}); stopifnot(nzchar(system.file(package={name})))",
+                sources.r_options()
             );
             let line = isolated(quote([
                 prefix.join("bin/Rscript").to_string_lossy().as_ref(),
@@ -556,7 +565,12 @@ pub(super) fn forget(record: &Path, folder: &Path) {
     let _ = fs::remove_file(report_path(record, folder));
 }
 
-pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan, tasks: &[Task]) -> Result<()> {
+pub(super) fn run(
+    record_path: &Path,
+    plan: &OwnSetupPlan,
+    tasks: &[Task],
+    sources: &Sources,
+) -> Result<()> {
     let folder = Path::new(&plan.setup.folder);
     let mut report = CopyReport {
         date: record::today(),
@@ -586,7 +600,7 @@ pub(super) fn run(record_path: &Path, plan: &OwnSetupPlan, tasks: &[Task]) -> Re
                 .map(|task| plan.copy[task.row].name.as_str())
                 .collect::<Vec<_>>();
             println!("Copying {}.", names.join(", "));
-            let succeeded = capture(&command(folder, &plan.copy, batch), &mut log)?;
+            let succeeded = capture(&command(folder, &plan.copy, batch, sources), &mut log)?;
             if succeeded {
                 report.copied += batch.len() as u32;
                 continue;
@@ -762,25 +776,40 @@ mod tests {
             source: Source::Cran,
             conda: "r-test".into(),
         };
-        let (same, task) = decide(&pkg, &hits);
+        let main = Sources::default();
+        let (same, task) = decide(&pkg, &hits, &main);
         assert_eq!(same.new_version.as_deref(), Some("1.1"));
-        assert_eq!(task.unwrap().1, "conda-forge::r-test==1.1");
+        assert_eq!(
+            task.unwrap().1,
+            "https://conda.anaconda.org/conda-forge::r-test==1.1"
+        );
+        let mirror = Sources {
+            conda: "https://mirrors.ustc.edu.cn/anaconda/cloud".into(),
+            ..Sources::default()
+        };
+        assert_eq!(
+            decide(&pkg, &hits, &mirror).1.unwrap().1,
+            "https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge::r-test==1.1"
+        );
         pkg.version = "1.0".into();
-        let (other, _) = decide(&pkg, &hits);
+        let (other, _) = decide(&pkg, &hits, &main);
         assert_eq!(other.new_version.as_deref(), Some("2.0"));
         assert_eq!(other.from, "CRAN");
-        assert_eq!(decide(&pkg, &Hits::new()).0.tool, Some(InstallTool::R));
+        assert_eq!(
+            decide(&pkg, &Hits::new(), &main).0.tool,
+            Some(InstallTool::R)
+        );
         pkg.source = Source::Github(inventory::Github {
             owner: "someone".into(),
             repo: "repo".into(),
             sha: "012345abcdef".into(),
             subdir: None,
         });
-        let (github, task) = decide(&pkg, &Hits::new());
+        let (github, task) = decide(&pkg, &Hits::new(), &main);
         assert_eq!(github.source.as_deref(), Some("GitHub"));
         assert_eq!(task.unwrap().1, "someone/repo@012345abcdef");
         pkg.source = Source::Local;
-        let (local, task) = decide(&pkg, &hits);
+        let (local, task) = decide(&pkg, &hits, &main);
         assert!(local.cant.unwrap().contains("folder on this computer"));
         assert!(task.is_none());
     }
@@ -844,6 +873,7 @@ printf '{{}}' > '{}'
         needs_developer_tools: false,
         copy: vec![row("bad"), row("good")],
         refused: None,
+        refused_fix: None,
     };
     let tasks = [
         Task {
@@ -857,7 +887,7 @@ printf '{{}}' > '{}'
             route: Route::Conda,
         },
     ];
-    run(&record, &plan, &tasks).unwrap();
+    run(&record, &plan, &tasks, &Sources::default()).unwrap();
     let report = report(&record, &folder).unwrap();
     assert_eq!(report.copied, 1);
     assert_eq!(report.failed[0].package, "bad");

@@ -289,7 +289,8 @@ fn configure_shell(command: &mut std::process::Command, folder: &Path) {
 }
 
 /// This command is both shown in Review and run by the install worker.
-pub(crate) fn settings(folder: &Path) -> String {
+/// `channels` are the conda channels at the chosen download source.
+pub(crate) fn settings(folder: &Path, channels: &[&str]) -> String {
     use std::fmt::Write as _;
     let qpath = |relative: &str| shell_quote(&folder.join(relative).to_string_lossy());
     let mut script = "umask 077\nmkdir -p".to_string();
@@ -324,10 +325,15 @@ pub(crate) fn settings(folder: &Path) -> String {
     };
     let pkgs =
         serde_json::to_string(&folder.join("conda/pkgs")).expect("validated environment path");
+    let channels = channels
+        .iter()
+        .map(|c| serde_json::to_string(c).expect("channel names"))
+        .collect::<Vec<_>>()
+        .join(", ");
     file(
         "condarc",
         &format!(
-            "channels: [conda-forge, bioconda]\nchannel_priority: strict\npkgs_dirs: [{pkgs}]\nshow_banner: false\n"
+            "channels: [{channels}]\nchannel_priority: strict\npkgs_dirs: [{pkgs}]\nshow_banner: false\n"
         ),
     );
     file("r/Renviron", "");
@@ -416,7 +422,7 @@ mod tests {
         .unwrap();
         std::fs::write(moved.join(".zlogin"), user_startup).unwrap();
         let status = std::process::Command::new("/bin/bash")
-            .args(["-ec", &settings(&folder)])
+            .args(["-ec", &settings(&folder, &["conda-forge", "bioconda"])])
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", &home)

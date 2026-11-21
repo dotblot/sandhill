@@ -4,8 +4,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::tooltip::Tooltip;
 use sandhill_proto::{
-    CORE_KIT, EnvCard, EnvMode, InstallTarget, KITS, Kit, PackageHit, PackageUpdate,
+    CORE_KIT, EnvCard, EnvMode, InstallTarget, KITS, Kit, PackageHit, PackageUpdate, RUpgrade,
 };
 
 use super::*;
@@ -23,6 +24,18 @@ pub(super) struct State {
     job_card: Option<String>,
     new_offers: bool,
     destination: Option<DestinationForm>,
+    /// Why Open Terminal Here didn't open, for the environment it was for.
+    terminal_error: Option<(String, String)>,
+}
+
+impl State {
+    /// Another device: its cards are read afresh.
+    pub(super) fn leave_device(&mut self) {
+        *self = Self {
+            generation: self.generation + 1,
+            ..Self::default()
+        };
+    }
 }
 
 struct OpenCard {
@@ -54,6 +67,7 @@ enum More {
     Export,
     Import,
     Delete,
+    Terminal,
 }
 
 #[derive(Clone)]
@@ -214,7 +228,7 @@ impl AppWindow {
     }
 
     pub(super) fn quick_list_cards(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let state = &mut self.start.quick.cards;
@@ -282,6 +296,7 @@ impl AppWindow {
         q.python_form = None;
         q.cards.new_offers = false;
         q.cards.destination = None;
+        q.cards.terminal_error = None;
         if q.cards.open.as_ref().is_some_and(|card| card.id == id) {
             q.cards.open = None;
         } else {
@@ -309,7 +324,7 @@ impl AppWindow {
     }
 
     fn quick_search_cards(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let Some(card) = &mut self.start.quick.cards.open else {
@@ -340,7 +355,7 @@ impl AppWindow {
     }
 
     fn quick_load_updates(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let Some(card) = &mut self.start.quick.cards.open else {
@@ -436,14 +451,14 @@ impl AppWindow {
         self.quick_request_packages(PackageRow::Card, Vec::new(), changes, None, cx);
     }
 
-    fn quick_install_package_file(&mut self, cx: &mut Context<Self>) {
+    fn quick_install_package_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(card), Some(Ok(found))) = (self.quick_card(), &self.start.quick.readiness) else {
             return;
         };
         let libraries = writable_libraries(card);
         let target = card_target(card, &found.prefs, &libraries);
         let plan_id = self.start.quick.plan_id;
-        let choose = choose_local_path("Choose a Downloaded Package", true, false, cx);
+        let choose = self.quick_choose_path("Choose a Downloaded Package", true, false, window, cx);
         cx.spawn(async move |this, cx| {
             let Some(file) = choose.await else { return };
             let _ = this.update(cx, |this, cx| {
@@ -484,6 +499,7 @@ impl AppWindow {
             .tools
             .first()
             .is_some_and(|tool| tool.tool == InstallTool::Conda);
+        let local = self.quick_local();
         let mut seen = HashSet::new();
         let (source, other): (Vec<_>, Vec<_>) = std::iter::once(&CORE_KIT)
             .chain(KITS.iter().filter(|kit| open.kits.contains(kit.id)))
@@ -491,7 +507,9 @@ impl AppWindow {
             .filter(|name| seen.insert(*name))
             .map(str::to_owned)
             .partition(|package| {
+                // GSVA has no conda build for Apple silicon Macs.
                 r && conda
+                    && local
                     && cfg!(all(target_os = "macos", target_arch = "aarch64"))
                     && package == "GSVA"
             });
@@ -525,7 +543,7 @@ impl AppWindow {
     }
 
     fn quick_ask_environment(&mut self, action: EnvAction, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let q = &mut self.start.quick;
@@ -565,10 +583,179 @@ impl AppWindow {
             (More::Duplicate, Some(env)) => {
                 self.quick_choose_destination(Destination::Duplicate { env }, window, cx)
             }
-            (More::Export, Some(env)) => self.quick_choose_export(env, cx),
+            (More::Export, Some(env)) => self.quick_choose_export(env, window, cx),
             (More::Delete, Some(env)) => self.quick_ask_environment(EnvAction::Delete { env }, cx),
+            (More::Terminal, Some(env)) => self.quick_open_terminal(env, cx),
             _ => {}
         }
+    }
+
+    /// Open Terminal Here: the environment's settings from its device's
+    /// daemon, then a Terminal window with them (through ssh for a server).
+    fn quick_open_terminal(&mut self, env: String, cx: &mut Context<Self>) {
+        let Some(daemon) = self.quick_daemon() else {
+            return;
+        };
+        let server = (!self.quick_local()).then(|| self.start.quick.host.clone());
+        self.start.quick.cards.terminal_error = None;
+        let vars =
+            daemon.call::<Vec<(String, Option<String>)>>(Call::EnvActivation { env: env.clone() });
+        cx.spawn(async move |this, cx| {
+            let opened = match vars.await {
+                Ok(vars) => {
+                    cx.background_executor()
+                        .spawn(async move { super::terminal_here::open(server.as_deref(), &vars) })
+                        .await
+                }
+                Err(error) => Err(format!(
+                    "Sandhill couldn't read this environment's settings: {error:#}"
+                )),
+            };
+            if let Err(error) = opened {
+                this.update(cx, |this, cx| {
+                    this.start.quick.cards.terminal_error = Some((env, error));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Reinstall Them: into the R's one changeable folder, or the folder
+    /// chosen when it has several.
+    fn quick_reinstall_old(&mut self, env: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.start.quick.busy() {
+            return;
+        }
+        let Some(libraries) = self
+            .start
+            .quick
+            .cards
+            .list
+            .as_ref()
+            .and_then(|list| list.as_ref().ok())
+            .and_then(|cards| cards.iter().find(|card| card.id == env))
+            .map(writable_libraries)
+        else {
+            return;
+        };
+        if self
+            .start
+            .quick
+            .cards
+            .open
+            .as_ref()
+            .is_none_or(|open| open.id != env)
+        {
+            self.quick_toggle_card(env.clone(), window, cx);
+        }
+        if let [library] = libraries.as_slice() {
+            let library = library.clone();
+            self.quick_ask_environment(EnvAction::ReinstallFromOldR { env, library }, cx);
+        } else {
+            self.start.quick.clear_review();
+            self.start.quick.confirm = Some(Confirm::Reinstall(env));
+            cx.notify();
+        }
+    }
+
+    /// "R was upgraded from 4.6. 312 packages from R 4.6 aren't installed
+    /// for this R." with Reinstall Them, then the folder choice when the
+    /// R has several.
+    fn quick_upgrade_rows(
+        &self,
+        card: &EnvCard,
+        upgrade: &RUpgrade,
+        blocked: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let count = if upgrade.packages == 1 {
+            format!("1 package from R {} isn't", upgrade.version)
+        } else {
+            format!(
+                "{} packages from R {} aren't",
+                upgrade.packages, upgrade.version
+            )
+        };
+        let detail = v_flex()
+            .gap(px(look::GAP_2))
+            .child(look::settings_detail(
+                format!("{count} installed for this R."),
+                p,
+            ))
+            .when(!upgrade.libraries.is_empty(), |d| {
+                d.child(look::settings_detail(
+                    format!(
+                        "Found in {}. Sandhill only reads them there.",
+                        upgrade.libraries.join(", ")
+                    ),
+                    p,
+                ))
+            });
+        let env = card.id.clone();
+        let asking = self.start.quick.confirm == Some(Confirm::Reinstall(card.id.clone()));
+        let mut rows = vec![
+            look::settings_row(
+                format!("R was upgraded from {}.", upgrade.version),
+                Some(detail),
+            )
+            .when(!asking, |row| {
+                row.child(
+                    Button::new("env-reinstall-old")
+                        .small()
+                        .label("Reinstall Them…")
+                        .disabled(blocked)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.quick_reinstall_old(env.clone(), window, cx)
+                        })),
+                )
+            })
+            .into_any_element(),
+        ];
+        if asking {
+            let libraries = writable_libraries(card);
+            let question = if libraries.is_empty() {
+                "This R has no package folder Sandhill can install into."
+            } else {
+                "Reinstall them into which folder?"
+            };
+            rows.push(
+                card_body()
+                    .child(section_title(question, p))
+                    .children(libraries.into_iter().enumerate().map(|(ix, library)| {
+                        let env = card.id.clone();
+                        h_flex().child(
+                            Button::new(("env-reinstall-folder", ix))
+                                .small()
+                                .label(library.clone())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.quick_ask_environment(
+                                        EnvAction::ReinstallFromOldR {
+                                            env: env.clone(),
+                                            library: library.clone(),
+                                        },
+                                        cx,
+                                    )
+                                })),
+                        )
+                    }))
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .child(review::cancel_button().on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.start.quick.confirm = None;
+                                    cx.notify();
+                                },
+                            ))),
+                    )
+                    .into_any_element(),
+            );
+        }
+        rows
     }
 
     fn quick_choose_import(
@@ -578,7 +765,7 @@ impl AppWindow {
         cx: &mut Context<Self>,
     ) {
         let plan_id = self.start.quick.plan_id;
-        let choose = choose_local_path("Choose a Package List", true, false, cx);
+        let choose = self.quick_choose_path("Choose a Package List", true, false, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let Some(file) = choose.await else { return };
             let _ = this.update_in(cx, |this, window, cx| {
@@ -630,7 +817,8 @@ impl AppWindow {
                     |name| format!("{}-copy", name.to_string_lossy()),
                 ),
         };
-        let choose = choose_local_path("Choose Where the New Folder Goes", false, true, cx);
+        let choose =
+            self.quick_choose_path("Choose Where the New Folder Goes", false, true, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let Some(parent) = choose.await else { return };
             let _ = this.update_in(cx, |this, window, cx| {
@@ -660,7 +848,7 @@ impl AppWindow {
         self.quick_choose_destination(Destination::NewR, window, cx);
     }
 
-    fn quick_choose_export(&mut self, env: String, cx: &mut Context<Self>) {
+    fn quick_choose_export(&mut self, env: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(card) = self.quick_card() else {
             return;
         };
@@ -671,27 +859,39 @@ impl AppWindow {
         } else {
             "requirements.txt"
         };
-        let folder = self
-            .start
-            .machines
-            .get(sandhill_link::LOCAL)
-            .and_then(|machine| machine.home.as_ref())
-            .map_or_else(|| Path::new(&card.folder), |home| Path::new(home));
         let plan_id = self.start.quick.plan_id;
-        let choose = cx.prompt_for_new_path(folder, Some(filename));
+        let ask = move |this: &mut Self, path: String, cx: &mut Context<Self>| {
+            if this.start.quick.plan_id == plan_id {
+                this.quick_ask_environment(EnvAction::Export { env, path }, cx);
+            }
+        };
+        if !self.quick_local() {
+            // A server's chooser picks the folder; the list keeps its usual name.
+            let choose = self.quick_choose_path(
+                "Choose a Folder for the Package List",
+                false,
+                true,
+                window,
+                cx,
+            );
+            cx.spawn(async move |this, cx| {
+                if let Some(folder) = choose.await {
+                    let path = Path::new(&folder)
+                        .join(filename)
+                        .to_string_lossy()
+                        .into_owned();
+                    this.update(cx, |this, cx| ask(this, path, cx)).ok();
+                }
+            })
+            .detach();
+            return;
+        }
+        let folder = self.quick_home().unwrap_or_else(|| card.folder.clone());
+        let choose = cx.prompt_for_new_path(Path::new(&folder), Some(filename));
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(path))) = choose.await {
-                let _ = this.update(cx, |this, cx| {
-                    if this.start.quick.plan_id == plan_id {
-                        this.quick_ask_environment(
-                            EnvAction::Export {
-                                env,
-                                path: path.to_string_lossy().into_owned(),
-                            },
-                            cx,
-                        );
-                    }
-                });
+                let path = path.to_string_lossy().into_owned();
+                this.update(cx, |this, cx| ask(this, path, cx)).ok();
             }
         })
         .detach();
@@ -880,6 +1080,27 @@ impl AppWindow {
                 }),
         );
         let mut rows = vec![head.into_any_element()];
+        if let Some(upgrade) = card.upgraded_from.as_ref().filter(|up| up.packages > 0) {
+            let q = &self.start.quick;
+            let blocked = busy || q.reviewing.is_some() || q.cards.destination.is_some();
+            rows.extend(self.quick_upgrade_rows(card, upgrade, blocked, p, cx));
+        }
+        if let Some((_, error)) = self
+            .start
+            .quick
+            .cards
+            .terminal_error
+            .as_ref()
+            .filter(|(env, _)| *env == card.id)
+        {
+            rows.push(
+                look::settings_row(
+                    "Terminal didn't open",
+                    Some(look::settings_detail(error.clone(), p)),
+                )
+                .into_any_element(),
+            );
+        }
         if let Some(open) = open {
             let q = &self.start.quick;
             let reviewing = q.reviewing.is_some() || q.cards.destination.is_some();
@@ -983,6 +1204,8 @@ impl AppWindow {
             kernel
         };
         let mut details = card_body().child(kernel.px(px(0.)).py(px(0.)));
+        // Finder shows this computer's folders only.
+        let local = self.quick_local();
         if is_r(card) {
             details = details.child(section_title("Where R keeps packages", p));
             if card.libraries.is_empty() {
@@ -1005,12 +1228,14 @@ impl AppWindow {
                         .flex_1()
                         .min_w_0(),
                     )
-                    .child(
-                        Button::new(("env-reveal-library", ix))
-                            .small()
-                            .label(look::mac_or("Show in Finder", "Show in Folder"))
-                            .on_click(move |_, _, cx| cx.reveal_path(Path::new(&folder))),
-                    )
+                    .when(local, |d| {
+                        d.child(
+                            Button::new(("env-reveal-library", ix))
+                                .small()
+                                .label(look::mac_or("Show in Finder", "Show in Folder"))
+                                .on_click(move |_, _, cx| cx.reveal_path(Path::new(&folder))),
+                        )
+                    })
             }));
         } else {
             let folder = card.folder.clone();
@@ -1022,12 +1247,14 @@ impl AppWindow {
                             .flex_1()
                             .min_w_0(),
                     )
-                    .child(
-                        Button::new("env-reveal-folder")
-                            .small()
-                            .label(look::mac_or("Show in Finder", "Show in Folder"))
-                            .on_click(move |_, _, cx| cx.reveal_path(Path::new(&folder))),
-                    ),
+                    .when(local, |d| {
+                        d.child(
+                            Button::new("env-reveal-folder")
+                                .small()
+                                .label(look::mac_or("Show in Finder", "Show in Folder"))
+                                .on_click(move |_, _, cx| cx.reveal_path(Path::new(&folder))),
+                        )
+                    }),
             );
         }
         let kits = std::iter::once(&CORE_KIT)
@@ -1104,7 +1331,7 @@ impl AppWindow {
                             .label("More")
                             .disabled(busy)
                             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                                [
+                                let menu = [
                                     (More::New, "New Environment…"),
                                     (More::Duplicate, "Duplicate…"),
                                     (More::Export, "Export…"),
@@ -1124,6 +1351,23 @@ impl AppWindow {
                                             },
                                         ))
                                     },
+                                );
+                                let owner = owner.clone();
+                                menu.separator().item(
+                                    PopupMenuItem::element(|_, _| {
+                                        div()
+                                            .id("env-terminal-here")
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new("Optional. Opens a Terminal window set up for this environment, for typing commands yourself.")
+                                                    .build(window, cx)
+                                            })
+                                            .child("Open Terminal Here")
+                                    })
+                                    .on_click(move |_, window, cx| {
+                                        let _ = owner.update(cx, |this, cx| {
+                                            this.quick_more_action(More::Terminal, window, cx)
+                                        });
+                                    }),
                                 )
                             }),
                     ),
@@ -1143,6 +1387,7 @@ impl AppWindow {
                 plan,
                 name,
                 Self::quick_review_buttons(cx),
+                Self::quick_space_button(cx),
                 p,
             ));
         }
@@ -1254,7 +1499,7 @@ impl AppWindow {
                 else { "Search by package name, enter a GitHub owner/repo, or enter the full path to a downloaded package." }, p))
             .child(h_flex().flex_wrap().gap(px(look::GAP_6))
                 .child(Button::new("env-package-file").small().label("Choose a File…").disabled(busy)
-                    .on_click(cx.listener(|this, _, _, cx| this.quick_install_package_file(cx))))
+                    .on_click(cx.listener(|this, _, window, cx| this.quick_install_package_file(window, cx))))
                 .child(Button::new("env-package-kits").small().label("Add Kits…").disabled(busy)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if own { this.quick_begin_own_kits(python, cx) } else { this.quick_select_panel(Panel::Kits, cx) }

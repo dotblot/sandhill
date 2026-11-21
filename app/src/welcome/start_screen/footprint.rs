@@ -545,22 +545,25 @@ impl AppWindow {
             installed_rows
                 .push(look::settings_row("No installs recorded", None).into_any_element());
         }
-        if local {
-            installed_rows.push(
-                look::settings_row("Remove only some of these installs", None)
-                    .child(
-                        Button::new("footprint-what-installed")
-                            .small()
-                            .label("What Sandhill Installed")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.start.quick.forget_check();
-                                this.start.show_install_record = true;
-                                this.show_page(Page::Ready, cx);
-                            })),
-                    )
-                    .into_any_element(),
-            );
-        }
+        // R and Python lists them, for this computer or the server.
+        let record_host = host.to_owned();
+        installed_rows.push(
+            look::settings_row("Remove only some of these installs", None)
+                .child(
+                    Button::new("footprint-what-installed")
+                        .small()
+                        .label("What Sandhill Installed")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.start.quick.show_host(&record_host) {
+                                return;
+                            }
+                            this.start.quick.forget_check();
+                            this.start.show_install_record = true;
+                            this.show_page(Page::Ready, cx);
+                        })),
+                )
+                .into_any_element(),
+        );
         inventory
             .child(look::settings_group(
                 "Installed into your R and Python",

@@ -152,7 +152,7 @@ pub fn readiness(
             })
         })
         .collect();
-    let python = super::python::readiness(search);
+    let python = super::python::readiness(search, &super::sources::chosen(record_path));
     let (tools, brew, brew_version) = super::install::readiness_tools(search, python.tool.as_ref());
     QuickReadiness {
         r,
@@ -167,6 +167,7 @@ pub fn readiness(
         prefs,
         own,
         developer_tools,
+        interrupted: super::interrupted::list(record_path),
     }
 }
 

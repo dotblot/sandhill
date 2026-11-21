@@ -1099,6 +1099,41 @@ pub enum Call {
         project: String,
         file: String,
     },
+    /// The download sources for CRAN, Bioconductor, conda and PyPI, each
+    /// checked (how fast it answers, whether it works; at most once a day
+    /// unless `check`), and the system's proxy. Returns `Vec<SourceInfo>`.
+    ListSources {
+        #[serde(default)]
+        check: bool,
+    },
+    /// Chooses the sources (`auto` or a URL each). Returns
+    /// [`InstallPrefs`].
+    SetSources {
+        sources: SourcePrefs,
+    },
+    /// The tool suggested first for `language`; `None` goes back to
+    /// Sandhill's own order. Returns [`InstallPrefs`].
+    SetPreferredTool {
+        language: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool: Option<InstallTool>,
+    },
+    /// Runs an interrupted install ([`InterruptedInstall::id`]) again to
+    /// finish it. Returns [`QuickInstalling`].
+    FinishInterrupted {
+        id: String,
+    },
+    /// Puts back what an interrupted install changed, from the snapshot
+    /// taken before it. Returns [`QuickInstalling`].
+    UndoInterrupted {
+        id: String,
+    },
+    /// The variables that put a Terminal in the environment `env` (an
+    /// [`EnvCard::id`]), for Open Terminal Here: `(name, value)`, with
+    /// `None` for one to unset. Returns `Vec<(String, Option<String>)>`.
+    EnvActivation {
+        env: String,
+    },
     /// Turns Install Without Asking on or off for this computer. Returns
     /// [`InstallPrefs`].
     SetInstallPrefs {

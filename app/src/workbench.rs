@@ -30,6 +30,7 @@ use crate::panes::terminal::TerminalView;
 use crate::panes::tree::{self, Folder, Tree};
 
 pub(crate) mod console;
+mod locked;
 mod missing_packages;
 mod panels;
 mod runs;
@@ -344,6 +345,9 @@ pub struct Workbench {
     pub(crate) others: Vec<Open>,
     next_missing_request: u64,
     missing_completion: (String, u64),
+    /// Sandhill's own R and Python are chosen on this tab's device, so
+    /// writes into the user's other R and Python are locked.
+    own_mode: bool,
     /// The tabs' files, in the order they were opened.
     pub(crate) tabs: Vec<String>,
     /// Quarto presentation preference, including documents closed this session.
@@ -664,6 +668,7 @@ impl Workbench {
             others: Vec::new(),
             next_missing_request: 0,
             missing_completion: Default::default(),
+            own_mode: false,
             tabs: Vec::new(),
             quarto_sources: HashSet::new(),
             previews: HashMap::new(),
@@ -1040,6 +1045,7 @@ impl Workbench {
         self.quota = Some(quota);
         self.connected_ms = Some(chrono::Utc::now().timestamp_millis());
         self.watch_machine(self.generation, cx);
+        self.read_env_mode(cx);
         let ping = daemon.call::<PingReply>(Call::Ping);
         let kernels = daemon.call::<Vec<KernelspecInfo>>(Call::ListKernelspecs);
         let recent = daemon.call::<Vec<ProjectInfo>>(Call::ListRecentProjects);

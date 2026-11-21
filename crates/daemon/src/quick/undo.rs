@@ -14,6 +14,7 @@ use sandhill_proto::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::sources::{self, Sources};
 use super::{environments, install, package_plan, record};
 
 const RETENTION: Duration = Duration::from_secs(30 * 86_400);
@@ -156,6 +157,10 @@ pub(super) struct Pending {
     snapshot: Snapshot,
 }
 
+/// Written as soon as a snapshot begins, `(id, snapshot)`, so an install
+/// that stops part way can still be undone ([`recover`]).
+const PENDING: &str = "pending.json";
+
 pub(super) fn begin(record_path: &Path, title: String, tracks: Vec<Track>) -> Result<Pending> {
     let id = environments::id(
         &tracks
@@ -210,7 +215,7 @@ pub(super) fn begin(record_path: &Path, title: String, tracks: Vec<Track>) -> Re
             owned,
         });
     }
-    Ok(Pending {
+    let pending = Pending {
         id,
         dir,
         snapshot: Snapshot {
@@ -221,7 +226,33 @@ pub(super) fn begin(record_path: &Path, title: String, tracks: Vec<Track>) -> Re
             changes,
             created: None,
         },
-    })
+    };
+    crate::files::write_atomic(
+        &pending.dir.path().join(PENDING),
+        &serde_json::to_vec(&(&pending.id, &pending.snapshot))?,
+    )?;
+    super::interrupted::note_snapshot(pending.dir.path());
+    Ok(pending)
+}
+
+/// A snapshot begun by an install that stopped before finishing it.
+pub(super) fn pending(dir: &Path) -> bool {
+    dir.join(PENDING).is_file()
+}
+
+/// Finishes the snapshot an interrupted install began, so Undo can put
+/// back what it changed. Returns the environment's undo id, or `None` when
+/// the install hadn't changed anything yet.
+pub(super) fn recover(record: &Path, dir: &Path) -> Result<Option<String>> {
+    let bytes = fs::read(dir.join(PENDING)).context("The saved packages couldn't be found.")?;
+    let (id, mut snapshot): (String, Snapshot) =
+        serde_json::from_slice(&bytes).context("The saved packages couldn't be read.")?;
+    if publish(record, &id, dir, &mut snapshot)? {
+        Ok(Some(id))
+    } else {
+        fs::remove_dir_all(dir)?;
+        Ok(None)
+    }
 }
 
 fn clone_package(from: &Path, to: &Path) -> Result<()> {
@@ -265,44 +296,48 @@ fn changed<'a>(before: &'a Inventory, after: &'a Inventory) -> BTreeSet<&'a str>
 
 impl Pending {
     pub fn finish(mut self, record: &Path) -> Result<()> {
-        for (index, change) in self.snapshot.changes.iter_mut().enumerate() {
-            change.after = change.track.inventory()?;
-            if change.track.tool == InstallTool::R {
-                for name in change.before.keys() {
-                    if change.before.get(name) == change.after.get(name) {
-                        let backup = self.dir.path().join(index.to_string()).join(name);
-                        if backup.is_dir() {
-                            fs::remove_dir_all(backup)?;
-                        }
+        publish(record, &self.id, self.dir.path(), &mut self.snapshot)?;
+        Ok(())
+    }
+}
+
+/// Records what the change did and makes the snapshot in `dir` the
+/// environment's Undo Last Change. Returns false when nothing changed (the
+/// previous snapshot stays).
+fn publish(record: &Path, id: &str, dir: &Path, snapshot: &mut Snapshot) -> Result<bool> {
+    for (index, change) in snapshot.changes.iter_mut().enumerate() {
+        change.after = change.track.inventory()?;
+        if change.track.tool == InstallTool::R {
+            for name in change.before.keys() {
+                if change.before.get(name) == change.after.get(name) {
+                    let backup = dir.join(index.to_string()).join(name);
+                    if backup.is_dir() {
+                        fs::remove_dir_all(backup)?;
                     }
                 }
             }
         }
-        if self.snapshot.created.is_none()
-            && self.snapshot.changes.iter().all(|c| c.before == c.after)
-        {
-            return Ok(());
-        }
-        crate::files::write_atomic(
-            &self.dir.path().join("snapshot.json"),
-            &serde_json::to_vec(&self.snapshot)?,
-        )?;
-        let target = environments::state_path(record, "undo", &self.id);
-        if target.is_dir() {
-            let old = tempfile::Builder::new()
-                .prefix(".old-")
-                .tempdir_in(target.parent().unwrap())?;
-            let backup = old.path().join("snapshot");
-            fs::rename(&target, &backup)?;
-            if let Err(error) = fs::rename(self.dir.path(), &target) {
-                let _ = fs::rename(backup, &target);
-                return Err(error.into());
-            }
-        } else {
-            fs::rename(self.dir.path(), &target)?;
-        }
-        Ok(())
     }
+    if snapshot.created.is_none() && snapshot.changes.iter().all(|c| c.before == c.after) {
+        return Ok(false);
+    }
+    let _ = fs::remove_file(dir.join(PENDING));
+    crate::files::write_atomic(&dir.join("snapshot.json"), &serde_json::to_vec(snapshot)?)?;
+    let target = environments::state_path(record, "undo", id);
+    if target.is_dir() {
+        let old = tempfile::Builder::new()
+            .prefix(".old-")
+            .tempdir_in(target.parent().unwrap())?;
+        let backup = old.path().join("snapshot");
+        fs::rename(&target, &backup)?;
+        if let Err(error) = fs::rename(dir, &target) {
+            let _ = fs::rename(backup, &target);
+            return Err(error.into());
+        }
+    } else {
+        fs::rename(dir, &target)?;
+    }
+    Ok(true)
 }
 
 pub(super) fn created(record: &Path, id: &str, item: QuickInstalled) -> Result<()> {
@@ -367,7 +402,11 @@ pub(super) fn info(record: &Path, id: &str) -> Option<UndoInfo> {
     Some(load(record, id).ok()?.1.info)
 }
 
-fn commands(path: &Path, snapshot: &Snapshot) -> Result<(Vec<String>, Vec<String>)> {
+fn commands(
+    path: &Path,
+    snapshot: &Snapshot,
+    sources: &Sources,
+) -> Result<(Vec<String>, Vec<String>)> {
     let mut commands = Vec::new();
     let mut notes = Vec::new();
     for (index, change) in snapshot.changes.iter().enumerate() {
@@ -453,20 +492,10 @@ fn commands(path: &Path, snapshot: &Snapshot) -> Result<(Vec<String>, Vec<String
             }
             if !restore.is_empty() {
                 commands.push(install::quote(
-                    [
-                        track.path.as_str(),
-                        "install",
-                        "-y",
-                        "-p",
-                        &folder,
-                        "--override-channels",
-                        "-c",
-                        "conda-forge",
-                        "-c",
-                        "bioconda",
-                    ]
-                    .into_iter()
-                    .chain(restore.iter().map(String::as_str)),
+                    [track.path.as_str(), "install", "-y", "-p", &folder]
+                        .into_iter()
+                        .chain(sources.conda_args().iter().map(String::as_str))
+                        .chain(restore.iter().map(String::as_str)),
                 ));
             }
         } else if let InstallTarget::Python { python, .. } = &track.target {
@@ -478,6 +507,7 @@ fn commands(path: &Path, snapshot: &Snapshot) -> Result<(Vec<String>, Vec<String
                     python,
                     PackageAction::Remove,
                     &remove,
+                    sources,
                 ));
             }
             if !restore.is_empty() {
@@ -487,6 +517,7 @@ fn commands(path: &Path, snapshot: &Snapshot) -> Result<(Vec<String>, Vec<String
                     python,
                     PackageAction::Install,
                     &restore,
+                    sources,
                 ));
             }
             let command = command.join(" && ");
@@ -524,7 +555,7 @@ pub(super) fn plan(record: &Path, id: &str) -> Result<(String, String, Vec<Strin
     let (command, notes) = if let Some(plan) = created_plan(record, &snapshot)? {
         plan
     } else {
-        let (commands, notes) = commands(&path, &snapshot)?;
+        let (commands, notes) = commands(&path, &snapshot, &sources::chosen(record))?;
         (commands.join(" && "), notes)
     };
     Ok((snapshot.info.what, command, notes))
@@ -544,7 +575,7 @@ pub(super) fn run(record_path: &Path, id: &str, approved: &str) -> Result<()> {
         fs::remove_dir_all(path)?;
         return Ok(());
     }
-    let (commands, _) = commands(&path, &snapshot)?;
+    let (commands, _) = commands(&path, &snapshot, &sources::chosen(record_path))?;
     let command = commands.join(" && ");
     ensure!(
         command == approved,

@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::sources::Sources;
 use crate::kernelspecs::{self, Search};
 use crate::terminal::Launch;
 use anyhow::{Result, bail};
@@ -15,7 +16,7 @@ use sandhill_proto::{
 };
 
 /// What Getting Ready shows about Python.
-pub fn readiness(search: &Search) -> QuickPython {
+pub(crate) fn readiness(search: &Search, sources: &Sources) -> QuickPython {
     let listed: Vec<_> = kernelspecs::list(search)
         .into_iter()
         .filter(|k| k.language.to_ascii_lowercase().starts_with("python"))
@@ -34,7 +35,7 @@ pub fn readiness(search: &Search) -> QuickPython {
             path: path.to_string_lossy().into_owned(),
             root: root.to_string_lossy().into_owned(),
         }),
-        bare: bare_envs(search),
+        bare: bare_envs(search, sources),
         found,
     }
 }
@@ -161,17 +162,26 @@ pub(crate) fn conda_package_version(prefix: &Path, package: &str) -> Option<Stri
 }
 
 /// Conda environments (not an installation's base) with Python but no
-/// ipykernel.
-fn bare_envs(search: &Search) -> Vec<QuickCondaEnv> {
+/// ipykernel, each with the command Add ipykernel runs.
+fn bare_envs(search: &Search, sources: &Sources) -> Vec<QuickCondaEnv> {
     kernelspecs::conda_envs(search)
         .into_iter()
         .filter(|prefix| kernelspecs::conda_root(prefix) != prefix.as_path())
         .filter(|prefix| prefix.join("bin/python").is_file() && !has_ipykernel(prefix))
-        .map(|prefix| QuickCondaEnv {
-            name: kernelspecs::conda_name(&prefix),
-            python: conda_package_version(&prefix, "python").unwrap_or_default(),
-            tool: crate::irkernel::conda_tool(&prefix),
-            prefix: prefix.to_string_lossy().into_owned(),
+        .map(|prefix| {
+            let tool = crate::irkernel::conda_tool(&prefix);
+            let folder = prefix.to_string_lossy().into_owned();
+            QuickCondaEnv {
+                name: kernelspecs::conda_name(&prefix),
+                python: conda_package_version(&prefix, "python").unwrap_or_default(),
+                command: super::install::quote(ipykernel_args(
+                    &tool,
+                    &folder,
+                    &sources.channel("conda-forge"),
+                )),
+                tool,
+                prefix: folder,
+            }
         })
         .collect()
 }
@@ -185,7 +195,11 @@ pub fn add_ipykernel(
     log: &Path,
     record_path: &Path,
 ) -> Result<Launch> {
-    let Some(env) = bare_envs(search).into_iter().find(|e| e.prefix == prefix) else {
+    let sources = super::sources::chosen(record_path);
+    let Some(env) = bare_envs(search, &sources)
+        .into_iter()
+        .find(|e| e.prefix == prefix)
+    else {
         bail!("{prefix} isn't an environment without ipykernel that Sandhill found");
     };
     let plan = sandhill_proto::PackagePlan {
@@ -211,9 +225,10 @@ pub fn add_ipykernel(
             source: "conda-forge".into(),
             version: None,
         }],
-        command: super::install::quote(ipykernel_args(&env.tool, prefix)),
+        command: env.command,
         notes: vec![],
         refused: None,
+        refused_fix: None,
     };
     super::install::launch(
         exe,
@@ -308,7 +323,10 @@ mod tests {
         let (tool, found_root) = find_tool(&search).unwrap();
         assert_eq!(tool, root.join("bin/mamba"));
         assert_eq!(found_root, root);
-        let bare = bare_envs(&search);
+        let bare = bare_envs(&search, &Sources::default());
+        assert!(bare[0].command.ends_with(
+            "'-c' 'https://conda.anaconda.org/conda-forge' '--override-channels' '--freeze-installed' 'ipykernel'"
+        ));
         assert_eq!(bare.len(), 1, "{bare:?}");
         assert_eq!(bare[0].name, "plain");
         assert_eq!(bare[0].python, "3.12.4");

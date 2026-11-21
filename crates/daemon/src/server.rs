@@ -38,6 +38,7 @@ mod connections;
 mod document_calls;
 mod file_history;
 mod help_calls;
+mod install_calls;
 mod package_calls;
 mod package_scan;
 mod project_package_calls;
@@ -353,6 +354,14 @@ impl Daemon {
             Call::SetInstallPrefs { without_asking } => {
                 self.set_install_prefs(without_asking).await?
             }
+            Call::ListSources { check } => self.list_sources(check).await?,
+            Call::SetSources { sources } => self.set_sources(sources).await?,
+            Call::SetPreferredTool { language, tool } => {
+                self.set_preferred_tool(language, tool).await?
+            }
+            Call::FinishInterrupted { id } => self.finish_interrupted(id).await?,
+            Call::UndoInterrupted { id } => self.undo_interrupted(id).await?,
+            Call::EnvActivation { env } => self.env_activation(env).await?,
             Call::SetEnvMode { mode } => self.set_env_mode(mode).await?,
             Call::PlanOwnSetup { setup } => self.plan_own_setup(setup).await?,
             Call::RunOwnSetup { setup } => self.run_own_setup(setup).await?,

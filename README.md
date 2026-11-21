@@ -101,8 +101,9 @@ xattr -dr com.apple.quarantine /Applications/Sandhill.app
 
 **What Sandhill connects to.** Sandhill sends no analytics, crash reports or
 update checks. It goes online only for what you ask: ssh to your servers;
-package indexes (PyPI, conda, CRAN, Bioconductor) when you check for updates
-or install IRkernel; images and Plotly charts that your documents link to;
+package indexes (PyPI, conda, CRAN, Bioconductor, or the mirrors chosen
+under **R and Python → Advanced**) when you install packages, check for
+updates or install IRkernel; images and Plotly charts that your documents link to;
 skills and connectors you add. Claude Code and Codex talk to Anthropic and
 OpenAI under your own accounts.
 
@@ -127,13 +128,45 @@ there, and the project window works as it does on the Mac.
   jump hosts work as they do in Terminal. `ssh yourserver` must log in
   without a password (set up a key with `ssh-copy-id yourserver`).
 - The first time, the app installs its background program, `sandhilld`, in
-  `~/.local/bin` on the server. It needs no root and opens no ports. It is
+  `~/.sandhill/bin` on the server. It needs no root and opens no ports. It is
   tested on Ubuntu 24.04 and built for any 64-bit Linux, Intel or ARM; the
   bundled Ark R kernel needs a glibc Linux (not Alpine).
 - Sessions start with the `PATH` your login shell sets up, so conda and your
   usual tools are found.
 - When the network drops, the app reconnects on its own and shows what was
   printed in the meantime.
+
+## Removing Sandhill by hand
+
+The easy way is **Uninstall Sandhill** on Welcome's **On This Computer**
+page: it removes everything Sandhill put on your Mac, and on the servers
+you tick, and lets you tick what it installed into your own R and Python.
+
+If Sandhill was only dragged to the Trash, a few things stay behind. To
+remove them yourself:
+
+1. Before you go, open **R and Python** in Welcome: **What Sandhill
+   Installed** lists every package and environment Sandhill installed into
+   your own R and Python, so you can remove the ones you don't want.
+2. Quit Sandhill and drag it from Applications to the Trash.
+3. Delete these on your Mac (in Finder, **Go → Go to Folder…** opens
+   each path):
+   - `~/.sandhill`: Sandhill's one folder, with its own R and Python, its
+     settings and its history. To keep your history (conversations and
+     what ran), keep `~/.sandhill/state` and delete the rest.
+   - `~/Library/Caches/dev.sandhill.ide`
+   - `~/Library/Preferences/dev.sandhill.ide.plist`
+   - `~/Library/Saved Application State/dev.sandhill.ide.savedState`
+   - `~/Library/WebKit/dev.sandhill.ide`
+   - `~/Library/HTTPStorages/dev.sandhill.ide`, and any file next to it
+     whose name starts the same way
+4. Open **Keychain Access**, search for `dev.sandhill.agent-account` and
+   delete that item.
+5. On each server you used, delete `~/.sandhill` (for example,
+   `ssh yourserver rm -rf ~/.sandhill`).
+
+Your projects, data and results are never inside these places, so they
+stay as they are.
 
 ## Agents
 

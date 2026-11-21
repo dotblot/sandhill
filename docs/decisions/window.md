@@ -207,6 +207,22 @@ differs, this wins.
   project's code uses) and Set Up This Project's Packages from such a
   file; the missing-packages bar offers the set-up when the project
   carries one.
+  The lock and Advanced (Huan, 2026-11-20; plan sections 3, 10, 11):
+  while Sandhill's own R and Python are chosen, kernels, the Terminal,
+  jobs and agents run under the system's sandbox (Apple's on a Mac,
+  bubblewrap on Linux when it works) so they can't write into the
+  user's other R, Python, conda and Homebrew; a refused write says so
+  in plain words. On a Mac an agent with its own sandbox on (Codex
+  outside Full access, Claude Code with its sandbox enabled) runs under
+  that instead, since sandboxes can't nest there (Huan, 2026-11-21).
+  R and Python → Advanced holds the download sources
+  (the fastest working one chosen by Sandhill, China's Tsinghua and
+  USTC mirrors included, the system's proxy followed), the suggested
+  tool per language, each R's Bioconductor release, Install Without
+  Asking, and Open Terminal Here. Installs check free space first;
+  installs cut off part way are offered to finish or undo on the next
+  start; after an R upgrade, the packages the old R had are offered for
+  reinstall from their sources. The page works for servers too.
   The AI pane (Huan, 2026-11-19; `docs/design/explore-next-plan.md`) has
   a title-bar switch shared by every Explore window on this Mac. Until
   that switch is used, the pane shows only with a signed-in Claude Code

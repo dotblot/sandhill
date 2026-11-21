@@ -170,6 +170,7 @@ impl Workbench {
         let count = InstallCompletions::count(&host, cx);
         if count != 0 && (self.missing_completion.0 != host || self.missing_completion.1 != count) {
             self.missing_completion = (host, count);
+            self.read_env_mode(cx);
             self.refresh_packages(cx);
             self.read_project_package_files(true, cx);
             self.refresh_missing_documents(true, cx);
@@ -575,6 +576,8 @@ impl Workbench {
                     &[],
                     &[],
                     (review::cancel_button().on_click(cancel), run),
+                    review::space_button()
+                        .on_click(cx.listener(|this, _, _, cx| this.manage_resources(cx))),
                     move |this: &mut Self, _, choice: Choice, cx| {
                         if let Some(Attempt {
                             stage: Stage::Review(Review::Ready(plan)),
@@ -742,6 +745,9 @@ impl Workbench {
                     cx,
                 )),
             );
+        }
+        if let Some(hint) = self.render_lock_hint(run, cx) {
+            return (None, Some(hint));
         }
         if run.missing_error().is_none() || self.restricted() {
             return (None, None);

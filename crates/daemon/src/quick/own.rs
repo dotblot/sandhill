@@ -13,9 +13,25 @@ use sandhill_proto::{
     OwnSetupPlan, PlannedPackage, SetupStep,
 };
 
-use super::{install, record};
+use super::sources::Sources;
+use super::{install, record, sources, space};
 use crate::kernelspecs::{self, Search};
 use crate::own_env::{self, MARKER, executable, prefix};
+
+/// What a first set-up makes inside the chosen folder, and removes again
+/// when it fails or stops part way (never the folder itself).
+const MADE: &[&str] = &[
+    "bin",
+    "conda",
+    "home",
+    "cache",
+    "r",
+    "python",
+    "shell",
+    "tmp",
+    "condarc",
+    "micromamba",
+];
 
 const MB: u64 = 1_000_000;
 const NAME: &str = "Sandhill's own R and Python";
@@ -255,11 +271,13 @@ fn step(plan: &mut OwnSetupPlan, what: &str, command: String) {
 }
 
 pub(crate) fn plan(record: &Path, setup: OwnSetup) -> Work {
-    let (plan, copy, core_steps) = prepare(record, setup);
+    let sources = sources::chosen(record);
+    let (plan, copy, core_steps) = prepare(record, setup, &sources);
     Work {
         plan,
         copy,
         core_steps,
+        sources,
     }
 }
 
@@ -268,6 +286,9 @@ pub(crate) struct Work {
     plan: OwnSetupPlan,
     copy: Vec<super::own_copy::Task>,
     core_steps: usize,
+    /// The sources the plan's commands name, for the copies run later.
+    #[serde(default)]
+    sources: Sources,
 }
 
 impl Work {
@@ -285,9 +306,13 @@ pub(crate) fn job(record: &Path, setup: OwnSetup) -> Work {
     plan(record, setup).into_job()
 }
 
-fn prepare(record: &Path, setup: OwnSetup) -> (OwnSetupPlan, Vec<super::own_copy::Task>, usize) {
+fn prepare(
+    record: &Path,
+    setup: OwnSetup,
+    sources: &Sources,
+) -> (OwnSetupPlan, Vec<super::own_copy::Task>, usize) {
     let tools = || developer_tools(&Search::from_env());
-    let mut plan = plan_for(setup, PLATFORM, tools, free_mb);
+    let mut plan = plan_for(setup, PLATFORM, tools, free_mb, sources);
     let core_steps = plan.steps.len();
     let base_download = plan.download_mb;
     let mut copy = Vec::new();
@@ -304,7 +329,7 @@ fn prepare(record: &Path, setup: OwnSetup) -> (OwnSetupPlan, Vec<super::own_copy
                         .map(|(_, name)| ("python", record::python_name(name))),
                 );
             }
-            copy = super::own_copy::prepare(record, &mut plan, platform, &core)?;
+            copy = super::own_copy::prepare(record, &mut plan, platform, &core, sources)?;
             if plan
                 .copy
                 .iter()
@@ -314,16 +339,12 @@ fn prepare(record: &Path, setup: OwnSetup) -> (OwnSetupPlan, Vec<super::own_copy
                 plan.needs_developer_tools = true;
             }
             let extra = plan.download_mb - base_download;
-            let required = (plan.download_mb * 48).div_ceil(10);
-            ensure!(
-                extra == 0 || plan.free_mb >= required,
-                "This setup and copy need about {required} MB of free space. Only {} MB is free in this folder.",
-                plan.free_mb
-            );
+            space::check_free(plan.free_mb, space::need_mb(Some(plan.download_mb)))?;
             plan.minutes += (extra.div_ceil(300) * 2) as u32;
             Ok(())
         })();
         if let Err(error) = result {
+            plan.refused_fix = space::fix(&error);
             plan.refused = Some(error.to_string());
         }
     }
@@ -343,6 +364,7 @@ fn plan_for(
     platform: Option<&str>,
     tools: impl Fn() -> bool,
     free: impl FnOnce(&Path) -> Result<u64>,
+    sources: &Sources,
 ) -> OwnSetupPlan {
     let mut plan = OwnSetupPlan {
         setup,
@@ -356,8 +378,10 @@ fn plan_for(
         needs_developer_tools: false,
         copy: Vec::new(),
         refused: None,
+        refused_fix: None,
     };
-    if let Err(error) = build(&mut plan, platform, tools, free) {
+    if let Err(error) = build(&mut plan, platform, tools, free, sources) {
+        plan.refused_fix = space::fix(&error);
         plan.refused = Some(error.to_string());
     }
     plan
@@ -368,6 +392,7 @@ fn build(
     platform: Option<&str>,
     tools: impl Fn() -> bool,
     free: impl FnOnce(&Path) -> Result<u64>,
+    sources: &Sources,
 ) -> Result<()> {
     let platform =
         platform.context("Sandhill can't set up its own R and Python on this computer.")?;
@@ -404,10 +429,15 @@ fn build(
     step(
         plan,
         "Keep R, Python and shell settings in this folder",
-        own_env::settings(&folder),
+        own_env::settings(
+            &folder,
+            &[
+                &sources.channel("conda-forge"),
+                &sources.channel("bioconda"),
+            ],
+        ),
     );
     let mut gsva = None;
-    let mut conda_mb = 0;
     for (lang, chosen) in [("r", plan.setup.r), ("python", plan.setup.python)] {
         if !chosen {
             continue;
@@ -460,18 +490,15 @@ fn build(
             let prefix = inventory.prefix.to_string_lossy();
             let (display, _, runtime) = inventory.runtime();
             let display = if inventory.r { display } else { "Python" };
+            let channels = sources.conda_args();
             let mut argv = vec![
                 shim.as_ref(),
                 if present { "install" } else { "create" },
                 "-y",
                 "-p",
                 prefix.as_ref(),
-                "--override-channels",
-                "-c",
-                "conda-forge",
-                "-c",
-                "bioconda",
             ];
+            argv.extend(channels.iter().map(String::as_str));
             if present {
                 argv.push("--freeze-installed");
             } else {
@@ -492,14 +519,16 @@ fn build(
             );
         }
         let download = download.min(cap);
-        conda_mb += download;
         plan.download_mb += download;
         if inventory.r {
             plan.r_packages = wanted;
             if let Some((pkg, can_build)) = gsva.take() {
                 if can_build {
                     let rscript = inventory.prefix.join("bin/Rscript");
-                    let code = "options(repos = c(CRAN = 'https://cloud.r-project.org')); BiocManager::install('GSVA', type = 'source', ask = FALSE, update = FALSE, Ncpus = 2L); stopifnot(requireNamespace('GSVA', quietly = TRUE))";
+                    let code = format!(
+                        "{}; BiocManager::install('GSVA', type = 'source', ask = FALSE, update = FALSE, Ncpus = 2L); stopifnot(requireNamespace('GSVA', quietly = TRUE))",
+                        sources.r_options()
+                    );
                     let command = own_env::command(
                         &folder,
                         &install::quote([
@@ -507,7 +536,7 @@ fn build(
                             "--no-save",
                             "--no-restore",
                             "-e",
-                            code,
+                            code.as_str(),
                         ]),
                     );
                     let isolated =
@@ -530,12 +559,7 @@ fn build(
             plan.python_packages = wanted;
         }
     }
-    let required = ((conda_mb * 3 + plan.download_mb) * 12).div_ceil(10);
-    ensure!(
-        plan.free_mb >= required,
-        "This setup needs about {required} MB of free space. Only {} MB is free in this folder.",
-        plan.free_mb
-    );
+    space::check_free(plan.free_mb, space::need_mb(Some(plan.download_mb)))?;
     plan.minutes = ((plan.download_mb.div_ceil(300) * 2) as u32
         + if plan
             .r_packages
@@ -649,15 +673,7 @@ pub(super) fn run(record_path: &Path, work: &Work) -> Result<()> {
         println!("{}", step.what);
         if let Err(error) = install::run_command(&format!("set -e -o pipefail\n{}", step.command)) {
             if new {
-                // Remove only the files this first setup made, not the chosen folder.
-                for name in [
-                    "bin", "conda", "home", "cache", "r", "python", "shell", "tmp",
-                ] {
-                    let _ = fs::remove_dir_all(folder.join(name));
-                }
-                for name in ["condarc", "micromamba"] {
-                    let _ = fs::remove_file(folder.join(name));
-                }
+                remove_partial(&folder);
             }
             for snapshot in snapshots {
                 snapshot.finish(record_path)?;
@@ -666,7 +682,7 @@ pub(super) fn run(record_path: &Path, work: &Work) -> Result<()> {
         }
     }
     if !plan.setup.copy_from.is_empty() {
-        super::own_copy::run(record_path, plan, &work.copy)?;
+        super::own_copy::run(record_path, plan, &work.copy, &work.sources)?;
     }
     for snapshot in snapshots {
         snapshot.finish(record_path)?;
@@ -689,6 +705,24 @@ pub(super) fn run(record_path: &Path, work: &Work) -> Result<()> {
     })?;
     println!("Sandhill's own R and Python are ready.");
     Ok(())
+}
+
+/// A first set-up that stopped part way left some of its files here.
+pub(super) fn partial(folder: &Path) -> bool {
+    MADE.iter()
+        .any(|name| folder.join(name).symlink_metadata().is_ok())
+}
+
+/// Removes only the files a first set-up makes, not the chosen folder.
+pub(super) fn remove_partial(folder: &Path) {
+    for name in MADE {
+        let path = folder.join(name);
+        let _ = if path.is_dir() && !path.is_symlink() {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        };
+    }
 }
 
 pub(crate) fn removable(folder: &Path) -> Result<()> {
@@ -778,6 +812,7 @@ pub(super) fn readiness(search: &Search, record: &Path, folder: &Path) -> Option
         kits,
         size_mb: disk_bytes(folder, &mut HashSet::new()).div_ceil(MB),
         copy_report: super::own_copy::report(record, folder),
+        lock: super::own_lock::status(record, folder),
     })
 }
 
@@ -822,24 +857,53 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("environment");
         let mut setup = setup(&root);
+        let main = Sources::default();
         let core = plan_for(
             setup.clone(),
             Some("linux-64"),
             || unreachable!(),
             |_| Ok(5000),
+            &main,
         );
         assert_eq!(core.refused, None);
         assert_eq!(core.download_mb, 391);
         assert_eq!(core.steps.len(), 4);
         assert!(core.steps[0].command.contains("/linux-64/latest"));
-        assert!(core.steps[2].command.contains("'r-base' 'r-irkernel'"));
+        assert!(core.steps[2].command.contains("'--override-channels' '-c' 'https://conda.anaconda.org/conda-forge' '-c' 'https://conda.anaconda.org/bioconda' 'r-base' 'r-irkernel'"));
+        assert!(core.steps[1].command.contains(
+            "channels: [\"https://conda.anaconda.org/conda-forge\", \"https://conda.anaconda.org/bioconda\"]"
+        ));
         assert!(
             core.steps[3]
                 .command
                 .contains("'python=3.12' 'pip' 'ipykernel'")
         );
         setup.kits = KITS.iter().map(|k| k.id.into()).collect();
-        let all = plan_for(setup, Some("linux-64"), || unreachable!(), |_| Ok(5000));
+        let mirror = Sources {
+            conda: "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud".into(),
+            cran: "https://mirrors.ustc.edu.cn/CRAN".into(),
+            ..Sources::default()
+        };
+        let all = plan_for(
+            setup,
+            Some("linux-64"),
+            || unreachable!(),
+            |_| Ok(5000),
+            &mirror,
+        );
+        assert!(
+            all.steps
+                .iter()
+                .filter(|s| s.command.contains("micromamba' 'create'"))
+                .all(|s| s
+                    .command
+                    .contains("'https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/bioconda'"))
+        );
+        assert!(
+            all.steps[1]
+                .command
+                .contains("mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge")
+        );
         assert_eq!(all.download_mb, 837 + 251 + 7);
         assert!(
             all.r_packages
@@ -890,11 +954,18 @@ mod tests {
             Some("linux-64"),
             || unreachable!(),
             |_| Ok(5000),
+            &Sources::default(),
         );
         assert!(core.python_packages.is_empty());
         assert_eq!(core.download_mb, 0);
         setup.kits = vec!["singlecell-python".into()];
-        let add = plan_for(setup, Some("linux-64"), || unreachable!(), |_| Ok(5000));
+        let add = plan_for(
+            setup,
+            Some("linux-64"),
+            || unreachable!(),
+            |_| Ok(5000),
+            &Sources::default(),
+        );
         assert_eq!(add.download_mb, 101);
         assert_eq!(add.steps.len(), 2);
         assert!(add.steps[1].command.contains("'install'"));
@@ -912,7 +983,13 @@ mod tests {
         let mut setup = setup(temp.path());
         setup.kits = vec!["pathways".into()];
         for tools in [true, false] {
-            let plan = plan_for(setup.clone(), Some("osx-arm64"), || tools, |_| Ok(5000));
+            let plan = plan_for(
+                setup.clone(),
+                Some("osx-arm64"),
+                || tools,
+                |_| Ok(5000),
+                &Sources::default(),
+            );
             assert_eq!(plan.refused, None);
             assert_eq!(plan.needs_developer_tools, !tools);
             assert_eq!(
@@ -943,20 +1020,30 @@ mod tests {
         }
         assert!(folder(&temp.path().join("missing/child")).is_ok());
         assert!(
-            plan_for(setup(temp.path()), None, || unreachable!(), |_| Ok(5000))
-                .refused
-                .is_some()
-        );
-        assert!(
             plan_for(
                 setup(temp.path()),
-                Some("linux-64"),
+                None,
                 || unreachable!(),
-                |_| Ok(100)
+                |_| Ok(5000),
+                &Sources::default()
             )
             .refused
-            .unwrap()
-            .contains("free space")
+            .is_some()
+        );
+        let low = plan_for(
+            setup(temp.path()),
+            Some("linux-64"),
+            || unreachable!(),
+            |_| Ok(1_100),
+            &Sources::default(),
+        );
+        assert_eq!(
+            low.refused.as_deref(),
+            Some("This needs about 1.7 GB and the disk has 1.1 GB free.")
+        );
+        assert_eq!(
+            low.refused_fix,
+            Some(sandhill_proto::FailureFix::FreeUpSpace)
         );
         fs::write(temp.path().join("personal.txt"), "keep me").unwrap();
         assert!(folder(temp.path()).is_err());

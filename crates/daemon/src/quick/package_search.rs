@@ -11,19 +11,13 @@ use anyhow::{Context, Result, bail};
 use sandhill_proto::{InstallTool, PackageHit};
 use serde::{Deserialize, Serialize};
 
-use super::{environments, package_plan, record};
+use super::{environments, package_plan, record, sources};
 use crate::kernelspecs::Search;
 
 const BIOC: [&str; 3] = ["bioc", "data/annotation", "data/experiment"];
-const CRAN: &str = "https://cloud.r-project.org";
 const FRESH: Duration = Duration::from_secs(86_400);
 const LIMIT: u64 = 16 * 1024 * 1024;
-static HTTP: LazyLock<ureq::Agent> = LazyLock::new(|| {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(8)))
-        .build()
-        .new_agent()
-});
+static HTTP: LazyLock<ureq::Agent> = LazyLock::new(|| sources::http(Duration::from_secs(8)));
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 struct Entry {
@@ -83,11 +77,13 @@ fn cache<T: Serialize + for<'de> Deserialize<'de>>(
     }
 }
 
+/// CRAN's list, from the chosen CRAN source (mirrors serve the same files).
 fn cran(record: &Path) -> Result<Vec<Entry>> {
+    let cran = sources::chosen(record).cran;
     cache(record, "cran", || {
         let (html, versions) = std::thread::scope(|scope| {
             let versions = scope.spawn(|| {
-                let body = download(&format!("{CRAN}/src/contrib/PACKAGES.gz"), &[]).ok()?;
+                let body = download(&format!("{cran}/src/contrib/PACKAGES.gz"), &[]).ok()?;
                 let mut data = String::new();
                 flate2::read::GzDecoder::new(body.as_slice())
                     .take(LIMIT * 3)
@@ -101,7 +97,7 @@ fn cran(record: &Path) -> Result<Vec<Entry>> {
                 )
             });
             let html = download(
-                &format!("{CRAN}/web/packages/available_packages_by_name.html"),
+                &format!("{cran}/web/packages/available_packages_by_name.html"),
                 &[],
             );
             (html, versions.join().ok().flatten().unwrap_or_default())
@@ -185,9 +181,10 @@ fn dcf(text: &str) -> Vec<Entry> {
 }
 
 fn bioc(record: &Path, category: &str) -> Result<Vec<Entry>> {
+    let bioconductor = sources::chosen(record).bioconductor;
     cache(record, &format!("bioc:{category}"), || {
         let text = download(
-            &format!("https://bioconductor.org/packages/release/{category}/VIEWS"),
+            &format!("{bioconductor}/packages/release/{category}/VIEWS"),
             &[],
         )?;
         let list = dcf(&String::from_utf8_lossy(&text));
@@ -274,15 +271,14 @@ fn pypi(record: &Path, query: &str) -> Result<Option<Entry>> {
         return Ok(None);
     }
     let normalized = record::python_name(query);
+    let sources = sources::chosen(record);
     cache(record, &format!("pypi:{normalized}"), || {
         let mut last = None;
         for name in [query, &normalized]
             .into_iter()
             .take(if normalized == query { 1 } else { 2 })
         {
-            let response = HTTP
-                .get(&format!("https://pypi.org/pypi/{name}/json"))
-                .call();
+            let response = HTTP.get(&sources.pypi_json(name)).call();
             match response {
                 Ok(mut response) => {
                     let mut bytes = Vec::new();

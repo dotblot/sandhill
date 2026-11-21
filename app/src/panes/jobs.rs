@@ -796,11 +796,18 @@ impl Workbench {
             } else {
                 in_project(job, &job.cwd)
             };
-            let state_color = match job_state(job) {
+            let state = job_state(job);
+            let state_color = match state {
                 JobState::Running => p.busy,
                 JobState::Done => p.ok,
                 _ => p.err,
             };
+            // A job the lock stopped from writing gets the plain reason.
+            let locked = (state == JobState::Failed)
+                .then(|| self.jobs.views.get(&job.id))
+                .flatten()
+                .map(|view| view.read(cx).screen_text(cx))
+                .and_then(|text| self.job_lock_hint(&text, cx));
             v_flex()
                 .flex_1()
                 .min_w_0()
@@ -831,6 +838,11 @@ impl Workbench {
                     &format!("job-{}", job.id),
                     cx,
                 ))
+                .children(locked.map(|hint| {
+                    hint.flex_none()
+                        .border_b(px(0.5))
+                        .border_color(p.glass_edge)
+                }))
                 .child(
                     // Absolute, so the log's height is the pane's, not its
                     // text's.

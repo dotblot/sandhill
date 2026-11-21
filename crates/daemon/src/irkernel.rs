@@ -2,10 +2,10 @@
 //! machine (on `PATH`, CRAN's framework and rig's versions, conda
 //! environments, a project's pixi environment) that no installed IRkernel
 //! runs are offered it; Ark doesn't count, as it is a different kernel.
-//! Installing runs as a job: plain R installs the package from its own
-//! mirror (else CRAN's cloud mirror) and registers the kernel by R's full
-//! path in the user's Jupyter folder; an environment gets `r-irkernel` from
-//! its own package manager, which registers the kernel inside it.
+//! Installing runs as a job: plain R installs the package from the chosen
+//! CRAN source (R and Python → Advanced) and registers the kernel by R's
+//! full path in the user's Jupyter folder; an environment gets `r-irkernel`
+//! from its own package manager, which registers the kernel inside it.
 
 use std::collections::HashSet;
 use std::io::Read;
@@ -18,12 +18,11 @@ use sandhill_proto::{JobSpec, RLibrary, RWithoutIrkernel};
 
 use crate::agents::shell_quote;
 use crate::kernelspecs::{self, Search, canonical};
+use crate::quick::sources::Sources;
 use crate::terminal::Launch;
 
 /// How long `R --version` may take.
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
-/// The mirror used when R names none.
-const CRAN: &str = "https://cloud.r-project.org";
 
 /// An R without IRkernel, and how it gets it.
 #[derive(Debug, Clone, PartialEq)]
@@ -219,12 +218,13 @@ impl Candidate {
     }
 
     /// What it is for the app: the R, its version and what installing does.
-    pub fn info(&self, search: &Search) -> RWithoutIrkernel {
+    pub(crate) fn info(&self, search: &Search, sources: &Sources) -> RWithoutIrkernel {
         let plan = match &self.how {
             How::Plain => {
                 let (name, dir) = kernel_dir(self, search);
                 format!(
-                    "Installs the R package IRkernel into the library you choose, from its package mirror (else {CRAN}), and registers the kernel \"{}\" as {name} in {}.",
+                    "Installs the R package IRkernel into the library you choose, from {}, and registers the kernel \"{}\" as {name} in {}.",
+                    sources.cran,
                     display_name(self),
                     dir.parent()
                         .map(Path::display)
@@ -232,10 +232,9 @@ impl Candidate {
                         .unwrap_or_default(),
                 )
             }
-            How::Conda { prefix, label } => format!(
-                "Runs `{} install -y -p {} -c conda-forge r-irkernel`, adding IRkernel and its kernel to {label}.",
-                conda_tool(prefix),
-                prefix.display()
+            How::Conda { prefix, .. } => format!(
+                "Runs `{}`, adding IRkernel and its kernel to this environment.",
+                conda_command(prefix, sources)
             ),
             How::Pixi { .. } => format!(
                 "Runs `{} add r-irkernel` in the project's folder, which adds it to the project's pixi manifest and installs it.",
@@ -332,12 +331,19 @@ fn r_string(text: &str) -> String {
 /// 2026-11-19) and registers the kernel in `dir` with `r` as its program.
 /// What it adds, and the kernel folder, go in Sandhill's `record`, so it
 /// can be removed later.
-fn install_code(r: &Path, name: &str, dir: &Path, library: &Path, record: &Path) -> String {
+fn install_code(
+    r: &Path,
+    name: &str,
+    dir: &Path,
+    library: &Path,
+    record: &Path,
+    sources: &Sources,
+) -> String {
     format!(
         r#"local({{
   {append}
+  {repos}
   repos <- getOption("repos")
-  if (!length(repos) || any(is.na(repos) | !nzchar(repos) | repos == "@CRAN@")) repos <- c(CRAN = {cran})
   lib <- {library}
   {check_library}
   if (!requireNamespace("IRkernel", quietly = TRUE)) {{
@@ -362,7 +368,7 @@ fn install_code(r: &Path, name: &str, dir: &Path, library: &Path, record: &Path)
         append_kernel = crate::quick::record::r_append_kernel(record, "dir"),
         library = r_string(&library.to_string_lossy()),
         check_library = check_library_code(),
-        cran = r_string(CRAN),
+        repos = sources.r_options(),
         r = r_string(&r.to_string_lossy()),
         name = r_string(name),
         dir = r_string(&dir.to_string_lossy()),
@@ -422,6 +428,7 @@ pub fn launch(
     search: &Search,
     record: &Path,
 ) -> Result<(Launch, Option<PathBuf>)> {
+    let sources = crate::quick::sources::chosen(record);
     let wanted = canonical(Path::new(r));
     let Some(candidate) = find(search)
         .into_iter()
@@ -446,6 +453,7 @@ pub fn launch(
                 &dir,
                 Path::new(library),
                 record,
+                &sources,
             );
             (
                 crate::quick::install::worker_command(
@@ -469,11 +477,7 @@ pub fn launch(
                 exe,
                 record,
                 &crate::quick::install::Job::Irkernel {
-                    command: format!(
-                        "{} install -y -p {} -c conda-forge r-irkernel",
-                        shell_quote(&conda_tool(prefix)),
-                        shell_quote(&prefix.to_string_lossy())
-                    ),
+                    command: conda_command(prefix, &sources),
                     prefix: Some(prefix.to_string_lossy().into_owned()),
                 },
             )?,
@@ -493,6 +497,16 @@ pub fn launch(
     let mut launch = crate::jobs::launch(&job, Some(&cwd), None)?;
     launch.title = format!("Install IRkernel for {}", candidate.named());
     Ok((launch, trust))
+}
+
+/// conda's command that adds IRkernel, from conda-forge at the chosen source.
+fn conda_command(prefix: &Path, sources: &Sources) -> String {
+    format!(
+        "{} install -y -p {} --override-channels -c {} r-irkernel",
+        shell_quote(&conda_tool(prefix)),
+        shell_quote(&prefix.to_string_lossy()),
+        shell_quote(&sources.channel("conda-forge"))
+    )
 }
 
 #[cfg(test)]
@@ -531,5 +545,33 @@ mod tests {
         assert_eq!(kernel_dir(&candidate, &search).0, "ir-4.6.2");
         std::fs::create_dir_all(tmp.path().join("kernels/ir-4.6.2")).unwrap();
         assert_eq!(kernel_dir(&candidate, &search).0, "ir-4.6.2-2");
+    }
+
+    #[test]
+    fn irkernel_installs_from_the_chosen_sources() {
+        let mirror = Sources {
+            cran: "https://mirrors.tuna.tsinghua.edu.cn/CRAN".into(),
+            conda: "https://mirrors.ustc.edu.cn/anaconda/cloud".into(),
+            ..Sources::default()
+        };
+        let code = install_code(
+            Path::new("/usr/bin/R"),
+            "R 4.6.2",
+            Path::new("/k/ir"),
+            Path::new("/lib"),
+            Path::new("/state/record.tsv"),
+            &mirror,
+        );
+        assert!(code.contains(
+            "options(repos = c(CRAN = \"https://mirrors.tuna.tsinghua.edu.cn/CRAN\"), BioC_mirror = \"https://bioconductor.org\")\n  repos <- getOption(\"repos\")"
+        ));
+        assert!(code.contains("install.packages(\"IRkernel\", lib = lib, repos = repos)"));
+        assert_eq!(
+            conda_command(Path::new("/envs/r"), &mirror),
+            format!(
+                "{} install -y -p '/envs/r' --override-channels -c 'https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge' r-irkernel",
+                shell_quote(&conda_tool(Path::new("/envs/r")))
+            )
+        );
     }
 }

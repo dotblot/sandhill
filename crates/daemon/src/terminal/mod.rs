@@ -500,7 +500,33 @@ impl Terminals {
     async fn spawn_host(&self, paths: &Paths, launch: &Launch, own: Option<&Path>) -> Result<()> {
         let (cols, rows) = launch.size.unwrap_or(DEFAULT_SIZE);
         let log = std::fs::File::create(paths.host_log())?;
-        let mut host = tokio::process::Command::new(&self.executable);
+        // Under the lock while Sandhill's own R and Python are chosen: the
+        // shell, a job or an agent and everything they start.
+        let lock = match (own, self.root.parent()) {
+            (Some(_), Some(state)) => {
+                crate::quick::own_lock::current_async(state.join(crate::quick::record::FILE)).await
+            }
+            _ => None,
+        };
+        let keep: Vec<&Path> = std::iter::once(launch.cwd.as_path())
+            .chain(launch.project.as_deref().map(Path::new))
+            .collect();
+        let run = lock_run(launch);
+        let locked = lock
+            .as_deref()
+            .and_then(|lock| lock.command(&self.executable, &keep, run));
+        let side = lock
+            .as_deref()
+            .filter(|_| crate::agents::is_agent(&launch.kind))
+            .and_then(|lock| lock.host_lock(run, locked.is_some()));
+        let mut host = match locked {
+            Some(locked) => tokio::process::Command::from(locked),
+            None => tokio::process::Command::new(&self.executable),
+        };
+        match side {
+            Some(side) => host.env(crate::quick::own_lock::HOST_LOCK, side),
+            None => host.env_remove(crate::quick::own_lock::HOST_LOCK),
+        };
         host.arg("terminal-host")
             .arg("--dir")
             .arg(paths.dir())
@@ -1054,6 +1080,30 @@ fn command_of(launch: &Launch) -> Vec<String> {
     command
 }
 
+/// On a Mac an agent's own sandbox can't run inside the lock, so an agent
+/// Sandhill starts runs under one or the other.
+fn lock_run(launch: &Launch) -> crate::quick::own_lock::Run {
+    use crate::quick::own_lock::{Run, own_sandbox};
+    let config = claude_config(launch);
+    let permission = launch.options.permission.as_deref();
+    if own_sandbox(&launch.kind, permission, &launch.cwd, config.as_deref()) {
+        Run::SandboxedAgent
+    } else {
+        Run::Host
+    }
+}
+
+/// Claude Code's settings folder: an added account's, else the usual one.
+fn claude_config(launch: &Launch) -> Option<PathBuf> {
+    launch
+        .env
+        .iter()
+        .find(|(key, _)| key == "CLAUDE_CONFIG_DIR")
+        .map(|(_, folder)| PathBuf::from(folder))
+        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))
+}
+
 fn host_alive(paths: &Paths) -> bool {
     let Some(host) = read_json::<Value>(&paths.host()) else {
         // Written right after the host starts; a terminal without it is
@@ -1120,6 +1170,62 @@ fn outdated(meta: &Meta) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosts_run_under_the_lock_unless_the_agent_has_its_own_sandbox() {
+        use crate::quick::own_lock::{Run, test_lock};
+        let launch = |kind: &str, permission: Option<&str>| Launch {
+            kind: kind.into(),
+            title: String::new(),
+            program: "/bin/zsh".into(),
+            args: Vec::new(),
+            env: vec![("CLAUDE_CONFIG_DIR".into(), "/account/claude".into())],
+            cwd: "/work/project".into(),
+            project: Some("/work".into()),
+            options: AgentOptions {
+                permission: permission.map(str::to_string),
+                ..Default::default()
+            },
+            size: None,
+            job: None,
+        };
+        assert_eq!(
+            claude_config(&launch("claude", None)).as_deref(),
+            Some(Path::new("/account/claude"))
+        );
+        let mac = test_lock(vec!["/opt/homebrew".into()], false);
+        let linux = test_lock(vec!["/opt/homebrew".into()], true);
+        for (kind, permission, own_sandbox) in [
+            (sandhill_proto::TERMINAL_SHELL, None, false),
+            (sandhill_proto::TERMINAL_JOB, None, false),
+            (sandhill_proto::TERMINAL_PREVIEW, None, false),
+            (crate::agents::CODEX, Some("edits"), true),
+            (crate::agents::CODEX, Some("full"), false),
+            (crate::agents::PI, Some("edits"), false),
+        ] {
+            let launch = launch(kind, permission);
+            let run = lock_run(&launch);
+            assert_eq!(
+                run == Run::SandboxedAgent,
+                own_sandbox,
+                "{kind} {permission:?}"
+            );
+            let keep = [launch.cwd.as_path()];
+            let host = mac.command("/sandhilld", &keep, run);
+            assert_eq!(host.is_none(), own_sandbox, "{kind} {permission:?}");
+            if let Some(host) = &host {
+                assert_eq!(host.get_program(), "/usr/bin/sandbox-exec");
+                assert_eq!(
+                    host.get_args().last(),
+                    Some(std::ffi::OsStr::new("/sandhilld"))
+                );
+            }
+            assert!(linux.command("/sandhilld", &keep, run).is_some());
+            let side = mac.host_lock(run, host.is_some());
+            assert_eq!(side, Some(if own_sandbox { "agent" } else { "on" }));
+            assert_eq!(linux.host_lock(run, true), None);
+        }
+    }
 
     #[test]
     fn conversation_child_uses_current_mode_and_keeps_the_original_shell_files() {

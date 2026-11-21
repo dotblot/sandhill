@@ -868,8 +868,10 @@ impl Actor {
             let msg = JupyterMessage::new(InterruptRequest {}, None);
             self.conn.control.send(msg).await?;
         } else if let Some(child) = &self.child {
-            // An unreaped child's PID can't be reused.
+            // An unreaped child's PID can't be reused. Under bubblewrap the
+            // kernel is its child, which ends only after the kernel.
             let pid = child.id().context("the kernel process has exited")?;
+            let pid = kernel::kernel_pid(pid, self.record.pid).unwrap_or(pid);
             kernel::send_signal(pid, libc::SIGINT)?;
         } else {
             self.kernel
@@ -968,6 +970,11 @@ impl Actor {
         if let Some(child) = self.child.as_mut() {
             // An unreaped child cannot have its PID reused.
             if let Some(pid) = child.id() {
+                // Bubblewrap's kernel leads its own group, pinned while
+                // bubblewrap, ending only after it, is unreaped.
+                if let Some(kernel) = kernel::kernel_pid(pid, self.record.pid) {
+                    kernel::kill_process_group(kernel);
+                }
                 // The retained, unreaped leader pins this process group.
                 kernel::kill_process_group(pid);
             }

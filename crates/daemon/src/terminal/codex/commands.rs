@@ -11,7 +11,7 @@ impl Bridge {
             }
             "interrupt" => self.interrupt().await,
             "set" => {
-                {
+                let refused = {
                     let mut state = self.state.lock().unwrap();
                     let text = |key: &str| command[key].as_str().map(str::to_string);
                     if command.get("model").is_some() {
@@ -32,9 +32,23 @@ impl Bridge {
                     if command.get("effort").is_some() {
                         state.effort = text("effort");
                     }
-                    if command.get("permission").is_some() {
-                        state.permission = text("permission");
+                    let wanted = text("permission");
+                    let allowed = crate::quick::own_lock::codex_mode_allowed(
+                        wanted.as_deref(),
+                        std::env::var(crate::quick::own_lock::HOST_LOCK)
+                            .ok()
+                            .as_deref(),
+                    );
+                    if command.get("permission").is_some() && allowed {
+                        state.permission = wanted;
                     }
+                    command.get("permission").is_some() && !allowed
+                };
+                if refused {
+                    self.chat(
+                        json!({"kind": "error", "text": crate::quick::own_lock::CODEX_SWITCH}),
+                    )
+                    .await;
                 }
                 self.report(json!({})).await;
             }

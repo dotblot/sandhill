@@ -55,6 +55,9 @@ const TOOLS: &[&str] = &[
     "ln",
     "rm",
     "rmdir",
+    "id",
+    "date",
+    "sleep",
 ];
 
 struct Server {

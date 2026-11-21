@@ -1,8 +1,8 @@
 //! The first-run R and Python setup and kit review for Sandhill's own folder.
 
 use sandhill_proto::{
-    CORE_KIT, CopyReport, EnvCard, EnvMode, InstallTarget, KITS, Kit, OWN_FOLDER, OwnRuntime,
-    OwnSetup, OwnSetupPlan, RSource,
+    CORE_KIT, CopyReport, EnvCard, EnvMode, InstallTarget, KITS, Kit, LockStatus, OWN_FOLDER,
+    OwnRuntime, OwnSetup, OwnSetupPlan, RSource,
 };
 
 use super::*;
@@ -32,6 +32,8 @@ struct ExistingReview {
     quarto: bool,
 }
 
+// Only one review is open at a time, so its size doesn't matter.
+#[allow(clippy::large_enum_variant)]
 enum SetupReview {
     Own(Review<OwnSetupPlan>),
     Existing(ExistingReview),
@@ -71,6 +73,16 @@ impl State {
             },
             ..Self::default()
         }
+    }
+
+    /// Another device: an open setup is let go, and the first-run offer
+    /// stays this computer's.
+    pub(super) fn leave_device(&mut self) {
+        *self = Self {
+            first_run: FirstRun::Done,
+            generation: self.generation + 1,
+            ..Self::default()
+        };
     }
 }
 
@@ -269,7 +281,7 @@ impl AppWindow {
         if q.environment.first_run != FirstRun::CheckMode {
             return;
         }
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         self.start.quick.environment.first_run = FirstRun::CheckingMode;
@@ -303,6 +315,12 @@ impl AppWindow {
         back_to: Option<Page>,
         cx: &mut Context<Self>,
     ) {
+        let default_folder = self.quick_home().map_or_else(String::new, |home| {
+            std::path::Path::new(&home)
+                .join(OWN_FOLDER)
+                .to_string_lossy()
+                .into_owned()
+        });
         let q = &mut self.start.quick;
         if q.busy() || q.checking || q.setting_prefs || q.environment.switching {
             return;
@@ -310,20 +328,6 @@ impl AppWindow {
         let Some(Ok(found)) = &q.readiness else {
             return;
         };
-        let home = self
-            .start
-            .machines
-            .get(sandhill_link::LOCAL)
-            .and_then(|m| m.home.clone())
-            .or_else(|| std::env::var("HOME").ok());
-        let default_folder =
-            home.filter(|home| !home.is_empty())
-                .map_or_else(String::new, |home| {
-                    std::path::Path::new(&home)
-                        .join(OWN_FOLDER)
-                        .to_string_lossy()
-                        .into_owned()
-                });
         let (setup, step) = if let Some(python) = adding_for_python {
             let Some(own) = &found.own else { return };
             (
@@ -398,7 +402,7 @@ impl AppWindow {
         cx.notify();
     }
 
-    fn quick_choose_setup_folder(&mut self, cx: &mut Context<Self>) {
+    fn quick_choose_setup_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let state = &mut self.start.quick.environment;
         let Some(flow) = &mut state.flow else { return };
         if flow.choosing {
@@ -406,7 +410,13 @@ impl AppWindow {
         }
         flow.choosing = true;
         let id = state.generation;
-        let choose = choose_local_path("Choose Sandhill's Environment Folder", false, true, cx);
+        let choose = self.quick_choose_path(
+            "Choose Sandhill's Environment Folder",
+            false,
+            true,
+            window,
+            cx,
+        );
         cx.spawn(async move |this, cx| {
             let folder = choose.await;
             this.update(cx, |this, cx| {
@@ -467,7 +477,7 @@ impl AppWindow {
     }
 
     fn quick_plan_own_setup(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let state = &mut self.start.quick.environment;
@@ -521,7 +531,7 @@ impl AppWindow {
         change: PackageChange,
         cx: &mut Context<Self>,
     ) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let id = self.start.quick.environment.generation;
@@ -584,7 +594,7 @@ impl AppWindow {
     }
 
     fn quick_setup_developer_tools(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let state = &mut self.start.quick.environment;
@@ -673,7 +683,7 @@ impl AppWindow {
         jobs: Option<VecDeque<PackageChange>>,
         cx: &mut Context<Self>,
     ) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let q = &mut self.start.quick;
@@ -691,6 +701,7 @@ impl AppWindow {
         q.python_form = None;
         q.environment.switching = true;
         q.environment.switch_error = None;
+        let host = q.host.clone();
         let set = daemon.call::<InstallPrefs>(Call::SetEnvMode { mode: Some(mode) });
         cx.spawn(async move |this, cx| {
             let result = set.await;
@@ -699,6 +710,10 @@ impl AppWindow {
                 q.environment.switching = false;
                 match result {
                     Ok(prefs) => {
+                        // Project windows on this device read the choice
+                        // again (the lock's hint follows it).
+                        crate::install_confirm::InstallCompletions::finished(host, cx);
+                        let q = &mut this.start.quick;
                         if let Some(jobs) = jobs {
                             q.environment.flow = None;
                             q.waiting = jobs;
@@ -773,6 +788,11 @@ impl AppWindow {
                 )
                 .into_any_element(),
             );
+        }
+        if found.prefs.mode == Some(EnvMode::Own)
+            && let Some(lock) = found.own.as_ref().and_then(|own| own.lock.as_ref())
+        {
+            rows.extend(self.quick_lock_rows(lock, p, cx));
         }
         if let Some(error) = &state.switch_error {
             rows.push(
@@ -860,11 +880,9 @@ impl AppWindow {
                                 .small()
                                 .label("Choose Folder…")
                                 .disabled(busy)
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.quick_choose_setup_folder(cx)
-                                    }),
-                                ),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.quick_choose_setup_folder(window, cx)
+                                })),
                         )
                         .into_any_element(),
                     );
@@ -1015,6 +1033,7 @@ impl AppWindow {
                             flow.details,
                             details,
                             developer_tools,
+                            Self::quick_space_button(cx),
                             p,
                         ))
                         .children(review::own_copy(plan, flow.copy_details, copy_details, p));
@@ -1323,6 +1342,7 @@ impl AppWindow {
                 review::setup_packages(
                     &review.plans,
                     &review.libraries,
+                    Self::quick_space_button(cx),
                     Self::quick_pick_setup_package,
                     p,
                     cx,
@@ -1363,6 +1383,69 @@ impl AppWindow {
         }
         rows.extend(self.quick_install_in(Section::Cards, p, cx));
         look::settings_box(rows, p)
+    }
+
+    /// The lock while Sandhill's own R and Python are chosen: what it
+    /// keeps safe, its folders on request, and the daemon's note (what
+    /// the lock means for agents with their own sandbox, or why it isn't
+    /// in place).
+    fn quick_lock_rows(
+        &self,
+        lock: &LockStatus,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        if !lock.active {
+            return vec![
+                look::settings_row(
+                    "Your other R and Python aren't locked",
+                    (!lock.note.is_empty()).then(|| look::settings_detail(lock.note.clone(), p)),
+                )
+                .into_any_element(),
+            ];
+        }
+        let shown = self.start.quick.show_locked;
+        let mut rows = vec![
+            look::settings_row(
+                "Your other R, Python, conda and Homebrew are locked while Sandhill's own is chosen",
+                Some(
+                    v_flex()
+                        .gap(px(look::GAP_2))
+                        .child(look::settings_detail(
+                            "What Sandhill starts can read them but not change them. Your own files and projects can still be changed.",
+                            p,
+                        ))
+                        .when(!lock.note.is_empty(), |d| {
+                            d.child(look::settings_detail(lock.note.clone(), p))
+                        }),
+                ),
+            )
+            .when(!lock.locked.is_empty(), |row| {
+                row.child(
+                    Button::new("own-lock-folders")
+                        .small()
+                        .label(if shown { "Hide Folders" } else { "Show Folders" })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.start.quick.show_locked = !this.start.quick.show_locked;
+                            cx.notify();
+                        })),
+                )
+            })
+            .into_any_element(),
+        ];
+        if shown {
+            rows.push(
+                v_flex()
+                    .px(px(look::PANE_PAD_X))
+                    .pb(px(look::PANE_PAD_Y))
+                    .gap(px(look::GAP_2))
+                    .children(lock.locked.iter().map(|folder| {
+                        look::settings_detail(folder.clone(), p).font_family(look::mono())
+                    }))
+                    .into_any_element(),
+            );
+        }
+        rows
     }
 }
 

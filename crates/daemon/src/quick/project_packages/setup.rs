@@ -1,4 +1,6 @@
 use super::*;
+use crate::quick::sources::{self, Sources};
+use crate::quick::space;
 
 #[derive(Deserialize, Serialize)]
 pub(crate) struct Work {
@@ -11,6 +13,19 @@ pub(crate) struct Work {
 impl Work {
     pub fn plan(&self) -> &ProjectSetupPlan {
         &self.plan
+    }
+
+    /// The new folder this set-up makes (a project's `.venv`, a conda
+    /// environment, a new renv library), which undoing an interrupted
+    /// set-up removes.
+    pub fn made(&self) -> Option<PathBuf> {
+        let folder = Path::new(&self.plan.folder);
+        let new = match &self.effect {
+            Effect::R { .. } => !folder.is_dir(),
+            Effect::Conda { .. } => true,
+            Effect::Python { new, .. } => *new,
+        };
+        new.then(|| folder.to_path_buf())
     }
 }
 
@@ -160,6 +175,7 @@ pub(crate) fn prepare(
         download_mb: None,
         notes: Vec::new(),
         refused: None,
+        refused_fix: None,
     };
     match build(project, search, record, trusted, runtime, &mut plan) {
         Ok((effect, fingerprint)) => {
@@ -172,6 +188,9 @@ pub(crate) fn prepare(
             (plan, Some(work))
         }
         Err(error) => {
+            if plan.refused_fix.is_none() {
+                plan.refused_fix = space::fix(&error);
+            }
             plan.refused = Some(error.to_string());
             plan.steps.clear();
             (plan, None)
@@ -195,11 +214,20 @@ fn build(
     let mut pins = parse(&plan.file, &text)?;
     plan.notes.append(&mut pins.notes);
     let own = search.own.as_deref();
+    let sources = sources::chosen(record);
     let path = project.join(&plan.file);
     let effect = match plan.file.as_str() {
-        "renv.lock" => setup_r(project, search, record, runtime("r")?, &pins, plan)?,
+        "renv.lock" => setup_r(
+            project,
+            search,
+            record,
+            runtime("r")?,
+            &pins,
+            plan,
+            &sources,
+        )?,
         "requirements.txt" if own.is_none() => {
-            setup_venv(project, search, runtime, &path, &pins, plan)?
+            setup_venv(project, search, runtime, &path, &pins, plan, &sources)?
         }
         file => {
             let (tool, root) = conda_tool(search)?;
@@ -224,26 +252,22 @@ fn build(
                 )
             };
             let command = if file == "requirements.txt" {
-                let create = install::quote([
-                    &tool.to_string_lossy(),
-                    "create",
-                    "-y",
-                    "-p",
-                    &plan.folder,
-                    "--override-channels",
-                    "-c",
-                    "conda-forge",
-                    "-c",
-                    "bioconda",
-                    "python",
-                    "pip",
-                ]);
+                let mut args = vec![
+                    tool.to_string_lossy().into_owned(),
+                    "create".into(),
+                    "-y".into(),
+                    "-p".into(),
+                    plan.folder.clone(),
+                ];
+                args.extend(sources.conda_args());
+                args.extend(["python".into(), "pip".into()]);
+                let create = install::quote(args);
                 add_step(plan, "Make a conda environment with Python", create.clone());
                 let kernel = !pins
                     .pins
                     .iter()
                     .any(|p| p.package.name.eq_ignore_ascii_case("ipykernel") && p.unconditional);
-                let pip = pip_command(project, &dst, &path, None, own, kernel);
+                let pip = pip_command(project, &dst, &path, None, own, kernel, &sources);
                 add_step(
                     plan,
                     if kernel {
@@ -255,7 +279,9 @@ fn build(
                 );
                 create
             } else {
-                let create = in_project(env_actions::conda_import_command(&tool, &dst, &path));
+                let create = in_project(env_actions::conda_import_command(
+                    &tool, &dst, &path, &sources,
+                ));
                 add_step(
                     plan,
                     "Make a conda environment from this file",
@@ -272,23 +298,17 @@ fn build(
                     .filter_map(|(name, need)| (need && !pkg(name)).then_some(name))
                     .collect::<Vec<_>>();
                 if !extras.is_empty() {
-                    let kernel = install::quote(
-                        [
-                            tool.to_string_lossy().as_ref(),
-                            "install",
-                            "--freeze-installed",
-                            "-y",
-                            "-p",
-                            &plan.folder,
-                            "--override-channels",
-                            "-c",
-                            "conda-forge",
-                            "-c",
-                            "bioconda",
-                        ]
-                        .into_iter()
-                        .chain(extras),
-                    );
+                    let mut args = vec![
+                        tool.to_string_lossy().into_owned(),
+                        "install".into(),
+                        "--freeze-installed".into(),
+                        "-y".into(),
+                        "-p".into(),
+                        plan.folder.clone(),
+                    ];
+                    args.extend(sources.conda_args());
+                    args.extend(extras.iter().map(|name| name.to_string()));
+                    let kernel = install::quote(args);
                     add_step(
                         plan,
                         "Add the kernel so Sandhill can use this environment",
@@ -313,6 +333,7 @@ fn build(
     };
     plan.packages
         .extend(pins.pins.into_iter().map(|pin| pin.package));
+    space::check(Path::new(&plan.folder), space::need_mb(plan.download_mb))?;
     Ok((effect, record::digest(text.as_bytes())))
 }
 
@@ -344,6 +365,7 @@ fn setup_r(
     runtime: Runtime,
     pins: &FilePins,
     plan: &mut ProjectSetupPlan,
+    sources: &Sources,
 ) -> Result<Effect> {
     let own = search.own.as_deref();
     let r = inventory::r_runtime(&runtime.program, Some(&runtime.spec), Some(project), own)?;
@@ -383,6 +405,7 @@ fn setup_r(
         };
         let install_renv = install::plan_packages(search, Some(record), change);
         if let Some(reason) = &install_renv.refused {
+            plan.refused_fix.clone_from(&install_renv.refused_fix);
             bail!("{reason}");
         }
         add_step(
@@ -433,8 +456,23 @@ fn setup_r(
     let project_r = r_string(project);
     let root_r = r_string(&root);
     let renv_r = r_string(&renv);
+    // renv restores from the lock file's own sources; a chosen mirror
+    // stands in for CRAN and Bioconductor there.
+    let mut mirrors = String::new();
+    if !sources.is_main("cran") {
+        mirrors.push_str(&format!(
+            " options(renv.config.repos.override = c(CRAN = {}));",
+            package_plan::r_string(&sources.cran)
+        ));
+    }
+    if !sources.is_main("bioconductor") {
+        mirrors.push_str(&format!(
+            " options(BioC_mirror = {});",
+            package_plan::r_string(&sources.bioconductor)
+        ));
+    }
     let prelude = format!(
-        ".libPaths(c({renv_r}, .libPaths())); options(renv.consent=TRUE); Sys.setenv(RENV_PATHS_LIBRARY={root_r}, RENV_PATHS_RENV=file.path({project_r}, 'renv'), RENV_PATHS_LOCKFILE=file.path({project_r}, 'renv.lock'), RENV_PROFILE='');"
+        ".libPaths(c({renv_r}, .libPaths())); options(renv.consent=TRUE); Sys.setenv(RENV_PATHS_LIBRARY={root_r}, RENV_PATHS_RENV=file.path({project_r}, 'renv'), RENV_PATHS_LOCKFILE=file.path({project_r}, 'renv.lock'), RENV_PROFILE='');{mirrors}"
     );
     let command = |expression: &str| {
         let code = format!("{prelude} {expression}");
@@ -518,6 +556,7 @@ fn pip_command(
     uv: Option<&Path>,
     own: Option<&Path>,
     kernel: bool,
+    sources: &Sources,
 ) -> String {
     let python = dst.join("bin/python");
     let python = python.to_string_lossy();
@@ -541,6 +580,7 @@ fn pip_command(
     } else {
         args.extend([&python, "-I", "-m", "pip", "--isolated", "install"]);
     }
+    args.extend(sources.pip_index());
     let requirements = requirements.to_string_lossy();
     args.extend(["-r", &requirements]);
     if kernel {
@@ -565,6 +605,7 @@ fn setup_venv(
     path: &Path,
     pins: &FilePins,
     plan: &mut ProjectSetupPlan,
+    sources: &Sources,
 ) -> Result<Effect> {
     let dst = project.join(".venv");
     ensure_not_symlink(&dst)?;
@@ -617,7 +658,7 @@ fn setup_venv(
         } else {
             "Install the packages in requirements.txt"
         },
-        pip_command(project, &dst, path, uv.as_deref(), None, kernel),
+        pip_command(project, &dst, path, uv.as_deref(), None, kernel, sources),
     );
     Ok(Effect::Python {
         new,

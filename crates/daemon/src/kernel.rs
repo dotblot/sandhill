@@ -76,7 +76,10 @@ pub(crate) async fn find_scoped(
 
 /// A freshly started kernel process.
 pub struct Launched {
+    /// What was started: the kernel, or on Linux under Sandhill's lock,
+    /// bubblewrap running it.
     pub child: Child,
+    /// The kernel's own process, the one to signal.
     pub pid: u32,
     pub connection_info: ConnectionInfo,
     pub connection_file: PathBuf,
@@ -131,6 +134,13 @@ pub(crate) async fn launch_scoped(
     }
     let program = spec.kernelspec.argv.first().cloned().unwrap_or_default();
     let r = crate::cells::normalize_language(&spec.kernelspec.language) == "r";
+    // Found before the ports are taken: the first time runs each R.
+    let lock = match (own, kernels_dir.parent()) {
+        (Some(_), Some(state)) => {
+            crate::quick::own_lock::current_async(state.join(crate::quick::record::FILE)).await
+        }
+        _ => None,
+    };
     let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let (ports, listeners) = jupyter_zmq_client::peek_ports_with_listeners(ip, 5).await?;
     let connection_info = ConnectionInfo {
@@ -156,18 +166,7 @@ pub(crate) async fn launch_scoped(
         .create(true)
         .append(true)
         .open(kernels_dir.join(format!("{session_id}.log")))?;
-    let mut command = spec.command(
-        &connection_file,
-        Some(Stdio::from(log.try_clone()?)),
-        Some(Stdio::from(log)),
-    )?;
-    command.current_dir(cwd);
-    if persistent {
-        command.process_group(0);
-    } else {
-        // A stopped Check job must stop its test kernel too.
-        command.kill_on_drop(true);
-    }
+    let mut command = spec.command(&connection_file, None, None)?;
     if let Some(folder) = own {
         anyhow::ensure!(
             crate::own_env::inside(folder, Path::new(&program)),
@@ -178,6 +177,27 @@ pub(crate) async fn launch_scoped(
     }
     if r {
         crate::own_env::apply_renv(command.as_std_mut(), cwd, own);
+    }
+    let run = crate::quick::own_lock::Run::Kernel { persistent };
+    let locked = lock
+        .as_deref()
+        .and_then(|lock| Some((lock.wrap(command.as_std(), &[cwd], run)?, lock)));
+    let bubblewrap = locked
+        .as_ref()
+        .is_some_and(|(_, lock)| lock.uses_bubblewrap());
+    if let Some((wrapped, _)) = locked {
+        command = tokio::process::Command::from(wrapped);
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log.try_clone()?))
+        .stderr(Stdio::from(log))
+        .current_dir(cwd);
+    if persistent {
+        command.process_group(0);
+    } else {
+        // A stopped Check job must stop its test kernel too.
+        command.kill_on_drop(true);
     }
     let mut child = command.spawn().map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
@@ -195,8 +215,16 @@ pub(crate) async fn launch_scoped(
     })?;
     // The kernel binds these ports as soon as it starts; release them now.
     drop(listeners);
-    let pid = child.id().context("kernel exited immediately")?;
+    let started = child.id().context("kernel exited immediately")?;
+    let pid = if bubblewrap {
+        sandboxed_kernel(started).await
+    } else {
+        started
+    };
     if persistent && let Err(err) = crate::lifecycle::record_kernel(&connection_file, pid) {
+        if pid != started {
+            kill_process_group(pid);
+        }
         let _ = child.start_kill();
         let _ = child.wait().await;
         return Err(err.context("cannot record kernel ownership"));
@@ -207,6 +235,25 @@ pub(crate) async fn launch_scoped(
         connection_info,
         connection_file,
     })
+}
+
+/// Bubblewrap stays as the kernel's parent and doesn't pass signals on,
+/// so the kernel itself, leading its own session, is the one signalled.
+#[cfg(target_os = "linux")]
+async fn sandboxed_kernel(bubblewrap: u32) -> u32 {
+    for _ in 0..400 {
+        if let Some(pid) = crate::quick::own_lock::child_of(bubblewrap) {
+            return pid;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    tracing::warn!("bubblewrap {bubblewrap} started no kernel in time");
+    bubblewrap
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn sandboxed_kernel(bubblewrap: u32) -> u32 {
+    bubblewrap
 }
 
 pub(crate) fn own_folder(kernels_dir: &Path) -> Option<PathBuf> {
@@ -381,6 +428,30 @@ pub fn pid_alive(pid: u32) -> bool {
     rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// True while our child `pid` runs, without reaping it: an exited child
+/// stays for its usual wait.
+pub(crate) fn child_running(pid: u32) -> bool {
+    // SAFETY: WNOWAIT leaves the child to be waited for; info is written
+    // only by the call.
+    unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        let rc = libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        );
+        rc == 0 && info.si_pid() == 0
+    }
+}
+
+/// The kernel to signal when the process started for it is `child`: the
+/// recorded kernel when it differs (bubblewrap's child, see `launch`),
+/// as long as bubblewrap runs, since it ends right after the kernel.
+pub(crate) fn kernel_pid(child: u32, recorded: Option<u32>) -> Option<u32> {
+    recorded.filter(|&pid| pid != child && child_running(child))
+}
+
 pub fn send_signal(pid: u32, signal: libc::c_int) -> std::io::Result<()> {
     // SAFETY: plain syscall on a pid we started.
     let rc = unsafe { libc::kill(pid as libc::pid_t, signal) };
@@ -415,4 +486,31 @@ pub fn log_tail(log: &Path, lines: usize) -> Option<String> {
     let from = usize::from(size > MAX && all.len() > 1);
     let kept = &all[from.max(all.len().saturating_sub(lines))..];
     (!kept.is_empty()).then(|| kept.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signals_go_to_the_kernel_bubblewrap_runs_while_bubblewrap_runs() {
+        let mut child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        assert!(child_running(pid));
+        // Started directly (a Mac, or no lock): the child itself.
+        assert_eq!(kernel_pid(pid, Some(pid)), None);
+        assert_eq!(kernel_pid(pid, None), None);
+        // Bubblewrap's kernel, recorded at launch.
+        assert_eq!(kernel_pid(pid, Some(pid + 1)), Some(pid + 1));
+        send_signal(pid, libc::SIGKILL).unwrap();
+        while child_running(pid) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Exited, not yet reaped: its kernel's number may be reused.
+        assert_eq!(kernel_pid(pid, Some(pid + 1)), None);
+        assert!(child.try_wait().unwrap().is_some());
+    }
 }

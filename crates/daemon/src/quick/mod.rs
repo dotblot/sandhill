@@ -9,9 +9,11 @@ pub(crate) mod env_updates;
 pub(crate) mod environments;
 pub mod folder;
 pub mod install;
-pub(crate) mod install_failure;
+pub mod install_failure;
+pub(crate) mod interrupted;
 pub(crate) mod own;
 mod own_copy;
+pub(crate) mod own_lock;
 mod package_inventory;
 pub(crate) mod package_names;
 mod package_plan;
@@ -24,7 +26,10 @@ pub mod record;
 pub mod run;
 mod runtime_plan;
 pub mod setup;
+pub(crate) mod sources;
+mod space;
 mod undo;
+mod upgrades;
 
 #[cfg(test)]
 #[path = "../../tests/common/mod.rs"]

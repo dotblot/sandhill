@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use sandhill_proto::{EnvCard, EnvMode, InstallTarget, InstallTool, RSource};
 
-use super::{install, package_plan, record, setup, undo};
+use super::{install, package_plan, record, setup, undo, upgrades};
 use crate::{irkernel, kernelspecs, own_env};
 use kernelspecs::Search;
 
@@ -513,9 +513,11 @@ fn probe(
             }
         }
     }
+    let language = if r { "r" } else { "python" };
+    install::prefer(&mut tools, &install::prefs(path), language);
+    let bioconductor = bioconductor(&library_packages);
     let program = program.to_string_lossy().into_owned();
     let folder = folder.to_string_lossy().into_owned();
-    let language = if r { "r" } else { "python" };
     let id = id(&if r {
         InstallTarget::R {
             r: program.clone(),
@@ -573,6 +575,8 @@ fn probe(
             tools,
             undo,
             check,
+            upgraded_from: None,
+            bioconductor,
         },
         packages,
     })
@@ -672,16 +676,41 @@ pub(crate) fn list(search: &Search, path: &Path) -> Vec<EnvCard> {
     undo::prune(path);
     let installed = record::read(path);
     let found = discover(search, path, false);
-    std::thread::scope(|scope| {
+    let envs: Vec<Environment> = std::thread::scope(|scope| {
         let installed = &installed;
         found
             .into_iter()
             .map(|f| scope.spawn(move || probe(f, search, path, installed, true)))
             .collect::<Vec<_>>()
             .into_iter()
-            .filter_map(|job| job.join().ok().flatten().map(|e| e.card))
+            .filter_map(|job| job.join().ok().flatten())
             .collect()
-    })
+    });
+    let present: BTreeSet<_> = envs
+        .iter()
+        .filter(|env| env.is_r())
+        .filter_map(|env| upgrades::minor(&env.version))
+        .collect();
+    let roots = upgrades::Roots::here();
+    envs.into_iter()
+        .map(|mut env| {
+            if env.is_r() && !matches!(env.card.kind.as_str(), "own" | "conda") {
+                let have = env.packages.keys().map(String::as_str).collect();
+                env.card.upgraded_from = upgrades::detect(&roots, &env.version, &have, &present);
+            }
+            env.card
+        })
+        .collect()
+}
+
+/// The Bioconductor release an R uses, from the installed `BiocVersion`'s
+/// version (`3.22.0` → `3.22`); its DESCRIPTION is only read.
+fn bioconductor(packages: &[RPackage]) -> Option<String> {
+    let version = &packages.iter().find(|p| p.name == "BiocVersion")?.version;
+    let mut parts = version.split(['.', '-']);
+    let (major, minor) = (parts.next()?, parts.next()?);
+    (major.parse::<u32>().is_ok() && minor.parse::<u32>().is_ok())
+        .then(|| format!("{major}.{minor}"))
 }
 
 pub(super) fn get(search: &Search, path: &Path, wanted: &str) -> Result<Environment> {
@@ -705,6 +734,71 @@ pub(super) fn get(search: &Search, path: &Path, wanted: &str) -> Result<Environm
         })
         .context("This environment couldn't be found. Refresh the R and Python page.")?;
     probe(found, &search, path, &[], false).context("This environment couldn't be read.")
+}
+
+/// The variables that put a Terminal in the environment `wanted` (Open
+/// Terminal Here): `(name, value)`, with `None` for one to unset. Paths are
+/// this computer's, so a server's environments get the server's.
+pub(crate) fn activation(
+    search: &Search,
+    path: &Path,
+    wanted: &str,
+) -> Result<Vec<(String, Option<String>)>> {
+    let env = get(search, path, wanted)?;
+    Ok(activation_for(
+        &env,
+        crate::paths::program_path().as_deref(),
+    ))
+}
+
+fn activation_for(
+    env: &Environment,
+    rest: Option<&std::ffi::OsStr>,
+) -> Vec<(String, Option<String>)> {
+    let text = |value: &std::ffi::OsStr| value.to_string_lossy().into_owned();
+    if let Some(folder) = &env.own {
+        return own_env::UNSET
+            .iter()
+            .map(|key| (key.to_string(), None))
+            .chain(
+                own_env::vars(folder, rest)
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), Some(text(&value)))),
+            )
+            .collect();
+    }
+    let path_with = |bin: &Path| {
+        let mut path = bin.as_os_str().to_os_string();
+        if let Some(rest) = rest.filter(|r| !r.is_empty()) {
+            path.push(":");
+            path.push(rest);
+        }
+        ("PATH".to_string(), Some(text(&path)))
+    };
+    let unset = |key: &str| (key.to_string(), None);
+    let folder = Path::new(&env.card.folder);
+    if let Some(prefix) = &env.conda {
+        vec![
+            ("CONDA_PREFIX".into(), Some(text(prefix.as_os_str()))),
+            (
+                "CONDA_DEFAULT_ENV".into(),
+                Some(kernelspecs::conda_name(prefix)),
+            ),
+            unset("VIRTUAL_ENV"),
+            unset("PYTHONHOME"),
+            path_with(&prefix.join("bin")),
+        ]
+    } else if !env.is_r() && folder.join("pyvenv.cfg").is_file() {
+        vec![
+            ("VIRTUAL_ENV".into(), Some(env.card.folder.clone())),
+            unset("CONDA_PREFIX"),
+            unset("PYTHONHOME"),
+            path_with(&folder.join("bin")),
+        ]
+    } else {
+        let program = Path::new(&env.card.program);
+        vec![path_with(program.parent().unwrap_or(program))]
+    }
 }
 
 pub(super) fn copy_sources(search: &Search, record: &Path, ids: &[String]) -> Result<Vec<Found>> {
@@ -782,6 +876,115 @@ mod tests {
                 BTreeSet::new()
             ),
             "Python 3.12 with 214 packages"
+        );
+    }
+
+    #[test]
+    fn the_bioconductor_release_comes_from_biocversion_in_the_libraries() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = |name: &str, packages: &[(&str, &str)]| {
+            let path = dir.path().join(name);
+            for (package, version) in packages {
+                fs::create_dir_all(path.join(package)).unwrap();
+                fs::write(
+                    path.join(package).join("DESCRIPTION"),
+                    format!("Package: {package}\nVersion: {version}\n"),
+                )
+                .unwrap();
+            }
+            sandhill_proto::RLibrary {
+                path: path.to_string_lossy().into_owned(),
+                writable: true,
+                packages: packages.len() as u32,
+            }
+        };
+        let user = library("user", &[("DESeq2", "1.50.2")]);
+        let site = library(
+            "site",
+            &[("BiocVersion", "3.22.0"), ("BiocManager", "1.30.27")],
+        );
+        let packages = r_packages(&[user.clone(), site]);
+        assert_eq!(bioconductor(&packages).as_deref(), Some("3.22"));
+        assert_eq!(bioconductor(&r_packages(&[user])), None);
+    }
+
+    #[test]
+    fn activation_sets_the_variables_of_each_kind_of_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = |language: &str, program: &Path, folder: &Path| Environment {
+            card: serde_json::from_value(serde_json::json!({
+                "id": "x", "language": language, "name": "x", "kind": "other",
+                "program": program, "folder": folder, "status": "",
+            }))
+            .unwrap(),
+            version: String::new(),
+            own: None,
+            conda: None,
+            packages: Default::default(),
+        };
+        let rest = std::ffi::OsStr::new("/usr/bin:/bin");
+        let value = |vars: &[(String, Option<String>)], key: &str| {
+            vars.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+        };
+        let conda = dir.path().join("envs/scanpy");
+        let mut python = env("python", &conda.join("bin/python"), &conda);
+        python.conda = Some(conda.clone());
+        let vars = activation_for(&python, Some(rest));
+        assert_eq!(
+            value(&vars, "CONDA_PREFIX"),
+            Some(Some(conda.display().to_string()))
+        );
+        assert_eq!(
+            value(&vars, "PATH"),
+            Some(Some(format!(
+                "{}:/usr/bin:/bin",
+                conda.join("bin").display()
+            )))
+        );
+        assert_eq!(value(&vars, "VIRTUAL_ENV"), Some(None));
+
+        let venv = dir.path().join("project/.venv");
+        fs::create_dir_all(&venv).unwrap();
+        fs::write(venv.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
+        let vars = activation_for(&env("python", &venv.join("bin/python"), &venv), Some(rest));
+        assert_eq!(
+            value(&vars, "VIRTUAL_ENV"),
+            Some(Some(venv.display().to_string()))
+        );
+        assert!(
+            value(&vars, "PATH")
+                .unwrap()
+                .unwrap()
+                .starts_with(&venv.join("bin").display().to_string())
+        );
+
+        let r = env(
+            "r",
+            Path::new("/opt/homebrew/bin/R"),
+            Path::new("/opt/homebrew/lib/R"),
+        );
+        assert_eq!(
+            activation_for(&r, Some(rest)),
+            [(
+                "PATH".to_string(),
+                Some("/opt/homebrew/bin:/usr/bin:/bin".to_string())
+            )]
+        );
+
+        let own = dir.path().join("own");
+        let mut mine = env("r", &own.join("conda/envs/sandhill-r/bin/R"), &own);
+        mine.own = Some(own.clone());
+        let vars = activation_for(&mine, Some(rest));
+        assert_eq!(value(&vars, "R_LIBS"), Some(None));
+        assert_eq!(
+            value(&vars, "CONDARC"),
+            Some(Some(own.join("condarc").display().to_string()))
+        );
+        assert!(
+            value(&vars, "PATH")
+                .unwrap()
+                .unwrap()
+                .ends_with(":/usr/bin:/bin")
         );
     }
 }

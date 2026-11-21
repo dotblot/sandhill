@@ -153,6 +153,10 @@ pub struct QuickCondaEnv {
     /// Its installation's mamba (else conda), which adds ipykernel to it.
     #[serde(default)]
     pub tool: String,
+    /// The exact command Add ipykernel runs (with the chosen source), as
+    /// the daemon will run it.
+    #[serde(default)]
+    pub command: String,
 }
 
 /// Python for notebooks (Huan, 2026-11-19; `docs/design/python-ready-plan.md`).
@@ -224,12 +228,19 @@ pub fn python_env_name_ok(name: &str) -> bool {
 }
 
 /// The command that creates a Python environment at `prefix` with `tool`,
-/// from conda-forge only: Python, ipykernel and the chosen [`PYTHON_SETS`].
-/// Shown before it runs and run as shown.
-pub fn python_create_args(tool: &str, prefix: &str, python: &str, sets: &[String]) -> Vec<String> {
+/// from conda-forge only (`channel`: its full URL at the chosen source):
+/// Python, ipykernel and the chosen [`PYTHON_SETS`]. Shown before it runs
+/// and run as shown.
+pub fn python_create_args(
+    tool: &str,
+    prefix: &str,
+    python: &str,
+    sets: &[String],
+    channel: &str,
+) -> Vec<String> {
     let mut args: Vec<String> = [tool, "create", "-y", "-p", prefix]
         .into_iter()
-        .chain(["-c", "conda-forge", "--override-channels"])
+        .chain(["-c", channel, "--override-channels"])
         .map(str::to_string)
         .collect();
     args.push(format!("python={python}"));
@@ -243,8 +254,9 @@ pub fn python_create_args(tool: &str, prefix: &str, python: &str, sets: &[String
 }
 
 /// The command that adds ipykernel to the environment at `prefix`, from
-/// conda-forge, changing nothing already there.
-pub fn ipykernel_args(tool: &str, prefix: &str) -> Vec<String> {
+/// conda-forge (`channel`: its full URL at the chosen source), changing
+/// nothing already there.
+pub fn ipykernel_args(tool: &str, prefix: &str, channel: &str) -> Vec<String> {
     [
         tool,
         "install",
@@ -252,7 +264,7 @@ pub fn ipykernel_args(tool: &str, prefix: &str) -> Vec<String> {
         "-p",
         prefix,
         "-c",
-        "conda-forge",
+        channel,
         "--override-channels",
         "--freeze-installed",
         "ipykernel",
@@ -302,6 +314,9 @@ pub struct QuickReadiness {
     /// packages can be built on this computer.
     #[serde(default)]
     pub developer_tools: bool,
+    /// Installs that stopped part way, to finish or undo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interrupted: Vec<crate::InterruptedInstall>,
 }
 
 /// A package install started: its job, and the file its output also goes

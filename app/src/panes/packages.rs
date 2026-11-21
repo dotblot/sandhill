@@ -850,6 +850,8 @@ impl Workbench {
                 &shown.skipped,
                 &shown.libraries,
                 (cancel, run),
+                review::space_button()
+                    .on_click(cx.listener(|this, _, _, cx| this.manage_resources(cx))),
                 |this: &mut Self, ix, choice, cx: &mut Context<Self>| {
                     this.change_package_plan(ix, choice, cx)
                 },

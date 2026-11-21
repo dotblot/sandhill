@@ -7,9 +7,10 @@ use anyhow::{Context, Result, bail};
 use sandhill_proto::{InstallTool, PackageUpdate};
 use serde_json::Value;
 
+use super::sources::Sources;
 use super::{
     environments::{self, Environment},
-    install, package_plan, record,
+    install, package_plan, record, sources,
 };
 use crate::kernelspecs::Search;
 
@@ -26,7 +27,7 @@ pub(crate) fn updates(
             .tool(InstallTool::Conda)
             .map(|t| scope.spawn(|| conda_updates(&env, Path::new(&t.path))));
         let language = if env.is_r() {
-            r_updates(&env)
+            r_updates(&env, &sources::chosen(record_path))
         } else {
             python_updates(&env)
         };
@@ -52,7 +53,7 @@ pub(crate) fn updates(
     Ok(output)
 }
 
-fn r_updates(env: &Environment) -> Result<Vec<PackageUpdate>> {
+fn r_updates(env: &Environment, sources: &Sources) -> Result<Vec<PackageUpdate>> {
     let mut libraries = env.card.libraries.iter().filter(|l| l.writable).peekable();
     if libraries.peek().is_none() {
         return Ok(Vec::new());
@@ -61,29 +62,7 @@ fn r_updates(env: &Environment) -> Result<Vec<PackageUpdate>> {
         .map(|l| package_plan::r_string(&l.path))
         .collect::<Vec<_>>()
         .join(",");
-    let code = format!(
-        r#"local({{
-      options(timeout = 35)
-      repos <- getOption('repos')
-      if (is.null(repos['CRAN']) || is.na(repos['CRAN']) || repos['CRAN'] == '@CRAN@') repos['CRAN'] <- 'https://cloud.r-project.org'
-      if (requireNamespace('BiocManager', quietly = TRUE)) {{
-        bioc <- tryCatch(suppressWarnings(suppressMessages(BiocManager::repositories())), error = function(e) NULL)
-        repos <- c(repos, bioc[setdiff(names(bioc), names(repos))])
-      }} else {{
-        root <- 'https://bioconductor.org/packages/release/'
-        repos <- c(repos, BioCsoft = paste0(root, 'bioc'), BioCann = paste0(root, 'data/annotation'), BioCexp = paste0(root, 'data/experiment'))
-      }}
-      available <- suppressWarnings(utils::available.packages(repos = repos))
-      if (!nrow(available)) stop('No package list could be reached', call. = FALSE)
-      for (lib in c({libs})) {{
-        old <- suppressWarnings(utils::old.packages(lib.loc = lib, repos = repos, available = available))
-        if (!is.null(old) && nrow(old)) {{
-          bioc <- grepl('bioconductor', old[, 'Repository'], ignore.case = TRUE) | old[, 'Repository'] %in% utils::contrib.url(repos[startsWith(names(repos), 'BioC')])
-          writeLines(paste('SANDHILL_UPDATE', old[, 'Package'], old[, 'Installed'], old[, 'ReposVer'], old[, 'LibPath'], as.integer(bioc), sep = '\t'))
-        }}
-      }}
-    }})"#
-    );
+    let code = r_update_code(&libs, sources);
     let mut updates = crate::packages::parse_updates(
         &install::probe_timeout(
             Path::new(&env.card.program),
@@ -105,6 +84,38 @@ fn r_updates(env: &Environment) -> Result<Vec<PackageUpdate>> {
         });
     }
     Ok(updates)
+}
+
+/// R code listing the updates for the libraries `libs` (R strings joined by
+/// commas). R's own repos win; where it names no CRAN or Bioconductor
+/// mirror, the chosen sources stand in.
+fn r_update_code(libs: &str, sources: &Sources) -> String {
+    let cran = package_plan::r_string(&sources.cran);
+    let bioc = package_plan::r_string(&sources.bioconductor);
+    format!(
+        r#"local({{
+      options(timeout = 35)
+      repos <- getOption('repos')
+      if (is.null(repos['CRAN']) || is.na(repos['CRAN']) || repos['CRAN'] == '@CRAN@') repos['CRAN'] <- {cran}
+      if (is.null(getOption('BioC_mirror'))) options(BioC_mirror = {bioc})
+      if (requireNamespace('BiocManager', quietly = TRUE)) {{
+        bioc <- tryCatch(suppressWarnings(suppressMessages(BiocManager::repositories())), error = function(e) NULL)
+        repos <- c(repos, bioc[setdiff(names(bioc), names(repos))])
+      }} else {{
+        root <- paste0(getOption('BioC_mirror'), '/packages/release/')
+        repos <- c(repos, BioCsoft = paste0(root, 'bioc'), BioCann = paste0(root, 'data/annotation'), BioCexp = paste0(root, 'data/experiment'))
+      }}
+      available <- suppressWarnings(utils::available.packages(repos = repos))
+      if (!nrow(available)) stop('No package list could be reached', call. = FALSE)
+      for (lib in c({libs})) {{
+        old <- suppressWarnings(utils::old.packages(lib.loc = lib, repos = repos, available = available))
+        if (!is.null(old) && nrow(old)) {{
+          bioc <- grepl('bioconductor', old[, 'Repository'], ignore.case = TRUE) | old[, 'Repository'] %in% utils::contrib.url(repos[startsWith(names(repos), 'BioC')])
+          writeLines(paste('SANDHILL_UPDATE', old[, 'Package'], old[, 'Installed'], old[, 'ReposVer'], old[, 'LibPath'], as.integer(bioc), sep = '\t'))
+        }}
+      }}
+    }})"#
+    )
 }
 
 fn conda_updates(env: &Environment, tool: &Path) -> Result<Vec<PackageUpdate>> {
@@ -295,4 +306,32 @@ fn python_updates(env: &Environment) -> Result<Vec<PackageUpdate>> {
             })
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn r_update_check_falls_back_to_the_chosen_sources() {
+        let mirror = Sources {
+            cran: "https://mirrors.ustc.edu.cn/CRAN".into(),
+            bioconductor: "https://mirrors.tuna.tsinghua.edu.cn/bioconductor".into(),
+            ..Sources::default()
+        };
+        let code = r_update_code("\"/lib\"", &mirror);
+        assert!(code.contains(
+            "repos['CRAN'] == '@CRAN@') repos['CRAN'] <- \"https://mirrors.ustc.edu.cn/CRAN\""
+        ));
+        assert!(code.contains(
+            "if (is.null(getOption('BioC_mirror'))) options(BioC_mirror = \"https://mirrors.tuna.tsinghua.edu.cn/bioconductor\")"
+        ));
+        assert!(
+            code.find("BioC_mirror = ").unwrap() < code.find("BiocManager::repositories").unwrap()
+        );
+        assert!(
+            !code.contains("cloud.r-project.org") && !code.contains("'https://bioconductor.org")
+        );
+        assert!(code.contains("for (lib in c(\"/lib\"))"));
+    }
 }

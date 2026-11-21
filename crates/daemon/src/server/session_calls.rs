@@ -6,13 +6,15 @@ impl Daemon {
     pub(super) async fn list_r_without_irkernel(&self, project: Option<String>) -> Result<Value> {
         let root = project.map(|p| projects::normalize(&p)).transpose()?;
         let own = self.own_folder();
+        let record = self.install_record();
         let found = blocking(move || {
             let search = crate::kernelspecs::Search::from_env()
                 .in_project(root.as_deref().map(Path::new))
                 .in_own(own);
+            let sources = crate::quick::sources::chosen(&record);
             Ok(crate::irkernel::find(&search)
                 .iter()
-                .map(|candidate| candidate.info(&search))
+                .map(|candidate| candidate.info(&search, &sources))
                 .collect::<Vec<_>>())
         })
         .await?;

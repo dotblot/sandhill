@@ -613,8 +613,9 @@ preview and R's imports weren't seen.
   Antigravity MCP entries, leaves modified/unowned components reported, and
   preserves backend data by default. Optional current-App Trash occurs last,
   only after selected device uninstalls succeed. Development executables are
-  never treated as removable app bundles. An uninstall tombstone blocks stale
-  automatic restarts; explicitly reinstall before reconnecting that device.
+  never treated as removable app bundles. An uninstall tombstone blocked stale
+  automatic restarts; since 2026-11-21 the app remembers devices it was
+  uninstalled from instead, and Connect reinstalls explicitly.
   Older untracked processes/components and reattached macOS kernels without
   safe retained process handles may require manual intervention; those appear
   as remaining rather than being force-killed by a guessed PID or filename.
@@ -1477,6 +1478,25 @@ preview and R's imports weren't seen.
   The app serves PDF.js and the cached PDF privately inside the web view,
   so remote daemons don't have to carry PDF.js or be upgraded.
 
+
+## Removing Sandhill by hand
+
+Use **Uninstall Sandhill** on Welcome's **On This Computer** page when you
+can. If the app was only dragged to the Trash, first look at **R and
+Python → What Sandhill Installed** for what Sandhill installed into your
+own R and Python, then delete:
+
+- `~/.sandhill` (keep `~/.sandhill/state` to keep your history);
+- `~/Library/Caches/dev.sandhill.ide`;
+- `~/Library/Preferences/dev.sandhill.ide.plist`;
+- `~/Library/Saved Application State/dev.sandhill.ide.savedState`;
+- `~/Library/WebKit/dev.sandhill.ide`;
+- `~/Library/HTTPStorages/dev.sandhill.ide` and the files beside it
+  whose names start the same way;
+- the Keychain item `dev.sandhill.agent-account` (in Keychain Access);
+- on each server, `~/.sandhill`.
+
+The steps, in plain words, are in the [main README](../README.md#removing-sandhill-by-hand).
 
 ## Running it
 

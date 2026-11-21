@@ -13,15 +13,19 @@ use sandhill_proto::{
 };
 
 use super::install::{self, home, probe, quote, run_command};
-use super::{python, record};
+use super::sources::{self, Sources};
+use super::{python, record, space};
 use crate::agents::shell_quote;
 use crate::kernelspecs::Search;
 
-const CRAN_MAC: &str = "https://cran.r-project.org/bin/macosx/";
 const R_FRAMEWORK: &str = "/Library/Frameworks/R.framework";
 const MINIFORGE_DIR: &str = "miniforge3";
 
-pub(crate) fn plan(search: &Search, runtime: NewRuntime) -> RuntimePlan {
+pub(crate) fn plan(search: &Search, record: &Path, runtime: NewRuntime) -> RuntimePlan {
+    plan_with(search, &sources::chosen(record), runtime)
+}
+
+fn plan_with(search: &Search, sources: &Sources, runtime: NewRuntime) -> RuntimePlan {
     let mut plan = RuntimePlan {
         runtime,
         tool: String::new(),
@@ -30,15 +34,37 @@ pub(crate) fn plan(search: &Search, runtime: NewRuntime) -> RuntimePlan {
         download_mb: None,
         notes: Vec::new(),
         refused: None,
+        refused_fix: None,
     };
-    match build(search, &mut plan) {
+    let built = build(search, sources, &mut plan).and_then(|command| {
+        space::check(Path::new(&plan.folder), need_mb(&plan))?;
+        Ok(command)
+    });
+    match built {
         Ok(command) => plan.command = command,
-        Err(error) => plan.refused = Some(error.to_string()),
+        Err(error) => {
+            plan.refused_fix = space::fix(&error);
+            plan.refused = Some(error.to_string());
+        }
     }
     plan
 }
 
-fn build(search: &Search, plan: &mut RuntimePlan) -> Result<String> {
+/// What a runtime needs free: R's own installers at least 1 GB when their
+/// size isn't known.
+fn need_mb(plan: &RuntimePlan) -> u64 {
+    let need = space::need_mb(plan.download_mb);
+    if matches!(
+        plan.runtime,
+        NewRuntime::RFromCran | NewRuntime::RFromHomebrew
+    ) {
+        need.max(space::R_INSTALLER_MB)
+    } else {
+        need
+    }
+}
+
+fn build(search: &Search, sources: &Sources, plan: &mut RuntimePlan) -> Result<String> {
     match plan.runtime.clone() {
         NewRuntime::RFromCran => {
             if !cfg!(target_os = "macos") {
@@ -47,7 +73,7 @@ fn build(search: &Search, plan: &mut RuntimePlan) -> Result<String> {
             if Path::new(R_FRAMEWORK).exists() {
                 bail!("CRAN's R is installed already in {R_FRAMEWORK}.");
             }
-            let (url, file) = cran_installer()?;
+            let (url, file) = cran_installer(&sources.cran)?;
             plan.tool = "Apple's Installer".into();
             plan.folder = R_FRAMEWORK.into();
             plan.download_mb = download_mb(&url);
@@ -88,18 +114,16 @@ fn build(search: &Search, plan: &mut RuntimePlan) -> Result<String> {
             plan.folder = prefix.clone();
             plan.notes
                 .push("R and IRkernel come from conda-forge.".into());
-            Ok(quote([
-                plan.tool.as_str(),
-                "create",
-                "-y",
-                "-p",
-                &prefix,
+            let mut args = vec![plan.tool.as_str(), "create", "-y", "-p", &prefix];
+            let channel = sources.channel("conda-forge");
+            args.extend([
                 "-c",
-                "conda-forge",
+                &channel,
                 "--override-channels",
                 "r-base",
                 "r-irkernel",
-            ]))
+            ]);
+            Ok(quote(args))
         }
         NewRuntime::PythonConda {
             prefix,
@@ -115,7 +139,11 @@ fn build(search: &Search, plan: &mut RuntimePlan) -> Result<String> {
             plan.notes
                 .push("Python and its packages come from conda-forge.".into());
             Ok(quote(python_create_args(
-                &plan.tool, &prefix, &python, &sets,
+                &plan.tool,
+                &prefix,
+                &python,
+                &sets,
+                &sources.channel("conda-forge"),
             )))
         }
         NewRuntime::PythonUv {
@@ -152,8 +180,9 @@ fn build(search: &Search, plan: &mut RuntimePlan) -> Result<String> {
                 "install".into(),
                 "--python".into(),
                 program.clone(),
-                "ipykernel".into(),
             ];
+            install.extend(sources.pip_index().map(String::from));
+            install.push("ipykernel".into());
             install.extend(set_packages(&sets).map(String::from));
             Ok(format!(
                 "{} && {} && {}",
@@ -245,22 +274,17 @@ fn kernel_dir(search: &Search, name: &str) -> Result<PathBuf> {
         .join(name))
 }
 
-fn http() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
-        .build()
-        .new_agent()
-}
-
-/// CRAN's current installer for this Mac's processor, from CRAN's page.
-fn cran_installer() -> Result<(String, String)> {
+/// CRAN's current installer for this Mac's processor, from the page at the
+/// chosen CRAN source.
+fn cran_installer(cran: &str) -> Result<(String, String)> {
     let arch = match std::env::consts::ARCH {
         "aarch64" => "arm64",
         "x86_64" => "x86_64",
         other => bail!("CRAN has no R installer for this Mac's processor ({other})."),
     };
-    let page = http()
-        .get(CRAN_MAC)
+    let base = format!("{cran}/bin/macosx/");
+    let page = sources::http(Duration::from_secs(15))
+        .get(&base)
         .call()
         .ok()
         .and_then(|r| r.into_body().read_to_string().ok())
@@ -270,7 +294,7 @@ fn cran_installer() -> Result<(String, String)> {
     cran_link(&page, arch)
         .map(|link| {
             let file = link.rsplit('/').next().unwrap_or(link).to_string();
-            (format!("{CRAN_MAC}{link}"), file)
+            (format!("{base}{link}"), file)
         })
         .context("Sandhill couldn't find CRAN's R installer for this Mac on CRAN's page.")
 }
@@ -292,7 +316,10 @@ fn cran_link<'a>(page: &'a str, arch: &str) -> Option<&'a str> {
 }
 
 fn download_mb(url: &str) -> Option<u64> {
-    let response = http().head(url).call().ok()?;
+    let response = sources::http(Duration::from_secs(15))
+        .head(url)
+        .call()
+        .ok()?;
     let bytes: u64 = response
         .headers()
         .get("content-length")?
@@ -525,7 +552,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let prefix = |name: &str| tmp.path().join(name).to_string_lossy().into_owned();
         let none = Search::default();
-        let refused = |runtime| plan(&none, runtime).refused.unwrap();
+        let refused = |runtime| {
+            plan_with(&none, &Sources::default(), runtime)
+                .refused
+                .unwrap()
+        };
         assert!(
             refused(NewRuntime::RConda {
                 prefix: "relative".into()
@@ -596,8 +627,14 @@ mod tests {
             ..Search::default()
         };
         let prefix = tmp.path().join("envs-r").to_string_lossy().into_owned();
-        let r = plan(
+        let mirror = Sources {
+            conda: "https://mirrors.ustc.edu.cn/anaconda/cloud".into(),
+            pypi: "https://pypi.tuna.tsinghua.edu.cn/simple".into(),
+            ..Sources::default()
+        };
+        let r = plan_with(
             &search,
+            &mirror,
             NewRuntime::RConda {
                 prefix: prefix.clone(),
             },
@@ -611,15 +648,16 @@ mod tests {
                 "-p",
                 &prefix,
                 "-c",
-                "conda-forge",
+                "https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge",
                 "--override-channels",
                 "r-base",
                 "r-irkernel"
             ])
         );
         let py = tmp.path().join("my-py").to_string_lossy().into_owned();
-        let plan = plan(
+        let plan = plan_with(
             &search,
+            &mirror,
             NewRuntime::PythonUv {
                 prefix: py.clone(),
                 python: "3.12".into(),
@@ -634,11 +672,33 @@ mod tests {
             "3.12",
             &py
         ])));
-        assert!(plan.command.contains("'ipykernel' 'numpy'"));
+        assert!(plan.command.contains(
+            "'--index-url' 'https://pypi.tuna.tsinghua.edu.cn/simple' 'ipykernel' 'numpy'"
+        ));
         assert!(
             plan.command
                 .ends_with("'--name' 'my-py' '--display-name' 'Python 3.12 (my-py)'")
         );
+    }
+
+    #[test]
+    fn r_installers_need_a_gigabyte_when_their_size_is_unknown() {
+        let need = |runtime, download_mb| {
+            need_mb(&RuntimePlan {
+                runtime,
+                tool: String::new(),
+                folder: String::new(),
+                command: String::new(),
+                download_mb,
+                notes: Vec::new(),
+                refused: None,
+                refused_fix: None,
+            })
+        };
+        assert_eq!(need(NewRuntime::RFromHomebrew, None), 1_000);
+        assert_eq!(need(NewRuntime::RFromCran, Some(95)), 1_000);
+        assert_eq!(need(NewRuntime::RFromCran, Some(400)), 1_700);
+        assert_eq!(need(NewRuntime::Miniforge, None), 500);
     }
 
     #[test]

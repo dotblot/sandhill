@@ -112,6 +112,19 @@ saves results into projects. Reading them still works. A refused write
 says in plain words that Sandhill's own environment is chosen and how to
 switch.
 
+On a Mac, a sandbox can't be started inside one that denies writes
+(checked 2026-11-21 on macOS 27.2.1: `sandbox_apply` fails with
+"Operation not permitted"), so an agent can't run its own sandbox under
+the lock. Each agent runs under one of the two, never neither (Huan,
+2026-11-21): Codex is locked only in Full access, where its own sandbox
+is off, and a conversation can't switch between Full access and the
+other modes; Claude Code is locked unless its own sandbox is on in its
+settings. Kernels, the Terminal, jobs and previews are always locked, so
+Codex or Claude Code started by hand in Sandhill's Terminal with their
+own sandbox won't work while the lock is on, and the R and Python page
+says so. On Linux, sandboxes nest under bubblewrap, so everything is
+locked.
+
 ## 4. Switching later
 
 From "Use what's on this computer" to "Everything in one folder",
@@ -447,7 +460,9 @@ Each step is usable on its own and committed when done:
    login item, Huan 2026-11-20). Built 2026-11-20.
 7. Sections 5 and 7: agents' settings, the footprint page, the new
    uninstall. Built 2026-11-21.
-8. Section 11, the lock and remote computers.
+8. Section 11, the lock and remote computers. Built 2026-11-21 (agents
+   under their own sandbox or the lock on a Mac; Miniforge, Homebrew and
+   uv's Python downloads and auto-configured proxies not yet on mirrors).
 9. Section 8: the leftover test, run once on this Mac in a fresh user
    account after Huan agrees.
 

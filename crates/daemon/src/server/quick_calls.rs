@@ -150,6 +150,9 @@ impl Daemon {
             ))
         })
         .await?;
+        // The download sources are checked again at most once a day.
+        let record = self.install_record();
+        tokio::task::spawn_blocking(move || crate::quick::sources::refresh_if_stale(&record));
         Ok(serde_json::to_value(ready)?)
     }
 
@@ -162,7 +165,7 @@ impl Daemon {
         Ok(serde_json::to_value(self.quick_job_started(make).await?)?)
     }
 
-    async fn quick_job_started(
+    pub(super) async fn quick_job_started(
         &self,
         make: impl FnOnce(&Path) -> Result<Launch> + Send + 'static,
     ) -> Result<QuickInstalling> {
@@ -348,9 +351,11 @@ impl Daemon {
     }
 
     pub(super) async fn plan_runtime(&self, runtime: NewRuntime) -> Result<Value> {
+        let record = self.install_record();
         let plan = blocking(move || {
             Ok(install::plan_runtime(
                 &crate::kernelspecs::Search::from_env(),
+                &record,
                 runtime,
             ))
         })
@@ -362,7 +367,8 @@ impl Daemon {
         let record = self.install_record();
         let executable = self.options.executable.clone();
         self.quick_job(move |log| {
-            let plan = install::plan_runtime(&crate::kernelspecs::Search::from_env(), runtime);
+            let plan =
+                install::plan_runtime(&crate::kernelspecs::Search::from_env(), &record, runtime);
             if let Some(refused) = &plan.refused {
                 bail!("{refused}");
             }

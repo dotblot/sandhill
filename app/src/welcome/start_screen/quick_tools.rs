@@ -1,13 +1,15 @@
 //! Welcome's Explore a Table and R and Python pages, and their shared jobs.
 
 use std::collections::{HashSet, VecDeque};
+use std::pin::Pin;
 
 use gpui_kit::component::checkbox::Checkbox;
+use sandhill_link::LOCAL;
 use sandhill_proto::{
-    EnvAction, EnvActionPlan, FailureFix, InstallPrefs, InstallTool, InstalledKey, NewRuntime,
-    PYTHON_ENV_NAME, PYTHON_SETS, PYTHON_VERSIONS, PackageAction, PackageChange, PackagePlan,
-    QuickInstalled, QuickInstalling, QuickReadiness, QuickTool, RuntimePlan, ipykernel_args,
-    python_env_name_ok,
+    EnvAction, EnvActionPlan, FailureFix, InstallPrefs, InstallTool, InstalledKey,
+    InterruptedInstall, NewRuntime, PYTHON_ENV_NAME, PYTHON_SETS, PYTHON_VERSIONS, PackageAction,
+    PackageChange, PackagePlan, QuickInstalled, QuickInstalling, QuickReadiness, QuickTool,
+    RuntimePlan, python_env_name_ok,
 };
 
 use crate::install_confirm::{self as review, Choice, Job, Review};
@@ -18,9 +20,10 @@ use super::*;
 
 use crate::welcome::folder_dialog::choose_local_path;
 
+mod advanced;
 mod cards;
 mod environment;
-
+mod terminal_here;
 const NODE: &str = "https://nodejs.org/";
 
 #[derive(Clone, PartialEq, Eq)]
@@ -55,6 +58,8 @@ enum Section {
     Environment,
     Ai,
     Record,
+    /// An install that stopped part way, being finished or undone.
+    Interrupted,
 }
 
 /// The new Python environment's choices, while its form is open.
@@ -87,10 +92,22 @@ enum Confirm {
     Agent(String),
     Remove,
     Ipykernel(String),
+    /// Finish an interrupted install, by its id.
+    Finish(String),
+    /// Undo an interrupted install, by its id.
+    Undo(String),
+    /// Which of an R's folders gets the packages of its earlier R.
+    Reinstall(String),
 }
+
+/// A chosen path, from the system's chooser or a server's.
+type Chosen = Pin<Box<dyn Future<Output = Option<String>>>>;
 
 #[derive(Default)]
 pub(crate) struct QuickPage {
+    /// The device whose R and Python are shown (Explore a Table is always
+    /// this computer's).
+    host: String,
     readiness: Option<Result<QuickReadiness, String>>,
     checking: bool,
     install: Option<Install>,
@@ -105,8 +122,11 @@ pub(crate) struct QuickPage {
     confirm: Option<Confirm>,
     environment: environment::State,
     cards: cards::State,
+    advanced: advanced::State,
     waiting: VecDeque<PackageChange>,
     python_form: Option<PythonForm>,
+    /// The locked folders are listed.
+    show_locked: bool,
     /// Tables being opened.
     opening: bool,
     archive_picker: Option<ArchivePicker>,
@@ -127,6 +147,7 @@ fn parent_of(path: &str) -> String {
 impl QuickPage {
     pub(super) fn new() -> Self {
         Self {
+            host: LOCAL.into(),
             environment: environment::State::new(),
             ..Self::default()
         }
@@ -157,6 +178,43 @@ impl QuickPage {
     pub(super) fn focus_explore_r(&mut self) {
         self.cards.focus_explore = true;
     }
+
+    /// Shows `host`'s R and Python, letting go of what was read for the
+    /// device shown before. Not while something runs or saves there.
+    pub(super) fn show_host(&mut self, host: &str) -> bool {
+        if self.host == host {
+            return true;
+        }
+        if self.busy() || self.environment.switching || self.setting_prefs {
+            return false;
+        }
+        self.host = host.to_owned();
+        self.readiness = None;
+        self.checking = false;
+        self.install = None;
+        self.install_error = None;
+        self.notice = None;
+        self.clear_review();
+        self.prefs_error = None;
+        self.selected.clear();
+        self.waiting.clear();
+        self.python_form = None;
+        self.show_locked = false;
+        self.environment.leave_device();
+        self.cards.leave_device();
+        self.advanced.leave_device();
+        true
+    }
+}
+
+/// "Setting up Sandhill's own R and Python stopped part way on
+/// 2026-11-21."
+fn interrupted_line(stopped: &InterruptedInstall) -> String {
+    if stopped.date.is_empty() {
+        format!("{} stopped part way.", stopped.what)
+    } else {
+        format!("{} stopped part way on {}.", stopped.what, stopped.date)
+    }
 }
 
 /// The R version line of the card.
@@ -186,31 +244,116 @@ fn r_line(readiness: &QuickReadiness) -> (bool, String) {
 }
 
 impl AppWindow {
-    fn local_daemon(&self) -> Option<Rc<Daemon>> {
-        match self
-            .start
+    /// The daemon of the device R and Python shows.
+    fn quick_daemon(&self) -> Option<Rc<Daemon>> {
+        self.machine_daemon(&self.start.quick.host)
+    }
+
+    fn quick_local(&self) -> bool {
+        self.start.quick.host == LOCAL
+    }
+
+    /// The home folder of the device R and Python shows.
+    fn quick_home(&self) -> Option<String> {
+        let host = &self.start.quick.host;
+        self.start
             .machines
-            .get(sandhill_link::LOCAL)
-            .map(|m| &m.link)
-        {
-            Some(MachineLink::Ready(daemon)) => Some(daemon.clone()),
-            _ => None,
+            .get(host)
+            .and_then(|m| m.home.clone())
+            .or_else(|| {
+                (host == LOCAL)
+                    .then(|| std::env::var("HOME").ok())
+                    .flatten()
+            })
+            .filter(|home| !home.is_empty())
+    }
+
+    /// "this Mac", or the server's name.
+    fn quick_place(&self) -> String {
+        if self.quick_local() {
+            look::mac_or("this Mac", "this computer").into()
+        } else {
+            host_label(&self.start.quick.host)
         }
     }
 
-    /// Reads what this Mac has for exploring tables.
+    /// Shows another device's R and Python.
+    fn quick_show_host(&mut self, host: String, cx: &mut Context<Self>) {
+        if self.start.quick.show_host(&host) {
+            self.start.problem = None;
+            cx.notify();
+        }
+    }
+
+    /// The system's chooser for this computer; the server's own chooser,
+    /// backed by its daemon, for a server.
+    fn quick_choose_path(
+        &mut self,
+        title: &str,
+        files: bool,
+        folders: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Chosen {
+        if self.quick_local() {
+            return Box::pin(choose_local_path(title, files, folders, cx));
+        }
+        let Some(daemon) = self.quick_daemon() else {
+            return Box::pin(async { None });
+        };
+        let home = self.quick_home();
+        let title = format!("{title} on {}", host_label(&self.start.quick.host));
+        let dialog = cx.new(|cx| {
+            let dialog = FolderDialog::new(
+                daemon,
+                title.into(),
+                "Choose".into(),
+                home,
+                Vec::new(),
+                window,
+                cx,
+            );
+            if files {
+                dialog.files(|_| true, folders)
+            } else {
+                dialog
+            }
+        });
+        let (send, chosen) = tokio::sync::oneshot::channel();
+        let mut send = Some(send);
+        self.start.folder_subscription = Some(cx.subscribe_in(
+            &dialog,
+            window,
+            move |this, _, event: &FolderDialogDone, window, cx| {
+                this.start.close_dialogs(window, cx);
+                if let Some(send) = send.take() {
+                    send.send(event.0.clone()).ok();
+                }
+                cx.notify();
+            },
+        ));
+        self.start.folder_dialog = Some(dialog);
+        cx.notify();
+        Box::pin(async move { chosen.await.ok().flatten() })
+    }
+
+    /// Reads what the device has for R and Python.
     pub(super) fn quick_check(&mut self, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         if self.start.quick.checking {
             return;
         }
         self.start.quick.checking = true;
+        let host = self.start.quick.host.clone();
         let read = daemon.call::<QuickReadiness>(Call::QuickReadiness);
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |this, cx| {
+                if this.start.quick.host != host {
+                    return;
+                }
                 this.start.quick.checking = false;
                 this.start.quick.readiness = Some(read.map_err(|err| format!("{err:#}")));
                 this.quick_resume_setup(cx);
@@ -292,7 +435,7 @@ impl AppWindow {
         automatic: Option<InstallTool>,
         cx: &mut Context<Self>,
     ) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let q = &mut self.start.quick;
@@ -348,7 +491,7 @@ impl AppWindow {
     }
 
     fn quick_change_plan(&mut self, ix: usize, choice: Choice, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let q = &mut self.start.quick;
@@ -368,7 +511,7 @@ impl AppWindow {
     }
 
     fn quick_plan_runtime(&mut self, row: RuntimeRow, runtime: NewRuntime, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let q = &mut self.start.quick;
@@ -455,9 +598,10 @@ impl AppWindow {
         notice: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
+        let host = self.start.quick.host.clone();
         let q = &mut self.start.quick;
         if q.busy() {
             return;
@@ -489,14 +633,7 @@ impl AppWindow {
                     Ok((info, log)) => {
                         let mut job = Job::new(info, log, title);
                         job.change = change;
-                        review::watch(
-                            daemon,
-                            sandhill_link::LOCAL.to_string(),
-                            &job,
-                            Self::quick_install_status,
-                            cx,
-                        )
-                        .detach();
+                        review::watch(daemon, host, &job, Self::quick_install_status, cx).detach();
                         q.install = Some(Install {
                             section,
                             job,
@@ -550,7 +687,7 @@ impl AppWindow {
 
     fn quick_refresh_after_job(&mut self, section: Section, cx: &mut Context<Self>) {
         self.quick_check(cx);
-        let local = sandhill_link::LOCAL;
+        let local = LOCAL;
         if section == Section::Ai {
             if let Some((_, _, accounts)) = self
                 .start
@@ -609,7 +746,7 @@ impl AppWindow {
             self.quick_open_selected(tables, Vec::new(), false, cx);
             return;
         }
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.machine_daemon(LOCAL) else {
             return;
         };
         self.start.quick.opening = true;
@@ -645,7 +782,7 @@ impl AppWindow {
         combine: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.machine_daemon(LOCAL) else {
             return;
         };
         self.start.quick.opening = true;
@@ -703,7 +840,7 @@ impl AppWindow {
     }
 
     fn quick_delete(&mut self, path: String, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.machine_daemon(LOCAL) else {
             return;
         };
         let deleted = daemon.call::<sandhill_proto::Deleted>(Call::DeletePath {
@@ -745,10 +882,12 @@ impl AppWindow {
     /// made from them.
     pub(super) fn explore_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = welcome_palette(cx);
-        if self.start.quick.readiness.is_none() && !self.start.quick.checking {
+        // Tables are explored on this computer, with its R.
+        let local = self.start.quick.show_host(LOCAL);
+        if local && self.start.quick.readiness.is_none() && !self.start.quick.checking {
             self.quick_check(cx);
         }
-        let not_ready = self.quick_ready() == Some(false);
+        let not_ready = local && self.quick_ready() == Some(false);
         v_flex()
             .w_full()
             .gap(px(look::GAP_12))
@@ -819,14 +958,18 @@ impl AppWindow {
             .into_any_element()
     }
 
-    /// Start → R and Python.
+    /// Start → R and Python, for the device chosen at its top.
     pub(super) fn ready_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = welcome_palette(cx);
-        if self.start.quick.readiness.is_none() && !self.start.quick.checking {
-            self.quick_check(cx);
-        }
-        if self.start.quick.cards.list.is_none() {
-            self.quick_list_cards(cx);
+        let connected = self.quick_daemon().is_some();
+        if connected {
+            if self.start.quick.readiness.is_none() && !self.start.quick.checking {
+                self.quick_check(cx);
+            }
+            if self.start.quick.cards.list.is_none() {
+                self.quick_list_cards(cx);
+            }
+            self.quick_load_advanced(cx);
         }
         if let Some(setup) = self.quick_setup_page(&p, cx) {
             return setup.into_any_element();
@@ -851,24 +994,238 @@ impl AppWindow {
                 "See what is installed, add packages and check that your environments work.",
                 &p,
             ))
-            .child(self.quick_ready_card(&p, cx))
+            .children(self.quick_devices(cx))
+            .child(if connected || self.quick_local() {
+                self.quick_ready_card(&p, cx)
+            } else {
+                self.quick_not_connected(&p, cx)
+            })
             .into_any_element()
+    }
+
+    /// This computer and each connected server, as On This Computer has
+    /// them; the chosen one's R and Python show below.
+    fn quick_devices(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let q = &self.start.quick;
+        let hosts: Vec<String> = self
+            .start
+            .hosts()
+            .into_iter()
+            .filter(|host| *host == LOCAL || *host == q.host || self.machine_daemon(host).is_some())
+            .collect();
+        if hosts.len() < 2 {
+            return None;
+        }
+        let busy = q.busy() || q.environment.switching || q.setting_prefs;
+        Some(
+            h_flex()
+                .flex_wrap()
+                .gap(px(look::GAP_6))
+                .children(hosts.into_iter().enumerate().map(|(index, host)| {
+                    let current = host == q.host;
+                    Button::new(("quick-device", index))
+                        .small()
+                        .label(host_label(&host))
+                        .when(current, |b| b.primary())
+                        .disabled(busy && !current)
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.quick_show_host(host.clone(), cx)
+                            }),
+                        )
+                })),
+        )
+    }
+
+    /// A server chosen above that isn't connected now.
+    fn quick_not_connected(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let host = self.start.quick.host.clone();
+        let detail = match self.start.machines.get(&host).map(|m| &m.link) {
+            Some(MachineLink::Failed(error)) => error.clone(),
+            Some(MachineLink::Connecting) => "Connecting…".into(),
+            _ => "Connect to see and manage its R and Python.".into(),
+        };
+        look::settings_box(
+            vec![
+                look::settings_row(
+                    format!("{} isn't connected", host_label(&host)),
+                    Some(look::settings_detail(detail, p)),
+                )
+                .child(self.welcome_connection_button(host, "quick-connect", "Connect", cx))
+                .into_any_element(),
+            ],
+            p,
+        )
+        .into_any_element()
+    }
+
+    /// Installs that stopped part way, each with Finish It and Undo It.
+    fn quick_interrupted(
+        &self,
+        readiness: &QuickReadiness,
+        busy: bool,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let q = &self.start.quick;
+        let progress = self.quick_install_in(Section::Interrupted, p, cx);
+        if readiness.interrupted.is_empty() && progress.is_none() {
+            return None;
+        }
+        let mut rows = Vec::new();
+        for (ix, stopped) in readiness.interrupted.iter().enumerate() {
+            let detail = if stopped.folder.is_empty() {
+                None
+            } else {
+                Some(look::settings_detail(
+                    format!("Folder: {}", stopped.folder),
+                    p,
+                ))
+            };
+            let row = look::settings_row(interrupted_line(stopped), detail);
+            let id = stopped.id.clone();
+            let (question, call, title, verb) = match &q.confirm {
+                Some(Confirm::Finish(at)) if *at == stopped.id => (
+                    "Finish it? Sandhill runs it again, keeping what was already done.",
+                    Call::FinishInterrupted { id },
+                    stopped.what.clone(),
+                    "Finish It",
+                ),
+                Some(Confirm::Undo(at)) if *at == stopped.id => (
+                    "Undo it? Sandhill puts back what it changed, and removes the part made of a new environment.",
+                    Call::UndoInterrupted { id },
+                    "Undoing what stopped part way".to_owned(),
+                    "Undo It",
+                ),
+                _ => {
+                    let finish = id.clone();
+                    let mut row = row;
+                    if stopped.can_finish {
+                        row = row.child(
+                            Button::new(("interrupted-finish", ix))
+                                .small()
+                                .primary()
+                                .label("Finish It…")
+                                .disabled(busy)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.start.quick.clear_review();
+                                    this.start.quick.confirm =
+                                        Some(Confirm::Finish(finish.clone()));
+                                    cx.notify();
+                                })),
+                        );
+                    }
+                    if stopped.can_undo {
+                        row = row.child(
+                            Button::new(("interrupted-undo", ix))
+                                .small()
+                                .label("Undo It…")
+                                .disabled(busy)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.start.quick.clear_review();
+                                    this.start.quick.confirm = Some(Confirm::Undo(id.clone()));
+                                    cx.notify();
+                                })),
+                        );
+                    }
+                    if !stopped.can_finish && !stopped.can_undo {
+                        row = row.child(look::settings_detail(
+                            "Sandhill can't finish or undo it.",
+                            p,
+                        ));
+                    }
+                    rows.push(row.into_any_element());
+                    continue;
+                }
+            };
+            let undo = matches!(call, Call::UndoInterrupted { .. });
+            rows.push(
+                v_flex()
+                    .child(row)
+                    .child(
+                        look::settings_row(question, None)
+                            .child(review::cancel_button().on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.start.quick.confirm = None;
+                                    cx.notify();
+                                },
+                            )))
+                            .child(
+                                Button::new(("interrupted-go", ix))
+                                    .small()
+                                    .label(verb)
+                                    .map(|b| if undo { b.danger() } else { b.primary() })
+                                    .disabled(busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.quick_start_install(
+                                            call.clone(),
+                                            Section::Interrupted,
+                                            title.clone(),
+                                            None,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        rows.extend(progress);
+        Some(look::settings_box(rows, p))
+    }
+
+    /// One line on Welcome's other pages while an install that stopped
+    /// part way waits to be finished or undone.
+    pub(super) fn quick_interrupted_notice(
+        &mut self,
+        p: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.start.page == Page::Ready || uninstall_running(cx) {
+            return None;
+        }
+        let q = &self.start.quick;
+        if q.readiness.is_none() && !q.checking && self.quick_daemon().is_some() {
+            self.quick_check(cx);
+        }
+        let Some(Ok(found)) = &self.start.quick.readiness else {
+            return None;
+        };
+        let stopped = found.interrupted.first()?;
+        let text = if self.quick_local() {
+            interrupted_line(stopped)
+        } else {
+            format!(
+                "On {}: {}",
+                host_label(&self.start.quick.host),
+                interrupted_line(stopped)
+            )
+        };
+        Some(
+            h_flex()
+                .px(px(look::PANE_PAD_X))
+                .pb(px(look::GAP_12))
+                .gap(px(look::GAP_8))
+                .child(div().flex_1().min_w_0().text_color(p.warn).child(text))
+                .child(
+                    Button::new("interrupted-open")
+                        .small()
+                        .label("Open R and Python")
+                        .on_click(cx.listener(|this, _, _, cx| this.show_page(Page::Ready, cx))),
+                )
+                .into_any_element(),
+        )
     }
 
     fn quick_ready_card(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let q = &self.start.quick;
+        let place = self.quick_place();
         let readiness = match &q.readiness {
             None => {
                 return look::settings_box(
                     vec![
-                        look::settings_row(
-                            look::mac_or(
-                                "Checking what this Mac has…",
-                                "Checking what this computer has…",
-                            ),
-                            None,
-                        )
-                        .into_any_element(),
+                        look::settings_row(format!("Checking what {place} has…"), None)
+                            .into_any_element(),
                     ],
                     p,
                 )
@@ -878,10 +1235,7 @@ impl AppWindow {
                 return look::settings_box(
                     vec![
                         look::settings_row(
-                            look::mac_or(
-                                "Sandhill couldn't check this Mac",
-                                "Sandhill couldn't check this computer",
-                            ),
+                            format!("Sandhill couldn't check {place}"),
                             Some(look::settings_detail(err.clone(), p)),
                         )
                         .child(check_again(cx))
@@ -904,8 +1258,9 @@ impl AppWindow {
             .and_then(|folder| folder.copy_report.as_ref().map(|report| (folder, report)));
         v_flex()
             .gap(px(look::GAP_6))
+            .children(self.quick_interrupted(readiness, busy, p, cx))
             .child(self.quick_mode_card(readiness, busy, p, cx))
-            .child(self.quick_tools_box(readiness, p, cx))
+            .child(self.quick_tools_box(readiness, p))
             .children(match copy_report {
                 Some((folder, report)) => {
                     Some(self.quick_copy_report(&folder.folder, report, busy, progress, p, cx))
@@ -919,15 +1274,11 @@ impl AppWindow {
                     .anchor_scroll(Some(self.start.record_anchor.clone())),
             )
             .child(look::settings_box(record, p))
+            .child(self.quick_advanced(readiness, busy, p, cx))
             .into_any_element()
     }
 
-    fn quick_tools_box(
-        &self,
-        readiness: &QuickReadiness,
-        p: &Palette,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn quick_tools_box(&self, readiness: &QuickReadiness, p: &Palette) -> Div {
         let mut tools = readiness
             .tools
             .iter()
@@ -970,7 +1321,6 @@ impl AppWindow {
                     )),
                 )
                 .into_any_element(),
-                self.quick_prefs_row(readiness, p, cx),
             ],
             p,
         )
@@ -984,7 +1334,8 @@ impl AppWindow {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let mut rows = Vec::new();
-        if cfg!(target_os = "macos") {
+        // The CRAN installer is a Mac package, opened on this Mac only.
+        if cfg!(target_os = "macos") && self.quick_local() {
             rows.push(self.quick_runtime_offer(
                 RuntimeRow::CranR,
                 NewRuntime::RFromCran,
@@ -1073,27 +1424,21 @@ impl AppWindow {
                     p,
                 )),
             );
-            rows.push(
-                self.quick_confirm_row(
-                    row,
-                    asking,
-                    &format!("ipykernel-{}", env.prefix),
-                    "Add ipykernel…",
-                    "Add",
-                    ipykernel_args(&env.tool, &env.prefix)
-                        .iter()
-                        .map(|arg| sandhill_daemon::agents::shell_quote(arg))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    busy,
-                    Confirm::Ipykernel(env.prefix.clone()),
-                    Call::QuickAddIpykernel {
-                        prefix: env.prefix.clone(),
-                    },
-                    p,
-                    cx,
-                ),
-            );
+            rows.push(self.quick_confirm_row(
+                row,
+                asking,
+                &format!("ipykernel-{}", env.prefix),
+                "Add ipykernel…",
+                "Add",
+                env.command.clone(),
+                busy,
+                Confirm::Ipykernel(env.prefix.clone()),
+                Call::QuickAddIpykernel {
+                    prefix: env.prefix.clone(),
+                },
+                p,
+                cx,
+            ));
         }
         let default_tool = if python.tool.is_some() {
             InstallTool::Conda
@@ -1133,12 +1478,7 @@ impl AppWindow {
         let name_ok = python_env_name_ok(&name);
         let version = form.version;
         let sets: Vec<String> = form.sets.iter().map(|s| s.to_string()).collect();
-        let home = self
-            .start
-            .machines
-            .get(sandhill_link::LOCAL)
-            .and_then(|m| m.home.clone())
-            .or_else(|| std::env::var("HOME").ok());
+        let home = self.quick_home();
         let parent = form.parent.clone().or_else(|| match form.tool {
             InstallTool::Conda => python
                 .tool
@@ -1266,8 +1606,8 @@ impl AppWindow {
                                     Button::new("python-choose-folder")
                                         .small()
                                         .label("Choose Folder…")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.quick_python_choose_folder(cx)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.quick_python_choose_folder(window, cx)
                                         })),
                                 ),
                         )
@@ -1330,12 +1670,12 @@ impl AppWindow {
         cx.notify();
     }
 
-    fn quick_python_choose_folder(&mut self, cx: &mut Context<Self>) {
+    fn quick_python_choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(form) = &self.start.quick.python_form else {
             return;
         };
         let name = form.name.clone();
-        let choose = choose_local_path("Choose a Parent Folder", false, true, cx);
+        let choose = self.quick_choose_path("Choose a Parent Folder", false, true, window, cx);
         cx.spawn(async move |this, cx| {
             if let Some(parent) = choose.await {
                 this.update(cx, |this, cx| {
@@ -1352,57 +1692,12 @@ impl AppWindow {
         .detach();
     }
 
-    fn quick_prefs_row(
-        &self,
-        readiness: &QuickReadiness,
-        p: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let q = &self.start.quick;
-        let label = "Install Without Asking";
-        let switch = Switch::new("quick-without-asking")
-            .small()
-            .color(p.accent)
-            .checked(readiness.prefs.without_asking)
-            .accessibility_label(label)
-            .disabled(q.setting_prefs || q.checking || q.busy() || q.reviewing.is_some())
-            .on_change(cx.listener(|this, on: &bool, _, cx| this.quick_set_prefs(*on, cx)));
-        v_flex()
-            .child(look::settings_row(label, Some(look::settings_detail(
-                "Only installs that use the same folder and tool as last time can run without asking. Add Packages always shows a plan.", p,
-            ))).child(switch))
-            .when_some(q.prefs_error.clone(), |d, error| {
-                d.child(look::settings_row("Couldn't save this choice", Some(look::settings_detail(error, p))))
-            })
-            .into_any_element()
-    }
-
-    fn quick_set_prefs(&mut self, without_asking: bool, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
-            return;
-        };
-        self.start.quick.setting_prefs = true;
-        self.start.quick.prefs_error = None;
-        let saved = daemon.call::<InstallPrefs>(Call::SetInstallPrefs { without_asking });
-        cx.spawn(async move |this, cx| {
-            let saved = saved.await;
-            this.update(cx, |this, cx| {
-                let q = &mut this.start.quick;
-                q.setting_prefs = false;
-                match saved {
-                    Ok(prefs) => {
-                        if let Some(Ok(found)) = &mut q.readiness {
-                            found.prefs = prefs;
-                        }
-                    }
-                    Err(err) => q.prefs_error = Some(err.to_string()),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
+    /// Free Up Space beside a refusal: Resources and Storage for the
+    /// device shown.
+    fn quick_space_button(cx: &mut Context<Self>) -> Button {
+        review::space_button().on_click(cx.listener(|this, _, window, cx| {
+            this.quick_install_fix(FailureFix::FreeUpSpace, window, cx)
+        }))
     }
 
     fn quick_review_buttons(cx: &mut Context<Self>) -> (Button, Button) {
@@ -1428,7 +1723,13 @@ impl AppWindow {
             return None;
         }
         let (cancel, run) = Self::quick_review_buttons(cx);
-        Some(review::runtime(planned, cancel, run, p))
+        Some(review::runtime(
+            planned,
+            cancel,
+            run,
+            Self::quick_space_button(cx),
+            p,
+        ))
     }
 
     fn quick_runtime_offer(
@@ -1516,6 +1817,7 @@ impl AppWindow {
                 &[],
                 libraries,
                 Self::quick_review_buttons(cx),
+                Self::quick_space_button(cx),
                 Self::quick_change_plan,
                 p,
                 cx,
@@ -1594,7 +1896,7 @@ impl AppWindow {
 
     // Registering IRkernel uses the same offer and job as the kernel picker.
     fn quick_plan_kernel(&mut self, program: String, canonical: String, cx: &mut Context<Self>) {
-        let Some(daemon) = self.local_daemon() else {
+        let Some(daemon) = self.quick_daemon() else {
             return;
         };
         let q = &mut self.start.quick;
@@ -1828,7 +2130,7 @@ impl AppWindow {
         match fix {
             FailureFix::InstallDeveloperTools => {
                 if let (Some(daemon), Some(install)) =
-                    (self.local_daemon(), &mut self.start.quick.install)
+                    (self.quick_daemon(), &mut self.start.quick.install)
                 {
                     install.job.request_developer_tools(
                         &daemon,
@@ -1858,7 +2160,7 @@ impl AppWindow {
                 }
             }
             FailureFix::FreeUpSpace => {
-                let mode = StartMode::Resources(sandhill_link::LOCAL.to_string());
+                let mode = StartMode::Resources(self.start.quick.host.clone());
                 // The manager reads all windows, so leave this window's update first.
                 let this = cx.entity().downgrade();
                 window.defer(cx, move |window, cx| {
@@ -1922,7 +2224,9 @@ impl AppWindow {
     }
 
     pub(super) fn quick_ai_helpers(&mut self, p: &Palette, cx: &mut Context<Self>) -> Div {
-        if self.start.quick.readiness.is_none() && !self.start.quick.checking {
+        // The Agents page shows this computer's helpers.
+        let local = self.start.quick.show_host(LOCAL);
+        if local && self.start.quick.readiness.is_none() && !self.start.quick.checking {
             self.quick_check(cx);
         }
         let signed_in = ["claude", "codex"].map(|kind| {
@@ -1937,6 +2241,9 @@ impl AppWindow {
         });
         let q = &self.start.quick;
         let mut rows = match &q.readiness {
+            _ if !local => {
+                vec![look::settings_row("Checking for AI helpers…", None).into_any_element()]
+            }
             Some(Ok(found)) => found
                 .agents
                 .iter()

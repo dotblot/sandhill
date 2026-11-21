@@ -67,8 +67,9 @@ pub(crate) enum StartMode {
     Accounts(String),
     /// This Mac's choices for every project (⌘,).
     General,
-    /// R and Python, with Explore a Table's R open when it is found.
-    Ready,
+    /// R and Python on a device, with Explore a Table's R open when it is
+    /// this computer's and found.
+    Ready(String),
 }
 
 /// What Welcome's right side shows; the sidebar selects it.
@@ -334,11 +335,14 @@ impl Start {
                 self.page = Page::Accounts;
             }
             StartMode::General => self.page = Page::General,
-            StartMode::Ready => {
+            StartMode::Ready(host) => {
                 self.page = Page::Ready;
                 self.page_chosen = true;
+                self.quick.show_host(&host);
                 self.quick.forget_check();
-                self.quick.focus_explore_r();
+                if host == sandhill_link::LOCAL {
+                    self.quick.focus_explore_r();
+                }
             }
             StartMode::Picking(host) => {
                 self.selected_host = host.clone();
@@ -454,6 +458,7 @@ impl AppWindow {
         self.prepare_folder_dialog(window, cx);
         let host = self.start.selected_host.clone();
         let page = self.start.page.clone();
+        let interrupted = self.quick_interrupted_notice(&p, cx);
         let mut devices = v_flex()
             .gap(px(look::GAP_2))
             .child(sidebar_heading("Start", &p))
@@ -760,6 +765,7 @@ impl AppWindow {
                             }
                         }))
                         .child(v_flex().w_full().max_w(px(CONTENT_WIDTH)).min_h_full()
+                            .children(interrupted)
                             .child(content)
                             .when_some(self.start.problem.clone(), |d, problem| {
                                 d.child(div().mt(px(12.)).text_color(p.err).child(problem))

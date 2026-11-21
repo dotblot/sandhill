@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use sandhill_proto::{
     InstallChoice, InstallPrefs, InstallTool, InstallToolInfo, InstalledKey, JobSpec, NewRuntime,
-    PackageAction, PackagePlan, QuickCondaTool, RuntimePlan,
+    PackageAction, PackagePlan, PreferredTool, QuickCondaTool, RuntimePlan,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{python, record, runtime_plan};
+use super::{interrupted, python, record, runtime_plan, sources};
 use crate::agents::shell_quote;
 use crate::kernelspecs::Search;
 use crate::terminal::Launch;
@@ -298,6 +298,50 @@ pub(crate) fn remember(record: &Path, plan: &PackagePlan) -> Result<()> {
     Ok(())
 }
 
+/// The user's preferred tool for `language` first, when it suits the target
+/// (it is among `tools`); otherwise Sandhill's own order stays.
+pub(super) fn prefer(tools: &mut [InstallToolInfo], prefs: &InstallPrefs, language: &str) {
+    if let Some(preferred) = prefs
+        .preferred_tools
+        .iter()
+        .find(|p| p.language == language)
+        && let Some(index) = tools.iter().position(|t| t.tool == preferred.tool)
+    {
+        tools[..=index].rotate_right(1);
+    }
+}
+
+/// Sets (or with `None` clears) the tool suggested first for a language.
+pub(crate) fn set_preferred_tool(
+    record: &Path,
+    language: &str,
+    tool: Option<InstallTool>,
+) -> Result<InstallPrefs> {
+    use InstallTool::{Conda, Pip, R, Uv};
+    let suits = match language {
+        "r" => [R, Conda].as_slice(),
+        "python" => [Conda, Pip, Uv].as_slice(),
+        _ => bail!("Choose R or Python."),
+    };
+    if let Some(tool) = tool
+        && !suits.contains(&tool)
+    {
+        bail!(
+            "{} doesn't install packages for this language.",
+            tool.label()
+        );
+    }
+    update_prefs(record, |prefs| {
+        prefs.preferred_tools.retain(|p| p.language != language);
+        if let Some(tool) = tool {
+            prefs.preferred_tools.push(PreferredTool {
+                language: language.into(),
+                tool,
+            });
+        }
+    })
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) enum Job {
     Packages(PackagePlan),
@@ -317,6 +361,8 @@ pub(crate) enum Job {
         command: String,
         prefix: Option<String>,
     },
+    /// Puts back what an interrupted install changed.
+    UndoInterrupted(interrupted::Undo),
 }
 
 pub(crate) fn worker_command(exe: &Path, record: &Path, job: &Job) -> Result<String> {
@@ -349,7 +395,11 @@ pub(crate) fn launch(
 ) -> Result<Launch> {
     let own_install = matches!(
         &job,
-        Job::OwnSetup(_) | Job::RemoveOwn(..) | Job::Environment(_) | Job::ProjectSetup(_)
+        Job::OwnSetup(_)
+            | Job::RemoveOwn(..)
+            | Job::Environment(_)
+            | Job::ProjectSetup(_)
+            | Job::UndoInterrupted(_)
     );
     let worker = if matches!(&job, Job::OwnSetup(_) | Job::ProjectSetup(_)) {
         format!(
@@ -381,6 +431,11 @@ pub(crate) fn launch(
         launch.env.push(("BASH_ENV".into(), "/dev/null".into()));
         // A removal must go through the daemon again to stop live kernels.
         launch.job = None;
+    }
+    for (key, value) in sources::proxy_env() {
+        if !launch.env.iter().any(|(k, _)| *k == key) {
+            launch.env.push((key, value));
+        }
     }
     launch.title = title.into();
     super::install_failure::remember(log, &job)?;
@@ -440,12 +495,14 @@ pub async fn worker(record_path: &Path, payload: &str) -> Result<()> {
         }
     };
     super::undo::prune_locked(record_path);
+    let _marker = interrupted::begin(record_path, &job)?;
     match job {
         Job::Packages(plan) => super::package_plan::run(record_path, &plan),
         Job::Runtime(plan) => runtime_plan::run(record_path, &plan),
         Job::OwnSetup(plan) => super::own::run(record_path, &plan),
         Job::Environment(work) => super::env_actions::run(record_path, work).await,
         Job::ProjectSetup(work) => super::project_packages::run(record_path, work).await,
+        Job::UndoInterrupted(undo) => undo.run(record_path),
         Job::RemoveOwn(folders, keys) => {
             for folder in folders {
                 super::own::remove(record_path, &folder)?;
