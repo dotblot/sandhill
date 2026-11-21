@@ -273,6 +273,7 @@ impl Workbench {
                                 }
                             }
                         }
+                        this.refresh_document_packages(&path, false, cx);
                         if selected {
                             this.session_changed(cx);
                             this.take_pending_location(window, cx);
@@ -820,6 +821,7 @@ impl Workbench {
             current: None,
             _subscriptions: subscriptions,
             history_edits: Default::default(),
+            missing: Default::default(),
         });
         if self.open.as_ref().is_some_and(|open| {
             open.notebook.format == Format::Quarto

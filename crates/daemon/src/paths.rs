@@ -37,6 +37,7 @@ impl StateDir {
             self.kernels_dir(),
             self.blobs_dir(),
             self.terminals_dir(),
+            self.install_logs_dir(),
         ] {
             std::fs::create_dir_all(&dir)?;
             restrict_permissions(&dir)?;
@@ -68,6 +69,10 @@ impl StateDir {
 
     pub fn log_path(&self) -> PathBuf {
         self.root.join("sandhilld.log")
+    }
+
+    pub(crate) fn install_logs_dir(&self) -> PathBuf {
+        self.root.join("log")
     }
 }
 

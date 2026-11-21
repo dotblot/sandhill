@@ -18,8 +18,8 @@ use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{
-    Call, InstallPrefs, InstallTarget, InstallTool, Package, PackageAction, PackageChange,
-    PackagePlan, PackageUpdate, PackageUpdates, Packages as Listed, QuickInstalling,
+    Call, FailureFix, InstallPrefs, InstallTarget, InstallTool, Package, PackageAction,
+    PackageChange, PackagePlan, PackageUpdate, PackageUpdates, Packages as Listed, QuickInstalling,
 };
 
 use crate::install_confirm::{self as review, Choice, Job, Review};
@@ -730,17 +730,20 @@ impl Workbench {
         {
             title = format!("{title} in {}", plan.folder);
         }
+        let change = plan.change.clone();
         let started = daemon.call::<QuickInstalling>(Call::RunPackages {
-            change: plan.change.clone(),
+            change: change.clone(),
         });
+        let host = self.host();
         cx.spawn(async move |this, cx| {
             let started = started.await;
             this.update(cx, |this, cx| {
                 this.packages.starting = false;
                 match started {
                     Ok(started) => {
-                        let job = Job::new(started.job, Some(started.log), title);
-                        review::watch(daemon, &job, Self::package_job_status, cx).detach();
+                        let mut job = Job::new(started.job, Some(started.log), title);
+                        job.change = Some(change);
+                        review::watch(daemon, host, &job, Self::package_job_status, cx).detach();
                         this.packages.job = Some(PaneJob { job, notice });
                     }
                     Err(err) => {
@@ -781,33 +784,25 @@ impl Workbench {
     fn package_job_status(
         &mut self,
         id: &str,
-        output: Option<String>,
-        finished: Option<bool>,
+        status: review::JobStatus,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.packages.job.as_ref().is_some_and(|j| j.job.id == id) {
+        let Some(running) = self.packages.job.as_mut().filter(|j| j.job.id == id) else {
             return false;
-        }
-        let left = if finished == Some(false) {
-            self.packages_left()
-        } else {
-            String::new()
         };
-        if let Some(running) = &mut self.packages.job {
-            if let Some(output) = output {
-                running.job.output = output;
+        running.job.update(status);
+        match running.job.finished {
+            Some(false) => {
+                let left = self.packages_left();
+                if let Some(running) = &mut self.packages.job {
+                    running.notice = (!left.is_empty()).then(|| left.trim_start().to_string());
+                }
             }
-            running.job.finished = finished;
-            if finished == Some(false) {
-                running.notice = (!left.is_empty()).then(|| left.trim_start().to_string());
-            }
-        }
-        if finished.is_some() {
-            self.refresh_packages(cx);
-            if finished == Some(true) && !self.packages.queue.is_empty() {
+            Some(true) if !self.packages.queue.is_empty() => {
                 let next = self.packages.queue.remove(0);
                 self.run_packages(&next, false, cx);
             }
+            _ => {}
         }
         cx.notify();
         true
@@ -867,6 +862,49 @@ impl Workbench {
         )
     }
 
+    fn package_job_fix(&mut self, fix: FailureFix, _: &mut Window, cx: &mut Context<Self>) {
+        match fix {
+            FailureFix::InstallDeveloperTools => {
+                if let (Some(daemon), Some(running)) = (self.daemon(), &mut self.packages.job) {
+                    running.job.request_developer_tools(
+                        &daemon,
+                        |this: &mut Self, id| {
+                            this.packages
+                                .job
+                                .as_mut()
+                                .filter(|running| running.job.id == id)
+                                .map(|running| &mut running.job)
+                        },
+                        cx,
+                    );
+                }
+            }
+            FailureFix::OtherTool { tool, change } => {
+                if self.package_busy() || self.packages.review.is_some() {
+                    return;
+                }
+                let Some(change) = self
+                    .packages
+                    .job
+                    .as_ref()
+                    .and_then(|running| running.job.alternative(tool, change))
+                else {
+                    return;
+                };
+                self.packages.job = None;
+                self.packages.review = Some(PaneReview {
+                    plans: vec![Review::Planning],
+                    ids: vec![0],
+                    skipped: Vec::new(),
+                    row: None,
+                    libraries: Vec::new(),
+                });
+                self.plan_packages(0, change, None, cx);
+            }
+            FailureFix::FreeUpSpace => self.manage_resources(cx),
+        }
+    }
+
     /// The running or last package job, with Show Details.
     fn package_job(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = *Palette::get(cx);
@@ -908,7 +946,11 @@ impl Workbench {
         Some(
             running
                 .job
-                .render(details, &p)
+                .render(
+                    details,
+                    running.job.fix_button(Self::package_job_fix, cx),
+                    &p,
+                )
                 .when_some(notice, |d, notice| {
                     d.child(div().text_color(p.text).child(notice))
                 })

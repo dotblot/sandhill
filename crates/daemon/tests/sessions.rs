@@ -1422,3 +1422,142 @@ async fn cleared_cells_have_no_outputs_until_run_again() {
     assert_eq!(outputs.cells[1].outputs[0]["text"], "again\n");
     client.shutdown(&session).await.unwrap();
 }
+
+#[tokio::test]
+async fn finds_missing_packages_in_files_and_real_sessions() {
+    use sandhill_proto::{KernelspecInfo, MissingPackage, MissingPackages};
+
+    let dir = common::tempdir().unwrap();
+    let daemon = TestDaemon::start(&dir.path().join("state")).await;
+    let mut client = daemon.client().await;
+    let kernels: Vec<KernelspecInfo> = client.call(Call::ListKernelspecs).await.unwrap();
+    let expected = vec![MissingPackage {
+        import: "sandhillnotapkg".into(),
+        package: "sandhillnotapkg".into(),
+    }];
+    for (language, file, source, fails) in [
+        (
+            "r",
+            "analysis.R",
+            "library(utils)\nlibrary(sandhillnotapkg)",
+            "library(sandhillnotapkg)",
+        ),
+        (
+            "python",
+            "analysis.ipynb",
+            "import ipykernel\nimport json\nimport beside_notebook\nimport sandhillnotapkg",
+            "import sandhillnotapkg",
+        ),
+    ] {
+        let Some(kernel) = kernels
+            .iter()
+            .find(|kernel| kernel.language.eq_ignore_ascii_case(language))
+        else {
+            eprintln!("skipping {language}: no {language} kernel is installed");
+            continue;
+        };
+        let path = dir.path().join(file);
+        let text = if language == "python" {
+            std::fs::write(dir.path().join("beside_notebook.py"), "value = 1\n").unwrap();
+            serde_json::json!({
+                "metadata": { "kernelspec": { "name": kernel.name, "language": language } },
+                "cells": [{ "cell_type": "code", "source": source }],
+            })
+            .to_string()
+        } else {
+            source.into()
+        };
+        std::fs::write(&path, text).unwrap();
+        let path = path.to_string_lossy().into_owned();
+        let check = |session| Call::MissingPackages {
+            path: path.clone(),
+            kernel: Some(kernel.name.clone()),
+            session,
+            project: None,
+        };
+        let from_files: MissingPackages = client.call(check(None)).await.unwrap();
+        assert_eq!(from_files.language, language);
+        assert_eq!(from_files.missing, expected);
+        let session = client
+            .start_session(&kernel.name, dir.path().to_str())
+            .await
+            .unwrap()
+            .id;
+        let from_session: MissingPackages =
+            client.call(check(Some(session.clone()))).await.unwrap();
+        assert_eq!(from_session.missing, expected);
+        let (events, finished) = run(&mut client, &session, fails).await;
+        assert_eq!(finished.status, "error");
+        let error = events
+            .iter()
+            .find(|event| event.msg_type == "error")
+            .unwrap();
+        let error = format!(
+            "{}: {}",
+            error.content["ename"].as_str().unwrap(),
+            error.content["evalue"].as_str().unwrap()
+        );
+        let from_error: MissingPackages = client
+            .call(Call::MissingInError {
+                session: session.clone(),
+                error,
+            })
+            .await
+            .unwrap();
+        assert_eq!(from_error.missing, expected);
+        assert_eq!(from_error.target, from_session.target);
+        if language == "python" {
+            let (events, finished) =
+                run(&mut client, &session, "import ipykernel.sandhillnotapkg").await;
+            assert_eq!(finished.status, "error");
+            let error = events
+                .iter()
+                .find(|event| event.msg_type == "error")
+                .unwrap();
+            let error = format!(
+                "{}: {}",
+                error.content["ename"].as_str().unwrap(),
+                error.content["evalue"].as_str().unwrap()
+            );
+            let from_error: MissingPackages = client
+                .call(Call::MissingInError {
+                    session: session.clone(),
+                    error,
+                })
+                .await
+                .unwrap();
+            assert!(
+                from_error.missing.is_empty(),
+                "ipykernel itself is installed"
+            );
+        }
+        client.shutdown(&session).await.unwrap();
+        if language == "r" {
+            let project = dir.path().join("restricted");
+            std::fs::create_dir(&project).unwrap();
+            let marker = project.join("profile-ran");
+            let r_path = serde_json::to_string(&marker).unwrap();
+            std::fs::write(
+                project.join(".Rprofile"),
+                format!("writeLines('ran', {r_path})"),
+            )
+            .unwrap();
+            let path = project.join(file);
+            std::fs::write(&path, source).unwrap();
+            let from_files: MissingPackages = client
+                .call(Call::MissingPackages {
+                    path: path.to_string_lossy().into_owned(),
+                    kernel: Some(kernel.name.clone()),
+                    session: None,
+                    project: Some(project.to_string_lossy().into_owned()),
+                })
+                .await
+                .unwrap();
+            assert_eq!(from_files.missing, expected);
+            assert!(
+                !marker.exists(),
+                "a file scan can't run an untrusted R profile"
+            );
+        }
+    }
+}

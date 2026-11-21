@@ -163,6 +163,7 @@ impl Workbench {
                     _ => None,
                 };
                 let failed = failed_status(run);
+                let (install, progress) = self.render_error_install(run_id, run, false, cx);
                 let code = run
                     .code
                     .as_deref()
@@ -235,6 +236,16 @@ impl Workbench {
                     }))
                     .when_some(failed, |d, s| {
                         d.child(div().text_color(p.err).child(format!("Run ended: {s}")))
+                    })
+                    .when(install.is_some() || progress.is_some(), |d| {
+                        d.child(
+                            v_flex()
+                                .id(SharedString::from(format!(
+                                    "console-error-actions-{run_id}"
+                                )))
+                                .children(install.map(|button| h_flex().child(button)))
+                                .children(progress),
+                        )
                     })
                     .map(|d| match (&run.asking, run.finished) {
                         (Some(question), false) => d.child(

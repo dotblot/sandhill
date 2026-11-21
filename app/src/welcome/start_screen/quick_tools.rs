@@ -4,9 +4,10 @@ use std::collections::{HashSet, VecDeque};
 
 use gpui_kit::component::checkbox::Checkbox;
 use sandhill_proto::{
-    EnvAction, EnvActionPlan, InstallPrefs, InstallTool, InstalledKey, NewRuntime, PYTHON_ENV_NAME,
-    PYTHON_SETS, PYTHON_VERSIONS, PackageAction, PackageChange, PackagePlan, QuickInstalled,
-    QuickInstalling, QuickReadiness, QuickTool, RuntimePlan, ipykernel_args, python_env_name_ok,
+    EnvAction, EnvActionPlan, FailureFix, InstallPrefs, InstallTool, InstalledKey, NewRuntime,
+    PYTHON_ENV_NAME, PYTHON_SETS, PYTHON_VERSIONS, PackageAction, PackageChange, PackagePlan,
+    QuickInstalled, QuickInstalling, QuickReadiness, QuickTool, RuntimePlan, ipykernel_args,
+    python_env_name_ok,
 };
 
 use crate::install_confirm::{self as review, Choice, Job, Review};
@@ -28,6 +29,7 @@ enum PackageRow {
     ChangedGenes,
     Symbols(String),
     Card,
+    Retry(Section),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -252,7 +254,7 @@ impl AppWindow {
                     "Gene symbols for mouse genes"
                 },
             ),
-            PackageRow::Card => return,
+            PackageRow::Card | PackageRow::Retry(_) => return,
         };
         let packages = found
             .packages
@@ -431,14 +433,18 @@ impl AppWindow {
     }
 
     fn quick_run_packages(&mut self, plan: &PackagePlan, automatic: bool, cx: &mut Context<Self>) {
-        self.quick_start_card_job(
-            Call::RunPackages {
-                change: plan.change.clone(),
-            },
-            review::progress_title(&plan.change),
-            automatic.then(|| review::auto_notice(plan)),
-            cx,
-        );
+        let call = Call::RunPackages {
+            change: plan.change.clone(),
+        };
+        let title = review::progress_title(&plan.change);
+        let notice = automatic.then(|| review::auto_notice(plan));
+        if let Some(QuickReview::Packages(PackageRow::Retry(section), _, _)) =
+            self.start.quick.reviewing.as_ref()
+        {
+            self.quick_start_install(call, *section, title, notice, cx);
+        } else {
+            self.quick_start_card_job(call, title, notice, cx);
+        }
     }
 
     fn quick_start_install(
@@ -463,6 +469,10 @@ impl AppWindow {
         q.notice = None;
         q.starting = Some(section);
         let kernel = matches!(&call, Call::InstallIrkernel { .. });
+        let change = match &call {
+            Call::RunPackages { change } => Some(change.clone()),
+            _ => None,
+        };
         let started = if kernel {
             let call = daemon.call::<TerminalInfo>(call);
             cx.background_spawn(async move { call.await.map(|job| (job, None)) })
@@ -477,8 +487,16 @@ impl AppWindow {
                 q.starting = None;
                 match started {
                     Ok((info, log)) => {
-                        let job = Job::new(info, log, title);
-                        review::watch(daemon, &job, Self::quick_install_status, cx).detach();
+                        let mut job = Job::new(info, log, title);
+                        job.change = change;
+                        review::watch(
+                            daemon,
+                            sandhill_link::LOCAL.to_string(),
+                            &job,
+                            Self::quick_install_status,
+                            cx,
+                        )
+                        .detach();
                         q.install = Some(Install {
                             section,
                             job,
@@ -502,18 +520,15 @@ impl AppWindow {
     fn quick_install_status(
         &mut self,
         id: &str,
-        output: Option<String>,
-        finished: Option<bool>,
+        status: review::JobStatus,
         cx: &mut Context<Self>,
     ) -> bool {
         let q = &mut self.start.quick;
         let Some(install) = q.install.as_mut().filter(|i| i.job.id == id) else {
             return false;
         };
-        if let Some(output) = output {
-            install.job.output = output;
-        }
-        install.job.finished = finished;
+        install.job.update(status);
+        let finished = install.job.finished;
         if finished.is_some() {
             let section = install.section;
             if self.quick_advance_jobs(section, finished == Some(true), cx) {
@@ -1445,7 +1460,7 @@ impl AppWindow {
             PackageRow::Plots => SharedString::from("quick-install-packages"),
             PackageRow::ChangedGenes => "quick-install-differential".into(),
             PackageRow::Symbols(name) => format!("quick-symbols-{name}").into(),
-            PackageRow::Card => unreachable!(),
+            PackageRow::Card | PackageRow::Retry(_) => unreachable!(),
         };
         if let Some(panel) = self.quick_package_panel(&at, p, cx) {
             v_flex().child(row).child(panel).into_any_element()
@@ -1787,6 +1802,50 @@ impl AppWindow {
             .into_any_element()
     }
 
+    fn quick_install_fix(&mut self, fix: FailureFix, window: &mut Window, cx: &mut Context<Self>) {
+        match fix {
+            FailureFix::InstallDeveloperTools => {
+                if let (Some(daemon), Some(install)) =
+                    (self.local_daemon(), &mut self.start.quick.install)
+                {
+                    install.job.request_developer_tools(
+                        &daemon,
+                        |this: &mut Self, id| {
+                            this.start
+                                .quick
+                                .install
+                                .as_mut()
+                                .filter(|install| install.job.id == id)
+                                .map(|install| &mut install.job)
+                        },
+                        cx,
+                    );
+                }
+            }
+            FailureFix::OtherTool { tool, change } => {
+                if let Some(install) = self.start.quick.install.as_ref()
+                    && let Some(change) = install.job.alternative(tool, change)
+                {
+                    self.quick_request_packages(
+                        PackageRow::Retry(install.section),
+                        Vec::new(),
+                        vec![change],
+                        None,
+                        cx,
+                    );
+                }
+            }
+            FailureFix::FreeUpSpace => {
+                let mode = StartMode::Resources(sandhill_link::LOCAL.to_string());
+                // The manager reads all windows, so leave this window's update first.
+                let this = cx.entity().downgrade();
+                window.defer(cx, move |window, cx| {
+                    let _ = this.update(cx, |this, cx| this.show_start(mode, window, cx));
+                });
+            }
+        }
+    }
+
     /// The running install's progress when it belongs in `section`'s box.
     fn quick_install_in(
         &self,
@@ -1795,6 +1854,9 @@ impl AppWindow {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let q = &self.start.quick;
+        if let Some(panel) = self.quick_package_panel(&PackageRow::Retry(section), p, cx) {
+            return Some(panel.into_any_element());
+        }
         let notice = q
             .notice
             .as_ref()
@@ -1828,7 +1890,11 @@ impl AppWindow {
         Some(
             v_flex()
                 .children(notice)
-                .child(install.job.render(details, p))
+                .child(install.job.render(
+                    details,
+                    install.job.fix_button(Self::quick_install_fix, cx),
+                    p,
+                ))
                 .into_any_element(),
         )
     }

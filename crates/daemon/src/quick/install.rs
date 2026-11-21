@@ -204,7 +204,7 @@ fn probe_command(command: Command, args: &[&str]) -> Option<String> {
     probe_command_with(command, args, Duration::from_secs(25), false)
 }
 
-fn probe_command_with(
+pub(super) fn probe_command_with(
     mut command: Command,
     args: &[&str],
     timeout: Duration,
@@ -361,6 +361,7 @@ pub(crate) fn launch(
         launch.job = None;
     }
     launch.title = title.into();
+    super::install_failure::remember(log, &job)?;
     Ok(launch)
 }
 

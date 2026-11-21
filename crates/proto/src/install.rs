@@ -617,3 +617,82 @@ pub struct EnvActionPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
 }
+
+/// A package a document or an error needs that its kernel's environment
+/// doesn't have.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingPackage {
+    /// As the code names it: `sklearn`, `Seurat`.
+    pub import: String,
+    /// What installs it: `scikit-learn`, `Seurat`.
+    pub package: String,
+}
+
+/// What a document or an error needs, and where it would go.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingPackages {
+    /// `r` or `python`.
+    pub language: String,
+    /// The kernel's environment: for R, the suggested library (the last
+    /// one chosen for this R when it can be written to, else the first
+    /// writable one).
+    pub target: InstallTarget,
+    /// The kernel, as pickers name it.
+    #[serde(default)]
+    pub kernel: String,
+    pub missing: Vec<MissingPackage>,
+}
+
+/// What went wrong in an install, in plain words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallFailureKind {
+    /// A package had to be built and the developer tools are missing.
+    DeveloperTools,
+    /// A site couldn't be reached.
+    Network,
+    /// Packages that can't be installed together.
+    Conflict,
+    /// Not enough disk space.
+    Space,
+    /// No such package (or not for this R or Python).
+    NotAvailable,
+    /// It needs a program or library from outside R or Python.
+    SystemLibrary,
+    /// The folder can't be written to.
+    Permission,
+    Other,
+}
+
+/// The button that fixes a failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FailureFix {
+    /// Apple's developer tools ([`Call::InstallDeveloperTools`](crate::Call)).
+    InstallDeveloperTools,
+    /// Try the same packages with another tool (another source). `change`
+    /// is the failed change with that tool, when the daemon knows it
+    /// (always for changes it planned, including imported package lists).
+    OtherTool {
+        tool: InstallTool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        change: Option<PackageChange>,
+    },
+    /// Open Resources and Storage.
+    FreeUpSpace,
+}
+
+/// A failed install, explained.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallFailure {
+    pub kind: InstallFailureKind,
+    /// One plain sentence: "DESeq2 had to be built on this Mac, which
+    /// needs Apple's developer tools."
+    pub message: String,
+    /// The specifics, one per line: the site, the packages in conflict
+    /// and why, the space needed, the missing library.
+    #[serde(default)]
+    pub detail: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<FailureFix>,
+}

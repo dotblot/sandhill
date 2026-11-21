@@ -5,7 +5,9 @@
 
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::button::Button;
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -415,32 +417,40 @@ impl Workbench {
         )
     }
 
-    /// The Fix and Explain buttons under a cell that ended in an error,
-    /// when the project has an AI pane.
+    /// Fix and Explain when there is an AI pane; package installs don't need one.
     pub(crate) fn render_error_actions(
         &self,
         ix: usize,
+        install: Option<Button>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.agents.as_ref()?;
+        let ai = self.agents.is_some();
+        if !ai && install.is_none() {
+            return None;
+        }
         Some(
             h_flex()
-                .mt(px(4.))
-                .gap(px(6.))
-                .child(
-                    look::button(("cell-fix", ix), "Fix", Some("sparkle.ai"), Row)
-                        .tooltip("Ask the agent to fix this error")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.ask_agent_about_cell(ix, true, window, cx)
-                        })),
-                )
-                .child(
-                    look::button(("cell-explain", ix), "Explain", Some("help"), Row)
-                        .tooltip("Ask the agent what went wrong")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.ask_agent_about_cell(ix, false, window, cx)
-                        })),
-                )
+                .px(px(look::PANE_PAD_X))
+                .pb(px(look::PANE_PAD_Y))
+                .gap(px(look::GAP_6))
+                .flex_wrap()
+                .when(ai, |d| {
+                    d.child(
+                        look::button(("cell-fix", ix), "Fix", Some("sparkle.ai"), Row)
+                            .tooltip("Ask the agent to fix this error")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.ask_agent_about_cell(ix, true, window, cx)
+                            })),
+                    )
+                    .child(
+                        look::button(("cell-explain", ix), "Explain", Some("help"), Row)
+                            .tooltip("Ask the agent what went wrong")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.ask_agent_about_cell(ix, false, window, cx)
+                            })),
+                    )
+                })
+                .children(install)
                 .into_any_element(),
         )
     }

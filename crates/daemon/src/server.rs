@@ -38,6 +38,8 @@ mod connections;
 mod document_calls;
 mod file_history;
 mod help_calls;
+mod package_calls;
+mod package_scan;
 mod quick_calls;
 mod request_helpers;
 mod session_calls;
@@ -295,6 +297,27 @@ impl Daemon {
             Call::QuickReadiness => self.quick_readiness().await?,
             Call::PlanPackages { change } => self.plan_packages(change).await?,
             Call::RunPackages { change } => self.run_packages(change).await?,
+            Call::MissingPackages {
+                path,
+                kernel,
+                session,
+                project,
+            } => serde_json::to_value(
+                self.missing_packages(path, kernel, session, project)
+                    .await?,
+            )?,
+            Call::MissingInError { session, error } => {
+                serde_json::to_value(self.missing_in_error(&session, &error).await?)?
+            }
+            Call::ExplainInstallFailure { log } => {
+                let folder = self.state.install_logs_dir();
+                serde_json::to_value(
+                    blocking(move || {
+                        crate::quick::install_failure::explain(&folder, Path::new(&log))
+                    })
+                    .await?,
+                )?
+            }
             Call::ListEnvironments => self.list_environments().await?,
             Call::SearchPackages { env, query } => self.search_packages(env, query).await?,
             Call::EnvUpdates { env } => self.env_updates(env).await?,

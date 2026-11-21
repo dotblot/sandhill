@@ -1,15 +1,18 @@
 //! Inline review and progress for changes to R, Python and their packages.
 
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Duration;
 
+use gpui_kit::component::Disableable;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use sandhill_proto::{
-    Call, EnvAction, EnvActionPlan, FileText, InstallPrefs, InstallTarget, InstallTool,
-    InstallToolInfo, NewRuntime, PackageAction, PackageChange, PackagePlan, RuntimePlan,
-    TerminalInfo,
+    Call, EnvAction, EnvActionPlan, FailureFix, FileText, InstallFailure, InstallFailureKind,
+    InstallPrefs, InstallTarget, InstallTool, InstallToolInfo, NewRuntime, PackageAction,
+    PackageChange, PackagePlan, RuntimePlan, TerminalInfo,
 };
 
 use crate::daemon::Daemon;
@@ -236,7 +239,7 @@ pub(crate) fn setup_packages<T: 'static>(
 ) -> Div {
     body().children(reviews.iter().enumerate().map(|(ix, review)| match review {
         Review::Planning => line("Working out the command…", p.muted),
-        Review::Ready(plan) => package_plan(ix, plan, libraries, pick, p, cx),
+        Review::Ready(plan) => package_plan(ix, plan, libraries, &pick, p, cx),
         Review::Error(error) => line(error.clone(), p.err),
     }))
 }
@@ -337,7 +340,7 @@ fn package_plan<T: 'static>(
     ix: usize,
     plan: &PackagePlan,
     libraries: &[String],
-    pick: impl Fn(&mut T, usize, Choice, &mut Context<T>) + Copy + 'static,
+    pick: &(impl Fn(&mut T, usize, Choice, &mut Context<T>) + Clone + 'static),
     p: &Palette,
     cx: &mut Context<T>,
 ) -> Div {
@@ -384,6 +387,7 @@ fn package_plan<T: 'static>(
                 .gap(px(look::GAP_4))
                 .children(plan.tools.iter().map(|info| {
                     let tool = info.tool;
+                    let pick = pick.clone();
                     Button::new(SharedString::from(format!(
                         "install-tool-{ix}-{}",
                         tool.id()
@@ -408,6 +412,7 @@ fn package_plan<T: 'static>(
             .children(libraries.iter().map(|folder| {
                 let chosen = folder == library;
                 let folder = folder.clone();
+                let pick = pick.clone();
                 Button::new(SharedString::from(format!("install-folder-{ix}-{folder}")))
                     .small()
                     .label(folder.clone())
@@ -441,7 +446,7 @@ pub(crate) fn packages<T: 'static>(
     skipped: &[String],
     libraries: &[String],
     (cancel, run): (Button, Button),
-    pick: impl Fn(&mut T, usize, Choice, &mut Context<T>) + Copy + 'static,
+    pick: impl Fn(&mut T, usize, Choice, &mut Context<T>) + Clone + 'static,
     p: &Palette,
     cx: &mut Context<T>,
 ) -> Div {
@@ -477,7 +482,7 @@ pub(crate) fn packages<T: 'static>(
     let any = plans.iter().any(|plan| runnable(plan));
     let mut panel = body();
     for (ix, plan) in plans.into_iter().enumerate() {
-        panel = panel.child(package_plan(ix, plan, choices, pick, p, cx));
+        panel = panel.child(package_plan(ix, plan, choices, &pick, p, cx));
     }
     panel
         .children(skipped)
@@ -604,13 +609,46 @@ pub(crate) fn run_button() -> Button {
     Button::new("install-review-run").small()
 }
 
+/// Installs can finish in Welcome or in another project window on this device.
+#[derive(Default)]
+pub(crate) struct InstallCompletions(HashMap<String, u64>);
+impl Global for InstallCompletions {}
+
+impl InstallCompletions {
+    pub(crate) fn count(host: &str, cx: &App) -> u64 {
+        cx.try_global::<Self>()
+            .and_then(|state| state.0.get(host))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn finished(host: String, cx: &mut App) {
+        *cx.default_global::<Self>().0.entry(host).or_default() += 1;
+    }
+}
+
+pub(crate) struct JobStatus {
+    output: Option<String>,
+    finished: Option<bool>,
+    failure: Option<InstallFailure>,
+}
+
+enum DeveloperTools {
+    Opening,
+    Opened,
+    Failed,
+}
+
 pub(crate) struct Job {
     pub(crate) id: String,
     pub(crate) log: Option<String>,
     pub(crate) title: String,
-    pub(crate) output: String,
+    output: SharedString,
     pub(crate) finished: Option<bool>,
     pub(crate) details: bool,
+    pub(crate) change: Option<PackageChange>,
+    failure: Option<InstallFailure>,
+    developer_tools: Option<DeveloperTools>,
 }
 
 impl Job {
@@ -620,15 +658,111 @@ impl Job {
             id: info.id,
             log,
             title,
-            output: String::new(),
+            output: SharedString::default(),
             details: false,
+            change: None,
+            failure: None,
+            developer_tools: None,
         }
     }
 
-    pub(crate) fn render(&self, details: Button, p: &Palette) -> Div {
+    pub(crate) fn update(&mut self, status: JobStatus) {
+        if let Some(output) = status.output {
+            self.output = output.into();
+        }
+        self.finished = status.finished;
+        self.failure = status.failure;
+    }
+
+    pub(crate) fn alternative(
+        &self,
+        tool: InstallTool,
+        proposed: Option<PackageChange>,
+    ) -> Option<PackageChange> {
+        let mut change = match proposed {
+            Some(change) => change,
+            None => self
+                .change
+                .as_ref()
+                .filter(|change| change.tool != Some(tool))?
+                .clone(),
+        };
+        change.tool = Some(tool);
+        Some(change)
+    }
+
+    pub(crate) fn fix_button<T: 'static>(
+        &self,
+        handle: impl Fn(&mut T, FailureFix, &mut Window, &mut Context<T>) + 'static,
+        cx: &mut Context<T>,
+    ) -> Option<Button> {
+        let fix = self.failure.as_ref()?.fix.clone()?;
+        let label = match &fix {
+            FailureFix::InstallDeveloperTools => "Install Developer Tools",
+            FailureFix::OtherTool { tool, change } => {
+                if change.is_none()
+                    && !self
+                        .change
+                        .as_ref()
+                        .is_some_and(|change| change.tool != Some(*tool))
+                {
+                    return None;
+                }
+                "Choose Another Source"
+            }
+            FailureFix::FreeUpSpace => "Free Up Space",
+        };
+        Some(
+            Button::new("install-job-fix")
+                .small()
+                .label(label)
+                .disabled(matches!(
+                    self.developer_tools,
+                    Some(DeveloperTools::Opening)
+                ))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| handle(this, fix.clone(), window, cx)),
+                ),
+        )
+    }
+
+    pub(crate) fn request_developer_tools<T: 'static>(
+        &mut self,
+        daemon: &Daemon,
+        job: impl for<'a> Fn(&'a mut T, &str) -> Option<&'a mut Job> + 'static,
+        cx: &mut Context<T>,
+    ) {
+        if matches!(self.developer_tools, Some(DeveloperTools::Opening)) {
+            return;
+        }
+        self.developer_tools = Some(DeveloperTools::Opening);
+        let id = self.id.clone();
+        let request = daemon.call::<()>(Call::InstallDeveloperTools);
+        cx.spawn(async move |this, cx| {
+            let result = request.await;
+            this.update(cx, |this, cx| {
+                if let Some(job) = job(this, &id) {
+                    job.developer_tools = Some(if result.is_ok() {
+                        DeveloperTools::Opened
+                    } else {
+                        DeveloperTools::Failed
+                    });
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(crate) fn render(&self, details: Button, fix: Option<Button>, p: &Palette) -> Div {
+        let explanation = self.failure.as_ref();
         let status = match self.finished {
             Some(true) => format!("{} finished.", self.title),
-            Some(false) => format!("{} didn't finish.", self.title),
+            Some(false) => explanation
+                .map(|failure| failure.message.clone())
+                .unwrap_or_else(|| format!("{} didn't finish.", self.title)),
             None => match self
                 .output
                 .lines()
@@ -640,59 +774,82 @@ impl Job {
                 None => format!("{}…", self.title),
             },
         };
-        body()
-            .child(
+        let details = self.log.as_ref().map(|_| {
+            details.label(if self.details {
+                "Hide Details"
+            } else {
+                "Show Details"
+            })
+        });
+        let status = line(
+            status,
+            if self.finished == Some(false) {
+                p.err
+            } else {
+                p.muted
+            },
+        );
+        let panel = if let Some(failure) = explanation {
+            body()
+                .child(status)
+                .children(
+                    failure
+                        .detail
+                        .iter()
+                        .map(|detail| line(detail.clone(), p.muted)),
+                )
+                .children(fix.map(|button| h_flex().child(button)))
+                .children(match self.developer_tools {
+                    Some(DeveloperTools::Opening) => {
+                        Some(line("Opening Apple's installer…", p.muted))
+                    }
+                    Some(DeveloperTools::Opened) => Some(line(
+                        "Finish in Apple's installer, then try installing again.",
+                        p.muted,
+                    )),
+                    Some(DeveloperTools::Failed) => {
+                        Some(line("Couldn't open Apple's installer.", p.err))
+                    }
+                    None => None,
+                })
+                .children(details.map(|button| h_flex().child(button)))
+        } else {
+            body().child(
                 h_flex()
                     .gap(px(look::GAP_8))
-                    .child(
-                        line(
-                            status,
-                            if self.finished == Some(false) {
-                                p.err
-                            } else {
-                                p.muted
-                            },
-                        )
-                        .flex_1(),
-                    )
-                    .when(self.log.is_some(), |d| {
-                        d.child(details.label(if self.details {
-                            "Hide Details"
-                        } else {
-                            "Show Details"
-                        }))
-                    }),
+                    .child(status.flex_1())
+                    .children(details),
             )
-            .when(self.details, |d| {
-                // The log's end: long builds print thousands of lines.
-                let tail: Vec<&str> = self.output.lines().rev().take(40).collect();
-                let text = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-                d.child(
-                    div()
-                        .id("install-job-log")
-                        .max_h(px(220.))
-                        .min_w_0()
-                        .overflow_y_scroll()
-                        .p(px(look::GAP_8))
-                        .rounded(px(look::CONTROL_RADIUS))
-                        .bg(p.ink(look::ROW_HOVER))
-                        .font_family(look::mono())
-                        .whitespace_normal()
-                        .child(text),
-                )
-            })
+        };
+        panel.when(self.details, |d| {
+            d.child(
+                div()
+                    .id("install-job-log")
+                    .max_h(px(220.))
+                    .min_w_0()
+                    .overflow_y_scroll()
+                    .p(px(look::GAP_8))
+                    .rounded(px(look::CONTROL_RADIUS))
+                    .bg(p.ink(look::ROW_HOVER))
+                    .font_family(look::mono())
+                    .whitespace_normal()
+                    .child(self.output.clone()),
+            )
+        })
     }
 }
 
 /// Share job tracking without tying it to either the Welcome or project window.
 pub(crate) fn watch<T: 'static>(
-    daemon: std::rc::Rc<Daemon>,
+    daemon: Rc<Daemon>,
+    host: String,
     job: &Job,
-    update: impl Fn(&mut T, &str, Option<String>, Option<bool>, &mut Context<T>) -> bool + 'static,
+    update: impl Fn(&mut T, &str, JobStatus, &mut Context<T>) -> bool + 'static,
     cx: &mut Context<T>,
 ) -> Task<()> {
     let id = job.id.clone();
     let log = job.log.clone();
+    let initially_finished = job.finished;
     cx.spawn(async move |this, cx| {
         let mut seen = None;
         loop {
@@ -702,7 +859,7 @@ pub(crate) fn watch<T: 'static>(
                     Some(t) if t.running => None,
                     Some(t) => Some(t.exit.as_ref().is_some_and(|e| e.code == Some(0))),
                     // Gone from the list once it ended and was cleaned up.
-                    None => Some(true),
+                    None => initially_finished.or(Some(true)),
                 };
                 let end = terminal.map(|t| t.end);
                 let output = if let Some(log) = &log
@@ -719,10 +876,30 @@ pub(crate) fn watch<T: 'static>(
                 if output.is_some() {
                     seen = end;
                 }
+                let failure = match (&log, finished) {
+                    (Some(log), Some(false)) => daemon
+                        .call::<Option<InstallFailure>>(Call::ExplainInstallFailure {
+                            log: log.clone(),
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                        .filter(|failure| failure.kind != InstallFailureKind::Other),
+                    _ => None,
+                };
+                let status = JobStatus {
+                    output,
+                    finished,
+                    failure,
+                };
                 let keep = this
-                    .update(cx, |this, cx| update(this, &id, output, finished, cx))
+                    .update(cx, |this, cx| update(this, &id, status, cx))
                     .unwrap_or(false);
-                if !keep || finished.is_some() {
+                if finished.is_some() {
+                    cx.update(|cx| InstallCompletions::finished(host, cx));
+                    break;
+                }
+                if !keep && log.is_none() {
                     break;
                 }
             } else if this.update(cx, |_, _| ()).is_err() {

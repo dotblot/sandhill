@@ -123,6 +123,7 @@ impl Workbench {
     /// Follows a change of the active kernel: the Console shows its runs
     /// and Variables its variables.
     pub(crate) fn session_changed(&mut self, cx: &mut Context<Self>) {
+        self.refresh_missing_documents(false, cx);
         let document = self.open.as_ref().and_then(|open| {
             open.session
                 .id()
@@ -825,6 +826,7 @@ impl Workbench {
                 self.save_console_choice();
             }
             self.console_sessions.live.retain(|s| s.id != event.session);
+            self.refresh_missing_documents(false, cx);
             cx.notify();
             return;
         }
@@ -906,6 +908,11 @@ impl Workbench {
                 }
                 self.suggest_after_run(&run_id, cx);
                 self.explore_when_made(&run_id, cx);
+                if !self.runs.get(&run_id).is_some_and(|run| run.quiet)
+                    && !self.session_is_busy(&session)
+                {
+                    self.refresh_missing_documents(false, cx);
+                }
             }
             sandhill_proto::EVENT_INPUT_REQUEST | sandhill_proto::EVENT_INPUT_REPLY => {
                 run.append_output(event.seq, event.msg_type, event.content);

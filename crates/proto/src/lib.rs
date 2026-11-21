@@ -1007,6 +1007,35 @@ pub enum Call {
     RunEnvAction {
         action: EnvAction,
     },
+    /// The packages a script, notebook or Quarto file at `path` uses
+    /// (`library()`, `require()`, `requireNamespace()`, `pkg::`,
+    /// `import`, `from … import`) that its kernel's environment doesn't
+    /// have. `kernel` is the document's chosen kernel, else the one it
+    /// would start with; `session` its running session, which answers
+    /// best when there is one. Returns [`MissingPackages`].
+    MissingPackages {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kernel: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
+    },
+    /// The packages behind an error a session showed ("there is no
+    /// package called", `ModuleNotFoundError`), mapped to what installs
+    /// them, and where. Returns [`MissingPackages`] (empty `missing` when
+    /// the error isn't one).
+    MissingInError {
+        session: String,
+        error: String,
+    },
+    /// Reads a failed install's log (`QuickInstalling::log`) and says what
+    /// went wrong in plain words, with a fix when there is one. Returns
+    /// `Option<InstallFailure>`.
+    ExplainInstallFailure {
+        log: String,
+    },
     /// Turns Install Without Asking on or off for this computer. Returns
     /// [`InstallPrefs`].
     SetInstallPrefs {

@@ -68,6 +68,13 @@ impl Workbench {
     /// The notebook and source jumps share the same unobscured viewport edge.
     /// Find has a 24px input, 12px padding and 1px edge; Replace adds 28px.
     pub(crate) fn notebook_header_height(&self) -> f32 {
+        if self
+            .open
+            .as_ref()
+            .is_some_and(Open::has_missing_package_bar)
+        {
+            return 0.;
+        }
         look::strip()
             + if self.find.open {
                 if self.find.replace { 65. } else { 37. }
@@ -157,6 +164,7 @@ impl Workbench {
                 .h_full()
                 .child(self.render_tabs(cx))
                 .children(self.render_find(cx))
+                .children(self.render_missing_bar(open, &p, cx))
                 .children(self.render_truncated_note(open, cx))
                 .child(self.render_source_document(open, cx))
                 .into_any_element();
@@ -258,28 +266,24 @@ impl Workbench {
                 d.gap(px(crate::editor::cell_view::TOOLS_HEIGHT + 4.))
             })
             .children(cells);
-        pane(&p)
-            .relative()
-            .flex_1()
-            .h_full()
-            .child(
-                look::PaneScroll::new(
-                    "notebook-scroll",
-                    header_height,
-                    10.,
-                    self.cell_keys(scroller, cx),
-                )
-                .handle(&self.notebook_scroll),
-            )
-            .child(look::floating_header(
-                &p,
-                0.,
-                true,
-                v_flex()
-                    .child(self.render_tabs(cx))
-                    .children(self.render_find(cx)),
-            ))
-            .into_any_element()
+        let scroller = look::PaneScroll::new(
+            "notebook-scroll",
+            header_height,
+            10.,
+            self.cell_keys(scroller, cx),
+        )
+        .handle(&self.notebook_scroll);
+        let header = v_flex()
+            .child(self.render_tabs(cx))
+            .children(self.render_find(cx));
+        let pane = pane(&p).relative().flex_1().h_full();
+        let pane = if let Some(bar) = self.render_missing_bar(open, &p, cx) {
+            pane.child(header).child(bar).child(scroller)
+        } else {
+            pane.child(scroller)
+                .child(look::floating_header(&p, 0., true, header))
+        };
+        pane.into_any_element()
     }
 
     fn render_source_document(&self, open: &Open, cx: &mut Context<Self>) -> AnyElement {
@@ -737,10 +741,8 @@ impl Workbench {
     ) -> AnyElement {
         let p = *Palette::get(cx);
         let cell = &open.notebook.cells[ix];
-        let run = open
-            .cell_runs
-            .get(&cell.id)
-            .and_then(|id| self.runs.get(id));
+        let run_id = open.cell_runs.get(&cell.id);
+        let run = run_id.and_then(|id| self.runs.get(id));
         let busy = open.sending.contains(&cell.id)
             || open.waiting.contains(&cell.id)
             || run.is_some_and(|r| !r.finished);
@@ -878,7 +880,18 @@ impl Workbench {
                             )
                         },
                     )
-                    .when(fixable, |d| d.children(self.render_error_actions(ix, cx))),
+                    .when(fixable, |d| {
+                        let (install, progress) = run_id
+                            .zip(run)
+                            .map(|(id, run)| self.render_error_install(id, run, true, cx))
+                            .unwrap_or_default();
+                        d.child(
+                            v_flex()
+                                .id(("cell-error-actions", ix))
+                                .children(self.render_error_actions(ix, install, cx))
+                                .children(progress),
+                        )
+                    }),
             )
             .into_any_element()
     }

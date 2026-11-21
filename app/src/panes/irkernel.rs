@@ -175,6 +175,7 @@ impl Workbench {
     /// An install job ended: its kernel, if any, can now be picked.
     pub(crate) fn irkernel_job_ended(&mut self, terminal: &str, cx: &mut Context<Self>) {
         if self.irkernel.jobs.remove(terminal) {
+            crate::install_confirm::InstallCompletions::finished(self.host(), cx);
             self.reload_kernels(cx);
         }
     }

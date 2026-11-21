@@ -109,6 +109,18 @@ by sentence); where an older plan differs, this wins.
   `.Rprofile` are not read (a project's own `.Rprofile` still runs). A
   document asking for another kernel gets the "wasn't found" message,
   which says the R and Python page can switch.
+- Missing packages (Huan, 2026-11-20;
+  `docs/design/clean-footprint-plan.md`): when a notebook, script or
+  Quarto file opens (and when its kernel changes or an install ends),
+  Sandhill reads its `library()`, `require()`, `pkg::` and `import`
+  lines; packages its kernel lacks are offered in one bar at the top
+  (Install…, Not Now), with import names matched to what installs them
+  (`sklearn` is scikit-learn). An error saying a package is missing gets
+  an Install button beside Fix and Explain, also without the AI pane.
+  Every such install goes through the usual confirmation. A failed
+  install says what went wrong in plain words with its fix as a button
+  (Install Developer Tools, Choose Another Source, Free Up Space), the
+  log one click away.
 
 ## Plots
 - Console plots stay inline unless sent to

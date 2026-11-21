@@ -1,0 +1,22 @@
+[
+  ["developer_tools", "* installing *source* package ‘systemfonts’ ...\nxcrun: error: invalid active developer path (/Library/Developer/CommandLineTools), missing xcrun\nERROR: compilation failed for package ‘systemfonts’", ""],
+  ["developer_tools", "* installing *source* package ‘ape’ ...\n/bin/sh: gfortran: command not found\nmake: *** [dist_dna.o] Error 127", ""],
+  ["network", "trying URL 'https://cloud.r-project.org/src/contrib/Seurat_5.4.0.tar.gz'\nError in download.file(url, destfile, method, mode = \"wb\") :\n  cannot open URL 'https://cloud.r-project.org/src/contrib/Seurat_5.4.0.tar.gz'\n  HTTP status was '503 Service Unavailable'", "cloud.r-project.org"],
+  ["network", "Downloading GitHub repo satijalab/seurat@HEAD\nError in curl::curl_fetch_memory(url, handle = handle) :\n  Could not resolve host: api.github.com", "api.github.com"],
+  ["network", "WARNING: Retrying after connection broken by 'SSLError(SSLCertVerificationError(1, certificate verify failed))': /simple/pandas/\npip._vendor.requests.exceptions.ConnectionError: HTTPSConnectionPool(host='pypi.org', port=443)", "pypi.org"],
+  ["network", "CondaHTTPError: HTTP 000 CONNECTION FAILED for url <https://conda.anaconda.org/conda-forge/osx-arm64/repodata.json>", "conda.anaconda.org"],
+  ["network", "error: Failed to fetch: `https://files.pythonhosted.org/packages/wheel.whl`\n  Caused by: HTTP status server error (503 Service Unavailable)\n  Caused by: Failed to connect to files.pythonhosted.org port 443", "files.pythonhosted.org"],
+  ["conflict", "Error: package or namespace load failed for ‘Seurat’:\n namespace ‘Matrix’ 1.5-4 is being loaded, but >= 1.6.3 is required", "1.6.3"],
+  ["conflict", "ERROR: Cannot install toolkit and numpy==2.1.0 because these package versions have conflicting dependencies.\nThe conflict is caused by:\n    The user requested numpy==2.1.0\n    toolkit 0.2 depends on numpy<2\nERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/", "toolkit 0.2 needs numpy<2"],
+  ["conflict", "LibMambaUnsatisfiableError: Encountered problems while solving:\nThe following packages are incompatible\n├─ numpy 1.21 requires python >=3.9,<3.10.0a0, which can be installed;\n└─ python 3.12 is not compatible with any installable versions previously reported.", "numpy 1.21 needs python"],
+  ["conflict", "  × No solution found when resolving dependencies:\n  ╰─▶ Because toolkit depends on numpy<2 and you require numpy>=2, your requirements are unsatisfiable.", "numpy<2"],
+  ["space", "Total download: 462 MB\nExtracting scanpy-1.11.5-pyhd8ed1ab_0.conda\n[Errno 28] No space left on device", "462 MB"],
+  ["not_available", "Installing package(s) ‘notthere’\nWarning message:\npackage ‘notthere’ is not available for this version of R", "notthere"],
+  ["not_available", "ERROR: Could not find a version that satisfies the requirement sandhillnotapkg (from versions: none)\nERROR: No matching distribution found for sandhillnotapkg", "sandhillnotapkg"],
+  ["not_available", "PackagesNotFoundError: The following packages are not available from current channels:\n  - sandhillnotapkg", "sandhillnotapkg"],
+  ["not_available", "critical libmamba Could not solve for environment specs\n    nothing provides sandhillnotapkg needed by toolkit-1.2-0", "sandhillnotapkg"],
+  ["system_library", "Package libxml-2.0 was not found in the pkg-config search path.\nERROR: configuration failed for package ‘xml2’", "libxml2"],
+  ["system_library", "configure: error: gdal-config not found or not executable.\nERROR: configuration failed for package ‘sf’", "GDAL"],
+  ["system_library", "src/include.c:1:10: fatal error: 'openssl/ssl.h' file not found\nclang: error: compilation failed", "openssl/ssl.h"],
+  ["permission", "Warning in install.packages(\"Seurat\", lib = lib) :\n  'lib = \"/usr/local/lib/R/site-library\"' is not writable\nError in install.packages : unable to install packages", "site-library"]
+]

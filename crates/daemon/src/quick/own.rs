@@ -77,7 +77,7 @@ fn folder(path: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn free_mb(folder: &Path) -> Result<u64> {
+pub(super) fn free_mb(folder: &Path) -> Result<u64> {
     let parent = folder
         .ancestors()
         .find(|path| path.is_dir())

@@ -13,7 +13,7 @@ use sandhill_proto::{
 use serde_json::Value;
 
 use super::install::{self, executable, info, probe, quote};
-use super::{record, setup};
+use super::{package_names, record, setup};
 use crate::kernelspecs::Search;
 
 const CRAN: &str = "https://cloud.r-project.org";
@@ -378,6 +378,8 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
             let conda_distributions = (*action != PackageAction::Install
                 && prefix.join("conda-meta").is_dir())
             .then(|| conda_distribution_names(prefix));
+            let translating =
+                *action == PackageAction::Install && prefix.join("conda-meta").is_dir();
             for (&name, spec) in requested.iter().zip(packages.iter()) {
                 let normalized = record::python_name(name);
                 if conda_distributions
@@ -399,8 +401,16 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
                 } else {
                     "PyPI"
                 };
-                plan.packages
-                    .push(package(file_label(name), spec, source, version));
+                let selected_name = if translating && source == "PyPI" {
+                    package_names::distribution(name, selected.tool)
+                } else {
+                    name
+                };
+                let mut planned = package(file_label(selected_name), spec, source, version);
+                if selected_name != name {
+                    planned.spec.replace_range(..name.len(), selected_name);
+                }
+                plan.packages.push(planned);
             }
             if !writable(&actual.package_folder) {
                 bail!(
@@ -426,7 +436,7 @@ fn build(search: &Search, record_path: Option<&Path>, plan: &mut PackagePlan) ->
                 &selected.path,
                 program.to_string_lossy().as_ref(),
                 *action,
-                packages,
+                plan.packages.iter().map(|package| package.spec.as_str()),
                 repair,
             )
         }
@@ -587,6 +597,10 @@ pub(super) fn kits() -> impl Iterator<Item = &'static sandhill_proto::Kit> {
 }
 
 fn conda_kit_python(name: &str) -> &str {
+    let mapped = package_names::distribution(name, InstallTool::Conda);
+    if mapped != name {
+        return mapped;
+    }
     kits()
         .flat_map(|kit| kit.python)
         .find(|&&(_, pypi)| pypi.eq_ignore_ascii_case(name))
@@ -633,15 +647,22 @@ pub(super) fn python_command(
     action: PackageAction,
     packages: &[String],
 ) -> String {
-    python_command_with(tool, path, python, action, packages, false)
+    python_command_with(
+        tool,
+        path,
+        python,
+        action,
+        packages.iter().map(String::as_str),
+        false,
+    )
 }
 
-fn python_command_with(
+fn python_command_with<'a>(
     tool: InstallTool,
-    path: &str,
-    python: &str,
+    path: &'a str,
+    python: &'a str,
     action: PackageAction,
-    packages: &[String],
+    packages: impl IntoIterator<Item = &'a str>,
     repair: bool,
 ) -> String {
     let verb = if action == PackageAction::Remove {
@@ -668,7 +689,7 @@ fn python_command_with(
         PackageAction::Remove if tool == InstallTool::Pip => args.push("-y"),
         _ => {}
     }
-    args.extend(packages.iter().map(String::as_str));
+    args.extend(packages);
     quote(args)
 }
 

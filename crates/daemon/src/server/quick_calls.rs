@@ -149,12 +149,16 @@ impl Daemon {
         &self,
         make: impl FnOnce(&Path) -> Result<Launch> + Send + 'static,
     ) -> Result<QuickInstalling> {
-        let log = std::env::temp_dir().join(format!(
-            "sandhill-quick-install-{}.log",
-            uuid::Uuid::new_v4().simple()
-        ));
-        let at = log.clone();
-        let launch = blocking(move || make(&at)).await?;
+        let folder = self.state.install_logs_dir();
+        let (launch, log) = blocking(move || {
+            // The install runs from another directory, so give it an absolute path.
+            let log = folder.canonicalize()?.join(format!(
+                "sandhill-quick-install-{}.log",
+                uuid::Uuid::new_v4().simple()
+            ));
+            Ok((make(&log)?, log))
+        })
+        .await?;
         let started = self.terminals.start_unmanaged(launch).await?;
         self.keep_awake(&started.id);
         Ok(QuickInstalling {

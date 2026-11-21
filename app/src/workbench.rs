@@ -30,6 +30,7 @@ use crate::panes::terminal::TerminalView;
 use crate::panes::tree::{self, Folder, Tree};
 
 pub(crate) mod console;
+mod missing_packages;
 mod panels;
 mod runs;
 mod tabs;
@@ -120,6 +121,7 @@ pub(crate) struct Run {
     output_replay_seq: i64,
     /// The question the running code is waiting on, unanswered.
     pub asking: Option<Question>,
+    missing_install: Option<Box<missing_packages::Attempt>>,
 }
 
 /// A question running code asked (`input()`, R's `browser()`), answered in
@@ -186,6 +188,7 @@ pub(crate) struct Open {
     pub current: Option<usize>,
     pub(crate) _subscriptions: Vec<Subscription>,
     pub(crate) history_edits: crate::editor::history::NotebookHistoryEdits,
+    missing: missing_packages::MissingBar,
 }
 
 pub(crate) struct QuartoView {
@@ -339,6 +342,8 @@ pub struct Workbench {
     pub(crate) open: Option<Open>,
     /// Notebooks open in other tabs.
     pub(crate) others: Vec<Open>,
+    next_missing_request: u64,
+    missing_completion: (String, u64),
     /// The tabs' files, in the order they were opened.
     pub(crate) tabs: Vec<String>,
     /// Quarto presentation preference, including documents closed this session.
@@ -602,6 +607,11 @@ impl Workbench {
         subscriptions.push(vars_filter_subscription);
         subscriptions.extend(find_subscriptions);
         subscriptions.push(outline_subscription);
+        subscriptions.push(
+            cx.observe_global::<crate::install_confirm::InstallCompletions>(
+                Self::packages_installed,
+            ),
+        );
         // Quitting saves what was edited first, as closing a tab does.
         subscriptions.push(cx.on_app_quit(|this, cx| {
             let tasks = this.save_all_tasks(cx);
@@ -652,6 +662,8 @@ impl Workbench {
             tree: Tree::new(),
             open: None,
             others: Vec::new(),
+            next_missing_request: 0,
+            missing_completion: Default::default(),
             tabs: Vec::new(),
             quarto_sources: HashSet::new(),
             previews: HashMap::new(),
@@ -1141,6 +1153,7 @@ impl Workbench {
         let (Some(daemon), Some(path)) = (self.daemon(), self.project.clone()) else {
             return;
         };
+        self.refresh_missing_documents(true, cx);
         let workbench = cx.entity().downgrade();
         let host = self.host();
         let explore = self.quick.is_some();

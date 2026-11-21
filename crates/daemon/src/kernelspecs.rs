@@ -272,7 +272,7 @@ pub fn list(search: &Search) -> Vec<KernelspecInfo> {
 /// (`/opt/homebrew/Cellar/r/4.4.2_2/lib/R/bin/R`) are not offered (Huan,
 /// 2026-11-15); `find` still names them, so a notebook that chose one
 /// gets a clear error rather than a different kernel.
-fn runnable(spec: &JupyterKernelspec, search: &Search) -> bool {
+pub(crate) fn runnable(spec: &JupyterKernelspec, search: &Search) -> bool {
     let Some(program) = spec.argv.first() else {
         return false;
     };
@@ -635,7 +635,7 @@ fn system_ipykernel(prefix: &Path) -> bool {
 /// `lib/<version>/site-packages`, Fedora also `lib64`, and Debian and Ubuntu
 /// `lib/python3/dist-packages` (apt) and `local/lib/<version>/dist-packages`
 /// (pip).
-fn base_site_dirs(base: &Path, version: &str) -> [PathBuf; 5] {
+pub(crate) fn base_site_dirs(base: &Path, version: &str) -> [PathBuf; 5] {
     [
         base.join("lib").join(version).join("site-packages"),
         base.join("lib64").join(version).join("site-packages"),
